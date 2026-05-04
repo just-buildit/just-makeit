@@ -1,0 +1,28 @@
+[build-system]
+requires = ["just-buildit"]
+build-backend = "just_buildit"
+
+[tool.just-buildit]
+package = "just_makeit"
+repair = false
+
+[project]
+name = "just-makeit"
+version = "0.1.0"
+description = "Python C extensions the easy way."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+just-makeit = "just_makeit._cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "just-buildit",
+    "numpy",
+    "pytest",
+]
