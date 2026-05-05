@@ -25,4 +25,5 @@ dev = [
     "just-buildit",
     "numpy",
     "pytest",
+    "zensical>=0.0.29",
 ]

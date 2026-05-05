@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 80" width="480" height="80">
+
+  <!-- Hex-nut icon (scaled down, flat-top, radius 34) -->
+  <polygon
+    fill="#f59e0b"
+    points="
+      74,40
+      57,11
+       23,11
+        6,40
+       23,69
+       57,69
+    "
+  />
+  <polygon
+    fill="#0d1117"
+    points="
+      61,40
+      50,22
+       30,22
+       19,40
+       30,58
+       50,58
+    "
+  />
+  <text
+    x="40" y="47"
+    font-family="'Courier New', Courier, monospace"
+    font-size="18"
+    font-weight="bold"
+    fill="#ffffff"
+    text-anchor="middle"
+  >jm</text>
+
+  <!-- "just-makeit" name -->
+  <text
+    x="98" y="52"
+    font-family="'Courier New', Courier, monospace"
+    font-size="32"
+    font-weight="bold"
+    fill="#f59e0b"
+  >just-makeit</text>
+
+</svg>
