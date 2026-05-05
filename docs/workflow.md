@@ -231,12 +231,10 @@ bpf_destroy(f);
 
 ### Development (no install)
 
-`make` places the DSOs directly in `src/my_dsp/`, so:
+`make` places the DSOs directly in `src/my_dsp/`. Run Python from the project
+root and the src-layout is picked up automatically:
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
 from my_dsp import Gain, BPF
 ```
 
