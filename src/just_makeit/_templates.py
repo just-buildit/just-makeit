@@ -314,26 +314,33 @@ CLIB_COMMON_H = """\
 /**
  * clib_common.h — common C99 types for <<package>>.
  */
-#pragma once
+#ifndef CLIB_COMMON_H
+#define CLIB_COMMON_H
 
 #include <complex.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#endif /* CLIB_COMMON_H */
 """
 
 PYEX_COMMON_H = """\
 /**
  * pyex_common.h — common Python extension includes for <<package>>.
+ *
+ * To add NumPy support, append after this include:
+ *   #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+ *   #include <numpy/arrayobject.h>
  */
-#pragma once
+#ifndef PYEX_COMMON_H
+#define PYEX_COMMON_H
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
-#include <numpy/arrayobject.h>
+#endif /* PYEX_COMMON_H */
 """
 
 COMPONENT_CORE_H = """\
@@ -350,7 +357,8 @@ COMPONENT_CORE_H = """\
  * <<component>>_destroy(obj);
  * @endcode
  */
-#pragma once
+#ifndef <<COMPONENT>>_CORE_H
+#define <<COMPONENT>>_CORE_H
 
 #include "clib_common.h"
 
@@ -423,6 +431,8 @@ void <<component>>_steps(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* <<COMPONENT>>_CORE_H */
 """
 
 # ── C source ─────────────────────────────────────────────────────────────────
@@ -767,8 +777,7 @@ PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
 all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
-\t@$(PYTHON) -c "import numpy" 2>/dev/null || \
-\t\t{ echo "error: numpy not found. Run: pip install numpy"; exit 1; }
+\t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
 \tcmake -B $(BUILD_DIR) -S . \\
 \t\t-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \\
 \t\t-DPython3_EXECUTABLE=$(PYTHON) \\
@@ -782,7 +791,8 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
-\t$(PYTHON) -m pytest src/ -v
+\t$(PYTHON) -m pytest src/ -v 2>/dev/null || \
+\t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
 
 just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
@@ -1004,8 +1014,7 @@ pip install -e .
 ## Development build
 
 ```bash
-pip install numpy        # required by the C extensions
-make                     # cmake configure + build
+make                     # cmake configure + build (installs numpy if needed)
 make test                # CTest + pytest
 ```
 

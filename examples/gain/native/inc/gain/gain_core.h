@@ -11,7 +11,8 @@
  * gain_destroy(obj);
  * @endcode
  */
-#pragma once
+#ifndef GAIN_CORE_H
+#define GAIN_CORE_H
 
 #include "clib_common.h"
 
@@ -89,3 +90,5 @@ void gain_set_gain(gain_state_t *state, double gain);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* GAIN_CORE_H */

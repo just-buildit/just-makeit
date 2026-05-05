@@ -25,9 +25,7 @@ pip install just-makeit
 
 ```sh
 just-makeit new my_project --component engine --state gain:double:1.0
-cd my_project
-make
-make test
+cd my_project && make && make test
 ```
 
 **What you get:**

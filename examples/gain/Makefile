@@ -18,6 +18,7 @@ PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
 all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
+	@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
 	cmake -B $(BUILD_DIR) -S . \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 		-DPython3_EXECUTABLE=$(PYTHON) \
@@ -31,7 +32,8 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
-	pytest src/ -v
+	$(PYTHON) -m pytest src/ -v 2>/dev/null || \
+		$(PYTHON) -m unittest discover -s src/gain/tests -t src -p "test_*.py" -v
 
 just-build: build
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
