@@ -822,7 +822,7 @@ name = "<<project>>"
 version = "<<version>>"
 description = "TODO: describe your project."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "numpy",
 ]

@@ -184,7 +184,7 @@ See [`examples/gain/`](examples/gain/) for a complete generated project.
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
 - CMake ≥ 3.16
 - A C99 compiler (GCC, Clang, MSVC/MinGW)
 - NumPy (runtime, for generated projects)

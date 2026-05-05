@@ -87,7 +87,7 @@ build backend, so `pip install .` just works.
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
 - CMake ≥ 3.16
 - A C99 compiler (GCC, Clang, MSVC)
 - NumPy (runtime dependency of generated projects)
