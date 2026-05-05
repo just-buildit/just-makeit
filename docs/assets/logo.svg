@@ -5,7 +5,7 @@
 
   <!-- Outer hex-nut (flat-top, radius 84) -->
   <polygon
-    fill="#f59e0b"
+    fill="#94a3b8"
     points="
       184,100
       142,27
@@ -29,9 +29,9 @@
     "
   />
 
-  <!-- "jm" wordmark -->
+  <!-- "jm" wordmark — baseline raised to account for j descender -->
   <text
-    x="100" y="115"
+    x="100" y="107"
     font-family="'Courier New', Courier, monospace"
     font-size="44"
     font-weight="bold"

@@ -2,7 +2,7 @@
 
   <!-- Hex-nut icon (scaled down, flat-top, radius 34) -->
   <polygon
-    fill="#f59e0b"
+    fill="#94a3b8"
     points="
       74,40
       57,11
@@ -24,7 +24,7 @@
     "
   />
   <text
-    x="40" y="47"
+    x="40" y="44"
     font-family="'Courier New', Courier, monospace"
     font-size="18"
     font-weight="bold"
@@ -38,7 +38,7 @@
     font-family="'Courier New', Courier, monospace"
     font-size="32"
     font-weight="bold"
-    fill="#f59e0b"
+    fill="#94a3b8"
   >just-makeit</text>
 
 </svg>

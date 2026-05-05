@@ -12,6 +12,7 @@ copyright        = "Copyright &copy; 2026 just-buildit contributors — MIT Lice
 
 nav = [
   { "Home"               = "index.md"        },
+  { "Workflow"           = "workflow.md"     },
   { "Commands"           = "commands.md"     },
   { "Template Reference" = "template.md"     },
   { "Customization"      = "customization.md"},
