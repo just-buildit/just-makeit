@@ -61,6 +61,9 @@ class TestInitFiles:
     def test_tests_init(self, project):
         assert (project / "src" / "my_filter" / "tests" / "__init__.py").exists()
 
+    def test_just_makeit_toml_exists(self, project):
+        assert (project / "just-makeit.toml").exists()
+
     def test_compile_commands_exists(self, project):
         assert (project / "compile_commands.json").exists()
 
@@ -76,6 +79,38 @@ class TestInitFiles:
 
     def test_python_test(self, project):
         assert (project / "src" / "my_filter" / "tests" / "test_my_filter.py").exists()
+
+
+class TestInitConfig:
+    def test_config_has_component_name(self, project):
+        import tomllib
+        with (project / "just-makeit.toml").open("rb") as f:
+            cfg = tomllib.load(f)
+        assert cfg["component"]["name"] == "my_filter"
+
+    def test_config_has_default_state(self, project):
+        import tomllib
+        with (project / "just-makeit.toml").open("rb") as f:
+            cfg = tomllib.load(f)
+        assert any(s["name"] == "gain" for s in cfg["state"])
+
+    def test_config_records_custom_state(self, tmp_path):
+        dest = tmp_path / "comp"
+        run("comp", dest, [("cutoff", "double", "440.0"), ("order", "int", "4")])
+        import tomllib
+        with (dest / "just-makeit.toml").open("rb") as f:
+            cfg = tomllib.load(f)
+        names = [s["name"] for s in cfg["state"]]
+        assert names == ["cutoff", "order"]
+
+    def test_config_default_values_preserved(self, tmp_path):
+        dest = tmp_path / "comp"
+        run("comp", dest, [("gain", "double", "1.5")])
+        import tomllib
+        with (dest / "just-makeit.toml").open("rb") as f:
+            cfg = tomllib.load(f)
+        gain = next(s for s in cfg["state"] if s["name"] == "gain")
+        assert gain["default"] == "1.5"
 
 
 class TestInitContent:

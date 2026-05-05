@@ -11,6 +11,7 @@ import sysconfig
 import sys
 from pathlib import Path
 
+from . import _config as C
 from . import _templates as T
 
 
@@ -133,6 +134,10 @@ def run(
     _write(root / "src" / pkg / "tests" / f"test_{comp}.py",        r(T.PYTEST_TEST))
 
     _write_compile_commands(root, comp)
+
+    cfg = C.from_init(comp, ctx["version"], vars_)
+    C.save(root, cfg)
+    print(f"  create  {root / C.FILENAME}")
 
     print()
     print(f"Done!  cd {root.name} && make && make test")
