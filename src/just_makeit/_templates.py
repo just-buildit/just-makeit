@@ -782,7 +782,7 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
-\tpytest src/ -v
+\t$(PYTHON) -m pytest src/ -v
 
 just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
