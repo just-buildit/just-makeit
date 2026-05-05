@@ -32,27 +32,24 @@ cd my_project && make && make test
 
 ```
 my_project/
-├── inc/
-│   ├── clib_common.h               # common C99 types
-│   ├── pyex_common.h               # Python extension includes
-│   └── my_project.h                # umbrella — includes all component headers
-├── engine/
-│   ├── CMakeLists.txt
-│   ├── inc/engine/
-│   │   └── engine_core.h           # component API
+├── native/
+│   ├── inc/
+│   │   ├── clib_common.h           # common C99 types
+│   │   ├── pyex_common.h           # Python extension includes
+│   │   └── engine/
+│   │       └── engine_core.h       # component API
 │   ├── src/
-│   │   ├── engine_core.c           # core logic — your algorithm goes here
-│   │   └── engine_ext.c            # thin Python binding
+│   │   └── engine/
+│   │       ├── CMakeLists.txt
+│   │       ├── engine_core.c       # core logic — your algorithm goes here
+│   │       └── engine_ext.c        # thin Python binding
 │   └── tests/
 │       └── test_engine_core.c      # CTest
 ├── src/my_project/
 │   ├── __init__.py
 │   ├── engine.pyi                  # type stub
 │   └── tests/
-│       └── test_engine.py          # pytest
-├── cmake/
-│   ├── my-project.pc.in            # pkg-config template
-│   └── my-project-config.cmake.in  # CMake find_package template
+│       └── test_engine.py          # pytest / unittest
 ├── CMakeLists.txt
 ├── Makefile
 ├── pyproject.toml
