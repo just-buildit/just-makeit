@@ -29,11 +29,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install deps
-        run: PYTHONPATH=src uv sync --group dev --no-build-isolation
-
       - name: Build Zensical site
-        run: uv run zensical build --clean
+        run: uv run --no-project --with "zensical>=0.0.29" zensical build --clean
 
       - name: Configure Pages
         if: github.ref == 'refs/heads/main'

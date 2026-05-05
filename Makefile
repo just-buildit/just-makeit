@@ -39,12 +39,10 @@ build:
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 docs:
-	$(UV) sync --group dev
-	$(UV) run zensical build --clean
+	$(UV) run --no-project --with "zensical>=0.0.29" zensical build --clean
 
 docs-serve:
-	$(UV) sync --group dev
-	$(UV) run zensical serve
+	$(UV) run --no-project --with "zensical>=0.0.29" zensical serve
 
 # ── Dev install ───────────────────────────────────────────────────────────────
 
