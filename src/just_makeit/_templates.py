@@ -767,6 +767,8 @@ PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
 all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
+\t@$(PYTHON) -c "import numpy" 2>/dev/null || \
+\t\t{ echo "error: numpy not found. Run: pip install numpy"; exit 1; }
 \tcmake -B $(BUILD_DIR) -S . \\
 \t\t-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \\
 \t\t-DPython3_EXECUTABLE=$(PYTHON) \\
@@ -991,22 +993,26 @@ README_MD = """\
 
 TODO: describe your project.
 
-## Build
+## Quickstart
+
+Install and build in one step (recommended):
 
 ```bash
-make
+pip install -e .
 ```
 
-## Test
+## Development build
 
 ```bash
-make test
+pip install numpy        # required by the C extensions
+make                     # cmake configure + build
+make test                # CTest + pytest
 ```
 
-## Install
+## Package
 
 ```bash
-just-buildit build dist/
-pip install dist/*.whl
+pip install just-buildit
+just-makeit build        # wheel → dist/
 ```
 """

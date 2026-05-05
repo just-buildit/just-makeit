@@ -9,10 +9,33 @@ repair = false
 [project]
 name = "just-makeit"
 version = "0.1.0"
-description = "Python C extensions the easy way."
+description = "Scaffold and build Python C extensions with CMake and just-buildit."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+keywords = [
+    "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
+    "code-generation", "numpy", "packaging", "wheel",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/just-buildit/just-makeit"
+Repository = "https://github.com/just-buildit/just-makeit"
+"Bug Tracker" = "https://github.com/just-buildit/just-makeit/issues"
 
 [project.scripts]
 just-makeit = "just_makeit._cli:main"
