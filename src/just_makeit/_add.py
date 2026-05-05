@@ -10,8 +10,6 @@ Adds state variables to an existing project:
   On any error during steps 4-5, restore from backup before re-raising.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import sys
@@ -24,12 +22,12 @@ from . import _init
 from . import _templates as T
 
 _STATE_TEMPLATES = [
-    ("native/inc/{c}/{c}_core.h",        T.COMPONENT_CORE_H),
-    ("native/src/{c}/{c}_core.c",        T.COMPONENT_CORE_C),
-    ("native/src/{c}/{c}_ext.c",         T.COMPONENT_EXT_C),
-    ("native/tests/test_{c}_core.c",     T.COMPONENT_TEST_C),
-    ("src/{c}/{c}.pyi",                  T.COMPONENT_PYI),
-    ("src/{c}/tests/test_{c}.py",        T.PYTEST_TEST),
+    ("native/inc/{c}/{c}_core.h", T.COMPONENT_CORE_H),
+    ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
+    ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
+    ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
+    ("src/{c}/{c}.pyi", T.COMPONENT_PYI),
+    ("src/{c}/tests/test_{c}.py", T.PYTEST_TEST),
 ]
 
 
@@ -62,8 +60,7 @@ def run(root: Path, new_vars: list[tuple[str, str, str]]) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
-            f"error: no {C.FILENAME} found in {root}.\n"
-            "Run 'just-makeit init' first.",
+            f"error: no {C.FILENAME} found in {root}.\nRun 'just-makeit init' first.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -86,13 +83,13 @@ def run(root: Path, new_vars: list[tuple[str, str, str]]) -> None:
 
     ctx = _init._make_ctx(comp, version)
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars))
-    r = lambda tmpl: T.render(tmpl, ctx)
+
+    def r(tmpl):
+        return T.render(tmpl, ctx)
 
     paths = [root / _expand(pat, comp) for pat, _ in _STATE_TEMPLATES]
 
-    print(
-        f"just-makeit: adding {len(new_vars)} state variable(s) to '{comp}'"
-    )
+    print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{comp}'")
     print()
 
     with _backup(paths):
@@ -101,9 +98,7 @@ def run(root: Path, new_vars: list[tuple[str, str, str]]) -> None:
             path.write_text(r(tmpl), encoding="utf-8")
             print(f"  update  {path}")
 
-    cfg["state"] = [
-        {"name": n, "type": t, "default": d} for n, t, d in all_vars
-    ]
+    cfg["state"] = [{"name": n, "type": t, "default": d} for n, t, d in all_vars]
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
     print()

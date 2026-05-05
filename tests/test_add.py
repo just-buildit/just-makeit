@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._init import run as init_run
 from just_makeit._add import run as add_run
-from just_makeit._config import load, FILENAME
+from just_makeit._config import load
 
 
 @pytest.fixture()
@@ -103,9 +103,7 @@ class TestAddValidation:
 
 class TestAddBackupRestore:
     def test_backup_restores_on_write_failure(self, project):
-        original_h = (
-            project / "native" / "inc" / "comp" / "comp_core.h"
-        ).read_text()
+        original_h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
 
         # Make the .pyi path a directory so write_text fails there
         pyi = project / "src" / "comp" / "comp.pyi"
@@ -116,9 +114,7 @@ class TestAddBackupRestore:
             add_run(project, [("order", "int", "4")])
 
         # Header should be restored to original
-        restored = (
-            project / "native" / "inc" / "comp" / "comp_core.h"
-        ).read_text()
+        restored = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert restored == original_h
 
     def test_config_not_written_on_failure(self, project):

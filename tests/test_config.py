@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -50,7 +49,9 @@ class TestSave:
         assert (tmp_path / FILENAME).exists()
 
     def test_round_trip(self, tmp_path):
-        cfg = from_init("my_f", "0.2.0", [("gain", "double", "1.5"), ("order", "int", "4")])
+        cfg = from_init(
+            "my_f", "0.2.0", [("gain", "double", "1.5"), ("order", "int", "4")]
+        )
         save(tmp_path, cfg)
         loaded = load(tmp_path)
         assert loaded["component"]["name"] == "my_f"
@@ -110,10 +111,12 @@ class TestDump:
         assert 'version = "0.1.0"' in text
 
     def test_state_section(self):
-        text = _dump({
-            "component": {"name": "g", "version": "0.1.0"},
-            "state": [{"name": "gain", "type": "double", "default": "1.0"}],
-        })
+        text = _dump(
+            {
+                "component": {"name": "g", "version": "0.1.0"},
+                "state": [{"name": "gain", "type": "double", "default": "1.0"}],
+            }
+        )
         assert "[[state]]" in text
         assert 'name = "gain"' in text
         assert 'type = "double"' in text

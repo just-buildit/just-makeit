@@ -11,7 +11,8 @@ try:
     _approx = _pytest.approx
     _raises = _pytest.raises
 except ImportError:
-    import contextlib, math
+    import contextlib
+    import math
 
     class _Approx:
         def __init__(self, expected, rel=1e-6):
@@ -27,6 +28,7 @@ except ImportError:
     @contextlib.contextmanager
     def _raises(exc_type, match=None):
         import re
+
         try:
             yield
         except exc_type as e:

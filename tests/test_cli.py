@@ -7,15 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 SRC = Path(__file__).parent.parent / "src"
 
 
 def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c",
-         "from just_makeit._cli import main; main()", *args],
+        [sys.executable, "-c", "from just_makeit._cli import main; main()", *args],
         cwd=cwd or Path.cwd(),
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
@@ -103,9 +101,13 @@ class TestInitStateCLI:
     def test_multi_state_flags(self, tmp_path):
         dest = tmp_path / "bpf"
         r = _cli(
-            "init", "bpf", str(dest),
-            "--state", "cutoff:double:440.0",
-            "--state", "order:int:4",
+            "init",
+            "bpf",
+            str(dest),
+            "--state",
+            "cutoff:double:440.0",
+            "--state",
+            "order:int:4",
         )
         assert r.returncode == 0
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
@@ -160,6 +162,7 @@ class TestAddCLI:
         _cli("init", "comp", str(dest))
         _cli("add", "--state", "order:int:4", cwd=dest)
         import tomllib
+
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         names = [s["name"] for s in cfg["state"]]

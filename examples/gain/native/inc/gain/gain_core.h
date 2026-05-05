@@ -57,9 +57,7 @@ void gain_reset(gain_state_t *state);
  * @return       Output sample.
  * @note Inlined for maximum performance.
  */
-static inline float complex
-gain_step(const gain_state_t *state, float complex x)
-{
+static inline float complex gain_step(const gain_state_t *state, float complex x) {
     (void)state; /* TODO: implement DSP using state variables */
     return x;
 }
@@ -73,11 +71,7 @@ gain_step(const gain_state_t *state, float complex x)
  * @param n       Number of samples.
  * @note Output buffer must be pre-allocated by caller.
  */
-void gain_steps(
-    gain_state_t *state,
-    const float complex    *input,
-    float complex          *output,
-    size_t                  n);
+void gain_steps(gain_state_t *state, const float complex *input, float complex *output, size_t n);
 
 /**
  * @brief Get current gain.

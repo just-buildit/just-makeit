@@ -4,8 +4,6 @@ _init.py — `just-makeit init` command.
 Creates a complete working C99 Python extension project in a new directory.
 """
 
-from __future__ import annotations
-
 import json
 import sysconfig
 import sys
@@ -36,6 +34,7 @@ def _write_compile_commands(root: Path, component: str) -> None:
     python_inc = sysconfig.get_path("include")
     try:
         import numpy as np
+
         numpy_inc = np.get_include()
     except ImportError:
         numpy_inc = None
@@ -62,7 +61,7 @@ def _write_compile_commands(root: Path, component: str) -> None:
 
     entries = [
         entry(f"native/src/{component}/{component}_core.c", base),
-        entry(f"native/src/{component}/{component}_ext.c",  base),
+        entry(f"native/src/{component}/{component}_ext.c", base),
         entry(
             f"native/tests/test_{component}_core.c",
             f"cc -std=c99 -Wall -I{r / 'native' / 'inc'} -I{r / 'native' / 'inc' / component}",
@@ -105,7 +104,9 @@ def run(
     vars_ = state_vars or [("gain", "double", "0.0")]
     ctx = _make_ctx(component)
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
-    r = lambda tmpl: T.render(tmpl, ctx)
+
+    def r(tmpl):
+        return T.render(tmpl, ctx)
 
     print(f"just-makeit: initialising '{component}' in {root}")
     print()
@@ -113,25 +114,25 @@ def run(
     comp = ctx["component"]
     pkg = ctx["package"]
 
-    _write(root / "CMakeLists.txt",                                  r(T.CMAKE_LISTS))
-    _write(root / "Makefile",                                        r(T.MAKEFILE))
-    _write(root / "pyproject.toml",                                  r(T.PYPROJECT_TOML))
-    _write(root / "README.md",                                       r(T.README_MD))
-    _write(root / ".gitignore",                                      r(T.GITIGNORE))
+    _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS))
+    _write(root / "Makefile", r(T.MAKEFILE))
+    _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
+    _write(root / "README.md", r(T.README_MD))
+    _write(root / ".gitignore", r(T.GITIGNORE))
 
-    _write(root / "native" / "inc" / "clib_common.h",               r(T.CLIB_COMMON_H))
-    _write(root / "native" / "inc" / "pyex_common.h",               r(T.PYEX_COMMON_H))
-    _write(root / "native" / "inc" / comp / f"{comp}_core.h",       r(T.COMPONENT_CORE_H))
+    _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
+    _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
+    _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
 
-    _write(root / "native" / "src" / comp / f"{comp}_core.c",       r(T.COMPONENT_CORE_C))
-    _write(root / "native" / "src" / comp / f"{comp}_ext.c",        r(T.COMPONENT_EXT_C))
+    _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
+    _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(T.COMPONENT_EXT_C))
 
-    _write(root / "native" / "tests" / f"test_{comp}_core.c",       r(T.COMPONENT_TEST_C))
+    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
 
-    _write(root / "src" / pkg / "__init__.py",                       r(T.PACKAGE_INIT_PY))
-    _write(root / "src" / pkg / f"{comp}.pyi",                      r(T.COMPONENT_PYI))
-    _write(root / "src" / pkg / "tests" / "__init__.py",             T.TESTS_INIT_PY)
-    _write(root / "src" / pkg / "tests" / f"test_{comp}.py",        r(T.PYTEST_TEST))
+    _write(root / "src" / pkg / "__init__.py", r(T.PACKAGE_INIT_PY))
+    _write(root / "src" / pkg / f"{comp}.pyi", r(T.COMPONENT_PYI))
+    _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)
+    _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(T.PYTEST_TEST))
 
     _write_compile_commands(root, comp)
 

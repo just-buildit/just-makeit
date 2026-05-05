@@ -1,22 +1,48 @@
 # Commands
 
-## `just-makeit init <name> [dir] [--state name:type[:default] ...]`
+## `just-makeit new <proj> [--component name] [--state name:type[:default] ...]`
 
-Create a new C extension project in a new directory.
+Create a new project. Optionally scaffold a first component in the same step.
 
 ```sh
-just-makeit init my_filter
-just-makeit init my_filter --state gain:double:1.0
-just-makeit init my_bpf --state center:double:1000.0 --state bw:double:200.0 --state order:int:4
-just-makeit init my_filter ~/dev/my_filter --state gain:double
+just-makeit new my_project
+just-makeit new my_project --component engine
+just-makeit new my_project --component engine --state rate:double:1.0
+just-makeit new my_project --component engine --state rate:double --state order:int:4
 ```
+
+`new` writes a `just-makeit.toml` that records the project name, version, and
+any components — the source of truth for all subsequent commands.
 
 **Arguments**
 
 | Argument | Description |
 |---|---|
-| `name` | Component name in `snake_case`. Used as the C prefix, Python module name, and directory name. |
-| `dir` | Destination directory for the new project (default: `./<name>`). |
+| `project` | Project name in `snake_case`. Used as the Python package name and distribution name. |
+| `--component name` | Scaffold a first component immediately (optional). |
+| `--state name:type[:default]` | Declare a state variable for the component. Repeatable. |
+
+---
+
+## `just-makeit init <component> [--state name:type[:default] ...]`
+
+Add a new component (C extension) to an existing project. Must be run from the
+project root (where `just-makeit.toml` lives).
+
+```sh
+just-makeit init engine --state rate:double:1.0
+just-makeit init parser --state depth:int:8 --state strict:int:1
+```
+
+Creates the component directory, updates the top-level `CMakeLists.txt` with
+`add_subdirectory`, registers the component in `just-makeit.toml`, and adds
+the Python type stub and test file.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `component` | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely. |
 
 **State types**
@@ -29,7 +55,7 @@ just-makeit init my_filter ~/dev/my_filter --state gain:double
 
 The `:default` suffix is optional — the type's zero value is used if omitted.
 Both `_reset()` and Python `__init__()` use the declared default, so
-`MyFilter()` with no arguments is always valid.
+`Engine()` with no arguments is always valid.
 
 Each `--state name:type[:default]` generates:
 - A field in the C state struct
@@ -38,51 +64,51 @@ Each `--state name:type[:default]` generates:
 - Getter/setter tests in both CTest and pytest
 - Reset behaviour that restores the declared default
 
-`init` also writes a `just-makeit.toml` that records the component name,
-version, and full state var list — used by `add` and `config`.
-
 **Naming rules**
 
 - Lowercase letters, digits, and underscores only.
 - Must not start with a digit.
-- Examples: `gain`, `my_filter`, `half_band_decim`
+- Examples: `engine`, `parser`, `rate_limiter`
 
 The Python class name is derived automatically:
 
 | Component name | Python class |
 |---|---|
-| `gain` | `Gain` |
-| `my_filter` | `MyFilter` |
-| `half_band_decim` | `HalfBandDecim` |
+| `engine` | `Engine` |
+| `rate_limiter` | `RateLimiter` |
+| `half_band_filter` | `HalfBandFilter` |
 
 ---
 
-## `just-makeit add --state name:type[:default] [...]`
+## `just-makeit add --state name:type[:default] [...] [--component name]`
 
-Add one or more state variables to an existing project.  Must be run from the
-project root (where `just-makeit.toml` lives).
+Add one or more state variables to an existing component. Must be run from the
+project root.
 
 ```sh
 just-makeit add --state order:int:4
-just-makeit add --state bandwidth:double:200.0 --state poles:int:2
+just-makeit add --state threshold:double:0.5 --state window:int:64
+just-makeit add --component parser --state depth:int:8
 ```
+
+When the project has a single component `--component` may be omitted.
 
 `add` regenerates the six state-sensitive files from the merged state list:
 
-- `native/inc/<comp>/<comp>_core.h`
-- `native/src/<comp>/<comp>_core.c`
-- `native/src/<comp>/<comp>_ext.c`
-- `native/tests/test_<comp>_core.c`
-- `src/<comp>/<comp>.pyi`
-- `src/<comp>/tests/test_<comp>.py`
+- `<component>/inc/<component>/<component>_core.h`
+- `<component>/src/<component>_core.c`
+- `<component>/src/<component>_ext.c`
+- `<component>/tests/test_<component>_core.c`
+- `src/<project>/<component>.pyi`
+- `src/<project>/tests/test_<component>.py`
 
 All six files are backed up before regeneration.  If any write fails, they
-are restored to their pre-`add` state and `just-makeit.toml` is left unchanged.
+are restored and `just-makeit.toml` is left unchanged.
 
 **Constraints**
 
-- Each new variable name must be unique across the full state list.
-- Requires a `just-makeit.toml` — run `just-makeit init` first.
+- Each new variable name must be unique within the component's state list.
+- Requires a `just-makeit.toml` — run `just-makeit new` first.
 
 ---
 
@@ -99,11 +125,16 @@ just-makeit config version 0.2.0  # update version
 **Example output**
 
 ```
-component: my_filter
-version:   0.1.0
-state:
-  gain: double = 1.0
-  order: int = 4
+project:  my_project
+version:  0.1.0
+
+engine:
+  rate:  double = 1.0
+  order: int    = 4
+
+parser:
+  depth:  int = 8
+  strict: int = 1
 ```
 
 **Supported keys**
@@ -116,7 +147,7 @@ state:
 
 ## `just-makeit build [dir]`
 
-Configure the CMake project (if not already done), build the C extension, and
+Configure the CMake project (if not already done), build the C extensions, and
 package a wheel via just-buildit.
 
 ```sh
@@ -136,7 +167,7 @@ Build (if needed), then run CTest and pytest.
 just-makeit test
 ```
 
-- CTest runs the C tests in `native/tests/`.
+- CTest runs the C tests in each component's `tests/` directory.
 - pytest runs the Python tests in `src/`.
 
 ---

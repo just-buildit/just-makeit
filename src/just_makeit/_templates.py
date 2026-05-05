@@ -18,9 +18,6 @@ All <<...>> placeholders in the templates below are filled by either the base
 context or make_state_ctx().  No placeholders survive rendering.
 """
 
-from __future__ import annotations
-
-
 _CTYPE_META: dict[str, dict] = {
     "double": {
         "fmt": "d",
@@ -78,9 +75,7 @@ def make_state_ctx(
 
     # ── CORE_H ───────────────────────────────────────────────────────────────
 
-    state_struct_fields = "\n".join(
-        f"    {ct} {name};" for name, ct, _ in state_vars
-    )
+    state_struct_fields = "\n".join(f"    {ct} {name};" for name, ct, _ in state_vars)
 
     create_params = ", ".join(f"{ct} {name}" for name, ct, _ in state_vars)
 
@@ -185,10 +180,10 @@ def make_state_ctx(
     for name, _, __ in state_vars:
         pmd_lines += [
             f'    {{"get_{name}",',
-            f'     (PyCFunction){Component}_get_{name}, METH_NOARGS,',
+            f"     (PyCFunction){Component}_get_{name}, METH_NOARGS,",
             f'     "Get {name}."}},',
             f'    {{"set_{name}",',
-            f'     (PyCFunction){Component}_set_{name}, METH_VARARGS,',
+            f"     (PyCFunction){Component}_set_{name}, METH_VARARGS,",
             f'     "Set {name}."}},',
         ]
     getter_setter_pymethoddef = "\n".join(pmd_lines)
@@ -219,9 +214,7 @@ def make_state_ctx(
 
     # ── Shared ───────────────────────────────────────────────────────────────
 
-    py_create_args = ", ".join(
-        _py_default(ct, dflt) for _, ct, dflt in state_vars
-    )
+    py_create_args = ", ".join(_py_default(ct, dflt) for _, ct, dflt in state_vars)
     c_create_args = ", ".join(dflt for _, _, dflt in state_vars)
 
     # ── PYTEST ───────────────────────────────────────────────────────────────

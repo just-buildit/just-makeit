@@ -5,8 +5,6 @@ These commands operate on an existing project created by `just-makeit init`
 (or any project using CMake + just-buildit with the same layout).
 """
 
-from __future__ import annotations
-
 import os
 import shlex
 import shutil
@@ -27,7 +25,11 @@ def _cmake_configure(root: Path, build_dir: Path, build_type: str = "Release") -
     cmake = _require("cmake")
     python = sys.executable
     cmd = [
-        cmake, "-B", str(build_dir), "-S", str(root),
+        cmake,
+        "-B",
+        str(build_dir),
+        "-S",
+        str(root),
         f"-DCMAKE_BUILD_TYPE={build_type}",
         f"-DPython3_EXECUTABLE={python}",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
@@ -158,12 +160,16 @@ def cmd_dry_run() -> None:
         build_type = "Release"
         python = sys.executable
         cmd = [
-            cmake, "-B", "build", "-S", ".",
+            cmake,
+            "-B",
+            "build",
+            "-S",
+            ".",
             f"-DCMAKE_BUILD_TYPE={build_type}",
             f"-DPython3_EXECUTABLE={python}",
         ]
         print(f"  configure: {shlex.join(cmd)}")
-        print(f"  build:     cmake --build build")
+        print("  build:     cmake --build build")
     else:
         print("  configure: cmake not found")
     print()

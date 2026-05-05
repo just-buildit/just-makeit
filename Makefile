@@ -4,6 +4,7 @@
 #   make               Run tests (default)
 #   make test          Run full test suite (pytest)
 #   make test-fast     Run tests, stop on first failure
+#   make lint          Run pre-commit hooks on all files
 #   make build         Build wheel into dist/
 #   make docs          Build docs site into site/
 #   make docs-serve    Build and serve docs with live reload
@@ -17,7 +18,7 @@ UV      = uv
 PYTEST  = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
 ZENSICAL = $(UV) run --group dev zensical
 
-.PHONY: all test test-fast build docs docs-serve install clean help
+.PHONY: all test test-fast lint build docs docs-serve install clean help
 
 all: test
 
@@ -28,6 +29,11 @@ test:
 
 test-fast:
 	$(PYTEST) -x -q
+
+# ── Lint ──────────────────────────────────────────────────────────────────────
+
+lint:
+	$(UV) run --group dev pre-commit run --all-files
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -65,6 +71,7 @@ help:
 	@echo "  make               run tests"
 	@echo "  make test          run full test suite"
 	@echo "  make test-fast     stop on first failure"
+	@echo "  make lint          run pre-commit hooks on all files"
 	@echo "  make build         build wheel → dist/"
 	@echo "  make docs          build docs → site/"
 	@echo "  make docs-serve    build and serve with live reload"

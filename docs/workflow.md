@@ -16,7 +16,7 @@ flowchart TD
     SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
     SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
 
-    CLIB --> C["**C / C++ / Rust**\npkg-config\nfind_package"]
+    CLIB --> C["**C / C++ / Rust / …**\npkg-config\nfind_package"]
     PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
 ```
 
@@ -53,7 +53,7 @@ my_dsp/
 │   │   └── gain/
 │   │       └── gain_core.h           # component API
 │   ├── src/
-│   │   ├── gain_core.c               # core logic — your DSP lives here
+│   │   ├── gain_core.c               # core logic — your algorithm goes here
 │   │   └── gain_ext.c                # thin Python binding
 │   └── tests/
 │       └── test_gain_core.c          # C lifecycle test
@@ -97,16 +97,16 @@ development.
 
 ---
 
-## Implementing your DSP
+## Implementing your core logic
 
 Open `gain/src/gain_core.c`.  The generated stub is a pass-through — replace
-`gain_step` with your logic:
+`gain_step` with your algorithm:
 
 ```c
 static inline float complex
 gain_step(const gain_state_t *state, float complex x)
 {
-    return x * (float)state->gain;   /* <— your DSP here */
+    return x * (float)state->gain;   /* <— your algorithm here */
 }
 ```
 
@@ -128,7 +128,7 @@ void          gain_set_gain(gain_state_t *state, double gain);
 ```
 
 The Python binding in `gain_ext.c` is generated and complete — you do not
-edit it.  Add your logic to `gain_core.c` only.
+edit it.  Add your core logic to `gain_core.c` only.
 
 ---
 

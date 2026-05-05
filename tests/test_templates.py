@@ -148,7 +148,10 @@ class TestMakeStateCtx:
     def test_getter_setter_stubs_pyi(self):
         ctx = self._ctx([("gain", "double", "0.0")])
         assert "def get_gain(self) -> float:" in ctx["getter_setter_stubs_pyi"]
-        assert "def set_gain(self, value: float) -> None:" in ctx["getter_setter_stubs_pyi"]
+        assert (
+            "def set_gain(self, value: float) -> None:"
+            in ctx["getter_setter_stubs_pyi"]
+        )
 
     def test_py_create_args_uses_default(self):
         ctx = self._ctx([("gain", "double", "1.5")])
@@ -196,5 +199,6 @@ class TestMakeStateCtx:
 
     def test_invalid_type_raises(self):
         import pytest
+
         with pytest.raises(ValueError, match="unsupported type"):
             make_state_ctx("comp", "Comp", [("x", "complex128", "0")])

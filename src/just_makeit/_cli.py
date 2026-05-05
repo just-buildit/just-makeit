@@ -2,8 +2,6 @@
 _cli.py — just-makeit command-line interface.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -111,7 +109,9 @@ def main() -> None:
             if tok == "--state":
                 i += 1
                 if i >= len(remaining):
-                    print("error: --state requires name:type[:default]", file=sys.stderr)
+                    print(
+                        "error: --state requires name:type[:default]", file=sys.stderr
+                    )
                     sys.exit(1)
                 spec = remaining[i]
                 parts = spec.split(":", 2)
@@ -177,22 +177,24 @@ def main() -> None:
                 sys.exit(1)
         else:
             print(
-                "Usage: just-makeit config [key value]\n"
-                "Supported keys: version",
+                "Usage: just-makeit config [key value]\nSupported keys: version",
                 file=sys.stderr,
             )
             sys.exit(1)
 
     elif cmd == "build":
         from . import _build
+
         _build.cmd_build(args[1:])
 
     elif cmd == "test":
         from . import _build
+
         _build.cmd_test(args[1:])
 
     elif cmd == "dry-run":
         from . import _build
+
         _build.cmd_dry_run()
 
     else:

@@ -24,6 +24,7 @@ testpaths = ["tests"]
 dev = [
     "just-buildit",
     "numpy",
+    "pre-commit",
     "pytest",
     "zensical>=0.0.29",
 ]

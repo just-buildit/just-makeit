@@ -3,8 +3,7 @@
 #include <complex.h>
 #include <stdio.h>
 
-int main(void)
-{
+int main(void) {
     gain_state_t *obj = gain_create(1.0);
     assert(obj != NULL);
 

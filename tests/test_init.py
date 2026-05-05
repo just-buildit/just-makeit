@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -69,6 +68,7 @@ class TestInitFiles:
 
     def test_compile_commands_json(self, project):
         import json
+
         data = json.loads((project / "compile_commands.json").read_text())
         assert isinstance(data, list)
         assert len(data) == 3
@@ -84,12 +84,14 @@ class TestInitFiles:
 class TestInitConfig:
     def test_config_has_component_name(self, project):
         import tomllib
+
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         assert cfg["component"]["name"] == "my_filter"
 
     def test_config_has_default_state(self, project):
         import tomllib
+
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         assert any(s["name"] == "gain" for s in cfg["state"])
@@ -98,6 +100,7 @@ class TestInitConfig:
         dest = tmp_path / "comp"
         run("comp", dest, [("cutoff", "double", "440.0"), ("order", "int", "4")])
         import tomllib
+
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         names = [s["name"] for s in cfg["state"]]
@@ -107,6 +110,7 @@ class TestInitConfig:
         dest = tmp_path / "comp"
         run("comp", dest, [("gain", "double", "1.5")])
         import tomllib
+
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         gain = next(s for s in cfg["state"] if s["name"] == "gain")
@@ -117,7 +121,14 @@ class TestInitContent:
     def test_no_unreplaced_placeholders(self, project):
         """All <<...>> placeholders must be replaced in every generated file."""
         for path in project.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt", ".md"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+                ".md",
+            ):
                 text = path.read_text(encoding="utf-8")
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
@@ -253,9 +264,14 @@ class TestInitBuild:
     @pytest.fixture(scope="class")
     def built_project(self, tmp_path_factory):
         import shutil
+
         if not shutil.which("cmake"):
             pytest.skip("cmake not found")
-        if not shutil.which("cc") and not shutil.which("gcc") and not shutil.which("clang"):
+        if (
+            not shutil.which("cc")
+            and not shutil.which("gcc")
+            and not shutil.which("clang")
+        ):
             pytest.skip("no C compiler found")
         try:
             import numpy  # noqa: F401
@@ -266,19 +282,28 @@ class TestInitBuild:
         run("gain", root)
 
         import subprocess
+
         r = subprocess.run(
             [
-                "cmake", "-B", "build", "-S", ".",
+                "cmake",
+                "-B",
+                "build",
+                "-S",
+                ".",
                 "-DCMAKE_BUILD_TYPE=Release",
                 f"-DPython3_EXECUTABLE={sys.executable}",
             ],
-            cwd=root, capture_output=True, text=True,
+            cwd=root,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, f"cmake configure failed:\n{r.stderr}"
 
         r = subprocess.run(
             ["cmake", "--build", "build", "--parallel", "4"],
-            cwd=root, capture_output=True, text=True,
+            cwd=root,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, f"cmake build failed:\n{r.stderr}"
 
@@ -290,18 +315,23 @@ class TestInitBuild:
 
     def test_ctest_passes(self, built_project):
         import subprocess
+
         r = subprocess.run(
             ["ctest", "--test-dir", "build", "--output-on-failure"],
-            cwd=built_project, capture_output=True, text=True,
+            cwd=built_project,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, f"CTest failed:\n{r.stdout}\n{r.stderr}"
 
     def test_pytest_passes(self, built_project):
         import subprocess
+
         r = subprocess.run(
             [sys.executable, "-m", "pytest", "src/", "-v"],
             cwd=built_project,
             env={**__import__("os").environ, "PYTHONPATH": str(built_project / "src")},
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, f"pytest failed:\n{r.stdout}\n{r.stderr}"
