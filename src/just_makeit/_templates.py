@@ -843,21 +843,7 @@ PACKAGE_INIT_PY_MINIMAL = """\
 """
 
 PACKAGE_INIT_PY = """\
-\"\"\"<<package>> — <<Component>> component.
-
-Classes
--------
-<<Component>>
-    Core <<component>> processor.
-
-Examples
---------
->>> from <<package>> import <<Component>>
->>> obj = <<Component>>(<<py_create_args>>)
->>> result = obj.step(1.0 + 0.0j)
->>> abs(result - (1.0 + 0.0j)) < 1e-6
-True
-\"\"\"
+\"\"\"<<package>> — <<Component>> component.\"\"\"
 
 from .<<component>> import <<Component>>
 
