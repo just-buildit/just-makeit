@@ -45,21 +45,31 @@ _CTYPE_META: dict[str, dict] = {
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
 
 
-def _c_test_val(ctype: str) -> str:
-    return "1.0f" if ctype == "float" else ("1" if ctype == "int" else "1.0")
-
-
 def _c_set_val(ctype: str) -> str:
     return "2.0f" if ctype == "float" else ("2" if ctype == "int" else "2.0")
+
+
+def _py_default(ctype: str, default: str) -> str:
+    """Convert a C default literal to a valid Python literal."""
+    if ctype in ("double", "float"):
+        s = default.rstrip("fF")
+        if "." not in s and "e" not in s.lower():
+            s += ".0"
+        return s
+    return default
 
 
 def make_state_ctx(
     component: str,
     Component: str,
-    state_vars: list[tuple[str, str]],
+    state_vars: list[tuple[str, str, str]],
 ) -> dict[str, str]:
-    """Return template context keys derived from the state variable list."""
-    for name, ct in state_vars:
+    """Return template context keys derived from the state variable list.
+
+    Each entry in state_vars is (name, ctype, default), where default is a
+    C literal used for both reset and as the Python __init__ default value.
+    """
+    for name, ct, _ in state_vars:
         if ct not in _CTYPE_META:
             supported = ", ".join(sorted(SUPPORTED_TYPES))
             raise ValueError(
@@ -69,17 +79,18 @@ def make_state_ctx(
     # ── CORE_H ───────────────────────────────────────────────────────────────
 
     state_struct_fields = "\n".join(
-        f"    {ct} {name};" for name, ct in state_vars
+        f"    {ct} {name};" for name, ct, _ in state_vars
     )
 
-    create_params = ", ".join(f"{ct} {name}" for name, ct in state_vars)
+    create_params = ", ".join(f"{ct} {name}" for name, ct, _ in state_vars)
 
     create_param_docs = "\n".join(
-        f" * @param {name}  Initial {name} value." for name, _ in state_vars
+        f" * @param {name}  Initial {name} (default: {dflt})."
+        for name, _, dflt in state_vars
     )
 
     decl_parts = []
-    for name, ct in state_vars:
+    for name, ct, _ in state_vars:
         decl_parts.append(
             f"/**\n"
             f" * @brief Get current {name}.\n"
@@ -99,15 +110,15 @@ def make_state_ctx(
     # ── CORE_C ───────────────────────────────────────────────────────────────
 
     create_assignments = "\n".join(
-        f"    state->{name} = {name};" for name, _ in state_vars
+        f"    state->{name} = {name};" for name, _, __ in state_vars
     )
 
     reset_assignments = "\n".join(
-        f"    state->{name} = {_CTYPE_META[ct]['zero']};" for name, ct in state_vars
+        f"    state->{name} = {dflt};" for name, _, dflt in state_vars
     )
 
     impl_parts = []
-    for name, ct in state_vars:
+    for name, ct, _ in state_vars:
         impl_parts.append(
             f"{ct}\n"
             f"{component}_get_{name}(const {component}_state_t *state)\n"
@@ -125,19 +136,20 @@ def make_state_ctx(
 
     # ── EXT_C ────────────────────────────────────────────────────────────────
 
-    kwlist_items = [f'"{name}"' for name, _ in state_vars] + ["NULL"]
+    kwlist_items = [f'"{name}"' for name, _, __ in state_vars] + ["NULL"]
     init_kwlist = ", ".join(kwlist_items)
 
+    # Use user defaults; "|" prefix makes all params optional in Python
     init_locals = "\n".join(
-        f"    {ct} {name} = {_CTYPE_META[ct]['zero']};" for name, ct in state_vars
+        f"    {ct} {name} = {dflt};" for name, ct, dflt in state_vars
     )
+    init_parse_fmt = "|" + "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in state_vars)
 
-    init_parse_fmt = "".join(_CTYPE_META[ct]["fmt"] for _, ct in state_vars)
-    init_parse_args = ", ".join(f"&{name}" for name, _ in state_vars)
-    create_call_args = ", ".join(name for name, _ in state_vars)
+    init_parse_args = ", ".join(f"&{name}" for name, _, __ in state_vars)
+    create_call_args = ", ".join(name for name, _, __ in state_vars)
 
     method_parts = []
-    for name, ct in state_vars:
+    for name, ct, _ in state_vars:
         meta = _CTYPE_META[ct]
         to_py = meta["to_py"](f"{component}_get_{name}(self->handle)")
         method_parts.append(
@@ -170,7 +182,7 @@ def make_state_ctx(
     getter_setter_methods_c = "\n\n".join(method_parts)
 
     pmd_lines = []
-    for name, _ in state_vars:
+    for name, _, __ in state_vars:
         pmd_lines += [
             f'    {{"get_{name}",',
             f'     (PyCFunction){Component}_get_{name}, METH_NOARGS,',
@@ -184,16 +196,18 @@ def make_state_ctx(
     # ── PYI ──────────────────────────────────────────────────────────────────
 
     init_params_pyi = ", ".join(
-        f"{name}: {_CTYPE_META[ct]['py_type']}" for name, ct in state_vars
+        f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
+        for name, ct, dflt in state_vars
     )
 
     pyi_param_docs = "\n".join(
-        f"    {name} : {_CTYPE_META[ct]['py_type']}\n        Initial {name} value."
-        for name, ct in state_vars
+        f"    {name} : {_CTYPE_META[ct]['py_type']}, default {_py_default(ct, dflt)}\n"
+        f"        {name} state variable."
+        for name, ct, dflt in state_vars
     )
 
     stub_lines: list[str] = []
-    for name, ct in state_vars:
+    for name, ct, _ in state_vars:
         py_type = _CTYPE_META[ct]["py_type"]
         stub_lines += [
             f"    def get_{name}(self) -> {py_type}:",
@@ -206,16 +220,16 @@ def make_state_ctx(
     # ── Shared ───────────────────────────────────────────────────────────────
 
     py_create_args = ", ".join(
-        "1" if _CTYPE_META[ct]["py_type"] == "int" else "1.0"
-        for _, ct in state_vars
+        _py_default(ct, dflt) for _, ct, dflt in state_vars
     )
+    c_create_args = ", ".join(dflt for _, _, dflt in state_vars)
 
     # ── PYTEST ───────────────────────────────────────────────────────────────
 
     gs_lines = [f"        obj = {Component}({py_create_args})"]
-    for name, ct in state_vars:
+    for name, ct, dflt in state_vars:
         py_type = _CTYPE_META[ct]["py_type"]
-        iv = "1" if py_type == "int" else "1.0"
+        iv = _py_default(ct, dflt)
         sv = "2" if py_type == "int" else "2.0"
         if py_type == "int":
             gs_lines += [
@@ -231,39 +245,40 @@ def make_state_ctx(
             ]
     getter_setter_test_py = "\n".join(gs_lines)
 
-    rs_lines = [f"        obj = {Component}({py_create_args})", "        obj.reset()"]
-    for name, ct in state_vars:
+    rs_lines = [f"        obj = {Component}({py_create_args})"]
+    for name, ct, _ in state_vars:
+        sv = "2" if _CTYPE_META[ct]["py_type"] == "int" else "2.0"
+        rs_lines.append(f"        obj.set_{name}({sv})")
+    rs_lines.append("        obj.reset()")
+    for name, ct, dflt in state_vars:
         py_type = _CTYPE_META[ct]["py_type"]
+        iv = _py_default(ct, dflt)
         if py_type == "int":
-            rs_lines.append(f"        assert obj.get_{name}() == 0")
+            rs_lines.append(f"        assert obj.get_{name}() == {iv}")
         else:
-            rs_lines.append(f"        assert obj.get_{name}() == _approx(0.0)")
+            rs_lines.append(f"        assert obj.get_{name}() == _approx({iv})")
     reset_test_py = "\n".join(rs_lines)
 
     # ── CTEST ────────────────────────────────────────────────────────────────
 
-    c_create_args = ", ".join(_c_test_val(ct) for _, ct in state_vars)
-
     cgs_lines: list[str] = []
-    for name, ct in state_vars:
-        iv = _c_test_val(ct)
+    for name, ct, dflt in state_vars:
         sv = _c_set_val(ct)
         cgs_lines += [
             f"    /* {name}: getter / setter */",
-            f"    assert({component}_get_{name}(obj) == {iv});",
+            f"    assert({component}_get_{name}(obj) == {dflt});",
             f"    {component}_set_{name}(obj, {sv});",
             f"    assert({component}_get_{name}(obj) == {sv});",
             "",
         ]
     getter_setter_test_c = "\n".join(cgs_lines).rstrip()
 
-    rst_lines = [
-        "    /* reset zeros all variables */",
-        f"    {component}_reset(obj);",
-    ]
-    for name, ct in state_vars:
-        zero = _CTYPE_META[ct]["zero"]
-        rst_lines.append(f"    assert({component}_get_{name}(obj) == {zero});")
+    rst_lines = ["    /* reset restores defaults */"]
+    for name, ct, _ in state_vars:
+        rst_lines.append(f"    {component}_set_{name}(obj, {_c_set_val(ct)});")
+    rst_lines.append(f"    {component}_reset(obj);")
+    for name, _, dflt in state_vars:
+        rst_lines.append(f"    assert({component}_get_{name}(obj) == {dflt});")
     reset_test_c = "\n".join(rst_lines)
 
     return {

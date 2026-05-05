@@ -82,7 +82,7 @@ def _write(path: Path, content: str) -> None:
 def run(
     component: str,
     dest: Path | None = None,
-    state_vars: list[tuple[str, str]] | None = None,
+    state_vars: list[tuple[str, str, str]] | None = None,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
         print(
@@ -101,7 +101,7 @@ def run(
         )
         sys.exit(1)
 
-    vars_ = state_vars or [("gain", "double")]
+    vars_ = state_vars or [("gain", "double", "0.0")]
     ctx = _make_ctx(component)
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
     r = lambda tmpl: T.render(tmpl, ctx)

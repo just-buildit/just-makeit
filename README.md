@@ -19,7 +19,7 @@ pip install just-makeit
 ## Quickstart
 
 ```sh
-just-makeit init my_filter --state gain:double
+just-makeit init my_filter --state gain:double:1.0
 cd my_filter
 make
 make test
@@ -58,12 +58,15 @@ my_filter/
 
 | Command | Description |
 |---|---|
-| `just-makeit init <name> [dir] [--state name:type ...]` | Create a new C extension project |
+| `just-makeit init <name> [dir] [--state name:type[:default] ...]` | Scaffold a new C extension project |
+| `just-makeit add --state name:type[:default] [...]` | Add state variables to an existing project |
+| `just-makeit config [key value]` | Show or edit project configuration |
 | `just-makeit build [dir]` | Configure + build C, then package a wheel |
 | `just-makeit test` | Build and run CTest + pytest |
 | `just-makeit dry-run` | Preview what would be compiled |
 
-State types: `double` (default), `float`, `int`.
+State types: `double`, `float`, `int`. Default value is `0` for each type if omitted.
+Both `reset` and the Python `__init__` use the declared default — `MyFilter()` with no args is valid.
 
 ---
 
@@ -72,13 +75,13 @@ State types: `double` (default), `float`, `int`.
 Generated code follows a consistent lifecycle pattern:
 
 ```c
-// Constructor — one parameter per --state var
+// Constructor — parameters match your --state declarations
 my_filter_state_t *my_filter_create(double gain);
 
 // Destructor
 void my_filter_destroy(my_filter_state_t *state);
 
-// Reset (zeros all state vars)
+// Reset — restores every variable to its declared default
 void my_filter_reset(my_filter_state_t *state);
 
 // Single sample (inlined, pass-through stub — implement your DSP here)
@@ -92,7 +95,7 @@ void my_filter_steps(
     float complex       *output,
     size_t               n);
 
-// Getter / setter for each --state var
+// Getter / setter for each --state variable
 double my_filter_get_gain(const my_filter_state_t *state);
 void   my_filter_set_gain(my_filter_state_t *state, double gain);
 ```
@@ -105,7 +108,8 @@ void   my_filter_set_gain(my_filter_state_t *state, double gain);
 from my_filter import MyFilter
 import numpy as np
 
-obj = MyFilter(gain=1.0)
+obj = MyFilter(gain=1.0)   # explicit
+obj = MyFilter()           # uses declared defaults
 
 # single sample
 y: complex = obj.step(1.0 + 0.5j)
@@ -118,8 +122,11 @@ y = obj.steps(x)   # returns complex64 ndarray
 obj.get_gain()
 obj.set_gain(2.0)
 
+# reset restores declared defaults
+obj.reset()
+
 # context manager
-with MyFilter(1.0) as f:
+with MyFilter() as f:
     y = f.steps(x)
 ```
 
@@ -129,13 +136,14 @@ with MyFilter(1.0) as f:
 
 ```sh
 just-makeit init my_bpf \
-    --state center_freq:double \
-    --state bandwidth:double \
-    --state order:int
+    --state center_freq:double:1000.0 \
+    --state bandwidth:double:200.0 \
+    --state order:int:4
 ```
 
-Each `--state name:type` becomes a struct field, a constructor parameter, and a
-getter/setter pair — in both C and Python.
+Each `--state name:type:default` becomes a struct field, a constructor parameter
+(optional in Python, required in C), getter/setter pair, and reset target — in
+both C and Python.
 
 ---
 

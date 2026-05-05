@@ -65,13 +65,14 @@ def main() -> None:
                     print("error: --state requires name:type", file=sys.stderr)
                     sys.exit(1)
                 spec = remaining[i]
-                if ":" not in spec:
+                parts = spec.split(":", 2)
+                if len(parts) < 2:
                     print(
-                        f"error: --state '{spec}' must be in name:type format",
+                        f"error: --state '{spec}' must be in name:type[:default] format",
                         file=sys.stderr,
                     )
                     sys.exit(1)
-                name, ctype = spec.split(":", 1)
+                name, ctype = parts[0], parts[1]
                 if ctype not in T.SUPPORTED_TYPES:
                     supported = ", ".join(sorted(T.SUPPORTED_TYPES))
                     print(
@@ -79,7 +80,9 @@ def main() -> None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-                state_vars.append((name, ctype))
+                _ZERO = {"double": "0.0", "float": "0.0f", "int": "0"}
+                default = parts[2] if len(parts) == 3 else _ZERO[ctype]
+                state_vars.append((name, ctype, default))
                 i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)

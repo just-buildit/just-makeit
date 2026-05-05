@@ -93,12 +93,19 @@ class TestInitStateCLI:
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
         assert "double cutoff;" in h
 
+    def test_state_flag_with_default(self, tmp_path):
+        dest = tmp_path / "bpf"
+        r = _cli("init", "bpf", str(dest), "--state", "gain:double:1.5")
+        assert r.returncode == 0
+        c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text()
+        assert "state->gain = 1.5;" in c
+
     def test_multi_state_flags(self, tmp_path):
         dest = tmp_path / "bpf"
         r = _cli(
             "init", "bpf", str(dest),
-            "--state", "cutoff:double",
-            "--state", "order:int",
+            "--state", "cutoff:double:440.0",
+            "--state", "order:int:4",
         )
         assert r.returncode == 0
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()

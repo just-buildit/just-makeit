@@ -57,12 +57,13 @@ Python files — so `import my_filter` works from the source tree after a single
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `just-makeit init <name>` | Create a new C extension project |
-| `just-makeit build` | Configure + build C, then package a wheel |
-| `just-makeit test` | Build and run CTest + pytest |
-| `just-makeit dry-run` | Preview what would be compiled |
+| Command                       | Description                               |
+|-------------------------------|-------------------------------------------|
+| `just-makeit init <project>`  | Create a new extension project and config |
+| `just-makeit build`           | Configure + build C, then package Python  |
+| `just-makeit test`            | Build and run CTest + pytest / unittest   |
+| `just-makeit dry-run`         | Preview what `just-makeit build` produces |
+| `just-makeit add`             | Add state or method to existing project   |
 
 See [Commands](commands.md) for the full reference.
 

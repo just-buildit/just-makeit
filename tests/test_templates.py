@@ -81,97 +81,120 @@ class TestMakeStateCtx:
         return make_state_ctx("my_filter", "MyFilter", state_vars)
 
     def test_single_double_struct_field(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "double gain;" in ctx["state_struct_fields"]
 
     def test_multi_var_struct_fields(self):
-        ctx = self._ctx([("gain", "double"), ("offset", "float")])
+        ctx = self._ctx([("gain", "double", "0.0"), ("offset", "float", "0.0f")])
         assert "double gain;" in ctx["state_struct_fields"]
         assert "float offset;" in ctx["state_struct_fields"]
 
     def test_create_params_single(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert ctx["create_params"] == "double gain"
 
     def test_create_params_multi(self):
-        ctx = self._ctx([("gain", "double"), ("n", "int")])
+        ctx = self._ctx([("gain", "double", "0.0"), ("n", "int", "0")])
         assert ctx["create_params"] == "double gain, int n"
 
     def test_getter_setter_decls_contain_component(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "my_filter_get_gain" in ctx["getter_setter_decls"]
         assert "my_filter_set_gain" in ctx["getter_setter_decls"]
 
     def test_getter_setter_impls_contain_component(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "my_filter_get_gain" in ctx["getter_setter_impls"]
         assert "my_filter_set_gain" in ctx["getter_setter_impls"]
 
     def test_init_kwlist_single(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert ctx["init_kwlist"] == '"gain", NULL'
 
     def test_init_kwlist_multi(self):
-        ctx = self._ctx([("gain", "double"), ("order", "int")])
+        ctx = self._ctx([("gain", "double", "0.0"), ("order", "int", "0")])
         assert ctx["init_kwlist"] == '"gain", "order", NULL'
 
-    def test_init_parse_fmt_double(self):
-        ctx = self._ctx([("gain", "double")])
-        assert ctx["init_parse_fmt"] == "d"
+    def test_init_parse_fmt_optional(self):
+        ctx = self._ctx([("gain", "double", "1.0")])
+        assert ctx["init_parse_fmt"] == "|d"
 
     def test_init_parse_fmt_multi(self):
-        ctx = self._ctx([("gain", "double"), ("n", "int")])
-        assert ctx["init_parse_fmt"] == "di"
+        ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
+        assert ctx["init_parse_fmt"] == "|di"
 
     def test_getter_setter_methods_c_contain_class(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "MyFilter_get_gain" in ctx["getter_setter_methods_c"]
         assert "MyFilter_set_gain" in ctx["getter_setter_methods_c"]
 
     def test_getter_setter_pymethoddef(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert '"get_gain"' in ctx["getter_setter_pymethoddef"]
         assert '"set_gain"' in ctx["getter_setter_pymethoddef"]
 
-    def test_init_params_pyi_single(self):
-        ctx = self._ctx([("gain", "double")])
-        assert ctx["init_params_pyi"] == "gain: float"
+    def test_init_params_pyi_includes_default(self):
+        ctx = self._ctx([("gain", "double", "1.0")])
+        assert ctx["init_params_pyi"] == "gain: float = 1.0"
 
     def test_init_params_pyi_multi(self):
-        ctx = self._ctx([("gain", "double"), ("n", "int")])
-        assert ctx["init_params_pyi"] == "gain: float, n: int"
+        ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
+        assert ctx["init_params_pyi"] == "gain: float = 1.0, n: int = 4"
+
+    def test_init_params_pyi_float_strips_suffix(self):
+        ctx = self._ctx([("x", "float", "0.5f")])
+        assert ctx["init_params_pyi"] == "x: float = 0.5"
 
     def test_getter_setter_stubs_pyi(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "def get_gain(self) -> float:" in ctx["getter_setter_stubs_pyi"]
         assert "def set_gain(self, value: float) -> None:" in ctx["getter_setter_stubs_pyi"]
 
-    def test_py_create_args_single_double(self):
-        ctx = self._ctx([("gain", "double")])
-        assert ctx["py_create_args"] == "1.0"
+    def test_py_create_args_uses_default(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert ctx["py_create_args"] == "1.5"
 
     def test_py_create_args_multi(self):
-        ctx = self._ctx([("gain", "double"), ("n", "int")])
-        assert ctx["py_create_args"] == "1.0, 1"
+        ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
+        assert ctx["py_create_args"] == "1.0, 4"
 
-    def test_c_create_args_single(self):
-        ctx = self._ctx([("gain", "double")])
-        assert ctx["c_create_args"] == "1.0"
+    def test_c_create_args_uses_default(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert ctx["c_create_args"] == "1.5"
 
-    def test_c_create_args_float(self):
-        ctx = self._ctx([("x", "float")])
-        assert ctx["c_create_args"] == "1.0f"
+    def test_c_create_args_float_literal(self):
+        ctx = self._ctx([("x", "float", "0.5f")])
+        assert ctx["c_create_args"] == "0.5f"
+
+    def test_reset_assignments_use_default(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert "state->gain = 1.5;" in ctx["reset_assignments"]
+
+    def test_reset_test_py_uses_default(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert "1.5" in ctx["reset_test_py"]
+
+    def test_reset_test_py_dirties_before_reset(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert "set_gain" in ctx["reset_test_py"]
+        assert "reset()" in ctx["reset_test_py"]
 
     def test_getter_setter_test_py_contains_class(self):
-        ctx = self._ctx([("gain", "double")])
+        ctx = self._ctx([("gain", "double", "0.0")])
         assert "MyFilter" in ctx["getter_setter_test_py"]
         assert "get_gain" in ctx["getter_setter_test_py"]
 
-    def test_reset_test_py_contains_zero(self):
-        ctx = self._ctx([("gain", "double")])
-        assert "0.0" in ctx["reset_test_py"]
+    def test_getter_setter_test_uses_default_as_initial(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert "_approx(1.5)" in ctx["getter_setter_test_py"]
+
+    def test_reset_test_c_dirties_before_reset(self):
+        ctx = self._ctx([("gain", "double", "1.5")])
+        assert "set_gain" in ctx["reset_test_c"]
+        assert "_reset(" in ctx["reset_test_c"]
+        assert "== 1.5" in ctx["reset_test_c"]
 
     def test_invalid_type_raises(self):
         import pytest
         with pytest.raises(ValueError, match="unsupported type"):
-            make_state_ctx("comp", "Comp", [("x", "complex128")])
+            make_state_ctx("comp", "Comp", [("x", "complex128", "0")])

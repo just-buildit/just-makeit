@@ -130,14 +130,14 @@ class TestInitStateVars:
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("cutoff", "double")])
+        run("comp", dest, [("cutoff", "double", "0.0")])
         h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "double cutoff;" in h
         assert "comp_get_cutoff" in h
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("gain", "double"), ("order", "int")])
+        run("comp", dest, [("gain", "double", "1.0"), ("order", "int", "4")])
         h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "double gain;" in h
         assert "int order;" in h
@@ -147,27 +147,39 @@ class TestInitStateVars:
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("alpha", "float")])
+        run("comp", dest, [("alpha", "float", "0.0f")])
         h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "float alpha;" in h
 
-    def test_pyi_has_correct_params(self, tmp_path):
+    def test_pyi_has_correct_params_with_defaults(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("gain", "double"), ("order", "int")])
+        run("comp", dest, [("gain", "double", "1.0"), ("order", "int", "4")])
         pyi = (dest / "src" / "comp" / "comp.pyi").read_text()
-        assert "gain: float" in pyi
-        assert "order: int" in pyi
+        assert "gain: float = 1.0" in pyi
+        assert "order: int = 4" in pyi
 
     def test_ext_c_has_correct_kwlist(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("gain", "double"), ("order", "int")])
+        run("comp", dest, [("gain", "double", "1.0"), ("order", "int", "4")])
         ext = (dest / "native" / "src" / "comp" / "comp_ext.c").read_text()
         assert '"gain"' in ext
         assert '"order"' in ext
 
+    def test_ext_c_init_params_optional(self, tmp_path):
+        dest = tmp_path / "comp"
+        run("comp", dest, [("gain", "double", "1.0")])
+        ext = (dest / "native" / "src" / "comp" / "comp_ext.c").read_text()
+        assert '"|d"' in ext
+
+    def test_reset_uses_default_not_zero(self, tmp_path):
+        dest = tmp_path / "comp"
+        run("comp", dest, [("gain", "double", "1.5")])
+        c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text()
+        assert "state->gain = 1.5;" in c
+
     def test_no_unreplaced_placeholders_custom_vars(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, [("cutoff", "double"), ("poles", "int")])
+        run("comp", dest, [("cutoff", "double", "0.0"), ("poles", "int", "2")])
         for path in dest.rglob("*"):
             if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
