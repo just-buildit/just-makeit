@@ -68,7 +68,7 @@ void <component>_destroy(<component>_state_t *state);
 
 ### Reset
 
-Zeros all state variables.
+Restores all state variables to their declared defaults.
 
 ```c
 void <component>_reset(<component>_state_t *state);
@@ -138,7 +138,7 @@ y = obj.steps(x)  # returns complex64 ndarray
 obj.get_gain()
 obj.set_gain(2.0)
 
-# reset (zeros all state vars)
+# reset (restores to declared defaults)
 obj.reset()
 
 # context manager (auto-destroys)

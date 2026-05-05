@@ -9,25 +9,15 @@ same source with no duplication.
 
 ## What you get
 
-```
-                  ┌─────────────────────────────────┐
-                  │         your C source           │
-                  │  gain_core.c   bpf_core.c  ...  │
-                  └─────────────────────────────────┘
-                       |                     |
-               ┌──────────────┐   ┌─────────────────────┐
-               │ libmy_dsp.so │   │  Python package     │
-               │  (combined   │   │  gain.cpython-*.so  │
-               │  shared lib) │   │  bpf.cpython-*.so   │
-               │              │   │        ...          │
-               └──────────────┘   └─────────────────────┘
-                      |                      |
-           ┌─────────────────────┐   ┌──────────────────────────┐
-           │  C / C++ / Rust     │   │  Python                  │
-           │  pkg-config         │   │  pip install .           │
-           │  find_package(...)  │   │  from my_dsp import Gain │
-           └─────────────────────┘   └──────────────────────────┘
-                                     
+```mermaid
+flowchart TD
+    SRC["**your C source**\ngain_core.c · bpf_core.c · …"]
+
+    SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
+    SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
+
+    CLIB --> C["**C / C++ / Rust**\npkg-config\nfind_package"]
+    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
 ```
 
 Each component's core logic compiles once (as an OBJECT library) and links
@@ -53,33 +43,34 @@ separately.  `--state` works the same as everywhere else:
 
 ```
 my_dsp/
-    inc/                                # project-wide shared headers
-        clib_common.h                   # common C99 types
-        pyex_common.h                   # Python extension includes
-        my_dsp.h                        # umbrella — includes all component headers
-
-    gain/                               # component (self-contained)
-        CMakeLists.txt                  # OBJECT lib + Python DSO + CTest
-        inc/gain/gain_core.h            # component API
-        src/gain_core.c                 # core logic — your DSP lives here
-            gain_ext.c                  # thin Python binding
-        tests/test_gain_core.c          # C lifecycle test
-
-    src/my_dsp/                         # Python package
-        __init__.py
-        gain.pyi                        # type stub
-        tests/
-            __init__.py
-            test_gain.py                # pytest
-
-    cmake/
-        my-dsp.pc.in                    # pkg-config template
-        my-dsp-config.cmake.in          # CMake find_package template
-
-    CMakeLists.txt                      # project root: find_package + add_subdirectory
-    Makefile                            # convenience wrapper
-    pyproject.toml                      # PEP 517 — just-buildit backend
-    just-makeit.toml                    # project + component registry
+├── inc/                              # project-wide shared headers
+│   ├── clib_common.h                 # common C99 types
+│   ├── pyex_common.h                 # Python extension includes
+│   └── my_dsp.h                      # umbrella — includes all component headers
+├── gain/                             # component (self-contained)
+│   ├── CMakeLists.txt                # OBJECT lib + Python DSO + CTest
+│   ├── inc/
+│   │   └── gain/
+│   │       └── gain_core.h           # component API
+│   ├── src/
+│   │   ├── gain_core.c               # core logic — your DSP lives here
+│   │   └── gain_ext.c                # thin Python binding
+│   └── tests/
+│       └── test_gain_core.c          # C lifecycle test
+├── src/
+│   └── my_dsp/                       # Python package
+│       ├── __init__.py
+│       ├── gain.pyi                  # type stub
+│       └── tests/
+│           ├── __init__.py
+│           └── test_gain.py          # pytest
+├── cmake/
+│   ├── my-dsp.pc.in                  # pkg-config template
+│   └── my-dsp-config.cmake.in        # CMake find_package template
+├── CMakeLists.txt                    # project root: find_package + add_subdirectory
+├── Makefile                          # convenience wrapper
+├── pyproject.toml                    # PEP 517 — just-buildit backend
+└── just-makeit.toml                  # project + component registry
 ```
 
 ---
@@ -185,17 +176,21 @@ Installs:
 
 ```
 /usr/local/
-    lib/
-        libmy_dsp.so
-        pkgconfig/my-dsp.pc
-        cmake/my-dsp/
-            my-dsp-config.cmake
-            my-dsp-config-version.cmake
-            my-dspTargets.cmake
-    include/
-        my_dsp.h              # umbrella
-        gain/gain_core.h
-        bpf/bpf_core.h
+├── lib/
+│   ├── libmy_dsp.so
+│   ├── pkgconfig/
+│   │   └── my-dsp.pc
+│   └── cmake/
+│       └── my-dsp/
+│           ├── my-dsp-config.cmake
+│           ├── my-dsp-config-version.cmake
+│           └── my-dspTargets.cmake
+└── include/
+    ├── my_dsp.h
+    ├── gain/
+    │   └── gain_core.h
+    └── bpf/
+        └── bpf_core.h
 ```
 
 ### pkg-config

@@ -1,30 +1,60 @@
 # Customizing your project
 
-The generated project is a starting point. Here is the typical workflow for
-extending it.
+The generated project is a starting point. Most extensions are one command
+away — reach for the editor only when implementing your actual DSP logic.
 
 ---
 
 ## 1. Declare your state variables upfront
 
-Use `--state name:type` when running `init` so the scaffolding matches your
-component from the start:
+Use `--state name:type[:default]` when running `new` or `init` so the
+scaffolding matches your component from the start:
 
 ```sh
-just-makeit init my_filter \
-    --state cutoff_freq:double \
-    --state num_taps:int
+just-makeit new my_filter \
+    --state cutoff_freq:double:440.0 \
+    --state num_taps:int:32
 ```
 
-This generates the struct, constructor parameters, and getter/setter pairs
-for each variable in one shot — no manual search-and-replace needed.
+This generates the struct, constructor parameters, getter/setter pairs,
+reset behaviour, and Python type stubs for each variable in one shot.
 
 ---
 
-## 2. Implement `step`
+## 2. Add state variables to an existing component
 
-Open `native/inc/<component>/<component>_core.h` and replace the pass-through
-stub with your DSP logic:
+```sh
+just-makeit add --component my_filter --state drive:double:1.0
+```
+
+Regenerates the six state-sensitive files from the updated state list.
+All files are backed up first and restored if anything fails —
+`just-makeit.toml` is updated only after the files are written successfully.
+
+Use this for any scalar state variable that follows the standard lifecycle
+(constructor parameter, getter/setter, reset target).  For non-scalar fields
+(arrays, pointers, structs) add them manually as described below.
+
+---
+
+## 3. Add a second component
+
+```sh
+just-makeit init bpf \
+    --state center_freq:double:1000.0 \
+    --state bandwidth:double:200.0    \
+    --state order:int:4
+```
+
+Adds a `bpf/` component directory, updates `CMakeLists.txt`, registers the
+component in `just-makeit.toml`, and adds the Python type stub and test.
+See the [Workflow](workflow.md) page for the full multi-component layout.
+
+---
+
+## 4. Implement `step`
+
+Open `<component>/src/<component>_core.c` and replace the pass-through stub:
 
 ```c
 static inline float complex
@@ -36,35 +66,35 @@ my_filter_step(const my_filter_state_t *state, float complex x)
 ```
 
 Reads `state->cutoff_freq`, `state->num_taps`, etc. to process `x`.  The
-function is `static inline` for maximum performance in the hot path.
+function is `static inline` in the header for maximum performance in the hot
+path.
 
 ---
 
-## 3. Add more state variables
+## 5. Add non-scalar state manually
 
-If you need variables not specified at `init` time, extend the struct in
-`native/inc/<component>/<component>_core.h`:
+For fields that don't fit the scalar pattern (fixed-size arrays, heap
+allocations, nested structs), add them directly to the struct in
+`<component>/inc/<component>/<component>_core.h`:
 
 ```c
 typedef struct {
     double cutoff_freq;
     int    num_taps;
-    float  coeffs[64];      // add more fields here
-    float  delay_line[64];
+    float  coeffs[64];       /* add manually */
+    float  delay_line[64];   /* add manually */
 } my_filter_state_t;
 ```
 
-Then implement the corresponding functions in `<component>_core.c` and
-expose any new getters/setters in `<component>_ext.c`.
+Then implement any corresponding logic in `<component>_core.c` and expose
+new getters/setters in `<component>_ext.c` if needed.
 
 ---
 
-## 4. Expose new methods
+## 6. Expose new Python methods
 
 Add new C functions to the header, implement them in the `.c` file, then
-expose them in `<component>_ext.c`.
-
-Each Python method follows this skeleton:
+expose them in `<component>_ext.c`.  Each Python method follows this skeleton:
 
 ```c
 static PyObject *
@@ -74,7 +104,7 @@ MyFilter_my_method(MyFilterObject *self, PyObject *args)
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    // parse args, call C function, return result
+    /* parse args, call C function, return result */
 }
 ```
 
@@ -89,40 +119,30 @@ Update the type stub `src/<package>/<component>.pyi` to match.
 
 ---
 
-## 5. Add CTest tests
+## 7. Add CTest tests
 
-`native/tests/test_<component>_core.c` already has a template test. Add more:
+`<component>/tests/test_<component>_core.c` already has a template test.
+Add more assertions inline, or register additional executables in the
+component's `CMakeLists.txt`:
 
-```c
-static void test_my_feature(void)
-{
-    my_filter_state_t *obj = my_filter_create(0.1, 32);
-    float complex y = my_filter_step(obj, 1.0f + 0.0f * I);
-    // assert ...
-    my_filter_destroy(obj);
-}
-
-int main(void)
-{
-    test_my_feature();
-    printf("all tests passed\n");
-    return 0;
-}
+```cmake
+add_executable(test_my_filter_edge tests/test_edge_cases.c)
+target_link_libraries(test_my_filter_edge PRIVATE my_filter_core)
+target_include_directories(test_my_filter_edge PRIVATE
+    inc ${CMAKE_SOURCE_DIR}/inc)
+add_test(NAME test_my_filter_edge COMMAND test_my_filter_edge)
 ```
-
-CTest runs all executables registered with `add_test()` in `CMakeLists.txt`.
-Add more executables and `add_test()` entries for larger test suites.
 
 ---
 
-## 6. Add dependencies
+## 8. Add dependencies
 
-If your C code needs a third-party library (FFTW, libsndfile, etc.), link it
-in `CMakeLists.txt`:
+Link a third-party library (FFTW, libsndfile, etc.) in the component's
+`CMakeLists.txt`:
 
 ```cmake
 find_package(FFTW3f REQUIRED)
-target_link_libraries(<component>_core PRIVATE FFTW3::fftw3f)
+target_link_libraries(my_filter_core PRIVATE FFTW3::fftw3f)
 ```
 
 For Python runtime dependencies, add them to `pyproject.toml`:
@@ -134,12 +154,3 @@ dependencies = [
     "scipy",
 ]
 ```
-
----
-
-## 7. Add a sibling component
-
-Duplicate the `native/src/<component>/` and `native/inc/<component>/` trees
-for the new component, add a new `Python3_add_library` target in
-`CMakeLists.txt`, and update the `just-build` Makefile target to copy the
-new `.so` into `src/<package>/`.
