@@ -10,10 +10,12 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  init <name> [dir] [--state name:type[:default] ...]
-                     Create a new C extension project called <name>
-  add --state name:type[:default] [...]
-                     Add state variables to the project in the current directory
+  new <proj> [dir] [--component name] [--state name:type[:default] ...]
+                     Create a new project; optionally scaffold a first component
+  init <name> [--state name:type[:default] ...]
+                     Add a component to the project in the current directory
+  add --state name:type[:default] [--component name] [...]
+                     Add state variables to an existing component
   config [key value] Show or edit project configuration
   build [dir]        Configure + build C, then package wheel into dir (default: dist/)
   test               Build and run CTest + pytest
@@ -24,16 +26,48 @@ State types: double (default), float, int
 Default value is zero for each type if omitted.
 
 Examples:
-  just-makeit init my_filter                               # single 'gain:double:0.0' var
-  just-makeit init my_filter --state gain:double:1.0      # explicit default
-  just-makeit init my_bpf --state center:double --state bw:double
-  just-makeit add --state order:int:4                     # add to existing project
-  just-makeit config                                      # show project config
-  just-makeit config version 0.2.0                        # set version
-  just-makeit build                                       # build wheel into dist/
-  just-makeit test                                        # run all tests
-  just-makeit dry-run                                     # preview build plan
+  just-makeit new my_filter                               # project scaffold only
+  just-makeit new my_filter --component my_filter        # project + first component
+  just-makeit new my_bpf --component bpf --state center:double --state bw:double
+  just-makeit init engine --state rate:double:1.0        # add component to existing project
+  just-makeit add --state order:int:4                    # add state var to existing component
+  just-makeit config                                     # show project config
+  just-makeit config version 0.2.0                      # set version
+  just-makeit build                                      # build wheel into dist/
+  just-makeit test                                       # run all tests
+  just-makeit dry-run                                    # preview build plan
 """
+
+
+def _parse_state_flags(
+    remaining: list[str], i: int
+) -> tuple[list[tuple[str, str, str]], int]:
+    """Parse one --state flag starting at index i. Returns (vars, new_i)."""
+    from . import _templates as T
+
+    i += 1
+    if i >= len(remaining):
+        print("error: --state requires name:type[:default]", file=sys.stderr)
+        sys.exit(1)
+    spec = remaining[i]
+    parts = spec.split(":", 2)
+    if len(parts) < 2:
+        print(
+            f"error: --state '{spec}' must be in name:type[:default] format",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    name, ctype = parts[0], parts[1]
+    if ctype not in T.SUPPORTED_TYPES:
+        supported = ", ".join(sorted(T.SUPPORTED_TYPES))
+        print(
+            f"error: unsupported type '{ctype}'. Supported: {supported}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _ZERO = {"double": "0.0", "float": "0.0f", "int": "0"}
+    default = parts[2] if len(parts) == 3 else _ZERO[ctype]
+    return (name, ctype, default), i + 1
 
 
 def main() -> None:
@@ -44,50 +78,31 @@ def main() -> None:
 
     cmd = args[0]
 
-    if cmd == "init":
+    if cmd == "new":
         if len(args) < 2:
-            print("error: 'init' requires a component name.", file=sys.stderr)
-            print(
-                "Usage: just-makeit init <name> [dir] [--state name:type ...]",
-                file=sys.stderr,
-            )
+            print("error: 'new' requires a project name.", file=sys.stderr)
             sys.exit(1)
-        from . import _init
-        from . import _templates as T
+        from . import _new
 
-        component = args[1]
+        project = args[1]
         dest = None
-        state_vars: list[tuple[str, str]] = []
+        component = None
+        state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok == "--state":
+            if tok == "--component":
                 i += 1
                 if i >= len(remaining):
-                    print("error: --state requires name:type", file=sys.stderr)
+                    print("error: --component requires a name", file=sys.stderr)
                     sys.exit(1)
-                spec = remaining[i]
-                parts = spec.split(":", 2)
-                if len(parts) < 2:
-                    print(
-                        f"error: --state '{spec}' must be in name:type[:default] format",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                name, ctype = parts[0], parts[1]
-                if ctype not in T.SUPPORTED_TYPES:
-                    supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-                    print(
-                        f"error: unsupported type '{ctype}'. Supported: {supported}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                _ZERO = {"double": "0.0", "float": "0.0f", "int": "0"}
-                default = parts[2] if len(parts) == 3 else _ZERO[ctype]
-                state_vars.append((name, ctype, default))
+                component = remaining[i]
                 i += 1
+            elif tok == "--state":
+                var, i = _parse_state_flags(remaining, i)
+                state_vars.append(var)
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -95,44 +110,53 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _init.run(component, dest, state_vars or None)
+        _new.run(project, dest, component, state_vars or None)
+
+    elif cmd == "init":
+        if len(args) < 2:
+            print("error: 'init' requires a component name.", file=sys.stderr)
+            print(
+                "Usage: just-makeit init <name> [--state name:type ...]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from . import _init
+
+        component = args[1]
+        state_vars: list[tuple[str, str, str]] = []
+
+        remaining = args[2:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok == "--state":
+                var, i = _parse_state_flags(remaining, i)
+                state_vars.append(var)
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        _init.run(Path.cwd(), component, state_vars or None)
 
     elif cmd == "add":
         from . import _add
-        from . import _templates as T
 
+        component = None
         state_vars: list[tuple[str, str, str]] = []
         remaining = args[1:]
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok == "--state":
+            if tok == "--component":
                 i += 1
                 if i >= len(remaining):
-                    print(
-                        "error: --state requires name:type[:default]", file=sys.stderr
-                    )
+                    print("error: --component requires a name", file=sys.stderr)
                     sys.exit(1)
-                spec = remaining[i]
-                parts = spec.split(":", 2)
-                if len(parts) < 2:
-                    print(
-                        f"error: --state '{spec}' must be in name:type[:default] format",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                name, ctype = parts[0], parts[1]
-                if ctype not in T.SUPPORTED_TYPES:
-                    supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-                    print(
-                        f"error: unsupported type '{ctype}'. Supported: {supported}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                _ZERO = {"double": "0.0", "float": "0.0f", "int": "0"}
-                default = parts[2] if len(parts) == 3 else _ZERO[ctype]
-                state_vars.append((name, ctype, default))
+                component = remaining[i]
                 i += 1
+            elif tok == "--state":
+                var, i = _parse_state_flags(remaining, i)
+                state_vars.append(var)
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -141,7 +165,7 @@ def main() -> None:
             print("error: 'add' requires at least one --state flag.", file=sys.stderr)
             sys.exit(1)
 
-        _add.run(Path.cwd(), state_vars)
+        _add.run(Path.cwd(), component, state_vars)
 
     elif cmd == "config":
         from . import _config as C
@@ -156,20 +180,17 @@ def main() -> None:
             sys.exit(1)
 
         if len(args) == 1:
-            comp = cfg.get("component", {})
-            print(f"component: {comp.get('name', '?')}")
-            print(f"version:   {comp.get('version', '0.1.0')}")
-            state = cfg.get("state", [])
-            if state:
-                print("state:")
-                for s in state:
-                    print(f"  {s['name']}: {s['type']} = {s['default']}")
-            else:
-                print("state: (none)")
+            proj = cfg.get("project", {})
+            print(f"project:  {proj.get('name', '?')}")
+            print(f"version:  {proj.get('version', '0.1.0')}")
+            for comp in C.components(cfg):
+                print(f"\n{comp}:")
+                for s in cfg[comp].get("state", []):
+                    print(f"  {s['name']}:  {s['type']} = {s['default']}")
         elif len(args) == 3:
             key, value = args[1], args[2]
             if key == "version":
-                cfg.setdefault("component", {})["version"] = value
+                cfg.setdefault("project", {})["version"] = value
                 C.save(root, cfg)
                 print(f"version = {value!r}")
             else:

@@ -8,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._templates import render, make_state_ctx, SUPPORTED_TYPES
-from just_makeit._init import _make_ctx
+from just_makeit._init import _make_component_ctx
+from just_makeit._new import _make_project_ctx
 
 
 class TestRender:
@@ -30,39 +31,44 @@ class TestRender:
         assert render(cmake, {"CMAKE_SOURCE_DIR": "replaced"}) == cmake
 
 
-class TestMakeCtx:
+class TestMakeComponentCtx:
     def test_snake_component(self):
-        ctx = _make_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter")
         assert ctx["component"] == "my_filter"
 
     def test_title_class(self):
-        ctx = _make_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter")
         assert ctx["Component"] == "MyFilter"
 
     def test_upper_macro(self):
-        ctx = _make_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter")
         assert ctx["COMPONENT"] == "MY_FILTER"
 
+    def test_single_word(self):
+        ctx = _make_component_ctx("gain")
+        assert ctx["Component"] == "Gain"
+
+    def test_three_words(self):
+        ctx = _make_component_ctx("half_band_filter")
+        assert ctx["Component"] == "HalfBandFilter"
+
+
+class TestMakeProjectCtx:
     def test_project_hyphen(self):
-        ctx = _make_ctx("my_filter")
+        ctx = _make_project_ctx("my_filter")
         assert ctx["project"] == "my-filter"
 
-    def test_package_same_as_component(self):
-        ctx = _make_ctx("my_filter")
+    def test_package_same_as_project(self):
+        ctx = _make_project_ctx("my_filter")
         assert ctx["package"] == "my_filter"
 
     def test_version_default(self):
-        ctx = _make_ctx("my_filter")
+        ctx = _make_project_ctx("my_filter")
         assert ctx["version"] == "0.1.0"
 
     def test_single_word(self):
-        ctx = _make_ctx("gain")
-        assert ctx["Component"] == "Gain"
+        ctx = _make_project_ctx("gain")
         assert ctx["project"] == "gain"
-
-    def test_three_words(self):
-        ctx = _make_ctx("half_band_filter")
-        assert ctx["Component"] == "HalfBandFilter"
 
 
 class TestSupportedTypes:

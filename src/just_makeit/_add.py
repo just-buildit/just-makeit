@@ -1,13 +1,14 @@
 """
 _add.py — `just-makeit add` command.
 
-Adds state variables to an existing project:
+Adds state variables to an existing component:
   1. Read just-makeit.toml
-  2. Validate no duplicate names
-  3. Back up the six state-sensitive generated files
-  4. Regenerate them from the merged state list
-  5. Update just-makeit.toml
-  On any error during steps 4-5, restore from backup before re-raising.
+  2. Resolve which component to modify
+  3. Validate no duplicate names
+  4. Back up the six state-sensitive generated files
+  5. Regenerate them from the merged state list
+  6. Update just-makeit.toml
+  On any error during steps 5-6, restore from backup before re-raising.
 """
 
 import os
@@ -26,13 +27,13 @@ _STATE_TEMPLATES = [
     ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
     ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
     ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
-    ("src/{c}/{c}.pyi", T.COMPONENT_PYI),
-    ("src/{c}/tests/test_{c}.py", T.PYTEST_TEST),
+    ("src/{p}/{c}.pyi", T.COMPONENT_PYI),
+    ("src/{p}/tests/test_{c}.py", T.PYTEST_TEST),
 ]
 
 
-def _expand(pattern: str, comp: str) -> str:
-    return pattern.replace("{c}", comp)
+def _expand(pattern: str, comp: str, pkg: str) -> str:
+    return pattern.replace("{c}", comp).replace("{p}", pkg)
 
 
 @contextmanager
@@ -56,19 +57,48 @@ def _backup(files: list[Path]):
             tmp.unlink(missing_ok=True)
 
 
-def run(root: Path, new_vars: list[tuple[str, str, str]]) -> None:
+def run(
+    root: Path,
+    component: str | None,
+    new_vars: list[tuple[str, str, str]],
+) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
-            f"error: no {C.FILENAME} found in {root}.\nRun 'just-makeit init' first.",
+            f"error: no {C.FILENAME} found in {root}.\nRun 'just-makeit new' first.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     cfg = C.load(root)
-    comp = cfg["component"]["name"]
-    version = cfg["component"].get("version", "0.1.0")
-    existing = C.state_vars(cfg)
+    comps = C.components(cfg)
+
+    if not comps:
+        print(
+            "error: project has no components yet. Run 'just-makeit init <component>' first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if component is None:
+        if len(comps) == 1:
+            component = comps[0]
+        else:
+            print(
+                f"error: project has multiple components {comps}. Use --component to specify one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    elif component not in comps:
+        print(
+            f"error: component '{component}' not found. Available: {comps}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    pkg = C.project_name(cfg)
+    version = C.project_version(cfg)
+    existing = C.state_vars(cfg, component)
 
     existing_names = {n for n, _, __ in existing}
     for name, _, __ in new_vars:
@@ -81,24 +111,34 @@ def run(root: Path, new_vars: list[tuple[str, str, str]]) -> None:
 
     all_vars = existing + new_vars
 
-    ctx = _init._make_ctx(comp, version)
+    ctx = _init._make_component_ctx(component)
+    ctx.update(
+        {
+            "package": pkg,
+            "project": pkg.replace("_", "-"),
+            "project_underscore": pkg,
+            "version": version,
+        }
+    )
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
 
-    paths = [root / _expand(pat, comp) for pat, _ in _STATE_TEMPLATES]
+    paths = [root / _expand(pat, component, pkg) for pat, _ in _STATE_TEMPLATES]
 
-    print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{comp}'")
+    print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'")
     print()
 
     with _backup(paths):
         for pat, tmpl in _STATE_TEMPLATES:
-            path = root / _expand(pat, comp)
+            path = root / _expand(pat, component, pkg)
             path.write_text(r(tmpl), encoding="utf-8")
             print(f"  update  {path}")
 
-    cfg["state"] = [{"name": n, "type": t, "default": d} for n, t, d in all_vars]
+    cfg[component]["state"] = [
+        {"name": n, "type": t, "default": d} for n, t, d in all_vars
+    ]
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
     print()

@@ -1,7 +1,5 @@
 """CLI dispatch tests for just-makeit."""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
@@ -30,6 +28,7 @@ class TestHelp:
     def test_help_command(self):
         r = _cli("help")
         assert r.returncode == 0
+        assert "new" in r.stdout
         assert "init" in r.stdout
         assert "build" in r.stdout
         assert "test" in r.stdout
@@ -46,54 +45,57 @@ class TestHelp:
         assert "unknown command" in r.stderr
 
 
-class TestInitCLI:
-    def test_init_no_name_exits_1(self):
-        r = _cli("init")
+class TestNewCLI:
+    def test_new_no_name_exits_1(self):
+        r = _cli("new")
         assert r.returncode == 1
-        assert "requires a component name" in r.stderr
+        assert "requires a project name" in r.stderr
 
-    def test_init_creates_project(self, tmp_path):
+    def test_new_creates_scaffold(self, tmp_path):
         dest = tmp_path / "gain"
-        r = _cli("init", "gain", str(dest))
+        r = _cli("new", "gain", str(dest))
         assert r.returncode == 0
         assert (dest / "CMakeLists.txt").exists()
 
-    def test_init_prints_created_files(self, tmp_path):
-        r = _cli("init", "gain", str(tmp_path / "gain"))
+    def test_new_with_component_creates_full_project(self, tmp_path):
+        dest = tmp_path / "gain"
+        r = _cli("new", "gain", str(dest), "--component", "gain")
+        assert r.returncode == 0
+        assert (dest / "CMakeLists.txt").exists()
+        assert (dest / "native" / "inc" / "gain" / "gain_core.h").exists()
+
+    def test_new_prints_created_files(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--component", "gain")
         assert r.returncode == 0
         assert "CMakeLists.txt" in r.stdout
 
-    def test_init_success_message(self, tmp_path):
-        r = _cli("init", "gain", str(tmp_path / "gain"))
+    def test_new_success_message(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--component", "gain")
         assert r.returncode == 0
         assert "Done!" in r.stdout
 
-    def test_init_invalid_name(self, tmp_path):
-        r = _cli("init", "my-filter", str(tmp_path / "my-filter"))
+    def test_new_invalid_name(self, tmp_path):
+        r = _cli("new", "my-filter", str(tmp_path / "my-filter"))
         assert r.returncode == 1
 
-    def test_init_default_dest(self, tmp_path):
-        r = _cli("init", "gain", cwd=tmp_path)
+    def test_new_default_dest(self, tmp_path):
+        r = _cli("new", "gain", cwd=tmp_path)
         assert r.returncode == 0
         assert (tmp_path / "gain" / "CMakeLists.txt").exists()
 
 
-class TestInitStateCLI:
-    def test_state_flag_creates_project(self, tmp_path):
-        dest = tmp_path / "bpf"
-        r = _cli("init", "bpf", str(dest), "--state", "gain:double")
-        assert r.returncode == 0
-        assert (dest / "CMakeLists.txt").exists()
-
+class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
         dest = tmp_path / "bpf"
-        _cli("init", "bpf", str(dest), "--state", "cutoff:double")
+        _cli("new", "bpf", str(dest), "--component", "bpf", "--state", "cutoff:double")
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
         assert "double cutoff;" in h
 
     def test_state_flag_with_default(self, tmp_path):
         dest = tmp_path / "bpf"
-        r = _cli("init", "bpf", str(dest), "--state", "gain:double:1.5")
+        r = _cli(
+            "new", "bpf", str(dest), "--component", "bpf", "--state", "gain:double:1.5"
+        )
         assert r.returncode == 0
         c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text()
         assert "state->gain = 1.5;" in c
@@ -101,13 +103,10 @@ class TestInitStateCLI:
     def test_multi_state_flags(self, tmp_path):
         dest = tmp_path / "bpf"
         r = _cli(
-            "init",
-            "bpf",
-            str(dest),
-            "--state",
-            "cutoff:double:440.0",
-            "--state",
-            "order:int:4",
+            "new", "bpf", str(dest),
+            "--component", "bpf",
+            "--state", "cutoff:double:440.0",
+            "--state", "order:int:4",
         )
         assert r.returncode == 0
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
@@ -116,31 +115,66 @@ class TestInitStateCLI:
 
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "double gain;" in h
 
     def test_invalid_type_exits_1(self, tmp_path):
-        r = _cli("init", "bpf", str(tmp_path / "bpf"), "--state", "x:complex128")
+        r = _cli(
+            "new", "bpf", str(tmp_path / "bpf"),
+            "--component", "bpf", "--state", "x:complex128",
+        )
         assert r.returncode == 1
         assert "unsupported type" in r.stderr
 
     def test_missing_colon_exits_1(self, tmp_path):
-        r = _cli("init", "bpf", str(tmp_path / "bpf"), "--state", "nodcolon")
+        r = _cli(
+            "new", "bpf", str(tmp_path / "bpf"),
+            "--component", "bpf", "--state", "nocolon",
+        )
         assert r.returncode == 1
         assert "name:type" in r.stderr
 
-    def test_state_flag_before_dir(self, tmp_path):
-        dest = tmp_path / "bpf"
-        r = _cli("init", "bpf", "--state", "gain:double", str(dest))
+
+class TestInitCLI:
+    def test_init_no_name_exits_1(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("init", cwd=dest)
+        assert r.returncode == 1
+        assert "requires a component name" in r.stderr
+
+    def test_init_adds_component(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("init", "engine", cwd=dest)
         assert r.returncode == 0
-        assert (dest / "CMakeLists.txt").exists()
+        assert (dest / "native" / "inc" / "engine" / "engine_core.h").exists()
+
+    def test_init_no_project_exits_1(self, tmp_path):
+        r = _cli("init", "engine", cwd=tmp_path)
+        assert r.returncode == 1
+
+    def test_init_success_message(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("init", "engine", cwd=dest)
+        assert r.returncode == 0
+        assert "Done!" in r.stdout
+
+    def test_init_with_state(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("init", "engine", "--state", "rate:double:1.0", cwd=dest)
+        assert r.returncode == 0
+        h = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text()
+        assert "double rate;" in h
 
 
 class TestAddCLI:
     def test_add_no_state_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("add", cwd=dest)
         assert r.returncode == 1
         assert "--state" in r.stderr
@@ -151,38 +185,37 @@ class TestAddCLI:
 
     def test_add_creates_state_var_in_header(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("add", "--state", "order:int:4", cwd=dest)
         assert r.returncode == 0
         h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "int order;" in h
 
     def test_add_updates_config(self, tmp_path):
-        dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
-        _cli("add", "--state", "order:int:4", cwd=dest)
         import tomllib
-
+        dest = tmp_path / "comp"
+        _cli("new", "comp", str(dest), "--component", "comp")
+        _cli("add", "--state", "order:int:4", cwd=dest)
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
-        names = [s["name"] for s in cfg["state"]]
+        names = [s["name"] for s in cfg["comp"]["state"]]
         assert "order" in names
 
     def test_add_duplicate_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest), "--state", "gain:double:1.0")
+        _cli("new", "comp", str(dest), "--component", "comp", "--state", "gain:double:1.0")
         r = _cli("add", "--state", "gain:double:2.0", cwd=dest)
         assert r.returncode == 1
 
     def test_add_invalid_type_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("add", "--state", "x:complex128", cwd=dest)
         assert r.returncode == 1
 
     def test_add_done_message(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("add", "--state", "order:int", cwd=dest)
         assert r.returncode == 0
         assert "Done!" in r.stdout
@@ -193,23 +226,23 @@ class TestConfigCLI:
         r = _cli("config", cwd=tmp_path)
         assert r.returncode == 1
 
-    def test_config_shows_component(self, tmp_path):
+    def test_config_shows_project(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("config", cwd=dest)
         assert r.returncode == 0
         assert "comp" in r.stdout
 
     def test_config_shows_state_vars(self, tmp_path):
         dest = tmp_path / "bpf"
-        _cli("init", "bpf", str(dest), "--state", "cutoff:double:440.0")
+        _cli("new", "bpf", str(dest), "--component", "bpf", "--state", "cutoff:double:440.0")
         r = _cli("config", cwd=dest)
         assert r.returncode == 0
         assert "cutoff" in r.stdout
 
     def test_config_set_version(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("config", "version", "0.2.0", cwd=dest)
         assert r.returncode == 0
         r2 = _cli("config", cwd=dest)
@@ -217,7 +250,7 @@ class TestConfigCLI:
 
     def test_config_unknown_key_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("init", "comp", str(dest))
+        _cli("new", "comp", str(dest), "--component", "comp")
         r = _cli("config", "frobnicate", "value", cwd=dest)
         assert r.returncode == 1
 
@@ -230,7 +263,7 @@ class TestDryRunCLI:
 
     def test_dry_run_shows_sources(self, tmp_path):
         dest = tmp_path / "gain"
-        _cli("init", "gain", str(dest))
+        _cli("new", "gain", str(dest), "--component", "gain")
         r = _cli("dry-run", cwd=dest)
         assert r.returncode == 0
         assert "gain_core.c" in r.stdout
@@ -238,7 +271,7 @@ class TestDryRunCLI:
 
     def test_dry_run_shows_cmake_command(self, tmp_path):
         dest = tmp_path / "gain"
-        _cli("init", "gain", str(dest))
+        _cli("new", "gain", str(dest), "--component", "gain")
         r = _cli("dry-run", cwd=dest)
         assert r.returncode == 0
         assert "cmake" in r.stdout

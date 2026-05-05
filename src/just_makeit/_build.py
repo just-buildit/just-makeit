@@ -1,7 +1,7 @@
 """
 _build.py — build, test, and dry-run commands for just-makeit.
 
-These commands operate on an existing project created by `just-makeit init`
+These commands operate on an existing project created by `just-makeit new`
 (or any project using CMake + just-buildit with the same layout).
 """
 

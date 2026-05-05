@@ -5,8 +5,6 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 
-# just-makeit
-
 Python C extensions the easy way.
 
 `just-makeit new` scaffolds a complete, working C99 extension project in one

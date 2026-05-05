@@ -3,14 +3,19 @@ _config.py — read/write just-makeit.toml project configuration.
 
 Format
 ------
-[component]
-name = "my_filter"
+[project]
+name = "my_project"
 version = "0.1.0"
 
-[[state]]
-name = "gain"
+[[engine.state]]
+name = "rate"
 type = "double"
 default = "1.0"
+
+[[parser.state]]
+name = "depth"
+type = "int"
+default = "8"
 """
 
 import tomllib
@@ -31,36 +36,55 @@ def save(root: Path, cfg: dict) -> None:
     (root / FILENAME).write_text(_dump(cfg), encoding="utf-8")
 
 
-def state_vars(cfg: dict) -> list[tuple[str, str, str]]:
-    return [(s["name"], s["type"], s["default"]) for s in cfg.get("state", [])]
+def components(cfg: dict) -> list[str]:
+    """Return component names — all top-level keys except 'project'."""
+    return [k for k in cfg if k != "project"]
 
 
-def from_init(
-    component: str,
-    version: str,
-    vars_: list[tuple[str, str, str]],
+def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
+    return [
+        (s["name"], s["type"], s["default"])
+        for s in cfg.get(component, {}).get("state", [])
+    ]
+
+
+def project_name(cfg: dict) -> str:
+    return cfg.get("project", {}).get("name", "")
+
+
+def project_version(cfg: dict) -> str:
+    return cfg.get("project", {}).get("version", "0.1.0")
+
+
+def from_new(name: str, version: str = "0.1.0") -> dict:
+    return {"project": {"name": name, "version": version}}
+
+
+def add_component(
+    cfg: dict, component: str, vars_: list[tuple[str, str, str]]
 ) -> dict:
-    return {
-        "component": {"name": component, "version": version},
-        "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_],
+    cfg[component] = {
+        "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
     }
+    return cfg
 
 
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
-    comp = cfg.get("component", {})
-    if comp:
-        lines.append("[component]")
-        for k, v in comp.items():
+    proj = cfg.get("project", {})
+    if proj:
+        lines.append("[project]")
+        for k, v in proj.items():
             lines.append(f'{k} = "{v}"')
         lines.append("")
 
-    for s in cfg.get("state", []):
-        lines.append("[[state]]")
-        lines.append(f'name = "{s["name"]}"')
-        lines.append(f'type = "{s["type"]}"')
-        lines.append(f'default = "{s["default"]}"')
-        lines.append("")
+    for comp in components(cfg):
+        for s in cfg[comp].get("state", []):
+            lines.append(f"[[{comp}.state]]")
+            lines.append(f'name = "{s["name"]}"')
+            lines.append(f'type = "{s["type"]}"')
+            lines.append(f'default = "{s["default"]}"')
+            lines.append("")
 
     return "\n".join(lines)

@@ -706,7 +706,7 @@ int main(void)
 
 # ── CMakeLists.txt ───────────────────────────────────────────────────────────
 
-CMAKE_LISTS = """\
+CMAKE_LISTS_TOP = """\
 cmake_minimum_required(VERSION 3.16)
 project(<<project_underscore>> VERSION <<version>> LANGUAGES C)
 
@@ -715,35 +715,32 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(Python3 REQUIRED COMPONENTS Development NumPy)
 
-# ── Core C library (static) ──────────────────────────────────────────────────
-add_library(<<component>>_core STATIC
-    native/src/<<component>>/<<component>>_core.c
-)
-target_include_directories(<<component>>_core PUBLIC
-    native/inc
-)
+set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
-# ── Python extension ─────────────────────────────────────────────────────────
-Python3_add_library(<<component>> MODULE WITH_SOABI
-    native/src/<<component>>/<<component>>_ext.c
-)
-target_link_libraries(<<component>> PRIVATE
-    <<component>>_core
-    Python3::NumPy
-)
-target_include_directories(<<component>> PRIVATE native/inc)
-set_target_properties(<<component>> PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/src/<<package>>")
-
-# ── CTest ────────────────────────────────────────────────────────────────────
 enable_testing()
 
-add_executable(test_<<component>>_core
-    native/tests/test_<<component>>_core.c
-)
-target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core)
-target_include_directories(test_<<component>>_core PRIVATE native/inc)
+# ── Components ───────────────────────────────────────────────────────────────
+# Added by: just-makeit init <component>
+"""
 
+CMAKE_LISTS_COMPONENT = """\
+add_library(<<component>>_core STATIC <<component>>_core.c)
+target_include_directories(<<component>>_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/native/inc)
+
+Python3_add_library(<<component>> MODULE WITH_SOABI <<component>>_ext.c)
+target_link_libraries(<<component>> PRIVATE
+    <<component>>_core
+    Python3::NumPy)
+target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+set_target_properties(<<component>> PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
+
+add_executable(test_<<component>>_core
+    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
+target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core)
+target_include_directories(test_<<component>>_core
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
 """
 
@@ -828,6 +825,10 @@ testpaths = ["src"]
 """
 
 # ── Python package ───────────────────────────────────────────────────────────
+
+PACKAGE_INIT_PY_MINIMAL = """\
+\"\"\"<<package>> package.\"\"\"
+"""
 
 PACKAGE_INIT_PY = """\
 \"\"\"<<package>> — <<Component>> component.
