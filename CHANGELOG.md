@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2] — 2026-05-06
+
+### Fixed
+
+- `--basic` Makefile: numpy include path now resolved as a shell subcommand at recipe execution time, fixing `numpy/arrayobject.h: No such file or directory` when numpy is installed during the build
+- `__version__` now derived from installed package metadata instead of a hardcoded string
+
+### Docs
+
+- `docs/index.md`: corrected stale `just-makeit init` references to `just-makeit new`
+
+---
+
 ## [0.1.1] — 2026-05-06
 
 ### Added
