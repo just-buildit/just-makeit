@@ -81,6 +81,7 @@ def run(
     root: Path,
     component: str,
     state_vars: list[tuple[str, str, str]] | None = None,
+    _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
         print(
@@ -168,4 +169,5 @@ def run(
     print(f"  update  {cfg_path}")
 
     print()
-    print(f"Done!  make && make test")
+    if _hint:
+        print("Done!  make && make test")

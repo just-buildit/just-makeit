@@ -73,7 +73,9 @@ def run(
 
     if component:
         from . import _init
-        _init.run(root, component, state_vars)
+        _init.run(root, component, state_vars, _hint=False)
+        print()
+        print(f"Done!  cd {root.name} && make && make test")
     else:
         _write(root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL))
         print()
