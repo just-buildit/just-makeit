@@ -1,3 +1,8 @@
 """just-makeit — Python C extensions the easy way."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("just-makeit")
+except PackageNotFoundError:
+    __version__ = "unknown"

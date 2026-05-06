@@ -772,9 +772,8 @@ CC     ?= cc
 CFLAGS ?= -O2 -fPIC -std=c99 -Wall
 
 PY_INC := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")
-NP_INC  = $(shell $(PYTHON) -c "import numpy; print(numpy.get_include())" 2>/dev/null)
 EXT    := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
-INC     = -I$(PY_INC) $(if $(NP_INC),-I$(NP_INC)) -Inative/inc
+INC     = -I$(PY_INC) -Inative/inc
 
 TARGETS :=
 C_TESTS :=
@@ -813,7 +812,7 @@ help:
 MAKEFILE_SIMPLE_COMPONENT = """\
 src/<<package>>/<<component>>$(EXT): native/src/<<component>>/<<component>>_core.c native/src/<<component>>/<<component>>_ext.c
 \t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
-\t$(CC) $(CFLAGS) $(INC) -shared $^ -o $@
+\t$(CC) $(CFLAGS) $(INC) -I$$($(PYTHON) -c "import numpy; print(numpy.get_include())") -shared $^ -o $@
 
 test_<<component>>_core: native/tests/test_<<component>>_core.c native/src/<<component>>/<<component>>_core.c
 \t$(CC) -O2 -std=c99 -Inative/inc $^ -o $@
