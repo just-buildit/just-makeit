@@ -2,7 +2,7 @@
 
 Python C extensions the easy way.
 
-`just-makeit init` scaffolds a complete, working C99 extension project — core C
+`just-makeit new` scaffolds a complete, working C99 extension project — core C
 library, thin Python binding, CMake build, and full test coverage — in one
 command.
 
@@ -12,7 +12,7 @@ command.
 
 ```sh
 pip install just-makeit
-just-makeit init my_filter
+just-makeit new my_filter
 cd my_filter
 make
 make test
@@ -59,7 +59,7 @@ Python files — so `import my_filter` works from the source tree after a single
 
 | Command                                         | Description                                     |
 |-------------------------------------------------|-------------------------------------------------|
-| `just-makeit init <name> [--state n:type:dflt]` | Scaffold a new C extension project              |
+| `just-makeit new <name> [--state n:type:dflt]`  | Scaffold a new C extension project              |
 | `just-makeit add --state name:type[:default]`   | Add state variables to an existing project      |
 | `just-makeit config [key value]`                | Show or edit project configuration              |
 | `just-makeit build`                             | Configure + build C, then package a wheel       |
