@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.1] — 2026-05-06
+
+### Added
+
+- `--basic` flag on `just-makeit new` — plain `cc` + `sysconfig` build with no CMake or build directory; stored as `build = "make"` in `just-makeit.toml`; `just-makeit init` patches the Makefile automatically for additional components
+
+### Fixed
+
+- `--basic` Makefile: numpy auto-installed via pip before compile; `NP_INC`/`INC` use lazy `=` so the include path is resolved after installation
+- `just-makeit new` done hint now correctly includes `cd <project> &&` prefix
+- `make test` falls back to `python -m unittest discover` when pytest is not installed
+- Generated `__init__.py` no longer contains an unrunnable doctest
+- `examples/gain/`: `#pragma once` replaced with C99 include guards; Makefile synced with template fixes
+- PyPI README: `examples/gain/` link changed to absolute GitHub URL
+
+---
+
 ## [0.1.0] — 2026-05-05
 
 ### Added
