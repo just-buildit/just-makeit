@@ -32,6 +32,7 @@ def run(
     dest: Path | None = None,
     component: str | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
+    basic: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -58,15 +59,18 @@ def run(
     print(f"just-makeit: creating project '{project}' in {root}")
     print()
 
-    _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
-    _write(root / "Makefile", r(T.MAKEFILE))
+    if not basic:
+        _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
+        _write(root / "Makefile", r(T.MAKEFILE))
+    else:
+        _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
     _write(root / "README.md", r(T.README_MD))
     _write(root / ".gitignore", r(T.GITIGNORE))
     _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
     _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
 
-    cfg = C.from_new(project)
+    cfg = C.from_new(project, basic=basic)
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
     print()

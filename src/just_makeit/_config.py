@@ -56,8 +56,16 @@ def project_version(cfg: dict) -> str:
     return cfg.get("project", {}).get("version", "0.1.0")
 
 
-def from_new(name: str, version: str = "0.1.0") -> dict:
-    return {"project": {"name": name, "version": version}}
+def build_system(cfg: dict) -> str:
+    """Return 'cmake' (default) or 'make' (--basic mode)."""
+    return cfg.get("project", {}).get("build", "cmake")
+
+
+def from_new(name: str, version: str = "0.1.0", basic: bool = False) -> dict:
+    proj: dict = {"name": name, "version": version}
+    if basic:
+        proj["build"] = "make"
+    return {"project": proj}
 
 
 def add_component(
@@ -76,6 +84,8 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
+            if k == "build" and v == "cmake":
+                continue  # cmake is default, don't write it
             lines.append(f'{k} = "{v}"')
         lines.append("")
 

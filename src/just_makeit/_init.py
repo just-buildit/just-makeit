@@ -5,6 +5,7 @@ Adds a new C extension component to an existing project.
 """
 
 import json
+import re
 import sysconfig
 import sys
 from pathlib import Path
@@ -134,10 +135,14 @@ def run(
     # C headers
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
 
-    # C sources + component CMakeLists
+    # C sources
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(T.COMPONENT_EXT_C))
-    _write(root / "native" / "src" / comp / "CMakeLists.txt", r(T.CMAKE_LISTS_COMPONENT))
+
+    build = C.build_system(cfg)
+
+    if build == "cmake":
+        _write(root / "native" / "src" / comp / "CMakeLists.txt", r(T.CMAKE_LISTS_COMPONENT))
 
     # C test
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
@@ -151,17 +156,33 @@ def run(
     _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)
     _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(T.PYTEST_TEST))
 
-    # Append add_subdirectory to top-level CMakeLists.txt
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        cmake_text = cmake_path.read_text(encoding="utf-8")
-        cmake_text += f"add_subdirectory(native/src/{comp})\n"
-        cmake_path.write_text(cmake_text, encoding="utf-8")
-        print(f"  update  {cmake_path}")
+    if build == "cmake":
+        # Append add_subdirectory to top-level CMakeLists.txt
+        cmake_path = root / "CMakeLists.txt"
+        if cmake_path.exists():
+            cmake_text = cmake_path.read_text(encoding="utf-8")
+            cmake_text += f"add_subdirectory(native/src/{comp})\n"
+            cmake_path.write_text(cmake_text, encoding="utf-8")
+            print(f"  update  {cmake_path}")
 
-    # compile_commands.json
-    all_comps = C.components(cfg) + [comp]
-    _write_compile_commands(root, all_comps)
+        # compile_commands.json
+        all_comps = C.components(cfg) + [comp]
+        _write_compile_commands(root, all_comps)
+
+    else:
+        # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile
+        mf_path = root / "Makefile"
+        mf = mf_path.read_text(encoding="utf-8")
+        target = f"src/{pkg}/{comp}$(EXT)"
+        ctest = f"test_{comp}_core"
+        mf = re.sub(r"^(TARGETS\s*:=.*)$", rf"\1 {target}", mf, flags=re.M)
+        mf = re.sub(r"^(C_TESTS\s*:=.*)$", rf"\1 {ctest}", mf, flags=re.M)
+        rules = T.render(T.MAKEFILE_SIMPLE_COMPONENT, ctx)
+        mf = mf.replace(
+            "# ── Fixed targets", rules + "# ── Fixed targets"
+        )
+        mf_path.write_text(mf, encoding="utf-8")
+        print(f"  update  {mf_path}")
 
     # just-makeit.toml
     C.add_component(cfg, comp, vars_)

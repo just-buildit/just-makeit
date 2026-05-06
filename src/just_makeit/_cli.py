@@ -10,8 +10,9 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  new <proj> [dir] [--component name] [--state name:type[:default] ...]
+  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic]
                      Create a new project; optionally scaffold a first component
+                     --basic uses a plain Makefile instead of CMake
   init <name> [--state name:type[:default] ...]
                      Add a component to the project in the current directory
   add --state name:type[:default] [--component name] [...]
@@ -87,6 +88,7 @@ def main() -> None:
         project = args[1]
         dest = None
         component = None
+        basic = False
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -103,6 +105,9 @@ def main() -> None:
             elif tok == "--state":
                 var, i = _parse_state_flags(remaining, i)
                 state_vars.append(var)
+            elif tok == "--basic":
+                basic = True
+                i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -110,7 +115,7 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None)
+        _new.run(project, dest, component, state_vars or None, basic=basic)
 
     elif cmd == "init":
         if len(args) < 2:

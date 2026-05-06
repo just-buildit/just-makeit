@@ -754,7 +754,72 @@ target_include_directories(test_<<component>>_core
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
 """
 
-# ── Makefile ─────────────────────────────────────────────────────────────────
+# ── Makefile (basic — no CMake) ──────────────────────────────────────────────
+
+MAKEFILE_SIMPLE = """\
+# <<project>> Makefile  (--basic build, no CMake)
+#
+# Targets:
+#   make             Build extension(s)
+#   make test        C tests + pytest
+#   make just-build  PEP 517 hook for just-buildit
+#   make clean       Remove build artifacts
+#   make help        Show this message
+
+SHELL  := /bin/sh
+PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python3)
+CC     ?= cc
+CFLAGS ?= -O2 -fPIC -std=c99 -Wall
+
+PY_INC := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")
+NP_INC := $(shell $(PYTHON) -c "import numpy; print(numpy.get_include())" 2>/dev/null)
+EXT    := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+INC    := -I$(PY_INC) $(if $(NP_INC),-I$(NP_INC)) -Inative/inc
+
+TARGETS :=
+C_TESTS :=
+
+.PHONY: all test just-build clean help
+
+all: $(TARGETS)
+
+# ── Component rules ───────────────────────────────────────────────────────────
+
+# ── Fixed targets ─────────────────────────────────────────────────────────────
+
+test: all $(C_TESTS)
+\t@for t in $(C_TESTS); do echo "--- $$t ---" && ./$$t || exit 1; done
+\t$(PYTHON) -m pytest src/ -v 2>/dev/null || \\
+\t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
+
+just-build: all
+\tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
+\tcp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
+
+clean:
+\trm -f $(TARGETS) $(C_TESTS)
+\tfind src -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
+
+help:
+\t@echo ""
+\t@echo "<<project>> build targets"
+\t@echo ""
+\t@echo "  make          Build extension(s)"
+\t@echo "  make test     Run C tests + pytest"
+\t@echo "  make clean    Remove build artifacts"
+\t@echo ""
+"""
+
+MAKEFILE_SIMPLE_COMPONENT = """\
+src/<<package>>/<<component>>$(EXT): native/src/<<component>>/<<component>>_core.c native/src/<<component>>/<<component>>_ext.c
+\t$(CC) $(CFLAGS) $(INC) -shared $^ -o $@
+
+test_<<component>>_core: native/tests/test_<<component>>_core.c native/src/<<component>>/<<component>>_core.c
+\t$(CC) -O2 -std=c99 -Inative/inc $^ -o $@
+
+"""
+
+# ── Makefile (CMake wrapper) ──────────────────────────────────────────────────
 
 MAKEFILE = """\
 # <<project>> project Makefile
