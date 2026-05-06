@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: PYTHONPATH=src uv build --wheel --no-build-isolation
+      - run: uv pip install just-buildit && uv build --wheel --no-build-isolation
 
       - uses: actions/upload-artifact@v4
         with:
