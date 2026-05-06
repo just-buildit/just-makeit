@@ -184,7 +184,7 @@ just-makeit build
 
 ## Examples
 
-See [`examples/gain/`](examples/gain/) for a complete generated project.
+See [`examples/gain/`](https://github.com/just-buildit/just-makeit/tree/main/examples/gain) for a complete generated project.
 
 ---
 
