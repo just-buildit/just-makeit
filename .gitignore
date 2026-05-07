@@ -220,3 +220,4 @@ __marimo__/
 # Project-specific
 *.pyd
 .cache/
+compile_commands.json
