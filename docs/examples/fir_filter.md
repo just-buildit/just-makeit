@@ -80,11 +80,8 @@ The scaffolded `_core.c` has stubs for `step()` and `steps()`.  Fill them in:
 #include "fir_filter/fir_filter_core.h"
 #include <string.h>
 
-/* Implements the dot-product convolution and shifts the delay line.
-   Defined inline in the header for single-sample use; the non-inline
-   version below is what steps() calls. */
-static float _Complex
-_fir_filter_step_impl(fir_filter_state_t *state, float _Complex x)
+static inline float _Complex
+fir_filter_step(fir_filter_state_t *state, float _Complex x)
 {
     /* Shift delay line: delay[1..N-1] = delay[0..N-2] */
     memmove(&state->delay[1], &state->delay[0],
@@ -106,7 +103,7 @@ fir_filter_steps(fir_filter_state_t *state,
                  size_t                n)
 {
     for (size_t i = 0; i < n; i++)
-        output[i] = _fir_filter_step_impl(state, input[i]);
+        output[i] = fir_filter_step(state, input[i]);
 }
 ```
 
