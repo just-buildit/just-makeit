@@ -3,7 +3,7 @@
 The generated project is a starting point. Most extensions are one command
 away — reach for the editor only when implementing your actual DSP logic.
 
----
+______________________________________________________________________
 
 ## 1. Declare your state variables upfront
 
@@ -19,7 +19,7 @@ just-makeit new my_filter \
 This generates the struct, constructor parameters, getter/setter pairs,
 reset behaviour, and Python type stubs for each variable in one shot.
 
----
+______________________________________________________________________
 
 ## 2. Add state variables to an existing component
 
@@ -35,7 +35,7 @@ Use this for any scalar state variable that follows the standard lifecycle
 (constructor parameter, getter/setter, reset target).  For non-scalar fields
 (arrays, pointers, structs) add them manually as described below.
 
----
+______________________________________________________________________
 
 ## 3. Add a second component
 
@@ -50,7 +50,7 @@ Adds a `bpf/` component directory, updates `CMakeLists.txt`, registers the
 component in `just-makeit.toml`, and adds the Python type stub and test.
 See the [Workflow](workflow.md) page for the full multi-component layout.
 
----
+______________________________________________________________________
 
 ## 4. Implement `step`
 
@@ -69,7 +69,7 @@ Reads `state->cutoff_freq`, `state->num_taps`, etc. to process `x`.  The
 function is `static inline` in the header for maximum performance in the hot
 path.
 
----
+______________________________________________________________________
 
 ## 5. Add non-scalar state manually
 
@@ -89,7 +89,7 @@ typedef struct {
 Then implement any corresponding logic in `<component>_core.c` and expose
 new getters/setters in `<component>_ext.c` if needed.
 
----
+______________________________________________________________________
 
 ## 6. Expose new Python methods
 
@@ -117,7 +117,7 @@ Add an entry to `MyFilter_methods[]`:
 
 Update the type stub `src/<package>/<component>.pyi` to match.
 
----
+______________________________________________________________________
 
 ## 7. Add CTest tests
 
@@ -133,7 +133,7 @@ target_include_directories(test_my_filter_edge PRIVATE
 add_test(NAME test_my_filter_edge COMMAND test_my_filter_edge)
 ```
 
----
+______________________________________________________________________
 
 ## 8. Add dependencies
 

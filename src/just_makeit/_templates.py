@@ -18,11 +18,24 @@ All <<...>> placeholders in the templates below are filled by either the base
 context or make_state_ctx().  No placeholders survive rendering.
 """
 
+import re as _re
+
+
 # Shared to_py lambdas reused across fixed-width integer groups.
-_TO_PY_LONG   = lambda v: f"PyLong_FromLong((long){v})"
-_TO_PY_LLONG  = lambda v: f"PyLong_FromLongLong((long long){v})"
-_TO_PY_ULONG  = lambda v: f"PyLong_FromUnsignedLong((unsigned long){v})"
-_TO_PY_ULLONG = lambda v: f"PyLong_FromUnsignedLongLong((unsigned long long){v})"
+def _TO_PY_LONG(v):
+    return f"PyLong_FromLong((long){v})"
+
+
+def _TO_PY_LLONG(v):
+    return f"PyLong_FromLongLong((long long){v})"
+
+
+def _TO_PY_ULONG(v):
+    return f"PyLong_FromUnsignedLong((unsigned long){v})"
+
+
+def _TO_PY_ULLONG(v):
+    return f"PyLong_FromUnsignedLongLong((unsigned long long){v})"
 
 
 def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
@@ -64,17 +77,29 @@ _CTYPE_META: dict[str, dict] = {
         "to_py": _TO_PY_LONG,
     },
     # Fixed-width signed
-    "int8_t":  _fwint("int8_t",  "i", "int",       "0",   "np.int8",  _TO_PY_LONG),
-    "int16_t": _fwint("int16_t", "i", "int",       "0",   "np.int16", _TO_PY_LONG),
-    "int32_t": _fwint("int32_t", "l", "long",      "0L",  "np.int32", _TO_PY_LONG),
+    "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
+    "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
+    "int32_t": _fwint("int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG),
     "int64_t": _fwint("int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG),
     # Fixed-width unsigned
-    "uint8_t":  _fwint("uint8_t",  "I", "unsigned int",       "0U",   "np.uint8",  _TO_PY_ULONG,  "0U"),
-    "uint16_t": _fwint("uint16_t", "I", "unsigned int",       "0U",   "np.uint16", _TO_PY_ULONG,  "0U"),
-    "uint32_t": _fwint("uint32_t", "k", "unsigned long",      "0UL",  "np.uint32", _TO_PY_ULONG,  "0U"),
-    "uint64_t": _fwint("uint64_t", "K", "unsigned long long", "0ULL", "np.uint64", _TO_PY_ULLONG, "0U"),
-    "size_t":    _fwint("size_t",    "K", "unsigned long long", "0ULL", "np.uintp",  _TO_PY_ULLONG, "0"),
-    "ptrdiff_t": _fwint("ptrdiff_t", "L", "long long",         "0LL",  "np.intp",   _TO_PY_LLONG,  "0"),
+    "uint8_t": _fwint(
+        "uint8_t", "I", "unsigned int", "0U", "np.uint8", _TO_PY_ULONG, "0U"
+    ),
+    "uint16_t": _fwint(
+        "uint16_t", "I", "unsigned int", "0U", "np.uint16", _TO_PY_ULONG, "0U"
+    ),
+    "uint32_t": _fwint(
+        "uint32_t", "k", "unsigned long", "0UL", "np.uint32", _TO_PY_ULONG, "0U"
+    ),
+    "uint64_t": _fwint(
+        "uint64_t", "K", "unsigned long long", "0ULL", "np.uint64", _TO_PY_ULLONG, "0U"
+    ),
+    "size_t": _fwint(
+        "size_t", "K", "unsigned long long", "0ULL", "np.uintp", _TO_PY_ULLONG, "0"
+    ),
+    "ptrdiff_t": _fwint(
+        "ptrdiff_t", "L", "long long", "0LL", "np.intp", _TO_PY_LLONG, "0"
+    ),
     # ── C99 complex — parsed via Py_complex (format "D"), then cast. ──────────
     "float _Complex": {
         "kind": "complex",
@@ -148,24 +173,23 @@ def _py_sample_val(meta: dict) -> str:
 
 # Maps scalar element type → NumPy C-API enum constant (for array state).
 _NP_DTYPE_ENUM: dict[str, str] = {
-    "float":              "NPY_FLOAT",
-    "double":             "NPY_DOUBLE",
-    "int":                "NPY_INT",
-    "int8_t":             "NPY_INT8",
-    "int16_t":            "NPY_INT16",
-    "int32_t":            "NPY_INT32",
-    "int64_t":            "NPY_INT64",
-    "uint8_t":            "NPY_UINT8",
-    "uint16_t":           "NPY_UINT16",
-    "uint32_t":           "NPY_UINT32",
-    "uint64_t":           "NPY_UINT64",
-    "float _Complex":     "NPY_COMPLEX64",
-    "double _Complex":    "NPY_COMPLEX128",
+    "float": "NPY_FLOAT",
+    "double": "NPY_DOUBLE",
+    "int": "NPY_INT",
+    "int8_t": "NPY_INT8",
+    "int16_t": "NPY_INT16",
+    "int32_t": "NPY_INT32",
+    "int64_t": "NPY_INT64",
+    "uint8_t": "NPY_UINT8",
+    "uint16_t": "NPY_UINT16",
+    "uint32_t": "NPY_UINT32",
+    "uint64_t": "NPY_UINT64",
+    "float _Complex": "NPY_COMPLEX64",
+    "double _Complex": "NPY_COMPLEX128",
     "long double _Complex": "NPY_CLONGDOUBLE",
 }
 
-import re as _re
-_ARRAY_RE = _re.compile(r'^(.+)\[(\d+)\]$')
+_ARRAY_RE = _re.compile(r"^(.+)\[(\d+)\]$")
 
 
 def parse_array_type(ctype: str) -> tuple[str, int] | None:
@@ -228,10 +252,13 @@ def make_state_ctx(
 
     create_params = ", ".join(f"{ct} {name}" for name, ct, _ in scalar_vars) or "void"
 
-    create_param_docs = "\n".join(
-        f" * @param {name}  Initial {name} (default: {dflt})."
-        for name, _, dflt in scalar_vars
-    ) or " * @param (none)  All array fields initialise to zero."
+    create_param_docs = (
+        "\n".join(
+            f" * @param {name}  Initial {name} (default: {dflt})."
+            for name, _, dflt in scalar_vars
+        )
+        or " * @param (none)  All array fields initialise to zero."
+    )
 
     # ── CORE_H: getter_setter_decls ──────────────────────────────────────────
 
@@ -280,12 +307,16 @@ def make_state_ctx(
 
     create_assign_lines = [f"    state->{n} = {n};" for n, _, _ in scalar_vars]
     for name, _, size in array_info:
-        create_assign_lines.append(f"    memset(state->{name}, 0, sizeof(state->{name}));")
+        create_assign_lines.append(
+            f"    memset(state->{name}, 0, sizeof(state->{name}));"
+        )
     create_assignments = "\n".join(create_assign_lines)
 
     reset_assign_lines = [f"    state->{n} = {dflt};" for n, _, dflt in scalar_vars]
     for name, _, size in array_info:
-        reset_assign_lines.append(f"    memset(state->{name}, 0, sizeof(state->{name}));")
+        reset_assign_lines.append(
+            f"    memset(state->{name}, 0, sizeof(state->{name}));"
+        )
     reset_assignments = "\n".join(reset_assign_lines)
 
     # ── CORE_C: getter_setter_impls ──────────────────────────────────────────
@@ -340,7 +371,9 @@ def make_state_ctx(
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
-            local_lines.append(f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};")
+            local_lines.append(
+                f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};"
+            )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")
         else:
@@ -369,10 +402,10 @@ def make_state_ctx(
     # ── EXT_C: getter/setter methods (scalars + arrays) ──────────────────────
 
     guard = (
-        f"    if (!self->handle) {{\n"
-        f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
-        f"        return NULL;\n"
-        f"    }}\n"
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return NULL;\n"
+        "    }\n"
     )
     method_parts = []
     for name, ct, _ in scalar_vars:
@@ -465,9 +498,9 @@ def make_state_ctx(
             f"        in_obj, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
             f"    if (!arr) return NULL;\n"
             f"    if (PyArray_SIZE(arr) != {size}) {{\n"
-            f'        PyErr_Format(PyExc_ValueError,\n'
+            f"        PyErr_Format(PyExc_ValueError,\n"
             f'            "{name} requires exactly {size} elements, got %zd",\n'
-            f'            (Py_ssize_t)PyArray_SIZE(arr));\n'
+            f"            (Py_ssize_t)PyArray_SIZE(arr));\n"
             f"        Py_DECREF(arr);\n"
             f"        return NULL;\n"
             f"    }}\n"
@@ -537,10 +570,10 @@ def make_state_ctx(
             f'        """Return a copy of {name} (length {size}, dtype {py_type})."""',
             f"    def get_{name}_view(self) -> NDArray[{py_type}]:",
             f'        """Return a read-only view of {name}.',
-            f"",
-            f"        Backed by the component's internal state buffer.",
-            f'        **Do not use after destroy().**',
-            f'        """',
+            "",
+            "        Backed by the component's internal state buffer.",
+            "        **Do not use after destroy().**",
+            '        """',
             f"    def set_{name}(self, value: NDArray[{py_type}]) -> None:",
             f'        """Set {name} from a {py_type} array of length {size}."""',
         ]
@@ -574,13 +607,13 @@ def make_state_ctx(
         np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
         gs_lines += [
             f"        _arr = np.zeros({size}, dtype=np.{np_dtype})",
-            f"        _arr[0] = 1",
+            "        _arr[0] = 1",
             f"        obj.set_{name}(_arr)",
             f"        _got = obj.get_{name}()",
-            f"        assert _got[0] == _approx(1)",
+            "        assert _got[0] == _approx(1)",
             f"        _view = obj.get_{name}_view()",
-            f"        assert not _view.flags['WRITEABLE']",
-            f"        assert _view[0] == _approx(1)",
+            "        assert not _view.flags['WRITEABLE']",
+            "        assert _view[0] == _approx(1)",
         ]
     getter_setter_test_py = "\n".join(gs_lines)
 
@@ -620,13 +653,13 @@ def make_state_ctx(
         sv = _c_set_val(elem_ct)
         cgs_lines += [
             f"    /* {name}: getter / setter */",
-            f"    {{",
+            "    {",
             f"        {elem_ct} src[{size}], dst[{size}];",
             f"        src[0] = {sv};",
             f"        {component}_set_{name}(obj, src);",
             f"        {component}_get_{name}(obj, dst);",
             f"        assert(dst[0] == {sv});",
-            f"    }}",
+            "    }",
             "",
         ]
     getter_setter_test_c = "\n".join(cgs_lines).rstrip()
@@ -639,11 +672,11 @@ def make_state_ctx(
     for name, elem_ct, size in array_info:
         sv = _c_set_val(elem_ct)
         rst_lines += [
-            f"    {{",
+            "    {",
             f"        {elem_ct} ones[{size}];",
             f"        size_t i_; for (i_ = 0; i_ < {size}; i_++) ones[i_] = {sv};",
             f"        {component}_set_{name}(obj, ones);",
-            f"    }}",
+            "    }",
         ]
     rst_lines.append(f"    {component}_reset(obj);")
     for name, _, dflt in scalar_vars:
@@ -651,11 +684,11 @@ def make_state_ctx(
     for name, elem_ct, size in array_info:
         zero = _CTYPE_META[elem_ct]["zero"]
         rst_lines += [
-            f"    {{",
+            "    {",
             f"        {elem_ct} buf[{size}];",
             f"        {component}_get_{name}(obj, buf);",
             f"        assert(buf[0] == {zero});",
-            f"    }}",
+            "    }",
         ]
     reset_test_c = "\n".join(rst_lines)
 

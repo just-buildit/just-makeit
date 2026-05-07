@@ -16,13 +16,13 @@ any components — the source of truth for all subsequent commands.
 
 **Arguments**
 
-| Argument | Description |
-|---|---|
-| `project` | Project name in `snake_case`. Used as the Python package name and distribution name. |
-| `--component name` | Scaffold a first component immediately (optional). |
-| `--state name:type[:default]` | Declare a state variable for the component. Repeatable. |
+| Argument                      | Description                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
+| `--component name`            | Scaffold a first component immediately (optional).                                   |
+| `--state name:type[:default]` | Declare a state variable for the component. Repeatable.                              |
 
----
+______________________________________________________________________
 
 ## `just-makeit init <component> [--state name:type[:default] ...]`
 
@@ -40,14 +40,15 @@ the Python type stub and test file.
 
 **Arguments**
 
-| Argument | Description |
-|---|---|
-| `component` | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
-| `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely. |
+| Argument                      | Description                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `component`                   | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
+| `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely.      |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
 Each `--state name:type[:default]` generates:
+
 - A field in the C state struct
 - A constructor parameter with the declared default
 - `get_name()` and `set_name()` methods in both C and Python
@@ -62,13 +63,13 @@ Each `--state name:type[:default]` generates:
 
 The Python class name is derived automatically:
 
-| Component name | Python class |
-|---|---|
-| `engine` | `Engine` |
-| `rate_limiter` | `RateLimiter` |
+| Component name     | Python class     |
+| ------------------ | ---------------- |
+| `engine`           | `Engine`         |
+| `rate_limiter`     | `RateLimiter`    |
 | `half_band_filter` | `HalfBandFilter` |
 
----
+______________________________________________________________________
 
 ## `just-makeit add --state name:type[:default] [...] [--component name]`
 
@@ -100,7 +101,7 @@ are restored and `just-makeit.toml` is left unchanged.
 - Each new variable name must be unique within the component's state list.
 - Requires a `just-makeit.toml` — run `just-makeit new` first.
 
----
+______________________________________________________________________
 
 ## `just-makeit config [key value]`
 
@@ -129,11 +130,11 @@ parser:
 
 **Supported keys**
 
-| Key | Description |
-|---|---|
+| Key       | Description                                          |
+| --------- | ---------------------------------------------------- |
 | `version` | Project version string stored in `just-makeit.toml`. |
 
----
+______________________________________________________________________
 
 ## `just-makeit build [dir]`
 
@@ -147,7 +148,7 @@ just-makeit build wheels/   # wheel → wheels/
 
 Must be run from a project directory containing `pyproject.toml`.
 
----
+______________________________________________________________________
 
 ## `just-makeit test`
 
@@ -160,7 +161,7 @@ just-makeit test
 - CTest runs the C tests in each component's `tests/` directory.
 - pytest runs the Python tests in `src/`.
 
----
+______________________________________________________________________
 
 ## `just-makeit dry-run`
 

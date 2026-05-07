@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.2] — 2026-05-06
+## \[0.1.2\] — 2026-05-06
 
 ### Fixed
 
@@ -11,9 +11,9 @@
 
 - `docs/index.md`: corrected stale `just-makeit init` references to `just-makeit new`
 
----
+______________________________________________________________________
 
-## [0.1.1] — 2026-05-06
+## \[0.1.1\] — 2026-05-06
 
 ### Added
 
@@ -28,9 +28,9 @@
 - `examples/gain/`: `#pragma once` replaced with C99 include guards; Makefile synced with template fixes
 - PyPI README: `examples/gain/` link changed to absolute GitHub URL
 
----
+______________________________________________________________________
 
-## [0.1.0] — 2026-05-05
+## \[0.1.0\] — 2026-05-05
 
 ### Added
 

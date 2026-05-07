@@ -10,27 +10,29 @@ Fenced-block syntax in step .md files:
 The assembler replaces this with the file's content in a fence whose language
 is inferred from the file extension (.sh→sh, .py→python, .c→c).
 """
+
 from __future__ import annotations
 
 import re
 import sys
 from pathlib import Path
 
-HERE  = Path(__file__).parent
+HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
-OUT   = HERE / "README.md"
+OUT = HERE / "README.md"
 
 _EXT_LANG = {".sh": "sh", ".py": "python", ".c": "c"}
-_REF_RE   = re.compile(r"```\{([^}]+)\}\s*\n```")
+_REF_RE = re.compile(r"```\{([^}]+)\}\s*\n```")
 
 
 def _resolve(md: str, step_dir: Path) -> str:
     def _sub(m: re.Match) -> str:
-        fname  = m.group(1)
-        fpath  = step_dir / fname
-        lang   = _EXT_LANG.get(fpath.suffix, "")
+        fname = m.group(1)
+        fpath = step_dir / fname
+        lang = _EXT_LANG.get(fpath.suffix, "")
         content = fpath.read_text().rstrip("\n")
         return f"```{lang}\n{content}\n```"
+
     return _REF_RE.sub(_sub, md)
 
 

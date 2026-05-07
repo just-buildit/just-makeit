@@ -108,6 +108,7 @@ class TestNewScaffoldOnly:
 
     def test_toml_has_no_components(self, scaffold):
         from just_makeit._config import load, components
+
         cfg = load(scaffold)
         assert components(cfg) == []
 
@@ -115,20 +116,25 @@ class TestNewScaffoldOnly:
 class TestNewConfig:
     def test_config_has_project_name(self, project):
         import tomllib
+
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         assert cfg["project"]["name"] == "my_filter"
 
     def test_config_has_default_state(self, project):
         import tomllib
+
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         assert any(s["name"] == "gain" for s in cfg["my_filter"]["state"])
 
     def test_config_records_custom_state(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp", [("cutoff", "double", "440.0"), ("order", "int", "4")])
+        run(
+            "comp", dest, "comp", [("cutoff", "double", "440.0"), ("order", "int", "4")]
+        )
         import tomllib
+
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         names = [s["name"] for s in cfg["comp"]["state"]]
@@ -138,7 +144,14 @@ class TestNewConfig:
 class TestNewContent:
     def test_no_unreplaced_placeholders(self, project):
         for path in project.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt", ".md"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+                ".md",
+            ):
                 text = path.read_text(encoding="utf-8")
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
@@ -156,7 +169,9 @@ class TestNewContent:
         assert "add_subdirectory(native/src/my_filter)" in cmake
 
     def test_component_cmake_has_python3_add_library(self, project):
-        cmake = (project / "native" / "src" / "my_filter" / "CMakeLists.txt").read_text()
+        cmake = (
+            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
+        ).read_text()
         assert "Python3_add_library(my_filter" in cmake
 
     def test_header_has_correct_typedef(self, project):

@@ -103,10 +103,15 @@ class TestNewStateCLI:
     def test_multi_state_flags(self, tmp_path):
         dest = tmp_path / "bpf"
         r = _cli(
-            "new", "bpf", str(dest),
-            "--component", "bpf",
-            "--state", "cutoff:double:440.0",
-            "--state", "order:int:4",
+            "new",
+            "bpf",
+            str(dest),
+            "--component",
+            "bpf",
+            "--state",
+            "cutoff:double:440.0",
+            "--state",
+            "order:int:4",
         )
         assert r.returncode == 0
         h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
@@ -121,16 +126,26 @@ class TestNewStateCLI:
 
     def test_invalid_type_exits_1(self, tmp_path):
         r = _cli(
-            "new", "bpf", str(tmp_path / "bpf"),
-            "--component", "bpf", "--state", "x:complex128",
+            "new",
+            "bpf",
+            str(tmp_path / "bpf"),
+            "--component",
+            "bpf",
+            "--state",
+            "x:complex128",
         )
         assert r.returncode == 1
         assert "unsupported type" in r.stderr
 
     def test_missing_colon_exits_1(self, tmp_path):
         r = _cli(
-            "new", "bpf", str(tmp_path / "bpf"),
-            "--component", "bpf", "--state", "nocolon",
+            "new",
+            "bpf",
+            str(tmp_path / "bpf"),
+            "--component",
+            "bpf",
+            "--state",
+            "nocolon",
         )
         assert r.returncode == 1
         assert "name:type" in r.stderr
@@ -193,6 +208,7 @@ class TestAddCLI:
 
     def test_add_updates_config(self, tmp_path):
         import tomllib
+
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--component", "comp")
         _cli("add", "--state", "order:int:4", cwd=dest)
@@ -203,7 +219,15 @@ class TestAddCLI:
 
     def test_add_duplicate_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
-        _cli("new", "comp", str(dest), "--component", "comp", "--state", "gain:double:1.0")
+        _cli(
+            "new",
+            "comp",
+            str(dest),
+            "--component",
+            "comp",
+            "--state",
+            "gain:double:1.0",
+        )
         r = _cli("add", "--state", "gain:double:2.0", cwd=dest)
         assert r.returncode == 1
 
@@ -235,7 +259,15 @@ class TestConfigCLI:
 
     def test_config_shows_state_vars(self, tmp_path):
         dest = tmp_path / "bpf"
-        _cli("new", "bpf", str(dest), "--component", "bpf", "--state", "cutoff:double:440.0")
+        _cli(
+            "new",
+            "bpf",
+            str(dest),
+            "--component",
+            "bpf",
+            "--state",
+            "cutoff:double:440.0",
+        )
         r = _cli("config", cwd=dest)
         assert r.returncode == 0
         assert "cutoff" in r.stdout

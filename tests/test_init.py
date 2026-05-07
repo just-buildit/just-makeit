@@ -31,25 +31,37 @@ def project_with_engine(tmp_path):
 
 class TestInitAddsFiles:
     def test_component_header(self, project_with_engine):
-        assert (project_with_engine / "native" / "inc" / "engine" / "engine_core.h").exists()
+        assert (
+            project_with_engine / "native" / "inc" / "engine" / "engine_core.h"
+        ).exists()
 
     def test_component_core_c(self, project_with_engine):
-        assert (project_with_engine / "native" / "src" / "engine" / "engine_core.c").exists()
+        assert (
+            project_with_engine / "native" / "src" / "engine" / "engine_core.c"
+        ).exists()
 
     def test_component_ext_c(self, project_with_engine):
-        assert (project_with_engine / "native" / "src" / "engine" / "engine_ext.c").exists()
+        assert (
+            project_with_engine / "native" / "src" / "engine" / "engine_ext.c"
+        ).exists()
 
     def test_component_cmake(self, project_with_engine):
-        assert (project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt").exists()
+        assert (
+            project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt"
+        ).exists()
 
     def test_c_test(self, project_with_engine):
-        assert (project_with_engine / "native" / "tests" / "test_engine_core.c").exists()
+        assert (
+            project_with_engine / "native" / "tests" / "test_engine_core.c"
+        ).exists()
 
     def test_python_pyi(self, project_with_engine):
         assert (project_with_engine / "src" / "myproj" / "engine.pyi").exists()
 
     def test_python_test(self, project_with_engine):
-        assert (project_with_engine / "src" / "myproj" / "tests" / "test_engine.py").exists()
+        assert (
+            project_with_engine / "src" / "myproj" / "tests" / "test_engine.py"
+        ).exists()
 
     def test_compile_commands_created(self, project_with_engine):
         assert (project_with_engine / "compile_commands.json").exists()
@@ -61,7 +73,9 @@ class TestInitUpdatesCMake:
         assert "add_subdirectory(native/src/engine)" in cmake
 
     def test_component_cmake_has_targets(self, project_with_engine):
-        cmake = (project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt").read_text()
+        cmake = (
+            project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt"
+        ).read_text()
         assert "Python3_add_library(engine" in cmake
         assert "engine_core" in cmake
 
@@ -98,12 +112,16 @@ class TestInitContent:
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
     def test_header_has_correct_typedef(self, project_with_engine):
-        h = (project_with_engine / "native" / "inc" / "engine" / "engine_core.h").read_text()
+        h = (
+            project_with_engine / "native" / "inc" / "engine" / "engine_core.h"
+        ).read_text()
         assert "engine_state_t" in h
         assert "engine_create" in h
 
     def test_ext_c_has_correct_class(self, project_with_engine):
-        ext = (project_with_engine / "native" / "src" / "engine" / "engine_ext.c").read_text()
+        ext = (
+            project_with_engine / "native" / "src" / "engine" / "engine_ext.c"
+        ).read_text()
         assert "EngineObject" in ext
         assert "PyInit_engine" in ext
 
@@ -112,7 +130,9 @@ class TestInitContent:
         assert (project_with_engine / "src" / "myproj" / "engine.pyi").exists()
 
     def test_test_file_uses_package_dir(self, project_with_engine):
-        assert (project_with_engine / "src" / "myproj" / "tests" / "test_engine.py").exists()
+        assert (
+            project_with_engine / "src" / "myproj" / "tests" / "test_engine.py"
+        ).exists()
 
     def test_second_component_no_placeholder(self, project):
         init_run(project, "engine")

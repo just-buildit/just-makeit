@@ -4,6 +4,7 @@ Each step mirrors what a user following the README would do.  If any command
 fails, or expected output is not produced, the test fails — keeping the README
 honest.
 """
+
 import shutil
 import subprocess
 import sys
@@ -11,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-STEPS   = Path(__file__).parent.parent / "examples" / "fir_filter" / ".steps"
-PYTHON  = sys.executable
+STEPS = Path(__file__).parent.parent / "examples" / "fir_filter" / ".steps"
+PYTHON = sys.executable
 
 
 def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
@@ -28,6 +29,7 @@ def _require(name: str) -> None:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def project(tmp_path_factory):
     """Scaffold → implement → build.  Shared by all steps."""
@@ -40,11 +42,17 @@ def project(tmp_path_factory):
     # Step 1 — scaffold
     r = _run(
         [
-            "just-makeit", "new", "my_fir",
-            "--component", "fir_filter",
-            "--state", "coeffs:float[16]",
-            "--state", "delay:float _Complex[16]",
-            "--state", "gain:float:1.0",
+            "just-makeit",
+            "new",
+            "my_fir",
+            "--component",
+            "fir_filter",
+            "--state",
+            "coeffs:float[16]",
+            "--state",
+            "delay:float _Complex[16]",
+            "--state",
+            "gain:float:1.0",
         ],
         cwd=root.parent,
     )
@@ -65,6 +73,7 @@ def project(tmp_path_factory):
 # Step 3: make test
 # ---------------------------------------------------------------------------
 
+
 class TestStep3Build:
     def test_make_test_passes(self, project):
         r = _run(["make", "test"], cwd=project)
@@ -75,6 +84,7 @@ class TestStep3Build:
 # ---------------------------------------------------------------------------
 # Step 4: pip install + Python demo
 # ---------------------------------------------------------------------------
+
 
 class TestStep4Python:
     @pytest.fixture(scope="class")
@@ -105,15 +115,27 @@ class TestStep4Python:
 # Step 5: C demo
 # ---------------------------------------------------------------------------
 
+
 class TestStep5C:
     @pytest.fixture(scope="class")
     def c_output(self, project):
         demo_c = project / "demo.c"
         shutil.copy(STEPS / "05_demo.c", demo_c)
-        lib = project / "build" / "native" / "src" / "fir_filter" / "libfir_filter_core.a"
+        lib = (
+            project / "build" / "native" / "src" / "fir_filter" / "libfir_filter_core.a"
+        )
         r = _run(
-            ["gcc", "-O2", "-std=c99", "-Inative/inc",
-             "demo.c", str(lib), "-lm", "-o", "demo"],
+            [
+                "gcc",
+                "-O2",
+                "-std=c99",
+                "-Inative/inc",
+                "demo.c",
+                str(lib),
+                "-lm",
+                "-o",
+                "demo",
+            ],
             cwd=project,
         )
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
@@ -137,6 +159,7 @@ class TestStep5C:
 # Step 6: add state
 # ---------------------------------------------------------------------------
 
+
 class TestStep6AddState:
     def test_add_scalar_state(self, project):
         r = _run(
@@ -151,6 +174,7 @@ class TestStep6AddState:
 # ---------------------------------------------------------------------------
 # Assembler: README.md must be up to date
 # ---------------------------------------------------------------------------
+
 
 def test_readme_up_to_date():
     r = _run(

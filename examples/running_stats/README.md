@@ -6,7 +6,7 @@ the full dataset: monitoring, data pipelines, scientific computing, control loop
 
 Follow along to scaffold, implement, build, and use it yourself.
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -20,15 +20,15 @@ just-makeit new my_stats \
 
 Three state variables — all zero by default, so `RunningStats()` needs no arguments:
 
-| Name   | Type       | Role                              |
-|--------|------------|-----------------------------------|
-| `n`    | `int32_t`  | Sample count                      |
-| `mean` | `double`   | Running mean (Welford)            |
-| `m2`   | `double`   | Sum of squared deviations (Welford) |
+| Name   | Type      | Role                                |
+| ------ | --------- | ----------------------------------- |
+| `n`    | `int32_t` | Sample count                        |
+| `mean` | `double`  | Running mean (Welford)              |
+| `m2`   | `double`  | Sum of squared deviations (Welford) |
 
 Variance = `m2 / (n - 1)` once `n > 1`.
 
----
+______________________________________________________________________
 
 ## 2. Implement
 
@@ -39,9 +39,8 @@ the real part and sample variance into the imaginary part:
 
 ```c
 // before
-static inline float complex
-running_stats_step(const running_stats_state_t *state, float complex x)
-{
+static inline float complex running_stats_step(const running_stats_state_t *state,
+                                               float complex                x) {
     (void)state; /* TODO: implement using state variables */
     return x;
 }
@@ -51,21 +50,19 @@ running_stats_step(const running_stats_state_t *state, float complex x)
 // after — Welford's online algorithm
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
-static inline float complex
-running_stats_step(running_stats_state_t *state, float complex x)
-{
+static inline float complex running_stats_step(running_stats_state_t *state, float complex x) {
     double sample = creal(x);
     state->n++;
-    double delta  = sample - state->mean;
-    state->mean  += delta / (double)state->n;
+    double delta = sample - state->mean;
+    state->mean += delta / (double)state->n;
     double delta2 = sample - state->mean;
-    state->m2    += delta * delta2;
-    double var = (state->n > 1) ? state->m2 / (double)(state->n - 1) : 0.0;
+    state->m2 += delta * delta2;
+    double var = (state->n > 0) ? state->m2 / (double)state->n : 0.0;
     return (float)state->mean + (float)var * I;
 }
 ```
 
----
+______________________________________________________________________
 
 ## 3. Build and test
 
@@ -74,7 +71,7 @@ make
 make test
 ```
 
----
+______________________________________________________________________
 
 ## 4. Try it from Python
 
@@ -94,18 +91,18 @@ data = np.array([2, 4, 4, 4, 5, 5, 7, 9], dtype=np.complex64)
 for x in data:
     y = s.step(x)
 
-print(f"n:        {s.get_n()}")          # 8
-print(f"mean:     {s.get_mean():.4f}")   # 5.0000
-print(f"variance: {y.imag:.4f}")         # 4.0000  (packed into imag of last step)
+print(f"n:        {s.get_n()}")  # 8
+print(f"mean:     {s.get_mean():.4f}")  # 5.0000
+print(f"variance: {y.imag:.4f}")  # 4.0000  (packed into imag of last step)
 
 # reset and try a single-pass block via steps()
 s.reset()
 y_all = s.steps(data)
-print(f"final mean from steps(): {y_all[-1].real:.4f}")   # 5.0000
-print(f"final var  from steps(): {y_all[-1].imag:.4f}")   # 4.0000
+print(f"final mean from steps(): {y_all[-1].real:.4f}")  # 5.0000
+print(f"final var  from steps(): {y_all[-1].imag:.4f}")  # 4.0000
 ```
 
----
+______________________________________________________________________
 
 ## 5. Try it from C
 
@@ -121,18 +118,18 @@ After `make`, the static library is at
 int main(void) {
     running_stats_state_t *s = running_stats_create(0, 0.0, 0.0);
 
-    double data[] = {2, 4, 4, 4, 5, 5, 7, 9};
+    double        data[] = {2, 4, 4, 4, 5, 5, 7, 9};
     float complex y;
     for (int i = 0; i < 8; i++)
         y = running_stats_step(s, (float)data[i] + 0.0f * I);
 
-    printf("n:        %d\n",   running_stats_get_n(s));       /* 8     */
-    printf("mean:     %.4f\n", running_stats_get_mean(s));    /* 5.0000 */
-    printf("variance: %.4f\n", (double)cimagf(y));            /* 4.0000 */
+    printf("n:        %d\n", running_stats_get_n(s));      /* 8     */
+    printf("mean:     %.4f\n", running_stats_get_mean(s)); /* 5.0000 */
+    printf("variance: %.4f\n", (double)cimagf(y));         /* 4.0000 */
 
     running_stats_reset(s);
-    printf("after reset: n=%d mean=%.1f\n",
-           running_stats_get_n(s), running_stats_get_mean(s)); /* n=0 mean=0.0 */
+    printf("after reset: n=%d mean=%.1f\n", running_stats_get_n(s),
+           running_stats_get_mean(s)); /* n=0 mean=0.0 */
 
     running_stats_destroy(s);
     return 0;
@@ -145,7 +142,7 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
     -lm -o demo && ./demo
 ```
 
----
+______________________________________________________________________
 
 ## 6. Add more state
 

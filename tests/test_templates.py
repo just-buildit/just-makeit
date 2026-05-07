@@ -213,44 +213,54 @@ class TestMakeStateCtx:
 class TestParseArrayType:
     def test_float_array(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("float[64]") == ("float", 64)
 
     def test_double_array(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("double[128]") == ("double", 128)
 
     def test_int32_array(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("int32_t[32]") == ("int32_t", 32)
 
     def test_complex_array(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("float _Complex[16]") == ("float _Complex", 16)
 
     def test_scalar_returns_none(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("double") is None
 
     def test_unknown_elem_returns_none(self):
         from just_makeit._templates import parse_array_type
+
         assert parse_array_type("bad_type[8]") is None
 
 
 class TestIsValidType:
     def test_scalar_valid(self):
         from just_makeit._templates import is_valid_type
+
         assert is_valid_type("double")
 
     def test_array_valid(self):
         from just_makeit._templates import is_valid_type
+
         assert is_valid_type("float[64]")
 
     def test_unknown_invalid(self):
         from just_makeit._templates import is_valid_type
+
         assert not is_valid_type("complex128")
 
     def test_array_unknown_elem_invalid(self):
         from just_makeit._templates import is_valid_type
+
         assert not is_valid_type("bad_type[8]")
 
 
@@ -280,27 +290,45 @@ class TestMakeStateCtxArrays:
 
     def test_array_create_assignment_uses_memset(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "memset(state->coeffs, 0, sizeof(state->coeffs))" in ctx["create_assignments"]
+        assert (
+            "memset(state->coeffs, 0, sizeof(state->coeffs))"
+            in ctx["create_assignments"]
+        )
 
     def test_array_reset_uses_memset(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "memset(state->coeffs, 0, sizeof(state->coeffs))" in ctx["reset_assignments"]
+        assert (
+            "memset(state->coeffs, 0, sizeof(state->coeffs))"
+            in ctx["reset_assignments"]
+        )
 
     def test_array_getter_decl(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "fir_get_coeffs(const fir_state_t *state, float *dest);" in ctx["getter_setter_decls"]
+        assert (
+            "fir_get_coeffs(const fir_state_t *state, float *dest);"
+            in ctx["getter_setter_decls"]
+        )
 
     def test_array_view_decl(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "const float *fir_get_coeffs_view(const fir_state_t *state);" in ctx["getter_setter_decls"]
+        assert (
+            "const float *fir_get_coeffs_view(const fir_state_t *state);"
+            in ctx["getter_setter_decls"]
+        )
 
     def test_array_setter_decl(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "fir_set_coeffs(fir_state_t *state, const float *src);" in ctx["getter_setter_decls"]
+        assert (
+            "fir_set_coeffs(fir_state_t *state, const float *src);"
+            in ctx["getter_setter_decls"]
+        )
 
     def test_array_getter_impl_uses_memcpy(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "memcpy(dest, state->coeffs, 16 * sizeof(float))" in ctx["getter_setter_impls"]
+        assert (
+            "memcpy(dest, state->coeffs, 16 * sizeof(float))"
+            in ctx["getter_setter_impls"]
+        )
 
     def test_array_view_impl_returns_pointer(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
@@ -308,7 +336,10 @@ class TestMakeStateCtxArrays:
 
     def test_array_setter_impl_uses_memcpy(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "memcpy(state->coeffs, src, 16 * sizeof(float))" in ctx["getter_setter_impls"]
+        assert (
+            "memcpy(state->coeffs, src, 16 * sizeof(float))"
+            in ctx["getter_setter_impls"]
+        )
 
     def test_array_copy_getter_method_c(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])

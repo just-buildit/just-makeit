@@ -37,6 +37,7 @@ def _write_compile_commands(root: Path, all_components: list[str]) -> None:
     python_inc = sysconfig.get_path("include")
     try:
         import numpy as np
+
         numpy_inc = np.get_include()
     except ImportError:
         numpy_inc = None
@@ -142,7 +143,10 @@ def run(
     build = C.build_system(cfg)
 
     if build == "cmake":
-        _write(root / "native" / "src" / comp / "CMakeLists.txt", r(T.CMAKE_LISTS_COMPONENT))
+        _write(
+            root / "native" / "src" / comp / "CMakeLists.txt",
+            r(T.CMAKE_LISTS_COMPONENT),
+        )
 
     # C test
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
@@ -178,9 +182,7 @@ def run(
         mf = re.sub(r"^(TARGETS\s*:=.*)$", rf"\1 {target}", mf, flags=re.M)
         mf = re.sub(r"^(C_TESTS\s*:=.*)$", rf"\1 {ctest}", mf, flags=re.M)
         rules = T.render(T.MAKEFILE_SIMPLE_COMPONENT, ctx)
-        mf = mf.replace(
-            "# ── Fixed targets", rules + "# ── Fixed targets"
-        )
+        mf = mf.replace("# ── Fixed targets", rules + "# ── Fixed targets")
         mf_path.write_text(mf, encoding="utf-8")
         print(f"  update  {mf_path}")
 

@@ -11,7 +11,7 @@ Python C extensions the easy way.
 command: core C library, thin Python binding, CMake build system, and full test
 coverage — all passing before you write a single line of code.
 
----
+______________________________________________________________________
 
 ## Installation
 
@@ -19,7 +19,7 @@ coverage — all passing before you write a single line of code.
 pip install just-makeit
 ```
 
----
+______________________________________________________________________
 
 ## Quickstart
 
@@ -56,7 +56,7 @@ my_project/
 └── just-makeit.toml
 ```
 
----
+______________________________________________________________________
 
 ## Commands
 
@@ -66,21 +66,20 @@ my_project/
 just-makeit COMMAND
 ```
 
-| `COMMAND`                                        | Description                                |
-|--------------------------------------------------|--------------------------------------------|
-| `new <project>`                                  | Create a new project                       |
-| `new <project> --component name [--state ...]`   | Project with component and optional state  |
-| `init <component> [--state ...]`                 | Add a component to existing project        |
-| `add --state name:type[:default] [...]`          | Add state variables to a component         |
-| `config [key value]`                             | Show or edit project configuration         |
-| `build [dir]`                                    | Configure + build C, and package dist      |
-| `test`                                           | Build and run CTest + pytest               |
-| `dry-run`                                        | Preview what would be compiled             |
+| `COMMAND`                                      | Description                               |
+| ---------------------------------------------- | ----------------------------------------- |
+| `new <project>`                                | Create a new project                      |
+| `new <project> --component name [--state ...]` | Project with component and optional state |
+| `init <component> [--state ...]`               | Add a component to existing project       |
+| `add --state name:type[:default] [...]`        | Add state variables to a component        |
+| `config [key value]`                           | Show or edit project configuration        |
+| `build [dir]`                                  | Configure + build C, and package dist     |
+| `test`                                         | Build and run CTest + pytest              |
+| `dry-run`                                      | Preview what would be compiled            |
 
+See [State Variable Types](https://just-buildit.github.io/just-makeit/types/) for supported types, defaults, and C/Python mappings.
 
-See [State Variable Types](docs/types.md) for supported types, defaults, and C/Python mappings.
-
----
+______________________________________________________________________
 
 ## C conventions
 
@@ -112,7 +111,7 @@ double engine_get_gain(const engine_state_t *state);
 void   engine_set_gain(engine_state_t *state, double gain);
 ```
 
----
+______________________________________________________________________
 
 ## Python API
 
@@ -142,7 +141,7 @@ with Engine() as e:
     y = e.steps(x)
 ```
 
----
+______________________________________________________________________
 
 ## Multiple state variables
 
@@ -158,18 +157,18 @@ Each `--state name:type:default` becomes a struct field, a constructor parameter
 (optional in Python, required in C), getter/setter pair, and reset target — in
 both C and Python.
 
----
+______________________________________________________________________
 
 ## Integrations
 
 - **CMake** — `Python3_add_library` with `WITH_SOABI`; `.so` lands in `src/` for zero-install dev workflow
 - **GNU Make** — convenience wrapper with `build`, `test`, and `just-build` targets
-- **NumPy buffer protocol** — `steps()` accepts and returns `complex64` ndarrays
+- **NumPy buffer protocol** — `steps()` accepts and returns typed ndarrays matching your declared state types
 - **pytest** — tests generated covering create, step, steps, getters/setters, reset, context manager, and destroy
 - **CTest** — C-level test for the core lifecycle
 - **just-buildit** — PEP 517 backend; `pip install .` and `pip install -e .` work out of the box
 
----
+______________________________________________________________________
 
 ## Packaging
 
@@ -187,13 +186,29 @@ pip install -e .
 just-makeit build
 ```
 
----
+______________________________________________________________________
 
 ## Examples
 
 See [`examples/running_stats/`](https://github.com/just-buildit/just-makeit/tree/main/examples/running_stats) for a step-by-step walkthrough example.
 
----
+______________________________________________________________________
+
+## Design principles
+
+**Separation of concerns.** Core C logic goes in `*_core.c` / `*_core.h`.
+The Python extension in `*_ext.c` is a thin adapter — argument parsing, array
+wrapping, and nothing more.  This keeps the C library independently testable
+and usable from Rust, C++, or any other language.
+
+**Full test coverage by default.** Every generated project has C tests (CTest)
+and Python tests (pytest) from day one.
+
+**just-buildit for packaging.** The generated `pyproject.toml` uses
+[just-buildit](https://github.com/just-buildit/just-buildit) as the PEP 517
+build backend, so `pip install .` just works.
+
+______________________________________________________________________
 
 ## Requirements
 

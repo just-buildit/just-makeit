@@ -104,7 +104,9 @@ class TestStateVars:
         assert state_vars(cfg, "parser") == []
 
     def test_single_var(self):
-        cfg = {"engine": {"state": [{"name": "gain", "type": "double", "default": "1.0"}]}}
+        cfg = {
+            "engine": {"state": [{"name": "gain", "type": "double", "default": "1.0"}]}
+        }
         assert state_vars(cfg, "engine") == [("gain", "double", "1.0")]
 
     def test_multi_vars(self):

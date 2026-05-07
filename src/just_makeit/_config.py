@@ -68,9 +68,7 @@ def from_new(name: str, version: str = "0.1.0", basic: bool = False) -> dict:
     return {"project": proj}
 
 
-def add_component(
-    cfg: dict, component: str, vars_: list[tuple[str, str, str]]
-) -> dict:
+def add_component(cfg: dict, component: str, vars_: list[tuple[str, str, str]]) -> dict:
     cfg[component] = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
     }

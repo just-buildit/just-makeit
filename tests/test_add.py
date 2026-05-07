@@ -55,7 +55,9 @@ class TestAddStateVar:
         assert "comp_get_order" in ct
 
     def test_add_multiple_vars_at_once(self, project):
-        add_run(project, None, [("bandwidth", "double", "200.0"), ("poles", "int", "2")])
+        add_run(
+            project, None, [("bandwidth", "double", "200.0"), ("poles", "int", "2")]
+        )
         h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
         assert "double bandwidth;" in h
         assert "int poles;" in h

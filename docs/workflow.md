@@ -5,25 +5,7 @@ scaffold to published package.  Every project it generates is **two things at
 once**: a first-class C shared library and a Python package, built from the
 same source with no duplication.
 
----
-
-## What you get
-
-```mermaid
-flowchart TD
-    SRC["**your C source**\ngain_core.c · bpf_core.c · …"]
-
-    SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
-    SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
-
-    CLIB --> C["**C / C++ / Rust / …**\npkg-config\nfind_package"]
-    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
-```
-
-Each component's core logic compiles once (as an OBJECT library) and links
-into both artifacts — no duplicated object files, no diverging codebases.
-
----
+______________________________________________________________________
 
 ## Creating a project
 
@@ -37,43 +19,39 @@ cd my_dsp
 separately.  `--state` works the same as everywhere else:
 `name:type[:default]`.
 
----
+______________________________________________________________________
 
 ## Project layout
 
-```
+```text
 my_dsp/
-├── inc/                              # project-wide shared headers
-│   ├── clib_common.h                 # common C99 types
-│   ├── pyex_common.h                 # Python extension includes
-│   └── my_dsp.h                      # umbrella — includes all component headers
-├── gain/                             # component (self-contained)
-│   ├── CMakeLists.txt                # OBJECT lib + Python DSO + CTest
+├── CMakeLists.txt
+├── Makefile
+├── just-makeit.toml
+├── pyproject.toml
+├── native/
 │   ├── inc/
+│   │   ├── clib_common.h               # common C99 types
+│   │   ├── pyex_common.h               # Python extension includes
 │   │   └── gain/
-│   │       └── gain_core.h           # component API
+│   │       └── gain_core.h             # component API
 │   ├── src/
-│   │   ├── gain_core.c               # core logic — your algorithm goes here
-│   │   └── gain_ext.c                # thin Python binding
+│   │   └── gain/
+│   │       ├── CMakeLists.txt          # component build target
+│   │       ├── gain_core.c             # core logic — your algorithm goes here
+│   │       └── gain_ext.c              # thin Python binding
 │   └── tests/
-│       └── test_gain_core.c          # C lifecycle test
-├── src/
-│   └── my_dsp/                       # Python package
-│       ├── __init__.py
-│       ├── gain.pyi                  # type stub
-│       └── tests/
-│           ├── __init__.py
-│           └── test_gain.py          # pytest
-├── cmake/
-│   ├── my-dsp.pc.in                  # pkg-config template
-│   └── my-dsp-config.cmake.in        # CMake find_package template
-├── CMakeLists.txt                    # project root: find_package + add_subdirectory
-├── Makefile                          # convenience wrapper
-├── pyproject.toml                    # PEP 517 — just-buildit backend
-└── just-makeit.toml                  # project + component registry
+│       └── test_gain_core.c            # CTest lifecycle test
+└── src/
+    └── my_dsp/
+        ├── __init__.py
+        ├── gain.pyi                    # type stub
+        └── tests/
+            ├── __init__.py
+            └── test_gain.py            # pytest
 ```
 
----
+______________________________________________________________________
 
 ## Building
 
@@ -84,23 +62,20 @@ make test   # CTest + pytest
 
 Produces:
 
-| Artifact | Location |
-|---|---|
-| Combined C shared library | `build/libmy_dsp.so` |
-| pkg-config file | `build/my-dsp.pc` |
-| CMake package config | `build/my-dsp-config.cmake` |
+| Artifact                     | Location                       |
+| ---------------------------- | ------------------------------ |
 | Python DSO (dev, no install) | `src/my_dsp/gain.cpython-*.so` |
 
 The Python DSO lands directly in `src/my_dsp/` so `import my_dsp` works
 from the source tree after a single `make` — no install step needed during
 development.
 
----
+______________________________________________________________________
 
 ## Implementing your core logic
 
-Open `gain/src/gain_core.c`.  The generated stub is a pass-through — replace
-`gain_step` with your algorithm:
+Open `native/src/gain/gain_core.c`.  The generated stub is a pass-through
+— replace `gain_step` with your algorithm:
 
 ```c
 static inline float complex
@@ -110,7 +85,7 @@ gain_step(const gain_state_t *state, float complex x)
 }
 ```
 
-`gain_core.h` defines the full lifecycle API:
+`native/inc/gain/gain_core.h` defines the full lifecycle API:
 
 ```c
 gain_state_t *gain_create(double gain);
@@ -130,7 +105,7 @@ void          gain_set_gain(gain_state_t *state, double gain);
 The Python binding in `gain_ext.c` is generated and complete — you do not
 edit it.  Add your core logic to `gain_core.c` only.
 
----
+______________________________________________________________________
 
 ## Adding a second component
 
@@ -141,14 +116,14 @@ just-makeit init bpf \
     --state order:int:4
 ```
 
-This adds a `bpf/` directory with the same structure as `gain/`, updates
-`CMakeLists.txt` with `add_subdirectory(bpf)`, registers the component in
-`just-makeit.toml`, adds `bpf.pyi` and `test_bpf.py` to the Python package,
-and adds `bpf_core` to the combined shared library target.
+This adds `native/src/bpf/` with the same structure as `gain/`, updates
+the top-level `CMakeLists.txt` with `add_subdirectory`, registers the
+component in `just-makeit.toml`, and adds `bpf.pyi` and `test_bpf.py` to
+the Python package.
 
 `make` picks up the new component automatically.
 
----
+______________________________________________________________________
 
 ## Extending a component's state
 
@@ -162,65 +137,7 @@ list — all existing files are backed up first and restored if anything fails.
 
 When the project has a single component, `--component` may be omitted.
 
----
-
-## C integration
-
-### Install
-
-```sh
-cmake --install build --prefix /usr/local
-```
-
-Installs:
-
-```
-/usr/local/
-├── lib/
-│   ├── libmy_dsp.so
-│   ├── pkgconfig/
-│   │   └── my-dsp.pc
-│   └── cmake/
-│       └── my-dsp/
-│           ├── my-dsp-config.cmake
-│           ├── my-dsp-config-version.cmake
-│           └── my-dspTargets.cmake
-└── include/
-    ├── my_dsp.h
-    ├── gain/
-    │   └── gain_core.h
-    └── bpf/
-        └── bpf_core.h
-```
-
-### pkg-config
-
-```sh
-gcc $(pkg-config --cflags --libs my-dsp) main.c -o main
-```
-
-### CMake
-
-```cmake
-find_package(my-dsp REQUIRED)
-target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
-```
-
-### Usage
-
-```c
-#include "my_dsp.h"   /* umbrella — includes gain and bpf */
-
-gain_state_t *g = gain_create(1.0);
-bpf_state_t  *f = bpf_create(1000.0, 200.0, 4);
-
-float complex y = gain_step(g, bpf_step(f, 1.0f + 0.0f * I));
-
-gain_destroy(g);
-bpf_destroy(f);
-```
-
----
+______________________________________________________________________
 
 ## Python integration
 
@@ -257,7 +174,7 @@ x = np.ones(1024, dtype=np.complex64)
 y = g.steps(f.steps(x))
 ```
 
----
+______________________________________________________________________
 
 ## Packaging and release
 
@@ -273,11 +190,8 @@ pip wheel . -w dist/
 ```
 
 The wheel contains the Python package (`src/my_dsp/`) with the compiled DSOs.
-The combined C shared library (`libmy_dsp.so`) is a separate install artifact
-— distribute it alongside your C headers for C/C++ consumers, or ship it as
-a system package.
 
----
+______________________________________________________________________
 
 ## Configuration
 
@@ -288,3 +202,52 @@ just-makeit config version 0.2.0    # update version
 
 `just-makeit.toml` is the source of truth.  `add` and `init` update it
 atomically — if generation fails, the config is left unchanged.
+
+______________________________________________________________________
+
+## Future: C library distribution (v0.4)
+
+> **Planned for v0.4.** The features below are not yet generated.
+
+v0.4 will make just-makeit projects first-class C libraries too — distributable
+to C, C++, and Rust via standard mechanisms.
+
+```mermaid
+flowchart TD
+    SRC["**your C source**\ngain_core.c · bpf_core.c · …"]
+
+    SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
+    SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
+
+    CLIB --> C["**C / C++ / Rust / …**\npkg-config\nfind_package"]
+    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
+```
+
+Each component's core logic will compile once (as an OBJECT library) and link
+into both artifacts — no duplicated object files, no diverging codebases.
+
+New generated files will include:
+
+```text
+my_dsp/
+├── cmake/
+│   ├── my-dsp.pc.in                  # pkg-config template
+│   └── my-dsp-config.cmake.in        # CMake find_package template
+└── native/
+    └── inc/
+        └── my_dsp.h                  # umbrella — includes all component headers
+```
+
+**Install:**
+
+```sh
+cmake --install build --prefix /usr/local
+gcc $(pkg-config --cflags --libs my-dsp) main.c -o main
+```
+
+```cmake
+find_package(my-dsp REQUIRED)
+target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
+```
+
+See the [Roadmap](roadmap.md) for the full plan.

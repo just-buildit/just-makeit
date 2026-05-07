@@ -2,10 +2,13 @@
 
 Run from the project root: python3 .steps/02_patch.py
 """
-import pathlib, re, sys
+
+import pathlib
+import re
+import sys
 
 header = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
-impl   = pathlib.Path(__file__).with_name("02_step_after.c")
+impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
     r"static inline float complex\s*\n"

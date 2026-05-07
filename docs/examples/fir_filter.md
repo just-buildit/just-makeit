@@ -5,7 +5,7 @@ processes complex (I/Q) signals.  It shows every array-state concept — struct
 layout, constructor, reset, copy getter, read-only view, and setter — in both
 C and Python.
 
----
+______________________________________________________________________
 
 ## Scaffold
 
@@ -19,16 +19,16 @@ just-makeit new fir_filter \
 
 Three state variables:
 
-| Name     | Type                  | Role                          |
-|----------|-----------------------|-------------------------------|
-| `coeffs` | `float[16]`           | Real-valued tap weights       |
-| `delay`  | `float _Complex[16]`  | Complex delay line (history)  |
-| `gain`   | `float`               | Scalar output gain            |
+| Name     | Type                 | Role                         |
+| -------- | -------------------- | ---------------------------- |
+| `coeffs` | `float[16]`          | Real-valued tap weights      |
+| `delay`  | `float _Complex[16]` | Complex delay line (history) |
+| `gain`   | `float`              | Scalar output gain           |
 
 `coeffs` and `delay` are always **zero-initialised** — no default may be given.
 `gain` gets the declared default `1.0f` in both `create()` and `reset()`.
 
----
+______________________________________________________________________
 
 ## Generated C API  (`fir_filter_core.h`)
 
@@ -70,7 +70,7 @@ The delay-line update lives in `step()` — it's not automatic.  The delay
 array is part of the mutable state but `get_delay_view()` returns a
 `const float _Complex *`, so callers can observe it without a copy.
 
----
+______________________________________________________________________
 
 ## Implementing the filter  (`fir_filter_core.c`)
 
@@ -110,7 +110,7 @@ fir_filter_steps(fir_filter_state_t *state,
 `reset()` is already generated — it writes `memset(state->delay, 0, ...)`,
 `memset(state->coeffs, 0, ...)`, and `state->gain = 1.0f`.
 
----
+______________________________________________________________________
 
 ## Using the filter from C
 
@@ -166,7 +166,7 @@ int main(void)
 }
 ```
 
----
+______________________________________________________________________
 
 ## Using the filter from Python
 
@@ -211,7 +211,7 @@ assert f.get_delay()[0] == 0j
 assert f.get_coeffs()[0] == 0.0   # coeffs are also zeroed on reset
 ```
 
----
+______________________________________________________________________
 
 ## Concepts illustrated
 
@@ -230,10 +230,10 @@ typedef struct {
 
 ### Copy getter vs. view getter
 
-| Method               | Returns                      | Allocation | Lifetime        |
-|----------------------|------------------------------|-----------|-----------------|
-| `get_coeffs()`       | Independent `np.float32[16]` | One malloc | Independent     |
-| `get_coeffs_view()`  | Read-only view, zero-alloc   | None       | Until `destroy()` |
+| Method              | Returns                      | Allocation | Lifetime          |
+| ------------------- | ---------------------------- | ---------- | ----------------- |
+| `get_coeffs()`      | Independent `np.float32[16]` | One malloc | Independent       |
+| `get_coeffs_view()` | Read-only view, zero-alloc   | None       | Until `destroy()` |
 
 Use `get_coeffs_view()` in hot paths where you want to read the taps without
 a memory allocation.  **Never pass the view to code that may outlive the

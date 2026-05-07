@@ -29,7 +29,7 @@
     README.md
 ```
 
----
+______________________________________________________________________
 
 ## C conventions
 
@@ -114,7 +114,7 @@ int    <component>_get_order(const <component>_state_t *state);
 void   <component>_set_order(<component>_state_t *state, int order);
 ```
 
----
+______________________________________________________________________
 
 ## Python binding conventions
 
@@ -149,7 +149,7 @@ with <Component>(1.0) as obj:
 obj.destroy()
 ```
 
----
+______________________________________________________________________
 
 ## Build system
 

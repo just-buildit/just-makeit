@@ -1,4 +1,5 @@
 """Integration test: run each step of examples/running_stats/README.md in sequence."""
+
 import shutil
 import subprocess
 import sys
@@ -6,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-STEPS  = Path(__file__).parent.parent / "examples" / "running_stats" / ".steps"
+STEPS = Path(__file__).parent.parent / "examples" / "running_stats" / ".steps"
 PYTHON = sys.executable
 
 
@@ -30,11 +31,17 @@ def project(tmp_path_factory):
 
     r = _run(
         [
-            "just-makeit", "new", "my_stats",
-            "--component", "running_stats",
-            "--state", "n:int32_t:0",
-            "--state", "mean:double:0.0",
-            "--state", "m2:double:0.0",
+            "just-makeit",
+            "new",
+            "my_stats",
+            "--component",
+            "running_stats",
+            "--state",
+            "n:int32_t:0",
+            "--state",
+            "mean:double:0.0",
+            "--state",
+            "m2:double:0.0",
         ],
         cwd=root.parent,
     )
@@ -86,11 +93,26 @@ class TestStep5C:
     @pytest.fixture(scope="class")
     def c_output(self, project):
         shutil.copy(STEPS / "05_demo.c", project / "demo.c")
-        lib = (project / "build" / "native" / "src" / "running_stats"
-               / "librunning_stats_core.a")
+        lib = (
+            project
+            / "build"
+            / "native"
+            / "src"
+            / "running_stats"
+            / "librunning_stats_core.a"
+        )
         r = _run(
-            ["gcc", "-O2", "-std=c99", "-Inative/inc",
-             "demo.c", str(lib), "-lm", "-o", "demo"],
+            [
+                "gcc",
+                "-O2",
+                "-std=c99",
+                "-Inative/inc",
+                "demo.c",
+                str(lib),
+                "-lm",
+                "-o",
+                "demo",
+            ],
             cwd=project,
         )
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
@@ -114,9 +136,14 @@ class TestStep5C:
 class TestStep6AddState:
     def test_add_min_max(self, project):
         r = _run(
-            ["just-makeit", "add",
-             "--state", "min_val:double:0.0",
-             "--state", "max_val:double:0.0"],
+            [
+                "just-makeit",
+                "add",
+                "--state",
+                "min_val:double:0.0",
+                "--state",
+                "max_val:double:0.0",
+            ],
             cwd=project,
         )
         assert r.returncode == 0, f"add failed:\n{r.stderr}"
@@ -128,6 +155,7 @@ def test_readme_up_to_date():
     r = subprocess.run(
         [PYTHON, "assemble.py", "--check"],
         cwd=Path(__file__).parent.parent / "examples" / "running_stats",
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
