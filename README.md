@@ -7,9 +7,9 @@
 
 Python C extensions the easy way.
 
-`just-makeit new` scaffolds a complete, working C99 extension project in one
+`just-makeit new` generates a complete, working C99 extension project in one
 command: core C library, thin Python binding, CMake build system, and full test
-coverage — no boilerplate to write.
+coverage — all passing before you write a single line of code.
 
 ---
 
@@ -191,7 +191,7 @@ just-makeit build
 
 ## Examples
 
-See [`examples/gain/`](https://github.com/just-buildit/just-makeit/tree/main/examples/gain) for a complete generated project.
+See [`examples/running_stats/`](https://github.com/just-buildit/just-makeit/tree/main/examples/running_stats) for a step-by-step walkthrough example.
 
 ---
 
