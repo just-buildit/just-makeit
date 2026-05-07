@@ -73,6 +73,8 @@ _CTYPE_META: dict[str, dict] = {
     "uint16_t": _fwint("uint16_t", "I", "unsigned int",       "0U",   "np.uint16", _TO_PY_ULONG,  "0U"),
     "uint32_t": _fwint("uint32_t", "k", "unsigned long",      "0UL",  "np.uint32", _TO_PY_ULONG,  "0U"),
     "uint64_t": _fwint("uint64_t", "K", "unsigned long long", "0ULL", "np.uint64", _TO_PY_ULLONG, "0U"),
+    "size_t":    _fwint("size_t",    "K", "unsigned long long", "0ULL", "np.uintp",  _TO_PY_ULLONG, "0"),
+    "ptrdiff_t": _fwint("ptrdiff_t", "L", "long long",         "0LL",  "np.intp",   _TO_PY_LLONG,  "0"),
     # ── C99 complex — parsed via Py_complex (format "D"), then cast. ──────────
     "float _Complex": {
         "kind": "complex",

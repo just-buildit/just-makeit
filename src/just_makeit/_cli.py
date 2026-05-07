@@ -24,7 +24,7 @@ Commands:
   help               Show this message
 
 Scalar types: double (default), float, int, int8_t…int64_t, uint8_t…uint64_t,
-              float _Complex, double _Complex, long double _Complex
+              size_t, ptrdiff_t, float _Complex, double _Complex, long double _Complex
 Array types:  type[N]  e.g. float[64], double _Complex[32]
               Array fields are always zero-initialised; no default may be given.
 
