@@ -13,7 +13,6 @@ just-makeit new my_fir \
     --state "coeffs:float[16]" \
     --state "delay:float _Complex[16]" \
     --state "gain:float:1.0"
-cd my_fir
 ```
 
 Three state variables:
@@ -41,7 +40,9 @@ fir_filter_step(const fir_filter_state_t *state, float complex x)
     (void)state; /* TODO: implement DSP using state variables */
     return x;
 }
+```
 
+```c
 // after
 static inline float complex
 fir_filter_step(fir_filter_state_t *state, float complex x)
@@ -68,8 +69,8 @@ no changes needed there.
 ## 3. Build and test
 
 ```sh
-make           # CMake configure + build
-make test      # CTest (C) + pytest (Python)
+make
+make test
 ```
 
 The generated tests cover getter/setter round-trips, reset behaviour, the
@@ -84,8 +85,7 @@ signal-level tests (see step 5).
 pip install -e .
 ```
 
-```sh
-python3 -c "
+```python
 import numpy as np
 from my_fir import FirFilter
 
@@ -104,7 +104,7 @@ print('h[1]:', view[1])                        # 0.5
 impulse = np.zeros(16, dtype=np.complex64)
 impulse[0] = 1.0
 y = f.steps(impulse)
-print('impulse response:', y[:4].real)   # [0.25 0.5 0.25 0.  ]
+print('impulse response:', y[:4].real)   # [0.25 0.5  0.25 0.  ]
 
 # Snapshot the delay line — independent copy, safe to keep indefinitely
 dl = f.get_delay()
@@ -114,15 +114,15 @@ print('delay[0]:', dl[0])
 with FirFilter(gain=2.0) as g:
     g.set_coeffs(h)
     y2 = g.steps(impulse)
-print('gain=2 response:', y2[:3].real)   # [0.5 1.0 0.5]
-"
+print('gain=2 response:', y2[:3].real)   # [0.5 1.  0.5]
 ```
 
 ---
 
 ## 5. Try it from C
 
-After `make`, the static library is at `build/native/src/fir_filter/libfir_filter_core.a`.
+After `make`, the static library is at
+`build/native/src/fir_filter/libfir_filter_core.a`.
 
 ```c
 // demo.c
@@ -162,7 +162,9 @@ int main(void) {
 ```
 
 ```sh
-gcc -O2 -std=c99 -Inative/inc demo.c build/native/src/fir_filter/libfir_filter_core.a -lm -o demo && ./demo
+gcc -O2 -std=c99 -Inative/inc demo.c \
+    build/native/src/fir_filter/libfir_filter_core.a \
+    -lm -o demo && ./demo
 ```
 
 ---
