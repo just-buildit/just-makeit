@@ -4,8 +4,6 @@ Each step mirrors what a user following the README would do.  If any command
 fails, or expected output is not produced, the test fails — keeping the README
 honest.
 """
-from __future__ import annotations
-
 import shutil
 import subprocess
 import sys
