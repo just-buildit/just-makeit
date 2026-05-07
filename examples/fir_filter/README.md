@@ -122,7 +122,7 @@ print('gain=2 response:', y2[:3].real)   # [0.5 1.0 0.5]
 
 ## 5. Try it from C
 
-After `make`, the static library is at `build/libfir_filter_core.a`.
+After `make`, the static library is at `build/native/src/fir_filter/libfir_filter_core.a`.
 
 ```c
 // demo.c
@@ -162,7 +162,7 @@ int main(void) {
 ```
 
 ```sh
-gcc -O2 -std=c99 -Inative/inc demo.c build/libfir_filter_core.a -lm -o demo && ./demo
+gcc -O2 -std=c99 -Inative/inc demo.c build/native/src/fir_filter/libfir_filter_core.a -lm -o demo && ./demo
 ```
 
 ---
