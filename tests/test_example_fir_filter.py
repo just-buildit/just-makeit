@@ -79,7 +79,7 @@ class TestStep3Build:
 class TestStep4Python:
     @pytest.fixture(scope="class")
     def installed(self, project):
-        r = _run([PYTHON, "-m", "pip", "install", "-e", "."], cwd=project)
+        r = _run(["uv", "pip", "install", "-e", "."], cwd=project)
         assert r.returncode == 0, f"pip install failed:\n{r.stderr}"
         return project
 
