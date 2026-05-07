@@ -22,6 +22,7 @@ repos:
     rev: 0.7.17  # Use latest version
     hooks:
     - id: mdformat
+      exclude: ^examples/
       # Add optional plugins (e.g., for GFM or code block formatting)
       additional_dependencies:
       - mdformat-gfm
