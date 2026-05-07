@@ -60,18 +60,25 @@ my_project/
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `just-makeit new <project> [--component name] [--state ...]` | Create a new project (optionally with a first component) |
-| `just-makeit init <component> [--state ...]` | Add a component to an existing project |
-| `just-makeit add --state name:type[:default] [...]` | Add state variables to a component |
-| `just-makeit config [key value]` | Show or edit project configuration |
-| `just-makeit build [dir]` | Configure + build C, then package a wheel |
-| `just-makeit test` | Build and run CTest + pytest |
-| `just-makeit dry-run` | Preview what would be compiled |
+`just-makeit` provides a CLI with several commands run with
 
-State types: `double`, `float`, `int`. Default value is `0` for each type if omitted.
-Both `reset` and the Python `__init__` use the declared default — `Engine()` with no args is valid.
+```bash
+just-makeit COMMAND
+```
+
+| `COMMAND`                                        | Description                                |
+|--------------------------------------------------|--------------------------------------------|
+| `new <project>`                                  | Create a new project                       |
+| `new <project> --component name [--state ...]`   | Project with component and optional state  |
+| `init <component> [--state ...]`                 | Add a component to existing project        |
+| `add --state name:type[:default] [...]`          | Add state variables to a component         |
+| `config [key value]`                             | Show or edit project configuration         |
+| `build [dir]`                                    | Configure + build C, and package dist      |
+| `test`                                           | Build and run CTest + pytest               |
+| `dry-run`                                        | Preview what would be compiled             |
+
+
+See [State Variable Types](docs/types.md) for supported types, defaults, and C/Python mappings.
 
 ---
 

@@ -23,8 +23,10 @@ Commands:
   dry-run            Show what would get compiled without building
   help               Show this message
 
-State types: double (default), float, int
-Default value is zero for each type if omitted.
+Scalar types: double (default), float, int, int8_t…int64_t, uint8_t…uint64_t,
+              float _Complex, double _Complex, long double _Complex
+Array types:  type[N]  e.g. float[64], double _Complex[32]
+              Array fields are always zero-initialised; no default may be given.
 
 Examples:
   just-makeit new my_filter                               # project scaffold only
@@ -59,15 +61,26 @@ def _parse_state_flags(
         )
         sys.exit(1)
     name, ctype = parts[0], parts[1]
-    if ctype not in T.SUPPORTED_TYPES:
+    if not T.is_valid_type(ctype):
         supported = ", ".join(sorted(T.SUPPORTED_TYPES))
         print(
-            f"error: unsupported type '{ctype}'. Supported: {supported}",
+            f"error: unsupported type '{ctype}'.\n"
+            f"Scalar types: {supported}\n"
+            f"Array syntax: type[N]  e.g. float[64]",
             file=sys.stderr,
         )
         sys.exit(1)
-    _ZERO = {"double": "0.0", "float": "0.0f", "int": "0"}
-    default = parts[2] if len(parts) == 3 else _ZERO[ctype]
+    arr = T.parse_array_type(ctype)
+    if arr is not None:
+        if len(parts) == 3:
+            print(
+                f"warning: default ignored for array type '{ctype}' "
+                f"(arrays are always zero-initialised)",
+                file=sys.stderr,
+            )
+        default = ""
+    else:
+        default = parts[2] if len(parts) == 3 else T._CTYPE_META[ctype]["zero"]
     return (name, ctype, default), i + 1
 
 

@@ -45,17 +45,7 @@ the Python type stub and test file.
 | `component` | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely. |
 
-**State types**
-
-| Type | C type | Python type | Zero default |
-|---|---|---|---|
-| `double` | `double` | `float` | `0.0` |
-| `float` | `float` | `float` | `0.0f` |
-| `int` | `int` | `int` | `0` |
-
-The `:default` suffix is optional — the type's zero value is used if omitted.
-Both `_reset()` and Python `__init__()` use the declared default, so
-`Engine()` with no arguments is always valid.
+See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
 Each `--state name:type[:default]` generates:
 - A field in the C state struct

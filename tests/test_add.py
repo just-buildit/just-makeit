@@ -41,8 +41,8 @@ class TestAddStateVar:
     def test_add_single_var_pyi(self, project):
         add_run(project, None, [("order", "int", "4")])
         pyi = (project / "src" / "comp" / "comp.pyi").read_text()
-        assert "gain: float = 1.0" in pyi
-        assert "order: int = 4" in pyi
+        assert "gain: np.float64 = 1.0" in pyi
+        assert "order: np.int32 = 4" in pyi
 
     def test_add_single_var_pytest(self, project):
         add_run(project, None, [("order", "int", "4")])
