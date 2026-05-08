@@ -213,3 +213,92 @@ class TestPerfUpgrade:
         perf_run(dest)
         out = capsys.readouterr().out
         assert "already enabled" in out
+
+
+# ── jm_simd.h presence ───────────────────────────────────────────────────────
+
+class TestJmSimdHPresence:
+    def test_generated_with_perf_flag(self, perf_project):
+        assert (perf_project / "native" / "inc" / "jm_simd.h").exists()
+
+    def test_absent_without_perf(self, plain_project):
+        assert not (plain_project / "native" / "inc" / "jm_simd.h").exists()
+
+    def test_written_by_perf_upgrade(self, tmp_path):
+        dest = tmp_path / "upg"
+        new_run("upg", dest, "mycomp")
+        assert not (dest / "native" / "inc" / "jm_simd.h").exists()
+        perf_run(dest)
+        assert (dest / "native" / "inc" / "jm_simd.h").exists()
+
+    def test_not_duplicated_by_second_init(self, perf_project):
+        init_run(perf_project, "engine", [("rate", "double", "1.0")])
+        simd_files = list(perf_project.rglob("jm_simd.h"))
+        assert len(simd_files) == 1
+
+
+# ── jm_simd.h content ────────────────────────────────────────────────────────
+
+class TestJmSimdHContent:
+    @pytest.fixture()
+    def simd_h(self, perf_project):
+        return (perf_project / "native" / "inc" / "jm_simd.h").read_text()
+
+    def test_has_simd_width_constants(self, simd_h):
+        assert "JM_SIMD_WIDTH_F32" in simd_h
+        assert "JM_SIMD_WIDTH_F64" in simd_h
+        assert "JM_SIMD_WIDTH" in simd_h
+
+    def test_has_vec_types(self, simd_h):
+        assert "JM_VEC_F32" in simd_h
+        assert "JM_VEC_F64" in simd_h
+
+    def test_has_zero_splat_load_store(self, simd_h):
+        for macro in ("JM_ZERO_F32", "JM_ZERO_F64",
+                      "JM_SPLAT_F32", "JM_SPLAT_F64",
+                      "JM_LOAD_F32", "JM_LOAD_F64",
+                      "JM_STORE_F32", "JM_STORE_F64"):
+            assert macro in simd_h, f"{macro} missing"
+
+    def test_has_arithmetic_macros(self, simd_h):
+        for macro in ("JM_ADD_F32", "JM_ADD_F64",
+                      "JM_MUL_F32", "JM_MUL_F64",
+                      "JM_FMA_F32", "JM_FMA_F64"):
+            assert macro in simd_h, f"{macro} missing"
+
+    def test_has_mac_and_hsum(self, simd_h):
+        for macro in ("JM_MAC_F32", "JM_MAC_F64",
+                      "JM_HSUM_F32", "JM_HSUM_F64"):
+            assert macro in simd_h, f"{macro} missing"
+
+    def test_has_dot_product_helpers(self, simd_h):
+        assert "jm_dot_f32" in simd_h
+        assert "jm_dot_f64" in simd_h
+
+    def test_three_simd_tiers(self, simd_h):
+        assert "__AVX512F__" in simd_h
+        assert "__AVX2__" in simd_h
+        assert "#else" in simd_h  # scalar fallback
+
+    def test_no_unreplaced_placeholders(self, simd_h):
+        assert "<<" not in simd_h
+
+
+# ── jm_perf.h includes jm_simd.h and new hint macros ─────────────────────────
+
+class TestJmPerfHUpdated:
+    @pytest.fixture()
+    def perf_h(self, perf_project):
+        return (perf_project / "native" / "inc" / "jm_perf.h").read_text()
+
+    def test_includes_jm_simd_h(self, perf_h):
+        assert '#include "jm_simd.h"' in perf_h
+
+    def test_has_unroll_macro(self, perf_h):
+        assert "JM_UNROLL" in perf_h
+
+    def test_has_assume_aligned_macro(self, perf_h):
+        assert "JM_ASSUME_ALIGNED" in perf_h
+
+    def test_has_prefetch_macro(self, perf_h):
+        assert "JM_PREFETCH" in perf_h

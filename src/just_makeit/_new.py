@@ -75,6 +75,7 @@ def run(
     _write(root / "native" / "inc" / f"{project}.h", r(T.UMBRELLA_H))
     if perf:
         _write(root / "native" / "inc" / "jm_perf.h", r(T.JM_PERF_H))
+        _write(root / "native" / "inc" / "jm_simd.h", T.JM_SIMD_H)
 
     if not basic:
         _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))

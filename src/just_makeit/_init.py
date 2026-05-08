@@ -155,6 +155,9 @@ def run(
         perf_h = root / "native" / "inc" / "jm_perf.h"
         if not perf_h.exists():
             _write(perf_h, r(T.JM_PERF_H))
+        simd_h = root / "native" / "inc" / "jm_simd.h"
+        if not simd_h.exists():
+            _write(simd_h, T.JM_SIMD_H)
 
     if pure_style == "scalar":
         core_h_tmpl = T.PURE_SCALAR_CORE_H

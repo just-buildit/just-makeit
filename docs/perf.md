@@ -122,6 +122,75 @@ walkthrough including benchmarks.
 
 ---
 
+## `jm_simd.h` — width-portable operation macros
+
+Raw AVX intrinsics lock your `step_batch()` to one ISA.  `jm_simd.h` provides
+macros that select the widest available instruction set at compile time —
+AVX-512, AVX2+FMA, or scalar — so the same source compiles everywhere.
+
+Included automatically by `jm_perf.h`; can also be included standalone.
+
+### SIMD tier selection
+
+| Tier | `JM_SIMD_WIDTH_F32` | `JM_VEC_F32` | `JM_VEC_F64` |
+|---|---|---|---|
+| AVX-512F | 16 | `__m512` | `__m512d` |
+| AVX2 + FMA | 8 | `__m256` | `__m256d` |
+| Scalar | 1 | `float` | `double` |
+
+`JM_SIMD_WIDTH_F64` is always half of `JM_SIMD_WIDTH_F32`.
+
+### Operation macros
+
+| Macro | Operation |
+|---|---|
+| `JM_ZERO_F32()` / `JM_ZERO_F64()` | Zero accumulator |
+| `JM_SPLAT_F32(x)` / `JM_SPLAT_F64(x)` | Broadcast scalar to all lanes |
+| `JM_LOAD_F32(ptr)` / `JM_LOAD_F64(ptr)` | Unaligned load |
+| `JM_STORE_F32(ptr, v)` / `JM_STORE_F64(ptr, v)` | Store |
+| `JM_ADD_F32(a, b)` / `JM_ADD_F64(a, b)` | Element-wise add |
+| `JM_MUL_F32(a, b)` / `JM_MUL_F64(a, b)` | Element-wise multiply |
+| `JM_FMA_F32(acc, a, b)` / `JM_FMA_F64(...)` | `acc += a * b` |
+| `JM_MAC_F32(acc, ptr, s)` / `JM_MAC_F64(...)` | Load `JM_SIMD_WIDTH_F32` floats from `ptr`, multiply by scalar `s`, accumulate |
+| `JM_HSUM_F32(v)` / `JM_HSUM_F64(v)` | Horizontal reduce all lanes to one scalar |
+
+### Dot product helper
+
+```c
+float  jm_dot_f32(const float  *a, const float  *b, int n);
+double jm_dot_f64(const double *a, const double *b, int n);
+```
+
+Handles the SIMD loop and scalar tail automatically.
+
+### FIR inner loop example
+
+```c
+/* step_batch: compute one output sample from JM_SIMD_WIDTH_F32 inputs */
+JM_FORCEINLINE JM_HOT void
+fir_step_batch(fir_state_t *state, const float *window, float *out)
+{
+    JM_VEC_F32 acc = JM_ZERO_F32();
+    for (int k = 0; k < N_TAPS; k++)
+        JM_MAC_F32(acc, window + k, state->coeffs[k]);
+    *out = JM_HSUM_F32(acc) * state->gain;
+}
+```
+
+On AVX-512 this expands to `_mm512_fmadd_ps` + `_mm512_reduce_add_ps`.
+On scalar it compiles to a plain loop the compiler can auto-vectorise.
+No `#ifdef` in user code; the tier is chosen once at the top of `jm_simd.h`.
+
+### Additional hint macros (in `jm_perf.h`)
+
+| Macro | Effect |
+|---|---|
+| `JM_UNROLL(n)` | `#pragma GCC unroll n` — ask compiler to unroll loop `n` times |
+| `JM_ASSUME_ALIGNED(ptr, n)` | `__builtin_assume_aligned` — enables SIMD loads without alignment penalty |
+| `JM_PREFETCH(ptr, rw, loc)` | `__builtin_prefetch` — software prefetch; `rw`=0 read / 1 write, `loc`=0–3 |
+
+---
+
 ## SIMD build flag
 
 SIMD intrinsics require `-march=native -ffast-math`.  Pass `-DENABLE_SIMD=ON`

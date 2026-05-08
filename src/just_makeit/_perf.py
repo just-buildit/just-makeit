@@ -68,11 +68,17 @@ def run(root: Path) -> None:
     print("just-makeit: enabling perf annotations")
     print()
 
-    perf_h = root / "native" / "inc" / "jm_perf.h"
+    inc = root / "native" / "inc"
+    perf_h = inc / "jm_perf.h"
     if not perf_h.exists():
         perf_h.parent.mkdir(parents=True, exist_ok=True)
         perf_h.write_text(T.render(T.JM_PERF_H, {"package": pkg}), encoding="utf-8")
         print(f"  create  {perf_h}")
+
+    simd_h = inc / "jm_simd.h"
+    if not simd_h.exists():
+        simd_h.write_text(T.JM_SIMD_H, encoding="utf-8")
+        print(f"  create  {simd_h}")
 
     for comp in comps:
         header = root / "native" / "inc" / comp / f"{comp}_core.h"
