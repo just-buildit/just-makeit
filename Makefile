@@ -1,20 +1,21 @@
 # just-makeit — development control centre
 #
 # Targets:
-#   make               Run tests (default)
-#   make test          Run full test suite (pytest)
-#   make test-fast     Run tests, stop on first failure
-#   make bench         Run scaffold benchmarks (pytest-benchmark)
-#   make bench-save    Save benchmark baseline (tagged with git describe)
-#   make bench-compare Compare against last saved baseline
-#   make lint          Run pre-commit hooks on all files
-#   make build         Build wheel into dist/
-#   make docs          Build docs site into site/
-#   make docs-serve    Build and serve docs with live reload
-#   make install       Install package in editable mode
-#   make clean         Remove build artifacts
-#   make examples-clean  Remove build artifacts from all examples
-#   make help          Show this message
+#   make                   Run unit tests (default)
+#   make test              Run unit test suite (pytest)
+#   make test-fast         Run tests, stop on first failure
+#   make test-examples     Run end-to-end example builds (requires cmake)
+#   make bench             Run scaffold benchmarks (pytest-benchmark)
+#   make bench-save        Save benchmark baseline (tagged with git describe)
+#   make bench-compare     Compare against last saved baseline
+#   make lint              Run pre-commit hooks on all files
+#   make build             Build wheel into dist/
+#   make docs              Build docs site into site/
+#   make docs-serve        Build and serve docs with live reload
+#   make install           Install package in editable mode
+#   make clean             Remove build artifacts
+#   make examples-clean    Remove build artifacts from all examples
+#   make help              Show this message
 
 SHELL      = /bin/sh
 PYTHON     ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
@@ -24,17 +25,20 @@ PYTEST_B   = $(UV) run --no-project --with pytest --with pytest-benchmark --with
 ZENSICAL   = $(UV) run --group dev zensical
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-.PHONY: all test test-fast bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help
+.PHONY: all test test-fast test-examples bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help
 
 all: test
 
 # ── Test ─────────────────────────────────────────────────────────────────────
 
 test:
-	$(PYTEST) -v
+	$(PYTEST) -v --ignore=tests/test_examples.py
 
 test-fast:
 	$(PYTEST) -x -q
+
+test-examples:
+	$(PYTEST) tests/test_examples.py -v
 
 # ── Bench ─────────────────────────────────────────────────────────────────────
 
@@ -96,6 +100,7 @@ help:
 	@echo "  make               run tests"
 	@echo "  make test          run full test suite"
 	@echo "  make test-fast     stop on first failure"
+	@echo "  make test-examples run end-to-end example builds (requires cmake)"
 	@echo "  make bench         run scaffold benchmarks"
 	@echo "  make bench-save    save baseline (git describe tag)"
 	@echo "  make bench-compare compare against last saved baseline"

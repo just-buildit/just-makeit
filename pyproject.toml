@@ -42,6 +42,7 @@ just-makeit = "just_makeit._cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/test_examples.py"
 
 [dependency-groups]
 dev = [
