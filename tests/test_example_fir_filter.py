@@ -122,9 +122,7 @@ class TestStep5C:
     def c_output(self, project):
         demo_c = project / "demo.c"
         shutil.copy(STEPS / "05_demo.c", demo_c)
-        lib = (
-            project / "build" / "native" / "src" / "fir_filter" / "libfir_filter_core.a"
-        )
+        build_dir = str(project / "build")
         r = _run(
             [
                 "gcc",
@@ -132,7 +130,9 @@ class TestStep5C:
                 "-std=c99",
                 "-Inative/inc",
                 "demo.c",
-                str(lib),
+                f"-L{build_dir}",
+                "-lmy_fir",
+                f"-Wl,-rpath,{build_dir}",
                 "-lm",
                 "-o",
                 "demo",

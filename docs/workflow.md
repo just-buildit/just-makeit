@@ -205,12 +205,10 @@ atomically — if generation fails, the config is left unchanged.
 
 ______________________________________________________________________
 
-## Future: C library distribution (v0.4)
+## C library distribution
 
-> **Planned for v0.4.** The features below are not yet generated.
-
-v0.4 will make just-makeit projects first-class C libraries too — distributable
-to C, C++, and Rust via standard mechanisms.
+Every just-makeit project is also a first-class C library — distributable to C,
+C++, and Rust via standard mechanisms.
 
 ```mermaid
 flowchart TD
@@ -223,22 +221,21 @@ flowchart TD
     PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
 ```
 
-Each component's core logic will compile once (as an OBJECT library) and link
+Each component's core logic compiles once (as a CMake OBJECT library) and links
 into both artifacts — no duplicated object files, no diverging codebases.
 
-New generated files will include:
+Generated files:
 
 ```text
 my_dsp/
 ├── cmake/
-│   ├── my-dsp.pc.in                  # pkg-config template
-│   └── my-dsp-config.cmake.in        # CMake find_package template
+│   └── my-dsp.pc.in              # pkg-config template
 └── native/
     └── inc/
-        └── my_dsp.h                  # umbrella — includes all component headers
+        └── my_dsp.h              # umbrella — includes all component headers
 ```
 
-**Install:**
+**Install and use:**
 
 ```sh
 cmake --install build --prefix /usr/local

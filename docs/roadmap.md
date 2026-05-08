@@ -42,39 +42,44 @@ Real algorithms are hot. The generated code should be ready for it.
 
 ______________________________________________________________________
 
-## v0.3 — Pure / stateless mode
+## v0.3 — Pure / stateless mode ✓ shipped
 
-Not every algorithm needs state. Some — especially those destined for cloud
-functions, k8s sidecars, or NumPy ufuncs — are better expressed as a pure
-function with no lifecycle overhead.
+Not every algorithm needs state. Some are better expressed as a pure function
+with no lifecycle overhead.
 
-**`--pure` flag** on `new` and `init`:
+**Planned and delivered:**
 
-```sh
-just-makeit new my_ops --component normalize --pure
-```
+- `--pure` flag on `new` and `init` — auto-detects style from declared params:
+  - **Scalar-only params** → scalar style: params passed per call as function
+    arguments; Python exports module-level `comp(x, **params)` and
+    `comp.steps(arr, **params)` functions.
+  - **Any array param** → struct style: caller-managed `comp_params_t` with
+    `_params_create()` (calloc), `_params_free()`, `_params_init()` (for
+    stack/pool/`aligned_alloc`/`mmap` allocation patterns); Python exposes a
+    callable class (`obj(x)` via `tp_call`, context-manager support).
+- `--param` flag — idiomatic synonym for `--state` when used with `--pure`;
+  both are accepted everywhere with identical semantics.
+- `pure` field in `just-makeit.toml` — persisted so `just-makeit add --param`
+  regenerates the correct template set; auto-promotes scalar→struct if an
+  array param is added.
+- `docs/pure.md` — full cost/benefit analysis, allocation pattern guide with
+  concrete C examples (heap, stack, SIMD-aligned, N-channel array, arena,
+  mmap), and a Mermaid decision flowchart.
 
-Generates a stateless component — no state struct, no create/destroy, no
-reset. Just a function:
+**Delivered beyond plan:**
 
-```c
-/* normalize_core.h */
-float complex normalize_fn(float complex x, double scale);
-```
-
-```python
-# Python binding — module-level function, not a class
-from my_ops import normalize
-y = normalize(x, scale=1.0)         # single sample
-y = normalize.steps(arr, scale=1.0) # block, returns ndarray
-```
-
-Natural fit for:
-
-- k8s sidecar microservices with a minimal Python surface
-- Cloud functions where object lifecycle is noise
-- NumPy ufunc registration (v0.3.x follow-on)
-- Functional pipelines where immutability matters
+- C and Python benchmarks generated with every component (`make bench`,
+  `make bench-save`, `make bench-compare`; pytest-benchmark + doppler-style
+  C binary).  Bench files are in `_STATE_TEMPLATES` so they regenerate on
+  `just-makeit add`.
+- `examples/` end-to-end test runner — `tests/test_examples.py`
+  auto-discovers `examples/*/test.py`; `test_all_examples_have_test_py`
+  enforces that every example directory ships a test driver.
+- `examples/README.md` — contributor guide explaining the `.steps/` naming
+  convention, `assemble.py` weaving, and the `test.py` contract.
+- `examples/fir_filter` step 8 — pure FIR variant demonstrating struct-style
+  caller-managed params and multi-channel usage.
+- `docs/examples/` retired — stale duplicate of `examples/*/README.md`.
 
 ______________________________________________________________________
 
@@ -82,23 +87,45 @@ ______________________________________________________________________
 
 Today just-makeit targets Python consumers. v0.4 makes the generated project
 a first-class C library too — distributable to C, C++, and Rust via the
-standard mechanisms.
+standard mechanisms, with no changes to user-written algorithm code.
+
+**Core idea:** each component's `_core.c` compiles once (as a CMake OBJECT
+library) and links into *both* the Python DSO and a combined `libmy_dsp.so`.
+No duplicated object files. No diverging codebases.
+
+```mermaid
+flowchart TD
+    SRC["**your C source**\ngain_core.c · bpf_core.c · …"]
+
+    SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
+    SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
+
+    CLIB --> C["**C / C++ / Rust / …**\npkg-config · find_package"]
+    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
+```
 
 **New generated artifacts:**
 
-```
+```text
 my_dsp/
 ├── cmake/
 │   ├── my-dsp.pc.in              # pkg-config template
 │   └── my-dsp-config.cmake.in   # CMake find_package template
-├── native/
-│   ├── inc/
-│   │   ├── my_dsp.h              # umbrella — includes all component headers
-│   │   └── …
+└── native/
+    └── inc/
+        └── my_dsp.h              # umbrella — includes all component headers
 ```
 
-**Combined shared library** — all components compile as OBJECT libraries and
-link into a single `libmy_dsp.so` alongside the per-component Python DSOs.
+**CMake changes:**
+
+- Each component's `CMakeLists.txt` gains an OBJECT library target
+  (`gain_core` OBJECT); the Python DSO and bench binary link against
+  `$<TARGET_OBJECTS:gain_core>` instead of a static archive.
+- Top-level `CMakeLists.txt` accumulates all OBJECT targets into
+  `libmy_dsp.so` and adds `install()` rules for the library, headers,
+  pkg-config file, and CMake config package.
+- `just-makeit init` patches `target_sources(${PROJECT_NAME}_lib …)` in the
+  top-level alongside the existing `add_subdirectory` patch.
 
 **Install story:**
 
@@ -111,9 +138,6 @@ gcc $(pkg-config --cflags --libs my-dsp) main.c -o main
 find_package(my-dsp REQUIRED)
 target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
 ```
-
-C/C++/Rust consumers get a proper library. Python consumers get the same `.so`
-they always had. One codebase, two distribution paths.
 
 ______________________________________________________________________
 

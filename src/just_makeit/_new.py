@@ -15,6 +15,7 @@ from . import _templates as T
 def _make_project_ctx(project: str, version: str = "0.1.0") -> dict[str, str]:
     return {
         "package": project,
+        "PACKAGE": project.upper(),
         "project": project.replace("_", "-"),
         "project_underscore": project,
         "version": version,
@@ -71,8 +72,12 @@ def run(
     _write(root / ".gitignore", r(T.GITIGNORE))
     _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
     _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
+    _write(root / "native" / "inc" / f"{project}.h", r(T.UMBRELLA_H))
     if perf:
         _write(root / "native" / "inc" / "jm_perf.h", r(T.JM_PERF_H))
+
+    if not basic:
+        _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))
 
     cfg = C.from_new(project, basic=basic, perf=perf)
     C.save(root, cfg)

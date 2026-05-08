@@ -48,6 +48,12 @@ class TestNewProjectFiles:
     def test_just_makeit_toml_exists(self, project):
         assert (project / "just-makeit.toml").exists()
 
+    def test_umbrella_header_exists(self, project):
+        assert (project / "native" / "inc" / "my_filter.h").exists()
+
+    def test_pc_in_exists(self, project):
+        assert (project / "cmake" / "my-filter.pc.in").exists()
+
 
 class TestNewComponentFiles:
     def test_component_header(self, project):
@@ -200,6 +206,33 @@ class TestNewContent:
         toml = (project / "pyproject.toml").read_text()
         assert 'name = "my-filter"' in toml
 
+    def test_cmake_top_has_combined_lib(self, project):
+        cmake = (project / "CMakeLists.txt").read_text()
+        assert "add_library(my_filter_lib SHARED" in cmake
+
+    def test_cmake_component_is_object_lib(self, project):
+        cmake = (
+            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
+        ).read_text()
+        assert "add_library(my_filter_core OBJECT" in cmake
+
+    def test_umbrella_header_content(self, project):
+        h = (project / "native" / "inc" / "my_filter.h").read_text()
+        assert "MY_FILTER_H" in h
+
+    def test_umbrella_header_updated_by_init(self, tmp_path):
+        from just_makeit._init import run as init_run
+        dest = tmp_path / "my_pkg"
+        run("my_pkg", dest)
+        init_run(dest, "gain")
+        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text()
+        assert '#include "gain/gain_core.h"' in umbrella
+
+    def test_pc_in_content(self, project):
+        pc = (project / "cmake" / "my-filter.pc.in").read_text()
+        assert "Name: my-filter" in pc
+        assert "-lmy_filter" in pc
+
 
 class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
@@ -310,6 +343,10 @@ class TestNewBuild:
     def test_so_file_produced(self, built_project):
         so_files = list((built_project / "src").rglob("*.so"))
         assert so_files, "No .so file found in src/"
+
+    def test_combined_lib_produced(self, built_project):
+        lib = built_project / "build" / "libgain.so"
+        assert lib.exists(), f"Combined shared library not found at {lib}"
 
     def test_ctest_passes(self, built_project):
         import subprocess

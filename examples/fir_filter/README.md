@@ -116,8 +116,7 @@ print("gain=2 response:", y2[:3].real)  # [0.5 1.  0.5]
 
 ## 5. Try it from C
 
-After `make`, the static library is at
-`build/native/src/fir_filter/libfir_filter_core.a`.
+After `make`, the combined shared library is at `build/libmy_fir.so`.
 
 ```c
 // demo.c
@@ -160,7 +159,7 @@ int main(void) {
 
 ```sh
 gcc -O2 -std=c99 -Inative/inc demo.c \
-    build/native/src/fir_filter/libfir_filter_core.a \
+    -Lbuild -lmy_fir -Wl,-rpath,build \
     -lm -o demo && ./demo
 ```
 

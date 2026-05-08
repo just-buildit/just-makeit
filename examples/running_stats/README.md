@@ -106,8 +106,7 @@ print(f"final var  from steps(): {y_all[-1].imag:.4f}")  # 4.0000
 
 ## 5. Try it from C
 
-After `make`, the static library is at
-`build/native/src/running_stats/librunning_stats_core.a`.
+After `make`, the combined shared library is at `build/libmy_stats.so`.
 
 ```c
 // demo.c
@@ -138,7 +137,7 @@ int main(void) {
 
 ```sh
 gcc -O2 -std=c99 -Inative/inc demo.c \
-    build/native/src/running_stats/librunning_stats_core.a \
+    -Lbuild -lmy_stats -Wl,-rpath,build \
     -lm -o demo && ./demo
 ```
 

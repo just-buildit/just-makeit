@@ -93,14 +93,7 @@ class TestStep5C:
     @pytest.fixture(scope="class")
     def c_output(self, project):
         shutil.copy(STEPS / "05_demo.c", project / "demo.c")
-        lib = (
-            project
-            / "build"
-            / "native"
-            / "src"
-            / "running_stats"
-            / "librunning_stats_core.a"
-        )
+        build_dir = str(project / "build")
         r = _run(
             [
                 "gcc",
@@ -108,7 +101,9 @@ class TestStep5C:
                 "-std=c99",
                 "-Inative/inc",
                 "demo.c",
-                str(lib),
+                f"-L{build_dir}",
+                "-lmy_stats",
+                f"-Wl,-rpath,{build_dir}",
                 "-lm",
                 "-o",
                 "demo",

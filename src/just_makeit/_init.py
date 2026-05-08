@@ -123,6 +123,7 @@ def run(
     ctx.update(
         {
             "package": pkg,
+            "PACKAGE": pkg.upper(),
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": version,
@@ -228,11 +229,36 @@ def run(
         _write(gitkeep, "")
 
     if build == "cmake":
-        # Append add_subdirectory to top-level CMakeLists.txt
+        # Write cmake/pkg.pc.in if the project predates v0.4
+        pc_in = root / "cmake" / f"{pkg.replace('_', '-')}.pc.in"
+        if not pc_in.exists():
+            _write(pc_in, T.render(T.CMAKE_PC_IN, ctx))
+
+        # Write or update the umbrella header
+        umbrella = root / "native" / "inc" / f"{pkg}.h"
+        include_line = f'#include "{comp}/{comp}_core.h"\n'
+        if not umbrella.exists():
+            _write(umbrella, T.render(T.UMBRELLA_H, ctx))
+        umbrella_text = umbrella.read_text(encoding="utf-8")
+        if include_line not in umbrella_text:
+            # Insert before the closing #endif
+            umbrella_text = umbrella_text.replace(
+                "#ifdef __cplusplus\n}\n#endif\n\n#endif",
+                f"{include_line}\n#ifdef __cplusplus\n}}\n#endif\n\n#endif",
+            )
+            umbrella.write_text(umbrella_text, encoding="utf-8")
+            print(f"  update  {umbrella}")
+
+        # Append add_subdirectory + wire component into combined lib
         cmake_path = root / "CMakeLists.txt"
         if cmake_path.exists():
             cmake_text = cmake_path.read_text(encoding="utf-8")
             cmake_text += f"add_subdirectory(native/src/{comp})\n"
+            # Only add target_link_libraries if the combined lib target exists (v0.4+)
+            if f"{pkg}_lib" in cmake_text:
+                cmake_text += (
+                    f"target_link_libraries({pkg}_lib PRIVATE {comp}_core)\n"
+                )
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
 
