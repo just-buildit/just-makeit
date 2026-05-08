@@ -34,6 +34,7 @@ def run(
     state_vars: list[tuple[str, str, str]] | None = None,
     basic: bool = False,
     perf: bool = False,
+    pure: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -81,7 +82,7 @@ def run(
     if component:
         from . import _init
 
-        _init.run(root, component, state_vars, perf=perf, _hint=False)
+        _init.run(root, component, state_vars, perf=perf, pure=pure, _hint=False)
         print()
         print(f"Done!  cd {root.name} && make && make test")
     else:

@@ -721,6 +721,257 @@ def make_state_ctx(
     }
 
 
+def _make_gs_decls_impls(
+    component: str,
+    scalar_vars: list[tuple[str, str, str]],
+    array_info: list[tuple[str, str, int]],
+    type_suffix: str,
+    ptr_name: str,
+) -> tuple[str, str]:
+    """Generate getter/setter C declarations and implementations.
+
+    type_suffix: 'state' or 'params'  (produces <comp>_<type_suffix>_t)
+    ptr_name:    'state' or 'params'  (the C variable name)
+    """
+    full_type = f"{component}_{type_suffix}_t"
+    decl_parts = []
+    for name, ct, _ in scalar_vars:
+        decl_parts.append(
+            f"/**\n"
+            f" * @brief Get current {name}.\n"
+            f" */\n"
+            f"{ct} {component}_get_{name}(const {full_type} *{ptr_name});\n"
+            f"\n"
+            f"/**\n"
+            f" * @brief Set {name}.\n"
+            f" */\n"
+            f"void {component}_set_{name}({full_type} *{ptr_name}, {ct} {name});"
+        )
+    for name, elem_ct, size in array_info:
+        decl_parts.append(
+            f"/**\n"
+            f" * @brief Copy {name} into dest.\n"
+            f" */\n"
+            f"void {component}_get_{name}(const {full_type} *{ptr_name}, {elem_ct} *dest);\n"
+            f"\n"
+            f"/**\n"
+            f" * @brief Return a read-only pointer to {name}.\n"
+            f" */\n"
+            f"const {elem_ct} *{component}_get_{name}_view(const {full_type} *{ptr_name});\n"
+            f"\n"
+            f"/**\n"
+            f" * @brief Set {name} from src.\n"
+            f" */\n"
+            f"void {component}_set_{name}({full_type} *{ptr_name}, const {elem_ct} *src);"
+        )
+    decls = "\n\n".join(decl_parts)
+
+    impl_parts = []
+    for name, ct, _ in scalar_vars:
+        impl_parts.append(
+            f"{ct}\n"
+            f"{component}_get_{name}(const {full_type} *{ptr_name})\n"
+            f"{{\n"
+            f"    return {ptr_name}->{name};\n"
+            f"}}\n"
+            f"\n"
+            f"void\n"
+            f"{component}_set_{name}({full_type} *{ptr_name}, {ct} {name})\n"
+            f"{{\n"
+            f"    {ptr_name}->{name} = {name};\n"
+            f"}}"
+        )
+    for name, elem_ct, size in array_info:
+        impl_parts.append(
+            f"void\n"
+            f"{component}_get_{name}(const {full_type} *{ptr_name}, {elem_ct} *dest)\n"
+            f"{{\n"
+            f"    memcpy(dest, {ptr_name}->{name}, {size} * sizeof({elem_ct}));\n"
+            f"}}\n"
+            f"\n"
+            f"const {elem_ct} *\n"
+            f"{component}_get_{name}_view(const {full_type} *{ptr_name})\n"
+            f"{{\n"
+            f"    return {ptr_name}->{name};\n"
+            f"}}\n"
+            f"\n"
+            f"void\n"
+            f"{component}_set_{name}({full_type} *{ptr_name}, const {elem_ct} *src)\n"
+            f"{{\n"
+            f"    memcpy({ptr_name}->{name}, src, {size} * sizeof({elem_ct}));\n"
+            f"}}"
+        )
+    impls = "\n\n".join(impl_parts)
+    return decls, impls
+
+
+def make_pure_ctx(
+    component: str,
+    Component: str,
+    state_vars: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    """Return context keys for a pure (stateless / caller-managed) component.
+
+    Auto-selects style:
+      'scalar' — scalar state only → params passed per call, no struct
+      'struct' — any array state   → caller-managed params_t struct
+    """
+    for name, ct, _ in state_vars:
+        if not is_valid_type(ct):
+            supported = ", ".join(sorted(SUPPORTED_TYPES))
+            raise ValueError(
+                f"unsupported type '{ct}' for '{name}'. Supported: {supported}"
+            )
+
+    scalar_vars = [(n, ct, d) for n, ct, d in state_vars if ct in _CTYPE_META]
+    array_info: list[tuple[str, str, int]] = []
+    for n, ct, _ in state_vars:
+        parsed = parse_array_type(ct)
+        if parsed:
+            array_info.append((n, parsed[0], parsed[1]))
+
+    if not array_info:
+        return _make_scalar_pure_ctx(component, Component, scalar_vars)
+    return _make_struct_pure_ctx(component, Component, scalar_vars, array_info)
+
+
+def _make_scalar_pure_ctx(
+    component: str,
+    Component: str,
+    scalar_vars: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    """Pure scalar style: params passed directly per call, no struct."""
+    # C function signature suffix: , double scale, int n
+    c_fn_params = "".join(f", {ct} {name}" for name, ct, _ in scalar_vars)
+    c_fn_call_args = "".join(f", {name}" for name, _, _ in scalar_vars)
+    c_fn_call_defaults = "".join(f", {dflt}" for _, _, dflt in scalar_vars)
+    c_fn_param_docs = "\n".join(
+        f" * @param {name}  Parameter (default: {dflt})."
+        for name, _, dflt in scalar_vars
+    )
+
+    # C kwlist portion (just param names, no first positional arg)
+    py_kwlist = "".join(f'"{name}", ' for name, _, _ in scalar_vars)
+
+    # Locals, parse format, args
+    local_lines: list[str] = []
+    post_lines: list[str] = []
+    param_parse_args: list[str] = []
+    param_fmt = ""
+    for name, ct, dflt in scalar_vars:
+        meta = _CTYPE_META[ct]
+        if meta.get("parse_type"):
+            local_lines.append(f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};")
+            post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
+            param_parse_args.append(f"&{name}_raw")
+        else:
+            local_lines.append(f"    {ct} {name} = {dflt};")
+            param_parse_args.append(f"&{name}")
+        param_fmt += meta["fmt"]
+
+    pure_locals = "\n".join(local_lines)
+    pure_fn_fmt = "D" + (f"|{param_fmt}" if scalar_vars else "")
+    pure_steps_fmt = "O" + (f"|{param_fmt}" if scalar_vars else "")
+    pure_params_args = (
+        (", " + ", ".join(param_parse_args)) if param_parse_args else ""
+    )
+    pure_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
+
+    # Python type params and kwargs for .pyi and tests
+    if scalar_vars:
+        py_fn_type_params = ", " + ", ".join(
+            f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
+            for name, ct, dflt in scalar_vars
+        )
+        py_fn_kwargs = ", " + ", ".join(
+            f"{name}={_py_default(ct, dflt)}" for name, ct, dflt in scalar_vars
+        )
+    else:
+        py_fn_type_params = ""
+        py_fn_kwargs = ""
+
+    c_create_args = ", ".join(dflt for _, _, dflt in scalar_vars)
+    py_create_args = ", ".join(_py_default(ct, dflt) for _, ct, dflt in scalar_vars)
+
+    return {
+        "pure_style": "scalar",
+        "c_fn_params": c_fn_params,
+        "c_fn_call_args": c_fn_call_args,
+        "c_fn_call_defaults": c_fn_call_defaults,
+        "c_fn_param_docs": c_fn_param_docs,
+        "py_kwlist": py_kwlist,
+        "pure_locals": pure_locals,
+        "pure_fn_fmt": pure_fn_fmt,
+        "pure_steps_fmt": pure_steps_fmt,
+        "pure_params_args": pure_params_args,
+        "pure_post_parse": pure_post_parse,
+        "py_fn_type_params": py_fn_type_params,
+        "py_fn_kwargs": py_fn_kwargs,
+        "c_create_args": c_create_args,
+        "py_create_args": py_create_args,
+    }
+
+
+def _make_struct_pure_ctx(
+    component: str,
+    Component: str,
+    scalar_vars: list[tuple[str, str, str]],
+    array_info: list[tuple[str, str, int]],
+) -> dict[str, str]:
+    """Pure struct style: caller-managed params_t; aligned alloc helper provided."""
+    # Reuse state context for Python-side code (getter/setter methods, init parsing,
+    # type stubs).  The Python ext code calls get_X(self->handle) which works for
+    # both state_t* and params_t* — the method bodies are identical.
+    all_vars = scalar_vars + [(n, f"{et}[{sz}]", "") for n, et, sz in array_info]
+    state_ctx = make_state_ctx(component, Component, all_vars)
+
+    # C core — params_t specific declarations and implementations
+    params_gs_decls, params_gs_impls = _make_gs_decls_impls(
+        component, scalar_vars, array_info, "params", "params"
+    )
+
+    # params_t struct fields (same layout as state_t)
+    struct_field_lines = []
+    for name, ct, _ in scalar_vars:
+        struct_field_lines.append(f"    {ct} {name};")
+    for name, elem_ct, size in array_info:
+        struct_field_lines.append(f"    {elem_ct} {name}[{size}];")
+    params_struct_fields = "\n".join(struct_field_lines)
+
+    # create: set scalar defaults, zero arrays
+    create_lines = [f"    p->{n} = {dflt};" for n, _, dflt in scalar_vars]
+    for name, _, size in array_info:
+        create_lines.append(f"    memset(p->{name}, 0, sizeof(p->{name}));")
+    params_create_assigns = "\n".join(create_lines)
+    params_reset_assigns = params_create_assigns  # same
+
+    # After params_create() in __init__, set scalar fields from parsed kwargs
+    override_lines = [f"    self->handle->{n} = {n};" for n, _, _ in scalar_vars]
+    params_init_overrides = ("\n".join(override_lines) + "\n") if override_lines else ""
+
+    c_create_args = state_ctx["c_create_args"]
+    py_create_args = state_ctx["py_create_args"]
+
+    return {
+        "pure_style": "struct",
+        # Python-side: reused from make_state_ctx
+        "getter_setter_methods_c": state_ctx["getter_setter_methods_c"],
+        "getter_setter_pymethoddef": state_ctx["getter_setter_pymethoddef"],
+        "init_parse_block": state_ctx["init_parse_block"],
+        "init_params_pyi": state_ctx["init_params_pyi"],
+        "getter_setter_stubs_pyi": state_ctx["getter_setter_stubs_pyi"],
+        "py_create_args": py_create_args,
+        "c_create_args": c_create_args,
+        # C core: params_t specific
+        "params_struct_fields": params_struct_fields,
+        "params_create_assigns": params_create_assigns,
+        "params_reset_assigns": params_reset_assigns,
+        "params_getter_setter_decls": params_gs_decls,
+        "params_getter_setter_impls": params_gs_impls,
+        "params_init_overrides": params_init_overrides,
+    }
+
+
 def make_perf_ctx(perf: bool) -> dict[str, str]:
     if perf:
         return {
@@ -1343,6 +1594,838 @@ def test_bench_steps_64k(benchmark, obj):
     benchmark(obj.steps, x)
 """
 
+# ── Pure scalar templates ─────────────────────────────────────────────────────
+
+PURE_SCALAR_CORE_H = """\
+/**
+ * @file <<component>>_core.h
+ * @brief <<Component>> — pure (stateless) transform.
+ *
+ * Usage:
+ * @code
+ * float complex y = <<component>>_fn(x<<c_fn_call_defaults>>);
+ * @endcode
+ */
+#ifndef <<COMPONENT>>_CORE_H
+#define <<COMPONENT>>_CORE_H
+
+#include "clib_common.h"
+<<perf_include>>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Process a single complex sample.
+ * @param x   Input sample.
+<<c_fn_param_docs>>
+ * @return    Output sample.
+ */
+<<step_qualifier>>float complex
+<<component>>_fn(float complex x<<c_fn_params>>)
+{
+    (void)x;  /* TODO: implement */
+    return x;
+}
+
+/**
+ * @brief Process a block of complex samples.
+ * @param input   Input array (length >= n).
+ * @param output  Output array (length >= n; may alias input).
+ * @param n       Number of samples.
+<<c_fn_param_docs>>
+ */
+void <<component>>_steps(
+    const float complex *input,
+    float complex       *output,
+    size_t               n<<c_fn_params>>);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* <<COMPONENT>>_CORE_H */
+"""
+
+PURE_SCALAR_CORE_C = """\
+#include "<<component>>/<<component>>_core.h"
+
+void
+<<component>>_steps(
+    const float complex *input,
+    float complex       *output,
+    size_t               n<<c_fn_params>>)
+{
+    for (size_t i = 0; i < n; i++)
+        output[i] = <<component>>_fn(input[i]<<c_fn_call_args>>);
+}
+"""
+
+PURE_SCALAR_EXT_C = """\
+/*
+ * <<component>>_ext.c — Python C extension for <<component>>_core.h (pure/scalar)
+ *
+ * Exports two module-level functions:
+ *   <<component>>(x<<c_fn_params>>) -> complex
+ *   <<component>>_steps(arr<<c_fn_params>>) -> NDArray[complex64]
+ */
+
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#include <numpy/arrayobject.h>
+#include <complex.h>
+
+#include "<<component>>/<<component>>_core.h"
+
+/* ── <<component>>(x, **params) ─────────────────────────────────────────────── */
+
+static PyObject *
+py_<<component>>(PyObject *module, PyObject *args, PyObject *kwds)
+{
+    (void)module;
+    static char *kwlist[] = {"x", <<py_kwlist>>NULL};
+    Py_complex pyx;
+<<pure_locals>>
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "<<pure_fn_fmt>>", kwlist,
+                                     &pyx<<pure_params_args>>))
+        return NULL;
+<<pure_post_parse>>    float complex x = (float)pyx.real + (float)pyx.imag * I;
+    float complex y = <<component>>_fn(x<<c_fn_call_args>>);
+    return PyComplex_FromDoubles((double)crealf(y), (double)cimagf(y));
+}
+
+/* ── <<component>>_steps(arr, **params) ──────────────────────────────────────── */
+
+static PyObject *
+py_<<component>>_steps(PyObject *module, PyObject *args, PyObject *kwds)
+{
+    (void)module;
+    static char *kwlist[] = {"arr", <<py_kwlist>>NULL};
+    PyObject *in_obj = NULL;
+<<pure_locals>>
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "<<pure_steps_fmt>>", kwlist,
+                                     &in_obj<<pure_params_args>>))
+        return NULL;
+<<pure_post_parse>>
+    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        in_obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS);
+    if (!in_arr)
+        return NULL;
+
+    Py_ssize_t n = PyArray_SIZE(in_arr);
+    npy_intp dims[] = {n};
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+
+    <<component>>_steps(
+        (const float complex *)PyArray_DATA(in_arr),
+        (float complex *)PyArray_DATA((PyArrayObject *)out_arr),
+        (size_t)n<<c_fn_call_args>>);
+
+    Py_DECREF(in_arr);
+    return out_arr;
+}
+
+/* ── Module ──────────────────────────────────────────────────────────────────── */
+
+static PyMethodDef <<component>>_methods[] = {
+    {"<<component>>",
+     (PyCFunction)py_<<component>>, METH_VARARGS | METH_KEYWORDS,
+     "<<component>>(x<<c_fn_params>>) -> complex"},
+    {"<<component>>_steps",
+     (PyCFunction)py_<<component>>_steps, METH_VARARGS | METH_KEYWORDS,
+     "<<component>>_steps(arr<<c_fn_params>>) -> NDArray[complex64]"},
+    {NULL}
+};
+
+static PyModuleDef <<component>>_module = {
+    PyModuleDef_HEAD_INIT,
+    .m_name    = "<<component>>",
+    .m_doc     = "Pure (stateless) binding for <<component>>_core.h.",
+    .m_size    = -1,
+    .m_methods = <<component>>_methods,
+};
+
+PyMODINIT_FUNC
+PyInit_<<component>>(void)
+{
+    import_array();
+    return PyModule_Create(&<<component>>_module);
+}
+"""
+
+PURE_SCALAR_TEST_C = """\
+#include "<<component>>/<<component>>_core.h"
+#include <assert.h>
+#include <complex.h>
+#include <stdio.h>
+
+int main(void)
+{
+    /* fn: verify it runs */
+    float complex y = <<component>>_fn(1.0f + 0.0f * I<<c_fn_call_defaults>>);
+    (void)y;
+
+    /* steps: verify it runs */
+    float complex in[4]  = {1.0f, 2.0f, 3.0f, 4.0f};
+    float complex out[4] = {0};
+    <<component>>_steps(in, out, 4<<c_fn_call_defaults>>);
+
+    printf("test_<<component>>_core PASSED\\n");
+    return 0;
+}
+"""
+
+PURE_SCALAR_PYI = """\
+import numpy as np
+from numpy.typing import NDArray
+
+def <<component>>(x: complex<<py_fn_type_params>>) -> complex:
+    \"\"\"<<Component>> — pure (stateless) transform. Returns a single complex sample.\"\"\"
+    ...
+
+def <<component>>_steps(arr: NDArray[np.complex64]<<py_fn_type_params>>) -> NDArray[np.complex64]:
+    \"\"\"Process a block of complex samples. Returns a complex64 ndarray.\"\"\"
+    ...
+"""
+
+PYTEST_PURE_SCALAR_TEST = """\
+import numpy as np
+import pytest
+
+from <<package>> import <<component>>, <<component>>_steps
+
+
+class Test<<Component>>:
+    def test_fn_runs(self):
+        y = <<component>>(1.0 + 0.0j<<py_fn_kwargs>>)
+        assert isinstance(y, complex)
+
+    def test_steps_runs(self):
+        x = np.ones(16, dtype=np.complex64)
+        y = <<component>>_steps(x<<py_fn_kwargs>>)
+        assert y.shape == (16,)
+        assert y.dtype == np.complex64
+
+    def test_steps_sizes(self):
+        for n in (1, 64, 1024):
+            x = np.ones(n, dtype=np.complex64)
+            y = <<component>>_steps(x<<py_fn_kwargs>>)
+            assert y.shape == (n,)
+
+    def test_steps_attr(self):
+        from <<package>> import <<component>>
+        y = <<component>>.steps(np.ones(4, dtype=np.complex64)<<py_fn_kwargs>>)
+        assert y.shape == (4,)
+"""
+
+PURE_SCALAR_BENCH_C = """\
+#include "<<component>>/<<component>>_core.h"
+#include <complex.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define BENCH_N    65536
+#define ITERATIONS 200
+
+static double
+elapsed_sec(struct timespec *t0, struct timespec *t1)
+{
+    return (double)(t1->tv_sec - t0->tv_sec)
+           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
+}
+
+int
+main(void)
+{
+    float complex *in  = malloc(BENCH_N * sizeof(float complex));
+    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
+    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+
+    for (int i = 0; i < 16; i++)
+        (void)<<component>>_fn(1.0f + 0.0f * I<<c_fn_call_defaults>>);
+
+    struct timespec t0, t1;
+    double sec;
+
+    printf("=== <<component>> benchmark (pure/scalar) ===\\n");
+    printf("block = %d samples,  %d iterations\\n\\n", BENCH_N, ITERATIONS);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        for (int i = 0; i < BENCH_N; i++)
+            (void)<<component>>_fn(in[i]<<c_fn_call_defaults>>);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  fn()     %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        <<component>>_steps(in, out, BENCH_N<<c_fn_call_defaults>>);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  steps()  %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    free(in); free(out);
+    return 0;
+}
+"""
+
+PURE_SCALAR_BENCH_PY = """\
+import numpy as np
+import pytest
+
+from <<package>> import <<component>>, <<component>>_steps
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_fn(benchmark):
+    benchmark(<<component>>, 1.0 + 0.0j<<py_fn_kwargs>>)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_1k(benchmark):
+    x = np.ones(1024, dtype=np.complex64)
+    benchmark(<<component>>_steps, x<<py_fn_kwargs>>)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_64k(benchmark):
+    x = np.ones(65536, dtype=np.complex64)
+    benchmark(<<component>>_steps, x<<py_fn_kwargs>>)
+"""
+
+# ── Pure struct templates ─────────────────────────────────────────────────────
+
+PURE_STRUCT_CORE_H = """\
+/**
+ * @file <<component>>_core.h
+ * @brief <<Component>> — pure (caller-managed) params.
+ *
+ * The caller owns <<component>>_params_t and passes it to every call.
+ * Multiple channels can use the same <<component>>_fn by keeping separate
+ * params instances — no hidden global state.
+ *
+ * Stack usage:
+ * @code
+ * <<component>>_params_t p;
+ * <<component>>_params_init(&p);
+ * float complex y = <<component>>_fn(x, &p);
+ * @endcode
+ *
+ * Heap usage (with aligned allocation for SIMD):
+ * @code
+ * <<component>>_params_t *p = <<component>>_params_create();
+ * float complex y = <<component>>_fn(x, p);
+ * <<component>>_params_free(p);
+ * @endcode
+ */
+#ifndef <<COMPONENT>>_CORE_H
+#define <<COMPONENT>>_CORE_H
+
+#include "clib_common.h"
+<<perf_include>>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Caller-managed params for <<component>>.
+ *
+ * Layout is non-opaque — all fields are directly accessible.
+ * Allocate with <<component>>_params_create() for heap (aligned),
+ * or declare on the stack and call <<component>>_params_init().
+ */
+typedef struct {
+<<params_struct_fields>>
+} <<component>>_params_t;
+
+/** @brief Heap-allocate and zero-initialise params. Returns NULL on OOM. */
+<<component>>_params_t *<<component>>_params_create(void);
+
+/** @brief Free heap-allocated params. Safe to call with NULL. */
+void <<component>>_params_free(<<component>>_params_t *p);
+
+/** @brief In-place zero-initialise (for stack / custom allocation). */
+void <<component>>_params_init(<<component>>_params_t *p);
+
+/**
+ * @brief Process a single complex sample.
+ * @param x       Input sample.
+ * @param params  Caller-managed params (modified in place).
+ * @return        Output sample.
+ */
+<<step_qualifier>>float complex
+<<component>>_fn(float complex x, <<component>>_params_t *params)
+{
+    (void)x; (void)params;  /* TODO: implement */
+    return x;
+}
+
+/**
+ * @brief Process a block of complex samples.
+ * @param input   Input array  (length >= n).
+ * @param output  Output array (length >= n; may alias input).
+ * @param n       Number of samples.
+ * @param params  Caller-managed params (modified in place).
+ */
+void <<component>>_steps(
+    const float complex     *input,
+    float complex           *output,
+    size_t                   n,
+    <<component>>_params_t  *params);
+
+<<params_getter_setter_decls>>
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* <<COMPONENT>>_CORE_H */
+"""
+
+PURE_STRUCT_CORE_C = """\
+#include "<<component>>/<<component>>_core.h"
+
+<<component>>_params_t *
+<<component>>_params_create(void)
+{
+    /* calloc: zero-initialises all fields.
+     * For SIMD alignment use aligned_alloc(64, sizeof(*p)) and memset. */
+    <<component>>_params_t *p = calloc(1, sizeof(*p));
+    if (!p) return NULL;
+<<params_create_assigns>>
+    return p;
+}
+
+void
+<<component>>_params_free(<<component>>_params_t *p)
+{
+    free(p);
+}
+
+void
+<<component>>_params_init(<<component>>_params_t *p)
+{
+    memset(p, 0, sizeof(*p));
+<<params_reset_assigns>>
+}
+
+void
+<<component>>_steps(
+    const float complex     *input,
+    float complex           *output,
+    size_t                   n,
+    <<component>>_params_t  *params)
+{
+    for (size_t i = 0; i < n; i++)
+        output[i] = <<component>>_fn(input[i], params);
+}
+
+<<params_getter_setter_impls>>
+"""
+
+PURE_STRUCT_EXT_C = """\
+/*
+ * <<component>>_ext.c — Python C extension for <<component>>_core.h (pure/struct)
+ *
+ * Exposes <<Component>> — a thin Python wrapper over <<component>>_params_t.
+ * The caller owns the params; multiple instances can share the same algorithm.
+ */
+
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#include <numpy/arrayobject.h>
+#include <complex.h>
+
+#include "<<component>>/<<component>>_core.h"
+
+/* ======================================================== */
+/* <<Component>>Object — wraps <<component>>_params_t *      */
+/* ======================================================== */
+
+typedef struct {
+    PyObject_HEAD
+    <<component>>_params_t *handle;
+} <<Component>>Object;
+
+static void
+<<Component>>_dealloc(<<Component>>Object *self)
+{
+    if (self->handle)
+        <<component>>_params_free(self->handle);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static PyObject *
+<<Component>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
+    if (self) self->handle = NULL;
+    return (PyObject *)self;
+}
+
+static int
+<<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
+{
+<<init_parse_block>>    self->handle = <<component>>_params_create();
+    if (!self->handle) {
+        PyErr_SetString(PyExc_MemoryError,
+                        "<<component>>_params_create returned NULL");
+        return -1;
+    }
+<<params_init_overrides>>    return 0;
+}
+
+static PyObject *
+<<Component>>_call(<<Component>>Object *self, PyObject *args, PyObject *kwds)
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+    Py_complex pyx;
+    if (!PyArg_ParseTuple(args, "D", &pyx))
+        return NULL;
+    float complex x = (float)pyx.real + (float)pyx.imag * I;
+    float complex y = <<component>>_fn(x, self->handle);
+    return PyComplex_FromDoubles((double)crealf(y), (double)cimagf(y));
+}
+
+static PyObject *
+<<Component>>_steps(<<Component>>Object *self, PyObject *args)
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+    PyObject *in_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O", &in_obj))
+        return NULL;
+
+    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        in_obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS);
+    if (!in_arr) return NULL;
+
+    Py_ssize_t n = PyArray_SIZE(in_arr);
+    npy_intp dims[] = {n};
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+
+    <<component>>_steps(
+        (const float complex *)PyArray_DATA(in_arr),
+        (float complex *)PyArray_DATA((PyArrayObject *)out_arr),
+        (size_t)n,
+        self->handle);
+
+    Py_DECREF(in_arr);
+    return out_arr;
+}
+
+static PyObject *
+<<Component>>_reset(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+    <<component>>_params_init(self->handle);
+    Py_RETURN_NONE;
+}
+
+<<getter_setter_methods_c>>
+
+static PyObject *
+<<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    if (self->handle) {
+        <<component>>_params_free(self->handle);
+        self->handle = NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+<<Component>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    Py_INCREF(self);
+    return (PyObject *)self;
+}
+
+static PyObject *
+<<Component>>_exit(<<Component>>Object *self, PyObject *args)
+{
+    (void)args;
+    if (self->handle) {
+        <<component>>_params_free(self->handle);
+        self->handle = NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef <<Component>>_methods[] = {
+    {"steps",     (PyCFunction)<<Component>>_steps,   METH_VARARGS,
+     "Process a complex64 ndarray. Returns complex64 ndarray."},
+    {"reset",     (PyCFunction)<<Component>>_reset,   METH_NOARGS,
+     "Re-zero all params fields to post-create defaults."},
+<<getter_setter_pymethoddef>>
+    {"destroy",   (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+     "Release resources."},
+    {"__enter__", (PyCFunction)<<Component>>_enter,    METH_NOARGS,  NULL},
+    {"__exit__",  (PyCFunction)<<Component>>_exit,     METH_VARARGS, NULL},
+    {NULL}
+};
+
+static PyTypeObject <<Component>>Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "<<component>>.<<Component>>",
+    .tp_basicsize = sizeof(<<Component>>Object),
+    .tp_dealloc   = (destructor)<<Component>>_dealloc,
+    .tp_call      = (ternaryfunc)<<Component>>_call,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_doc       = "<<Component>> — caller-managed params wrapper.",
+    .tp_methods   = <<Component>>_methods,
+    .tp_new       = <<Component>>_new,
+    .tp_init      = (initproc)<<Component>>_init,
+};
+
+static PyModuleDef <<component>>_module = {
+    PyModuleDef_HEAD_INIT,
+    .m_name    = "<<component>>",
+    .m_doc     = "Pure (caller-managed) binding for <<component>>_core.h.",
+    .m_size    = -1,
+    .m_methods = NULL,
+};
+
+PyMODINIT_FUNC
+PyInit_<<component>>(void)
+{
+    import_array();
+    if (PyType_Ready(&<<Component>>Type) < 0) return NULL;
+
+    PyObject *m = PyModule_Create(&<<component>>_module);
+    if (!m) return NULL;
+
+    Py_INCREF(&<<Component>>Type);
+    if (PyModule_AddObject(m, "<<Component>>",
+                           (PyObject *)&<<Component>>Type) < 0) {
+        Py_DECREF(&<<Component>>Type);
+        Py_DECREF(m);
+        return NULL;
+    }
+    return m;
+}
+"""
+
+PURE_STRUCT_TEST_C = """\
+#include "<<component>>/<<component>>_core.h"
+#include <assert.h>
+#include <complex.h>
+#include <stdio.h>
+
+int main(void)
+{
+    /* heap-allocated params */
+    <<component>>_params_t *p = <<component>>_params_create();
+    assert(p != NULL);
+
+    /* fn: verify it runs */
+    (void)<<component>>_fn(1.0f + 0.0f * I, p);
+
+    /* steps: verify it runs */
+    float complex in[4]  = {1, 2, 3, 4};
+    float complex out[4] = {0};
+    <<component>>_steps(in, out, 4, p);
+
+    /* stack allocation via init */
+    <<component>>_params_t stack_p;
+    <<component>>_params_init(&stack_p);
+    (void)<<component>>_fn(1.0f + 0.0f * I, &stack_p);
+
+    <<component>>_params_free(p);
+    printf("test_<<component>>_core PASSED\\n");
+    return 0;
+}
+"""
+
+PURE_STRUCT_PYI = """\
+import numpy as np
+from numpy.typing import NDArray
+
+class <<Component>>:
+    \"\"\"<<Component>> — caller-managed params wrapper.
+
+    Wraps <<component>>_params_t.  The instance IS the params; pass it to
+    <<component>>_fn / <<component>>_steps to process samples.
+
+    Parameters
+    ----------
+<<pyi_param_docs>>
+    \"\"\"
+
+    def __init__(self, <<init_params_pyi>>) -> None: ...
+    def __call__(self, x: complex) -> complex:
+        \"\"\"Process one complex sample.\"\"\"
+        ...
+    def steps(self, arr: NDArray[np.complex64]) -> NDArray[np.complex64]:
+        \"\"\"Process a complex64 ndarray. Returns complex64 ndarray.\"\"\"
+        ...
+    def reset(self) -> None:
+        \"\"\"Re-zero all params fields to post-create defaults.\"\"\"
+        ...
+<<getter_setter_stubs_pyi>>
+    def destroy(self) -> None:
+        \"\"\"Release resources.\"\"\"
+        ...
+    def __enter__(self) -> "<<Component>>": ...
+    def __exit__(self, *args: object) -> None: ...
+"""
+
+PYTEST_PURE_STRUCT_TEST = """\
+import numpy as np
+import pytest
+
+from <<package>> import <<Component>>
+
+
+def _raises(exc, **kw):
+    return pytest.raises(exc, **kw)
+
+
+class Test<<Component>>:
+    def test_create(self):
+        obj = <<Component>>(<<py_create_args>>)
+        assert obj is not None
+
+    def test_call_runs(self):
+        obj = <<Component>>(<<py_create_args>>)
+        y = obj(1.0 + 0.0j)
+        assert isinstance(y, complex)
+
+    def test_steps_runs(self):
+        obj = <<Component>>(<<py_create_args>>)
+        x = np.ones(16, dtype=np.complex64)
+        y = obj.steps(x)
+        assert y.shape == (16,)
+        assert y.dtype == np.complex64
+
+    def test_steps_sizes(self):
+        obj = <<Component>>(<<py_create_args>>)
+        for n in (1, 64, 1024):
+            x = np.ones(n, dtype=np.complex64)
+            assert obj.steps(x).shape == (n,)
+
+    def test_reset(self):
+        obj = <<Component>>(<<py_create_args>>)
+        obj.reset()
+        y = obj(1.0 + 0.0j)
+        assert isinstance(y, complex)
+
+    def test_context_manager(self):
+        with <<Component>>(<<py_create_args>>) as obj:
+            y = obj.steps(np.ones(4, dtype=np.complex64))
+        assert y.shape == (4,)
+
+    def test_destroy(self):
+        obj = <<Component>>(<<py_create_args>>)
+        obj.destroy()
+        with _raises(RuntimeError, match="destroyed"):
+            obj(1.0 + 0.0j)
+"""
+
+PURE_STRUCT_BENCH_C = """\
+#include "<<component>>/<<component>>_core.h"
+#include <complex.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define BENCH_N    65536
+#define ITERATIONS 200
+
+static double
+elapsed_sec(struct timespec *t0, struct timespec *t1)
+{
+    return (double)(t1->tv_sec - t0->tv_sec)
+           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
+}
+
+int
+main(void)
+{
+    float complex *in  = malloc(BENCH_N * sizeof(float complex));
+    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
+    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+
+    <<component>>_params_t *p = <<component>>_params_create();
+
+    for (int i = 0; i < 16; i++) (void)<<component>>_fn(1.0f + 0.0f * I, p);
+
+    struct timespec t0, t1;
+    double sec;
+
+    printf("=== <<component>> benchmark (pure/struct) ===\\n");
+    printf("block = %d samples,  %d iterations\\n\\n", BENCH_N, ITERATIONS);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        for (int i = 0; i < BENCH_N; i++)
+            (void)<<component>>_fn(in[i], p);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  fn()     %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        <<component>>_steps(in, out, BENCH_N, p);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  steps()  %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    <<component>>_params_free(p);
+    free(in); free(out);
+    return 0;
+}
+"""
+
+PURE_STRUCT_BENCH_PY = """\
+import numpy as np
+import pytest
+
+from <<package>> import <<Component>>
+
+
+@pytest.fixture
+def obj():
+    return <<Component>>(<<py_create_args>>)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_fn(benchmark, obj):
+    benchmark(obj, 1.0 + 0.0j)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_1k(benchmark, obj):
+    x = np.ones(1024, dtype=np.complex64)
+    benchmark(obj.steps, x)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_64k(benchmark, obj):
+    x = np.ones(65536, dtype=np.complex64)
+    benchmark(obj.steps, x)
+"""
+
 # ── CMakeLists.txt ───────────────────────────────────────────────────────────
 
 CMAKE_LISTS_TOP = """\
@@ -1577,6 +2660,16 @@ PACKAGE_INIT_PY = """\
 from .<<component>> import <<Component>>
 
 __all__ = ["<<Component>>"]
+"""
+
+PACKAGE_INIT_PY_PURE_SCALAR = """\
+\"\"\"<<package>> — <<component>> pure-function component.\"\"\"
+
+from .<<component>> import <<component>>, <<component>>_steps
+
+<<component>>.steps = <<component>>_steps
+
+__all__ = ["<<component>>"]
 """
 
 COMPONENT_PYI = """\

@@ -85,6 +85,7 @@ def run(
     component: str,
     state_vars: list[tuple[str, str, str]] | None = None,
     perf: bool | None = None,
+    pure: bool = False,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -127,7 +128,15 @@ def run(
             "version": version,
         }
     )
-    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
+
+    if pure:
+        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], vars_)
+        ctx.update(pure_ctx)
+        pure_style = pure_ctx["pure_style"]
+    else:
+        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
+        pure_style = None
+
     ctx.update(T.make_perf_ctx(perf))
 
     def r(tmpl):
@@ -146,12 +155,43 @@ def run(
         if not perf_h.exists():
             _write(perf_h, r(T.JM_PERF_H))
 
+    if pure_style == "scalar":
+        core_h_tmpl = T.PURE_SCALAR_CORE_H
+        core_c_tmpl = T.PURE_SCALAR_CORE_C
+        ext_c_tmpl = T.PURE_SCALAR_EXT_C
+        test_c_tmpl = T.PURE_SCALAR_TEST_C
+        bench_c_tmpl = T.PURE_SCALAR_BENCH_C
+        pyi_tmpl = T.PURE_SCALAR_PYI
+        pytest_tmpl = T.PYTEST_PURE_SCALAR_TEST
+        bench_py_tmpl = T.PURE_SCALAR_BENCH_PY
+        init_py_tmpl = T.PACKAGE_INIT_PY_PURE_SCALAR
+    elif pure_style == "struct":
+        core_h_tmpl = T.PURE_STRUCT_CORE_H
+        core_c_tmpl = T.PURE_STRUCT_CORE_C
+        ext_c_tmpl = T.PURE_STRUCT_EXT_C
+        test_c_tmpl = T.PURE_STRUCT_TEST_C
+        bench_c_tmpl = T.PURE_STRUCT_BENCH_C
+        pyi_tmpl = T.PURE_STRUCT_PYI
+        pytest_tmpl = T.PYTEST_PURE_STRUCT_TEST
+        bench_py_tmpl = T.PURE_STRUCT_BENCH_PY
+        init_py_tmpl = T.PACKAGE_INIT_PY
+    else:
+        core_h_tmpl = T.COMPONENT_CORE_H
+        core_c_tmpl = T.COMPONENT_CORE_C
+        ext_c_tmpl = T.COMPONENT_EXT_C
+        test_c_tmpl = T.COMPONENT_TEST_C
+        bench_c_tmpl = T.COMPONENT_BENCH_C
+        pyi_tmpl = T.COMPONENT_PYI
+        pytest_tmpl = T.PYTEST_TEST
+        bench_py_tmpl = T.COMPONENT_BENCH_PY
+        init_py_tmpl = T.PACKAGE_INIT_PY
+
     # C headers
-    _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
+    _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
 
     # C sources
-    _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
-    _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(T.COMPONENT_EXT_C))
+    _write(root / "native" / "src" / comp / f"{comp}_core.c", r(core_c_tmpl))
+    _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
 
     build = C.build_system(cfg)
 
@@ -162,25 +202,25 @@ def run(
         )
 
     # C test
-    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
+    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(test_c_tmpl))
 
     # C benchmark
-    _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(T.COMPONENT_BENCH_C))
+    _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(bench_c_tmpl))
 
     # Python package — write __init__.py only if it doesn't exist yet
     init_py = root / "src" / pkg / "__init__.py"
     if not init_py.exists():
-        _write(init_py, r(T.PACKAGE_INIT_PY))
+        _write(init_py, r(init_py_tmpl))
 
-    _write(root / "src" / pkg / f"{comp}.pyi", r(T.COMPONENT_PYI))
+    _write(root / "src" / pkg / f"{comp}.pyi", r(pyi_tmpl))
     _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)
-    _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(T.PYTEST_TEST))
+    _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(pytest_tmpl))
 
     # Python benchmark
     benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
-    _write(root / "src" / pkg / "benchmarks" / f"bench_{comp}.py", r(T.COMPONENT_BENCH_PY))
+    _write(root / "src" / pkg / "benchmarks" / f"bench_{comp}.py", r(bench_py_tmpl))
 
     # Benchmark history dir (committed to git)
     gitkeep = root / ".benchmarks" / ".gitkeep"
@@ -214,7 +254,7 @@ def run(
         print(f"  update  {mf_path}")
 
     # just-makeit.toml
-    C.add_component(cfg, comp, vars_)
+    C.add_component(cfg, comp, vars_, pure=pure_style)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## \[0.3.0\] — 2026-05-08
+
+### Added
+
+- `--pure` flag on `just-makeit new` and `just-makeit init` — generates a
+  **stateless** component where the caller supplies all parameters per call.
+  Style is auto-detected from the state variable types:
+  - **Scalar-only state** → *scalar* style: params passed per call as function
+    arguments.  The Python module exports `<comp>(x, **params)` and
+    `<comp>_steps(arr, **params)`; a `.steps` attribute is attached to the
+    function in `__init__.py` so `<comp>.steps(arr)` also works.
+  - **Any array state** → *struct* style: caller-managed `<comp>_params_t`
+    struct with heap-alloc helper `_params_create()` (uses `calloc`; comment
+    shows `aligned_alloc` for SIMD), `_params_free()`, and `_params_init()` for
+    stack/custom allocation.  Python exposes a `<Component>` callable class
+    (`obj(x)` via `tp_call`, `obj.steps(arr)`, context-manager support).
+- Both pure styles ship with: C test, C benchmark, Python benchmark, `.pyi`
+  stub, and pytest test — all regenerated on `just-makeit add --state`.
+- `examples/fir_filter` Step 8: pure FIR variant demonstrating struct-style
+  caller-managed params, multiple independent channels, and stack allocation.
+- `pure` field persisted in `just-makeit.toml`; read back by `just-makeit add`
+  to select the correct template set when state variables change.
+
 ## \[0.2.0\] — 2026-05-08
 
 ### Added

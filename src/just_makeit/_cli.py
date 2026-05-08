@@ -10,13 +10,15 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf]
+  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
                      Create a new project; optionally scaffold a first component
                      --basic uses a plain Makefile instead of CMake
                      --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
-  init <name> [--state name:type[:default] ...] [--perf]
+                     --pure generates a stateless component (scalar params or caller-managed struct)
+  init <name> [--state name:type[:default] ...] [--perf] [--pure]
                      Add a component to the project in the current directory
                      --perf enables performance hints (inherited from project config by default)
+                     --pure generates a stateless component (auto-detected: scalar or struct)
   add --state name:type[:default] [--component name] [...]
                      Add state variables to an existing component
   perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
@@ -32,11 +34,19 @@ Scalar types: double (default), float, int, int8_t…int64_t, uint8_t…uint64_t
 Array types:  type[N]  e.g. float[64], double _Complex[32]
               Array fields are always zero-initialised; no default may be given.
 
+Pure mode auto-detection:
+  All scalar --state vars  → scalar style: params passed per call, module functions
+                             e.g. normalize(x, scale=1.0); normalize.steps(arr)
+  Any array --state var    → struct style: caller-managed params_t, alloc helpers
+                             e.g. f = MyComp(cutoff=440.0); f(x); f.steps(arr)
+
 Examples:
   just-makeit new my_filter                               # project scaffold only
   just-makeit new my_filter --component my_filter        # project + first component
   just-makeit new my_bpf --component bpf --state center:double --state bw:double
   just-makeit init engine --state rate:double:1.0        # add component to existing project
+  just-makeit init norm --pure --state scale:double:1.0  # scalar pure component
+  just-makeit init fir --pure --state taps:float[64]     # struct pure (array → struct)
   just-makeit add --state order:int:4                    # add state var to existing component
   just-makeit config                                     # show project config
   just-makeit config version 0.2.0                      # set version
@@ -107,6 +117,7 @@ def main() -> None:
         component = None
         basic = False
         perf = False
+        pure = False
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -129,6 +140,9 @@ def main() -> None:
             elif tok == "--perf":
                 perf = True
                 i += 1
+            elif tok == "--pure":
+                pure = True
+                i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -136,7 +150,7 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf)
+        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf, pure=pure)
 
     elif cmd == "init":
         if len(args) < 2:
@@ -150,6 +164,7 @@ def main() -> None:
 
         component = args[1]
         perf: bool | None = None
+        pure = False
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -162,11 +177,14 @@ def main() -> None:
             elif tok == "--perf":
                 perf = True
                 i += 1
+            elif tok == "--pure":
+                pure = True
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _init.run(Path.cwd(), component, state_vars or None, perf=perf)
+        _init.run(Path.cwd(), component, state_vars or None, perf=perf, pure=pure)
 
     elif cmd == "add":
         from . import _add

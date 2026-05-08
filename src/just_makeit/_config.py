@@ -76,10 +76,28 @@ def from_new(
     return {"project": proj}
 
 
-def add_component(cfg: dict, component: str, vars_: list[tuple[str, str, str]]) -> dict:
-    cfg[component] = {
+def pure_style(cfg: dict, component: str) -> str | None:
+    """Return 'scalar', 'struct', or None (stateful / not pure)."""
+    v = cfg.get(component, {}).get("pure")
+    return v if v in ("scalar", "struct") else None
+
+
+def is_pure_component(cfg: dict, component: str) -> bool:
+    return pure_style(cfg, component) is not None
+
+
+def add_component(
+    cfg: dict,
+    component: str,
+    vars_: list[tuple[str, str, str]],
+    pure: str | None = None,
+) -> dict:
+    entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
     }
+    if pure:
+        entry["pure"] = pure
+    cfg[component] = entry
     return cfg
 
 
@@ -96,7 +114,12 @@ def _dump(cfg: dict) -> str:
         lines.append("")
 
     for comp in components(cfg):
-        for s in cfg[comp].get("state", []):
+        comp_data = cfg[comp]
+        if comp_data.get("pure"):
+            lines.append(f"[{comp}]")
+            lines.append(f'pure = "{comp_data["pure"]}"')
+            lines.append("")
+        for s in comp_data.get("state", []):
             lines.append(f"[[{comp}.state]]")
             lines.append(f'name = "{s["name"]}"')
             lines.append(f'type = "{s["type"]}"')
