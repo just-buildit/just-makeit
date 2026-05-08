@@ -345,8 +345,10 @@ class TestNewBuild:
         assert so_files, "No .so file found in src/"
 
     def test_combined_lib_produced(self, built_project):
-        lib = built_project / "build" / "libgain.so"
-        assert lib.exists(), f"Combined shared library not found at {lib}"
+        import platform
+        suffix = ".dylib" if platform.system() == "Darwin" else ".so"
+        libs = list((built_project / "build").rglob(f"libgain{suffix}"))
+        assert libs, f"Combined shared library libgain{suffix} not found in build/"
 
     def test_ctest_passes(self, built_project):
         import subprocess
