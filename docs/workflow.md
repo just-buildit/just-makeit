@@ -252,6 +252,22 @@ target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
 
 ______________________________________________________________________
 
+## Pure (stateless / caller-managed) components
+
+`--pure` generates a component where the caller supplies parameters per call
+or manages the working-state struct directly, instead of the library owning
+an opaque pointer.
+
+```sh
+just-makeit init normalize --pure --state scale:double:1.0   # scalar: fn(x, scale)
+just-makeit init fir       --pure --state taps:"float[64]"   # struct: caller owns params_t
+```
+
+See [Stateful vs pure components](pure.md) for the full cost/benefit analysis
+and a decision guide.
+
+______________________________________________________________________
+
 ## Performance optimization
 
 Once your algorithm is working, opt into performance annotations at any time:

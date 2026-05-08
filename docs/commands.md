@@ -21,6 +21,7 @@ any components — the source of truth for all subsequent commands.
 | `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
 | `--component name`            | Scaffold a first component immediately (optional).                                   |
 | `--state name:type[:default]` | Declare a state variable for the component. Repeatable.                              |
+| `--pure`                      | Generate a stateless component. See [Stateful vs pure](pure.md).                    |
 
 ______________________________________________________________________
 
@@ -44,6 +45,7 @@ the Python type stub and test file.
 | ----------------------------- | --------------------------------------------------------------------------------------------- |
 | `component`                   | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely.      |
+| `--pure`                      | Generate a stateless component. See [Stateful vs pure](pure.md).                    |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
