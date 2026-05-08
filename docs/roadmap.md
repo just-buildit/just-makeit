@@ -13,53 +13,32 @@ disappear. Your algorithm should be all that remains.
 
 ______________________________________________________________________
 
-## v0.2 — Performance scaffold
+## v0.2 — Performance scaffold ✓ shipped
 
 Real algorithms are hot. The generated code should be ready for it.
 
-**`--perf` flag** on `new` and `init` generates a `jm_perf.h` header alongside
-the common headers. All macros are C99-compatible: compiler-extension paths are
-gated behind `#if defined(...)` guards, with safe no-op fallbacks for unknown
-compilers.
+**Planned and delivered:**
 
-```c
-/* GCC / Clang */
-#if defined(__GNUC__) || defined(__clang__)
-#  define JM_LIKELY(x)     __builtin_expect(!!(x), 1)
-#  define JM_UNLIKELY(x)   __builtin_expect(!!(x), 0)
-#  define JM_RESTRICT      restrict            /* C99 keyword */
-#  define JM_FORCEINLINE   __attribute__((always_inline)) inline
-#  define JM_ALIGNED(n)    __attribute__((aligned(n)))
-#  define JM_HOT           __attribute__((hot))
+- `--perf` flag on `new` and `init` — generates `jm_perf.h` with
+  `JM_FORCEINLINE`, `JM_HOT`, `JM_LIKELY`, `JM_UNLIKELY`, `JM_RESTRICT`,
+  `JM_ALIGNED`.  All macros are C99-compatible with safe no-op fallbacks.
+- `ENABLE_SIMD` CMake option — enables `-march=native -ffast-math` on
+  GCC/Clang.  Off by default; opt in per build.
+- `/* #pragma omp simd */` annotation on the generated `steps()` loop.
 
-/* MSVC */
-#elif defined(_MSC_VER)
-#  define JM_LIKELY(x)     (x)
-#  define JM_UNLIKELY(x)   (x)
-#  define JM_RESTRICT      __restrict
-#  define JM_FORCEINLINE   __forceinline
-#  define JM_ALIGNED(n)    __declspec(align(n))
-#  define JM_HOT
+**Delivered beyond plan:**
 
-/* Unknown / strict C99 — safe no-ops */
-#else
-#  define JM_LIKELY(x)     (x)
-#  define JM_UNLIKELY(x)   (x)
-#  define JM_RESTRICT      restrict
-#  define JM_FORCEINLINE   inline
-#  define JM_ALIGNED(n)
-#  define JM_HOT
-#endif
-```
-
-**SIMD cmake option** — `cmake -DENABLE_SIMD=ON` enables `-march=native -ffast-math`
-(GCC/Clang) or `/arch:AVX2 /fp:fast` (MSVC). Off by default; opt in per build.
-
-**`steps()` loop annotation** — the generated block-processing loop gets a
-`/* #pragma omp simd */` comment so enabling it is a one-line opt-in.
-
-Zero runtime dependencies — purely compile-time hints that fall back gracefully
-on compilers that don't support them.
+- `just-makeit perf` command — upgrades an existing project in-place without
+  touching any user-written code.  The `--perf` flag is for new scaffolds;
+  `just-makeit perf` is for projects already in progress.
+- `JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)` macro —
+  stamps out the outer dispatch loop from three separated concerns: algorithm
+  history depth, SIMD batch width, and scratch-buffer tuning.  The user writes
+  `step()`.  The macro generates everything else.
+- `sliding_correlator` example — proves `JM_DEFINE_STEPS` is
+  algorithm-agnostic: complex cross-correlation with a different state layout
+  and complex multiply uses the exact same macro invocation as the FIR filter.
+- `docs/perf.md` — full reference for the macro set and `JM_DEFINE_STEPS`.
 
 ______________________________________________________________________
 
