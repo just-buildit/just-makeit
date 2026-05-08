@@ -176,11 +176,75 @@ with FirPure() as fir2:   # context manager → _params_free on exit
 **Benefit:**
 
 - **Caller controls allocation.** The library provides `_params_create()` as
-  a convenience, but the caller can just as well use:
-  - Stack allocation + `_params_init()` (zero overhead, no heap)
-  - `aligned_alloc(64, sizeof(*p))` for AVX-512 SIMD alignment
-  - A pool allocator for N simultaneous channels
-  - `mmap` for persistent state across process restarts
+  a convenience, but the caller is free to use any allocation strategy.
+
+  **Heap (default helper)** — what the Python binding does internally:
+  ```c
+  fir_pure_params_t *p = fir_pure_params_create();  /* calloc + defaults */
+  fir_pure_fn(x, p);
+  fir_pure_params_free(p);
+  ```
+  The generated `test_<comp>_core.c` demonstrates this alongside stack
+  allocation, so both patterns are CTest-verified from day one.
+
+  **Stack** — zero allocation cost; `_params_init` zero-fills and applies defaults:
+  ```c
+  fir_pure_params_t p;
+  fir_pure_params_init(&p);       /* memset + scalar defaults */
+  fir_pure_fn(x, &p);            /* no heap touch */
+  ```
+  Use this in tight inner loops or interrupt handlers where `malloc` is
+  forbidden.
+
+  **SIMD-aligned heap** — for AVX-512 you need 64-byte alignment:
+  ```c
+  fir_pure_params_t *p = aligned_alloc(64, sizeof(*p));
+  memset(p, 0, sizeof(*p));
+  fir_pure_params_init(p);        /* apply scalar defaults over the zero fill */
+  fir_pure_fn(x, p);
+  free(p);
+  ```
+  The comment in `_params_create()` points here; the generated source uses
+  `calloc` by default and notes the `aligned_alloc` substitution explicitly.
+
+  **N-channel array** — N independent channels, single allocation, no pointer
+  chasing:
+  ```c
+  #define N_CHANNELS 8
+  fir_pure_params_t ch[N_CHANNELS];
+  for (int i = 0; i < N_CHANNELS; i++)
+      fir_pure_params_init(&ch[i]);
+
+  for (int i = 0; i < N_CHANNELS; i++)
+      fir_pure_steps(in[i], out[i], block_len, &ch[i]);
+  ```
+
+  **Arena / pool** — pre-allocate a slab, carve out params with pointer
+  arithmetic, free the whole arena at once:
+  ```c
+  char arena[N_CHANNELS * sizeof(fir_pure_params_t)];
+  fir_pure_params_t *ch = (fir_pure_params_t *)arena;
+  for (int i = 0; i < N_CHANNELS; i++)
+      fir_pure_params_init(&ch[i]);
+  /* ... process ... */
+  /* free: nothing — arena is on the stack or owned by the caller */
+  ```
+
+  **`mmap` for persistence** — map a file, cast to the struct, call
+  `_params_init` only on first creation:
+  ```c
+  int fd = open("state.bin", O_RDWR | O_CREAT, 0600);
+  ftruncate(fd, sizeof(fir_pure_params_t));
+  fir_pure_params_t *p = mmap(NULL, sizeof(*p),
+                               PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (is_new_file)
+      fir_pure_params_init(p);    /* first run: zero + defaults */
+  fir_pure_fn(x, p);
+  msync(p, sizeof(*p), MS_ASYNC); /* flush to disk */
+  munmap(p, sizeof(*p));
+  ```
+  Because the struct is non-opaque and contains no pointers, the binary
+  layout is stable across runs on the same architecture.
 
 - **Non-opaque struct.** In C you can inspect, copy, serialize, or checkpoint
   the entire state with a single `memcpy`. No getter/setter indirection.
