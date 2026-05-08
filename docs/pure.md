@@ -279,31 +279,27 @@ ______________________________________________________________________
 
 ## Decision guide
 
-```
-Does your algorithm remember anything between calls?
-│
-├─ No (each output depends only on current input + fixed params)
-│  └─ Use  --pure  (scalar style auto-selected when no arrays)
-│     e.g. normalize, clip, dB conversion, window evaluation
-│
-└─ Yes (delay line, accumulator, envelope, phase, history buffer)
-   │
-   ├─ Is the state conceptually private implementation detail?
-   │  The caller shouldn't need to see or own it.
-   │  └─ Use stateful (default)
-   │     e.g. IIR filter, oscillator, PLL, running stats
-   │
-   └─ Does the caller need to control allocation, alignment, or
-      inspect/copy the state directly?
-      │
-      ├─ Yes
-      │  └─ Use  --pure  with array state (struct style auto-selected)
-      │     e.g. FIR with caller-managed delay line, convolution engine
-      │
-      └─ No — but you want explicit lifecycle + multiple channels
-         sharing one algorithm in C
-         └─ Also  --pure  struct; or stateful with N instances
-            (both work; struct gives caller allocation control)
+```mermaid
+flowchart TD
+    Q1{"Does the algorithm remember\nanything between calls?"}
+
+    Q1 -->|"No — output depends only on\ncurrent input + fixed params"| SCALAR
+    Q1 -->|"Yes — delay line, accumulator,\nenvelope, phase, history buffer"| Q2
+
+    Q2{"Is the working state\nprivate implementation detail?\nCaller doesn't need to see or own it."}
+
+    Q2 -->|Yes| STATEFUL
+    Q2 -->|"No — caller needs allocation\ncontrol, alignment, or direct\nstruct access"| STRUCT
+
+    SCALAR["<b>--pure</b> (scalar)\njust-makeit init comp --pure\n  --param scale:double:1.0\n───────────────────────\nno allocation · fully reentrant\ncomp(x, scale=1.0)\ncomp.steps(arr, scale=1.0)\ne.g. normalize, clip, dB, dither"]
+
+    STATEFUL["<b>stateful</b> (default)\njust-makeit init comp\n  --state gain:double:1.0\n───────────────────────\nlibrary owns opaque pointer\nobj = Comp(); obj.step(x)\ne.g. IIR filter, oscillator,\nPLL, running stats, AGC"]
+
+    STRUCT["<b>--pure</b> (struct)\njust-makeit init comp --pure\n  --param taps:float[64]\n───────────────────────\ncaller owns params_t\nstack · aligned_alloc · pool · mmap\nobj = Comp(); obj(x); obj.steps(arr)\ne.g. FIR, matched filter,\nN-channel convolution engine"]
+
+    style SCALAR   fill:#1e3a5f,stroke:#4a9eff,color:#e8f4fd
+    style STATEFUL fill:#1e3a2f,stroke:#4adf6f,color:#e8fdf0
+    style STRUCT   fill:#3a1e3a,stroke:#df4adf,color:#fde8fd
 ```
 
 ______________________________________________________________________
