@@ -19,6 +19,8 @@ Commands:
                      --perf enables performance hints (inherited from project config by default)
   add --state name:type[:default] [--component name] [...]
                      Add state variables to an existing component
+  perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
+                     annotations without overwriting any user code
   config [key value] Show or edit project configuration
   build [dir]        Configure + build C, then package wheel into dir (default: dist/)
   test               Build and run CTest + pytest
@@ -194,6 +196,11 @@ def main() -> None:
             sys.exit(1)
 
         _add.run(Path.cwd(), component, state_vars)
+
+    elif cmd == "perf":
+        from . import _perf
+
+        _perf.run(Path.cwd())
 
     elif cmd == "config":
         from . import _config as C

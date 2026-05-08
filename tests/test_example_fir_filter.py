@@ -8,6 +8,7 @@ honest.
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,184 @@ def test_readme_up_to_date():
         cwd=Path(__file__).parent.parent / "examples" / "fir_filter",
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
+
+
+# ---------------------------------------------------------------------------
+# Step 7: `just-makeit perf` upgrade + scratch-buffer kernel (scalar path)
+# ---------------------------------------------------------------------------
+
+_IMPULSE_CHECK = textwrap.dedent("""\
+    import numpy as np
+    from my_fir import FirFilter
+
+    f = FirFilter(gain=1.0)
+    h = np.array([0.25, 0.5, 0.25] + [0.0] * 13, dtype=np.float32)
+    f.set_coeffs(h)
+
+    impulse = np.zeros(16, dtype=np.complex64)
+    impulse[0] = 1.0
+    y = f.steps(impulse)
+    print(y[:4].real.tolist())
+""")
+
+_TAIL_CHECK = textwrap.dedent("""\
+    import numpy as np
+    from my_fir import FirFilter
+
+    f = FirFilter(gain=1.0)
+    h = np.array([0.25, 0.5, 0.25] + [0.0] * 13, dtype=np.float32)
+    f.set_coeffs(h)
+
+    # 19 samples: AVX-512 handles first 16, step() handles last 3
+    x = np.zeros(19, dtype=np.complex64)
+    x[0] = 1.0
+    y = f.steps(x)
+    print(y[:5].real.tolist())
+""")
+
+_CONTINUITY_CHECK = textwrap.dedent("""\
+    import numpy as np
+    from my_fir import FirFilter
+
+    f = FirFilter(gain=1.0)
+    h = np.array([0.25, 0.5, 0.25] + [0.0] * 13, dtype=np.float32)
+    f.set_coeffs(h)
+
+    # Split the impulse across two steps() calls so the tail crosses the boundary
+    y1 = f.steps(np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex64))
+    y2 = f.steps(np.zeros(4, dtype=np.complex64))
+    print(y1.real.tolist())
+    print(y2.real.tolist())
+""")
+
+
+def _approx_list(got, expected, atol=1e-5):
+    assert len(got) == len(expected), f"length mismatch: {got} vs {expected}"
+    for i, (g, e) in enumerate(zip(got, expected)):
+        assert abs(g - e) < atol, f"index {i}: got {g}, expected {e}"
+
+
+def _scaffold_perf(tmp_path_factory):
+    """Scaffold plain my_fir, implement step(), upgrade via 'just-makeit perf', apply step-7 patch."""
+    _require("cmake")
+    _require("gcc")
+    _require("just-makeit")
+
+    root = tmp_path_factory.mktemp("fir_perf") / "my_fir"
+
+    r = _run(
+        [
+            "just-makeit", "new", "my_fir",
+            "--component", "fir_filter",
+            "--state", "coeffs:float[16]",
+            "--state", "delay:float _Complex[16]",
+            "--state", "gain:float:1.0",
+        ],
+        cwd=root.parent,
+    )
+    assert r.returncode == 0, f"scaffold failed:\n{r.stderr}"
+
+    r = _run([PYTHON, str(STEPS / "02_patch.py")], cwd=root)
+    assert r.returncode == 0, f"step-2 patch failed:\n{r.stderr}"
+
+    r = _run(["just-makeit", "perf"], cwd=root)
+    assert r.returncode == 0, f"perf upgrade failed:\n{r.stderr}"
+
+    r = _run([PYTHON, str(STEPS / "07_patch.py")], cwd=root)
+    assert r.returncode == 0, f"step-7 patch failed:\n{r.stderr}"
+
+    r = _run(["make"], cwd=root)
+    assert r.returncode == 0, f"make failed:\n{r.stderr}"
+
+    return root
+
+
+def _has_avx512() -> bool:
+    cpuinfo = Path("/proc/cpuinfo")
+    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text()
+
+
+class TestStep7PerfScalar:
+    """Scalar-path correctness — always runs, no AVX-512 required."""
+
+    @pytest.fixture(scope="class")
+    def installed(self, tmp_path_factory):
+        root = _scaffold_perf(tmp_path_factory)
+        r = _run(["uv", "pip", "install", "-e", "."], cwd=root)
+        assert r.returncode == 0, f"pip install failed:\n{r.stderr}"
+        return root
+
+    def test_impulse_response(self, installed):
+        r = _run([PYTHON, "-c", _IMPULSE_CHECK], cwd=installed)
+        assert r.returncode == 0, r.stderr
+        vals = eval(r.stdout.strip())
+        _approx_list(vals, [0.25, 0.5, 0.25, 0.0])
+
+    def test_multi_block_continuity(self, installed):
+        """Impulse tail crosses the boundary between two steps() calls."""
+        r = _run([PYTHON, "-c", _CONTINUITY_CHECK], cwd=installed)
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        y1 = eval(lines[0])
+        y2 = eval(lines[1])
+        _approx_list(y1, [0.25, 0.5, 0.25, 0.0])
+        _approx_list(y2, [0.0, 0.0, 0.0, 0.0])
+
+    def test_avx_to_step_handoff(self, installed):
+        """19 samples: first 16 via AVX-512 scratch, last 3 via step() tail."""
+        r = _run([PYTHON, "-c", _TAIL_CHECK], cwd=installed)
+        assert r.returncode == 0, r.stderr
+        vals = eval(r.stdout.strip())
+        _approx_list(vals, [0.25, 0.5, 0.25, 0.0, 0.0])
+
+
+class TestStep7PerfSIMD:
+    """AVX-512 path — skipped when the CPU or flags are unavailable."""
+
+    @pytest.fixture(scope="class")
+    def installed_simd(self, tmp_path_factory):
+        if not _has_avx512():
+            pytest.skip("AVX-512 not available on this host")
+
+        root = _scaffold_perf(tmp_path_factory)
+
+        r = _run(
+            [
+                "cmake", "-B", "build", "-S", ".",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DENABLE_SIMD=ON",
+                f"-DPython3_EXECUTABLE={PYTHON}",
+            ],
+            cwd=root,
+        )
+        assert r.returncode == 0, f"cmake failed:\n{r.stderr}"
+
+        r = _run(["cmake", "--build", "build", "--parallel"], cwd=root)
+        assert r.returncode == 0, f"simd build failed:\n{r.stderr}"
+
+        r = _run(["uv", "pip", "install", "-e", ".", "--force-reinstall"], cwd=root)
+        assert r.returncode == 0, f"pip install failed:\n{r.stderr}"
+
+        return root
+
+    def test_simd_impulse_response(self, installed_simd):
+        r = _run([PYTHON, "-c", _IMPULSE_CHECK], cwd=installed_simd)
+        assert r.returncode == 0, r.stderr
+        vals = eval(r.stdout.strip())
+        _approx_list(vals, [0.25, 0.5, 0.25, 0.0])
+
+    def test_simd_avx_to_step_handoff(self, installed_simd):
+        """19 samples: first 16 via AVX-512 scratch, last 3 via step() tail."""
+        r = _run([PYTHON, "-c", _TAIL_CHECK], cwd=installed_simd)
+        assert r.returncode == 0, r.stderr
+        vals = eval(r.stdout.strip())
+        _approx_list(vals, [0.25, 0.5, 0.25, 0.0, 0.0])
+
+    def test_simd_multi_block_continuity(self, installed_simd):
+        r = _run([PYTHON, "-c", _CONTINUITY_CHECK], cwd=installed_simd)
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        y1 = eval(lines[0])
+        y2 = eval(lines[1])
+        _approx_list(y1, [0.25, 0.5, 0.25, 0.0])
+        _approx_list(y2, [0.0, 0.0, 0.0, 0.0])

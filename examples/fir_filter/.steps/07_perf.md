@@ -1,15 +1,11 @@
 ## 7. Bonus: `--perf` + SIMD benchmark
 
-`--perf` rewrites the scaffold to annotate `fir_filter_step` with
-`JM_FORCEINLINE JM_HOT` and generates `jm_perf.h`.
-
-Scaffold a perf-enabled copy from the parent directory of `my_fir`:
+From inside `my_fir`:
 
 ```{07_scaffold.sh}
 ```
 
-Implement `fir_filter_step` exactly as in step 2 — the logic is unchanged,
-only the qualifier differs.  Then save the benchmark below as `bench.py`:
+Save the benchmark below as `bench.py`:
 
 ```{07_bench.py}
 ```
@@ -35,26 +31,34 @@ that store with the accumulate.  Flags alone don't get you there.
 
 ### Round 2 — algorithm matters
 
-Replace the per-sample `memmove` with a **scratch-buffer kernel**:
+Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
+that stamps out the outer dispatch loop so you never write it by hand.
 
-1. Copy `state->delay[0..14]` followed by `input[0..N-1]` into a flat scratch
-   array (processed in chunks so the hot window fits in L1 cache).
-2. Run an AVX-512 inner loop: for each tap `k`, broadcast `h[k]` and `fmadd`
-   against 8 consecutive interleaved complex samples — **1 FMA per tap per 8
-   outputs**, no permute, no modulo arithmetic.
-3. Copy `scratch[N..N+14]` back to `state->delay`.
+**1.** Add the constants and `fir_filter_step_batch()` to
+`native/inc/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
 
-```c
-/* hot kernel — explicit AVX-512 */
-for (i = 0; i + 8 <= n; i += 8) {
-    __m512 acc = _mm512_setzero_ps();
-    for (k = 0; k < 16; k++) {
-        __m512 vx = _mm512_loadu_ps((float *)(scratch + i + 15 - k));
-        acc = _mm512_fmadd_ps(_mm512_set1_ps(h[k]), vx, acc);
-    }
-    _mm512_storeu_ps((float *)(out + i), _mm512_mul_ps(acc, vg));
-}
+```{07_step_batch.h}
 ```
+
+Three named constants make each concern explicit:
+
+| constant    | concern      | meaning                              |
+|-------------|--------------|--------------------------------------|
+| `FIR_TAPS`  | algorithm    | filter length (set at codegen time)  |
+| `FIR_BATCH` | parallelism  | AVX-512 complex samples per call     |
+| `FIR_CHUNK` | tuning       | samples per scratch-buffer fill      |
+
+`step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
+but you never write `steps()`.
+
+**2.** Replace `fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
+
+```{07_kernel.c}
+```
+
+`JM_DEFINE_STEPS` generates `fir_filter_steps()` from the macro in `jm_perf.h`:
+it owns the scratch buffer, the chunked fill, and the scalar tail.  You write
+`step()`.  You write `step_batch()`.  The rest is infrastructure.
 
 ```
 baseline:   475 M complex samples/sec

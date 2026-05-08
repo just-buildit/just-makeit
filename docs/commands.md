@@ -103,6 +103,25 @@ are restored and `just-makeit.toml` is left unchanged.
 
 ______________________________________________________________________
 
+## `just-makeit perf`
+
+Upgrade an existing project to use performance annotations without
+overwriting any user code.  Must be run from the project root.
+
+```sh
+just-makeit perf
+```
+
+Writes `native/inc/jm_perf.h`, adds `#include "jm_perf.h"` to each component
+header, and replaces `static inline` with `JM_FORCEINLINE JM_HOT` on `step()`.
+Records `perf = true` in `just-makeit.toml` so future `init`/`add` commands
+inherit it.  Safe to run on a project with a filled-in `step()`.  Idempotent.
+
+See [Performance annotations](perf.md) for the full macro reference and
+`JM_DEFINE_STEPS` documentation.
+
+______________________________________________________________________
+
 ## `just-makeit config [key value]`
 
 Show or edit the project configuration stored in `just-makeit.toml`.

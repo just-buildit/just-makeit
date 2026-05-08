@@ -1,4 +1,4 @@
-"""Patch fir_filter_step stub with the implementation.
+"""Patch sliding_correlator_step stub with the implementation.
 
 Run from the project root: python3 .steps/02_patch.py
 """
@@ -7,12 +7,12 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
+header = pathlib.Path("native/inc/sliding_correlator/sliding_correlator_core.h")
 impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float complex\s*\n"
-    r"fir_filter_step\(const fir_filter_state_t \*state.*?\n\}",
+    r"sliding_correlator_step\(const sliding_correlator_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 

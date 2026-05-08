@@ -1,4 +1,4 @@
-"""Tests for the --perf scaffold (v0.2)."""
+"""Tests for the --perf scaffold and `just-makeit perf` upgrade command."""
 
 import sys
 from pathlib import Path
@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
 from just_makeit._init import run as init_run
+from just_makeit._perf import run as perf_run
 from just_makeit._config import load, is_perf
 
 
@@ -151,3 +152,64 @@ class TestPerfEnabledViaInit:
         init_run(plain_project, "engine", perf=True)
         h = (plain_project / "native" / "inc" / "engine" / "engine_core.h").read_text()
         assert "JM_FORCEINLINE JM_HOT" in h
+
+
+# ── `just-makeit perf` upgrade command ───────────────────────────────────────
+
+class TestPerfUpgrade:
+    @pytest.fixture()
+    def upgraded(self, tmp_path):
+        dest = tmp_path / "myproj"
+        new_run("myproj", dest, "mycomp")
+        perf_run(dest)
+        return dest
+
+    def test_writes_jm_perf_h(self, upgraded):
+        assert (upgraded / "native" / "inc" / "jm_perf.h").exists()
+
+    def test_updates_toml(self, upgraded):
+        assert is_perf(load(upgraded))
+
+    def test_header_includes_jm_perf_h(self, upgraded):
+        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text()
+        assert '#include "jm_perf.h"' in h
+
+    def test_step_qualifier_upgraded(self, upgraded):
+        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text()
+        assert "JM_FORCEINLINE JM_HOT" in h
+        assert "static inline" not in h
+
+    def test_step_body_preserved(self, upgraded):
+        """User implementation survives the upgrade."""
+        header = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
+        # Write a custom implementation, then upgrade a second component
+        text = header.read_text()
+        text = text.replace("(void)state; /* TODO: implement DSP using state variables */\n    return x;",
+                            "return x * 2.0f;")
+        header.write_text(text)
+        # Re-run perf (idempotent) — body must survive
+        perf_run(upgraded)
+        assert "return x * 2.0f;" in header.read_text()
+
+    def test_idempotent(self, upgraded):
+        """Running perf_run twice produces the same result."""
+        h_before = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text()
+        perf_run(upgraded)
+        h_after = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text()
+        assert h_before == h_after
+
+    def test_multi_component(self, tmp_path):
+        dest = tmp_path / "multi"
+        new_run("multi", dest, "alpha")
+        init_run(dest, "beta")
+        perf_run(dest)
+        for comp in ("alpha", "beta"):
+            h = (dest / "native" / "inc" / comp / f"{comp}_core.h").read_text()
+            assert "JM_FORCEINLINE JM_HOT" in h
+
+    def test_already_perf_is_noop(self, tmp_path, capsys):
+        dest = tmp_path / "already"
+        new_run("already", dest, "mycomp", perf=True)
+        perf_run(dest)
+        out = capsys.readouterr().out
+        assert "already enabled" in out

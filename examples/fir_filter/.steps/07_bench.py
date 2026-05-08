@@ -1,6 +1,6 @@
 import timeit
 import numpy as np
-from my_fir_perf import FirFilter
+from my_fir import FirFilter
 
 BLOCK = 100_000
 RUNS  = 500

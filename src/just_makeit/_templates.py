@@ -828,6 +828,64 @@ JM_PERF_H = """\
 #  define _JM_HOT_
 #endif
 
+/* x86 SIMD intrinsics (SSE through AVX-512) */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#  include <immintrin.h>
+#endif
+
+/* ── JM_DEFINE_STEPS ────────────────────────────────────────────────────────
+ *
+ * Stamps out <fn>_steps() — the outer dispatch loop — from three separate
+ * concerns:
+ *
+ *   fn        - name prefix; calls fn##_step() and fn##_step_batch()
+ *   state_t   - state struct type
+ *   sample_t  - per-sample type  (e.g. float complex)
+ *   LENGTH    - history depth: samples held in state->delay[]  [algorithm]
+ *   BATCH     - SIMD width in samples                          [parallelism]
+ *   CHUNK     - samples per scratch-buffer fill                [tuning]
+ *
+ * Convention: state->delay[0..LENGTH-1] is the delay line, delay[0] = newest.
+ * LENGTH, BATCH, and CHUNK must be integer constant expressions (no VLA).
+ *
+ * Usage (16-tap FIR: TAPS=16, LENGTH=TAPS-1=15):
+ *   JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
+ *                   FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
+ */
+#ifdef __AVX512F__
+#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)                \\
+    {                                                                          \\
+        samp _scratch[(LENGTH) + (CHUNK)];                                    \\
+        while (_i + (BATCH) <= n) {                                           \\
+            size_t _blk  = (n - _i < (CHUNK)) ? (n - _i) : (CHUNK);          \\
+            size_t _main = _blk & ~(size_t)((BATCH) - 1);                    \\
+            for (int _j = 0; _j < (LENGTH); _j++)                             \\
+                _scratch[_j] = state->delay[(LENGTH) - 1 - _j];              \\
+            memcpy(_scratch + (LENGTH), input + _i, _blk * sizeof(samp));    \\
+            for (size_t _p = 0; _p < _main; _p += (BATCH))                   \\
+                fn##_step_batch(state, _scratch + _p, output + _i + _p);     \\
+            for (int _j = 0; _j < (LENGTH); _j++)                             \\
+                state->delay[_j] = _scratch[_main + (LENGTH) - 1 - _j];     \\
+            _i += _main;                                                      \\
+        }                                                                      \\
+    }
+#else
+#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)  /* no SIMD */
+#endif
+
+#define JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)         \\
+void fn##_steps(                                                               \\
+        state_t            *state,                                             \\
+        const sample_t     *input,                                             \\
+        sample_t           *output,                                            \\
+        size_t              n)                                                 \\
+{                                                                              \\
+    size_t _i = 0;                                                             \\
+    _JM_STEPS_SIMD_(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)              \\
+    for (; _i < n; _i++)                                                       \\
+        output[_i] = fn##_step(state, input[_i]);                             \\
+}
+
 #endif /* JM_PERF_H */
 """
 
