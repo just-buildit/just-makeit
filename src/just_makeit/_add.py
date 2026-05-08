@@ -27,8 +27,10 @@ _STATE_TEMPLATES = [
     ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
     ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
     ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
+    ("native/benchmarks/bench_{c}_core.c", T.COMPONENT_BENCH_C),
     ("src/{p}/{c}.pyi", T.COMPONENT_PYI),
     ("src/{p}/tests/test_{c}.py", T.PYTEST_TEST),
+    ("src/{p}/benchmarks/bench_{c}.py", T.COMPONENT_BENCH_PY),
 ]
 
 

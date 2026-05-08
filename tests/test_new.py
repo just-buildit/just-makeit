@@ -85,10 +85,11 @@ class TestNewComponentFiles:
 
         data = json.loads((project / "compile_commands.json").read_text())
         assert isinstance(data, list)
-        assert len(data) == 3
+        assert len(data) == 4
         files = {e["file"] for e in data}
         assert any("my_filter_core.c" in f for f in files)
         assert any("my_filter_ext.c" in f for f in files)
+        assert any("bench_my_filter_core.c" in f for f in files)
         assert all("directory" in e for e in data)
 
 

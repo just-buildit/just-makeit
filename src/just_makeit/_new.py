@@ -88,5 +88,6 @@ def run(
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
         )
+        _write(root / ".benchmarks" / ".gitkeep", "")
         print()
         print(f"Done!  cd {root.name} && just-makeit init <component>")

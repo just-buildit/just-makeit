@@ -4,6 +4,9 @@
 #   make               Run tests (default)
 #   make test          Run full test suite (pytest)
 #   make test-fast     Run tests, stop on first failure
+#   make bench         Run scaffold benchmarks (pytest-benchmark)
+#   make bench-save    Save benchmark baseline (tagged with git describe)
+#   make bench-compare Compare against last saved baseline
 #   make lint          Run pre-commit hooks on all files
 #   make build         Build wheel into dist/
 #   make docs          Build docs site into site/
@@ -13,13 +16,15 @@
 #   make examples-clean  Remove build artifacts from all examples
 #   make help          Show this message
 
-SHELL   = /bin/sh
-PYTHON  ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
-UV      = uv
-PYTEST  = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
-ZENSICAL = $(UV) run --group dev zensical
+SHELL      = /bin/sh
+PYTHON     ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
+UV         = uv
+PYTEST     = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
+PYTEST_B   = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
+ZENSICAL   = $(UV) run --group dev zensical
+BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-.PHONY: all test test-fast lint build docs docs-serve install clean examples-clean help
+.PHONY: all test test-fast bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help
 
 all: test
 
@@ -30,6 +35,19 @@ test:
 
 test-fast:
 	$(PYTEST) -x -q
+
+# ── Bench ─────────────────────────────────────────────────────────────────────
+
+bench:
+	$(PYTEST_B) tests/bench_scaffold.py -v --benchmark-disable-gc
+
+bench-save:
+	$(PYTEST_B) tests/bench_scaffold.py \
+		--benchmark-save=$(BENCH_TAG) --benchmark-disable-gc
+
+bench-compare:
+	$(PYTEST_B) tests/bench_scaffold.py \
+		--benchmark-compare --benchmark-disable-gc
 
 # ── Lint ──────────────────────────────────────────────────────────────────────
 
@@ -78,6 +96,9 @@ help:
 	@echo "  make               run tests"
 	@echo "  make test          run full test suite"
 	@echo "  make test-fast     stop on first failure"
+	@echo "  make bench         run scaffold benchmarks"
+	@echo "  make bench-save    save baseline (git describe tag)"
+	@echo "  make bench-compare compare against last saved baseline"
 	@echo "  make lint          run pre-commit hooks on all files"
 	@echo "  make build         build wheel → dist/"
 	@echo "  make docs          build docs → site/"

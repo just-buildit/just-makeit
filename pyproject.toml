@@ -49,5 +49,6 @@ dev = [
     "numpy",
     "pre-commit",
     "pytest",
+    "pytest-benchmark",
     "zensical>=0.0.29",
 ]

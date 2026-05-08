@@ -71,6 +71,7 @@ def _write_compile_commands(root: Path, all_components: list[str]) -> None:
             _entry(f"native/src/{comp}/{comp}_core.c", base),
             _entry(f"native/src/{comp}/{comp}_ext.c", base),
             _entry(f"native/tests/test_{comp}_core.c", test_flags),
+            _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
         ]
 
     dest = root / "compile_commands.json"
@@ -163,6 +164,9 @@ def run(
     # C test
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
 
+    # C benchmark
+    _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(T.COMPONENT_BENCH_C))
+
     # Python package — write __init__.py only if it doesn't exist yet
     init_py = root / "src" / pkg / "__init__.py"
     if not init_py.exists():
@@ -171,6 +175,17 @@ def run(
     _write(root / "src" / pkg / f"{comp}.pyi", r(T.COMPONENT_PYI))
     _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)
     _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(T.PYTEST_TEST))
+
+    # Python benchmark
+    benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"
+    if not benchmarks_init.exists():
+        _write(benchmarks_init, "")
+    _write(root / "src" / pkg / "benchmarks" / f"bench_{comp}.py", r(T.COMPONENT_BENCH_PY))
+
+    # Benchmark history dir (committed to git)
+    gitkeep = root / ".benchmarks" / ".gitkeep"
+    if not gitkeep.exists():
+        _write(gitkeep, "")
 
     if build == "cmake":
         # Append add_subdirectory to top-level CMakeLists.txt

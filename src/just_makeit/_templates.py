@@ -1251,6 +1251,98 @@ int main(void)
 }
 """
 
+# ── C benchmark ──────────────────────────────────────────────────────────────
+
+COMPONENT_BENCH_C = """\
+#include "<<component>>/<<component>>_core.h"
+#include <complex.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define BENCH_N    65536
+#define ITERATIONS 200
+
+static double
+elapsed_sec(struct timespec *t0, struct timespec *t1)
+{
+    return (double)(t1->tv_sec - t0->tv_sec)
+           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
+}
+
+int
+main(void)
+{
+    float complex *in  = malloc(BENCH_N * sizeof(float complex));
+    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
+    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+
+    <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
+
+    /* warmup */
+    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj, 1.0f + 0.0f * I);
+
+    struct timespec t0, t1;
+    double sec;
+
+    printf("=== <<component>> benchmark ===\\n");
+    printf("block = %d samples,  %d iterations\\n\\n", BENCH_N, ITERATIONS);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        for (int i = 0; i < BENCH_N; i++)
+            (void)<<component>>_step(obj, in[i]);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  step()   %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < ITERATIONS; r++)
+        <<component>>_steps(obj, in, out, BENCH_N);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = elapsed_sec(&t0, &t1);
+    printf("  steps()  %8.1f MSa/s\\n",
+           (double)ITERATIONS * BENCH_N / sec / 1e6);
+
+    <<component>>_destroy(obj);
+    free(in); free(out);
+    return 0;
+}
+"""
+
+# ── Python benchmark ──────────────────────────────────────────────────────────
+
+COMPONENT_BENCH_PY = """\
+import numpy as np
+import pytest
+
+from <<package>> import <<Component>>
+
+
+@pytest.fixture
+def obj():
+    return <<Component>>(<<py_create_args>>)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_step(benchmark, obj):
+    benchmark(obj.step, 1.0 + 0.0j)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_1k(benchmark, obj):
+    x = np.ones(1024, dtype=np.complex64)
+    benchmark(obj.steps, x)
+
+
+@pytest.mark.benchmark(group="<<component>>")
+def test_bench_steps_64k(benchmark, obj):
+    x = np.ones(65536, dtype=np.complex64)
+    benchmark(obj.steps, x)
+"""
+
 # ── CMakeLists.txt ───────────────────────────────────────────────────────────
 
 CMAKE_LISTS_TOP = """\
@@ -1298,6 +1390,12 @@ target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core)
 target_include_directories(test_<<component>>_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
+
+add_executable(bench_<<component>>_core
+    ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
+target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core)
+target_include_directories(bench_<<component>>_core
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 """
 
 # ── Makefile (basic — no CMake) ──────────────────────────────────────────────
@@ -1371,19 +1469,23 @@ MAKEFILE = """\
 # <<project>> project Makefile
 #
 # Targets:
-#   make             Configure + build (Release)
-#   make test        CTest + pytest
-#   make just-build  PEP 517 hook for just-buildit
-#   make clean       Remove build artifacts
-#   make help        Show this message
+#   make              Configure + build (Release)
+#   make test         CTest + pytest
+#   make bench        C + Python benchmarks (output only)
+#   make bench-save   Save benchmark baseline (tagged with git describe)
+#   make bench-compare  Compare against last saved baseline
+#   make just-build   PEP 517 hook for just-buildit
+#   make clean        Remove build artifacts
+#   make help         Show this message
 
 SHELL      = /bin/sh
 BUILD_DIR  ?= build
 BUILD_TYPE ?= Release
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
+BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-.PHONY: all build test just-build clean help
+.PHONY: all build test bench bench-save bench-compare just-build clean help
 
 all: build
 
@@ -1405,6 +1507,19 @@ test: build
 \t$(PYTHON) -m pytest src/ -v 2>/dev/null || \
 \t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
 
+bench: build
+\t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
+\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ -v --benchmark-disable-gc \\
+\t\t2>/dev/null || echo "(hint: pip install pytest-benchmark)"
+
+bench-save: build
+\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ \\
+\t\t--benchmark-save=$(BENCH_TAG) --benchmark-disable-gc
+
+bench-compare: build
+\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ \\
+\t\t--benchmark-compare --benchmark-disable-gc
+
 just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 \tcp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
@@ -1417,9 +1532,12 @@ help:
 \t@echo ""
 \t@echo "<<project>> build targets"
 \t@echo ""
-\t@echo "  make          Configure + build"
-\t@echo "  make test     Run CTest + pytest"
-\t@echo "  make clean    Remove build artifacts"
+\t@echo "  make               Configure + build"
+\t@echo "  make test          Run CTest + pytest"
+\t@echo "  make bench         Run C + Python benchmarks"
+\t@echo "  make bench-save    Save baseline (git describe tag)"
+\t@echo "  make bench-compare Compare against last saved baseline"
+\t@echo "  make clean         Remove build artifacts"
 \t@echo ""
 """
 
