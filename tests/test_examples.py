@@ -20,8 +20,22 @@ import pytest
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 
+def _all_example_dirs():
+    """All subdirs of examples/ that contain an assemble.py (i.e. are examples)."""
+    return sorted(p.parent for p in EXAMPLES_DIR.glob("*/assemble.py"))
+
+
 def _discover_examples():
     return sorted(p.parent for p in EXAMPLES_DIR.glob("*/test.py"))
+
+
+def test_all_examples_have_test_py():
+    missing = [d.name for d in _all_example_dirs() if not (d / "test.py").exists()]
+    assert not missing, (
+        f"Example(s) missing test.py: {missing}\n"
+        "Add a test.py with a run(root: Path) -> None function. "
+        "See examples/README.md for the pattern."
+    )
 
 
 def _load_run(example_dir: Path):
