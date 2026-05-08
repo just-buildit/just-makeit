@@ -15,12 +15,14 @@ Commands:
                      --basic uses a plain Makefile instead of CMake
                      --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
                      --pure generates a stateless component (scalar params or caller-managed struct)
-  init <name> [--state name:type[:default] ...] [--perf] [--pure]
+  init <name> [--state|--param name:type[:default] ...] [--perf] [--pure]
                      Add a component to the project in the current directory
                      --perf enables performance hints (inherited from project config by default)
                      --pure generates a stateless component (auto-detected: scalar or struct)
-  add --state name:type[:default] [--component name] [...]
-                     Add state variables to an existing component
+                     --param is idiomatic with --pure; --state is idiomatic without it (both work)
+  add --state|--param name:type[:default] [--component name] [...]
+                     Add state/param variables to an existing component
+
   perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
                      annotations without overwriting any user code
   config [key value] Show or edit project configuration
@@ -35,24 +37,25 @@ Array types:  type[N]  e.g. float[64], double _Complex[32]
               Array fields are always zero-initialised; no default may be given.
 
 Pure mode auto-detection:
-  All scalar --state vars  → scalar style: params passed per call, module functions
+  All scalar --param vars  → scalar style: params passed per call, module functions
                              e.g. normalize(x, scale=1.0); normalize.steps(arr)
-  Any array --state var    → struct style: caller-managed params_t, alloc helpers
+  Any array --param var    → struct style: caller-managed params_t, alloc helpers
                              e.g. f = MyComp(cutoff=440.0); f(x); f.steps(arr)
 
 Examples:
-  just-makeit new my_filter                               # project scaffold only
-  just-makeit new my_filter --component my_filter        # project + first component
+  just-makeit new my_filter                                # project scaffold only
+  just-makeit new my_filter --component my_filter         # project + first component
   just-makeit new my_bpf --component bpf --state center:double --state bw:double
-  just-makeit init engine --state rate:double:1.0        # add component to existing project
-  just-makeit init norm --pure --state scale:double:1.0  # scalar pure component
-  just-makeit init fir --pure --state taps:float[64]     # struct pure (array → struct)
-  just-makeit add --state order:int:4                    # add state var to existing component
-  just-makeit config                                     # show project config
-  just-makeit config version 0.2.0                      # set version
-  just-makeit build                                      # build wheel into dist/
-  just-makeit test                                       # run all tests
-  just-makeit dry-run                                    # preview build plan
+  just-makeit init engine --state rate:double:1.0         # stateful component
+  just-makeit init norm --pure --param scale:double:1.0   # scalar pure component
+  just-makeit init fir --pure --param taps:float[64]      # struct pure (array → struct)
+  just-makeit add --state order:int:4                     # add state var (stateful)
+  just-makeit add --param n_taps:int:16                   # add param (pure component)
+  just-makeit config                                      # show project config
+  just-makeit config version 0.2.0                        # set version
+  just-makeit build                                       # build wheel into dist/
+  just-makeit test                                        # run all tests
+  just-makeit dry-run                                     # preview build plan
 """
 
 
@@ -131,7 +134,7 @@ def main() -> None:
                     sys.exit(1)
                 component = remaining[i]
                 i += 1
-            elif tok == "--state":
+            elif tok in ("--state", "--param"):
                 var, i = _parse_state_flags(remaining, i)
                 state_vars.append(var)
             elif tok == "--basic":
@@ -171,7 +174,7 @@ def main() -> None:
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok == "--state":
+            if tok in ("--state", "--param"):
                 var, i = _parse_state_flags(remaining, i)
                 state_vars.append(var)
             elif tok == "--perf":
@@ -202,7 +205,7 @@ def main() -> None:
                     sys.exit(1)
                 component = remaining[i]
                 i += 1
-            elif tok == "--state":
+            elif tok in ("--state", "--param"):
                 var, i = _parse_state_flags(remaining, i)
                 state_vars.append(var)
             else:
@@ -210,7 +213,7 @@ def main() -> None:
                 sys.exit(1)
 
         if not state_vars:
-            print("error: 'add' requires at least one --state flag.", file=sys.stderr)
+            print("error: 'add' requires at least one --state or --param flag.", file=sys.stderr)
             sys.exit(1)
 
         _add.run(Path.cwd(), component, state_vars)

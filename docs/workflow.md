@@ -259,8 +259,8 @@ or manages the working-state struct directly, instead of the library owning
 an opaque pointer.
 
 ```sh
-just-makeit init normalize --pure --state scale:double:1.0   # scalar: fn(x, scale)
-just-makeit init fir       --pure --state taps:"float[64]"   # struct: caller owns params_t
+just-makeit init normalize --pure --param scale:double:1.0   # scalar: fn(x, scale)
+just-makeit init fir       --pure --param taps:"float[64]"   # struct: caller owns params_t
 ```
 
 See [Stateful vs pure components](pure.md) for the full cost/benefit analysis

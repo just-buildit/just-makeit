@@ -75,8 +75,8 @@ ______________________________________________________________________
 ```sh
 just-makeit new my_dsp --component normalize \
     --pure \
-    --state scale:double:1.0 \
-    --state offset:double:0.0
+    --param scale:double:1.0 \
+    --param offset:double:0.0
 ```
 
 **What you get:**
@@ -131,8 +131,8 @@ ______________________________________________________________________
 ```sh
 just-makeit new my_dsp --component fir_pure \
     --pure \
-    --state coeffs:"float[16]" \
-    --state delay:"float _Complex[16]"
+    --param coeffs:"float[16]" \
+    --param delay:"float _Complex[16]"
 ```
 
 **What you get:**
@@ -273,7 +273,7 @@ ______________________________________________________________________
 `--pure` and `--perf` are orthogonal and composable:
 
 ```sh
-just-makeit init norm --pure --state scale:double:1.0
+just-makeit init norm --pure --param scale:double:1.0
 just-makeit perf   # adds JM_FORCEINLINE JM_HOT to norm_fn
 ```
 
