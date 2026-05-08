@@ -721,6 +721,20 @@ def make_state_ctx(
     }
 
 
+def make_perf_ctx(perf: bool) -> dict[str, str]:
+    if perf:
+        return {
+            "perf_include": '#include "jm_perf.h"',
+            "step_qualifier": "JM_FORCEINLINE JM_HOT",
+            "omp_simd_hint": "    /* #pragma omp simd */\n",
+        }
+    return {
+        "perf_include": "",
+        "step_qualifier": "static inline",
+        "omp_simd_hint": "",
+    }
+
+
 def render(template: str, ctx: dict[str, str]) -> str:
     result = template
     for k, v in ctx.items():
@@ -763,6 +777,60 @@ PYEX_COMMON_H = """\
 #endif /* PYEX_COMMON_H */
 """
 
+JM_PERF_H = """\
+/**
+ * jm_perf.h — compiler-hint macros for <<package>>.
+ *
+ * All macros expand to safe no-ops on unknown compilers.
+ * Include freely; zero runtime cost.
+ */
+#ifndef JM_PERF_H
+#define JM_PERF_H
+
+/* Hint that x is almost always true; guides branch-predictor, reducing misprediction stalls. */
+#define JM_LIKELY(x)     _JM_LIKELY_(x)
+/* Hint that x is almost never true; keeps cold-path code out of the L1 instruction cache. */
+#define JM_UNLIKELY(x)   _JM_UNLIKELY_(x)
+/* Assert that a pointer does not alias any other; lets the compiler reorder/vectorise freely. */
+#define JM_RESTRICT      _JM_RESTRICT_
+/* Override inlining heuristics and force inlining; eliminates call overhead on hot functions. */
+#define JM_FORCEINLINE   _JM_FORCEINLINE_
+/* Align a variable or struct member to n bytes; required for safe SIMD load/store operations. */
+#define JM_ALIGNED(n)    _JM_ALIGNED_(n)
+/* Mark a function as performance-critical; compiler may place it in a hot section and optimise more aggressively. */
+#define JM_HOT           _JM_HOT_
+
+/* GCC / Clang */
+#if defined(__GNUC__) || defined(__clang__)
+#  define _JM_LIKELY_(x)     __builtin_expect(!!(x), 1)
+#  define _JM_UNLIKELY_(x)   __builtin_expect(!!(x), 0)
+#  define _JM_RESTRICT_      restrict
+#  define _JM_FORCEINLINE_   __attribute__((always_inline)) inline
+#  define _JM_ALIGNED_(n)    __attribute__((aligned(n)))
+#  define _JM_HOT_           __attribute__((hot))
+
+/* MSVC */
+#elif defined(_MSC_VER)
+#  define _JM_LIKELY_(x)     (x)
+#  define _JM_UNLIKELY_(x)   (x)
+#  define _JM_RESTRICT_      __restrict
+#  define _JM_FORCEINLINE_   __forceinline
+#  define _JM_ALIGNED_(n)    __declspec(align(n))
+#  define _JM_HOT_
+
+/* Unknown / strict C99 — safe no-ops */
+#else
+#  define _JM_LIKELY_(x)     (x)
+#  define _JM_UNLIKELY_(x)   (x)
+#  define _JM_RESTRICT_      restrict
+#  define _JM_FORCEINLINE_   inline
+#  define _JM_ALIGNED_(n)
+#  define _JM_HOT_
+#endif
+
+#endif /* JM_PERF_H */
+"""
+
 COMPONENT_CORE_H = """\
 /**
  * @file <<component>>_core.h
@@ -781,7 +849,7 @@ COMPONENT_CORE_H = """\
 #define <<COMPONENT>>_CORE_H
 
 #include "clib_common.h"
-
+<<perf_include>>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -824,7 +892,7 @@ void <<component>>_reset(<<component>>_state_t *state);
  * @return       Output sample.
  * @note Inlined for maximum performance.
  */
-static inline float complex
+<<step_qualifier>> float complex
 <<component>>_step(const <<component>>_state_t *state, float complex x)
 {
     (void)state; /* TODO: implement DSP using state variables */
@@ -889,7 +957,7 @@ void
     float complex          *output,
     size_t                  n)
 {
-    for (size_t i = 0; i < n; i++)
+<<omp_simd_hint>>    for (size_t i = 0; i < n; i++)
         output[i] = <<component>>_step(state, input[i]);
 }
 
@@ -1133,6 +1201,15 @@ project(<<project_underscore>> VERSION <<version>> LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+option(ENABLE_SIMD "Enable SIMD flags (-march=native -ffast-math / /arch:AVX2 /fp:fast)" OFF)
+if(ENABLE_SIMD)
+    if(MSVC)
+        add_compile_options(/arch:AVX2 /fp:fast)
+    else()
+        add_compile_options(-march=native -ffast-math)
+    endif()
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Development NumPy)
 

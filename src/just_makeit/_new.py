@@ -33,6 +33,7 @@ def run(
     component: str | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
     basic: bool = False,
+    perf: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -69,8 +70,10 @@ def run(
     _write(root / ".gitignore", r(T.GITIGNORE))
     _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
     _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
+    if perf:
+        _write(root / "native" / "inc" / "jm_perf.h", r(T.JM_PERF_H))
 
-    cfg = C.from_new(project, basic=basic)
+    cfg = C.from_new(project, basic=basic, perf=perf)
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
     print()
@@ -78,7 +81,7 @@ def run(
     if component:
         from . import _init
 
-        _init.run(root, component, state_vars, _hint=False)
+        _init.run(root, component, state_vars, perf=perf, _hint=False)
         print()
         print(f"Done!  cd {root.name} && make && make test")
     else:

@@ -61,10 +61,18 @@ def build_system(cfg: dict) -> str:
     return cfg.get("project", {}).get("build", "cmake")
 
 
-def from_new(name: str, version: str = "0.1.0", basic: bool = False) -> dict:
+def is_perf(cfg: dict) -> bool:
+    return cfg.get("project", {}).get("perf") == "true"
+
+
+def from_new(
+    name: str, version: str = "0.1.0", basic: bool = False, perf: bool = False
+) -> dict:
     proj: dict = {"name": name, "version": version}
     if basic:
         proj["build"] = "make"
+    if perf:
+        proj["perf"] = "true"
     return {"project": proj}
 
 

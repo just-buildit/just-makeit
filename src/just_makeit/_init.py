@@ -83,6 +83,7 @@ def run(
     root: Path,
     component: str,
     state_vars: list[tuple[str, str, str]] | None = None,
+    perf: bool | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -113,6 +114,8 @@ def run(
     vars_ = state_vars or [("gain", "double", "0.0")]
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
+    if perf is None:
+        perf = C.is_perf(cfg)
 
     ctx = _make_component_ctx(component)
     ctx.update(
@@ -124,6 +127,7 @@ def run(
         }
     )
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
+    ctx.update(T.make_perf_ctx(perf))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -132,6 +136,14 @@ def run(
 
     print(f"just-makeit: adding component '{comp}' to project '{pkg}'")
     print()
+
+    if perf and not C.is_perf(cfg):
+        cfg.setdefault("project", {})["perf"] = "true"
+
+    if perf:
+        perf_h = root / "native" / "inc" / "jm_perf.h"
+        if not perf_h.exists():
+            _write(perf_h, r(T.JM_PERF_H))
 
     # C headers
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))

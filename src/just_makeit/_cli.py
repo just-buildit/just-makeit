@@ -10,11 +10,13 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic]
+  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf]
                      Create a new project; optionally scaffold a first component
                      --basic uses a plain Makefile instead of CMake
-  init <name> [--state name:type[:default] ...]
+                     --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
+  init <name> [--state name:type[:default] ...] [--perf]
                      Add a component to the project in the current directory
+                     --perf enables performance hints (inherited from project config by default)
   add --state name:type[:default] [--component name] [...]
                      Add state variables to an existing component
   config [key value] Show or edit project configuration
@@ -102,6 +104,7 @@ def main() -> None:
         dest = None
         component = None
         basic = False
+        perf = False
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -121,6 +124,9 @@ def main() -> None:
             elif tok == "--basic":
                 basic = True
                 i += 1
+            elif tok == "--perf":
+                perf = True
+                i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -128,7 +134,7 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None, basic=basic)
+        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf)
 
     elif cmd == "init":
         if len(args) < 2:
@@ -141,6 +147,7 @@ def main() -> None:
         from . import _init
 
         component = args[1]
+        perf: bool | None = None
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -150,11 +157,14 @@ def main() -> None:
             if tok == "--state":
                 var, i = _parse_state_flags(remaining, i)
                 state_vars.append(var)
+            elif tok == "--perf":
+                perf = True
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _init.run(Path.cwd(), component, state_vars or None)
+        _init.run(Path.cwd(), component, state_vars or None, perf=perf)
 
     elif cmd == "add":
         from . import _add

@@ -121,6 +121,7 @@ def run(
         }
     )
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars))
+    ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
 
     def r(tmpl):
         return T.render(tmpl, ctx)

@@ -18,18 +18,39 @@ ______________________________________________________________________
 Real algorithms are hot. The generated code should be ready for it.
 
 **`--perf` flag** on `new` and `init` generates a `jm_perf.h` header alongside
-the common headers:
+the common headers. All macros are C99-compatible: compiler-extension paths are
+gated behind `#if defined(...)` guards, with safe no-op fallbacks for unknown
+compilers.
 
 ```c
-#define JM_LIKELY(x)      __builtin_expect(!!(x), 1)
-#define JM_UNLIKELY(x)    __builtin_expect(!!(x), 0)
-#define JM_RESTRICT       __restrict__
-#define JM_FORCEINLINE    __attribute__((always_inline)) inline
-#define JM_ALIGNED(n)     __attribute__((aligned(n)))
-#define JM_HOT            __attribute__((hot))
-```
+/* GCC / Clang */
+#if defined(__GNUC__) || defined(__clang__)
+#  define JM_LIKELY(x)     __builtin_expect(!!(x), 1)
+#  define JM_UNLIKELY(x)   __builtin_expect(!!(x), 0)
+#  define JM_RESTRICT      restrict            /* C99 keyword */
+#  define JM_FORCEINLINE   __attribute__((always_inline)) inline
+#  define JM_ALIGNED(n)    __attribute__((aligned(n)))
+#  define JM_HOT           __attribute__((hot))
 
-MSVC equivalents generated automatically when targeting Windows.
+/* MSVC */
+#elif defined(_MSC_VER)
+#  define JM_LIKELY(x)     (x)
+#  define JM_UNLIKELY(x)   (x)
+#  define JM_RESTRICT      __restrict
+#  define JM_FORCEINLINE   __forceinline
+#  define JM_ALIGNED(n)    __declspec(align(n))
+#  define JM_HOT
+
+/* Unknown / strict C99 — safe no-ops */
+#else
+#  define JM_LIKELY(x)     (x)
+#  define JM_UNLIKELY(x)   (x)
+#  define JM_RESTRICT      restrict
+#  define JM_FORCEINLINE   inline
+#  define JM_ALIGNED(n)
+#  define JM_HOT
+#endif
+```
 
 **SIMD cmake option** — `cmake -DENABLE_SIMD=ON` enables `-march=native -ffast-math`
 (GCC/Clang) or `/arch:AVX2 /fp:fast` (MSVC). Off by default; opt in per build.
