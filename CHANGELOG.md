@@ -1,5 +1,36 @@
 # Changelog
 
+## \[0.2.0\] — 2026-05-08
+
+### Added
+
+- `just-makeit perf` command — upgrades an existing project to use performance
+  annotations in-place: writes `jm_perf.h`, patches `step()` with
+  `JM_FORCEINLINE JM_HOT`, records `perf = true` in `just-makeit.toml`.
+  Never touches user-written function bodies.  Idempotent.
+- `JM_DEFINE_STEPS` macro in `jm_perf.h` — stamps out `<fn>_steps()` from
+  three clearly separated concerns: `LENGTH` (history depth, algorithm),
+  `BATCH` (SIMD width, parallelism), `CHUNK` (scratch-buffer fill, tuning).
+  Eliminates hand-written outer dispatch loops.
+- `sliding_correlator` example — demonstrates `JM_DEFINE_STEPS` is
+  algorithm-agnostic using complex cross-correlation (`Σ conj(ref[k])·x[n-k]`).
+  `step_batch()` is a compiler-vectorizable scalar loop; no explicit SIMD
+  intrinsics required.
+- `docs/perf.md` — reference guide covering `just-makeit perf`, all
+  `jm_perf.h` macros, and `JM_DEFINE_STEPS` with generic + FIR examples.
+
+### Changed
+
+- `examples/fir_filter` Step 7: reworked to use `just-makeit perf` on the
+  existing `my_fir` project instead of scaffolding a new `my_fir_perf` copy.
+  The `step()` implementation from Step 2 is preserved — no copy-paste.
+- `JM_DEFINE_STEPS` parameter renamed `taps` → `LENGTH` to reflect its
+  generic meaning (history depth), separating it from the FIR-specific `TAPS`
+  concept.  FIR example now defines `FIR_TAPS = 16` and
+  `FIR_LENGTH = FIR_TAPS - 1`.
+
+______________________________________________________________________
+
 ## \[0.1.2\] — 2026-05-06
 
 ### Fixed

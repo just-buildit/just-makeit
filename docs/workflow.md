@@ -250,4 +250,28 @@ find_package(my-dsp REQUIRED)
 target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
 ```
 
+______________________________________________________________________
+
+## Performance optimization
+
+Once your algorithm is working, opt into performance annotations at any time:
+
+```sh
+just-makeit perf
+```
+
+This upgrades the project in-place — writes `native/inc/jm_perf.h`, patches
+`step()` with `JM_FORCEINLINE JM_HOT`, and records the setting in
+`just-makeit.toml` so future `init` and `add` commands inherit it.  Your
+implementation is never touched.
+
+For SIMD acceleration, `jm_perf.h` also ships `JM_DEFINE_STEPS` — a macro
+that stamps out `<component>_steps()` from three separated concerns (algorithm
+length, SIMD batch width, scratch-buffer chunk size).  You write `step()` and
+optionally `step_batch()`; the macro generates the outer dispatch loop.
+
+See [Performance annotations](perf.md) for the full reference.
+
+______________________________________________________________________
+
 See the [Roadmap](roadmap.md) for the full plan.

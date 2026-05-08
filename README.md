@@ -72,6 +72,7 @@ just-makeit COMMAND
 | `new <project> --component name [--state ...]` | Project with component and optional state |
 | `init <component> [--state ...]`               | Add a component to existing project       |
 | `add --state name:type[:default] [...]`        | Add state variables to a component        |
+| `perf`                                         | Upgrade an existing project with performance annotations |
 | `config [key value]`                           | Show or edit project configuration        |
 | `build [dir]`                                  | Configure + build C, and package dist     |
 | `test`                                         | Build and run CTest + pytest              |
