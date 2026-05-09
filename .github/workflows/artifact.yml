@@ -34,82 +34,138 @@ jobs:
           VERSION="${{ github.event.workflow_run.head_branch }}"
           pip install "just-makeit==${VERSION#v}" --no-cache-dir
 
-      - name: Scaffold, build, and test
+      # ── Python workflow ──────────────────────────────────────────────────────
+
+      - name: Scaffold fir_filter project
         run: |
-          just-makeit new smoke_test \
-            --component gain \
+          just-makeit new my_fir \
+            --component fir_filter \
+            --state "coeffs:float[16]" \
+            --state "delay:float _Complex[16]" \
+            --state "gain:float:1.0"
+
+      - name: Implement fir_filter_step
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, re
+          header = pathlib.Path("my_fir/native/inc/fir_filter/fir_filter_core.h")
+          impl = (
+              "fir_filter_step(fir_filter_state_t *state, float complex x)\n"
+              "{\n"
+              "    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));\n"
+              "    state->delay[0] = x;\n"
+              "    float complex y = 0.0f + 0.0f * I;\n"
+              "    for (int k = 0; k < 16; k++)\n"
+              "        y += state->coeffs[k] * state->delay[k];\n"
+              "    return (float complex)state->gain * y;\n"
+              "}"
+          )
+          stub_re = re.compile(
+              r"(static inline|JM_FORCEINLINE JM_HOT) float complex\s*\n"
+              r"fir_filter_step\(const fir_filter_state_t \*state.*?\n\}",
+              re.DOTALL,
+          )
+          text = header.read_text()
+          m = stub_re.search(text)
+          assert m, "stub not found"
+          replacement = m.group(1) + " float complex\n" + impl
+          header.write_text(stub_re.sub(replacement, text))
+          print("patched fir_filter_step")
+          PYEOF
+
+      - name: Enable perf annotations
+        working-directory: my_fir
+        run: just-makeit perf
+
+      - name: Build and test
+        working-directory: my_fir
+        run: make && make test
+
+      - name: Add second component — verify __init__.py splice
+        working-directory: my_fir
+        run: |
+          just-makeit init gain \
             --arg-type float \
             --return-type float \
             --state gain:float:1.0
-          cd smoke_test
-          make
-          make test
+          grep "from .gain import Gain" src/my_fir/__init__.py
+          grep '"Gain"' src/my_fir/__init__.py
+          make && make test
 
-      - name: Add second component and verify __init__ splice
-        run: |
-          cd smoke_test
-          just-makeit init ema \
-            --arg-type float \
-            --return-type float \
-            --state alpha:double:0.1 \
-            --state prev:float:0.0
-          grep "from .ema import Ema" src/smoke_test/__init__.py
-          grep '"Ema"' src/smoke_test/__init__.py
-          make
-          make test
+      # ── C library distribution ───────────────────────────────────────────────
 
       - name: Install C library to local prefix
-        run: cmake --install smoke_test/build --prefix "$HOME/smoke_prefix"
+        run: cmake --install my_fir/build --prefix "$HOME/fir_prefix"
 
       - name: Show install layout
-        run: find "$HOME/smoke_prefix" -type f | sort
+        run: find "$HOME/fir_prefix" -type f | sort
 
       - name: Write C consumer
         run: |
-          cat > /tmp/consumer.c << 'EOF'
-          #include "smoke_test.h"
+          cat > /tmp/fir_consumer.c << 'EOF'
+          #include "my_fir.h"
           #include <assert.h>
+          #include <complex.h>
+          #include <math.h>
           #include <stdio.h>
+
           int main(void) {
-              gain_state_t *g = gain_create(2.0f);
-              float y = gain_step(g, 1.0f);
-              assert(y == 2.0f);
-              gain_destroy(g);
-              puts("ok");
+              fir_filter_state_t *f = fir_filter_create(1.0f);
+
+              /* 3-tap averager: h = [0.25, 0.50, 0.25, 0, ...] */
+              float h[16] = {0};
+              h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
+              fir_filter_set_coeffs(f, h);
+
+              /* Unit impulse -> impulse response */
+              float complex in[16]  = {0};
+              float complex out[16] = {0};
+              in[0] = 1.0f + 0.0f * I;
+              fir_filter_steps(f, in, out, 16);
+
+              assert(fabsf(crealf(out[0]) - 0.25f) < 1e-6f);
+              assert(fabsf(crealf(out[1]) - 0.50f) < 1e-6f);
+              assert(fabsf(crealf(out[2]) - 0.25f) < 1e-6f);
+              assert(fabsf(crealf(out[3]))          < 1e-6f);
+
+              fir_filter_reset(f);
+              fir_filter_destroy(f);
+              puts("fir_filter: ok");
               return 0;
           }
           EOF
 
       - name: Test pkg-config consumer
         run: |
-          PREFIX="$HOME/smoke_prefix"
-          PC_DIR=$(find "$PREFIX" -name "smoke-test.pc" -exec dirname {} \; | head -1)
-          LIB_DIR=$(find "$PREFIX" -name "libsmoke_test.*" -exec dirname {} \; | head -1)
+          PREFIX="$HOME/fir_prefix"
+          PC_DIR=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
+          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
           echo "pc: $PC_DIR  lib: $LIB_DIR"
           PKG_CONFIG_PATH="$PC_DIR" \
-            gcc \
-              $(pkg-config --cflags --libs smoke-test) \
+            gcc -O2 -std=c99 \
+              $(pkg-config --cflags --libs my-fir) \
               -Wl,-rpath,"$LIB_DIR" \
-              /tmp/consumer.c -o /tmp/consumer_pkgconfig
-          /tmp/consumer_pkgconfig
+              -lm \
+              /tmp/fir_consumer.c -o /tmp/fir_consumer_pkgconfig
+          /tmp/fir_consumer_pkgconfig
 
       - name: Test CMake find_package consumer
         run: |
-          PREFIX="$HOME/smoke_prefix"
-          LIB_DIR=$(find "$PREFIX" -name "libsmoke_test.*" -exec dirname {} \; | head -1)
-          mkdir /tmp/cmake_consumer
-          cp /tmp/consumer.c /tmp/cmake_consumer/
-          cat > /tmp/cmake_consumer/CMakeLists.txt << 'EOF'
+          PREFIX="$HOME/fir_prefix"
+          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
+          mkdir /tmp/cmake_fir_consumer
+          cp /tmp/fir_consumer.c /tmp/cmake_fir_consumer/
+          cat > /tmp/cmake_fir_consumer/CMakeLists.txt << 'EOF'
           cmake_minimum_required(VERSION 3.16)
-          project(consumer C)
-          find_package(smoke_test REQUIRED)
-          add_executable(consumer consumer.c)
-          target_link_libraries(consumer PRIVATE smoke_test::smoke_test_lib)
-          set_target_properties(consumer PROPERTIES
+          project(fir_consumer C)
+          find_package(my_fir REQUIRED)
+          add_executable(fir_consumer fir_consumer.c)
+          target_link_libraries(fir_consumer PRIVATE my_fir::my_fir_lib m)
+          set_target_properties(fir_consumer PROPERTIES
               INSTALL_RPATH_USE_LINK_PATH ON)
           EOF
-          cmake -B /tmp/cmake_consumer/build /tmp/cmake_consumer \
+          cmake -B /tmp/cmake_fir_consumer/build /tmp/cmake_fir_consumer \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
             -DCMAKE_BUILD_RPATH="$LIB_DIR"
-          cmake --build /tmp/cmake_consumer/build
-          /tmp/cmake_consumer/build/consumer
+          cmake --build /tmp/cmake_fir_consumer/build
+          /tmp/cmake_fir_consumer/build/fir_consumer
