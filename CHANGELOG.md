@@ -1,5 +1,36 @@
 # Changelog
 
+## \[0.7.0\] — 2026-05-09
+
+### Added
+
+- Generated project `README.md` now includes a Requirements section
+  listing Python 3.11+, CMake ≥ 3.16, a C99 compiler, NumPy, and
+  pkg-config with per-platform install commands.
+- `docs/c-library.md` — dedicated end-user guide for installing and
+  consuming the generated C library: prerequisites, build + install,
+  pkg-config and CMake find\_package usage, rpath options, and
+  verification steps.
+
+### Fixed
+
+- `just-makeit init` now uses `target_sources(… PRIVATE $<TARGET_OBJECTS:…>)`
+  to wire component OBJECT libraries into the combined shared library.
+  The previous `target_link_libraries` approach produced an empty
+  `lib<project>.so` on some CMake versions.
+- Generated `.pc` file now has the correct `includedir` when installing
+  to a non-default prefix: cmake is reconfigured with
+  `CMAKE_INSTALL_PREFIX` before `cmake --install`, ensuring
+  `configure_file` regenerates the `.pc` with the right paths.
+
+### Docs
+
+- `docs/workflow.md`: C library section updated with correct cmake
+  install sequence, split pkg-config invocation, `--as-needed` note,
+  and link to `docs/c-library.md`.
+
+______________________________________________________________________
+
 ## \[0.6.9\] — 2026-05-09
 
 ### Changed
