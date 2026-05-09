@@ -56,15 +56,19 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     text = "".join(lines)
 
     # Append Component to __all__ = [...] (handles single- and multi-line).
+    # If __all__ is absent entirely, append it.
     all_re = re.compile(r'(__all__\s*=\s*\[)(.*?)(\])', re.DOTALL)
-    def _splice_all(m: re.Match) -> str:
-        inner = m.group(2)
-        if f'"{Component}"' in inner or f"'{Component}'" in inner:
-            return m.group(0)
-        stripped = inner.rstrip()
-        sep = ", " if stripped.rstrip(",") else ""
-        return f'{m.group(1)}{stripped.rstrip(",")}{sep}"{Component}"{m.group(3)}'
-    text = all_re.sub(_splice_all, text)
+    if all_re.search(text):
+        def _splice_all(m: re.Match) -> str:
+            inner = m.group(2)
+            if f'"{Component}"' in inner or f"'{Component}'" in inner:
+                return m.group(0)
+            stripped = inner.rstrip()
+            sep = ", " if stripped.rstrip(",") else ""
+            return f'{m.group(1)}{stripped.rstrip(",")}{sep}"{Component}"{m.group(3)}'
+        text = all_re.sub(_splice_all, text)
+    else:
+        text = text.rstrip("\n") + f'\n\n__all__ = ["{Component}"]\n'
 
     init_py.write_text(text, encoding="utf-8")
     print(f"  update  {init_py}")

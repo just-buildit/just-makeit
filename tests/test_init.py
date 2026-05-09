@@ -148,12 +148,15 @@ class TestInitPreservesInit:
         init_run(project, "engine")
         assert (project / "src" / "myproj" / "__init__.py").exists()
 
-    def test_second_component_does_not_overwrite_init_py(self, project):
+    def test_second_component_splices_init_py(self, project):
         init_run(project, "engine")
         init_path = project / "src" / "myproj" / "__init__.py"
-        original = init_path.read_text()
         init_run(project, "parser")
-        assert init_path.read_text() == original
+        text = init_path.read_text()
+        assert "from .engine import Engine" in text
+        assert "from .parser import Parser" in text
+        assert '"Engine"' in text
+        assert '"Parser"' in text
 
 
 class TestInitValidation:
