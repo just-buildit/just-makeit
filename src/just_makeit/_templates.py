@@ -1497,7 +1497,7 @@ JM_PERF_H = """\
  *   JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
  *                   FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
  */
-#ifdef __AVX512F__
+#if JM_SIMD_WIDTH_F32 > 1
 #  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)                \\
     {                                                                          \\
         samp _scratch[(LENGTH) + (CHUNK)];                                    \\
@@ -1515,7 +1515,7 @@ JM_PERF_H = """\
         }                                                                      \\
     }
 #else
-#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)  /* no SIMD */
+#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)  /* scalar: no batching */
 #endif
 
 #define JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)         \\

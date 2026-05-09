@@ -42,11 +42,16 @@ that stamps out the outer dispatch loop so you never write it by hand.
 
 Three named constants make each concern explicit:
 
-| constant    | concern      | meaning                              |
-|-------------|--------------|--------------------------------------|
-| `FIR_TAPS`  | algorithm    | filter length (set at codegen time)  |
-| `FIR_BATCH` | parallelism  | AVX-512 complex samples per call     |
-| `FIR_CHUNK` | tuning       | samples per scratch-buffer fill      |
+| constant    | concern      | meaning                                           |
+|-------------|--------------|---------------------------------------------------|
+| `FIR_TAPS`  | algorithm    | filter length (set at codegen time)               |
+| `FIR_BATCH` | parallelism  | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
+| `FIR_CHUNK` | tuning       | samples per scratch-buffer fill                   |
+
+`FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2),
+so the same source compiles to 8 or 4 complex samples per batch without any
+`#ifdef`.  On scalar targets `JM_SIMD_WIDTH_F32 = 1`, `_JM_STEPS_SIMD_` is a
+no-op, and `step_batch()` is never called.
 
 `step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
 but you never write `steps()`.
@@ -68,4 +73,6 @@ with SIMD: 1745 M complex samples/sec   (3.7×)
 The scalar baseline is already 4.5× faster than the `memmove` version because
 sequential scratch accesses are hardware-prefetcher-friendly; the L1-resident
 chunk eliminates the circular-buffer index arithmetic entirely.  Adding
-`ENABLE_SIMD=ON` then delivers the full 3.7× from AVX-512's 16-wide float FMA.
+`ENABLE_SIMD=ON` delivers the full speedup from AVX-512's 16-wide float FMA
+(3.7×) or AVX2's 8-wide FMA — `jm_simd.h` selects the best tier at compile
+time, no source changes needed.
