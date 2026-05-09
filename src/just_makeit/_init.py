@@ -306,10 +306,13 @@ def run(
         if cmake_path.exists():
             cmake_text = cmake_path.read_text(encoding="utf-8")
             cmake_text += f"add_subdirectory(native/src/{comp})\n"
-            # Only add target_link_libraries if the combined lib target exists (v0.4+)
+            # Use target_sources + $<TARGET_OBJECTS:...> — reliable across all
+            # CMake versions; target_link_libraries(SHARED PRIVATE OBJECT) is
+            # not guaranteed to include the objects in the output binary.
             if f"{pkg}_lib" in cmake_text:
                 cmake_text += (
-                    f"target_link_libraries({pkg}_lib PRIVATE {comp}_core)\n"
+                    f"target_sources({pkg}_lib PRIVATE"
+                    f" $<TARGET_OBJECTS:{comp}_core>)\n"
                 )
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")

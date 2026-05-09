@@ -1,5 +1,19 @@
 # Changelog
 
+## \[0.6.7\] — 2026-05-09
+
+### Fixed
+
+- Generated `libmy_project.so` now actually contains the component
+  symbols.  `just-makeit init` was appending
+  `target_link_libraries(…_lib PRIVATE …_core)` to link OBJECT files
+  into the combined shared library, which is unreliable across CMake
+  versions and produces an empty `.so`.  Replaced with
+  `target_sources(…_lib PRIVATE $<TARGET_OBJECTS:…_core>)`, the
+  canonical approach supported since CMake 3.1.
+
+______________________________________________________________________
+
 ## \[0.6.6\] — 2026-05-09
 
 ### Fixed

@@ -2848,7 +2848,7 @@ target_include_directories(<<project_underscore>>_lib PUBLIC
 enable_testing()
 
 # ── Components ───────────────────────────────────────────────────────────────
-# just-makeit init appends: add_subdirectory + target_link_libraries per component
+# just-makeit init appends: add_subdirectory + target_sources($<TARGET_OBJECTS:...>) per component
 
 # ── Install ──────────────────────────────────────────────────────────────────
 
