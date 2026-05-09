@@ -128,7 +128,7 @@ just-makeit init ema \
 
 `init` writes all C and Python files for the new component and updates:
 
-- root `CMakeLists.txt` — `add_subdirectory` + `target_link_libraries`
+- root `CMakeLists.txt` — `add_subdirectory` + `target_sources($<TARGET_OBJECTS:…>)`
 - umbrella header `native/inc/dsp_toolkit.h` — `#include "ema/ema_core.h"`
 - `src/dsp_toolkit/__init__.py` — splices in `from .ema import Ema` and
   adds `"Ema"` to `__all__`, preserving any existing user edits
@@ -307,13 +307,15 @@ Each component's core logic compiles once (CMake OBJECT library) and links
 into both artifacts.
 
 ```sh
-cmake --install build --prefix /usr/local
-gcc $(pkg-config --cflags --libs my-dsp) main.c -o main
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --install build
+# split --cflags / --libs so the source file sits between them (required on Linux)
+gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
 ```
 
 ```cmake
-find_package(my-dsp REQUIRED)
-target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
+find_package(my_dsp REQUIRED)
+target_link_libraries(my_app PRIVATE my_dsp::my_dsp_lib m)
 ```
 
 ______________________________________________________________________
