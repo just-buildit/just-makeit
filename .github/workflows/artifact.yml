@@ -148,12 +148,12 @@ jobs:
           PC_DIR=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
           LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
           echo "pc: $PC_DIR  lib: $LIB_DIR"
-          PKG_CONFIG_PATH="$PC_DIR" \
-            gcc -O2 -std=c99 \
-              $(pkg-config --cflags --libs my-fir) \
-              -Wl,-rpath,"$LIB_DIR" \
-              -lm \
-              /tmp/fir_consumer.c -o /tmp/fir_consumer_pkgconfig
+          export PKG_CONFIG_PATH="$PC_DIR"
+          gcc -O2 -std=c99 \
+            $(pkg-config --cflags --libs my-fir) \
+            -Wl,-rpath,"$LIB_DIR" \
+            -lm \
+            /tmp/fir_consumer.c -o /tmp/fir_consumer_pkgconfig
           /tmp/fir_consumer_pkgconfig
 
       - name: Test CMake find_package consumer
