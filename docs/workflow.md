@@ -309,9 +309,14 @@ into both artifacts.
 ```sh
 cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --install build
-# split --cflags / --libs so the source file sits between them (required on Linux)
 gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
 ```
+
+> **Linux linker note:** `--cflags` and `--libs` must be split with the
+> source file between them.  GNU ld uses `--as-needed` by default on
+> Debian/Ubuntu, which silently drops any shared library that appears
+> before the object files that reference it.  Putting `-lmy_dsp` after
+> `main.c` ensures the linker sees the undefined symbols first.
 
 ```cmake
 find_package(my_dsp REQUIRED)
