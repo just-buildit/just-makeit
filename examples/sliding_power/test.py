@@ -26,23 +26,26 @@ def run(root: Path) -> None:
             ("pos", "int", "0"),
         ],
         perf=True,
+        arg_type="float _Complex",
+        return_type="float",
     )
 
     assert (dest / "native" / "inc" / "jm_simd.h").exists(), "jm_simd.h missing"
     assert (dest / "native" / "inc" / "jm_perf.h").exists(), "jm_perf.h missing"
 
-    # Patch step(): replace full function (remove const, add implementation)
+    # Patch step(): replace stub (const + placeholder body) with real implementation.
+    # The stub is: JM_FORCEINLINE JM_HOT float\npower_est_step(const ...) { ... }
     import re as _re
     header = dest / "native" / "inc" / "power_est" / "power_est_core.h"
     text = header.read_text()
     stub_re = _re.compile(
-        r"JM_FORCEINLINE JM_HOT float complex\s*\n"
+        r"JM_FORCEINLINE JM_HOT float\s*\n"
         r"power_est_step\(const power_est_state_t \*state.*?\n\}",
         _re.DOTALL,
     )
     assert stub_re.search(text), "step stub not found in header"
     impl = (
-        "JM_FORCEINLINE JM_HOT float complex\n"
+        "JM_FORCEINLINE JM_HOT float\n"
         "power_est_step(power_est_state_t *state, float complex x)\n"
         "{\n"
         "    float re = crealf(x), im = cimagf(x);\n"
@@ -50,7 +53,7 @@ def run(root: Path) -> None:
         "    state->sum_sq += (double)(mag_sq - state->delay[state->pos]);\n"
         "    state->delay[state->pos] = mag_sq;\n"
         "    state->pos = (state->pos + 1) & 63;\n"
-        "    return (float)(state->sum_sq * (1.0 / 64.0)) + 0.0f * I;\n"
+        "    return (float)(state->sum_sq * (1.0 / 64.0));\n"
         "}"
     )
     header.write_text(stub_re.sub(impl, text))
@@ -63,7 +66,7 @@ def run(root: Path) -> None:
     r = subprocess.run(["make", "test"], cwd=dest, capture_output=True, text=True)
     assert r.returncode == 0, f"make test failed:\n{r.stdout}\n{r.stderr}"
 
-    # Python smoke test
+    # Python smoke test — step() now returns float, not complex
     r = subprocess.run(
         [sys.executable, "-c", """
 import math, sys
@@ -72,10 +75,10 @@ from my_power import PowerEst
 est = PowerEst()
 for n in range(128):
     y = est.step(math.sin(2 * math.pi * n / 16) + 0j)
-assert 0.48 < y.real < 0.52, f"sine power out of range: {y.real}"
+assert 0.48 < y < 0.52, f"sine power out of range: {y}"
 for _ in range(64):
     y = est.step(0j)
-assert y.real < 0.01, f"silence power should be ~0: {y.real}"
+assert y < 0.01, f"silence power should be ~0: {y}"
 print("ok")
 """],
         cwd=dest,

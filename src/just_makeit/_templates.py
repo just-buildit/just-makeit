@@ -135,6 +135,162 @@ _CTYPE_META: dict[str, dict] = {
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
 
+# Maps py_type → NumPy C-API enum constant (for ext.c array ops).
+_NP_ENUM: dict[str, str] = {
+    "np.float32": "NPY_FLOAT",
+    "np.float64": "NPY_DOUBLE",
+    "np.complex64": "NPY_COMPLEX64",
+    "np.complex128": "NPY_COMPLEX128",
+    "np.clongdouble": "NPY_CLONGDOUBLE",
+    "np.int8": "NPY_INT8",
+    "np.int16": "NPY_INT16",
+    "np.int32": "NPY_INT",
+    "np.int64": "NPY_INT64",
+    "np.uint8": "NPY_UINT8",
+    "np.uint16": "NPY_UINT16",
+    "np.uint32": "NPY_UINT32",
+    "np.uint64": "NPY_UINT64",
+    "np.uintp": "NPY_UINTP",
+    "np.intp": "NPY_INTP",
+}
+
+# Maps kind → Python isinstance target.
+_KIND_PY_ISINSTANCE: dict[str, str] = {
+    "float": "float",
+    "int": "int",
+    "complex": "complex",
+}
+
+# Maps kind → Python test input literal.
+_KIND_PY_TEST_VAL: dict[str, str] = {
+    "float": "1.0",
+    "int": "1",
+    "complex": "1.0 + 0.0j",
+}
+
+
+def _ctype_display(ct: str) -> str:
+    """Internal key → C display form: 'float _Complex' → 'float complex'."""
+    return ct.replace("_Complex", "complex")
+
+
+def _step_parse_block(sample_type: str, samp: dict) -> str:
+    """4-space-indented parse block for step(); ends without trailing newline.
+
+    Uses 'x_raw' as the intermediate parse variable so to_c("x") works
+    (the to_c lambdas append '_raw' to the base name they receive).
+    """
+    disp = _ctype_display(sample_type)
+    if "parse_type" in samp:
+        parse_type = samp["parse_type"]
+        parse_zero = samp["parse_zero"]
+        fmt = samp["fmt"]
+        to_c_expr = samp["to_c"]("x")  # to_c("x") → "(type)x_raw..." using x_raw var
+        return (
+            f'    {parse_type} x_raw = {parse_zero};\n'
+            f'    if (!PyArg_ParseTuple(args, "{fmt}", &x_raw))\n'
+            f"        return NULL;\n"
+            f"    {disp} x = {to_c_expr};"
+        )
+    else:
+        fmt = samp["fmt"]
+        return (
+            f"    {disp} x;\n"
+            f'    if (!PyArg_ParseTuple(args, "{fmt}", &x))\n'
+            f"        return NULL;"
+        )
+
+
+def _bench_in_init(sample_type: str, samp: dict) -> str:
+    if samp["kind"] == "complex":
+        base = sample_type.replace(" _Complex", "")
+        suffix = samp["zero"][samp["zero"].index("+"):]
+        return f"({base})(i){suffix}"
+    return f"({_ctype_display(sample_type)})(i)"
+
+
+def _bench_warmup(samp: dict) -> str:
+    z = samp["zero"]
+    if samp["kind"] == "complex":
+        return z.replace("0.0f +", "1.0f +").replace("0.0 +", "1.0 +").replace("0.0L +", "1.0L +")
+    if samp["kind"] == "float":
+        return z.replace("0.0f", "1.0f").replace("0.0", "1.0")
+    return "1"
+
+
+def _test_arr_4_init(sample_type: str, samp: dict) -> str:
+    if samp["kind"] == "complex":
+        base = sample_type.replace(" _Complex", "")
+        if "long double" in base:
+            return "{1.0L, 2.0L, 3.0L, 4.0L}"
+        elif base == "double":
+            return "{1.0, 2.0, 3.0, 4.0}"
+        return "{1.0f, 2.0f, 3.0f, 4.0f}"
+    if samp["kind"] == "float":
+        return "{1.0, 2.0, 3.0, 4.0}" if sample_type == "double" else "{1.0f, 2.0f, 3.0f, 4.0f}"
+    return "{1, 2, 3, 4}"
+
+
+def make_sample_ctx(
+    arg_type: str = "float _Complex",
+    return_type: str | None = None,
+) -> dict[str, str]:
+    """Return template context keys derived from step() arg/return types.
+
+    arg_type    — C type for the step() input parameter x (default: float _Complex)
+    return_type — C type for the step() return value (default: same as arg_type)
+    """
+    if return_type is None:
+        return_type = arg_type
+
+    for t, label in [(arg_type, "--arg-type"), (return_type, "--return-type")]:
+        if t not in _CTYPE_META:
+            supported = ", ".join(sorted(_CTYPE_META))
+            raise ValueError(
+                f"unsupported {label} value '{t}'. Supported scalar types: {supported}"
+            )
+
+    samp = _CTYPE_META[arg_type]
+    ret = _CTYPE_META[return_type]
+
+    in_np_dtype = samp["py_type"]
+    out_np_dtype = ret["py_type"]
+
+    # pure_x_* keys: used inside pure-scalar fn() to parse the x argument.
+    # Use x_raw as intermediate so to_c("x") works (lambdas append _raw).
+    samp_disp = _ctype_display(arg_type)
+    if "parse_type" in samp:
+        pure_x_local = f"    {samp['parse_type']} x_raw = {samp['parse_zero']};"
+        pure_x_parse_arg = "&x_raw"
+        pure_x_to_c = f"    {samp_disp} x = {samp['to_c']('x')};\n"
+    else:
+        pure_x_local = f"    {samp_disp} x;"
+        pure_x_parse_arg = "&x"
+        pure_x_to_c = ""
+
+    return {
+        "arg_ctype":        _ctype_display(arg_type),
+        "return_ctype":     _ctype_display(return_type),
+        "arg_zero":         samp["zero"],
+        "in_np_dtype":      in_np_dtype,
+        "out_np_dtype":     out_np_dtype,
+        "in_np_enum":       _NP_ENUM[in_np_dtype],
+        "out_np_enum":      _NP_ENUM[out_np_dtype],
+        "in_py_hint":       _KIND_PY_ISINSTANCE[samp["kind"]],
+        "out_py_hint":      _KIND_PY_ISINSTANCE[ret["kind"]],
+        "out_py_isinstance":_KIND_PY_ISINSTANCE[ret["kind"]],
+        "in_py_test_val":   _KIND_PY_TEST_VAL[samp["kind"]],
+        "step_parse_block": _step_parse_block(arg_type, samp),
+        "step_return_expr": ret["to_py"]("y"),
+        "bench_in_init":    _bench_in_init(arg_type, samp),
+        "bench_warmup":     _bench_warmup(samp),
+        "test_arr_4_init":  _test_arr_4_init(arg_type, samp),
+        "pure_x_local":     pure_x_local,
+        "pure_x_fmt_char":  samp["fmt"],
+        "pure_x_parse_arg": pure_x_parse_arg,
+        "pure_x_to_c":      pure_x_to_c,
+    }
+
 
 _C_SET_VAL: dict[str, str] = {
     "float": "2.0f",
@@ -809,6 +965,7 @@ def make_pure_ctx(
     component: str,
     Component: str,
     state_vars: list[tuple[str, str, str]],
+    arg_type: str = "float _Complex",
 ) -> dict[str, str]:
     """Return context keys for a pure (stateless / caller-managed) component.
 
@@ -831,7 +988,7 @@ def make_pure_ctx(
             array_info.append((n, parsed[0], parsed[1]))
 
     if not array_info:
-        return _make_scalar_pure_ctx(component, Component, scalar_vars)
+        return _make_scalar_pure_ctx(component, Component, scalar_vars, arg_type)
     return _make_struct_pure_ctx(component, Component, scalar_vars, array_info)
 
 
@@ -839,6 +996,7 @@ def _make_scalar_pure_ctx(
     component: str,
     Component: str,
     scalar_vars: list[tuple[str, str, str]],
+    arg_type: str = "float _Complex",
 ) -> dict[str, str]:
     """Pure scalar style: params passed directly per call, no struct."""
     # C function signature suffix: , double scale, int n
@@ -869,8 +1027,9 @@ def _make_scalar_pure_ctx(
             param_parse_args.append(f"&{name}")
         param_fmt += meta["fmt"]
 
+    x_fmt = _CTYPE_META[arg_type]["fmt"]
     pure_locals = "\n".join(local_lines)
-    pure_fn_fmt = "D" + (f"|{param_fmt}" if scalar_vars else "")
+    pure_fn_fmt = x_fmt + (f"|{param_fmt}" if scalar_vars else "")
     pure_steps_fmt = "O" + (f"|{param_fmt}" if scalar_vars else "")
     pure_params_args = (
         (", " + ", ".join(param_parse_args)) if param_parse_args else ""
@@ -893,6 +1052,18 @@ def _make_scalar_pure_ctx(
     c_create_args = ", ".join(dflt for _, _, dflt in scalar_vars)
     py_create_args = ", ".join(_py_default(ct, dflt) for _, ct, dflt in scalar_vars)
 
+    # pure_x_* keys for the x argument in py_<<component>>() (fn, not steps).
+    samp_meta = _CTYPE_META[arg_type]
+    samp_disp = _ctype_display(arg_type)
+    if "parse_type" in samp_meta:
+        pure_x_local = f"    {samp_meta['parse_type']} x_raw = {samp_meta['parse_zero']};"
+        pure_x_parse_arg = "&x_raw"
+        pure_x_to_c = f"    {samp_disp} x = {samp_meta['to_c']('x')};\n"
+    else:
+        pure_x_local = f"    {samp_disp} x;"
+        pure_x_parse_arg = "&x"
+        pure_x_to_c = ""
+
     return {
         "pure_style": "scalar",
         "c_fn_params": c_fn_params,
@@ -909,6 +1080,9 @@ def _make_scalar_pure_ctx(
         "py_fn_kwargs": py_fn_kwargs,
         "c_create_args": c_create_args,
         "py_create_args": py_create_args,
+        "pure_x_local": pure_x_local,
+        "pure_x_parse_arg": pure_x_parse_arg,
+        "pure_x_to_c": pure_x_to_c,
     }
 
 
@@ -1370,7 +1544,7 @@ COMPONENT_CORE_H = """\
  * Example:
  * @code
  * <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
- * float complex y = <<component>>_step(obj, 1.0f + 0.0f * I);
+ * <<return_ctype>> y = <<component>>_step(obj, <<arg_zero>>);
  * <<component>>_destroy(obj);
  * @endcode
  */
@@ -1421,15 +1595,15 @@ void <<component>>_reset(<<component>>_state_t *state);
  * @return       Output sample.
  * @note Inlined for maximum performance.
  */
-<<step_qualifier>> float complex
-<<component>>_step(const <<component>>_state_t *state, float complex x)
+<<step_qualifier>> <<return_ctype>>
+<<component>>_step(const <<component>>_state_t *state, <<arg_ctype>> x)
 {
-    (void)state; /* TODO: implement DSP using state variables */
-    return x;
+    (void)state; /* TODO: implement using state variables */
+    return (<<return_ctype>>)x;
 }
 
 /**
- * @brief Process a block of complex samples.
+ * @brief Process a block of samples.
  *
  * @param state   Component state.
  * @param input   Input array (length >= n).
@@ -1439,9 +1613,9 @@ void <<component>>_reset(<<component>>_state_t *state);
  */
 void <<component>>_steps(
     <<component>>_state_t *state,
-    const float complex    *input,
-    float complex          *output,
-    size_t                  n);
+    const <<arg_ctype>>   *input,
+    <<return_ctype>>      *output,
+    size_t                 n);
 
 <<getter_setter_decls>>
 
@@ -1482,9 +1656,9 @@ void
 void
 <<component>>_steps(
     <<component>>_state_t *state,
-    const float complex    *input,
-    float complex          *output,
-    size_t                  n)
+    const <<arg_ctype>>   *input,
+    <<return_ctype>>      *output,
+    size_t                 n)
 {
 <<omp_simd_hint>>    for (size_t i = 0; i < n; i++)
         output[i] = <<component>>_step(state, input[i]);
@@ -1562,13 +1736,9 @@ static PyObject *
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    Py_complex pyx;
-    if (!PyArg_ParseTuple(args, "D", &pyx))
-        return NULL;
-
-    float complex x = (float)pyx.real + (float)pyx.imag * I;
-    float complex y = <<component>>_step(self->handle, x);
-    return PyComplex_FromDoubles((double)crealf(y), (double)cimagf(y));
+<<step_parse_block>>
+    <<return_ctype>> y = <<component>>_step(self->handle, x);
+    return <<step_return_expr>>;
 }
 
 static PyObject *
@@ -1583,13 +1753,13 @@ static PyObject *
         return NULL;
 
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        in_obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS);
+        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
     if (!in_arr)
         return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
     npy_intp dims[] = {n};
-    PyObject *out_arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) {
         Py_DECREF(in_arr);
         return NULL;
@@ -1597,8 +1767,8 @@ static PyObject *
 
     <<component>>_steps(
         self->handle,
-        (const float complex *)PyArray_DATA(in_arr),
-        (float complex *)PyArray_DATA((PyArrayObject *)out_arr),
+        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
         (size_t)n);
 
     Py_DECREF(in_arr);
@@ -1639,9 +1809,9 @@ static PyMethodDef <<Component>>_methods[] = {
     {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
      "Reset state to post-create defaults."},
     {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
-     "Process one complex sample. Returns complex."},
+     "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a complex64 ndarray. Returns complex64 ndarray."},
+     "Process a samples array. Returns an ndarray."},
 <<getter_setter_pymethoddef>>
     {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
@@ -1710,7 +1880,7 @@ int main(void)
     assert(obj != NULL);
 
     /* step: verify it runs */
-    (void)<<component>>_step(obj, 1.0f + 0.0f * I);
+    (void)<<component>>_step(obj, <<arg_zero>>);
 
 <<getter_setter_test_c>>
 
@@ -1744,15 +1914,15 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 int
 main(void)
 {
-    float complex *in  = malloc(BENCH_N * sizeof(float complex));
-    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    <<arg_ctype>> *in  = malloc(BENCH_N * sizeof(<<arg_ctype>>));
+    <<return_ctype>> *out = malloc(BENCH_N * sizeof(<<return_ctype>>));
     if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
-    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+    for (int i = 0; i < BENCH_N; i++) in[i] = <<bench_in_init>>;
 
     <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
 
     /* warmup */
-    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj, 1.0f + 0.0f * I);
+    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj, <<bench_warmup>>);
 
     struct timespec t0, t1;
     double sec;
@@ -1799,18 +1969,18 @@ def obj():
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_step(benchmark, obj):
-    benchmark(obj.step, 1.0 + 0.0j)
+    benchmark(obj.step, <<in_py_test_val>>)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_1k(benchmark, obj):
-    x = np.ones(1024, dtype=np.complex64)
+    x = np.ones(1024, dtype=<<in_np_dtype>>)
     benchmark(obj.steps, x)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_64k(benchmark, obj):
-    x = np.ones(65536, dtype=np.complex64)
+    x = np.ones(65536, dtype=<<in_np_dtype>>)
     benchmark(obj.steps, x)
 """
 
@@ -1823,7 +1993,7 @@ PURE_SCALAR_CORE_H = """\
  *
  * Usage:
  * @code
- * float complex y = <<component>>_fn(x<<c_fn_call_defaults>>);
+ * <<return_ctype>> y = <<component>>_fn(x<<c_fn_call_defaults>>);
  * @endcode
  */
 #ifndef <<COMPONENT>>_CORE_H
@@ -1836,28 +2006,28 @@ extern "C" {
 #endif
 
 /**
- * @brief Process a single complex sample.
+ * @brief Process a single sample.
  * @param x   Input sample.
 <<c_fn_param_docs>>
  * @return    Output sample.
  */
-<<step_qualifier>>float complex
-<<component>>_fn(float complex x<<c_fn_params>>)
+<<step_qualifier>><<return_ctype>>
+<<component>>_fn(<<arg_ctype>> x<<c_fn_params>>)
 {
     (void)x;  /* TODO: implement */
-    return x;
+    return (<<return_ctype>>)x;
 }
 
 /**
- * @brief Process a block of complex samples.
+ * @brief Process a block of samples.
  * @param input   Input array (length >= n).
  * @param output  Output array (length >= n; may alias input).
  * @param n       Number of samples.
 <<c_fn_param_docs>>
  */
 void <<component>>_steps(
-    const float complex *input,
-    float complex       *output,
+    const <<arg_ctype>> *input,
+    <<return_ctype>>    *output,
     size_t               n<<c_fn_params>>);
 
 #ifdef __cplusplus
@@ -1872,8 +2042,8 @@ PURE_SCALAR_CORE_C = """\
 
 void
 <<component>>_steps(
-    const float complex *input,
-    float complex       *output,
+    const <<arg_ctype>> *input,
+    <<return_ctype>>    *output,
     size_t               n<<c_fn_params>>)
 {
     for (size_t i = 0; i < n; i++)
@@ -1886,8 +2056,8 @@ PURE_SCALAR_EXT_C = """\
  * <<component>>_ext.c — Python C extension for <<component>>_core.h (pure/scalar)
  *
  * Exports two module-level functions:
- *   <<component>>(x<<c_fn_params>>) -> complex
- *   <<component>>_steps(arr<<c_fn_params>>) -> NDArray[complex64]
+ *   <<component>>(x<<c_fn_params>>) -> scalar
+ *   <<component>>_steps(arr<<c_fn_params>>) -> NDArray
  */
 
 #define PY_SSIZE_T_CLEAN
@@ -1905,14 +2075,13 @@ py_<<component>>(PyObject *module, PyObject *args, PyObject *kwds)
 {
     (void)module;
     static char *kwlist[] = {"x", <<py_kwlist>>NULL};
-    Py_complex pyx;
+<<pure_x_local>>
 <<pure_locals>>
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "<<pure_fn_fmt>>", kwlist,
-                                     &pyx<<pure_params_args>>))
+                                     <<pure_x_parse_arg>><<pure_params_args>>))
         return NULL;
-<<pure_post_parse>>    float complex x = (float)pyx.real + (float)pyx.imag * I;
-    float complex y = <<component>>_fn(x<<c_fn_call_args>>);
-    return PyComplex_FromDoubles((double)crealf(y), (double)cimagf(y));
+<<pure_post_parse>><<pure_x_to_c>>    <<return_ctype>> y = <<component>>_fn(x<<c_fn_call_args>>);
+    return <<step_return_expr>>;
 }
 
 /* ── <<component>>_steps(arr, **params) ──────────────────────────────────────── */
@@ -1929,18 +2098,18 @@ py_<<component>>_steps(PyObject *module, PyObject *args, PyObject *kwds)
         return NULL;
 <<pure_post_parse>>
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        in_obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS);
+        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
     if (!in_arr)
         return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
     npy_intp dims[] = {n};
-    PyObject *out_arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) { Py_DECREF(in_arr); return NULL; }
 
     <<component>>_steps(
-        (const float complex *)PyArray_DATA(in_arr),
-        (float complex *)PyArray_DATA((PyArrayObject *)out_arr),
+        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
         (size_t)n<<c_fn_call_args>>);
 
     Py_DECREF(in_arr);
@@ -1952,10 +2121,10 @@ py_<<component>>_steps(PyObject *module, PyObject *args, PyObject *kwds)
 static PyMethodDef <<component>>_methods[] = {
     {"<<component>>",
      (PyCFunction)py_<<component>>, METH_VARARGS | METH_KEYWORDS,
-     "<<component>>(x<<c_fn_params>>) -> complex"},
+     "<<component>>(x<<c_fn_params>>) -> scalar"},
     {"<<component>>_steps",
      (PyCFunction)py_<<component>>_steps, METH_VARARGS | METH_KEYWORDS,
-     "<<component>>_steps(arr<<c_fn_params>>) -> NDArray[complex64]"},
+     "<<component>>_steps(arr<<c_fn_params>>) -> NDArray"},
     {NULL}
 };
 
@@ -1984,12 +2153,12 @@ PURE_SCALAR_TEST_C = """\
 int main(void)
 {
     /* fn: verify it runs */
-    float complex y = <<component>>_fn(1.0f + 0.0f * I<<c_fn_call_defaults>>);
+    <<return_ctype>> y = <<component>>_fn(<<arg_zero>><<c_fn_call_defaults>>);
     (void)y;
 
     /* steps: verify it runs */
-    float complex in[4]  = {1.0f, 2.0f, 3.0f, 4.0f};
-    float complex out[4] = {0};
+    <<arg_ctype>> in[4]  = <<test_arr_4_init>>;
+    <<return_ctype>> out[4] = {0};
     <<component>>_steps(in, out, 4<<c_fn_call_defaults>>);
 
     printf("test_<<component>>_core PASSED\\n");
@@ -2001,12 +2170,12 @@ PURE_SCALAR_PYI = """\
 import numpy as np
 from numpy.typing import NDArray
 
-def <<component>>(x: complex<<py_fn_type_params>>) -> complex:
-    \"\"\"<<Component>> — pure (stateless) transform. Returns a single complex sample.\"\"\"
+def <<component>>(x: <<in_py_hint>><<py_fn_type_params>>) -> <<out_py_hint>>:
+    \"\"\"<<Component>> — pure (stateless) transform. Returns a single output sample.\"\"\"
     ...
 
-def <<component>>_steps(arr: NDArray[np.complex64]<<py_fn_type_params>>) -> NDArray[np.complex64]:
-    \"\"\"Process a block of complex samples. Returns a complex64 ndarray.\"\"\"
+def <<component>>_steps(arr: NDArray[<<in_np_dtype>>]<<py_fn_type_params>>) -> NDArray[<<out_np_dtype>>]:
+    \"\"\"Process a block of samples. Returns an ndarray.\"\"\"
     ...
 """
 
@@ -2019,24 +2188,24 @@ from <<package>> import <<component>>, <<component>>_steps
 
 class Test<<Component>>:
     def test_fn_runs(self):
-        y = <<component>>(1.0 + 0.0j<<py_fn_kwargs>>)
-        assert isinstance(y, complex)
+        y = <<component>>(<<in_py_test_val>><<py_fn_kwargs>>)
+        assert isinstance(y, <<out_py_isinstance>>)
 
     def test_steps_runs(self):
-        x = np.ones(16, dtype=np.complex64)
+        x = np.ones(16, dtype=<<in_np_dtype>>)
         y = <<component>>_steps(x<<py_fn_kwargs>>)
         assert y.shape == (16,)
-        assert y.dtype == np.complex64
+        assert y.dtype == <<out_np_dtype>>
 
     def test_steps_sizes(self):
         for n in (1, 64, 1024):
-            x = np.ones(n, dtype=np.complex64)
+            x = np.ones(n, dtype=<<in_np_dtype>>)
             y = <<component>>_steps(x<<py_fn_kwargs>>)
             assert y.shape == (n,)
 
     def test_steps_attr(self):
         from <<package>> import <<component>>
-        y = <<component>>.steps(np.ones(4, dtype=np.complex64)<<py_fn_kwargs>>)
+        y = <<component>>.steps(np.ones(4, dtype=<<in_np_dtype>>)<<py_fn_kwargs>>)
         assert y.shape == (4,)
 """
 
@@ -2060,13 +2229,13 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 int
 main(void)
 {
-    float complex *in  = malloc(BENCH_N * sizeof(float complex));
-    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    <<arg_ctype>> *in  = malloc(BENCH_N * sizeof(<<arg_ctype>>));
+    <<return_ctype>> *out = malloc(BENCH_N * sizeof(<<return_ctype>>));
     if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
-    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+    for (int i = 0; i < BENCH_N; i++) in[i] = <<bench_in_init>>;
 
     for (int i = 0; i < 16; i++)
-        (void)<<component>>_fn(1.0f + 0.0f * I<<c_fn_call_defaults>>);
+        (void)<<component>>_fn(<<bench_warmup>><<c_fn_call_defaults>>);
 
     struct timespec t0, t1;
     double sec;
@@ -2105,18 +2274,18 @@ from <<package>> import <<component>>, <<component>>_steps
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_fn(benchmark):
-    benchmark(<<component>>, 1.0 + 0.0j<<py_fn_kwargs>>)
+    benchmark(<<component>>, <<in_py_test_val>><<py_fn_kwargs>>)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_1k(benchmark):
-    x = np.ones(1024, dtype=np.complex64)
+    x = np.ones(1024, dtype=<<in_np_dtype>>)
     benchmark(<<component>>_steps, x<<py_fn_kwargs>>)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_64k(benchmark):
-    x = np.ones(65536, dtype=np.complex64)
+    x = np.ones(65536, dtype=<<in_np_dtype>>)
     benchmark(<<component>>_steps, x<<py_fn_kwargs>>)
 """
 
@@ -2135,13 +2304,13 @@ PURE_STRUCT_CORE_H = """\
  * @code
  * <<component>>_params_t p;
  * <<component>>_params_init(&p);
- * float complex y = <<component>>_fn(x, &p);
+ * <<return_ctype>> y = <<component>>_fn(x, &p);
  * @endcode
  *
  * Heap usage (with aligned allocation for SIMD):
  * @code
  * <<component>>_params_t *p = <<component>>_params_create();
- * float complex y = <<component>>_fn(x, p);
+ * <<return_ctype>> y = <<component>>_fn(x, p);
  * <<component>>_params_free(p);
  * @endcode
  */
@@ -2180,25 +2349,25 @@ void <<component>>_params_init(<<component>>_params_t *p);
  * @param params  Caller-managed params (modified in place).
  * @return        Output sample.
  */
-<<step_qualifier>>float complex
-<<component>>_fn(float complex x, <<component>>_params_t *params)
+<<step_qualifier>><<return_ctype>>
+<<component>>_fn(<<arg_ctype>> x, <<component>>_params_t *params)
 {
     (void)x; (void)params;  /* TODO: implement */
-    return x;
+    return (<<return_ctype>>)x;
 }
 
 /**
- * @brief Process a block of complex samples.
+ * @brief Process a block of samples.
  * @param input   Input array  (length >= n).
  * @param output  Output array (length >= n; may alias input).
  * @param n       Number of samples.
  * @param params  Caller-managed params (modified in place).
  */
 void <<component>>_steps(
-    const float complex     *input,
-    float complex           *output,
-    size_t                   n,
-    <<component>>_params_t  *params);
+    const <<arg_ctype>>    *input,
+    <<return_ctype>>       *output,
+    size_t                  n,
+    <<component>>_params_t *params);
 
 <<params_getter_setter_decls>>
 
@@ -2238,10 +2407,10 @@ void
 
 void
 <<component>>_steps(
-    const float complex     *input,
-    float complex           *output,
-    size_t                   n,
-    <<component>>_params_t  *params)
+    const <<arg_ctype>>    *input,
+    <<return_ctype>>       *output,
+    size_t                  n,
+    <<component>>_params_t *params)
 {
     for (size_t i = 0; i < n; i++)
         output[i] = <<component>>_fn(input[i], params);
@@ -2310,12 +2479,9 @@ static PyObject *
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    Py_complex pyx;
-    if (!PyArg_ParseTuple(args, "D", &pyx))
-        return NULL;
-    float complex x = (float)pyx.real + (float)pyx.imag * I;
-    float complex y = <<component>>_fn(x, self->handle);
-    return PyComplex_FromDoubles((double)crealf(y), (double)cimagf(y));
+<<step_parse_block>>
+    <<return_ctype>> y = <<component>>_fn(x, self->handle);
+    return <<step_return_expr>>;
 }
 
 static PyObject *
@@ -2330,17 +2496,17 @@ static PyObject *
         return NULL;
 
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        in_obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS);
+        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
     if (!in_arr) return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
     npy_intp dims[] = {n};
-    PyObject *out_arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) { Py_DECREF(in_arr); return NULL; }
 
     <<component>>_steps(
-        (const float complex *)PyArray_DATA(in_arr),
-        (float complex *)PyArray_DATA((PyArrayObject *)out_arr),
+        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
         (size_t)n,
         self->handle);
 
@@ -2391,7 +2557,7 @@ static PyObject *
 
 static PyMethodDef <<Component>>_methods[] = {
     {"steps",     (PyCFunction)<<Component>>_steps,   METH_VARARGS,
-     "Process a complex64 ndarray. Returns complex64 ndarray."},
+     "Process a samples array. Returns an ndarray."},
     {"reset",     (PyCFunction)<<Component>>_reset,   METH_NOARGS,
      "Re-zero all params fields to post-create defaults."},
 <<getter_setter_pymethoddef>>
@@ -2456,17 +2622,17 @@ int main(void)
     assert(p != NULL);
 
     /* fn: verify it runs */
-    (void)<<component>>_fn(1.0f + 0.0f * I, p);
+    (void)<<component>>_fn(<<arg_zero>>, p);
 
     /* steps: verify it runs */
-    float complex in[4]  = {1, 2, 3, 4};
-    float complex out[4] = {0};
+    <<arg_ctype>> in[4]  = <<test_arr_4_init>>;
+    <<return_ctype>> out[4] = {0};
     <<component>>_steps(in, out, 4, p);
 
     /* stack allocation via init */
     <<component>>_params_t stack_p;
     <<component>>_params_init(&stack_p);
-    (void)<<component>>_fn(1.0f + 0.0f * I, &stack_p);
+    (void)<<component>>_fn(<<arg_zero>>, &stack_p);
 
     <<component>>_params_free(p);
     printf("test_<<component>>_core PASSED\\n");
@@ -2490,11 +2656,11 @@ class <<Component>>:
     \"\"\"
 
     def __init__(self, <<init_params_pyi>>) -> None: ...
-    def __call__(self, x: complex) -> complex:
-        \"\"\"Process one complex sample.\"\"\"
+    def __call__(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
+        \"\"\"Process one sample.\"\"\"
         ...
-    def steps(self, arr: NDArray[np.complex64]) -> NDArray[np.complex64]:
-        \"\"\"Process a complex64 ndarray. Returns complex64 ndarray.\"\"\"
+    def steps(self, arr: NDArray[<<in_np_dtype>>]) -> NDArray[<<out_np_dtype>>]:
+        \"\"\"Process a samples array. Returns ndarray.\"\"\"
         ...
     def reset(self) -> None:
         \"\"\"Re-zero all params fields to post-create defaults.\"\"\"
@@ -2525,38 +2691,38 @@ class Test<<Component>>:
 
     def test_call_runs(self):
         obj = <<Component>>(<<py_create_args>>)
-        y = obj(1.0 + 0.0j)
-        assert isinstance(y, complex)
+        y = obj(<<in_py_test_val>>)
+        assert isinstance(y, <<out_py_isinstance>>)
 
     def test_steps_runs(self):
         obj = <<Component>>(<<py_create_args>>)
-        x = np.ones(16, dtype=np.complex64)
+        x = np.ones(16, dtype=<<in_np_dtype>>)
         y = obj.steps(x)
         assert y.shape == (16,)
-        assert y.dtype == np.complex64
+        assert y.dtype == <<out_np_dtype>>
 
     def test_steps_sizes(self):
         obj = <<Component>>(<<py_create_args>>)
         for n in (1, 64, 1024):
-            x = np.ones(n, dtype=np.complex64)
+            x = np.ones(n, dtype=<<in_np_dtype>>)
             assert obj.steps(x).shape == (n,)
 
     def test_reset(self):
         obj = <<Component>>(<<py_create_args>>)
         obj.reset()
-        y = obj(1.0 + 0.0j)
-        assert isinstance(y, complex)
+        y = obj(<<in_py_test_val>>)
+        assert isinstance(y, <<out_py_isinstance>>)
 
     def test_context_manager(self):
         with <<Component>>(<<py_create_args>>) as obj:
-            y = obj.steps(np.ones(4, dtype=np.complex64))
+            y = obj.steps(np.ones(4, dtype=<<in_np_dtype>>))
         assert y.shape == (4,)
 
     def test_destroy(self):
         obj = <<Component>>(<<py_create_args>>)
         obj.destroy()
         with _raises(RuntimeError, match="destroyed"):
-            obj(1.0 + 0.0j)
+            obj(<<in_py_test_val>>)
 """
 
 PURE_STRUCT_BENCH_C = """\
@@ -2579,14 +2745,14 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 int
 main(void)
 {
-    float complex *in  = malloc(BENCH_N * sizeof(float complex));
-    float complex *out = malloc(BENCH_N * sizeof(float complex));
+    <<arg_ctype>> *in  = malloc(BENCH_N * sizeof(<<arg_ctype>>));
+    <<return_ctype>> *out = malloc(BENCH_N * sizeof(<<return_ctype>>));
     if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
-    for (int i = 0; i < BENCH_N; i++) in[i] = (float)(i) + 0.0f * I;
+    for (int i = 0; i < BENCH_N; i++) in[i] = <<bench_in_init>>;
 
     <<component>>_params_t *p = <<component>>_params_create();
 
-    for (int i = 0; i < 16; i++) (void)<<component>>_fn(1.0f + 0.0f * I, p);
+    for (int i = 0; i < 16; i++) (void)<<component>>_fn(<<bench_warmup>>, p);
 
     struct timespec t0, t1;
     double sec;
@@ -2631,18 +2797,18 @@ def obj():
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_fn(benchmark, obj):
-    benchmark(obj, 1.0 + 0.0j)
+    benchmark(obj, <<in_py_test_val>>)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_1k(benchmark, obj):
-    x = np.ones(1024, dtype=np.complex64)
+    x = np.ones(1024, dtype=<<in_np_dtype>>)
     benchmark(obj.steps, x)
 
 
 @pytest.mark.benchmark(group="<<component>>")
 def test_bench_steps_64k(benchmark, obj):
-    x = np.ones(65536, dtype=np.complex64)
+    x = np.ones(65536, dtype=<<in_np_dtype>>)
     benchmark(obj.steps, x)
 """
 
@@ -2988,10 +3154,10 @@ class <<Component>>:
     def __init__(self, <<init_params_pyi>>) -> None: ...
     def reset(self) -> None:
         \"\"\"Reset state to post-create defaults.\"\"\"
-    def step(self, x: complex) -> complex:
-        \"\"\"Process one complex sample.\"\"\"
-    def steps(self, x: NDArray[np.complex64]) -> NDArray[np.complex64]:
-        \"\"\"Process a complex64 ndarray, return complex64 ndarray.\"\"\"
+    def step(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
+        \"\"\"Process one sample.\"\"\"
+    def steps(self, x: NDArray[<<in_np_dtype>>]) -> NDArray[<<out_np_dtype>>]:
+        \"\"\"Process a samples array. Returns ndarray.\"\"\"
 <<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"
@@ -3058,15 +3224,15 @@ class Test<<Component>>(unittest.TestCase):
 
     def test_step_runs(self):
         obj = <<Component>>(<<py_create_args>>)
-        y = obj.step(3.0 + 4.0j)
-        assert isinstance(y, complex)
+        y = obj.step(<<in_py_test_val>>)
+        assert isinstance(y, <<out_py_isinstance>>)
 
     def test_steps_shape_dtype(self):
         obj = <<Component>>(<<py_create_args>>)
-        x = np.ones(64, dtype=np.complex64)
+        x = np.ones(64, dtype=<<in_np_dtype>>)
         y = obj.steps(x)
         self.assertEqual(y.shape, (64,))
-        self.assertEqual(y.dtype, np.complex64)
+        self.assertEqual(y.dtype, <<out_np_dtype>>)
 
     def test_getter_setter(self):
 <<getter_setter_test_py>>
@@ -3076,14 +3242,14 @@ class Test<<Component>>(unittest.TestCase):
 
     def test_context_manager(self):
         with <<Component>>(<<py_create_args>>) as obj:
-            y = obj.step(1.0 + 1.0j)
-        assert isinstance(y, complex)
+            y = obj.step(<<in_py_test_val>>)
+        assert isinstance(y, <<out_py_isinstance>>)
 
     def test_destroy(self):
         obj = <<Component>>(<<py_create_args>>)
         obj.destroy()
         with _raises(RuntimeError, match="destroyed"):
-            obj.step(1.0 + 0.0j)
+            obj.step(<<in_py_test_val>>)
 """
 
 # ── .gitignore ───────────────────────────────────────────────────────────────

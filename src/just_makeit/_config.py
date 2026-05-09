@@ -86,17 +86,32 @@ def is_pure_component(cfg: dict, component: str) -> bool:
     return pure_style(cfg, component) is not None
 
 
+def arg_type(cfg: dict, component: str) -> str:
+    return cfg.get(component, {}).get("arg_type", "float _Complex")
+
+
+def return_type(cfg: dict, component: str) -> str:
+    return cfg.get(component, {}).get("return_type", "float _Complex")
+
+
 def add_component(
     cfg: dict,
     component: str,
     vars_: list[tuple[str, str, str]],
     pure: str | None = None,
+    arg_type_: str = "float _Complex",
+    return_type_: str | None = None,
 ) -> dict:
     entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
     }
     if pure:
         entry["pure"] = pure
+    if arg_type_ != "float _Complex":
+        entry["arg_type"] = arg_type_
+    rt = return_type_ if return_type_ is not None else arg_type_
+    if rt != "float _Complex":
+        entry["return_type"] = rt
     cfg[component] = entry
     return cfg
 
@@ -115,9 +130,11 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        if comp_data.get("pure"):
+        meta_keys = [k for k in ("pure", "arg_type", "return_type") if comp_data.get(k)]
+        if meta_keys:
             lines.append(f"[{comp}]")
-            lines.append(f'pure = "{comp_data["pure"]}"')
+            for k in meta_keys:
+                lines.append(f'{k} = "{comp_data[k]}"')
             lines.append("")
         for s in comp_data.get("state", []):
             lines.append(f"[[{comp}.state]]")

@@ -11,15 +11,20 @@ Usage: just-makeit <command> [options]
 
 Commands:
   new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
+             [--arg-type TYPE] [--return-type TYPE]
                      Create a new project; optionally scaffold a first component
                      --basic uses a plain Makefile instead of CMake
                      --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
                      --pure generates a stateless component (scalar params or caller-managed struct)
+                     --arg-type TYPE    C type for step()/fn() input x (default: float _Complex)
+                     --return-type TYPE C type for step()/fn() return value (default: --arg-type)
   init <name> [--state|--param name:type[:default] ...] [--perf] [--pure]
+             [--arg-type TYPE] [--return-type TYPE]
                      Add a component to the project in the current directory
                      --perf enables performance hints (inherited from project config by default)
                      --pure generates a stateless component (auto-detected: scalar or struct)
                      --param is idiomatic with --pure; --state is idiomatic without it (both work)
+                     --arg-type / --return-type set the step() I/O C types
   add --state|--param name:type[:default] [--component name] [...]
                      Add state/param variables to an existing component
 
@@ -121,6 +126,8 @@ def main() -> None:
         basic = False
         perf = False
         pure = False
+        arg_type = "float _Complex"
+        return_type = None
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -146,6 +153,23 @@ def main() -> None:
             elif tok == "--pure":
                 pure = True
                 i += 1
+            elif tok in ("--arg-type", "--return-type"):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a type", file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                val = remaining[i]
+                if val not in T._CTYPE_META:
+                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
+                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                if tok == "--arg-type":
+                    arg_type = val
+                else:
+                    return_type = val
+                i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -153,7 +177,8 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf, pure=pure)
+        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf, pure=pure,
+                 arg_type=arg_type, return_type=return_type)
 
     elif cmd == "init":
         if len(args) < 2:
@@ -168,6 +193,8 @@ def main() -> None:
         component = args[1]
         perf: bool | None = None
         pure = False
+        arg_type = "float _Complex"
+        return_type = None
         state_vars: list[tuple[str, str, str]] = []
 
         remaining = args[2:]
@@ -183,11 +210,29 @@ def main() -> None:
             elif tok == "--pure":
                 pure = True
                 i += 1
+            elif tok in ("--arg-type", "--return-type"):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a type", file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                val = remaining[i]
+                if val not in T._CTYPE_META:
+                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
+                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                if tok == "--arg-type":
+                    arg_type = val
+                else:
+                    return_type = val
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _init.run(Path.cwd(), component, state_vars or None, perf=perf, pure=pure)
+        _init.run(Path.cwd(), component, state_vars or None, perf=perf, pure=pure,
+                  arg_type=arg_type, return_type=return_type)
 
     elif cmd == "add":
         from . import _add

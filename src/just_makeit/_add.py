@@ -146,8 +146,12 @@ def run(
         }
     )
 
+    arg_type_ = C.arg_type(cfg, component)
+    return_type_ = C.return_type(cfg, component)
+    ctx.update(T.make_sample_ctx(arg_type_, return_type_))
+
     if style:
-        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], all_vars)
+        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], all_vars, arg_type_)
         ctx.update(pure_ctx)
         # pure_style may change if state type mix changes (scalar→struct on array add)
         new_style = pure_ctx["pure_style"]

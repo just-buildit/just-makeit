@@ -184,7 +184,7 @@ class TestPerfUpgrade:
         header = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
         # Write a custom implementation, then upgrade a second component
         text = header.read_text()
-        text = text.replace("(void)state; /* TODO: implement DSP using state variables */\n    return x;",
+        text = text.replace("(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
                             "return x * 2.0f;")
         header.write_text(text)
         # Re-run perf (idempotent) — body must survive

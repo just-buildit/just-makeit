@@ -86,6 +86,8 @@ def run(
     state_vars: list[tuple[str, str, str]] | None = None,
     perf: bool | None = None,
     pure: bool = False,
+    arg_type: str = "float _Complex",
+    return_type: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -130,8 +132,11 @@ def run(
         }
     )
 
+    sample_ctx = T.make_sample_ctx(arg_type, return_type)
+    ctx.update(sample_ctx)
+
     if pure:
-        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], vars_)
+        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], vars_, arg_type)
         ctx.update(pure_ctx)
         pure_style = pure_ctx["pure_style"]
     else:

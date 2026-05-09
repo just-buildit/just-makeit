@@ -36,6 +36,8 @@ def run(
     basic: bool = False,
     perf: bool = False,
     pure: bool = False,
+    arg_type: str = "float _Complex",
+    return_type: str | None = None,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -88,7 +90,8 @@ def run(
     if component:
         from . import _init
 
-        _init.run(root, component, state_vars, perf=perf, pure=pure, _hint=False)
+        _init.run(root, component, state_vars, perf=perf, pure=pure,
+                  arg_type=arg_type, return_type=return_type, _hint=False)
         print()
         print(f"Done!  cd {root.name} && make && make test")
     else:
