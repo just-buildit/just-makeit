@@ -233,3 +233,9 @@ ______________________________________________________________________
 - CMake ≥ 3.16
 - A C99 compiler (GCC, Clang, MSVC/MinGW)
 - NumPy (runtime, for generated projects)
+
+______________________________________________________________________
+
+## Authors
+
+Matthew T. Hunter, Ph.D. and [Claude Code](https://claude.ai/code)
