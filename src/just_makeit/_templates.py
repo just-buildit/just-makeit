@@ -1447,8 +1447,11 @@ JM_PERF_H = """\
 #  define _JM_HOT_
 #endif
 
-/* Loop-unroll hint: JM_UNROLL(8) before a for loop asks the compiler to
- * unroll it 8 times.  Both GCC and Clang accept the GCC pragma form. */
+/* Loop-unroll directive: JM_UNROLL(8) before a for loop instructs GCC/Clang
+ * to unroll it exactly n times regardless of the compiler's own cost model.
+ * Unlike advisory hints (JM_HOT, JM_LIKELY), this is obeyed unconditionally —
+ * a large n on a non-trivial body will bloat code size and hurt icache.
+ * Use only on tight, well-measured inner loops with a known iteration count. */
 #define JM_UNROLL(n)     _JM_UNROLL_(n)
 
 /* Inform the compiler that ptr is aligned to n bytes; enables SIMD

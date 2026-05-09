@@ -36,6 +36,8 @@ my_project/
 │   ├── inc/
 │   │   ├── clib_common.h           # common C99 types
 │   │   ├── pyex_common.h           # Python extension includes
+│   │   ├── jm_perf.h               # JM_FORCEINLINE / JM_HOT macros  (added by 'just-makeit perf')
+│   │   ├── jm_simd.h               # width-portable SIMD helpers      (added by 'just-makeit perf')
 │   │   └── engine/
 │   │       └── engine_core.h       # component API
 │   ├── src/
@@ -68,9 +70,9 @@ just-makeit COMMAND
 
 | `COMMAND`                                      | Description                               |
 | ---------------------------------------------- | ----------------------------------------- |
-| `new <project>`                                | Create a new project                      |
-| `new <project> --component name [--state ...]` | Project with component and optional state |
-| `init <component> [--state ...]`               | Add a component to existing project       |
+| `new <project>`                                                              | Create a new project                      |
+| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project with component and optional state |
+| `init <component> [--state ...] [--arg-type T] [--return-type T]`            | Add a component to existing project       |
 | `add --state name:type[:default] [...]`        | Add state variables to a component        |
 | `perf`                                         | Upgrade an existing project with performance annotations |
 | `config [key value]`                           | Show or edit project configuration        |
@@ -191,7 +193,12 @@ ______________________________________________________________________
 
 ## Examples
 
-See [`examples/running_stats/`](https://github.com/just-buildit/just-makeit/tree/main/examples/running_stats) for a step-by-step walkthrough example.
+The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples) directory contains step-by-step walkthroughs:
+
+- [`running_stats/`](https://github.com/just-buildit/just-makeit/tree/main/examples/running_stats) — Welford's online mean & variance (introductory walkthrough)
+- [`fir_filter/`](https://github.com/just-buildit/just-makeit/tree/main/examples/fir_filter) — 16-tap FIR filter processing complex I/Q signals, with perf annotations
+- [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
+- [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
 
 ______________________________________________________________________
 
