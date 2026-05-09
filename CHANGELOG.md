@@ -1,5 +1,65 @@
 # Changelog
 
+## \[0.6.0\] — 2026-05-08
+
+### Added
+
+- `--arg-type TYPE` and `--return-type TYPE` flags on `just-makeit new` and
+  `just-makeit init` — generated `step()` and `fn()` signatures are no longer
+  hardcoded to `float _Complex`.  Both flags accept any supported C scalar type:
+  `float`, `double`, `float _Complex`, `double _Complex`.
+- Generated Python bindings, `.pyi` stubs, C tests, benchmarks, and NumPy
+  `steps()` loops all derive their types from the declared `arg_type` /
+  `return_type` — no manual edits needed after scaffolding.
+- `arg_type` and `return_type` fields persisted in `just-makeit.toml`; read
+  back by `just-makeit add` so regenerated files stay consistent.
+- `make_sample_ctx(arg_type, return_type)` in `_templates.py` — single source
+  of truth for all type-derived template keys (`<<arg_ctype>>`, `<<return_ctype>>`,
+  `<<in_np_enum>>`, `<<out_np_dtype>>`, `<<step_parse_block>>`, etc.).
+- `examples/sliding_power` — end-to-end example using `--return-type float`
+  since signal power is real-valued; demonstrates that `step()` need not return
+  the same type it receives.
+
+______________________________________________________________________
+
+## \[0.5.0\] — 2026-05-08
+
+### Added
+
+- `jm_simd.h` — width-portable SIMD operation macros included automatically
+  with `--perf`.  Provides `JM_VEC_F32`/`JM_VEC_F64` types and `JM_ZERO_`,
+  `JM_SPLAT_`, `JM_LOAD_`, `JM_STORE_`, `JM_ADD_`, `JM_MUL_`, `JM_FMA_`,
+  `JM_MAC_`, `JM_HSUM_` macro families, plus `jm_dot_f32`/`jm_dot_f64` helpers.
+  ISA tier selected at compile time: AVX-512F → AVX2+FMA → scalar fallback.
+  Write `step_batch()` once; the compiler picks the best vector width.
+- New macros added to `jm_perf.h`: `JM_UNROLL(n)`, `JM_ASSUME_ALIGNED(ptr, n)`,
+  `JM_PREFETCH(ptr, rw, loc)` — loop unroll hint, alignment assertion for
+  auto-vectorisation, and software prefetch.
+
+______________________________________________________________________
+
+## \[0.4.0\] — 2026-05-08
+
+### Added
+
+- **C library distribution** — each component's `_core.c` now compiles as a
+  CMake OBJECT library (`<comp>_core` OBJECT) and links into *both* the Python
+  DSO and a combined `lib<project>.so`.  One compilation, two consumers.
+- `lib<project>.so` target in the top-level `CMakeLists.txt`, accumulating all
+  component OBJECT targets.  `just-makeit init` patches
+  `target_sources(${PROJECT_NAME}_lib …)` alongside the existing
+  `add_subdirectory` patch.
+- `cmake/<project>.pc.in` — pkg-config template; `cmake --install` makes
+  `gcc $(pkg-config --cflags --libs my-project) main.c` work out of the box.
+- `cmake/<project>-config.cmake.in` — CMake `find_package` template for C/C++
+  consumers; exposes `my_project::my_project` imported target.
+- `native/inc/<project>.h` — umbrella header that `#include`s all component
+  headers; the installed library exposes exactly one include path.
+- `install()` rules for the shared library, all headers, pkg-config file, and
+  CMake config package.
+
+______________________________________________________________________
+
 ## \[0.3.0\] — 2026-05-08
 
 ### Added

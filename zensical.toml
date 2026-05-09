@@ -20,6 +20,13 @@ nav = [
   { "Template Reference" = "template.md"     },
   { "Customization"      = "customization.md"},
   { "Roadmap"            = "roadmap.md"      },
+  { "Examples" = [
+    { "Overview"           = "examples/index.md"              },
+    { "FIR filter"         = "examples/fir_filter.md"         },
+    { "Sliding power"      = "examples/sliding_power.md"      },
+    { "Sliding correlator" = "examples/sliding_correlator.md" },
+    { "Running stats"      = "examples/running_stats.md"      },
+  ]},
 ]
 
 # ----------------------------------------------------------------------------

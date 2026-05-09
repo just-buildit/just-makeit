@@ -68,9 +68,11 @@ build:
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 docs:
+	$(PYTHON) scripts/copy_examples.py
 	$(UV) run --no-project --with "zensical>=0.0.29" zensical build --clean
 
 docs-serve:
+	$(PYTHON) scripts/copy_examples.py
 	$(UV) run --no-project --with "zensical>=0.0.29" zensical serve
 
 # ── Dev install ───────────────────────────────────────────────────────────────

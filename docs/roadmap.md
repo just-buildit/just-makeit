@@ -83,7 +83,7 @@ with no lifecycle overhead.
 
 ______________________________________________________________________
 
-## v0.4 — C library distribution
+## v0.4 — C library distribution ✓ shipped
 
 Today just-makeit targets Python consumers. v0.4 makes the generated project
 a first-class C library too — distributable to C, C++, and Rust via the
@@ -104,19 +104,7 @@ flowchart TD
     PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
 ```
 
-**New generated artifacts:**
-
-```text
-my_dsp/
-├── cmake/
-│   ├── my-dsp.pc.in              # pkg-config template
-│   └── my-dsp-config.cmake.in   # CMake find_package template
-└── native/
-    └── inc/
-        └── my_dsp.h              # umbrella — includes all component headers
-```
-
-**CMake changes:**
+**Delivered:**
 
 - Each component's `CMakeLists.txt` gains an OBJECT library target
   (`gain_core` OBJECT); the Python DSO and bench binary link against
@@ -126,6 +114,9 @@ my_dsp/
   pkg-config file, and CMake config package.
 - `just-makeit init` patches `target_sources(${PROJECT_NAME}_lib …)` in the
   top-level alongside the existing `add_subdirectory` patch.
+- `cmake/<project>.pc.in` — pkg-config template.
+- `cmake/<project>-config.cmake.in` — CMake `find_package` template.
+- `native/inc/<project>.h` — umbrella header.
 
 **Install story:**
 
@@ -207,14 +198,34 @@ dependency on `libmy_dsp.so`. Pre-compiled wheel distribution is handled by
 
 ______________________________________________________________________
 
+## v0.6 — Type-parameterised I/O ✓ shipped
+
+Generated `step()` signatures were hardcoded to `float complex`.  Real
+algorithms use whatever type fits: `float`, `double`, `float _Complex`,
+`double _Complex`.  v0.6 makes the I/O types explicit flags.
+
+**Delivered:**
+
+- `--arg-type TYPE` and `--return-type TYPE` on `just-makeit new` and
+  `just-makeit init` — supported types: `float`, `double`, `float _Complex`,
+  `double _Complex`.  Both default to `float _Complex` for backward
+  compatibility.
+- All generated artifacts (C header, Python binding, `.pyi` stub, C test,
+  benchmarks, NumPy `steps()` loop) derive types from the declared flags.
+  No manual patching needed after scaffolding.
+- `arg_type` / `return_type` persisted in `just-makeit.toml` and read back by
+  `just-makeit add` so regenerated files stay consistent.
+- `examples/sliding_power` — demonstrates `--return-type float`: the estimator
+  receives `float complex` samples and returns real-valued signal power.
+
+______________________________________________________________________
+
 ## Ideas under consideration
 
 These are not yet scheduled but are worth tracking:
 
 - **NumPy ufunc registration** — `--ufunc` flag wraps `comp_fn` as a proper
   NumPy generalized ufunc, enabling broadcasting and `out=` support
-- **Type specialisation** — generate separate `float` and `double` variants
-  of a component from a single template
 - **Windows / MSVC CI template** — `just-makeit new` optionally generates a
   GitHub Actions workflow with a Windows runner
 - **Interactive wizard** — `just-makeit new` without arguments drops into a

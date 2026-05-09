@@ -221,3 +221,9 @@ __marimo__/
 *.pyd
 .cache/
 compile_commands.json
+
+# Generated docs — copied from examples/*/README.md by scripts/copy_examples.py
+docs/examples/fir_filter.md
+docs/examples/sliding_power.md
+docs/examples/sliding_correlator.md
+docs/examples/running_stats.md
