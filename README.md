@@ -207,7 +207,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`fir_filter/`](https://github.com/just-buildit/just-makeit/tree/main/examples/fir_filter) — 16-tap FIR filter processing complex I/Q signals, with perf annotations
 - [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
 - [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
-- [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-component library (Gain + Ema); demonstrates multi-component workflow and the `__init__.py` gap
+- [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-component library (Gain + Ema); demonstrates multi-component workflow and `__init__.py` auto-splice
 
 ______________________________________________________________________
 

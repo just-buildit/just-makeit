@@ -241,10 +241,37 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## v0.6.2 — CI split ✓ shipped
+
+**Changed:**
+
+- Post-publish smoke tests extracted into a dedicated `artifact.yml` workflow,
+  triggered via `workflow_run` on Release success.  `release.yml` now handles
+  `test → build → publish` only; artifact tests run after PyPI propagation.
+
+______________________________________________________________________
+
+## v0.6.3 — Realistic artifact CI ✓ shipped
+
+**Changed:**
+
+- `artifact.yml` rewritten around the `fir_filter` example — a real algorithm
+  with array state (`coeffs`, `delay`) and a scalar param (`gain`).  The full
+  workflow runs in CI: scaffold → implement `fir_filter_step` → `just-makeit perf`
+  → `make && make test` → `just-makeit init gain` with `__init__.py` splice check
+  → `cmake --install` → pkg-config consumer → CMake `find_package` consumer.
+  The C consumers assert a correct impulse response `[0.25, 0.50, 0.25, 0.0, …]`.
+
+______________________________________________________________________
+
 ## Ideas under consideration
 
 These are not yet scheduled but are worth tracking:
 
+- **`just-makeit ci` command** — `just-makeit ci --provider github|woodpecker`
+  adds a CI config to an existing project, similar to how `just-makeit perf`
+  upgrades the build in-place.  Targets both GitHub Actions and Woodpecker+Gitea
+  workflows.
 - **NumPy ufunc registration** — `--ufunc` flag wraps `comp_fn` as a proper
   NumPy generalized ufunc, enabling broadcasting and `out=` support
 - **Windows / MSVC CI template** — `just-makeit new` optionally generates a

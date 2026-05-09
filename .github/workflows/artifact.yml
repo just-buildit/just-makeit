@@ -27,7 +27,14 @@ jobs:
           brew install cmake 2>/dev/null || true
 
       - name: Wait for PyPI index propagation
-        run: sleep 60
+        run: |
+          VERSION="${{ github.event.workflow_run.head_branch }}"
+          for i in $(seq 1 10); do
+            pip install "just-makeit==${VERSION#v}" --dry-run \
+              --no-cache-dir 2>/dev/null && break
+            echo "Not yet, retry $i/10..."
+            sleep 30
+          done
 
       - name: Install just-makeit from PyPI
         run: |
