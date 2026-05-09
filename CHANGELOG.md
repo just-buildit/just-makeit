@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.6.3\] — 2026-05-09
+
+### Changed
+
+- CI: `artifact.yml` rewritten around `fir_filter` example — real algorithm,
+  array + complex state, `just-makeit perf`, impulse response assertion in
+  the C consumer, multi-component `__init__.py` splice check.
+
+______________________________________________________________________
+
 ## \[0.6.2\] — 2026-05-09
 
 ### Changed
