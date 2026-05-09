@@ -53,3 +53,55 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  smoke:
+    name: Post-publish smoke test
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build deps
+        run: |
+          sudo apt-get install -y cmake gcc 2>/dev/null || \
+          brew install cmake 2>/dev/null || true
+
+      - name: Wait for PyPI index propagation
+        run: sleep 60
+
+      - name: Install just-makeit from PyPI
+        run: |
+          VERSION="${{ github.ref_name }}"
+          pip install "just-makeit==${VERSION#v}" --no-cache-dir
+
+      - name: Scaffold, build, and test
+        run: |
+          just-makeit new smoke_test \
+            --component gain \
+            --arg-type float \
+            --return-type float \
+            --state gain:float:1.0
+          cd smoke_test
+          make
+          make test
+
+      - name: Add second component and verify __init__ splice
+        run: |
+          cd smoke_test
+          just-makeit init ema \
+            --arg-type float \
+            --return-type float \
+            --state alpha:double:0.1 \
+            --state prev:float:0.0
+          grep "from .ema import Ema" src/smoke_test/__init__.py
+          grep '"Ema"' src/smoke_test/__init__.py
+          make
+          make test
