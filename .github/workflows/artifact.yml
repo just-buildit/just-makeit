@@ -1,0 +1,108 @@
+name: Artifact smoke test
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+jobs:
+  smoke:
+    name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build deps
+        run: |
+          sudo apt-get install -y cmake gcc 2>/dev/null || \
+          brew install cmake 2>/dev/null || true
+
+      - name: Wait for PyPI index propagation
+        run: sleep 60
+
+      - name: Install just-makeit from PyPI
+        run: |
+          VERSION="${{ github.event.workflow_run.head_branch }}"
+          pip install "just-makeit==${VERSION#v}" --no-cache-dir
+
+      - name: Scaffold, build, and test
+        run: |
+          just-makeit new smoke_test \
+            --component gain \
+            --arg-type float \
+            --return-type float \
+            --state gain:float:1.0
+          cd smoke_test
+          make
+          make test
+
+      - name: Add second component and verify __init__ splice
+        run: |
+          cd smoke_test
+          just-makeit init ema \
+            --arg-type float \
+            --return-type float \
+            --state alpha:double:0.1 \
+            --state prev:float:0.0
+          grep "from .ema import Ema" src/smoke_test/__init__.py
+          grep '"Ema"' src/smoke_test/__init__.py
+          make
+          make test
+
+      - name: Install C library to local prefix
+        run: cmake --install smoke_test/build --prefix "$HOME/smoke_prefix"
+
+      - name: Write C consumer
+        run: |
+          cat > /tmp/consumer.c << 'EOF'
+          #include "smoke_test.h"
+          #include <assert.h>
+          #include <stdio.h>
+          int main(void) {
+              gain_state_t *g = gain_create(2.0f);
+              float y = gain_step(g, 1.0f);
+              assert(y == 2.0f);
+              gain_destroy(g);
+              puts("ok");
+              return 0;
+          }
+          EOF
+
+      - name: Test pkg-config consumer
+        run: |
+          PREFIX="$HOME/smoke_prefix"
+          PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig" \
+            gcc \
+              $(pkg-config --cflags --libs smoke-test) \
+              -Wl,-rpath,"$PREFIX/lib" -Wl,-rpath,"$PREFIX/lib64" \
+              /tmp/consumer.c -o /tmp/consumer_pkgconfig
+          /tmp/consumer_pkgconfig
+
+      - name: Test CMake find_package consumer
+        run: |
+          PREFIX="$HOME/smoke_prefix"
+          mkdir /tmp/cmake_consumer
+          cp /tmp/consumer.c /tmp/cmake_consumer/
+          cat > /tmp/cmake_consumer/CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(consumer C)
+          find_package(smoke_test REQUIRED)
+          add_executable(consumer consumer.c)
+          target_link_libraries(consumer PRIVATE smoke_test::smoke_test_lib)
+          set_target_properties(consumer PROPERTIES
+              INSTALL_RPATH_USE_LINK_PATH ON)
+          EOF
+          cmake -B /tmp/cmake_consumer/build /tmp/cmake_consumer \
+            -DCMAKE_PREFIX_PATH="$PREFIX" \
+            -DCMAKE_BUILD_RPATH="$PREFIX/lib;$PREFIX/lib64"
+          cmake --build /tmp/cmake_consumer/build
+          /tmp/cmake_consumer/build/consumer
