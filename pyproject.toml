@@ -12,6 +12,10 @@ version = "0.7.0"
 description = "Scaffold and build Python C extensions with CMake and just-buildit."
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "Matthew T. Hunter, Ph.D." },
+    { name = "Claude Code", email = "noreply@anthropic.com" },
+]
 dependencies = []
 keywords = [
     "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
