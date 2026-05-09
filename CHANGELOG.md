@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.6.6\] — 2026-05-09
+
+### Fixed
+
+- CI: `artifact.yml` C library install now reconfigures cmake with the
+  target prefix (`-DCMAKE_INSTALL_PREFIX=...`) before `cmake --install`,
+  so the generated `.pc` file has the correct `includedir` rather than
+  the default `/usr/local` baked in at build time.
+
+______________________________________________________________________
+
 ## \[0.6.5\] — 2026-05-09
 
 ### Fixed

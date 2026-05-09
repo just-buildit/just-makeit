@@ -102,7 +102,9 @@ jobs:
       # ── C library distribution ───────────────────────────────────────────────
 
       - name: Install C library to local prefix
-        run: cmake --install my_fir/build --prefix "$HOME/fir_prefix"
+        run: |
+          cmake -S my_fir -B my_fir/build -DCMAKE_INSTALL_PREFIX="$HOME/fir_prefix"
+          cmake --install my_fir/build
 
       - name: Show install layout
         run: find "$HOME/fir_prefix" -type f | sort
