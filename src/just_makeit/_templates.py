@@ -3109,6 +3109,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "pytest-benchmark",
 ]
 
 [tool.just-buildit]
@@ -3116,6 +3117,9 @@ command = "make just-build"
 
 [tool.pytest.ini_options]
 testpaths = ["src"]
+markers = [
+    "benchmark: mark test as a benchmark (requires pytest-benchmark)",
+]
 """
 
 # ── Python package ───────────────────────────────────────────────────────────

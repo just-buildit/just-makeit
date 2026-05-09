@@ -32,6 +32,44 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
     print(f"  {verb}  {path}")
 
 
+def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
+    """Add `from .component import Component` and update __all__ in-place.
+
+    Only appends — never removes or reorders — so user edits are preserved.
+    No-op if the import is already present.
+    """
+    text = init_py.read_text(encoding="utf-8")
+    import_line = f"from .{component} import {Component}\n"
+    if import_line in text:
+        return
+
+    # Insert after the last `from .xxx import` line, or before __all__ if none.
+    lines = text.splitlines(keepends=True)
+    last_import_idx = -1
+    for i, line in enumerate(lines):
+        if re.match(r"^from \.\w+ import \w+", line):
+            last_import_idx = i
+    if last_import_idx >= 0:
+        lines.insert(last_import_idx + 1, import_line)
+    else:
+        lines.append(import_line)
+    text = "".join(lines)
+
+    # Append Component to __all__ = [...] (handles single- and multi-line).
+    all_re = re.compile(r'(__all__\s*=\s*\[)(.*?)(\])', re.DOTALL)
+    def _splice_all(m: re.Match) -> str:
+        inner = m.group(2)
+        if f'"{Component}"' in inner or f"'{Component}'" in inner:
+            return m.group(0)
+        stripped = inner.rstrip()
+        sep = ", " if stripped.rstrip(",") else ""
+        return f'{m.group(1)}{stripped.rstrip(",")}{sep}"{Component}"{m.group(3)}'
+    text = all_re.sub(_splice_all, text)
+
+    init_py.write_text(text, encoding="utf-8")
+    print(f"  update  {init_py}")
+
+
 def _write_compile_commands(root: Path, all_components: list[str]) -> None:
     r = root.resolve()
     python_inc = sysconfig.get_path("include")
@@ -216,10 +254,12 @@ def run(
     # C benchmark
     _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(bench_c_tmpl))
 
-    # Python package — write __init__.py only if it doesn't exist yet
+    # Python package — create __init__.py on first component; splice on subsequent ones
     init_py = root / "src" / pkg / "__init__.py"
     if not init_py.exists():
         _write(init_py, r(init_py_tmpl))
+    else:
+        _splice_init_py(init_py, comp, ctx["Component"])
 
     _write(root / "src" / pkg / f"{comp}.pyi", r(pyi_tmpl))
     _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)

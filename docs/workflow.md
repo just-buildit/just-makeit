@@ -1,27 +1,226 @@
 # Workflow
 
-`just-makeit` manages the full lifecycle of a C extension project — from first
-scaffold to published package.  Every project it generates is **two things at
-once**: a first-class C shared library and a Python package, built from the
-same source with no duplication.
+Two common starting points are covered below.  Reference sections follow.
 
 ______________________________________________________________________
 
-## Creating a project
+## Scenario 1 — Simple standalone extension
+
+A single C component exposed as a Python extension.  Good starting point for
+wrapping an algorithm, DSP primitive, or performance-critical inner loop.
+
+### 1. Scaffold
 
 ```sh
-just-makeit new my_dsp --component gain --state gain:double:1.0
+just-makeit new my_dsp \
+    --component gain \
+    --arg-type float \
+    --return-type float \
+    --state gain:float:1.0
 cd my_dsp
 ```
 
-`new` scaffolds the project and seeds it with a first component.  The
-`--component` flag is optional — omit it and `init` the first component
-separately.  `--state` works the same as everywhere else:
-`name:type[:default]`.
+`--arg-type` and `--return-type` set the C types for `step()`'s input and
+output.  Omit both and they default to `float _Complex`.
+
+### 2. Implement
+
+Open `native/inc/gain/gain_core.h` and fill in the `gain_step` stub:
+
+```c
+static inline float
+gain_step(const gain_state_t *state, float x)
+{
+    return state->gain * x;
+}
+```
+
+`gain_steps()` — the block processor — is already in `gain_core.c` and loops
+over this automatically.  You do not edit the Python binding (`gain_ext.c`).
+
+### 3. Build and test
+
+```sh
+make        # cmake configure + build (Release)
+make test   # CTest (C lifecycle) + pytest (Python API)
+```
+
+The `.so` lands in `src/my_dsp/` so `import my_dsp` works immediately from
+the project root — no install step needed during development.
+
+### 4. Use from Python
+
+```python
+import sys
+sys.path.insert(0, "src")   # not needed after pip install
+
+import numpy as np
+from my_dsp import Gain
+
+g = Gain(gain=2.0)
+
+# single sample
+y = g.step(1.0)              # → 2.0
+
+# block
+x = np.ones(1024, dtype=np.float32)
+y = g.steps(x)               # → float32 ndarray, all 2.0
+
+# getters / setters
+g.set_gain(0.5)
+g.get_gain()                 # → 0.5
+
+# reset to declared defaults
+g.reset()
+
+# context manager
+with Gain(gain=2.0) as g:
+    y = g.steps(x)
+```
+
+### 5. Install
+
+```sh
+pip install .          # build wheel + install
+pip install -e .       # editable install (Python-only edits take effect immediately)
+```
+
+### 6. Optional: performance annotations
+
+Once the algorithm is working and tested:
+
+```sh
+just-makeit perf
+make
+```
+
+Patches `step()` with `JM_FORCEINLINE JM_HOT`, writes `jm_perf.h` and
+`jm_simd.h`, and records the setting so future `init` and `add` calls
+inherit it.  See [Performance annotations](perf.md) for the full reference.
 
 ______________________________________________________________________
 
-## Project layout
+## Scenario 2 — Python package with multiple extensions
+
+Multiple C components in one project, all accessible from a single Python
+package.
+
+### 1. Scaffold the first component
+
+```sh
+just-makeit new dsp_toolkit \
+    --component gain \
+    --arg-type float \
+    --return-type float \
+    --state gain:float:1.0
+cd dsp_toolkit && make
+```
+
+### 2. Add a second component
+
+```sh
+just-makeit init ema \
+    --arg-type float \
+    --return-type float \
+    --state alpha:double:0.1 \
+    --state prev:float:0.0
+```
+
+`init` writes all C and Python files for the new component and updates:
+
+- root `CMakeLists.txt` — `add_subdirectory` + `target_link_libraries`
+- umbrella header `native/inc/dsp_toolkit.h` — `#include "ema/ema_core.h"`
+- `src/dsp_toolkit/__init__.py` — splices in `from .ema import Ema` and
+  adds `"Ema"` to `__all__`, preserving any existing user edits
+
+After `init`, `__init__.py` looks like:
+
+```python
+"""dsp_toolkit — Gain component."""
+
+from .gain import Gain
+from .ema import Ema
+
+__all__ = ["Gain", "Ema"]
+```
+
+No manual edits required.
+
+### 3. Implement both components
+
+`gain_step` (read-only state):
+
+```c
+static inline float
+gain_step(const gain_state_t *state, float x)
+{
+    return state->gain * x;
+}
+```
+
+`ema_step` (writes back to state — drop `const`):
+
+```c
+static inline float
+ema_step(ema_state_t *state, float x)
+{
+    float y = (float)state->alpha * x
+            + (float)(1.0 - state->alpha) * state->prev;
+    state->prev = y;
+    return y;
+}
+```
+
+### 4. Build and test
+
+```sh
+make && make test
+```
+
+CTest runs `test_gain_core` and `test_ema_core`.  pytest runs the full
+generated suite for both components.
+
+### 5. Use from Python
+
+```python
+import sys
+sys.path.insert(0, "src")
+
+import numpy as np
+from dsp_toolkit import Gain, Ema
+
+signal = np.ones(20, dtype=np.float32)
+
+gain = Gain(gain=2.0)
+ema  = Ema(alpha=0.3)
+
+for x in signal:
+    y = ema.step(gain.step(x))
+```
+
+### 6. Add more components
+
+```sh
+just-makeit init dc_block --state r:double:0.995
+```
+
+Each `init` repeats the same pattern: new C files, updated CMake, updated
+`__init__.py`.  `make` picks up the new component automatically.
+
+### 7. Install
+
+```sh
+pip install .
+```
+
+The wheel bundles all compiled DSOs (`gain.cpython-*.so`, `ema.cpython-*.so`,
+…) alongside the Python package.
+
+______________________________________________________________________
+
+## Project layout (full)
+
+After scaffolding with one component and running `just-makeit perf`:
 
 ```text
 my_dsp/
@@ -29,99 +228,37 @@ my_dsp/
 ├── Makefile
 ├── just-makeit.toml
 ├── pyproject.toml
+├── cmake/
+│   └── my-dsp.pc.in                    # pkg-config template
 ├── native/
+│   ├── benchmarks/
+│   │   └── bench_gain_core.c           # C benchmark
 │   ├── inc/
 │   │   ├── clib_common.h               # common C99 types
 │   │   ├── pyex_common.h               # Python extension includes
+│   │   ├── my_dsp.h                    # umbrella header
+│   │   ├── jm_perf.h                   # JM_FORCEINLINE / JM_HOT / JM_UNROLL …
+│   │   ├── jm_simd.h                   # width-portable SIMD macros
 │   │   └── gain/
-│   │       └── gain_core.h             # component API
+│   │       └── gain_core.h             # component API  ← implement step() here
 │   ├── src/
 │   │   └── gain/
-│   │       ├── CMakeLists.txt          # component build target
-│   │       ├── gain_core.c             # core logic — your algorithm goes here
-│   │       └── gain_ext.c              # thin Python binding
+│   │       ├── CMakeLists.txt
+│   │       ├── gain_core.c             # steps() loop + any multi-sample logic
+│   │       └── gain_ext.c              # Python binding  ← do not edit
 │   └── tests/
 │       └── test_gain_core.c            # CTest lifecycle test
 └── src/
     └── my_dsp/
         ├── __init__.py
         ├── gain.pyi                    # type stub
+        ├── benchmarks/
+        │   ├── __init__.py
+        │   └── bench_gain.py           # pytest-benchmark suite
         └── tests/
             ├── __init__.py
             └── test_gain.py            # pytest
 ```
-
-______________________________________________________________________
-
-## Building
-
-```sh
-make        # cmake configure + build (Release)
-make test   # CTest + pytest
-```
-
-Produces:
-
-| Artifact                     | Location                       |
-| ---------------------------- | ------------------------------ |
-| Python DSO (dev, no install) | `src/my_dsp/gain.cpython-*.so` |
-
-The Python DSO lands directly in `src/my_dsp/` so `import my_dsp` works
-from the source tree after a single `make` — no install step needed during
-development.
-
-______________________________________________________________________
-
-## Implementing your core logic
-
-Open `native/src/gain/gain_core.c`.  The generated stub is a pass-through
-— replace `gain_step` with your algorithm:
-
-```c
-static inline float complex
-gain_step(const gain_state_t *state, float complex x)
-{
-    return x * (float)state->gain;   /* <— your algorithm here */
-}
-```
-
-`native/inc/gain/gain_core.h` defines the full lifecycle API:
-
-```c
-gain_state_t *gain_create(double gain);
-void          gain_destroy(gain_state_t *state);
-void          gain_reset(gain_state_t *state);
-
-float complex gain_step(const gain_state_t *state, float complex x);
-void          gain_steps(gain_state_t *state,
-                         const float complex *in,
-                         float complex       *out,
-                         size_t               n);
-
-double        gain_get_gain(const gain_state_t *state);
-void          gain_set_gain(gain_state_t *state, double gain);
-```
-
-The Python binding in `gain_ext.c` is generated and complete — you do not
-edit it.  Add your core logic to `gain_core.c` only.
-
-______________________________________________________________________
-
-## Adding a second component
-
-```sh
-just-makeit init bpf \
-    --state center_freq:double:1000.0 \
-    --state bandwidth:double:200.0    \
-    --state order:int:4
-```
-
-This adds `native/src/bpf/` with the same structure as `gain/`, updates
-the top-level `CMakeLists.txt` with `add_subdirectory`, registers the
-component in `just-makeit.toml`, and adds `bpf.pyi` and `test_bpf.py` to
-the Python package.
-
-`make` picks up the new component automatically.
 
 ______________________________________________________________________
 
@@ -132,110 +269,42 @@ just-makeit add --component gain --state drive:double:1.0
 ```
 
 Regenerates the six state-sensitive files for `gain` from the updated state
-list — all existing files are backed up first and restored if anything fails.
-`just-makeit.toml` is updated only after the files are written successfully.
-
-When the project has a single component, `--component` may be omitted.
-
-______________________________________________________________________
-
-## Python integration
-
-### Development (no install)
-
-`make` places the DSOs directly in `src/my_dsp/`. Run Python from the project
-root and the src-layout is picked up automatically:
-
-```python
-from my_dsp import Gain, BPF
-```
-
-### Install from source
-
-```sh
-pip install .
-```
-
-Uses [just-buildit](https://github.com/just-buildit/just-buildit) as the
-PEP 517 build backend.  just-buildit drives the CMake build and packages the
-resulting DSOs into a wheel — it works with any C extension project and does
-not require just-makeit.
-
-### Usage
-
-```python
-from my_dsp import Gain, BPF
-import numpy as np
-
-g = Gain(gain=1.0)
-f = BPF(center_freq=1000.0, bandwidth=200.0, order=4)
-
-x = np.ones(1024, dtype=np.complex64)
-y = g.steps(f.steps(x))
-```
+list.  `just-makeit.toml` is updated only after the files are written
+successfully.  When the project has a single component, `--component` may be
+omitted.
 
 ______________________________________________________________________
 
-## Packaging and release
+## Benchmarking
 
 ```sh
-just-makeit build          # CMake build + wheel → dist/
-pip install dist/*.whl     # install the wheel
+make bench              # C benchmark (timing loop) + Python pytest-benchmark
+make bench-save         # save baseline tagged with current git describe
+make bench-compare      # compare against last saved baseline
 ```
 
-Or build manually:
-
-```sh
-pip wheel . -w dist/
-```
-
-The wheel contains the Python package (`src/my_dsp/`) with the compiled DSOs.
-
-______________________________________________________________________
-
-## Configuration
-
-```sh
-just-makeit config                  # show project + component registry
-just-makeit config version 0.2.0    # update version
-```
-
-`just-makeit.toml` is the source of truth.  `add` and `init` update it
-atomically — if generation fails, the config is left unchanged.
+The C benchmark in `native/benchmarks/bench_gain_core.c` runs a raw timing
+loop with no pytest overhead — useful for measuring SIMD uplift.
 
 ______________________________________________________________________
 
 ## C library distribution
 
-Every just-makeit project is also a first-class C library — distributable to C,
-C++, and Rust via standard mechanisms.
+Every just-makeit project is also a first-class C library.
 
 ```mermaid
 flowchart TD
-    SRC["**your C source**\ngain_core.c · bpf_core.c · …"]
+    SRC["**your C source**\ngain_core.c · ema_core.c · …"]
 
     SRC --> CLIB["**libmy_dsp.so**\ncombined shared library"]
-    SRC --> PY["**Python package**\ngain.cpython-*.so\nbpf.cpython-*.so"]
+    SRC --> PY["**Python package**\ngain.cpython-*.so\nema.cpython-*.so"]
 
-    CLIB --> C["**C / C++ / Rust / …**\npkg-config\nfind_package"]
-    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain"]
+    CLIB --> C["**C / C++ / Rust / …**\npkg-config · find_package"]
+    PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain, Ema"]
 ```
 
-Each component's core logic compiles once (as a CMake OBJECT library) and links
-into both artifacts — no duplicated object files, no diverging codebases.
-
-Generated files:
-
-```text
-my_dsp/
-├── cmake/
-│   └── my-dsp.pc.in              # pkg-config template
-└── native/
-    └── inc/
-        └── my_dsp.h              # umbrella — includes all component headers
-```
-
-**Install and use:**
+Each component's core logic compiles once (CMake OBJECT library) and links
+into both artifacts.
 
 ```sh
 cmake --install build --prefix /usr/local
@@ -249,41 +318,24 @@ target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
 
 ______________________________________________________________________
 
-## Pure (stateless / caller-managed) components
-
-`--pure` generates a component where the caller supplies parameters per call
-or manages the working-state struct directly, instead of the library owning
-an opaque pointer.
+## Configuration
 
 ```sh
-just-makeit init normalize --pure --param scale:double:1.0   # scalar: fn(x, scale)
-just-makeit init fir       --pure --param taps:"float[64]"   # struct: caller owns params_t
+just-makeit config                  # show project + component registry
+just-makeit config version 0.2.0    # update version
 ```
 
-See [Stateful vs pure components](pure.md) for the full cost/benefit analysis
-and a decision guide.
+`just-makeit.toml` is the source of truth for all scaffolded state.
 
 ______________________________________________________________________
 
-## Performance optimization
-
-Once your algorithm is working, opt into performance annotations at any time:
+## Pure (stateless) components
 
 ```sh
-just-makeit perf
+just-makeit init normalize --pure --param scale:double:1.0
 ```
 
-This upgrades the project in-place — writes `native/inc/jm_perf.h`, patches
-`step()` with `JM_FORCEINLINE JM_HOT`, and records the setting in
-`just-makeit.toml` so future `init` and `add` commands inherit it.  Your
-implementation is never touched.
-
-For SIMD acceleration, `jm_perf.h` also ships `JM_DEFINE_STEPS` — a macro
-that stamps out `<component>_steps()` from three separated concerns (algorithm
-length, SIMD batch width, scratch-buffer chunk size).  You write `step()` and
-optionally `step_batch()`; the macro generates the outer dispatch loop.
-
-See [Performance annotations](perf.md) for the full reference.
+See [Stateful vs pure components](pure.md) for the decision guide.
 
 ______________________________________________________________________
 

@@ -33,9 +33,12 @@ cd my_project && make && make test
 ```
 my_project/
 ├── native/
+│   ├── benchmarks/
+│   │   └── bench_engine_core.c     # C-level benchmark
 │   ├── inc/
 │   │   ├── clib_common.h           # common C99 types
 │   │   ├── pyex_common.h           # Python extension includes
+│   │   ├── my_project.h            # umbrella header (includes all components)
 │   │   ├── jm_perf.h               # JM_FORCEINLINE / JM_HOT macros  (added by 'just-makeit perf')
 │   │   ├── jm_simd.h               # width-portable SIMD helpers      (added by 'just-makeit perf')
 │   │   └── engine/
@@ -47,9 +50,14 @@ my_project/
 │   │       └── engine_ext.c        # thin Python binding
 │   └── tests/
 │       └── test_engine_core.c      # CTest
+├── cmake/
+│   └── my-project.pc.in            # pkg-config template
 ├── src/my_project/
 │   ├── __init__.py
 │   ├── engine.pyi                  # type stub
+│   ├── benchmarks/
+│   │   ├── __init__.py
+│   │   └── bench_engine.py         # Python benchmark
 │   └── tests/
 │       └── test_engine.py          # pytest / unittest
 ├── CMakeLists.txt
@@ -199,6 +207,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`fir_filter/`](https://github.com/just-buildit/just-makeit/tree/main/examples/fir_filter) — 16-tap FIR filter processing complex I/Q signals, with perf annotations
 - [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
 - [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
+- [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-component library (Gain + Ema); demonstrates multi-component workflow and the `__init__.py` gap
 
 ______________________________________________________________________
 
