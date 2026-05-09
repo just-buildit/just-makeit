@@ -323,6 +323,9 @@ find_package(my_dsp REQUIRED)
 target_link_libraries(my_app PRIVATE my_dsp::my_dsp_lib m)
 ```
 
+See [Installing your C library for end users](c-library.md) for the full
+guide: prerequisites, custom prefixes, rpath, and verification.
+
 ______________________________________________________________________
 
 ## Configuration
