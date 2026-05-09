@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.6.9\] — 2026-05-09
+
+### Changed
+
+- CI: `artifact.yml` C library section consolidated from five steps to
+  two: **Install C library** (reconfigure + install) and **Verify C
+  consumers** (pkg-config + CMake find_package in a single step).
+
+______________________________________________________________________
+
 ## \[0.6.8\] — 2026-05-09
 
 ### Fixed
