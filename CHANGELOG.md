@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.6.5\] — 2026-05-09
+
+### Fixed
+
+- CI: `artifact.yml` pkg-config step now `export`s `PKG_CONFIG_PATH`
+  before the `$(pkg-config ...)` subshell expansion; the previous
+  inline prefix only applied to `gcc`, not to the subshell.
+
+______________________________________________________________________
+
 ## \[0.6.4\] — 2026-05-09
 
 ### Changed
