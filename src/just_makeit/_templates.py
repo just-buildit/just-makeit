@@ -3287,8 +3287,8 @@ TODO: describe your project.
 - A C99 compiler (GCC, Clang, or MSVC)
 - NumPy (installed automatically by `make` if missing)
 
-**Linux:** `sudo apt-get install cmake gcc`
-**macOS:** `brew install cmake` (compiler via `xcode-select --install`)
+**Linux:** `sudo apt-get install cmake gcc pkg-config`
+**macOS:** `brew install cmake pkg-config` (compiler via `xcode-select --install`)
 
 ## Quickstart
 
