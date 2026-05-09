@@ -1,5 +1,29 @@
 # Changelog
 
+## \[0.6.1\] — 2026-05-09
+
+### Added
+
+- `examples/dsp_toolkit` — two-component library (Gain + EMA) that walks
+  through the full multi-component workflow end-to-end and verifies the
+  `__init__.py` auto-splice in CI.
+- `docs/workflow.md` rewritten around two end-to-end scenarios: standalone
+  extension and multi-component package.
+
+### Fixed
+
+- `just-makeit init` now automatically splices the new component's import and
+  `__all__` entry into the existing `src/<pkg>/__init__.py` instead of leaving
+  it untouched.  Handles missing `__all__`, multi-line `__all__`, and user
+  additions; idempotent.
+- Generated `pyproject.toml` lists `pytest-benchmark` as a runtime dependency
+  (moved from `[project.optional-dependencies]`) so `pip install .` provides
+  everything needed to run `make bench`.
+- `JM_UNROLL` comment in `jm_perf.h` corrected: it is a directive (obeyed
+  unconditionally), not an advisory hint like `JM_HOT` or `JM_LIKELY`.
+
+______________________________________________________________________
+
 ## \[0.6.0\] — 2026-05-08
 
 ### Added

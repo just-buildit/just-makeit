@@ -220,6 +220,27 @@ algorithms use whatever type fits: `float`, `double`, `float _Complex`,
 
 ______________________________________________________________________
 
+## v0.6.1 — Multi-component quality-of-life ✓ shipped
+
+**Fixed:**
+
+- `just-makeit init` now automatically splices the new component's
+  `from .comp import Comp` import and `__all__` entry into the existing
+  `src/<pkg>/__init__.py`.  Handles absent `__all__`, multi-line `__all__`,
+  and user additions; idempotent.
+- Generated `pyproject.toml` lists `pytest-benchmark` as a `dependencies`
+  entry so `pip install .` provides everything needed to run `make bench`.
+- `JM_UNROLL` comment corrected: directive (unconditionally obeyed), not an
+  advisory hint like `JM_HOT`.
+
+**Added:**
+
+- `examples/dsp_toolkit` — two-component library (Gain + EMA) that exercises
+  the full `new` → `init` → build → test → use workflow in CI.
+- `docs/workflow.md` rewritten around two end-to-end scenarios.
+
+______________________________________________________________________
+
 ## Ideas under consideration
 
 These are not yet scheduled but are worth tracking:

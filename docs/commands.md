@@ -9,6 +9,7 @@ just-makeit new my_project
 just-makeit new my_project --component engine
 just-makeit new my_project --component engine --state rate:double:1.0
 just-makeit new my_project --component engine --state rate:double --state order:int:4
+just-makeit new my_project --component gain --arg-type float --return-type float --state gain:float:1.0
 ```
 
 `new` writes a `just-makeit.toml` that records the project name, version, and
@@ -21,6 +22,8 @@ any components — the source of truth for all subsequent commands.
 | `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
 | `--component name`            | Scaffold a first component immediately (optional).                                   |
 | `--state name:type[:default]` | Declare a state variable for the component. Repeatable.                              |
+| `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`.                        |
+| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`.                         |
 | `--pure`                      | Generate a stateless component. See [Stateful vs pure](pure.md).                    |
 
 ______________________________________________________________________
@@ -33,11 +36,13 @@ project root (where `just-makeit.toml` lives).
 ```sh
 just-makeit init engine --state rate:double:1.0
 just-makeit init parser --state depth:int:8 --state strict:int:1
+just-makeit init ema --arg-type float --return-type float --state alpha:double:0.1 --state prev:float:0.0
 ```
 
 Creates the component directory, updates the top-level `CMakeLists.txt` with
-`add_subdirectory`, registers the component in `just-makeit.toml`, and adds
-the Python type stub and test file.
+`add_subdirectory`, registers the component in `just-makeit.toml`, adds the
+Python type stub and test file, and splices the new import and `__all__` entry
+into `src/<pkg>/__init__.py` without overwriting existing content.
 
 **Arguments**
 
@@ -45,7 +50,9 @@ the Python type stub and test file.
 | ----------------------------- | --------------------------------------------------------------------------------------------- |
 | `component`                   | Component name in `snake_case`. Becomes the C prefix, Python module name, and directory name. |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. Defaults to `gain:double:0.0` if omitted entirely.      |
-| `--pure`                      | Generate a stateless component. See [Stateful vs pure](pure.md).                    |
+| `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`.                                 |
+| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`.                                  |
+| `--pure`                      | Generate a stateless component. See [Stateful vs pure](pure.md).                             |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 

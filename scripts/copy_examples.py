@@ -13,10 +13,11 @@ DEST = ROOT / "docs" / "examples"
 DEST.mkdir(exist_ok=True)
 
 examples = [
-    ("fir_filter",        "fir_filter.md"),
-    ("sliding_power",     "sliding_power.md"),
-    ("sliding_correlator","sliding_correlator.md"),
-    ("running_stats",     "running_stats.md"),
+    ("running_stats",      "running_stats.md"),
+    ("fir_filter",         "fir_filter.md"),
+    ("sliding_correlator", "sliding_correlator.md"),
+    ("sliding_power",      "sliding_power.md"),
+    ("dsp_toolkit",        "dsp_toolkit.md"),
 ]
 
 for folder, out_name in examples:
