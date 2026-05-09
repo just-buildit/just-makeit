@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.6.2\] — 2026-05-09
+
+### Changed
+
+- CI: post-publish smoke tests extracted into dedicated `artifact.yml`
+  (triggered via `workflow_run` on Release); `release.yml` now handles
+  `test → build → publish` only.
+
+______________________________________________________________________
+
 ## \[0.6.1\] — 2026-05-09
 
 ### Added
