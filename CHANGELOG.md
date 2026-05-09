@@ -1,5 +1,22 @@
 # Changelog
 
+## \[0.6.4\] — 2026-05-09
+
+### Changed
+
+- CI: `artifact.yml` PyPI propagation wait replaced with a retry loop
+  (10 × 30 s, up to 5 min) so the smoke test never fails on slow PyPI
+  indexing.
+
+### Docs
+
+- `docs/roadmap.md`: v0.6.2 and v0.6.3 shipped sections added;
+  `just-makeit ci --provider github|woodpecker` added to ideas.
+- `README.md`: `dsp_toolkit` description updated to reflect
+  `__init__.py` auto-splice (gap is fixed, not demonstrated).
+
+______________________________________________________________________
+
 ## \[0.6.3\] — 2026-05-09
 
 ### Changed
