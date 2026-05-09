@@ -3280,6 +3280,16 @@ README_MD = """\
 
 TODO: describe your project.
 
+## Requirements
+
+- Python 3.11+
+- CMake ≥ 3.16
+- A C99 compiler (GCC, Clang, or MSVC)
+- NumPy (installed automatically by `make` if missing)
+
+**Linux:** `sudo apt-get install cmake gcc`
+**macOS:** `brew install cmake` (compiler via `xcode-select --install`)
+
 ## Quickstart
 
 Install and build in one step (recommended):
@@ -3291,7 +3301,7 @@ pip install -e .
 ## Development build
 
 ```bash
-make                     # cmake configure + build (installs numpy if needed)
+make                     # cmake configure + build
 make test                # CTest + pytest
 ```
 
