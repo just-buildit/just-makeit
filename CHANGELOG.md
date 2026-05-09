@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.6.8\] — 2026-05-09
+
+### Fixed
+
+- CI: `artifact.yml` pkg-config consumer now splits `--cflags` and
+  `--libs` with the source file between them.  Ubuntu's `--as-needed`
+  linker default silently drops a shared library that appears before
+  the object referencing it, causing undefined-reference errors.
+
+______________________________________________________________________
+
 ## \[0.6.7\] — 2026-05-09
 
 ### Fixed
