@@ -101,16 +101,17 @@ jobs:
 
       # ── C library distribution ───────────────────────────────────────────────
 
-      - name: Install C library to local prefix
+      - name: Install C library
         run: |
           cmake -S my_fir -B my_fir/build -DCMAKE_INSTALL_PREFIX="$HOME/fir_prefix"
           cmake --install my_fir/build
 
-      - name: Show install layout
-        run: find "$HOME/fir_prefix" -type f | sort
-
-      - name: Write C consumer
+      - name: Verify C consumers (pkg-config + CMake find_package)
         run: |
+          PREFIX="$HOME/fir_prefix"
+          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
+
           cat > /tmp/fir_consumer.c << 'EOF'
           #include "my_fir.h"
           #include <assert.h>
@@ -121,12 +122,10 @@ jobs:
           int main(void) {
               fir_filter_state_t *f = fir_filter_create(1.0f);
 
-              /* 3-tap averager: h = [0.25, 0.50, 0.25, 0, ...] */
               float h[16] = {0};
               h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
               fir_filter_set_coeffs(f, h);
 
-              /* Unit impulse -> impulse response */
               float complex in[16]  = {0};
               float complex out[16] = {0};
               in[0] = 1.0f + 0.0f * I;
@@ -144,26 +143,16 @@ jobs:
           }
           EOF
 
-      - name: Test pkg-config consumer
-        run: |
-          PREFIX="$HOME/fir_prefix"
-          PC_DIR=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
-          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
-          echo "pc: $PC_DIR  lib: $LIB_DIR"
-          export PKG_CONFIG_PATH="$PC_DIR"
+          # pkg-config
           gcc -O2 -std=c99 \
             $(pkg-config --cflags my-fir) \
             /tmp/fir_consumer.c \
             $(pkg-config --libs my-fir) \
             -Wl,-rpath,"$LIB_DIR" \
-            -lm \
-            -o /tmp/fir_consumer_pkgconfig
+            -lm -o /tmp/fir_consumer_pkgconfig
           /tmp/fir_consumer_pkgconfig
 
-      - name: Test CMake find_package consumer
-        run: |
-          PREFIX="$HOME/fir_prefix"
-          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
+          # CMake find_package
           mkdir /tmp/cmake_fir_consumer
           cp /tmp/fir_consumer.c /tmp/cmake_fir_consumer/
           cat > /tmp/cmake_fir_consumer/CMakeLists.txt << 'EOF'
