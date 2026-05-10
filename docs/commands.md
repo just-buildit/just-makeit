@@ -10,6 +10,8 @@ just-makeit new my_project --component engine
 just-makeit new my_project --component engine --state rate:double:1.0
 just-makeit new my_project --component engine --state rate:double --state order:int:4
 just-makeit new my_project --component gain --arg-type float --return-type float --state gain:float:1.0
+just-makeit new my_filters --module filter
+just-makeit new my_dsp --module osc --module env
 ```
 
 `new` writes a `just-makeit.toml` that records the project name, version, and
@@ -21,6 +23,7 @@ any components — the source of truth for all subsequent commands.
 | ----------------------------- | ------------------------------------------------------------------------------------ |
 | `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
 | `--component name`            | Scaffold a first component immediately (optional).                                   |
+| `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--component`. |
 | `--state name:type[:default]` | Declare a state variable for the component. Repeatable.                              |
 | `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`.                        |
 | `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`.                         |

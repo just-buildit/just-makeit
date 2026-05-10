@@ -12,7 +12,10 @@ Usage: just-makeit <command> [options]
 Commands:
   new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
              [--arg-type TYPE] [--return-type TYPE]
-                     Create a new project; optionally scaffold a first component
+             [--module name ...]
+                     Create a new project; optionally scaffold a first component or one or more modules
+                     --component name   scaffold a standalone component (.so) in the same step
+                     --module name      scaffold an empty extension module; repeatable
                      --basic uses a plain Makefile instead of CMake
                      --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
                      --pure generates a stateless component (scalar params or caller-managed struct)
@@ -57,6 +60,8 @@ Examples:
   just-makeit new my_filter                                # project scaffold only
   just-makeit new my_filter --component my_filter         # project + first component
   just-makeit new my_bpf --component bpf --state center:double --state bw:double
+  just-makeit new my_filters --module filter              # project + one module
+  just-makeit new my_dsp --module osc --module env        # project + two modules
   just-makeit init engine --state rate:double:1.0         # stateful component
   just-makeit init norm --pure --param scale:double:1.0   # scalar pure component
   just-makeit init fir --pure --param taps:float[64]      # struct pure (array → struct)
@@ -129,6 +134,7 @@ def main() -> None:
         project = args[1]
         dest = None
         component = None
+        modules: list[str] = []
         basic = False
         perf = False
         pure = False
@@ -146,6 +152,13 @@ def main() -> None:
                     print("error: --component requires a name", file=sys.stderr)
                     sys.exit(1)
                 component = remaining[i]
+                i += 1
+            elif tok == "--module":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --module requires a name", file=sys.stderr)
+                    sys.exit(1)
+                modules.append(remaining[i])
                 i += 1
             elif tok in ("--state", "--param"):
                 var, i = _parse_state_flags(remaining, i)
@@ -183,7 +196,8 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None, basic=basic, perf=perf, pure=pure,
+        _new.run(project, dest, component, state_vars or None, modules=modules,
+                 basic=basic, perf=perf, pure=pure,
                  arg_type=arg_type, return_type=return_type)
 
     elif cmd == "init":

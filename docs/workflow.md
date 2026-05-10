@@ -226,25 +226,24 @@ import from a common subpackage path (`from my_filters.filter import Fir, Biquad
 Each type still has its own independent C library; the module is the Python
 grouping unit only.
 
-### 1. Scaffold the project (no component)
+### 1. Scaffold the project and module together
+
+```sh
+just-makeit new my_filters --module filter
+cd my_filters
+```
+
+`--module` is repeatable — `--module osc --module env` scaffolds two modules
+in one command.  Each module is an empty slot; types are added with
+`just-makeit object`.
+
+Alternatively, scaffold the project first and add the module separately:
 
 ```sh
 just-makeit new my_filters
 cd my_filters
-```
-
-`just-makeit new` without `--component` creates the project skeleton only:
-`CMakeLists.txt`, `pyproject.toml`, `just-makeit.toml`, and shared headers.
-
-### 2. Create the module
-
-```sh
 just-makeit module filter
 ```
-
-Scaffolds the grouping unit: an empty `filter_ext.c`, a Python module
-`CMakeLists.txt`, and `src/my_filters/filter/__init__.py`.  Records
-`[module.filter]` in `just-makeit.toml`.  No types exist yet.
 
 ### 3. Add types
 

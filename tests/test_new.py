@@ -272,6 +272,33 @@ class TestNewStateVars:
         assert "state->gain = 1.5;" in c
 
 
+class TestNewWithModules:
+    def test_single_module_scaffolded(self, tmp_path):
+        dest = tmp_path / "my_pkg"
+        run("my_pkg", dest, modules=["audio"])
+        assert (dest / "native" / "src" / "audio" / "audio_ext.c").exists()
+        assert (dest / "src" / "my_pkg" / "audio" / "__init__.py").exists()
+
+    def test_multiple_modules_scaffolded(self, tmp_path):
+        dest = tmp_path / "my_pkg"
+        run("my_pkg", dest, modules=["osc", "env"])
+        assert (dest / "native" / "src" / "osc" / "osc_ext.c").exists()
+        assert (dest / "native" / "src" / "env" / "env_ext.c").exists()
+
+    def test_modules_recorded_in_toml(self, tmp_path):
+        from just_makeit._config import load, modules as cfg_modules
+        dest = tmp_path / "my_pkg"
+        run("my_pkg", dest, modules=["osc", "env"])
+        cfg = load(dest)
+        assert set(cfg_modules(cfg)) == {"osc", "env"}
+
+    def test_module_add_subdirectory_in_cmake(self, tmp_path):
+        dest = tmp_path / "my_pkg"
+        run("my_pkg", dest, modules=["audio"])
+        cmake = (dest / "CMakeLists.txt").read_text()
+        assert "add_subdirectory(native/src/audio)" in cmake
+
+
 class TestNewValidation:
     def test_invalid_name_digit_start(self, tmp_path):
         with pytest.raises(SystemExit):

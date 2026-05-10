@@ -70,9 +70,8 @@ my_project/
 **Group multiple types into a single subpackage module** using `module` + `object`:
 
 ```sh
-just-makeit new my_filters
+just-makeit new my_filters --module filter
 cd my_filters
-just-makeit module filter
 just-makeit object fir    --module filter --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
 just-makeit object biquad --module filter --arg-type float --return-type float --state "b0:double:1.0" ...
 make && make test
@@ -92,19 +91,20 @@ ______________________________________________________________________
 just-makeit COMMAND
 ```
 
-| `COMMAND`                                      | Description                               |
-| ---------------------------------------------- | ----------------------------------------- |
-| `new <project>`                                                              | Create a new project                      |
-| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project with component and optional state |
-| `init <component> [--state ...] [--arg-type T] [--return-type T]`            | Add a standalone component (its own `.so`) |
-| `module <name>`                                | Scaffold a multi-type extension module (subpackage `.so`) |
-| `object <name> [--module name] [--state ...]`  | Add a Python type to an existing module   |
-| `add --state name:type[:default] [...]`        | Add state variables to a component        |
-| `perf`                                         | Upgrade an existing project with performance annotations |
-| `config [key value]`                           | Show or edit project configuration        |
-| `build [dir]`                                  | Configure + build C, and package dist     |
-| `test`                                         | Build and run CTest + pytest              |
-| `dry-run`                                      | Preview what would be compiled            |
+| Command | Description |
+| ------- | ----------- |
+| `new <project>` | Create a new project scaffold |
+| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project + standalone component |
+| `new <project> --module name [--module name ...]` | Project + one or more empty modules |
+| `init <component> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone component (its own `.so`) |
+| `module <name>` | Scaffold an empty extension module (subpackage `.so`) |
+| `object <name> [--module name] [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to an existing module |
+| `add --state name:type[:default] [...]` | Add state variables to a component |
+| `perf` | Upgrade an existing project with performance annotations |
+| `config [key value]` | Show or edit project configuration |
+| `build [dir]` | Configure + build C, and package dist |
+| `test` | Build and run CTest + pytest |
+| `dry-run` | Preview what would be compiled |
 
 See [State Variable Types](https://just-buildit.github.io/just-makeit/types/) for supported types, defaults, and C/Python mappings.
 

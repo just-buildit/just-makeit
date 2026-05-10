@@ -1,5 +1,22 @@
 # Changelog
 
+## \[0.8.4\] — 2026-05-10
+
+### Added
+
+- `just-makeit new <project> --module <name>` — scaffold one or more empty
+  extension modules in the same command as the project.  `--module` is
+  repeatable: `--module osc --module env` scaffolds both modules at once.
+  Equivalent to running `just-makeit module` separately for each name.
+
+### Docs
+
+- README: commands table and quickstart updated for `new --module`
+- `docs/commands.md`: `--module` argument documented under `new`
+- `docs/workflow.md`: Scenario 3 updated to use `new --module filter`
+
+______________________________________________________________________
+
 ## \[0.8.3\] — 2026-05-10
 
 ### Fixed

@@ -2,7 +2,8 @@
 _new.py — `just-makeit new` command.
 
 Creates a new project scaffold in a new directory. With --component also
-scaffolds the first C extension component in the same step.
+scaffolds the first C extension component in the same step.  With --module
+(repeatable) scaffolds one or more empty extension modules.
 """
 
 import sys
@@ -33,6 +34,7 @@ def run(
     dest: Path | None = None,
     component: str | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
+    modules: list[str] | None = None,
     basic: bool = False,
     perf: bool = False,
     pure: bool = False,
@@ -95,6 +97,18 @@ def run(
                   arg_type=arg_type, return_type=return_type, _hint=False)
         print()
         print(f"Done!  cd {root.name} && make && make test")
+    elif modules:
+        from . import _module
+
+        _write(
+            root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
+        )
+        _write(root / ".benchmarks" / ".gitkeep", "")
+        print()
+        for mod in modules:
+            _module.run(root, mod)
+        print()
+        print(f"Done!  cd {root.name} && just-makeit object <name> --module <module>")
     else:
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
