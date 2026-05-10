@@ -169,3 +169,160 @@ jobs:
             -DCMAKE_BUILD_RPATH="$LIB_DIR"
           cmake --build /tmp/cmake_fir_consumer/build
           /tmp/cmake_fir_consumer/build/fir_consumer
+
+      # ── Module / object workflow ─────────────────────────────────────────────
+
+      - name: Scaffold filter_module project
+        run: |
+          mkdir filter_module_test && cd filter_module_test
+          just-makeit new my_filters
+          cd my_filters
+          just-makeit module filter
+          just-makeit object fir \
+            --module filter \
+            --state "coeffs:float[16]" \
+            --state "delay:float _Complex[16]" \
+            --state "gain:float:1.0"
+          just-makeit object biquad \
+            --module filter \
+            --arg-type float \
+            --return-type float \
+            --state "b0:double:1.0" \
+            --state "b1:double:0.0" \
+            --state "b2:double:0.0" \
+            --state "a1:double:0.0" \
+            --state "a2:double:0.0" \
+            --state "w1:double:0.0" \
+            --state "w2:double:0.0"
+
+      - name: Verify generated structure
+        working-directory: filter_module_test/my_filters
+        run: |
+          # Both types in one ext.c
+          grep "FirObject"    native/src/filter/filter_ext.c
+          grep "BiquadObject" native/src/filter/filter_ext.c
+          grep "PyInit_filter" native/src/filter/filter_ext.c
+          # Subpackage __init__ re-exports both
+          grep "Fir"   src/my_filters/filter/__init__.py
+          grep "Biquad" src/my_filters/filter/__init__.py
+          # CMakeLists links both cores
+          grep "fir_core"    native/src/filter/CMakeLists.txt
+          grep "biquad_core" native/src/filter/CMakeLists.txt
+          # OBJECT-only CMakeLists — no Python3_add_library
+          ! grep "Python3_add_library" native/src/fir/CMakeLists.txt
+          ! grep "Python3_add_library" native/src/biquad/CMakeLists.txt
+
+      - name: Patch fir_step and biquad_step stubs
+        working-directory: filter_module_test/my_filters
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, re, sys
+
+          def patch(header_path, fn_name, return_type, new_sig, body):
+              header = pathlib.Path(header_path)
+              text   = header.read_text()
+              stub_re = re.compile(
+                  rf"(static inline|JM_FORCEINLINE JM_HOT) {re.escape(return_type)}\s*\n"
+                  rf"{re.escape(fn_name)}\(const .*?\n\}}",
+                  re.DOTALL,
+              )
+              m = stub_re.search(text)
+              assert m, f"stub not found in {header_path}"
+              replacement = m.group(1) + f" {return_type}\n" + new_sig + body
+              header.write_text(stub_re.sub(replacement, text))
+              print(f"patched {header_path}")
+
+          patch(
+              "native/inc/fir/fir_core.h",
+              "fir_step", "float complex",
+              "fir_step(fir_state_t *state, float complex x)\n",
+              "{\n"
+              "    memmove(&state->delay[1], &state->delay[0],\n"
+              "            (16 - 1) * sizeof(float complex));\n"
+              "    state->delay[0] = x;\n"
+              "    float complex y = 0.0f;\n"
+              "    for (int k = 0; k < 16; k++)\n"
+              "        y += state->coeffs[k] * state->delay[k];\n"
+              "    return (float complex)state->gain * y;\n"
+              "}",
+          )
+
+          patch(
+              "native/inc/biquad/biquad_core.h",
+              "biquad_step", "float",
+              "biquad_step(biquad_state_t *state, float x)\n",
+              "{\n"
+              "    double y  = state->b0 * (double)x + state->w1;\n"
+              "    state->w1 = state->b1 * (double)x - state->a1 * y + state->w2;\n"
+              "    state->w2 = state->b2 * (double)x - state->a2 * y;\n"
+              "    return (float)y;\n"
+              "}",
+          )
+          PYEOF
+
+      - name: Build filter_module
+        working-directory: filter_module_test/my_filters
+        run: make && make test
+
+      - name: Smoke test — both types importable and correct
+        working-directory: filter_module_test/my_filters
+        run: |
+          python3 - <<'PYEOF'
+          import sys, math
+          sys.path.insert(0, 'src')
+          import numpy as np
+          from my_filters.filter import Fir, Biquad
+
+          # Fir: 3-tap box impulse response
+          fir = Fir(gain=1.0)
+          h = np.zeros(16, dtype=np.float32)
+          h[0] = h[1] = h[2] = 1.0 / 3
+          fir.set_coeffs(h)
+          imp = np.zeros(16, dtype=np.complex64); imp[0] = 1.0
+          ir  = fir.steps(imp)
+          assert abs(ir[0].real - 1/3) < 1e-5, f"ir[0]={ir[0].real}"
+          assert abs(ir[1].real - 1/3) < 1e-5, f"ir[1]={ir[1].real}"
+          assert abs(ir[2].real - 1/3) < 1e-5, f"ir[2]={ir[2].real}"
+          assert abs(ir[3].real)       < 1e-5, f"ir[3]={ir[3].real}"
+
+          # Biquad: passthrough (b0=1, all others 0)
+          bq = Biquad(b0=1.0)
+          x  = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+          y  = bq.steps(x)
+          assert all(abs(float(y[i]) - float(x[i])) < 1e-5 for i in range(4))
+
+          # Biquad: spectral selectivity
+          fc, Q = 0.1, 0.707
+          w0    = 2 * math.pi * fc
+          alpha = math.sin(w0) / (2 * Q)
+          c     = math.cos(w0)
+          a0    = 1 + alpha
+          bq2   = Biquad(
+              b0=(1-c)/2/a0, b1=(1-c)/a0, b2=(1-c)/2/a0,
+              a1=-2*c/a0,    a2=(1-alpha)/a0,
+          )
+          t  = np.arange(512, dtype=np.float32) / 512
+          lo = np.cos(2*math.pi*0.05*t)
+          hi = np.cos(2*math.pi*0.40*t)
+          p_lo = float(np.mean(bq2.steps(lo)**2))
+          bq2.reset()
+          p_hi = float(np.mean(bq2.steps(hi)**2))
+          assert p_lo > 0.3,  f"passband too attenuated: {p_lo}"
+          assert p_hi < 0.01, f"stopband not rejected: {p_hi}"
+
+          print("filter_module artifact smoke: PASSED")
+          PYEOF
+
+      - name: Add a third object — verify module regeneration
+        working-directory: filter_module_test/my_filters
+        run: |
+          just-makeit object iir \
+            --module filter \
+            --arg-type float \
+            --return-type float \
+            --state "gain:float:1.0"
+          grep "IirObject"   native/src/filter/filter_ext.c
+          grep "FirObject"   native/src/filter/filter_ext.c
+          grep "BiquadObject" native/src/filter/filter_ext.c
+          grep "iir_core"    native/src/filter/CMakeLists.txt
+          grep "Iir"         src/my_filters/filter/__init__.py

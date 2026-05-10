@@ -37,8 +37,40 @@ def save(root: Path, cfg: dict) -> None:
 
 
 def components(cfg: dict) -> list[str]:
-    """Return component names — all top-level keys except 'project'."""
-    return [k for k in cfg if k != "project"]
+    """Return component names — all top-level keys except 'project' and 'module'."""
+    return [k for k in cfg if k not in ("project", "module")]
+
+
+def modules(cfg: dict) -> list[str]:
+    """Return names of explicitly defined multi-object modules."""
+    return list(cfg.get("module", {}).keys())
+
+
+def module_objects(cfg: dict, module: str) -> list[str]:
+    """Return the object names belonging to the given module."""
+    return list(cfg.get("module", {}).get(module, {}).get("objects", []))
+
+
+def component_module(cfg: dict, component: str) -> str | None:
+    """Return the module that owns this component, or None if self-contained."""
+    for mod, data in cfg.get("module", {}).items():
+        if component in data.get("objects", []):
+            return mod
+    return None
+
+
+def scaffold_module(cfg: dict, module: str) -> dict:
+    """Add an empty module entry (no objects yet)."""
+    cfg.setdefault("module", {})[module] = {"objects": []}
+    return cfg
+
+
+def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
+    """Append object_name to an existing module's object list."""
+    cfg.setdefault("module", {}).setdefault(module, {}).setdefault(
+        "objects", []
+    ).append(object_name)
+    return cfg
 
 
 def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
@@ -126,6 +158,13 @@ def _dump(cfg: dict) -> str:
             if k == "build" and v == "cmake":
                 continue  # cmake is default, don't write it
             lines.append(f'{k} = "{v}"')
+        lines.append("")
+
+    for mod, data in cfg.get("module", {}).items():
+        lines.append(f"[module.{mod}]")
+        objs = data.get("objects", [])
+        objs_str = ", ".join(f'"{o}"' for o in objs)
+        lines.append(f"objects = [{objs_str}]")
         lines.append("")
 
     for comp in components(cfg):

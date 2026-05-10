@@ -20,13 +20,19 @@ Commands:
                      --return-type TYPE C type for step()/fn() return value (default: --arg-type)
   init <name> [--state|--param name:type[:default] ...] [--perf] [--pure]
              [--arg-type TYPE] [--return-type TYPE]
-                     Add a component to the project in the current directory
+                     Add a standalone component (its own .so) to the project
                      --perf enables performance hints (inherited from project config by default)
                      --pure generates a stateless component (auto-detected: scalar or struct)
                      --param is idiomatic with --pure; --state is idiomatic without it (both work)
                      --arg-type / --return-type set the step() I/O C types
+  module <name>      Scaffold a new Python extension module (a subpackage .so that
+                     hosts multiple types added via 'object')
+  object <name> [--module name] [--state|--param name:type[:default] ...] [--perf] [--pure]
+             [--arg-type TYPE] [--return-type TYPE]
+                     Add a Python type to an existing module
+                     --module is inferred when only one module exists
   add --state|--param name:type[:default] [--component name] [...]
-                     Add state/param variables to an existing component
+                     Add state/param variables to an existing standalone component
 
   perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
                      annotations without overwriting any user code
@@ -233,6 +239,72 @@ def main() -> None:
 
         _init.run(Path.cwd(), component, state_vars or None, perf=perf, pure=pure,
                   arg_type=arg_type, return_type=return_type)
+
+    elif cmd == "module":
+        if len(args) < 2:
+            print("error: 'module' requires a module name.", file=sys.stderr)
+            sys.exit(1)
+        from . import _module
+
+        _module.run(Path.cwd(), args[1])
+
+    elif cmd == "object":
+        if len(args) < 2:
+            print("error: 'object' requires an object name.", file=sys.stderr)
+            sys.exit(1)
+        from . import _object
+
+        object_name = args[1]
+        module = None
+        perf: bool | None = None
+        pure = False
+        arg_type = "float _Complex"
+        return_type = None
+        state_vars: list[tuple[str, str, str]] = []
+
+        remaining = args[2:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok == "--module":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --module requires a name", file=sys.stderr)
+                    sys.exit(1)
+                module = remaining[i]
+                i += 1
+            elif tok in ("--state", "--param"):
+                var, i = _parse_state_flags(remaining, i)
+                state_vars.append(var)
+            elif tok == "--perf":
+                perf = True
+                i += 1
+            elif tok == "--pure":
+                pure = True
+                i += 1
+            elif tok in ("--arg-type", "--return-type"):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a type", file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                val = remaining[i]
+                if val not in T._CTYPE_META:
+                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
+                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                if tok == "--arg-type":
+                    arg_type = val
+                else:
+                    return_type = val
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        _object.run(Path.cwd(), object_name, module, state_vars or None,
+                    perf=perf, pure=pure, arg_type=arg_type, return_type=return_type)
 
     elif cmd == "add":
         from . import _add

@@ -80,6 +80,76 @@ The Python class name is derived automatically:
 
 ______________________________________________________________________
 
+## `just-makeit module <name>`
+
+Scaffold a new Python extension module — a subpackage `.so` that groups
+multiple types added via `just-makeit object`.  Must be run from the project root.
+
+```sh
+just-makeit module filter
+just-makeit module osc
+```
+
+Creates:
+
+| File | Purpose |
+|------|---------|
+| `native/src/<name>/<name>_ext.c` | C extension (empty — no types yet) |
+| `native/src/<name>/CMakeLists.txt` | Python module target |
+| `src/<pkg>/<name>/__init__.py` | Subpackage init (empty exports) |
+
+Appends `add_subdirectory(native/src/<name>)` to the root `CMakeLists.txt`
+and records `[module.<name>]` with an empty `objects` list in `just-makeit.toml`.
+
+Types are added with `just-makeit object`.
+
+______________________________________________________________________
+
+## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--pure] [--arg-type TYPE] [--return-type TYPE]`
+
+Add a Python type ("object") to an existing module.  Must be run from the
+project root.
+
+```sh
+just-makeit object fir --module filter --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
+just-makeit object biquad --module filter --state "b0:double:1.0" --state "a1:double:0.0" --state "w1:double:0.0"
+just-makeit object iir --module filter    # --module inferred when only one exists
+```
+
+**Per-object files created** (identical to `just-makeit init`, but no standalone Python module target):
+
+| File | Purpose |
+|------|---------|
+| `native/inc/<obj>/<obj>_core.h` | Header: struct, inline `_step`, getters/setters |
+| `native/src/<obj>/<obj>_core.c` | Source: create/destroy/reset/steps |
+| `native/src/<obj>/CMakeLists.txt` | OBJECT library + C test + bench (no `.so`) |
+| `native/tests/test_<obj>_core.c` | C test with `CHECK` macro counter |
+| `native/benchmarks/bench_<obj>_core.c` | C benchmark |
+
+**Module files regenerated** after each `just-makeit object`:
+
+| File | What changes |
+|------|-------------|
+| `native/src/<module>/<module>_ext.c` | New type block added; `PyMODINIT_FUNC` updated |
+| `native/src/<module>/CMakeLists.txt` | New `<obj>_core` added to link list |
+| `src/<pkg>/<module>/__init__.py` | New type added to import and `__all__` |
+
+The module `_ext.c` is always fully regenerated from the complete object list
+— never patched — so adding a third type never disturbs the first two.
+
+**Arguments**
+
+| Argument | Description |
+|----------|-------------|
+| `name` | Object name in `snake_case`. Becomes the C prefix and Python class name (title-cased). |
+| `--module name` | Target module. Inferred when only one module exists in the project. |
+| `--state name:type[:default]` | Declare a state variable. Same syntax as `init`. |
+| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. |
+| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. |
+| `--pure` | Generate a stateless object. Same semantics as `init --pure`. |
+
+______________________________________________________________________
+
 ## `just-makeit add --state name:type[:default] [...] [--component name]`
 
 Add one or more state variables to an existing component. Must be run from the
