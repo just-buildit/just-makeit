@@ -95,8 +95,8 @@ just-makeit COMMAND
 | ------- | ----------- |
 | `new <project>` | Create a new project scaffold |
 | `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project + standalone component |
-| `new <project> --module name [--module name ...]` | Project + one or more empty modules |
 | `init <component> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone component (its own `.so`) |
+| `new <project> --module name [--module name ...]` | Project + one or more empty modules |
 | `module <name>` | Scaffold an empty extension module (subpackage `.so`) |
 | `object <name> [--module name] [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to an existing module |
 | `add --state name:type[:default] [...]` | Add state variables to a component |
