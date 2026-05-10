@@ -1,5 +1,13 @@
 # Changelog
 
+## \[0.9.4\] — 2026-05-10
+
+### Fixed
+
+- `artifact.yml` biquad spectral test: same `t/512` and `reset()` bugs fixed in v0.9.3 for the local test were also present in the CI smoke test.
+
+______________________________________________________________________
+
 ## \[0.9.3\] — 2026-05-10
 
 ### Added
