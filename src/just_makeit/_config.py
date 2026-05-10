@@ -73,6 +73,52 @@ def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
     return cfg
 
 
+def module_functions(cfg: dict, module: str) -> list[dict]:
+    """Return the module-level function entries for module as [{"name":..., "doc":...}, ...]."""
+    return list(cfg.get("module", {}).get(module, {}).get("functions", []))
+
+
+def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
+    """Append a function entry to a module's functions list."""
+    (
+        cfg.setdefault("module", {})
+        .setdefault(module, {})
+        .setdefault("functions", [])
+        .append(fn)
+    )
+    return cfg
+
+
+def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
+    """Return declared array constructor args for component as [(name, dtype), ...]."""
+    return [
+        (a["name"], a["dtype"])
+        for a in cfg.get(component, {}).get("array_args", [])
+    ]
+
+
+def methods(cfg: dict, component: str) -> list[dict]:
+    """Return declared extra methods for component (empty list if none)."""
+    return list(cfg.get(component, {}).get("methods", []))
+
+
+def add_method(cfg: dict, component: str, method: dict) -> dict:
+    """Append a method entry to the component's methods list."""
+    cfg.setdefault(component, {}).setdefault("methods", []).append(method)
+    return cfg
+
+
+def properties(cfg: dict, component: str) -> list[dict]:
+    """Return declared Python properties for component (empty list if none)."""
+    return list(cfg.get(component, {}).get("properties", []))
+
+
+def add_property(cfg: dict, component: str, prop: dict) -> dict:
+    """Append a property entry to the component's properties list."""
+    cfg.setdefault(component, {}).setdefault("properties", []).append(prop)
+    return cfg
+
+
 def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     return [
         (s["name"], s["type"], s["default"])
@@ -133,6 +179,7 @@ def add_component(
     pure: str | None = None,
     arg_type_: str = "float _Complex",
     return_type_: str | None = None,
+    array_args_: list[tuple[str, str]] = (),
 ) -> dict:
     entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
@@ -144,6 +191,10 @@ def add_component(
     rt = return_type_ if return_type_ is not None else arg_type_
     if rt != "float _Complex":
         entry["return_type"] = rt
+    if array_args_:
+        entry["array_args"] = [
+            {"name": n, "dtype": dt} for n, dt in array_args_
+        ]
     cfg[component] = entry
     return cfg
 
@@ -166,6 +217,12 @@ def _dump(cfg: dict) -> str:
         objs_str = ", ".join(f'"{o}"' for o in objs)
         lines.append(f"objects = [{objs_str}]")
         lines.append("")
+        for fn in data.get("functions", []):
+            lines.append(f"[[module.{mod}.functions]]")
+            lines.append(f'name = "{fn["name"]}"')
+            if fn.get("doc"):
+                lines.append(f'doc = "{fn["doc"]}"')
+            lines.append("")
 
     for comp in components(cfg):
         comp_data = cfg[comp]
@@ -175,11 +232,36 @@ def _dump(cfg: dict) -> str:
             for k in meta_keys:
                 lines.append(f'{k} = "{comp_data[k]}"')
             lines.append("")
+        for a in comp_data.get("array_args", []):
+            lines.append(f"[[{comp}.array_args]]")
+            lines.append(f'name = "{a["name"]}"')
+            lines.append(f'dtype = "{a["dtype"]}"')
+            lines.append("")
         for s in comp_data.get("state", []):
             lines.append(f"[[{comp}.state]]")
             lines.append(f'name = "{s["name"]}"')
             lines.append(f'type = "{s["type"]}"')
             lines.append(f'default = "{s["default"]}"')
+            lines.append("")
+        for m in comp_data.get("methods", []):
+            lines.append(f"[[{comp}.methods]]")
+            lines.append(f'name = "{m["name"]}"')
+            if m.get("arg_type"):
+                lines.append(f'arg_type = "{m["arg_type"]}"')
+            if m.get("return_type"):
+                lines.append(f'return_type = "{m["return_type"]}"')
+            if m.get("variable_output"):
+                lines.append("variable_output = true")
+            if m.get("multi_output"):
+                mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
+                lines.append(f"multi_output = [{mo_str}]")
+            lines.append("")
+        for p in comp_data.get("properties", []):
+            lines.append(f"[[{comp}.properties]]")
+            lines.append(f'name = "{p["name"]}"')
+            lines.append(f'ctype = "{p["ctype"]}"')
+            if p.get("writable"):
+                lines.append("writable = true")
             lines.append("")
 
     return "\n".join(lines)

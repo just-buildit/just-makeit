@@ -1,0 +1,202 @@
+"""Integration tests for `just-makeit property`."""
+
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+# Generated stubs intentionally embed <<IMPLEMENT:...>> guidance comments.
+# Only flag tokens that are NOT the IMPLEMENT marker.
+_STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from just_makeit._new import run as new_run
+from just_makeit._property import run as property_run
+from just_makeit._config import load, properties
+
+
+@pytest.fixture()
+def project(tmp_path):
+    dest = tmp_path / "dsp"
+    new_run("dsp", dest, "buf", [("capacity", "size_t", "1024")])
+    return dest
+
+
+class TestPropertyUpdatesExtC:
+    def test_ext_c_has_getset_def(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "PyGetSetDef Buf_getset[]" in ext
+
+    def test_ext_c_has_tp_getset(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert ".tp_getset" in ext
+        assert "Buf_getset" in ext
+
+    def test_ext_c_getter_calls_correct_fn(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "buf_get_dropped(self->handle)" in ext
+
+    def test_ext_c_getter_stub_signature(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "Buf_getprop_dropped" in ext
+
+    def test_ext_c_getset_entry_with_null_setter(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert '"dropped"' in ext
+        # read-only: setter should be NULL
+        assert "NULL, NULL" in ext
+
+    def test_ext_c_getset_null_terminator(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "{ NULL }" in ext
+
+    def test_ext_c_multiple_properties(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        property_run(project, "buf", "available", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "Buf_getprop_dropped" in ext
+        assert "Buf_getprop_available" in ext
+        # Only one getset array
+        assert ext.count("PyGetSetDef Buf_getset[]") == 1
+
+    def test_ext_c_writable_has_setter(self, project):
+        property_run(project, "buf", "threshold", None, "size_t", True)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "Buf_setprop_threshold" in ext
+        assert "buf_set_threshold(self->handle" in ext
+
+    def test_ext_c_readonly_no_setter_fn(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        ext = (
+            project / "native" / "src" / "buf" / "buf_ext.c"
+        ).read_text()
+        assert "Buf_setprop_dropped" not in ext
+
+
+class TestPropertyUpdatesCoreH:
+    def test_core_h_has_getter_decl(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        h = (
+            project / "native" / "inc" / "buf" / "buf_core.h"
+        ).read_text()
+        assert "buf_get_dropped" in h
+
+    def test_core_h_has_setter_decl_when_writable(self, project):
+        property_run(project, "buf", "threshold", None, "size_t", True)
+        h = (
+            project / "native" / "inc" / "buf" / "buf_core.h"
+        ).read_text()
+        assert "buf_set_threshold" in h
+
+    def test_core_h_no_setter_decl_when_readonly(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        h = (
+            project / "native" / "inc" / "buf" / "buf_core.h"
+        ).read_text()
+        assert "buf_set_dropped" not in h
+
+
+class TestPropertyUpdatesConfig:
+    def test_config_records_property(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        cfg = load(project)
+        names = [p["name"] for p in properties(cfg, "buf")]
+        assert "dropped" in names
+
+    def test_config_records_ctype(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        cfg = load(project)
+        p = next(p for p in properties(cfg, "buf") if p["name"] == "dropped")
+        assert p["ctype"] == "size_t"
+
+    def test_config_readonly_no_writable_flag(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        cfg = load(project)
+        p = next(p for p in properties(cfg, "buf") if p["name"] == "dropped")
+        assert not p.get("writable", False)
+
+    def test_config_records_writable(self, project):
+        property_run(project, "buf", "threshold", None, "size_t", True)
+        cfg = load(project)
+        p = next(p for p in properties(cfg, "buf") if p["name"] == "threshold")
+        assert p.get("writable") is True
+
+    def test_config_multiple_properties(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        property_run(project, "buf", "available", None, "size_t", False)
+        cfg = load(project)
+        names = [p["name"] for p in properties(cfg, "buf")]
+        assert "dropped" in names
+        assert "available" in names
+
+
+class TestPropertyValidation:
+    def test_no_config_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            property_run(tmp_path, "buf", "dropped", None, "size_t", False)
+
+    def test_unknown_object_exits(self, project):
+        with pytest.raises(SystemExit):
+            property_run(
+                project, "nonexistent", "dropped", None, "size_t", False
+            )
+
+    def test_unsupported_type_exits(self, project):
+        with pytest.raises(SystemExit):
+            property_run(
+                project, "buf", "dropped", None, "notavalidtype", False
+            )
+
+    def test_duplicate_property_name_exits(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        with pytest.raises(SystemExit):
+            property_run(project, "buf", "dropped", None, "size_t", False)
+
+
+def _check_no_placeholders(project: Path) -> None:
+    for path in project.rglob("*"):
+        if path.is_file() and path.suffix in (
+            ".py", ".c", ".h", ".toml", ".txt"
+        ):
+            text = path.read_text(encoding="utf-8")
+            m = _STRAY_PLACEHOLDER.search(text)
+            assert m is None, f"Unreplaced placeholder in {path}"
+
+
+class TestPropertyNoUnreplacedPlaceholders:
+    def test_no_placeholders_readonly(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        _check_no_placeholders(project)
+
+    def test_no_placeholders_writable(self, project):
+        property_run(project, "buf", "threshold", None, "size_t", True)
+        _check_no_placeholders(project)
+
+    def test_no_placeholders_multiple_props(self, project):
+        property_run(project, "buf", "dropped", None, "size_t", False)
+        property_run(project, "buf", "threshold", None, "size_t", True)
+        _check_no_placeholders(project)

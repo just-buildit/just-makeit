@@ -28,6 +28,16 @@ Commands:
                      Add a Python type to the project
                      Without --module: standalone object with its own .so
                      With --module:    type grouped into a shared module subpackage .so
+  method <object> <method_name> [--module name]
+             --arg-type TYPE --return-type TYPE [--variable-output]
+             [--multi-output TYPE ...]
+                     Add a named execute method to an existing object
+                     --variable-output  Pre-allocates output buffer at init; returns zero-copy view
+                     --multi-output T   Additional return types (produces a tuple); repeatable
+  property <object> <prop_name> [--module name] --type TYPE [--writable]
+                     Add a read-only (or read-write) Python property to an existing object
+  function <name> --module <mod> [--doc "text"]
+                     Add a module-level function (no type object) to an existing module
   add --state|--param name:type[:default] [--object name] [...]
                      Add state/param variables to an existing standalone object
 
@@ -59,6 +69,12 @@ Examples:
   just-makeit object engine --state rate:double:1.0       # standalone stateful object
   just-makeit object norm --pure --param scale:double:1.0 # scalar pure object
   just-makeit object fir --module filter                  # object in a module
+  just-makeit method nco execute_cf32 --module dsp \\
+      --arg-type void --return-type "float _Complex" --variable-output
+  just-makeit method nco execute_u32_ovf --module dsp \\
+      --arg-type void --return-type uint32_t --variable-output --multi-output uint8_t
+  just-makeit property nco phase --module dsp --type uint32_t
+  just-makeit property buffer dropped --type size_t
   just-makeit add --state order:int:4                     # add state var
   just-makeit add --param n_taps:int:16                   # add param (pure object)
   just-makeit config                                      # show project config
@@ -135,6 +151,7 @@ def main() -> None:
         arg_type = "float _Complex"
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
+        array_args_new: list[tuple[str, str]] = []
 
         remaining = args[2:]
         i = 0
@@ -183,6 +200,27 @@ def main() -> None:
                 else:
                     return_type = val
                 i += 1
+            elif tok == "--array-arg":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --array-arg requires name:dtype", file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                val = remaining[i]
+                if ":" not in val:
+                    print(f"error: --array-arg '{val}' must be name:dtype",
+                          file=sys.stderr)
+                    sys.exit(1)
+                aa_name, aa_dtype = val.split(":", 1)
+                if aa_dtype not in T.SUPPORTED_ARRAY_DTYPES:
+                    print(
+                        f"error: --array-arg dtype '{aa_dtype}' not supported.\n"
+                        f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                array_args_new.append((aa_name, aa_dtype))
+                i += 1
             elif dest is None and not tok.startswith("-"):
                 dest = Path(tok)
                 i += 1
@@ -215,6 +253,7 @@ def main() -> None:
         arg_type = "float _Complex"
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
+        array_args_obj: list[tuple[str, str]] = []
 
         remaining = args[2:]
         i = 0
@@ -253,12 +292,193 @@ def main() -> None:
                 else:
                     return_type = val
                 i += 1
+            elif tok == "--array-arg":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --array-arg requires name:dtype", file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                val = remaining[i]
+                if ":" not in val:
+                    print(f"error: --array-arg '{val}' must be name:dtype",
+                          file=sys.stderr)
+                    sys.exit(1)
+                aa_name, aa_dtype = val.split(":", 1)
+                if aa_dtype not in T.SUPPORTED_ARRAY_DTYPES:
+                    print(
+                        f"error: --array-arg dtype '{aa_dtype}' not supported.\n"
+                        f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                array_args_obj.append((aa_name, aa_dtype))
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
         _object.run(Path.cwd(), object_name, module, state_vars or None,
-                    perf=perf, pure=pure, arg_type=arg_type, return_type=return_type)
+                    perf=perf, pure=pure, arg_type=arg_type, return_type=return_type,
+                    array_args=array_args_obj)
+
+    elif cmd == "method":
+        if len(args) < 3:
+            print("error: 'method' requires an object name and a method name.", file=sys.stderr)
+            sys.exit(1)
+        from . import _method
+        from . import _templates as T
+
+        object_name = args[1]
+        method_name = args[2]
+        module = None
+        arg_type = "void"
+        return_type = "float _Complex"
+        variable_output = False
+        multi_output: list[str] = []
+
+        remaining = args[3:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok == "--module":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --module requires a name", file=sys.stderr)
+                    sys.exit(1)
+                module = remaining[i]
+                i += 1
+            elif tok == "--variable-output":
+                variable_output = True
+                i += 1
+            elif tok == "--multi-output":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --multi-output requires a type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if val not in T._CTYPE_META:
+                    print(f"error: --multi-output '{val}' is not a supported type.",
+                          file=sys.stderr)
+                    sys.exit(1)
+                multi_output.append(val)
+                i += 1
+            elif tok in ("--arg-type", "--return-type"):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if val != "void" and val not in T._CTYPE_META:
+                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
+                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                if tok == "--arg-type":
+                    arg_type = val
+                else:
+                    return_type = val
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        if return_type not in T._CTYPE_META:
+            print(f"error: --return-type '{return_type}' is required and must be a scalar type.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        _method.run(
+            Path.cwd(), object_name, method_name, module,
+            arg_type, return_type, variable_output, multi_output,
+        )
+
+    elif cmd == "property":
+        if len(args) < 3:
+            print("error: 'property' requires an object name and a property name.",
+                  file=sys.stderr)
+            sys.exit(1)
+        from . import _property
+        from . import _templates as T
+
+        object_name = args[1]
+        prop_name = args[2]
+        module = None
+        ctype = "size_t"
+        writable = False
+
+        remaining = args[3:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok == "--module":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --module requires a name", file=sys.stderr)
+                    sys.exit(1)
+                module = remaining[i]
+                i += 1
+            elif tok == "--type":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --type requires a type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if val not in T._CTYPE_META:
+                    print(f"error: --type '{val}' is not a supported scalar type.\n"
+                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                ctype = val
+                i += 1
+            elif tok == "--writable":
+                writable = True
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        _property.run(Path.cwd(), object_name, prop_name, module, ctype, writable)
+
+    elif cmd == "function":
+        if len(args) < 2:
+            print("error: 'function' requires a function name.", file=sys.stderr)
+            sys.exit(1)
+        from . import _function
+
+        fn_name = args[1]
+        module = None
+        doc = ""
+
+        remaining = args[2:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok == "--module":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --module requires a name", file=sys.stderr)
+                    sys.exit(1)
+                module = remaining[i]
+                i += 1
+            elif tok == "--doc":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --doc requires a string", file=sys.stderr)
+                    sys.exit(1)
+                doc = remaining[i]
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        if module is None:
+            print(
+                "error: 'function' requires --module (functions must belong to a module).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        _function.run(Path.cwd(), fn_name, module, doc)
 
     elif cmd == "add":
         from . import _add

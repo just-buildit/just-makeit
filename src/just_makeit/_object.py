@@ -35,6 +35,7 @@ def _make_object_ctx(
     return_type: str | None = None,
     perf: bool = False,
     pure: bool = False,
+    array_args: list[tuple[str, str]] = (),
 ) -> tuple[dict, str | None]:
     """Build the render ctx for an object.  Returns (ctx, pure_style)."""
     ctx = _make_component_ctx(component)
@@ -56,7 +57,8 @@ def _make_object_ctx(
         ctx.update(pure_ctx)
         pure_style = pure_ctx["pure_style"]
     else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars))
+        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars,
+                                    array_args=array_args))
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
@@ -81,11 +83,17 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             state_vars, arg_type_, return_type_,
             perf=perf,
             pure=(pure_style is not None),
+            array_args=C.array_args(cfg, obj),
         )
+        ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
+                                      C.methods(cfg, obj)))
+        ctx.update(T.make_properties_ctx(ctx["component"], ctx["Component"],
+                                         C.properties(cfg, obj)))
         comp_ctxs.append(ctx)
 
     # Module ext.c
-    ext_c = T.render_module_ext_c(module, comp_ctxs)
+    functions = C.module_functions(cfg, module)
+    ext_c = T.render_module_ext_c(module, comp_ctxs, functions)
     _write(root / "native" / "src" / module / f"{module}_ext.c", ext_c, "update")
 
     # Module CMakeLists
@@ -126,6 +134,7 @@ def run(
     pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
+    array_args: list[tuple[str, str]] = (),
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -151,7 +160,8 @@ def run(
     if module is None:
         from . import _init
         _init.run(root, object_name, state_vars, perf=perf, pure=pure,
-                  arg_type=arg_type, return_type=return_type, _hint=_hint)
+                  arg_type=arg_type, return_type=return_type,
+                  array_args=array_args, _hint=_hint)
         return
 
     # --module given → in-module path
@@ -185,7 +195,7 @@ def run(
     vars_ = state_vars or [("gain", "double", "0.0")]
     ctx, pure_style = _make_object_ctx(
         object_name, module, pkg, version, vars_, arg_type, return_type,
-        perf=perf, pure=pure,
+        perf=perf, pure=pure, array_args=array_args,
     )
 
     def r(tmpl):
@@ -211,7 +221,7 @@ def run(
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)
     C.add_component(cfg, comp, vars_, pure=pure_style, arg_type_=arg_type,
-                    return_type_=return_type)
+                    return_type_=return_type, array_args_=array_args)
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)

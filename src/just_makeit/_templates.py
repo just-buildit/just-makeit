@@ -164,6 +164,24 @@ _NP_ENUM: dict[str, str] = {
     "str": "NPY_OBJECT",
 }
 
+# Maps user-facing dtype strings (--array-arg name:dtype) to (C type, NPY enum).
+_ARRAY_DTYPE: dict[str, tuple[str, str]] = {
+    "float32":    ("float",           "NPY_FLOAT"),
+    "float64":    ("double",          "NPY_DOUBLE"),
+    "complex64":  ("float _Complex",  "NPY_COMPLEX64"),
+    "complex128": ("double _Complex", "NPY_COMPLEX128"),
+    "int8":       ("int8_t",          "NPY_INT8"),
+    "int16":      ("int16_t",         "NPY_INT16"),
+    "int32":      ("int32_t",         "NPY_INT"),
+    "int64":      ("int64_t",         "NPY_INT64"),
+    "uint8":      ("uint8_t",         "NPY_UINT8"),
+    "uint16":     ("uint16_t",        "NPY_UINT16"),
+    "uint32":     ("uint32_t",        "NPY_UINT32"),
+    "uint64":     ("uint64_t",        "NPY_UINT64"),
+}
+
+SUPPORTED_ARRAY_DTYPES: frozenset[str] = frozenset(_ARRAY_DTYPE)
+
 # Maps kind → Python isinstance target.
 _KIND_PY_ISINSTANCE: dict[str, str] = {
     "float": "float",
@@ -384,6 +402,7 @@ def make_state_ctx(
     component: str,
     Component: str,
     state_vars: list[tuple[str, str, str]],
+    array_args: list[tuple[str, str]] = (),
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -391,6 +410,11 @@ def make_state_ctx(
     C literal used for both reset and as the Python __init__ default value.
     Array types like 'float[64]' are always zero-initialised and do not appear
     as constructor parameters.
+
+    array_args is a list of (name, dtype) pairs from --array-arg, e.g.
+    [("h", "float32")].  Each becomes a required positional constructor
+    argument: const <ctype> *name, size_t name_len.  Array args appear before
+    scalar args in both the kwlist and the create() signature.
     """
     for name, ct, _ in state_vars:
         if not is_valid_type(ct):
@@ -418,13 +442,29 @@ def make_state_ctx(
             struct_field_lines.append(f"    {ct} {name};")
     state_struct_fields = "\n".join(struct_field_lines)
 
-    create_params = ", ".join(f"{ct} {name}" for name, ct, _ in scalar_vars) or "void"
+    # Array args (from --array-arg) go first in create() signature/kwlist.
+    _aa = list(array_args)  # [(name, dtype), ...]
+    _aa_ctypes = [(_ARRAY_DTYPE[dt][0], _ARRAY_DTYPE[dt][1]) for _, dt in _aa]
 
+    arr_param_parts = [
+        f"const {ct} *{name}, size_t {name}_len"
+        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
+    ]
+    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in scalar_vars]
+    all_param_parts = arr_param_parts + scalar_param_parts
+    create_params = ", ".join(all_param_parts) or "void"
+
+    arr_doc_parts = [
+        f" * @param {name}  Input {dt} array (length passed as {name}_len)."
+        for (name, dt) in _aa
+    ]
+    scalar_doc_parts = [
+        f" * @param {name}  Initial {name} (default: {dflt})."
+        for name, _, dflt in scalar_vars
+    ]
+    all_docs = arr_doc_parts + scalar_doc_parts
     create_param_docs = (
-        "\n".join(
-            f" * @param {name}  Initial {name} (default: {dflt})."
-            for name, _, dflt in scalar_vars
-        )
+        "\n".join(all_docs)
         or " * @param (none)  All array fields initialise to zero."
     )
 
@@ -526,16 +566,20 @@ def make_state_ctx(
         )
     getter_setter_impls = "\n\n".join(impl_parts)
 
-    # ── EXT_C: init parse block (scalars only) ───────────────────────────────
+    # ── EXT_C: init parse block (array args first, then scalars) ────────────
 
-    # Individual keys kept for backward-compat with tests; init_parse_block is
-    # what the template actually uses.
-    kwlist_items = [f'"{name}"' for name, _, __ in scalar_vars] + ["NULL"]
+    # kwlist: array arg names first (required), then scalar names (optional)
+    kwlist_items = (
+        [f'"{name}"' for name, _ in _aa]
+        + [f'"{name}"' for name, _, __ in scalar_vars]
+        + ["NULL"]
+    )
     init_kwlist = ", ".join(kwlist_items)
 
-    local_lines = []
+    # Locals: PyObject* for each array arg, then scalar locals
+    local_lines = [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
     post_lines = []
-    parse_args = []
+    parse_args = [f"&{name}_obj" for name, _ in _aa]
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
@@ -549,11 +593,26 @@ def make_state_ctx(
             parse_args.append(f"&{name}")
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
-    init_parse_fmt = "|" + "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in scalar_vars)
-    init_parse_args = ", ".join(parse_args)
-    create_call_args = ", ".join(name for name, _, __ in scalar_vars)
 
+    # Format: required O per array arg, then optional scalars after |
+    array_fmt = "O" * len(_aa)
+    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in scalar_vars)
     if scalar_vars:
+        init_parse_fmt = array_fmt + "|" + scalar_fmt_str
+    else:
+        init_parse_fmt = array_fmt or "|"  # "|" means no args required
+
+    init_parse_args = ", ".join(parse_args)
+
+    # create_call_args: array (ptr, len) pairs first, then scalars
+    arr_call_parts = [
+        f"(const {ct} *)PyArray_DATA({name}_arr), {name}_len"
+        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
+    ]
+    scalar_call_parts = [name for name, _, __ in scalar_vars]
+    create_call_args = ", ".join(arr_call_parts + scalar_call_parts)
+
+    if _aa or scalar_vars:
         post_str = ("\n".join(post_lines) + "\n") if post_lines else ""
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
@@ -566,6 +625,42 @@ def make_state_ctx(
         )
     else:
         init_parse_block = "    (void)args;\n    (void)kwds;\n"
+
+    # ── EXT_C: array-arg post-parse (FROM_OTF + size, after kwarg parse) ────
+
+    aapb_lines: list[str] = []
+    already_allocated: list[str] = []
+    for (name, _), (ct, npy_enum) in zip(_aa, _aa_ctypes):
+        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in already_allocated)
+        aapb_lines.append(
+            f"    PyArrayObject *{name}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+            f"        {name}_obj, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+            f"    if (!{name}_arr) {{{cleanup} return -1; }}\n"
+            f"    size_t {name}_len = (size_t)PyArray_SIZE({name}_arr);\n"
+        )
+        already_allocated.append(name)
+    array_args_parse_block = "".join(aapb_lines)
+
+    array_args_decref = "".join(
+        f"    Py_DECREF({name}_arr);\n" for name, _ in _aa
+    )
+
+    # c_create_args: for C test templates — pass NULL, 0 per array arg
+    c_arr_call_parts = [f"NULL, 0" for _ in _aa]
+    c_create_args = ", ".join(c_arr_call_parts + [dflt for _, _, dflt in scalar_vars])
+
+    # py_create_args: for Python test/bench/pyi templates
+    _NP_PY_TYPE: dict[str, str] = {
+        "float32": "np.float32", "float64": "np.float64",
+        "complex64": "np.complex64", "complex128": "np.complex128",
+        "int8": "np.int8", "int16": "np.int16",
+        "int32": "np.int32", "int64": "np.int64",
+        "uint8": "np.uint8", "uint16": "np.uint16",
+        "uint32": "np.uint32", "uint64": "np.uint64",
+    }
+    py_arr_args = [
+        f"np.zeros(1, dtype={_NP_PY_TYPE[dt]})" for _, dt in _aa
+    ]
 
     # ── EXT_C: getter/setter methods (scalars + arrays) ──────────────────────
 
@@ -749,8 +844,11 @@ def make_state_ctx(
 
     # ── Shared: create args ───────────────────────────────────────────────────
 
-    py_create_args = ", ".join(_py_default(ct, dflt) for _, ct, dflt in scalar_vars)
-    c_create_args = ", ".join(dflt for _, _, dflt in scalar_vars)
+    # Array args appear first; scalar args follow.
+    py_create_args = ", ".join(
+        py_arr_args + [_py_default(ct, dflt) for _, ct, dflt in scalar_vars]
+    )
+    # c_create_args already computed above (NULL, 0 per array arg + scalar defaults)
 
     # ── PYTEST: getter_setter_test_py ─────────────────────────────────────────
 
@@ -886,6 +984,20 @@ def make_state_ctx(
         "c_create_args": c_create_args,
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
+        # Array-arg placeholders (empty when no --array-arg used).
+        "array_args_parse_block": array_args_parse_block,
+        "array_args_decref": array_args_decref,
+        # Extra-method placeholders: callers override via make_methods_ctx().
+        "method_decls": "",
+        "extra_buf_fields": "",
+        "extra_buf_free": "",
+        "extra_buf_alloc": "",
+        "extra_methods_c": "",
+        "extra_methods_pymethoddef": "",
+        # Property placeholders: callers override via make_properties_ctx().
+        "getset_def": "",
+        "tp_getset_decl": "",
+        "property_decls": "",
     }
 
 
@@ -1169,6 +1281,363 @@ def make_perf_ctx(perf: bool) -> dict[str, str]:
         "perf_include": "",
         "step_qualifier": "static inline",
         "omp_simd_hint": "",
+    }
+
+
+def make_methods_ctx(
+    component: str,
+    Component: str,
+    methods: list[dict],
+) -> dict[str, str]:
+    """Generate template context keys for extra named methods.
+
+    Each method dict has: name, arg_type ("void" or a _CTYPE_META key),
+    return_type (a _CTYPE_META key), variable_output (bool),
+    and optionally multi_output (list of additional return ctypes).
+    """
+    _EMPTY: dict[str, str] = {
+        "method_decls": "",
+        "extra_buf_fields": "",
+        "extra_buf_free": "",
+        "extra_buf_alloc": "",
+        "extra_methods_c": "",
+        "extra_methods_pymethoddef": "",
+    }
+    if not methods:
+        return _EMPTY
+
+    guard = (
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+
+    decl_lines: list[str] = []
+    buf_fields: list[str] = []
+    buf_free: list[str] = []
+    buf_alloc: list[str] = []
+    method_c_parts: list[str] = []
+    pmd_lines: list[str] = []
+
+    for m in methods:
+        name: str = m["name"]
+        arg_type: str = m.get("arg_type", "void")
+        return_type: str = m.get("return_type", "float _Complex")
+        variable_output: bool = m.get("variable_output", False)
+        multi_output: list[str] = m.get("multi_output", [])
+
+        ret_disp = _ctype_display(return_type)
+        ret_meta = _CTYPE_META.get(return_type)
+        ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
+
+        has_arg = arg_type != "void"
+        if has_arg:
+            arg_disp = _ctype_display(arg_type)
+            arg_meta = _CTYPE_META[arg_type]
+            arg_np = _NP_ENUM[arg_meta["py_type"]]
+
+        # ── declarations for _core.h ─────────────────────────────────────────
+        if variable_output:
+            decl_lines.append(
+                f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
+                f"size_t {component}_{name}({component}_state_t *state, size_t n,"
+                f" {ret_disp} *out);"
+            )
+            if multi_output:
+                # Additional output buffers declared separately
+                for i, extra_rt in enumerate(multi_output):
+                    extra_disp = _ctype_display(extra_rt)
+                    decl_lines.append(
+                        f"/* secondary output {i+1} for {name}: {extra_disp} */"
+                    )
+        else:
+            if has_arg:
+                decl_lines.append(
+                    f"{ret_disp} {component}_{name}"
+                    f"({component}_state_t *state, {arg_disp} x);"
+                )
+            else:
+                decl_lines.append(
+                    f"{ret_disp} {component}_{name}({component}_state_t *state);"
+                )
+
+        # ── pre-allocated buffer fields + alloc + free ────────────────────────
+        if variable_output:
+            all_return_types = [return_type] + list(multi_output)
+            for i, rt in enumerate(all_return_types):
+                suffix = f"_{i}" if i > 0 else ""
+                rt_disp = _ctype_display(rt)
+                field_name = f"_{name}_buf{suffix}"
+                buf_fields.append(
+                    f"    {rt_disp} *{field_name};"
+                    f"  /* pre-allocated output for {name} */\n"
+                )
+                buf_free.append(f"    free(self->{field_name});\n")
+                buf_alloc.append(
+                    f"    self->{field_name} = malloc(\n"
+                    f"        {component}_{name}_max_out(self->handle)"
+                    f" * sizeof({rt_disp}));\n"
+                    f"    if (!self->{field_name}) {{"
+                    f" PyErr_NoMemory(); return -1; }}\n"
+                )
+
+        # ── Python wrapper in ext.c ───────────────────────────────────────────
+        if variable_output:
+            if has_arg:
+                parse_block = (
+                    f"    PyObject *in_obj = NULL;\n"
+                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    f"        return NULL;\n"
+                    f"    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                    f"    if (!in_arr) return NULL;\n"
+                    f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
+                )
+                call_data = (
+                    f"self->handle,"
+                    f" (const {arg_disp} *)PyArray_DATA(in_arr),"
+                    f" (size_t)n, self->_{name}_buf"
+                )
+                decref_in = "    Py_DECREF(in_arr);\n"
+            else:
+                parse_block = (
+                    "    Py_ssize_t n = 1;\n"
+                    '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                    "        return NULL;\n"
+                )
+                call_data = f"self->handle, (size_t)n, self->_{name}_buf"
+                decref_in = ""
+
+            if multi_output:
+                # Multi-output: call C function, return tuple of views
+                all_rts = [return_type] + list(multi_output)
+                call_extra = "".join(
+                    f", self->_{name}_buf_{i}" for i in range(1, len(all_rts))
+                )
+                np_enums = [_NP_ENUM[_CTYPE_META[rt]["py_type"]] for rt in all_rts]
+                arr_decls = "\n".join(
+                    f"    PyObject *arr{i} = PyArray_SimpleNewFromData(\n"
+                    f"        1, &dim, {np_enums[i]}, self->_{name}_buf"
+                    f"{'_' + str(i) if i > 0 else ''});"
+                    for i in range(len(all_rts))
+                )
+                incref_lines = "\n".join(
+                    f"    PyArray_SetBaseObject((PyArrayObject *)arr{i},"
+                    f" (PyObject *)self); Py_INCREF(self);"
+                    for i in range(len(all_rts))
+                )
+                null_checks = " || ".join(f"!arr{i}" for i in range(len(all_rts)))
+                decref_cleanup = " ".join(
+                    f"Py_XDECREF(arr{i});" for i in range(len(all_rts))
+                )
+                pack_args = ", ".join(f"arr{i}" for i in range(len(all_rts)))
+                decref_after = "\n".join(
+                    f"    Py_DECREF(arr{i});" for i in range(len(all_rts))
+                )
+                wrapper = (
+                    f"static PyObject *\n"
+                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{parse_block}"
+                    f"    size_t n_out = {component}_{name}({call_data}{call_extra});\n"
+                    f"    npy_intp dim = (npy_intp)n_out;\n"
+                    f"{arr_decls}\n"
+                    f"    if ({null_checks}) {{\n"
+                    f"        {decref_cleanup} return NULL;\n"
+                    f"    }}\n"
+                    f"{incref_lines}\n"
+                    f"    PyObject *result = PyTuple_Pack({len(all_rts)}, {pack_args});\n"
+                    f"{decref_after}\n"
+                    f"{decref_in}"
+                    f"    return result;\n"
+                    f"}}"
+                )
+            else:
+                wrapper = (
+                    f"static PyObject *\n"
+                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{parse_block}"
+                    f"    size_t n_out = {component}_{name}({call_data});\n"
+                    f"    npy_intp dim = (npy_intp)n_out;\n"
+                    f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
+                    f"        1, &dim, {ret_np}, self->_{name}_buf);\n"
+                    f"    if (!arr) return NULL;\n"
+                    f"    PyArray_SetBaseObject((PyArrayObject *)arr, (PyObject *)self);\n"
+                    f"    Py_INCREF(self);\n"
+                    f"{decref_in}"
+                    f"    return arr;\n"
+                    f"}}"
+                )
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
+                f'     "{name}. Zero-copy view into pre-allocated output buffer."}},\n'
+            )
+        else:
+            # Fixed-output wrapper
+            if has_arg:
+                parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
+                call_args_c = f"self->handle, x"
+                fn_sig = f"{Component}Object *self, PyObject *args"
+                meth_flags = "METH_VARARGS"
+            else:
+                parse_block = ""
+                call_args_c = "self->handle"
+                fn_sig = f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
+                meth_flags = "METH_NOARGS"
+
+            if ret_meta:
+                ret_expr = ret_meta["to_py"]("y")
+                ret_body = (
+                    f"    {ret_disp} y = {component}_{name}({call_args_c});\n"
+                    f"    return {ret_expr};\n"
+                )
+            else:
+                ret_body = (
+                    f"    {component}_{name}({call_args_c});\n"
+                    f"    Py_RETURN_NONE;\n"
+                )
+            wrapper = (
+                f"static PyObject *\n"
+                f"{Component}_{name}({fn_sig})\n"
+                f"{{\n"
+                f"{guard}"
+                f"{parse_block}"
+                f"{ret_body}"
+                f"}}"
+            )
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction){Component}_{name}, {meth_flags},\n'
+                f'     "{name}."}},\n'
+            )
+
+        method_c_parts.append(wrapper)
+
+    method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
+
+    return {
+        "method_decls": method_decls,
+        "extra_buf_fields": "".join(buf_fields),
+        "extra_buf_free": "".join(buf_free),
+        "extra_buf_alloc": "".join(buf_alloc),
+        "extra_methods_c": "\n\n".join(method_c_parts),
+        "extra_methods_pymethoddef": "".join(pmd_lines),
+    }
+
+
+def make_properties_ctx(
+    component: str,
+    Component: str,
+    properties: list[dict],
+) -> dict[str, str]:
+    """Generate getset_def and tp_getset_decl context keys for Python properties.
+
+    Each property dict has: name, ctype (a _CTYPE_META key), writable (bool).
+    """
+    _EMPTY: dict[str, str] = {
+        "getset_def": "",
+        "tp_getset_decl": "",
+        "property_decls": "",
+    }
+    if not properties:
+        return _EMPTY
+
+    guard = (
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+
+    getter_parts: list[str] = []
+    getset_entries: list[str] = []
+    decl_lines: list[str] = []
+
+    for p in properties:
+        pname: str = p["name"]
+        ctype: str = p.get("ctype", "size_t")
+        writable: bool = p.get("writable", False)
+
+        meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
+        to_py = meta["to_py"](f"{component}_get_{pname}(self->handle)")
+        disp = _ctype_display(ctype)
+
+        getter = (
+            f"static PyObject *\n"
+            f"{Component}_getprop_{pname}({Component}Object *self,"
+            f" void *Py_UNUSED(closure))\n"
+            f"{{\n"
+            f"{guard}"
+            f"    /* <<IMPLEMENT: return the computed or stored value>> */\n"
+            f"    return {to_py};\n"
+            f"}}"
+        )
+        getter_parts.append(getter)
+
+        decl_lines.append(
+            f"{disp} {component}_get_{pname}(const {component}_state_t *state);"
+        )
+
+        setter_name = "NULL"
+        if writable:
+            setter_name = f"(setter){Component}_setprop_{pname}"
+            if "parse_type" in meta:
+                setter_body = (
+                    f"    {meta['parse_type']} v_raw = {meta['parse_zero']};\n"
+                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw)) return -1;\n'
+                    f"    {disp} v = {meta['to_c']('v')};\n"
+                    f"    {component}_set_{pname}(self->handle, v);\n"
+                    f"    return 0;\n"
+                )
+            else:
+                setter_body = (
+                    f"    {disp} v = {meta['zero']};\n"
+                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v)) return -1;\n'
+                    f"    {component}_set_{pname}(self->handle, v);\n"
+                    f"    return 0;\n"
+                )
+            setter = (
+                f"static int\n"
+                f"{Component}_setprop_{pname}({Component}Object *self,"
+                f" PyObject *value, void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return -1;\n"
+                f"    }}\n"
+                f"{setter_body}"
+                f"}}"
+            )
+            getter_parts.append(setter)
+            decl_lines.append(
+                f"void {component}_set_{pname}"
+                f"({component}_state_t *state, {disp} val);"
+            )
+
+        getset_entries.append(
+            f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
+            f" {setter_name}, NULL, NULL }},"
+        )
+
+    getset_body = "\n".join(getter_parts)
+    entries_str = "\n".join(getset_entries)
+    getset_def = (
+        f"{getset_body}\n\n"
+        f"static PyGetSetDef {Component}_getset[] = {{\n"
+        f"{entries_str}\n"
+        f"    {{ NULL }}\n"
+        f"}};\n"
+    )
+    tp_getset_decl = f"\n    .tp_getset    = {Component}_getset,"
+    property_decls = "\n".join(decl_lines) + "\n" if decl_lines else ""
+
+    return {
+        "getset_def": getset_def,
+        "tp_getset_decl": tp_getset_decl,
+        "property_decls": property_decls,
     }
 
 
@@ -1634,6 +2103,8 @@ void <<component>>_steps(
 
 <<getter_setter_decls>>
 
+<<property_decls>>
+<<method_decls>>
 #ifdef __cplusplus
 }
 #endif
@@ -1702,14 +2173,14 @@ COMPONENT_EXT_C = """\
 typedef struct {
     PyObject_HEAD
     <<component>>_state_t *handle;
-} <<Component>>Object;
+<<extra_buf_fields>>} <<Component>>Object;
 
 static void
 <<Component>>_dealloc(<<Component>>Object *self)
 {
     if (self->handle)
         <<component>>_destroy(self->handle);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+<<extra_buf_free>>    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *
@@ -1724,13 +2195,13 @@ static PyObject *
 static int
 <<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
-<<init_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
-    if (!self->handle) {
+<<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
+<<array_args_decref>>    if (!self->handle) {
         PyErr_SetString(PyExc_MemoryError,
                         "<<component>>_create returned NULL");
         return -1;
     }
-    return 0;
+<<extra_buf_alloc>>    return 0;
 }
 
 static PyObject *
@@ -1791,7 +2262,8 @@ static PyObject *
 }
 
 <<getter_setter_methods_c>>
-
+<<extra_methods_c>>
+<<getset_def>>
 static PyObject *
 <<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
@@ -1827,8 +2299,7 @@ static PyMethodDef <<Component>>_methods[] = {
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
      "Process a samples array. Returns an ndarray."},
-<<getter_setter_pymethoddef>>
-    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
     {"__exit__",  (PyCFunction)<<Component>>_exit,    METH_VARARGS, NULL},
@@ -1842,7 +2313,7 @@ static PyTypeObject <<Component>>Type = {
     .tp_dealloc   = (destructor)<<Component>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = "<<Component>> component. Wraps <<component>>_state_t.",
-    .tp_methods   = <<Component>>_methods,
+    .tp_methods   = <<Component>>_methods,<<tp_getset_decl>>
     .tp_new       = <<Component>>_new,
     .tp_init      = (initproc)<<Component>>_init,
 };
@@ -1902,14 +2373,14 @@ COMPONENT_TYPE_SECTION = """\
 typedef struct {
     PyObject_HEAD
     <<component>>_state_t *handle;
-} <<Component>>Object;
+<<extra_buf_fields>>} <<Component>>Object;
 
 static void
 <<Component>>_dealloc(<<Component>>Object *self)
 {
     if (self->handle)
         <<component>>_destroy(self->handle);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+<<extra_buf_free>>    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *
@@ -1924,13 +2395,13 @@ static PyObject *
 static int
 <<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
-<<init_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
-    if (!self->handle) {
+<<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
+<<array_args_decref>>    if (!self->handle) {
         PyErr_SetString(PyExc_MemoryError,
                         "<<component>>_create returned NULL");
         return -1;
     }
-    return 0;
+<<extra_buf_alloc>>    return 0;
 }
 
 static PyObject *
@@ -1991,7 +2462,8 @@ static PyObject *
 }
 
 <<getter_setter_methods_c>>
-
+<<extra_methods_c>>
+<<getset_def>>
 static PyObject *
 <<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
@@ -2027,8 +2499,7 @@ static PyMethodDef <<Component>>_methods[] = {
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
      "Process a samples array. Returns an ndarray."},
-<<getter_setter_pymethoddef>>
-    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
     {"__exit__",  (PyCFunction)<<Component>>_exit,    METH_VARARGS, NULL},
@@ -2042,7 +2513,7 @@ static PyTypeObject <<Component>>Type = {
     .tp_dealloc   = (destructor)<<Component>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = "<<Component>> type.",
-    .tp_methods   = <<Component>>_methods,
+    .tp_methods   = <<Component>>_methods,<<tp_getset_decl>>
     .tp_new       = <<Component>>_new,
     .tp_init      = (initproc)<<Component>>_init,
 };
@@ -2061,7 +2532,7 @@ MODULE_EXT_C_HEADER = """\
 #include <numpy/arrayobject.h>
 #include <complex.h>
 
-"""
+<<module_functions_include>>"""
 
 MODULE_EXT_C_FOOTER = """\
 
@@ -2069,12 +2540,12 @@ MODULE_EXT_C_FOOTER = """\
 /* Module                                                    */
 /* ======================================================== */
 
-static PyModuleDef <<module>>_moduledef = {
+<<module_methods_def>>static PyModuleDef <<module>>_moduledef = {
     PyModuleDef_HEAD_INIT,
     .m_name    = "<<module>>",
     .m_doc     = "<<Module>> module.",
     .m_size    = -1,
-    .m_methods = NULL,
+    .m_methods = <<module_m_methods>>,
 };
 
 PyMODINIT_FUNC
@@ -2090,15 +2561,60 @@ PyInit_<<module>>(void)
 """
 
 
-def render_module_ext_c(module: str, comp_ctxs: list[dict]) -> str:
+def make_functions_ctx(module: str, Module: str, functions: list[dict]) -> dict:
+    """Return template context keys for module-level PyMethodDef functions.
+
+    Returns three keys consumed by MODULE_EXT_C_HEADER and MODULE_EXT_C_FOOTER:
+      module_functions_include — '#include "{module}_functions.c"\\n' or ''
+      module_methods_def       — static PyMethodDef array block, or ''
+      module_m_methods         — '{Module}_methods' or 'NULL'
+    """
+    if not functions:
+        return {
+            "module_functions_include": "",
+            "module_methods_def": "",
+            "module_m_methods": "NULL",
+        }
+    entries = []
+    for fn in functions:
+        name = fn["name"]
+        doc = fn.get("doc", f"{name}.")
+        entries.append(f'    {{"{name}", {name}, METH_VARARGS, "{doc}"}},')
+    entries.append("    {NULL, NULL, 0, NULL}")
+    array_body = "\n".join(entries)
+    methods_def = (
+        f"static PyMethodDef {Module}_methods[] = {{\n"
+        f"{array_body}\n"
+        f"}};\n\n"
+    )
+    return {
+        "module_functions_include": f'#include "{module}_functions.c"\n',
+        "module_methods_def": methods_def,
+        "module_m_methods": f"{Module}_methods",
+    }
+
+
+def render_module_ext_c(
+    module: str,
+    comp_ctxs: list[dict],
+    functions: list[dict] = (),
+) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
     Each ctx must contain 'module' = module_name and 'Component' = the type name.
+    Pass functions (from config module_functions()) to wire up module-level
+    PyMethodDef entries and the #include of {module}_functions.c.
     """
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
-    header_ctx = {"module": module, "Module": Module, "object_list": object_list}
+    fn_ctx = make_functions_ctx(module, Module, list(functions))
+    header_ctx = {
+        "module": module,
+        "Module": Module,
+        "object_list": object_list,
+        **fn_ctx,
+    }
     parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
 
     for ctx in comp_ctxs:
@@ -2124,6 +2640,7 @@ def render_module_ext_c(module: str, comp_ctxs: list[dict]) -> str:
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
+        **fn_ctx,
     }
     parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
     return "".join(parts)

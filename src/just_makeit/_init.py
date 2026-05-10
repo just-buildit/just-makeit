@@ -130,6 +130,7 @@ def run(
     pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
+    array_args: list[tuple[str, str]] = (),
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -182,7 +183,8 @@ def run(
         ctx.update(pure_ctx)
         pure_style = pure_ctx["pure_style"]
     else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_))
+        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
+                                    array_args=array_args))
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
@@ -335,7 +337,7 @@ def run(
         print(f"  update  {mf_path}")
 
     # just-makeit.toml
-    C.add_component(cfg, comp, vars_, pure=pure_style)
+    C.add_component(cfg, comp, vars_, pure=pure_style, array_args_=array_args)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
