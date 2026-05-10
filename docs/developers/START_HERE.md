@@ -63,6 +63,8 @@ just-makeit/
 │   └── filter_module/        # module + object workflow
 ├── scripts/
 │   └── copy_examples.py      # copies example sources into docs/
+├── tools/
+│   └── local-smoke.sh        # local Docker end-to-end smoke test (mirrors artifact.yml)
 ├── .github/workflows/
 │   ├── ci.yml                # runs tests on every push to main / PR
 │   ├── release.yml           # triggered by v* tag: test → build → publish to PyPI
