@@ -94,11 +94,11 @@ just-makeit COMMAND
 | Command | Description |
 | ------- | ----------- |
 | `new <project>` | Create a new project scaffold |
-| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project + standalone component |
-| `init <component> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone component (its own `.so`) |
 | `new <project> --module name [--module name ...]` | Project + one or more empty modules |
 | `module <name>` | Scaffold an empty extension module (subpackage `.so`) |
 | `object <name> [--module name] [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to an existing module |
+| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project + standalone component |
+| `init <component> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone component (its own `.so`) |
 | `add --state name:type[:default] [...]` | Add state variables to a component |
 | `perf` | Upgrade an existing project with performance annotations |
 | `config [key value]` | Show or edit project configuration |
