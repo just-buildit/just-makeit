@@ -44,6 +44,7 @@ my_project/
 │   │   └── engine/
 │   │       └── engine_core.h       # component API
 │   ├── src/
+│   │   ├── my_project_lib.c        # combined C library stub (version symbol)
 │   │   └── engine/
 │   │       ├── CMakeLists.txt
 │   │       ├── engine_core.c       # core logic — your algorithm goes here
@@ -64,6 +65,21 @@ my_project/
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
+```
+
+**Group multiple types into a single subpackage module** using `module` + `object`:
+
+```sh
+just-makeit new my_filters
+cd my_filters
+just-makeit module filter
+just-makeit object fir    --module filter --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
+just-makeit object biquad --module filter --arg-type float --return-type float --state "b0:double:1.0" ...
+make && make test
+```
+
+```python
+from my_filters.filter import Fir, Biquad   # one .so, one import
 ```
 
 ______________________________________________________________________
@@ -128,6 +144,8 @@ ______________________________________________________________________
 
 ## Python API
 
+**Standalone component** (`just-makeit init`):
+
 ```python
 from my_project import Engine
 import numpy as np
@@ -153,6 +171,18 @@ obj.reset()
 with Engine() as e:
     y = e.steps(x)
 ```
+
+**Module subpackage** (`just-makeit module` + `just-makeit object`):
+
+```python
+from my_filters.filter import Fir, Biquad   # one .so, clean subpackage import
+
+fir = Fir(gain=1.0)
+bq  = Biquad(b0=1.0)
+```
+
+Types within a module are fully independent — separate lifecycles, each with
+its own `step`, `steps`, `reset`, getters/setters, and context manager.
 
 ______________________________________________________________________
 
