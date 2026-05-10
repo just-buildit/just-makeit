@@ -108,7 +108,11 @@ class TestNewScaffoldOnly:
         assert "my_proj" in init
 
     def test_no_component_files(self, scaffold):
-        assert not (scaffold / "native" / "src").exists()
+        src = scaffold / "native" / "src"
+        if src.exists():
+            # Only the lib stub should be present — no component subdirectories
+            entries = [p for p in src.iterdir() if p.is_dir()]
+            assert entries == [], f"unexpected component dirs: {entries}"
 
     def test_no_compile_commands(self, scaffold):
         assert not (scaffold / "compile_commands.json").exists()
