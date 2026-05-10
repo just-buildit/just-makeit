@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.8.2\] — 2026-05-10
+
+### Fixed
+
+- Test: `TestNewScaffoldOnly.test_no_component_files` updated to allow
+  the `native/src/<project>_lib.c` stub introduced in 0.8.1 — checks for
+  absence of component *directories* rather than the directory itself.
+
+______________________________________________________________________
+
 ## \[0.8.1\] — 2026-05-10
 
 ### Fixed
