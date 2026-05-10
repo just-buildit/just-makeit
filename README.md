@@ -105,6 +105,8 @@ just-makeit COMMAND
 | `new <project> --object name [--state ...] [--arg-type T] [--return-type T]` | Project + first standalone object |
 | `object <name> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone object (its own `.so`) |
 | `add --state name:type[:default] [--object name] [...]` | Add state variables to a standalone object |
+| `method <name> [--arg-type T] [--return-type T] [--variable-output]` | Add a named execute method to an object |
+| `property <name> [--return-type T]` | Add a computed property to an object |
 | `perf` | Upgrade an existing project with performance annotations |
 | `config [key value]` | Show or edit project configuration |
 | `build [dir]` | Configure + build C, and package dist |
@@ -163,7 +165,8 @@ y: complex = obj.step(1.0 + 0.5j)
 
 # block processing
 x = np.ones(1024, dtype=np.complex64)
-y = obj.steps(x)   # returns complex64 ndarray
+y = obj.steps(x)            # allocates and returns complex64 ndarray
+obj.steps(x, out=y)         # zero-copy: writes into y, returns y
 
 # getters / setters
 obj.get_gain()

@@ -1,5 +1,54 @@
 # Changelog
 
+## \[0.9.6\] — 2026-05-10
+
+### Added
+
+- `steps(x, out=buf)` zero-copy path: when an output buffer is passed to
+  `steps()`, the C function writes directly into it and returns the same Python
+  object (no allocation).  `out` is accepted by all stateful objects and
+  pure-struct types.
+- `array_processing` example: four array-processing patterns (auto-generated
+  `steps()`, fixed-output method, variable-output method, multi-output method).
+
+### Fixed
+
+- `_perf.py`: `static inline → JM_FORCEINLINE JM_HOT` upgrade now patches
+  `_core.h` (where the inline step lives) instead of the thin `_impl.h` wrapper.
+- `_init.py`: `arg_type` / `return_type` now persisted to `just-makeit.toml`
+  for standalone objects; previously the default `float _Complex` was reloaded
+  when `just-makeit method` re-rendered `_core.h`.
+- Step stub in `_core.h` restored to `const` state pointer (placeholder body
+  does not mutate state), matching example patch-script expectations.
+- `make_methods_ctx`: variable-output declarations now include the input
+  parameter (`const arg_t *in, size_t n_in`) and multi-output extra params
+  when `arg_type != void`.
+- `fir_filter` and `sliding_correlator` example patch scripts: insertion-point
+  regex updated to match the `steps_c_decl` docstring anchor; `steps()` body
+  regex fixed (`void\s+` not `void\s*\n`).
+- `test_steps_out_param` template: uses separate `obj1`/`obj2` instances so
+  the stateful-filter comparison is valid across both calls.
+
+______________________________________________________________________
+
+## \[0.9.5\] — 2026-05-10
+
+### Added
+
+- **`just-makeit method <name>`** — add a named execute method to an object:
+  scalar fixed-output (`return_type scalar_fn(state, arg x)`), variable-output
+  (`size_t fn(state, [in, n_in,] ret *out)` with pre-allocated Python buffer),
+  and multi-output (tuple of zero-copy NumPy views).
+- **`just-makeit property <name>`** — add a named computed property backed by a
+  C function; getter auto-registered in the Python type's `tp_getset`.
+- **`--array-arg name:dtype`** on `object` / `new --object` — declares a
+  constructor parameter that is a NumPy array (any NumPy dtype string accepted);
+  C side receives a typed pointer, Python side passes an ndarray.
+- **Function commands** — `just-makeit function` scaffolds a standalone
+  pure-function extension (no state, no lifecycle) for simple numeric operations.
+
+______________________________________________________________________
+
 ## \[0.9.4\] — 2026-05-10
 
 ### Fixed

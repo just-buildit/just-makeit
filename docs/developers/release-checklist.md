@@ -3,7 +3,7 @@
 ## Before you start
 
 - [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally (353 passed, 32 skipped as of v0.9)
+- [ ] `uv run pytest` passes locally (507 passed as of v0.9.6)
 - [ ] CI badge on `main` is green
 
 ______________________________________________________________________
