@@ -1,5 +1,13 @@
 # Changelog
 
+## \[0.9.1\] — 2026-05-10
+
+### Fixed
+
+- `artifact.yml` post-release smoke tests were failing due to stale `--component` / `just-makeit init` CLI references carried over from v0.8.x.  All references updated to `--object` / `just-makeit object` to match the v0.9.0 CLI.
+
+______________________________________________________________________
+
 ## \[0.9.0\] — 2026-05-10
 
 ### Breaking
