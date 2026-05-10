@@ -39,8 +39,6 @@ my_project/
 │   │   ├── clib_common.h           # common C99 types
 │   │   ├── pyex_common.h           # Python extension includes
 │   │   ├── my_project.h            # umbrella header (includes all components)
-│   │   ├── jm_perf.h               # JM_FORCEINLINE / JM_HOT macros  (added by 'just-makeit perf')
-│   │   ├── jm_simd.h               # width-portable SIMD helpers      (added by 'just-makeit perf')
 │   │   └── engine/
 │   │       └── engine_core.h       # component API
 │   ├── src/
