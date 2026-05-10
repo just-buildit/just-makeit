@@ -297,12 +297,15 @@ jobs:
               b0=(1-c)/2/a0, b1=(1-c)/a0, b2=(1-c)/2/a0,
               a1=-2*c/a0,    a2=(1-alpha)/a0,
           )
-          t  = np.arange(512, dtype=np.float32) / 512
-          lo = np.cos(2*math.pi*0.05*t)
-          hi = np.cos(2*math.pi*0.40*t)
+          n  = np.arange(512, dtype=np.float32)
+          lo = np.cos(2*math.pi*0.05*n)
+          hi = np.cos(2*math.pi*0.40*n)
           p_lo = float(np.mean(bq2.steps(lo)**2))
-          bq2.reset()
-          p_hi = float(np.mean(bq2.steps(hi)**2))
+          bq3 = Biquad(
+              b0=(1-c)/2/a0, b1=(1-c)/a0, b2=(1-c)/2/a0,
+              a1=-2*c/a0,    a2=(1-alpha)/a0,
+          )
+          p_hi = float(np.mean(bq3.steps(hi)**2))
           assert p_lo > 0.3,  f"passband too attenuated: {p_lo}"
           assert p_hi < 0.01, f"stopband not rejected: {p_hi}"
 
