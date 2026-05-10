@@ -51,14 +51,16 @@ my_project/
 │       └── test_engine_core.c      # CTest
 ├── cmake/
 │   └── my-project.pc.in            # pkg-config template
-├── src/my_project/
-│   ├── __init__.py
-│   ├── engine.pyi                  # type stub
-│   ├── benchmarks/
-│   │   ├── __init__.py
-│   │   └── bench_engine.py         # Python benchmark
-│   └── tests/
-│       └── test_engine.py          # pytest / unittest
+├── src/
+│   └── my_project/                 # Python package — import my_project
+│       ├── __init__.py
+│       ├── engine.pyi              # type stub
+│       ├── benchmarks/
+│       │   ├── __init__.py
+│       │   └── bench_engine.py     # Python benchmark
+│       └── tests/
+│           ├── __init__.py
+│           └── test_engine.py      # pytest / unittest
 ├── CMakeLists.txt
 ├── Makefile
 ├── pyproject.toml
