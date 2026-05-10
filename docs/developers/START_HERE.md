@@ -38,7 +38,11 @@ just-makeit/
 │   ├── _perf.py              # `perf` command — add performance annotations
 │   ├── _build.py             # `build`/`test`/`dry-run` commands
 │   ├── _config.py            # just-makeit.toml read/write
-│   └── _templates.py         # all file templates (single source of truth)
+│   ├── _scripts.py           # entry points for jm-install-deps and jm-docker-e2e
+│   ├── _templates.py         # all file templates (single source of truth)
+│   └── scripts/              # bundled shell utilities (shipped in wheel)
+│       ├── install-deps.sh   # OS-aware dep installer + venv setup
+│       └── docker-e2e.sh     # Docker end-to-end smoke test
 ├── tests/                    # pytest suite
 │   ├── test_new.py           # `new` command integration tests
 │   ├── test_init.py          # internal `_init.run()` tests (standalone path)
@@ -63,8 +67,6 @@ just-makeit/
 │   └── filter_module/        # module + object workflow
 ├── scripts/
 │   └── copy_examples.py      # copies example sources into docs/
-├── tools/
-│   └── local-smoke.sh        # local Docker end-to-end smoke test (mirrors artifact.yml)
 ├── .github/workflows/
 │   ├── ci.yml                # runs tests on every push to main / PR
 │   ├── release.yml           # triggered by v* tag: test → build → publish to PyPI

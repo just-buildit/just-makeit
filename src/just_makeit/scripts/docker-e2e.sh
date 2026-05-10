@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# local-smoke.sh — end-to-end artifact smoke test in a clean Docker container.
+# docker-e2e.sh — end-to-end artifact smoke test in a clean Docker container.
 #
 # Usage:
 #   scripts/local-smoke.sh              # uses version from pyproject.toml

@@ -33,7 +33,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_fir",
         root / "my_fir",
-        component="fir_filter",
+        object_name="fir_filter",
         state_vars=[
             ("coeffs", "float[16]", ""),
             ("delay", "float _Complex[16]", ""),

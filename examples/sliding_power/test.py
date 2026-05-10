@@ -19,7 +19,7 @@ def run(root: Path) -> None:
     new_run(
         "my_power",
         dest,
-        component="power_est",
+        object_name="power_est",
         state_vars=[
             ("delay", "float[64]", ""),
             ("sum_sq", "double", "0.0"),

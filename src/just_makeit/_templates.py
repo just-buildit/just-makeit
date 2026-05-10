@@ -2188,10 +2188,10 @@ int main(void)
     CHECK(obj != NULL);
     if (!obj) return 1;
 
-    /* step: verify it runs */
-    (void)<<component>>_step(obj, <<arg_zero>>);
-
 <<getter_setter_test_c>>
+
+    /* step: verify it runs without crashing */
+    (void)<<component>>_step(obj, <<arg_zero>>);
 
 <<reset_test_c>>
 

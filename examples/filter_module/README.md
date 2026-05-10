@@ -20,6 +20,24 @@ Users import cleanly:
 from my_filters.filter import Fir, Biquad
 ```
 
+## What you'll need
+
+- `just-makeit` (`pip install just-makeit`)
+- `cmake` ≥ 3.16
+- A C compiler (`gcc` or `clang`)
+- `numpy` (`pip install numpy` — needed before cmake runs)
+- A text editor
+
+`jm-install-deps` (installed with `just-makeit`) detects your OS, installs cmake and a C compiler, then creates a venv at `/tmp/jm-venv` with numpy and just-makeit:
+
+```sh
+# Set up deps + venv, then activate in your current shell:
+source $(which jm-install-deps)
+
+# Or with a custom venv path:
+jm-install-deps ~/my-venv
+```
+
 ---
 
 ## 1. Scaffold the project
@@ -198,6 +216,7 @@ cmake -B build -S . \
     -DCMAKE_BUILD_TYPE=Release \
     -DPython3_EXECUTABLE=$(python3 -c "import sys; print(sys.executable)")
 cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 pip install -e .
 ```
 

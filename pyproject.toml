@@ -8,7 +8,7 @@ repair = false
 
 [project]
 name = "just-makeit"
-version = "0.9.2"
+version = "0.9.3"
 description = "Scaffold and build Python C extensions with CMake and just-buildit."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,10 +43,12 @@ Repository = "https://github.com/just-buildit/just-makeit"
 
 [project.scripts]
 just-makeit = "just_makeit._cli:main"
+jm-install-deps = "just_makeit._scripts:install_deps"
+jm-docker-e2e = "just_makeit._scripts:docker_e2e"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--ignore=tests/test_examples.py"
+
 
 [dependency-groups]
 dev = [

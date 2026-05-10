@@ -1,5 +1,24 @@
 # Changelog
 
+## \[0.9.3\] — 2026-05-10
+
+### Added
+
+- `jm-install-deps` console script: detects OS, installs cmake + C compiler via system package manager, creates a venv at `/tmp/jm-venv` (configurable), installs numpy and just-makeit into it.
+- `jm-docker-e2e` console script: runs the full artifact smoke test in a clean Docker container (mirrors `artifact.yml`).
+- Both scripts are bundled in the wheel (`just_makeit/scripts/`) and exposed as proper `[project.scripts]` entry points.
+
+### Fixed
+
+- Generated `COMPONENT_TEST_C`: getter/setter checks now run before `step()` is called, so state-mutating `step()` implementations (e.g. running_stats incrementing `n`) no longer cause false failures.
+- `filter_module` example smoke test: biquad spectral test used normalized time (`t/512`) instead of sample indices, placing both lo and hi signals well below the filter cutoff. Fixed to use sample indices so the stopband test is meaningful.
+- `filter_module` example smoke test: `reset()` resets all state vars (including coefficients) to type defaults, not constructor values — fixed test to use a fresh `Biquad` instance for the stopband check instead of calling `reset()`.
+- All example `test.py` files updated from `component=` to `object_name=` keyword arg.
+- `pyproject.toml` pytest config: removed stale `--ignore` flags; all tests (including cmake-build example tests) now run in the default suite.
+- `filter_module` README: added "What you'll need" prerequisites, `ctest` step in build instructions.
+
+______________________________________________________________________
+
 ## \[0.9.2\] — 2026-05-10
 
 ### Fixed

@@ -32,7 +32,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_corr",
         root / "my_corr",
-        component="sliding_correlator",
+        object_name="sliding_correlator",
         state_vars=[
             ("ref", "float _Complex[16]", ""),
             ("delay", "float _Complex[16]", ""),
