@@ -1155,6 +1155,7 @@ def _make_scalar_pure_ctx(
     pure_locals = "\n".join(local_lines)
     pure_fn_fmt = x_fmt + (f"|{param_fmt}" if scalar_vars else "")
     pure_steps_fmt = "O" + (f"|{param_fmt}" if scalar_vars else "")
+    pure_steps_out_fmt = "O" + (f"|{param_fmt}O" if scalar_vars else "|O")
     pure_params_args = (
         (", " + ", ".join(param_parse_args)) if param_parse_args else ""
     )
@@ -1198,6 +1199,7 @@ def _make_scalar_pure_ctx(
         "pure_locals": pure_locals,
         "pure_fn_fmt": pure_fn_fmt,
         "pure_steps_fmt": pure_steps_fmt,
+        "pure_steps_out_fmt": pure_steps_out_fmt,
         "pure_params_args": pure_params_args,
         "pure_post_parse": pure_post_parse,
         "py_fn_type_params": py_fn_type_params,
@@ -2234,8 +2236,9 @@ static PyObject *
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    PyObject *in_obj = NULL;
-    if (!PyArg_ParseTuple(args, "O", &in_obj))
+    PyObject *in_obj  = NULL;
+    PyObject *out_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))
         return NULL;
 
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
@@ -2244,6 +2247,29 @@ static PyObject *
         return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
+
+    if (out_obj && out_obj != Py_None) {
+        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
+            out_obj, <<out_np_enum>>,
+            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+        if (PyArray_SIZE(out_arr) != n) {
+            PyErr_Format(PyExc_ValueError,
+                "out length %zd != input length %zd",
+                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
+            Py_DECREF(out_arr);
+            Py_DECREF(in_arr);
+            return NULL;
+        }
+        <<component>>_steps(
+            self->handle,
+            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+            (<<return_ctype>> *)PyArray_DATA(out_arr),
+            (size_t)n);
+        Py_DECREF(in_arr);
+        return (PyObject *)out_arr;
+    }
+
     npy_intp dims[] = {n};
     PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) {
@@ -2298,7 +2324,7 @@ static PyMethodDef <<Component>>_methods[] = {
     {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a samples array. Returns an ndarray."},
+     "Process a block of samples. Returns an ndarray, or fills out= if supplied."},
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -2434,8 +2460,9 @@ static PyObject *
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    PyObject *in_obj = NULL;
-    if (!PyArg_ParseTuple(args, "O", &in_obj))
+    PyObject *in_obj  = NULL;
+    PyObject *out_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))
         return NULL;
 
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
@@ -2444,6 +2471,29 @@ static PyObject *
         return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
+
+    if (out_obj && out_obj != Py_None) {
+        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
+            out_obj, <<out_np_enum>>,
+            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+        if (PyArray_SIZE(out_arr) != n) {
+            PyErr_Format(PyExc_ValueError,
+                "out length %zd != input length %zd",
+                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
+            Py_DECREF(out_arr);
+            Py_DECREF(in_arr);
+            return NULL;
+        }
+        <<component>>_steps(
+            self->handle,
+            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+            (<<return_ctype>> *)PyArray_DATA(out_arr),
+            (size_t)n);
+        Py_DECREF(in_arr);
+        return (PyObject *)out_arr;
+    }
+
     npy_intp dims[] = {n};
     PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) {
@@ -2498,7 +2548,7 @@ static PyMethodDef <<Component>>_methods[] = {
     {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a samples array. Returns an ndarray."},
+     "Process a block of samples. Returns an ndarray, or fills out= if supplied."},
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -2920,11 +2970,12 @@ static PyObject *
 py_<<component>>_steps(PyObject *module, PyObject *args, PyObject *kwds)
 {
     (void)module;
-    static char *kwlist[] = {"arr", <<py_kwlist>>NULL};
-    PyObject *in_obj = NULL;
+    static char *kwlist[] = {"arr", <<py_kwlist>>"out", NULL};
+    PyObject *in_obj  = NULL;
+    PyObject *out_obj = NULL;
 <<pure_locals>>
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "<<pure_steps_fmt>>", kwlist,
-                                     &in_obj<<pure_params_args>>))
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "<<pure_steps_out_fmt>>", kwlist,
+                                     &in_obj<<pure_params_args>>, &out_obj))
         return NULL;
 <<pure_post_parse>>
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
@@ -2933,6 +2984,28 @@ py_<<component>>_steps(PyObject *module, PyObject *args, PyObject *kwds)
         return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
+
+    if (out_obj && out_obj != Py_None) {
+        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
+            out_obj, <<out_np_enum>>,
+            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+        if (PyArray_SIZE(out_arr) != n) {
+            PyErr_Format(PyExc_ValueError,
+                "out length %zd != input length %zd",
+                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
+            Py_DECREF(out_arr);
+            Py_DECREF(in_arr);
+            return NULL;
+        }
+        <<component>>_steps(
+            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+            (<<return_ctype>> *)PyArray_DATA(out_arr),
+            (size_t)n<<c_fn_call_args>>);
+        Py_DECREF(in_arr);
+        return (PyObject *)out_arr;
+    }
+
     npy_intp dims[] = {n};
     PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) { Py_DECREF(in_arr); return NULL; }
@@ -3037,6 +3110,13 @@ class Test<<Component>>:
         from <<package>> import <<component>>
         y = <<component>>.steps(np.ones(4, dtype=<<in_np_dtype>>)<<py_fn_kwargs>>)
         assert y.shape == (4,)
+
+    def test_steps_out_param(self):
+        x   = np.ones(16, dtype=<<in_np_dtype>>)
+        buf = np.zeros(16, dtype=<<out_np_dtype>>)
+        ret = <<component>>_steps(x<<py_fn_kwargs>>, out=buf)
+        assert ret is buf
+        np.testing.assert_array_equal(ret, <<component>>_steps(x<<py_fn_kwargs>>))
 """
 
 PURE_SCALAR_BENCH_C = """\
@@ -3321,8 +3401,9 @@ static PyObject *
         PyErr_SetString(PyExc_RuntimeError, "destroyed");
         return NULL;
     }
-    PyObject *in_obj = NULL;
-    if (!PyArg_ParseTuple(args, "O", &in_obj))
+    PyObject *in_obj  = NULL;
+    PyObject *out_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))
         return NULL;
 
     PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
@@ -3330,6 +3411,29 @@ static PyObject *
     if (!in_arr) return NULL;
 
     Py_ssize_t n = PyArray_SIZE(in_arr);
+
+    if (out_obj && out_obj != Py_None) {
+        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
+            out_obj, <<out_np_enum>>,
+            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
+        if (PyArray_SIZE(out_arr) != n) {
+            PyErr_Format(PyExc_ValueError,
+                "out length %zd != input length %zd",
+                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
+            Py_DECREF(out_arr);
+            Py_DECREF(in_arr);
+            return NULL;
+        }
+        <<component>>_steps(
+            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+            (<<return_ctype>> *)PyArray_DATA(out_arr),
+            (size_t)n,
+            self->handle);
+        Py_DECREF(in_arr);
+        return (PyObject *)out_arr;
+    }
+
     npy_intp dims[] = {n};
     PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
     if (!out_arr) { Py_DECREF(in_arr); return NULL; }
@@ -3489,8 +3593,8 @@ class <<Component>>:
     def __call__(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
         \"\"\"Process one sample.\"\"\"
         ...
-    def steps(self, arr: NDArray[<<in_np_dtype>>]) -> NDArray[<<out_np_dtype>>]:
-        \"\"\"Process a samples array. Returns ndarray.\"\"\"
+    def steps(self, arr: NDArray[<<in_np_dtype>>], out: NDArray[<<out_np_dtype>>] | None = None) -> NDArray[<<out_np_dtype>>]:
+        \"\"\"Process a samples array. Returns ndarray, or fills out= if supplied.\"\"\"
         ...
     def reset(self) -> None:
         \"\"\"Re-zero all params fields to post-create defaults.\"\"\"
@@ -3536,6 +3640,14 @@ class Test<<Component>>:
         for n in (1, 64, 1024):
             x = np.ones(n, dtype=<<in_np_dtype>>)
             assert obj.steps(x).shape == (n,)
+
+    def test_steps_out_param(self):
+        obj = <<Component>>(<<py_create_args>>)
+        x   = np.ones(16, dtype=<<in_np_dtype>>)
+        buf = np.zeros(16, dtype=<<out_np_dtype>>)
+        ret = obj.steps(x, buf)
+        assert ret is buf
+        np.testing.assert_array_equal(ret, obj.steps(x))
 
     def test_reset(self):
         obj = <<Component>>(<<py_create_args>>)
@@ -3660,29 +3772,33 @@ if(ENABLE_SIMD)
     endif()
 endif()
 
-find_package(Python3 REQUIRED COMPONENTS Development NumPy)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module NumPy)
 
 set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
-# Combined C shared library — links all component OBJECT libraries.
-# No Python dependency; distributable to C, C++, and Rust consumers.
+# Combined C library — shared + static, no Python dependency.
+# Component OBJECT libraries are wired in via target_sources below.
 add_library(<<project_underscore>>_lib SHARED native/src/<<project_underscore>>_lib.c)
-set_target_properties(<<project_underscore>>_lib PROPERTIES OUTPUT_NAME <<project_underscore>>)
-target_include_directories(<<project_underscore>>_lib PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/native/inc>
-    $<INSTALL_INTERFACE:include>)
+add_library(<<project_underscore>>_lib_static STATIC native/src/<<project_underscore>>_lib.c)
+foreach(_t <<project_underscore>>_lib <<project_underscore>>_lib_static)
+    target_include_directories(${_t} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/native/inc>
+        $<INSTALL_INTERFACE:include>)
+    set_target_properties(${_t} PROPERTIES OUTPUT_NAME <<project_underscore>>)
+endforeach()
 
 enable_testing()
 
-# ── Components ───────────────────────────────────────────────────────────────
-# just-makeit init appends: add_subdirectory + target_sources($<TARGET_OBJECTS:...>) per component
+# ── Components (add_subdirectory lines appended here by just-makeit) ──────────
+
+# ── Modules (add_subdirectory lines appended here by just-makeit) ─────────────
 
 # ── Install ──────────────────────────────────────────────────────────────────
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS <<project_underscore>>_lib
+install(TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
     EXPORT <<project_underscore>>-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -3690,7 +3806,8 @@ install(TARGETS <<project_underscore>>_lib
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/native/inc/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
-    PATTERN "pyex_common.h" EXCLUDE)
+    PATTERN "pyex_common.h" EXCLUDE
+    PATTERN "clib_common.h" EXCLUDE)
 
 install(EXPORT <<project_underscore>>-targets
     FILE <<project_underscore>>-config.cmake
@@ -4000,8 +4117,8 @@ class <<Component>>:
         \"\"\"Reset state to post-create defaults.\"\"\"
     def step(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
         \"\"\"Process one sample.\"\"\"
-    def steps(self, x: NDArray[<<in_np_dtype>>]) -> NDArray[<<out_np_dtype>>]:
-        \"\"\"Process a samples array. Returns ndarray.\"\"\"
+    def steps(self, x: NDArray[<<in_np_dtype>>], out: NDArray[<<out_np_dtype>>] | None = None) -> NDArray[<<out_np_dtype>>]:
+        \"\"\"Process a samples array. Returns ndarray, or fills out= if supplied.\"\"\"
 <<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"
@@ -4077,6 +4194,14 @@ class Test<<Component>>(unittest.TestCase):
         y = obj.steps(x)
         self.assertEqual(y.shape, (64,))
         self.assertEqual(y.dtype, <<out_np_dtype>>)
+
+    def test_steps_out_param(self):
+        obj = <<Component>>(<<py_create_args>>)
+        x   = np.ones(64, dtype=<<in_np_dtype>>)
+        buf = np.zeros(64, dtype=<<out_np_dtype>>)
+        ret = obj.steps(x, buf)
+        self.assertIs(ret, buf)
+        np.testing.assert_array_equal(ret, obj.steps(x))
 
     def test_getter_setter(self):
 <<getter_setter_test_py>>

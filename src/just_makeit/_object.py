@@ -226,18 +226,30 @@ def run(
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
 
-    # Root CMakeLists: add_subdirectory + wire core into combined C library
+    # Root CMakeLists: insert add_subdirectory into Components sentinel section,
+    # then wire OBJECT library into both shared and static C library targets.
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
         cmake_text = cmake_path.read_text(encoding="utf-8")
         sub = f"add_subdirectory(native/src/{comp})\n"
         if sub not in cmake_text:
-            cmake_text += sub
-            if f"{pkg}_lib" in cmake_text:
-                cmake_text += (
-                    f"target_sources({pkg}_lib PRIVATE"
-                    f" $<TARGET_OBJECTS:{comp}_core>)\n"
+            sentinel = "# ── Components"
+            obj_lines = (
+                f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
+                f"target_sources({pkg}_lib_static PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
+            )
+            if sentinel in cmake_text:
+                # Insert after the sentinel comment line
+                cmake_text = cmake_text.replace(
+                    sentinel,
+                    sentinel,
+                    1,
                 )
+                idx = cmake_text.index(sentinel)
+                idx = cmake_text.index("\n", idx) + 1
+                cmake_text = cmake_text[:idx] + sub + obj_lines + cmake_text[idx:]
+            else:
+                cmake_text += sub + obj_lines
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
 

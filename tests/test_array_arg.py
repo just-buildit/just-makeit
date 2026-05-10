@@ -67,10 +67,10 @@ class TestArrayArgExtC:
         ext = (in_module / "native/src/filter/filter_ext.c").read_text()
         assert ext.index('"h"') < ext.index('"factor"')
 
-    def test_array_only_no_pipe(self, standalone):
-        # fir has no scalar state vars — format should be just "O"
+    def test_array_only_steps_format(self, standalone):
+        # fir has no scalar state vars — steps() format is "O|O" (input + optional out)
         ext = (standalone / "native/src/fir/fir_ext.c").read_text()
-        assert '"O"' in ext
+        assert '"O|O"' in ext
 
     def test_in_module_ext_has_array_parse(self, in_module):
         ext = (in_module / "native/src/filter/filter_ext.c").read_text()

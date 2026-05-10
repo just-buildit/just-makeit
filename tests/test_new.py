@@ -213,6 +213,7 @@ class TestNewContent:
     def test_cmake_top_has_combined_lib(self, project):
         cmake = (project / "CMakeLists.txt").read_text()
         assert "add_library(my_filter_lib SHARED" in cmake
+        assert "add_library(my_filter_lib_static STATIC" in cmake
 
     def test_cmake_component_is_object_lib(self, project):
         cmake = (

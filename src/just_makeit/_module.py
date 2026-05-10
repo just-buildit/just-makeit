@@ -83,13 +83,21 @@ def run(root: Path, module: str) -> None:
     pkg_module_dir = root / "src" / pkg / module
     _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx))
 
-    # Root CMakeLists.txt — append add_subdirectory
+    # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
         cmake_text = cmake_path.read_text(encoding="utf-8")
-        cmake_text += f"add_subdirectory(native/src/{module})\n"
-        cmake_path.write_text(cmake_text, encoding="utf-8")
-        print(f"  update  {cmake_path}")
+        sub = f"add_subdirectory(native/src/{module})\n"
+        if sub not in cmake_text:
+            sentinel = "# ── Modules"
+            if sentinel in cmake_text:
+                idx = cmake_text.index(sentinel)
+                idx = cmake_text.index("\n", idx) + 1
+                cmake_text = cmake_text[:idx] + sub + cmake_text[idx:]
+            else:
+                cmake_text += sub
+            cmake_path.write_text(cmake_text, encoding="utf-8")
+            print(f"  update  {cmake_path}")
 
     # Config
     C.scaffold_module(cfg, module)
