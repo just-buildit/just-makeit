@@ -80,7 +80,9 @@ just-makeit COMMAND
 | ---------------------------------------------- | ----------------------------------------- |
 | `new <project>`                                                              | Create a new project                      |
 | `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project with component and optional state |
-| `init <component> [--state ...] [--arg-type T] [--return-type T]`            | Add a component to existing project       |
+| `init <component> [--state ...] [--arg-type T] [--return-type T]`            | Add a standalone component (its own `.so`) |
+| `module <name>`                                | Scaffold a multi-type extension module (subpackage `.so`) |
+| `object <name> [--module name] [--state ...]`  | Add a Python type to an existing module   |
 | `add --state name:type[:default] [...]`        | Add state variables to a component        |
 | `perf`                                         | Upgrade an existing project with performance annotations |
 | `config [key value]`                           | Show or edit project configuration        |
@@ -208,6 +210,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
 - [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
 - [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-component library (Gain + Ema); demonstrates multi-component workflow and `__init__.py` auto-splice
+- [`filter_module/`](https://github.com/just-buildit/just-makeit/tree/main/examples/filter_module) — `Fir` + `Biquad` in a single `filter` subpackage `.so` using `module` + `object`
 
 ______________________________________________________________________
 
