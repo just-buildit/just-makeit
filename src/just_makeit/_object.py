@@ -62,6 +62,8 @@ def _make_object_ctx(
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
+    if pure_style is None:
+        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type))
     return ctx, pure_style
 
 
@@ -207,6 +209,7 @@ def run(
 
     # C library files (OBJECT lib only — no standalone Python module)
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
+    _write(root / "native" / "inc" / comp / f"{comp}_impl.h", r(T.COMPONENT_IMPL_H))
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
     _write(
         root / "native" / "src" / comp / "CMakeLists.txt",

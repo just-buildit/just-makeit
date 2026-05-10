@@ -12,7 +12,7 @@ impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float\s*\n"
-    r"gain_step\(const gain_state_t \*state.*?\n\}",
+    r"gain_step\((?:const )?gain_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 

@@ -24,6 +24,7 @@ from . import _templates as T
 
 _STATEFUL_TEMPLATES = [
     ("native/inc/{c}/{c}_core.h", T.COMPONENT_CORE_H),
+    ("native/inc/{c}/{c}_impl.h", T.COMPONENT_IMPL_H),
     ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
     ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
     ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
@@ -157,11 +158,14 @@ def run(
         new_style = pure_ctx["pure_style"]
         templates = _PURE_SCALAR_TEMPLATES if new_style == "scalar" else _PURE_STRUCT_TEMPLATES
     else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars))
+        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars,
+                                    array_args=C.array_args(cfg, component)))
         templates = _STATEFUL_TEMPLATES
         new_style = None
 
     ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
+    if new_style is None:
+        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
 
     def r(tmpl):
         return T.render(tmpl, ctx)

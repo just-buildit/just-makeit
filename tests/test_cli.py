@@ -88,8 +88,8 @@ class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
         dest = tmp_path / "bpf"
         _cli("new", "bpf", str(dest), "--object", "bpf", "--state", "cutoff:double")
-        h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
-        assert "double cutoff;" in h
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
+        assert "double cutoff;" in core
 
     def test_state_flag_with_default(self, tmp_path):
         dest = tmp_path / "bpf"
@@ -114,15 +114,15 @@ class TestNewStateCLI:
             "order:int:4",
         )
         assert r.returncode == 0
-        h = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
-        assert "double cutoff;" in h
-        assert "int order;" in h
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
+        assert "double cutoff;" in core
+        assert "int order;" in core
 
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double gain;" in h
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double gain;" in core
 
     def test_invalid_type_exits_1(self, tmp_path):
         r = _cli(
@@ -182,8 +182,8 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
         assert r.returncode == 0
-        h = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text()
-        assert "double rate;" in h
+        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text()
+        assert "double rate;" in core
 
 
 class TestAddCLI:
@@ -203,8 +203,8 @@ class TestAddCLI:
         _cli("new", "comp", str(dest), "--object", "comp")
         r = _cli("add", "--state", "order:int:4", cwd=dest)
         assert r.returncode == 0
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "int order;" in h
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "int order;" in core
 
     def test_add_updates_config(self, tmp_path):
         import tomllib

@@ -8,7 +8,7 @@ text   = header.read_text()
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float\s*\n"
-    r"biquad_step\(const biquad_state_t \*state.*?\n\}",
+    r"biquad_step\((?:const )?biquad_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 m = stub_re.search(text)

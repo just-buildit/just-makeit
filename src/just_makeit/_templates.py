@@ -267,24 +267,62 @@ def make_sample_ctx(
 ) -> dict[str, str]:
     """Return template context keys derived from step() arg/return types.
 
-    arg_type    — C type for the step() input parameter x (default: float _Complex)
-    return_type — C type for the step() return value (default: same as arg_type)
+    arg_type    — C type for the step() input parameter x, or "void" for
+                  generator objects that produce output from internal state only.
+    return_type — C type for the step() return value (default: same as arg_type,
+                  or "float _Complex" when arg_type is "void").
     """
     if return_type is None:
-        return_type = arg_type
+        return_type = arg_type if arg_type != "void" else "float _Complex"
 
-    for t, label in [(arg_type, "--arg-type"), (return_type, "--return-type")]:
-        if t not in _CTYPE_META:
-            supported = ", ".join(sorted(_CTYPE_META))
-            raise ValueError(
-                f"unsupported {label} value '{t}'. Supported scalar types: {supported}"
-            )
+    if return_type not in _CTYPE_META:
+        supported = ", ".join(sorted(_CTYPE_META))
+        raise ValueError(
+            f"unsupported --return-type value '{return_type}'."
+            f" Supported scalar types: {supported}"
+        )
+
+    ret = _CTYPE_META[return_type]
+    out_np_dtype = ret["py_type"]
+
+    if arg_type == "void":
+        # Generator object: step(state) → sample, steps(state, out, n).
+        # Keys that reference input type are set to safe fallbacks; the actual
+        # step/steps C and Python bodies are pre-rendered by make_step_ctx().
+        return {
+            "arg_ctype":         "void",
+            "return_ctype":      _ctype_display(return_type),
+            "arg_zero":          "",
+            "step_example_suffix": "",
+            "in_np_dtype":       out_np_dtype,  # unused for void; mirror out
+            "out_np_dtype":      out_np_dtype,
+            "in_np_enum":        _NP_ENUM[out_np_dtype],
+            "out_np_enum":       _NP_ENUM[out_np_dtype],
+            "in_py_hint":        "int",
+            "out_py_hint":       _KIND_PY_ISINSTANCE[ret["kind"]],
+            "out_py_isinstance": _KIND_PY_ISINSTANCE[ret["kind"]],
+            "in_py_test_val":    "1",
+            "step_parse_block":  "",
+            "step_return_expr":  ret["to_py"]("y"),
+            "bench_in_init":     "0",
+            "bench_warmup":      "1",
+            "test_arr_4_init":   "{0}",
+            # pure_x_* not used with void; provide empty fallbacks
+            "pure_x_local":      "",
+            "pure_x_fmt_char":   "",
+            "pure_x_parse_arg":  "",
+            "pure_x_to_c":       "",
+        }
+
+    if arg_type not in _CTYPE_META:
+        supported = ", ".join(sorted(_CTYPE_META))
+        raise ValueError(
+            f"unsupported --arg-type value '{arg_type}'."
+            f" Supported scalar types: void, {supported}"
+        )
 
     samp = _CTYPE_META[arg_type]
-    ret = _CTYPE_META[return_type]
-
     in_np_dtype = samp["py_type"]
-    out_np_dtype = ret["py_type"]
 
     # pure_x_* keys: used inside pure-scalar fn() to parse the x argument.
     # Use x_raw as intermediate so to_c("x") works (lambdas append _raw).
@@ -299,26 +337,27 @@ def make_sample_ctx(
         pure_x_to_c = ""
 
     return {
-        "arg_ctype":        _ctype_display(arg_type),
-        "return_ctype":     _ctype_display(return_type),
-        "arg_zero":         samp["zero"],
-        "in_np_dtype":      in_np_dtype,
-        "out_np_dtype":     out_np_dtype,
-        "in_np_enum":       _NP_ENUM[in_np_dtype],
-        "out_np_enum":      _NP_ENUM[out_np_dtype],
-        "in_py_hint":       _KIND_PY_ISINSTANCE[samp["kind"]],
-        "out_py_hint":      _KIND_PY_ISINSTANCE[ret["kind"]],
-        "out_py_isinstance":_KIND_PY_ISINSTANCE[ret["kind"]],
-        "in_py_test_val":   _KIND_PY_TEST_VAL[samp["kind"]],
-        "step_parse_block": _step_parse_block(arg_type, samp),
-        "step_return_expr": ret["to_py"]("y"),
-        "bench_in_init":    _bench_in_init(arg_type, samp),
-        "bench_warmup":     _bench_warmup(samp),
-        "test_arr_4_init":  _test_arr_4_init(arg_type, samp),
-        "pure_x_local":     pure_x_local,
-        "pure_x_fmt_char":  samp["fmt"],
-        "pure_x_parse_arg": pure_x_parse_arg,
-        "pure_x_to_c":      pure_x_to_c,
+        "arg_ctype":           _ctype_display(arg_type),
+        "return_ctype":        _ctype_display(return_type),
+        "arg_zero":            samp["zero"],
+        "step_example_suffix": f", {samp['zero']}",
+        "in_np_dtype":         in_np_dtype,
+        "out_np_dtype":        out_np_dtype,
+        "in_np_enum":          _NP_ENUM[in_np_dtype],
+        "out_np_enum":         _NP_ENUM[out_np_dtype],
+        "in_py_hint":          _KIND_PY_ISINSTANCE[samp["kind"]],
+        "out_py_hint":         _KIND_PY_ISINSTANCE[ret["kind"]],
+        "out_py_isinstance":   _KIND_PY_ISINSTANCE[ret["kind"]],
+        "in_py_test_val":      _KIND_PY_TEST_VAL[samp["kind"]],
+        "step_parse_block":    _step_parse_block(arg_type, samp),
+        "step_return_expr":    ret["to_py"]("y"),
+        "bench_in_init":       _bench_in_init(arg_type, samp),
+        "bench_warmup":        _bench_warmup(samp),
+        "test_arr_4_init":     _test_arr_4_init(arg_type, samp),
+        "pure_x_local":        pure_x_local,
+        "pure_x_fmt_char":     samp["fmt"],
+        "pure_x_parse_arg":    pure_x_parse_arg,
+        "pure_x_to_c":         pure_x_to_c,
     }
 
 
@@ -403,6 +442,7 @@ def make_state_ctx(
     Component: str,
     state_vars: list[tuple[str, str, str]],
     array_args: list[tuple[str, str]] = (),
+    roles: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -415,7 +455,14 @@ def make_state_ctx(
     [("h", "float32")].  Each becomes a required positional constructor
     argument: const <ctype> *name, size_t name_len.  Array args appear before
     scalar args in both the kwlist and the create() signature.
+
+    roles is a dict mapping state-var name to "state" (default) or "config".
+    Config fields are preserved on reset() — they represent construction-time
+    parameters (e.g. filter coefficients, sample rate) that should survive a
+    soft-reset of runtime state (e.g. phase accumulator, filter history).
     """
+    if roles is None:
+        roles = {}
     for name, ct, _ in state_vars:
         if not is_valid_type(ct):
             supported = ", ".join(sorted(SUPPORTED_TYPES))
@@ -520,11 +567,23 @@ def make_state_ctx(
         )
     create_assignments = "\n".join(create_assign_lines)
 
-    reset_assign_lines = [f"    state->{n} = {dflt};" for n, _, dflt in scalar_vars]
+    reset_assign_lines = []
+    for n, _, dflt in scalar_vars:
+        if roles.get(n, "state") == "config":
+            reset_assign_lines.append(
+                f"    /* {n}: config field — preserved on reset */"
+            )
+        else:
+            reset_assign_lines.append(f"    state->{n} = {dflt};")
     for name, _, size in array_info:
-        reset_assign_lines.append(
-            f"    memset(state->{name}, 0, sizeof(state->{name}));"
-        )
+        if roles.get(name, "state") == "config":
+            reset_assign_lines.append(
+                f"    /* {name}[]: config field — preserved on reset */"
+            )
+        else:
+            reset_assign_lines.append(
+                f"    memset(state->{name}, 0, sizeof(state->{name}));"
+            )
     reset_assignments = "\n".join(reset_assign_lines)
 
     # ── CORE_C: getter_setter_impls ──────────────────────────────────────────
@@ -1295,7 +1354,11 @@ def make_methods_ctx(
 
     Each method dict has: name, arg_type ("void" or a _CTYPE_META key),
     return_type (a _CTYPE_META key), variable_output (bool),
-    and optionally multi_output (list of additional return ctypes).
+    batch (bool), and optionally multi_output (list of additional return ctypes).
+
+    batch=True generates a 1:1-rate array method:
+      C: void comp_name(state_t *, [const arg_t *in,] size_t n, ret_t *out)
+      Python: allocates output array each call with PyArray_SimpleNew.
     """
     _EMPTY: dict[str, str] = {
         "method_decls": "",
@@ -1327,6 +1390,7 @@ def make_methods_ctx(
         arg_type: str = m.get("arg_type", "void")
         return_type: str = m.get("return_type", "float _Complex")
         variable_output: bool = m.get("variable_output", False)
+        batch: bool = m.get("batch", False)
         multi_output: list[str] = m.get("multi_output", [])
 
         ret_disp = _ctype_display(return_type)
@@ -1339,20 +1403,84 @@ def make_methods_ctx(
             arg_meta = _CTYPE_META[arg_type]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
+        # ── batch method (1:1-rate array transform, no pre-alloc buffer) ─────
+        if batch:
+            if has_arg:
+                decl_lines.append(
+                    f"void {component}_{name}({component}_state_t *state,"
+                    f" const {arg_disp} *in, size_t n, {ret_disp} *out);"
+                )
+                wrapper = (
+                    f"static PyObject *\n"
+                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"    PyObject *in_obj = NULL;\n"
+                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    f"        return NULL;\n"
+                    f"    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                    f"    if (!in_arr) return NULL;\n"
+                    f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
+                    f"    npy_intp dims[] = {{n}};\n"
+                    f"    PyObject *out = PyArray_SimpleNew(1, dims, {ret_np});\n"
+                    f"    if (!out) {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"    {component}_{name}(self->handle,\n"
+                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
+                    f"        (size_t)n,\n"
+                    f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out));\n"
+                    f"    Py_DECREF(in_arr);\n"
+                    f"    return out;\n"
+                    f"}}"
+                )
+            else:
+                decl_lines.append(
+                    f"void {component}_{name}({component}_state_t *state,"
+                    f" size_t n, {ret_disp} *out);"
+                )
+                wrapper = (
+                    f"static PyObject *\n"
+                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"    Py_ssize_t n = 1;\n"
+                    f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                    f"        return NULL;\n"
+                    f"    npy_intp dims[] = {{n}};\n"
+                    f"    PyObject *out = PyArray_SimpleNew(1, dims, {ret_np});\n"
+                    f"    if (!out) return NULL;\n"
+                    f"    {component}_{name}(self->handle,\n"
+                    f"        (size_t)n,\n"
+                    f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out));\n"
+                    f"    return out;\n"
+                    f"}}"
+                )
+            method_c_parts.append(wrapper)
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
+                f'     "{name}. 1:1-rate batch method. Returns ndarray."}},\n'
+            )
+            continue
+
         # ── declarations for _core.h ─────────────────────────────────────────
         if variable_output:
-            decl_lines.append(
-                f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
-                f"size_t {component}_{name}({component}_state_t *state, size_t n,"
-                f" {ret_disp} *out);"
+            extra_params = "".join(
+                f", {_ctype_display(rt)} *out{i+1}"
+                for i, rt in enumerate(multi_output)
             )
-            if multi_output:
-                # Additional output buffers declared separately
-                for i, extra_rt in enumerate(multi_output):
-                    extra_disp = _ctype_display(extra_rt)
-                    decl_lines.append(
-                        f"/* secondary output {i+1} for {name}: {extra_disp} */"
-                    )
+            if has_arg:
+                decl_lines.append(
+                    f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
+                    f"size_t {component}_{name}({component}_state_t *state,"
+                    f" const {arg_disp} *in, size_t n_in,"
+                    f" {ret_disp} *out{extra_params});"
+                )
+            else:
+                decl_lines.append(
+                    f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
+                    f"size_t {component}_{name}({component}_state_t *state, size_t n,"
+                    f" {ret_disp} *out{extra_params});"
+                )
         else:
             if has_arg:
                 decl_lines.append(
@@ -1640,6 +1768,242 @@ def make_properties_ctx(
         "getset_def": getset_def,
         "tp_getset_decl": tp_getset_decl,
         "property_decls": property_decls,
+    }
+
+
+def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
+    """Pre-render step() and steps() C and Python bodies for stateful objects.
+
+    Must be called AFTER make_sample_ctx() and make_perf_ctx() so that
+    ctx already contains: component, Component, return_ctype, out_np_enum,
+    step_qualifier, omp_simd_hint, step_parse_block, step_return_expr.
+
+    Returns seven keys:
+      step_header_decl — non-inline step() declaration for _core.h
+      step_impl_def    — inline step() definition for _impl.h (after struct)
+      steps_c_decl     — steps() declaration for _core.h
+      steps_c_impl     — steps() implementation for _core.c
+      step_ext_fn      — Component_step() C ext function
+      steps_ext_fn     — Component_steps() C ext function
+      step_py_flags    — METH_NOARGS or METH_VARARGS for PyMethodDef
+
+    The split between _core.h and _impl.h keeps the public header opaque:
+    _core.h declares step() as a regular function; _impl.h defines the
+    inline version after the struct body so implementations (and extension
+    code that wants inlining) include _impl.h while pure API consumers
+    need only _core.h.
+    """
+    component      = ctx["component"]
+    Component      = ctx["Component"]
+    ret_disp       = ctx["return_ctype"]
+    out_np_enum    = ctx["out_np_enum"]
+    step_qualifier = ctx.get("step_qualifier", "static inline")
+    omp_simd_hint  = ctx.get("omp_simd_hint", "")
+    step_return    = ctx.get("step_return_expr", f"PyFloat_FromDouble((double)y)")
+
+    if arg_type == "void":
+        step_header_decl = (
+            f"/* step() is a static inline defined in {component}_impl.h.\n"
+            f" * Include that header (not this one) from implementation files.\n"
+            f" * External C consumers use {component}_steps() declared below. */"
+        )
+        step_impl_def = (
+            f"{step_qualifier} {ret_disp}\n"
+            f"{component}_step(const {component}_state_t *state)\n"
+            f"{{\n"
+            f"    (void)state; /* TODO: implement */\n"
+            f"    return ({ret_disp})0;\n"
+            f"}}"
+        )
+        steps_c_decl = (
+            f"/**\n"
+            f" * @brief Generate a block of output samples.\n"
+            f" *\n"
+            f" * @param state   Component state (mutated).\n"
+            f" * @param output  Output array (length >= n).\n"
+            f" * @param n       Number of samples to generate.\n"
+            f" */\n"
+            f"void {component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    {ret_disp}          *output,\n"
+            f"    size_t               n);"
+        )
+        steps_c_impl = (
+            f"void {component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    {ret_disp}          *output,\n"
+            f"    size_t               n)\n"
+            f"{{\n"
+            f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+            f"        output[i] = {component}_step(state);\n"
+            f"}}"
+        )
+        step_ext_fn = (
+            f"static PyObject *\n"
+            f"{Component}_step({Component}Object *self,"
+            f" PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    {ret_disp} y = {component}_step(self->handle);\n"
+            f"    return {step_return};\n"
+            f"}}"
+        )
+        steps_ext_fn = (
+            f"static PyObject *\n"
+            f"{Component}_steps({Component}Object *self, PyObject *args)\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    Py_ssize_t n = 1;\n"
+            f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+            f"        return NULL;\n"
+            f"\n"
+            f"    npy_intp dims[] = {{n}};\n"
+            f"    PyObject *out_arr = PyArray_SimpleNew(1, dims, {out_np_enum});\n"
+            f"    if (!out_arr)\n"
+            f"        return NULL;\n"
+            f"\n"
+            f"    {component}_steps(\n"
+            f"        self->handle,\n"
+            f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out_arr),\n"
+            f"        (size_t)n);\n"
+            f"\n"
+            f"    return out_arr;\n"
+            f"}}"
+        )
+        step_py_flags = "METH_NOARGS"
+    else:
+        arg_disp       = ctx["arg_ctype"]
+        in_np_enum     = ctx.get("in_np_enum", "NPY_COMPLEX64")
+        step_parse     = ctx.get("step_parse_block", "")
+
+        step_header_decl = (
+            f"/* step() is a static inline defined in {component}_impl.h.\n"
+            f" * Include that header (not this one) from implementation files.\n"
+            f" * External C consumers use {component}_steps() declared below. */"
+        )
+        step_impl_def = (
+            f"{step_qualifier} {ret_disp}\n"
+            f"{component}_step(const {component}_state_t *state, {arg_disp} x)\n"
+            f"{{\n"
+            f"    (void)state; /* TODO: implement using state variables */\n"
+            f"    return ({ret_disp})x;\n"
+            f"}}"
+        )
+        steps_c_decl = (
+            f"/**\n"
+            f" * @brief Process a block of samples.\n"
+            f" *\n"
+            f" * @param state   Component state (mutated).\n"
+            f" * @param input   Input array (length >= n).\n"
+            f" * @param output  Output array (length >= n; may alias input for"
+            f" in-place).\n"
+            f" * @param n       Number of samples.\n"
+            f" */\n"
+            f"void {component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    const {arg_disp}    *input,\n"
+            f"    {ret_disp}          *output,\n"
+            f"    size_t               n);"
+        )
+        steps_c_impl = (
+            f"void {component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    const {arg_disp}    *input,\n"
+            f"    {ret_disp}          *output,\n"
+            f"    size_t               n)\n"
+            f"{{\n"
+            f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+            f"        output[i] = {component}_step(state, input[i]);\n"
+            f"}}"
+        )
+        step_ext_fn = (
+            f"static PyObject *\n"
+            f"{Component}_step({Component}Object *self, PyObject *args)\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"{step_parse}\n"
+            f"    {ret_disp} y = {component}_step(self->handle, x);\n"
+            f"    return {step_return};\n"
+            f"}}"
+        )
+        steps_ext_fn = (
+            f"static PyObject *\n"
+            f"{Component}_steps({Component}Object *self, PyObject *args)\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    PyObject *in_obj  = NULL;\n"
+            f"    PyObject *out_obj = NULL;\n"
+            f'    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))\n'
+            f"        return NULL;\n"
+            f"\n"
+            f"    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+            f"        in_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+            f"    if (!in_arr)\n"
+            f"        return NULL;\n"
+            f"\n"
+            f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
+            f"\n"
+            f"    if (out_obj && out_obj != Py_None) {{\n"
+            f"        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+            f"            out_obj, {out_np_enum},\n"
+            f"            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);\n"
+            f"        if (!out_arr) {{ Py_DECREF(in_arr); return NULL; }}\n"
+            f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+            f"            PyErr_Format(PyExc_ValueError,\n"
+            f'                "out length %zd != input length %zd",\n'
+            f"                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);\n"
+            f"            Py_DECREF(out_arr);\n"
+            f"            Py_DECREF(in_arr);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"        {component}_steps(\n"
+            f"            self->handle,\n"
+            f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
+            f"            ({ret_disp} *)PyArray_DATA(out_arr),\n"
+            f"            (size_t)n);\n"
+            f"        Py_DECREF(in_arr);\n"
+            f"        return (PyObject *)out_arr;\n"
+            f"    }}\n"
+            f"\n"
+            f"    npy_intp dims[] = {{n}};\n"
+            f"    PyObject *out_arr = PyArray_SimpleNew(1, dims, {out_np_enum});\n"
+            f"    if (!out_arr) {{\n"
+            f"        Py_DECREF(in_arr);\n"
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"\n"
+            f"    {component}_steps(\n"
+            f"        self->handle,\n"
+            f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
+            f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out_arr),\n"
+            f"        (size_t)n);\n"
+            f"\n"
+            f"    Py_DECREF(in_arr);\n"
+            f"    return out_arr;\n"
+            f"}}"
+        )
+        step_py_flags = "METH_VARARGS"
+
+    return {
+        "step_header_decl": step_header_decl,
+        "step_impl_def":    step_impl_def,
+        "steps_c_decl":     steps_c_decl,
+        "steps_c_impl":     steps_c_impl,
+        "step_ext_fn":      step_ext_fn,
+        "steps_ext_fn":     steps_ext_fn,
+        "step_py_flags":    step_py_flags,
     }
 
 
@@ -2030,7 +2394,7 @@ COMPONENT_CORE_H = """\
  * Example:
  * @code
  * <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
- * <<return_ctype>> y = <<component>>_step(obj, <<arg_zero>>);
+ * <<return_ctype>> y = <<component>>_step(obj<<step_example_suffix>>);
  * <<component>>_destroy(obj);
  * @endcode
  */
@@ -2046,7 +2410,7 @@ extern "C" {
 /**
  * @brief <<Component>> state.
  *
- * Opaque to callers — allocate with <<component>>_create().
+ * Allocate with <<component>>_create().
  */
 typedef struct {
 <<state_struct_fields>>
@@ -2073,35 +2437,9 @@ void <<component>>_destroy(<<component>>_state_t *state);
  */
 void <<component>>_reset(<<component>>_state_t *state);
 
-/**
- * @brief Process a single complex sample.
- *
- * @param state  Component state.
- * @param x      Input sample.
- * @return       Output sample.
- * @note Inlined for maximum performance.
- */
-<<step_qualifier>> <<return_ctype>>
-<<component>>_step(const <<component>>_state_t *state, <<arg_ctype>> x)
-{
-    (void)state; /* TODO: implement using state variables */
-    return (<<return_ctype>>)x;
-}
+<<step_impl_def>>
 
-/**
- * @brief Process a block of samples.
- *
- * @param state   Component state.
- * @param input   Input array (length >= n).
- * @param output  Output array (length >= n; may alias input for in-place).
- * @param n       Number of samples.
- * @note Output buffer must be pre-allocated by caller.
- */
-void <<component>>_steps(
-    <<component>>_state_t *state,
-    const <<arg_ctype>>   *input,
-    <<return_ctype>>      *output,
-    size_t                 n);
+<<steps_c_decl>>
 
 <<getter_setter_decls>>
 
@@ -2112,6 +2450,25 @@ void <<component>>_steps(
 #endif
 
 #endif /* <<COMPONENT>>_CORE_H */
+"""
+
+# ── Private implementation header (opaque struct fields) ─────────────────────
+
+COMPONENT_IMPL_H = """\
+/**
+ * @file <<component>>_impl.h
+ * @brief <<Component>> implementation header.
+ *
+ * Include from implementation files (<<component>>_core.c, extension code,
+ * and any extra .c files added via 'just-makeit source').  External
+ * consumers may include <<component>>_core.h directly instead.
+ */
+#ifndef <<COMPONENT>>_IMPL_H
+#define <<COMPONENT>>_IMPL_H
+
+#include "<<component>>/<<component>>_core.h"
+
+#endif /* <<COMPONENT>>_IMPL_H */
 """
 
 # ── C source ─────────────────────────────────────────────────────────────────
@@ -2141,23 +2498,14 @@ void
 <<reset_assignments>>
 }
 
-void
-<<component>>_steps(
-    <<component>>_state_t *state,
-    const <<arg_ctype>>   *input,
-    <<return_ctype>>      *output,
-    size_t                 n)
-{
-<<omp_simd_hint>>    for (size_t i = 0; i < n; i++)
-        output[i] = <<component>>_step(state, input[i]);
-}
+<<steps_c_impl>>
 
 <<getter_setter_impls>>
 """
 
 COMPONENT_EXT_C = """\
 /*
- * <<component>>_ext.c — Python C extension for <<component>>_core.h
+ * <<component>>_ext.c — Python C extension for <<component>>
  */
 
 #define PY_SSIZE_T_CLEAN
@@ -2166,7 +2514,7 @@ COMPONENT_EXT_C = """\
 #include <numpy/arrayobject.h>
 #include <complex.h>
 
-#include "<<component>>/<<component>>_core.h"
+#include "<<component>>/<<component>>_impl.h"
 
 /* ======================================================== */
 /* <<Component>>Object — wraps <<component>>_state_t *       */
@@ -2217,75 +2565,9 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyObject *
-<<Component>>_step(<<Component>>Object *self, PyObject *args)
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-<<step_parse_block>>
-    <<return_ctype>> y = <<component>>_step(self->handle, x);
-    return <<step_return_expr>>;
-}
+<<step_ext_fn>>
 
-static PyObject *
-<<Component>>_steps(<<Component>>Object *self, PyObject *args)
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-    PyObject *in_obj  = NULL;
-    PyObject *out_obj = NULL;
-    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))
-        return NULL;
-
-    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
-    if (!in_arr)
-        return NULL;
-
-    Py_ssize_t n = PyArray_SIZE(in_arr);
-
-    if (out_obj && out_obj != Py_None) {
-        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
-            out_obj, <<out_np_enum>>,
-            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
-        if (PyArray_SIZE(out_arr) != n) {
-            PyErr_Format(PyExc_ValueError,
-                "out length %zd != input length %zd",
-                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
-            Py_DECREF(out_arr);
-            Py_DECREF(in_arr);
-            return NULL;
-        }
-        <<component>>_steps(
-            self->handle,
-            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
-            (<<return_ctype>> *)PyArray_DATA(out_arr),
-            (size_t)n);
-        Py_DECREF(in_arr);
-        return (PyObject *)out_arr;
-    }
-
-    npy_intp dims[] = {n};
-    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
-    if (!out_arr) {
-        Py_DECREF(in_arr);
-        return NULL;
-    }
-
-    <<component>>_steps(
-        self->handle,
-        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
-        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
-        (size_t)n);
-
-    Py_DECREF(in_arr);
-    return out_arr;
-}
+<<steps_ext_fn>>
 
 <<getter_setter_methods_c>>
 <<extra_methods_c>>
@@ -2321,10 +2603,10 @@ static PyObject *
 static PyMethodDef <<Component>>_methods[] = {
     {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
      "Reset state to post-create defaults."},
-    {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
+    {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a block of samples. Returns an ndarray, or fills out= if supplied."},
+     "Process a block of samples. Returns an ndarray."},
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -2394,7 +2676,7 @@ COMPONENT_TYPE_SECTION = """\
 /* <<Component>>Object — wraps <<component>>_state_t *       */
 /* ======================================================== */
 
-#include "<<component>>/<<component>>_core.h"
+#include "<<component>>/<<component>>_impl.h"
 
 typedef struct {
     PyObject_HEAD
@@ -2441,75 +2723,9 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyObject *
-<<Component>>_step(<<Component>>Object *self, PyObject *args)
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-<<step_parse_block>>
-    <<return_ctype>> y = <<component>>_step(self->handle, x);
-    return <<step_return_expr>>;
-}
+<<step_ext_fn>>
 
-static PyObject *
-<<Component>>_steps(<<Component>>Object *self, PyObject *args)
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-    PyObject *in_obj  = NULL;
-    PyObject *out_obj = NULL;
-    if (!PyArg_ParseTuple(args, "O|O", &in_obj, &out_obj))
-        return NULL;
-
-    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
-    if (!in_arr)
-        return NULL;
-
-    Py_ssize_t n = PyArray_SIZE(in_arr);
-
-    if (out_obj && out_obj != Py_None) {
-        PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
-            out_obj, <<out_np_enum>>,
-            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-        if (!out_arr) { Py_DECREF(in_arr); return NULL; }
-        if (PyArray_SIZE(out_arr) != n) {
-            PyErr_Format(PyExc_ValueError,
-                "out length %zd != input length %zd",
-                (Py_ssize_t)PyArray_SIZE(out_arr), (Py_ssize_t)n);
-            Py_DECREF(out_arr);
-            Py_DECREF(in_arr);
-            return NULL;
-        }
-        <<component>>_steps(
-            self->handle,
-            (const <<arg_ctype>> *)PyArray_DATA(in_arr),
-            (<<return_ctype>> *)PyArray_DATA(out_arr),
-            (size_t)n);
-        Py_DECREF(in_arr);
-        return (PyObject *)out_arr;
-    }
-
-    npy_intp dims[] = {n};
-    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
-    if (!out_arr) {
-        Py_DECREF(in_arr);
-        return NULL;
-    }
-
-    <<component>>_steps(
-        self->handle,
-        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
-        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
-        (size_t)n);
-
-    Py_DECREF(in_arr);
-    return out_arr;
-}
+<<steps_ext_fn>>
 
 <<getter_setter_methods_c>>
 <<extra_methods_c>>
@@ -2545,10 +2761,10 @@ static PyObject *
 static PyMethodDef <<Component>>_methods[] = {
     {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
      "Reset state to post-create defaults."},
-    {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
+    {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
      "Process one sample. Returns a scalar."},
     {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a block of samples. Returns an ndarray, or fills out= if supplied."},
+     "Process a block of samples. Returns an ndarray."},
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -2738,7 +2954,7 @@ __all__ = [<<object_all>>]
 # ── C test ───────────────────────────────────────────────────────────────────
 
 COMPONENT_TEST_C = """\
-#include "<<component>>/<<component>>_core.h"
+#include "<<component>>/<<component>>_impl.h"
 #include <complex.h>
 #include <stdio.h>
 
@@ -2758,7 +2974,7 @@ int main(void)
 <<getter_setter_test_c>>
 
     /* step: verify it runs without crashing */
-    (void)<<component>>_step(obj, <<arg_zero>>);
+    (void)<<component>>_step(obj<<step_example_suffix>>);
 
 <<reset_test_c>>
 
@@ -2775,7 +2991,7 @@ int main(void)
 # ── C benchmark ──────────────────────────────────────────────────────────────
 
 COMPONENT_BENCH_C = """\
-#include "<<component>>/<<component>>_core.h"
+#include "<<component>>/<<component>>_impl.h"
 #include <complex.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -4196,12 +4412,13 @@ class Test<<Component>>(unittest.TestCase):
         self.assertEqual(y.dtype, <<out_np_dtype>>)
 
     def test_steps_out_param(self):
-        obj = <<Component>>(<<py_create_args>>)
         x   = np.ones(64, dtype=<<in_np_dtype>>)
         buf = np.zeros(64, dtype=<<out_np_dtype>>)
-        ret = obj.steps(x, buf)
+        obj1 = <<Component>>(<<py_create_args>>)
+        ret = obj1.steps(x, buf)
         self.assertIs(ret, buf)
-        np.testing.assert_array_equal(ret, obj.steps(x))
+        obj2 = <<Component>>(<<py_create_args>>)
+        np.testing.assert_array_equal(ret, obj2.steps(x))
 
     def test_getter_setter(self):
 <<getter_setter_test_py>>

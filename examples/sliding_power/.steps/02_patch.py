@@ -11,7 +11,7 @@ impl   = pathlib.Path(__file__).with_name("02_step_impl.c")
 
 stub_re = re.compile(
     r"JM_FORCEINLINE JM_HOT float\s*\n"
-    r"power_est_step\(const power_est_state_t \*state.*?\n\}",
+    r"power_est_step\((?:const )?power_est_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 

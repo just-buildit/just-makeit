@@ -246,8 +246,11 @@ def run(
         if pure_style:
             ctx.update(T.make_pure_ctx(object_name, Component, state_vars_list, arg_type_))
         else:
-            ctx.update(T.make_state_ctx(object_name, Component, state_vars_list))
+            ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
+                                        array_args=C.array_args(cfg, object_name)))
         ctx.update(T.make_perf_ctx(perf))
+        if not pure_style:
+            ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
         ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
         ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name)))
 

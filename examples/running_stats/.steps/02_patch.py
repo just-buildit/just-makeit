@@ -12,7 +12,7 @@ impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
     r"static inline float complex\s*\n"
-    r"running_stats_step\(const running_stats_state_t \*state.*?\n\}",
+    r"running_stats_step\((?:const )?running_stats_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 

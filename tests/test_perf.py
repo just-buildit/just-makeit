@@ -181,15 +181,14 @@ class TestPerfUpgrade:
 
     def test_step_body_preserved(self, upgraded):
         """User implementation survives the upgrade."""
-        header = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
-        # Write a custom implementation, then upgrade a second component
-        text = header.read_text()
+        core = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
+        text = core.read_text()
         text = text.replace("(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
                             "return x * 2.0f;")
-        header.write_text(text)
+        core.write_text(text)
         # Re-run perf (idempotent) — body must survive
         perf_run(upgraded)
-        assert "return x * 2.0f;" in header.read_text()
+        assert "return x * 2.0f;" in core.read_text()
 
     def test_idempotent(self, upgraded):
         """Running perf_run twice produces the same result."""

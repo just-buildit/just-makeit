@@ -243,28 +243,28 @@ class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp")
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double gain;" in h
-        assert "comp_get_gain" in h
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double gain;" in core_h
+        assert "comp_get_gain" in core_h
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("cutoff", "double", "0.0")])
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double cutoff;" in h
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double cutoff;" in core_h
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("gain", "double", "1.0"), ("order", "int", "4")])
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double gain;" in h
-        assert "int order;" in h
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double gain;" in core_h
+        assert "int order;" in core_h
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("alpha", "float", "0.0f")])
-        h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "float alpha;" in h
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "float alpha;" in core_h
 
     def test_reset_uses_default_not_zero(self, tmp_path):
         dest = tmp_path / "comp"

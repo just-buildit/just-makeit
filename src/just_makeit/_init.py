@@ -188,6 +188,8 @@ def run(
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
+    if pure_style is None:
+        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -241,6 +243,11 @@ def run(
 
     # C headers
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
+    if pure_style is None:
+        _write(
+            root / "native" / "inc" / comp / f"{comp}_impl.h",
+            r(T.COMPONENT_IMPL_H),
+        )
 
     # C sources
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(core_c_tmpl))
@@ -337,7 +344,9 @@ def run(
         print(f"  update  {mf_path}")
 
     # just-makeit.toml
-    C.add_component(cfg, comp, vars_, pure=pure_style, array_args_=array_args)
+    C.add_component(cfg, comp, vars_, pure=pure_style,
+                    arg_type_=arg_type, return_type_=return_type,
+                    array_args_=array_args)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

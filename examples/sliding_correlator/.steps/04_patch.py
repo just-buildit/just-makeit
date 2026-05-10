@@ -18,7 +18,7 @@ kernel  = pathlib.Path(__file__).with_name("04_kernel.c")
 # ── 1. Insert step_batch() into header ───────────────────────────────────────
 
 insert_re = re.compile(
-    r"(sliding_correlator_step\(.*?\n\})\s*\n(\s*/\*\*\s*\n\s*\* @brief Process a block)",
+    r"(sliding_correlator_step\(.*?\n\})\s*\n(/\*\*\n \* @brief Process a block)",
     re.DOTALL,
 )
 
@@ -45,7 +45,7 @@ if "JM_DEFINE_STEPS" in ctext:
     print(f"{core_c}: JM_DEFINE_STEPS already present, skipping")
 else:
     fn_re = re.compile(
-        r"void\s*\nsliding_correlator_steps\(.*?\n\}",
+        r"void\s+sliding_correlator_steps\(.*?\n\}",
         re.DOTALL,
     )
     if not fn_re.search(ctext):

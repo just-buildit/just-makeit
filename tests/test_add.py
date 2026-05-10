@@ -22,9 +22,9 @@ def project(tmp_path):
 class TestAddStateVar:
     def test_add_single_var_header(self, project):
         add_run(project, None, [("order", "int", "4")])
-        h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double gain;" in h
-        assert "int order;" in h
+        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double gain;" in core
+        assert "int order;" in core
 
     def test_add_single_var_core_c(self, project):
         add_run(project, None, [("order", "int", "4")])
@@ -58,9 +58,9 @@ class TestAddStateVar:
         add_run(
             project, None, [("bandwidth", "double", "200.0"), ("poles", "int", "2")]
         )
-        h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
-        assert "double bandwidth;" in h
-        assert "int poles;" in h
+        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        assert "double bandwidth;" in core
+        assert "int poles;" in core
 
     def test_no_unreplaced_placeholders(self, project):
         add_run(project, None, [("order", "int", "4")])

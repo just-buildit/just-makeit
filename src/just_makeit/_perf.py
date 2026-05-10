@@ -22,22 +22,19 @@ from . import _config as C
 from . import _templates as T
 
 
-def _patch_header(header: Path, comp: str) -> bool:
-    """Patch comp header in-place.  Returns True if any change was made."""
+def _patch_core_h(header: Path, comp: str) -> bool:
+    """Upgrade _core.h: add jm_perf.h include and replace step() qualifier."""
     text = header.read_text(encoding="utf-8")
     original = text
-
     if '"jm_perf.h"' not in text:
         text = text.replace(
             '#include "clib_common.h"',
             '#include "clib_common.h"\n#include "jm_perf.h"',
         )
-
     qualifier_re = re.compile(
-        r'\bstatic inline\b(\s+float complex\s*\n' + re.escape(comp) + r'_step\b)'
+        r'\bstatic inline\b(\s+\S.*?\n' + re.escape(comp) + r'_step\b)'
     )
     text = qualifier_re.sub(r'JM_FORCEINLINE JM_HOT\1', text)
-
     if text != original:
         header.write_text(text, encoding="utf-8")
         return True
@@ -81,14 +78,14 @@ def run(root: Path) -> None:
         print(f"  create  {simd_h}")
 
     for comp in comps:
-        header = root / "native" / "inc" / comp / f"{comp}_core.h"
-        if not header.exists():
-            print(f"  skip    {header}  (not found)", file=sys.stderr)
-            continue
-        if _patch_header(header, comp):
-            print(f"  update  {header}")
+        core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
+        if core_h.exists():
+            if _patch_core_h(core_h, comp):
+                print(f"  update  {core_h}")
+            else:
+                print(f"  ok      {core_h}  (already up to date)")
         else:
-            print(f"  ok      {header}  (already up to date)")
+            print(f"  skip    {comp}  (header not found)", file=sys.stderr)
 
     cfg.setdefault("project", {})["perf"] = "true"
     C.save(root, cfg)
