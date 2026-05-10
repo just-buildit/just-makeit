@@ -1,5 +1,45 @@
 # Changelog
 
+## \[0.8.0\] — 2026-05-09
+
+### Added
+
+- **`just-makeit module <name>`** — scaffold a named Python extension
+  module (subpackage `.so`) that groups multiple types.  Creates
+  `native/src/<name>/<name>_ext.c`, `CMakeLists.txt`, and
+  `src/<pkg>/<name>/__init__.py`; records `[module.<name>]` in
+  `just-makeit.toml`.
+- **`just-makeit object <name> [--module <name>]`** — add a Python type
+  to an existing module.  Generates the full C library scaffold
+  (`_core.h`, `_core.c`, test, bench, OBJECT-only `CMakeLists.txt`)
+  then fully regenerates the module's `_ext.c`, `CMakeLists.txt`, and
+  `__init__.py` from the complete object list.  `--module` is inferred
+  when only one module exists.  Supports all flags from `init`:
+  `--state`, `--pure`, `--arg-type`, `--return-type`, `--perf`.
+- Module `_ext.c` is always regenerated from scratch — never patched —
+  so adding a third type never disturbs existing ones.
+- Types within a module may have different `--arg-type`/`--return-type`
+  (e.g. `Fir` processes `float complex`, `Biquad` processes `float`).
+
+### Fixed
+
+- Generated C tests now use a `CHECK(cond)` macro counter instead of
+  `assert()`.  Failures print `FAIL file:line expr` and exit nonzero —
+  no silent pass under `-DNDEBUG`.
+- Generated `CMakeLists.txt`: test and bench targets now link `-lm`,
+  preventing linker failures on projects that use `<math.h>`.
+
+### Docs
+
+- `docs/commands.md`: `module` and `object` command reference added.
+- `examples/filter_module/`: complete walkthrough — `Fir` (complex) +
+  `Biquad` (real) in a single `filter` module, with end-to-end
+  `test.py` covering scaffold, patch, build, ctest, and spectral checks.
+- `artifact.yml`: filter_module scaffold + verify + build + smoke test
+  block added to the release artifact CI.
+
+______________________________________________________________________
+
 ## \[0.7.0\] — 2026-05-09
 
 ### Added

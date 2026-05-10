@@ -131,6 +131,14 @@ _CTYPE_META: dict[str, dict] = {
         "to_c": lambda n: f"(long double){n}_raw.real + (long double){n}_raw.imag * I",
         "to_py": lambda v: f"PyComplex_FromDoubles((double)creall({v}), (double)cimagl({v}))",
     },
+    # ── String — return-type only; step() returns a Python str. ──────────────
+    "const char *": {
+        "kind": "str",
+        "fmt": "s",
+        "zero": "NULL",
+        "py_type": "str",
+        "to_py": lambda v: f"PyUnicode_FromString({v})",
+    },
 }
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
@@ -152,6 +160,8 @@ _NP_ENUM: dict[str, str] = {
     "np.uint64": "NPY_UINT64",
     "np.uintp": "NPY_UINTP",
     "np.intp": "NPY_INTP",
+    # const char * — return-type only; steps() array path does not apply.
+    "str": "NPY_OBJECT",
 }
 
 # Maps kind → Python isinstance target.
@@ -159,6 +169,7 @@ _KIND_PY_ISINSTANCE: dict[str, str] = {
     "float": "float",
     "int": "int",
     "complex": "complex",
+    "str": "str",
 }
 
 # Maps kind → Python test input literal.
@@ -166,6 +177,7 @@ _KIND_PY_TEST_VAL: dict[str, str] = {
     "float": "1.0",
     "int": "1",
     "complex": "1.0 + 0.0j",
+    "str": '"hello"',
 }
 
 
@@ -800,9 +812,9 @@ def make_state_ctx(
         sv = _c_set_val(ct)
         cgs_lines += [
             f"    /* {name}: getter / setter */",
-            f"    assert({component}_get_{name}(obj) == {dflt});",
+            f"    CHECK({component}_get_{name}(obj) == {dflt});",
             f"    {component}_set_{name}(obj, {sv});",
-            f"    assert({component}_get_{name}(obj) == {sv});",
+            f"    CHECK({component}_get_{name}(obj) == {sv});",
             "",
         ]
     for name, elem_ct, size in array_info:
@@ -814,7 +826,7 @@ def make_state_ctx(
             f"        src[0] = {sv};",
             f"        {component}_set_{name}(obj, src);",
             f"        {component}_get_{name}(obj, dst);",
-            f"        assert(dst[0] == {sv});",
+            f"        CHECK(dst[0] == {sv});",
             "    }",
             "",
         ]
@@ -836,14 +848,14 @@ def make_state_ctx(
         ]
     rst_lines.append(f"    {component}_reset(obj);")
     for name, _, dflt in scalar_vars:
-        rst_lines.append(f"    assert({component}_get_{name}(obj) == {dflt});")
+        rst_lines.append(f"    CHECK({component}_get_{name}(obj) == {dflt});")
     for name, elem_ct, size in array_info:
         zero = _CTYPE_META[elem_ct]["zero"]
         rst_lines += [
             "    {",
             f"        {elem_ct} buf[{size}];",
             f"        {component}_get_{name}(obj, buf);",
-            f"        assert(buf[0] == {zero});",
+            f"        CHECK(buf[0] == {zero});",
             "    }",
         ]
     reset_test_c = "\n".join(rst_lines)
@@ -1869,18 +1881,312 @@ PyInit_<<component>>(void)
 }
 """
 
+# ── Multi-object module support ──────────────────────────────────────────────
+#
+# A "module" is a single .so that hosts multiple Python types ("objects").
+# COMPONENT_TYPE_SECTION is the per-object block (struct + methods +
+# PyTypeObject) without file headers or PyMODINIT_FUNC.
+# MODULE_EXT_C is the full file: header + <<type_sections>> + PyMODINIT_FUNC.
+# render_module_ext_c() assembles the two from a list of component contexts.
+#
+# <<module>> must be in the ctx passed to COMPONENT_TYPE_SECTION; it equals
+# the component name for standalone components, or the module name otherwise.
+
+COMPONENT_TYPE_SECTION = """\
+/* ======================================================== */
+/* <<Component>>Object — wraps <<component>>_state_t *       */
+/* ======================================================== */
+
+#include "<<component>>/<<component>>_core.h"
+
+typedef struct {
+    PyObject_HEAD
+    <<component>>_state_t *handle;
+} <<Component>>Object;
+
+static void
+<<Component>>_dealloc(<<Component>>Object *self)
+{
+    if (self->handle)
+        <<component>>_destroy(self->handle);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static PyObject *
+<<Component>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
+    if (self)
+        self->handle = NULL;
+    return (PyObject *)self;
+}
+
+static int
+<<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
+{
+<<init_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
+    if (!self->handle) {
+        PyErr_SetString(PyExc_MemoryError,
+                        "<<component>>_create returned NULL");
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *
+<<Component>>_reset(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+    <<component>>_reset(self->handle);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+<<Component>>_step(<<Component>>Object *self, PyObject *args)
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+<<step_parse_block>>
+    <<return_ctype>> y = <<component>>_step(self->handle, x);
+    return <<step_return_expr>>;
+}
+
+static PyObject *
+<<Component>>_steps(<<Component>>Object *self, PyObject *args)
+{
+    if (!self->handle) {
+        PyErr_SetString(PyExc_RuntimeError, "destroyed");
+        return NULL;
+    }
+    PyObject *in_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O", &in_obj))
+        return NULL;
+
+    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        in_obj, <<in_np_enum>>, NPY_ARRAY_C_CONTIGUOUS);
+    if (!in_arr)
+        return NULL;
+
+    Py_ssize_t n = PyArray_SIZE(in_arr);
+    npy_intp dims[] = {n};
+    PyObject *out_arr = PyArray_SimpleNew(1, dims, <<out_np_enum>>);
+    if (!out_arr) {
+        Py_DECREF(in_arr);
+        return NULL;
+    }
+
+    <<component>>_steps(
+        self->handle,
+        (const <<arg_ctype>> *)PyArray_DATA(in_arr),
+        (<<return_ctype>> *)PyArray_DATA((PyArrayObject *)out_arr),
+        (size_t)n);
+
+    Py_DECREF(in_arr);
+    return out_arr;
+}
+
+<<getter_setter_methods_c>>
+
+static PyObject *
+<<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    if (self->handle) {
+        <<component>>_destroy(self->handle);
+        self->handle = NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+<<Component>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+{
+    Py_INCREF(self);
+    return (PyObject *)self;
+}
+
+static PyObject *
+<<Component>>_exit(<<Component>>Object *self, PyObject *args)
+{
+    (void)args;
+    if (self->handle) {
+        <<component>>_destroy(self->handle);
+        self->handle = NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef <<Component>>_methods[] = {
+    {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
+     "Reset state to post-create defaults."},
+    {"step",     (PyCFunction)<<Component>>_step,     METH_VARARGS,
+     "Process one sample. Returns a scalar."},
+    {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
+     "Process a samples array. Returns an ndarray."},
+<<getter_setter_pymethoddef>>
+    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+     "Release resources."},
+    {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
+    {"__exit__",  (PyCFunction)<<Component>>_exit,    METH_VARARGS, NULL},
+    {NULL}
+};
+
+static PyTypeObject <<Component>>Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "<<module>>.<<Component>>",
+    .tp_basicsize = sizeof(<<Component>>Object),
+    .tp_dealloc   = (destructor)<<Component>>_dealloc,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_doc       = "<<Component>> type.",
+    .tp_methods   = <<Component>>_methods,
+    .tp_new       = <<Component>>_new,
+    .tp_init      = (initproc)<<Component>>_init,
+};
+"""
+
+MODULE_EXT_C_HEADER = """\
+/*
+ * <<module>>_ext.c — Python extension module <<module>>
+ *
+ * Objects: <<object_list>>
+ */
+
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#include <numpy/arrayobject.h>
+#include <complex.h>
+
+"""
+
+MODULE_EXT_C_FOOTER = """\
+
+/* ======================================================== */
+/* Module                                                    */
+/* ======================================================== */
+
+static PyModuleDef <<module>>_moduledef = {
+    PyModuleDef_HEAD_INIT,
+    .m_name    = "<<module>>",
+    .m_doc     = "<<Module>> module.",
+    .m_size    = -1,
+    .m_methods = NULL,
+};
+
+PyMODINIT_FUNC
+PyInit_<<module>>(void)
+{
+    import_array();
+<<type_ready_checks>>
+    PyObject *m = PyModule_Create(&<<module>>_moduledef);
+    if (!m) return NULL;
+<<add_object_calls>>
+    return m;
+}
+"""
+
+
+def render_module_ext_c(module: str, comp_ctxs: list[dict]) -> str:
+    """Render a multi-object module _ext.c from a list of component contexts.
+
+    Each ctx must contain 'module' = module_name and 'Component' = the type name.
+    """
+    Module = "".join(w.title() for w in module.split("_"))
+    object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
+
+    header_ctx = {"module": module, "Module": Module, "object_list": object_list}
+    parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
+
+    for ctx in comp_ctxs:
+        parts.append(render(COMPONENT_TYPE_SECTION, ctx))
+
+    type_ready_checks = "\n".join(
+        f"    if (PyType_Ready(&{ctx['Component']}Type) < 0) return NULL;"
+        for ctx in comp_ctxs
+    )
+    add_object_calls_lines: list[str] = []
+    for ctx in comp_ctxs:
+        C_ = ctx["Component"]
+        add_object_calls_lines += [
+            f"    Py_INCREF(&{C_}Type);",
+            f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{C_}Type) < 0) {{',
+            f"        Py_DECREF(&{C_}Type); Py_DECREF(m); return NULL;",
+            "    }",
+        ]
+    add_object_calls = "\n".join(add_object_calls_lines)
+
+    footer_ctx = {
+        "module": module,
+        "Module": Module,
+        "type_ready_checks": type_ready_checks,
+        "add_object_calls": add_object_calls,
+    }
+    parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
+    return "".join(parts)
+
+
+CMAKE_LISTS_OBJECT_CORE = """\
+# OBJECT library — pure C core, no Python dependency.
+add_library(<<component>>_core OBJECT <<component>>_core.c)
+target_include_directories(<<component>>_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/native/inc
+    ${CMAKE_SOURCE_DIR}/native/inc/<<component>>)
+
+add_executable(test_<<component>>_core
+    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
+target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core m)
+target_include_directories(test_<<component>>_core
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
+
+add_executable(bench_<<component>>_core
+    ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
+target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core m)
+target_include_directories(bench_<<component>>_core
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+"""
+
+CMAKE_LISTS_MODULE = """\
+# <<module>> Python module — aggregates: <<object_list>>
+Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c)
+target_link_libraries(<<module>> PRIVATE
+    <<object_core_libs>>
+    Python3::NumPy)
+target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+set_target_properties(<<module>> PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>")
+"""
+
+MODULE_INIT_PY = """\
+# <<module>>/__init__.py — re-export all types from the C extension.
+from .<<module>> import <<object_imports>>
+
+__all__ = [<<object_all>>]
+"""
+
 # ── C test ───────────────────────────────────────────────────────────────────
 
 COMPONENT_TEST_C = """\
 #include "<<component>>/<<component>>_core.h"
-#include <assert.h>
 #include <complex.h>
 #include <stdio.h>
 
+#define CHECK(cond) \\
+    do { if (!(cond)) { \\
+        fprintf(stderr, "FAIL %s:%d  %s\\n", __FILE__, __LINE__, #cond); \\
+        _fails++; \\
+    } } while (0)
+
 int main(void)
 {
+    int _fails = 0;
     <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
-    assert(obj != NULL);
+    CHECK(obj != NULL);
+    if (!obj) return 1;
 
     /* step: verify it runs */
     (void)<<component>>_step(obj, <<arg_zero>>);
@@ -1890,6 +2196,10 @@ int main(void)
 <<reset_test_c>>
 
     <<component>>_destroy(obj);
+    if (_fails) {
+        fprintf(stderr, "test_<<component>>_core FAILED (%d)\\n", _fails);
+        return 1;
+    }
     printf("test_<<component>>_core PASSED\\n");
     return 0;
 }
@@ -2901,14 +3211,14 @@ set_target_properties(<<component>> PROPERTIES
 
 add_executable(test_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
-target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core)
+target_link_libraries(test_<<component>>_core PRIVATE <<component>>_core m)
 target_include_directories(test_<<component>>_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
 
 add_executable(bench_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
-target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core)
+target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core m)
 target_include_directories(bench_<<component>>_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 """
