@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.9.2\] — 2026-05-10
+
+### Fixed
+
+- Generated `Makefile` now auto-installs `pytest` if not present (same pattern as numpy), so `make test` works in bare environments such as the post-release artifact smoke test.
+- Removed the broken `unittest discover` fallback from both Makefile templates.  When pytest exits 5 (no tests collected — normal for the module workflow) `make test` now succeeds cleanly; any other non-zero exit propagates as a real failure.
+- Removed `2>/dev/null` from the pytest invocation so failures are visible.
+
+______________________________________________________________________
+
 ## \[0.9.1\] — 2026-05-10
 
 ### Fixed

@@ -3303,8 +3303,9 @@ all: $(TARGETS)
 
 test: all $(C_TESTS)
 \t@for t in $(C_TESTS); do echo "--- $$t ---" && ./$$t || exit 1; done
-\t$(PYTHON) -m pytest src/ -v 2>/dev/null || \\
-\t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
+\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
+\t$(PYTHON) -m pytest src/ -v; ret=$$?; \
+\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
 
 just-build: all
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
@@ -3362,6 +3363,7 @@ all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
 \t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
+\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
 \tcmake -B $(BUILD_DIR) -S . \\
 \t\t-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \\
 \t\t-DPython3_EXECUTABLE=$(PYTHON) \\
@@ -3375,9 +3377,8 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
-\t$(PYTHON) -m pytest src/ -v 2>/dev/null; ret=$$?; \
-\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || \
-\t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
+\t$(PYTHON) -m pytest src/ -v; ret=$$?; \
+\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
 
 bench: build
 \t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
