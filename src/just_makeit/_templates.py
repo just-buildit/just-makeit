@@ -3149,7 +3149,7 @@ set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
 # Combined C shared library — links all component OBJECT libraries.
 # No Python dependency; distributable to C, C++, and Rust consumers.
-add_library(<<project_underscore>>_lib SHARED "")
+add_library(<<project_underscore>>_lib SHARED native/src/<<project_underscore>>_lib.c)
 set_target_properties(<<project_underscore>>_lib PROPERTIES OUTPUT_NAME <<project_underscore>>)
 target_include_directories(<<project_underscore>>_lib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/native/inc>
@@ -3191,6 +3191,14 @@ install(FILES
 configure_file(cmake/<<project>>.pc.in <<project>>.pc @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+"""
+
+LIB_STUB_C = """\
+/* <<project_underscore>>_lib — combined C library.
+ * Component symbols are provided by OBJECT libraries linked via target_sources.
+ */
+const char *<<project_underscore>>_version(void);
+const char *<<project_underscore>>_version(void) { return "<<version>>"; }
 """
 
 CMAKE_LISTS_COMPONENT = """\

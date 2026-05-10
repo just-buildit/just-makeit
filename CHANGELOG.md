@@ -1,5 +1,23 @@
 # Changelog
 
+## \[0.8.1\] — 2026-05-10
+
+### Fixed
+
+- `just-makeit new` now generates `native/src/<project>_lib.c` (a version stub),
+  and `CMakeLists.txt` references it instead of `""`.  The empty-string source was
+  rejected by CMake on macOS with AppleClang 17 (`No SOURCES given to target`).
+- `just-makeit object` now patches `target_sources(<pkg>_lib PRIVATE
+  $<TARGET_OBJECTS:<comp>_core>)` into the root `CMakeLists.txt` alongside the
+  existing `add_subdirectory` patch.  Previously, module-only projects built an
+  empty `lib<pkg>.so`; now all object cores are wired in, enabling `cmake --install`,
+  pkg-config, and CMake `find_package` for module-based projects.
+- CI: `artifact.yml` PyPI propagation retry extended from 10 to 20 × 30 s (10 min);
+  `artifact.yml` adds C library install + pkg-config/find_package consumer steps for
+  the `filter_module` workflow.
+
+______________________________________________________________________
+
 ## \[0.8.0\] — 2026-05-09
 
 ### Added

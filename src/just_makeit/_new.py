@@ -81,6 +81,7 @@ def run(
 
     if not basic:
         _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))
+        _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
     cfg = C.from_new(project, basic=basic, perf=perf)
     C.save(root, cfg)

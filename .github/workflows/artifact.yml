@@ -313,6 +313,77 @@ jobs:
           print("filter_module artifact smoke: PASSED")
           PYEOF
 
+      - name: Install filter_module C library
+        run: |
+          cmake -S filter_module_test/my_filters \
+                -B filter_module_test/my_filters/build \
+                -DCMAKE_INSTALL_PREFIX="$HOME/filters_prefix"
+          cmake --install filter_module_test/my_filters/build
+
+      - name: Verify filter_module C consumers (pkg-config + CMake find_package)
+        run: |
+          PREFIX="$HOME/filters_prefix"
+          LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | head -1)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-filters.pc" -exec dirname {} \; | head -1)
+
+          cat > /tmp/filters_consumer.c << 'EOF'
+          #include "my_filters.h"
+          #include <assert.h>
+          #include <complex.h>
+          #include <math.h>
+          #include <stdio.h>
+
+          int main(void) {
+              fir_state_t *f = fir_create(1.0f);
+
+              float h[16] = {0};
+              h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
+              fir_set_coeffs(f, h);
+
+              float complex in[16]  = {0};
+              float complex out[16] = {0};
+              in[0] = 1.0f + 0.0f * I;
+              fir_steps(f, in, out, 16);
+
+              assert(fabsf(crealf(out[0]) - 0.25f) < 1e-6f);
+              assert(fabsf(crealf(out[1]) - 0.50f) < 1e-6f);
+              assert(fabsf(crealf(out[2]) - 0.25f) < 1e-6f);
+              assert(fabsf(crealf(out[3]))          < 1e-6f);
+
+              fir_reset(f);
+              fir_destroy(f);
+              puts("my_filters fir: ok");
+              return 0;
+          }
+          EOF
+
+          # pkg-config
+          gcc -O2 -std=c99 \
+            $(pkg-config --cflags my-filters) \
+            /tmp/filters_consumer.c \
+            $(pkg-config --libs my-filters) \
+            -Wl,-rpath,"$LIB_DIR" \
+            -lm -o /tmp/filters_consumer_pkgconfig
+          /tmp/filters_consumer_pkgconfig
+
+          # CMake find_package
+          mkdir /tmp/cmake_filters_consumer
+          cp /tmp/filters_consumer.c /tmp/cmake_filters_consumer/
+          cat > /tmp/cmake_filters_consumer/CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(filters_consumer C)
+          find_package(my_filters REQUIRED)
+          add_executable(filters_consumer filters_consumer.c)
+          target_link_libraries(filters_consumer PRIVATE my_filters::my_filters_lib m)
+          set_target_properties(filters_consumer PROPERTIES
+              INSTALL_RPATH_USE_LINK_PATH ON)
+          EOF
+          cmake -B /tmp/cmake_filters_consumer/build /tmp/cmake_filters_consumer \
+            -DCMAKE_PREFIX_PATH="$PREFIX" \
+            -DCMAKE_BUILD_RPATH="$LIB_DIR"
+          cmake --build /tmp/cmake_filters_consumer/build
+          /tmp/cmake_filters_consumer/build/filters_consumer
+
       - name: Add a third object — verify module regeneration
         working-directory: filter_module_test/my_filters
         run: |

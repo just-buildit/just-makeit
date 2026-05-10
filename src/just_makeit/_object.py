@@ -225,13 +225,18 @@ def run(
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
 
-    # Root CMakeLists: add_subdirectory for the new object's core
+    # Root CMakeLists: add_subdirectory + wire core into combined C library
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
         cmake_text = cmake_path.read_text(encoding="utf-8")
         sub = f"add_subdirectory(native/src/{comp})\n"
         if sub not in cmake_text:
             cmake_text += sub
+            if f"{pkg}_lib" in cmake_text:
+                cmake_text += (
+                    f"target_sources({pkg}_lib PRIVATE"
+                    f" $<TARGET_OBJECTS:{comp}_core>)\n"
+                )
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
 
