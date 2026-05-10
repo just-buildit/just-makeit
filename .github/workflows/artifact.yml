@@ -42,7 +42,7 @@ jobs:
       - name: Scaffold fir_filter project
         run: |
           just-makeit new my_fir \
-            --component fir_filter \
+            --object fir_filter \
             --state "coeffs:float[16]" \
             --state "delay:float _Complex[16]" \
             --state "gain:float:1.0"
@@ -84,10 +84,10 @@ jobs:
         working-directory: my_fir
         run: make && make test
 
-      - name: Add second component — verify __init__.py splice
+      - name: Add second object — verify __init__.py splice
         working-directory: my_fir
         run: |
-          just-makeit init gain \
+          just-makeit object gain \
             --arg-type float \
             --return-type float \
             --state gain:float:1.0
