@@ -3375,7 +3375,8 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
-\t$(PYTHON) -m pytest src/ -v 2>/dev/null || \
+\t$(PYTHON) -m pytest src/ -v 2>/dev/null; ret=$$?; \
+\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || \
 \t\t$(PYTHON) -m unittest discover -s src/<<package>>/tests -t src -p "test_*.py" -v
 
 bench: build

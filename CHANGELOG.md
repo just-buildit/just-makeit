@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.8.3\] — 2026-05-10
+
+### Fixed
+
+- Generated `Makefile` `test` target now treats pytest exit code 5 ("no tests
+  collected") as success rather than falling through to the `unittest discover`
+  fallback.  Module-only projects (no standalone components) have no
+  `src/<pkg>/tests/` directory, so the fallback always failed.
+
+______________________________________________________________________
+
 ## \[0.8.2\] — 2026-05-10
 
 ### Fixed
