@@ -29,7 +29,7 @@ just-makeit new my_filters
 cd my_filters
 ```
 
-`just-makeit new` with no `--component` creates the project scaffold only:
+`just-makeit new` with no `--object` creates the project scaffold only:
 `CMakeLists.txt`, `pyproject.toml`, `just-makeit.toml`, and the `native/`
 directory tree — but no component yet.  Types come next.
 
@@ -84,7 +84,7 @@ just-makeit object biquad \
 
 `just-makeit object` does two things for each type:
 
-**Per-object C library** (same as `just-makeit init`, no Python module target):
+**Per-object C library** (same as `just-makeit object`, no Python module target):
 
 | File | Purpose |
 |------|---------|

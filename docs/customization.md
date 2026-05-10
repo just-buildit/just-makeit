@@ -7,8 +7,8 @@ ______________________________________________________________________
 
 ## 1. Declare your state variables upfront
 
-Use `--state name:type[:default]` when running `new` or `init` so the
-scaffolding matches your component from the start:
+Use `--state name:type[:default]` when running `new` or `object` so the
+scaffolding matches your object from the start:
 
 ```sh
 just-makeit new my_filter \
@@ -21,10 +21,10 @@ reset behaviour, and Python type stubs for each variable in one shot.
 
 ______________________________________________________________________
 
-## 2. Add state variables to an existing component
+## 2. Add state variables to an existing object
 
 ```sh
-just-makeit add --component my_filter --state drive:double:1.0
+just-makeit add --object my_filter --state drive:double:1.0
 ```
 
 Regenerates the six state-sensitive files from the updated state list.
@@ -37,18 +37,18 @@ Use this for any scalar state variable that follows the standard lifecycle
 
 ______________________________________________________________________
 
-## 3. Add a second component
+## 3. Add a second standalone object
 
 ```sh
-just-makeit init bpf \
+just-makeit object bpf \
     --state center_freq:double:1000.0 \
     --state bandwidth:double:200.0    \
     --state order:int:4
 ```
 
-Adds a `bpf/` component directory, updates `CMakeLists.txt`, registers the
-component in `just-makeit.toml`, and adds the Python type stub and test.
-See the [Workflow](workflow.md) page for the full multi-component layout.
+Adds a `bpf/` object directory, updates `CMakeLists.txt`, registers the
+object in `just-makeit.toml`, and adds the Python type stub and test.
+See the [Workflow](workflow.md) page for the full multi-object layout.
 
 ______________________________________________________________________
 

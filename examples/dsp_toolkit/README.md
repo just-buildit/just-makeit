@@ -12,7 +12,7 @@ the generator currently needs a manual touch when you add a second component.
 
 ```sh
 just-makeit new dsp_toolkit \
-    --component gain \
+    --object gain \
     --arg-type float \
     --return-type float \
     --state "gain:float:1.0"
@@ -49,14 +49,14 @@ gain_step(const gain_state_t *state, float x)
 ## 3. Add a second component
 
 ```sh
-just-makeit init ema \
+just-makeit object ema \
     --arg-type float \
     --return-type float \
     --state "alpha:double:0.1" \
     --state "prev:float:0.0"
 ```
 
-`just-makeit init` adds `ema` alongside `gain` in the same project:
+`just-makeit object` adds `ema` alongside `gain` in the same project:
 
 - new C header, source, test, and benchmark under `native/`
 - new Python stub, test, and benchmark under `src/dsp_toolkit/`
@@ -129,7 +129,7 @@ print(f"patched {header}")
 
 ## 5. Both components are exported automatically
 
-After `just-makeit init`, `__init__.py` is updated in-place — the new import
+After `just-makeit object`, `__init__.py` is updated in-place — the new import
 and `__all__` entry are spliced in without touching anything else:
 
 ```python

@@ -1,9 +1,9 @@
 """
 _new.py — `just-makeit new` command.
 
-Creates a new project scaffold in a new directory. With --component also
-scaffolds the first C extension component in the same step.  With --module
-(repeatable) scaffolds one or more empty extension modules.
+Creates a new project scaffold in a new directory. With --object also
+scaffolds the first object in the same step.  With --module (repeatable)
+scaffolds one or more empty extension modules.
 """
 
 import sys
@@ -32,7 +32,7 @@ def _write(path: Path, content: str) -> None:
 def run(
     project: str,
     dest: Path | None = None,
-    component: str | None = None,
+    object_name: str | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
     modules: list[str] | None = None,
     basic: bool = False,
@@ -90,11 +90,11 @@ def run(
     print(f"  create  {root / C.FILENAME}")
     print()
 
-    if component:
-        from . import _init
+    if object_name:
+        from . import _object
 
-        _init.run(root, component, state_vars, perf=perf, pure=pure,
-                  arg_type=arg_type, return_type=return_type, _hint=False)
+        _object.run(root, object_name, None, state_vars, perf=perf, pure=pure,
+                    arg_type=arg_type, return_type=return_type, _hint=False)
         print()
         print(f"Done!  cd {root.name} && make && make test")
     elif modules:
@@ -115,4 +115,4 @@ def run(
         )
         _write(root / ".benchmarks" / ".gitkeep", "")
         print()
-        print(f"Done!  cd {root.name} && just-makeit init <component>")
+        print(f"Done!  cd {root.name} && just-makeit object <name>")

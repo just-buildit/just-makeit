@@ -53,7 +53,7 @@ def _scaffold_plain(tmp_path_factory):
     r = _run(
         [
             "just-makeit", "new", "my_corr",
-            "--component", "sliding_correlator",
+            "--object", "sliding_correlator",
             "--state", "ref:float _Complex[16]",
             "--state", "delay:float _Complex[16]",
         ],
@@ -81,7 +81,7 @@ def _scaffold_perf(tmp_path_factory):
     r = _run(
         [
             "just-makeit", "new", "my_corr",
-            "--component", "sliding_correlator",
+            "--object", "sliding_correlator",
             "--state", "ref:float _Complex[16]",
             "--state", "delay:float _Complex[16]",
         ],

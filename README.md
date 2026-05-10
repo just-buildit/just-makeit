@@ -23,8 +23,10 @@ ______________________________________________________________________
 
 ## Quickstart
 
+**Standalone object** — each type gets its own `.so`:
+
 ```sh
-just-makeit new my_project --component engine --state gain:double:1.0
+just-makeit new my_project --object engine --state gain:double:1.0
 cd my_project && make && make test
 ```
 
@@ -38,14 +40,14 @@ my_project/
 │   ├── inc/
 │   │   ├── clib_common.h           # common C99 types
 │   │   ├── pyex_common.h           # Python extension includes
-│   │   ├── my_project.h            # umbrella header (includes all components)
+│   │   ├── my_project.h            # umbrella header
 │   │   └── engine/
-│   │       └── engine_core.h       # component API
+│   │       └── engine_core.h       # object API  ← implement step() here
 │   ├── src/
 │   │   ├── my_project_lib.c        # combined C library stub (version symbol)
 │   │   └── engine/
 │   │       ├── CMakeLists.txt
-│   │       ├── engine_core.c       # core logic — your algorithm goes here
+│   │       ├── engine_core.c       # block processor + lifecycle
 │   │       └── engine_ext.c        # thin Python binding
 │   └── tests/
 │       └── test_engine_core.c      # CTest
@@ -67,13 +69,16 @@ my_project/
 └── just-makeit.toml
 ```
 
-**Group multiple types into a single subpackage module** using `module` + `object`:
+**Module subpackage** — multiple types share one `.so`:
 
 ```sh
 just-makeit new my_filters --module filter
 cd my_filters
-just-makeit object fir    --module filter --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
-just-makeit object biquad --module filter --arg-type float --return-type float --state "b0:double:1.0" ...
+just-makeit object fir    --module filter \
+    --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
+just-makeit object biquad --module filter \
+    --arg-type float --return-type float \
+    --state "b0:double:1.0" --state "b1:double:0.0" --state "a1:double:0.0"
 make && make test
 ```
 
@@ -96,10 +101,10 @@ just-makeit COMMAND
 | `new <project>` | Create a new project scaffold |
 | `new <project> --module name [--module name ...]` | Project + one or more empty modules |
 | `module <name>` | Scaffold an empty extension module (subpackage `.so`) |
-| `object <name> [--module name] [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to an existing module |
-| `new <project> --component name [--state ...] [--arg-type T] [--return-type T]` | Project + standalone component |
-| `init <component> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone component (its own `.so`) |
-| `add --state name:type[:default] [...]` | Add state variables to a component |
+| `object <name> --module name [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to a module subpackage |
+| `new <project> --object name [--state ...] [--arg-type T] [--return-type T]` | Project + first standalone object |
+| `object <name> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone object (its own `.so`) |
+| `add --state name:type[:default] [--object name] [...]` | Add state variables to a standalone object |
 | `perf` | Upgrade an existing project with performance annotations |
 | `config [key value]` | Show or edit project configuration |
 | `build [dir]` | Configure + build C, and package dist |
@@ -144,7 +149,7 @@ ______________________________________________________________________
 
 ## Python API
 
-**Standalone component** (`just-makeit init`):
+**Standalone object** (`just-makeit object`):
 
 ```python
 from my_project import Engine
@@ -190,7 +195,7 @@ ______________________________________________________________________
 
 ```sh
 just-makeit new my_project \
-    --component engine \
+    --object engine \
     --state center_freq:double:1000.0 \
     --state bandwidth:double:200.0 \
     --state order:int:4
@@ -239,7 +244,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`fir_filter/`](https://github.com/just-buildit/just-makeit/tree/main/examples/fir_filter) — 16-tap FIR filter processing complex I/Q signals, with perf annotations
 - [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
 - [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
-- [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-component library (Gain + Ema); demonstrates multi-component workflow and `__init__.py` auto-splice
+- [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-object library (Gain + Ema); demonstrates multi-object workflow and `__init__.py` auto-splice
 - [`filter_module/`](https://github.com/just-buildit/just-makeit/tree/main/examples/filter_module) — `Fir` + `Biquad` in a single `filter` subpackage `.so` using `module` + `object`
 
 ______________________________________________________________________

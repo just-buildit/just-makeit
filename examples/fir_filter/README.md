@@ -9,7 +9,7 @@ Follow along to scaffold, implement, build, and use it yourself.
 
 ```sh
 just-makeit new my_fir \
-    --component fir_filter \
+    --object fir_filter \
     --state "coeffs:float[16]" \
     --state "delay:float _Complex[16]" \
     --state "gain:float:1.0"
@@ -325,7 +325,7 @@ without any allocation inside the hot path.
 ```sh
 cd ..
 just-makeit new my_fir_pure \
-    --component fir_pure \
+    --object fir_pure \
     --pure \
     --param "coeffs:float[16]" \
     --param "delay:float _Complex[16]"

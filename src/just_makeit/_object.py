@@ -1,17 +1,15 @@
 """
 _object.py — `just-makeit object` command.
 
-Adds a new Python type ("object") to an existing module:
-  1. Generates the C library for the object (_core.h, _core.c, test, bench,
-     object-only CMakeLists with no Python module target)
-  2. Regenerates the module's _ext.c from all its objects (including the new one)
-  3. Regenerates the module's CMakeLists to link the new _core OBJECT lib
-  4. Updates the module's Python subpackage __init__.py
-  5. Updates just-makeit.toml
+Adds a Python type to an existing project:
 
-Usage:
-  just-makeit object fir                     # inferred if only one module
-  just-makeit object fir --module filter
+  Standalone (own .so):
+    just-makeit object gain                  # no --module → standalone
+    from my_pkg import Gain
+
+  In-module (shared .so subpackage):
+    just-makeit object fir --module filter   # grouped under filter subpackage
+    from my_pkg.filter import Fir
 """
 
 import sys
@@ -128,6 +126,7 @@ def run(
     pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
+    _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
         print(
@@ -148,24 +147,16 @@ def run(
 
     cfg = C.load(root)
 
-    # Resolve module
-    mods = C.modules(cfg)
+    # No --module → standalone object (own .so)
     if module is None:
-        if len(mods) == 1:
-            module = mods[0]
-        elif len(mods) == 0:
-            print(
-                "error: no modules defined. Run 'just-makeit module <name>' first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        else:
-            print(
-                f"error: multiple modules {mods}. Use --module to specify one.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif module not in mods:
+        from . import _init
+        _init.run(root, object_name, state_vars, perf=perf, pure=pure,
+                  arg_type=arg_type, return_type=return_type, _hint=_hint)
+        return
+
+    # --module given → in-module path
+    mods = C.modules(cfg)
+    if module not in mods:
         print(
             f"error: module '{module}' not found. "
             f"Run 'just-makeit module {module}' first.",

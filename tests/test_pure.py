@@ -19,7 +19,7 @@ from just_makeit import _config as C
 def scalar_pure(tmp_path):
     """Project with a scalar-pure component (all scalar state)."""
     dest = tmp_path / "my_norm"
-    new_run("my_norm", dest, component="norm", state_vars=[("scale", "double", "1.0")], pure=True)
+    new_run("my_norm", dest, object_name="norm", state_vars=[("scale", "double", "1.0")], pure=True)
     return dest
 
 
@@ -30,7 +30,7 @@ def struct_pure(tmp_path):
     new_run(
         "my_fir",
         dest,
-        component="fir",
+        object_name="fir",
         state_vars=[("taps", "float[16]", ""), ("n_taps", "int", "16")],
         pure=True,
     )
@@ -41,7 +41,7 @@ def struct_pure(tmp_path):
 def scalar_pure_no_state(tmp_path):
     """Scalar pure with no extra params (just x → y)."""
     dest = tmp_path / "my_pass"
-    new_run("my_pass", dest, component="passthrough", pure=True, state_vars=[])
+    new_run("my_pass", dest, object_name="passthrough", pure=True, state_vars=[])
     return dest
 
 
@@ -62,7 +62,7 @@ class TestPureConfig:
 
     def test_stateful_not_pure(self, tmp_path):
         dest = tmp_path / "s"
-        new_run("s", dest, component="gain")
+        new_run("s", dest, object_name="gain")
         cfg = C.load(dest)
         assert not C.is_pure_component(cfg, "gain")
 
@@ -271,34 +271,34 @@ class TestStructPureContent:
 class TestPureAutoDetect:
     def test_all_scalar_gives_scalar_style(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest, component="comp",
+        new_run("p", dest, object_name="comp",
                 state_vars=[("a", "double", "1.0"), ("b", "int", "4")], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "comp") == "scalar"
 
     def test_one_array_gives_struct_style(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest, component="comp",
+        new_run("p", dest, object_name="comp",
                 state_vars=[("buf", "float[8]", "")], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "comp") == "struct"
 
     def test_mixed_scalar_and_array_gives_struct(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest, component="comp",
+        new_run("p", dest, object_name="comp",
                 state_vars=[("gain", "double", "1.0"), ("buf", "float[8]", "")], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "comp") == "struct"
 
     def test_no_state_gives_scalar_style(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest, component="comp", state_vars=[], pure=True)
+        new_run("p", dest, object_name="comp", state_vars=[], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "comp") == "scalar"
 
     def test_no_pure_flag_gives_stateful(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest, component="comp", state_vars=[("gain", "double", "1.0")])
+        new_run("p", dest, object_name="comp", state_vars=[("gain", "double", "1.0")])
         cfg = C.load(dest)
         assert C.pure_style(cfg, "comp") is None
 

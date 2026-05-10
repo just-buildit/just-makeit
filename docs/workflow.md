@@ -6,14 +6,14 @@ ______________________________________________________________________
 
 ## Scenario 1 — Simple standalone extension
 
-A single C component exposed as a Python extension.  Good starting point for
+A single C object exposed as a Python extension.  Good starting point for
 wrapping an algorithm, DSP primitive, or performance-critical inner loop.
 
 ### 1. Scaffold
 
 ```sh
 just-makeit new my_dsp \
-    --component gain \
+    --object gain \
     --arg-type float \
     --return-type float \
     --state gain:float:1.0
@@ -95,48 +95,48 @@ make
 ```
 
 Patches `step()` with `JM_FORCEINLINE JM_HOT`, writes `jm_perf.h` and
-`jm_simd.h`, and records the setting so future `init` and `add` calls
+`jm_simd.h`, and records the setting so future `object` and `add` calls
 inherit it.  See [Performance annotations](perf.md) for the full reference.
 
 ______________________________________________________________________
 
 ## Scenario 2 — Python package with multiple extensions
 
-Multiple C components in one project, all accessible from a single Python
+Multiple C objects in one project, all accessible from a single Python
 package.
 
-### 1. Scaffold the first component
+### 1. Scaffold the first object
 
 ```sh
 just-makeit new dsp_toolkit \
-    --component gain \
+    --object gain \
     --arg-type float \
     --return-type float \
     --state gain:float:1.0
 cd dsp_toolkit && make
 ```
 
-### 2. Add a second component
+### 2. Add a second object
 
 ```sh
-just-makeit init ema \
+just-makeit object ema \
     --arg-type float \
     --return-type float \
     --state alpha:double:0.1 \
     --state prev:float:0.0
 ```
 
-`init` writes all C and Python files for the new component and updates:
+`object` writes all C and Python files for the new standalone object and updates:
 
 - root `CMakeLists.txt` — `add_subdirectory` + `target_sources($<TARGET_OBJECTS:…>)`
 - umbrella header `native/inc/dsp_toolkit.h` — `#include "ema/ema_core.h"`
 - `src/dsp_toolkit/__init__.py` — splices in `from .ema import Ema` and
   adds `"Ema"` to `__all__`, preserving any existing user edits
 
-After `init`, `__init__.py` looks like:
+After adding `ema`, `__init__.py` looks like:
 
 ```python
-"""dsp_toolkit — Gain component."""
+"""dsp_toolkit — Gain."""
 
 from .gain import Gain
 from .ema import Ema
@@ -146,7 +146,7 @@ __all__ = ["Gain", "Ema"]
 
 No manual edits required.
 
-### 3. Implement both components
+### 3. Implement both objects
 
 `gain_step` (read-only state):
 
@@ -178,7 +178,7 @@ make && make test
 ```
 
 CTest runs `test_gain_core` and `test_ema_core`.  pytest runs the full
-generated suite for both components.
+generated suite for both objects.
 
 ### 5. Use from Python
 
@@ -198,14 +198,14 @@ for x in signal:
     y = ema.step(gain.step(x))
 ```
 
-### 6. Add more components
+### 6. Add more objects
 
 ```sh
-just-makeit init dc_block --state r:double:0.995
+just-makeit object dc_block --state r:double:0.995
 ```
 
-Each `init` repeats the same pattern: new C files, updated CMake, updated
-`__init__.py`.  `make` picks up the new component automatically.
+Each `object` repeats the same pattern: new C files, updated CMake, updated
+`__init__.py`.  `make` picks up the new object automatically.
 
 ### 7. Install
 
@@ -332,9 +332,9 @@ pip install .
 The wheel contains one `.so` for the `filter` subpackage rather than one `.so`
 per type.
 
-### Module vs init — when to use which
+### Standalone object vs module object — when to use which
 
-| `just-makeit init` | `just-makeit module` + `just-makeit object` |
+| `just-makeit object` (no `--module`) | `just-makeit module` + `just-makeit object --module` |
 |---|---|
 | Each type gets its own `.so` | All types share one `.so` subpackage |
 | `from my_pkg import Gain, Ema` | `from my_pkg.filter import Fir, Biquad` |
@@ -348,7 +348,7 @@ ______________________________________________________________________
 
 ## Project layout (full)
 
-After scaffolding with one component and running `just-makeit perf`:
+After scaffolding with one object and running `just-makeit perf`:
 
 ```text
 my_dsp/
@@ -368,7 +368,7 @@ my_dsp/
 │   │   ├── jm_perf.h                   # JM_FORCEINLINE / JM_HOT / JM_UNROLL …
 │   │   ├── jm_simd.h                   # width-portable SIMD macros
 │   │   └── gain/
-│   │       └── gain_core.h             # component API  ← implement step() here
+│   │       └── gain_core.h             # object API  ← implement step() here
 │   ├── src/
 │   │   └── gain/
 │   │       ├── CMakeLists.txt
@@ -390,15 +390,15 @@ my_dsp/
 
 ______________________________________________________________________
 
-## Extending a component's state
+## Extending an object's state
 
 ```sh
-just-makeit add --component gain --state drive:double:1.0
+just-makeit add --object gain --state drive:double:1.0
 ```
 
 Regenerates the six state-sensitive files for `gain` from the updated state
 list.  `just-makeit.toml` is updated only after the files are written
-successfully.  When the project has a single component, `--component` may be
+successfully.  When the project has a single standalone object, `--object` may be
 omitted.
 
 ______________________________________________________________________
@@ -431,7 +431,7 @@ flowchart TD
     PY   --> PYUSER["**Python**\npip install .\nfrom my_dsp import Gain, Ema"]
 ```
 
-Each component's core logic compiles once (CMake OBJECT library) and links
+Each object's core logic compiles once (CMake OBJECT library) and links
 into both artifacts.
 
 ```sh
@@ -459,7 +459,7 @@ ______________________________________________________________________
 ## Configuration
 
 ```sh
-just-makeit config                  # show project + component registry
+just-makeit config                  # show project + object registry
 just-makeit config version 0.2.0    # update version
 ```
 
@@ -467,13 +467,13 @@ just-makeit config version 0.2.0    # update version
 
 ______________________________________________________________________
 
-## Pure (stateless) components
+## Pure (stateless) objects
 
 ```sh
-just-makeit init normalize --pure --param scale:double:1.0
+just-makeit object normalize --pure --param scale:double:1.0
 ```
 
-See [Stateful vs pure components](pure.md) for the decision guide.
+See [Stateful vs pure objects](pure.md) for the decision guide.
 
 ______________________________________________________________________
 

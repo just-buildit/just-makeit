@@ -5,7 +5,7 @@
 
 `just-makeit object` does two things for each type:
 
-**Per-object C library** (same as `just-makeit init`, no Python module target):
+**Per-object C library** (same as `just-makeit object`, no Python module target):
 
 | File | Purpose |
 |------|---------|

@@ -24,7 +24,7 @@ and a write-head index (`pos`).  `--perf` generates `jm_perf.h` and
 
 ```sh
 just-makeit new my_power \
-    --component power_est \
+    --object power_est \
     --state "delay:float[64]" \
     --state "sum_sq:double:0.0" \
     --state "pos:int:0" \

@@ -46,7 +46,7 @@ def project(tmp_path_factory):
             "just-makeit",
             "new",
             "my_fir",
-            "--component",
+            "--object",
             "fir_filter",
             "--state",
             "coeffs:float[16]",
@@ -251,7 +251,7 @@ def _scaffold_perf(tmp_path_factory):
     r = _run(
         [
             "just-makeit", "new", "my_fir",
-            "--component", "fir_filter",
+            "--object", "fir_filter",
             "--state", "coeffs:float[16]",
             "--state", "delay:float _Complex[16]",
             "--state", "gain:float:1.0",

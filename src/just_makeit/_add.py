@@ -99,7 +99,7 @@ def run(
 
     if not comps:
         print(
-            "error: project has no components yet. Run 'just-makeit init <component>' first.",
+            "error: project has no standalone objects yet. Run 'just-makeit object <name>' first.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -109,13 +109,13 @@ def run(
             component = comps[0]
         else:
             print(
-                f"error: project has multiple components {comps}. Use --component to specify one.",
+                f"error: project has multiple objects {comps}. Use --object to specify one.",
                 file=sys.stderr,
             )
             sys.exit(1)
     elif component not in comps:
         print(
-            f"error: component '{component}' not found. Available: {comps}",
+            f"error: object '{component}' not found. Available: {comps}",
             file=sys.stderr,
         )
         sys.exit(1)

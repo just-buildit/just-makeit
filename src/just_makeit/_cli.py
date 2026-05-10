@@ -10,32 +10,26 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  new <proj> [dir] [--component name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
+  new <proj> [dir] [--object name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
              [--arg-type TYPE] [--return-type TYPE]
              [--module name ...]
-                     Create a new project; optionally scaffold a first component or one or more modules
-                     --component name   scaffold a standalone component (.so) in the same step
+                     Create a new project; optionally scaffold a first object or one or more modules
+                     --object name      scaffold a standalone object (.so) in the same step
                      --module name      scaffold an empty extension module; repeatable
                      --basic uses a plain Makefile instead of CMake
                      --perf generates jm_perf.h with compiler-hint macros (JM_HOT, JM_LIKELY, …)
-                     --pure generates a stateless component (scalar params or caller-managed struct)
+                     --pure generates a stateless object (scalar params or caller-managed struct)
                      --arg-type TYPE    C type for step()/fn() input x (default: float _Complex)
                      --return-type TYPE C type for step()/fn() return value (default: --arg-type)
-  init <name> [--state|--param name:type[:default] ...] [--perf] [--pure]
-             [--arg-type TYPE] [--return-type TYPE]
-                     Add a standalone component (its own .so) to the project
-                     --perf enables performance hints (inherited from project config by default)
-                     --pure generates a stateless component (auto-detected: scalar or struct)
-                     --param is idiomatic with --pure; --state is idiomatic without it (both work)
-                     --arg-type / --return-type set the step() I/O C types
   module <name>      Scaffold a new Python extension module (a subpackage .so that
                      hosts multiple types added via 'object')
   object <name> [--module name] [--state|--param name:type[:default] ...] [--perf] [--pure]
              [--arg-type TYPE] [--return-type TYPE]
-                     Add a Python type to an existing module
-                     --module is inferred when only one module exists
-  add --state|--param name:type[:default] [--component name] [...]
-                     Add state/param variables to an existing standalone component
+                     Add a Python type to the project
+                     Without --module: standalone object with its own .so
+                     With --module:    type grouped into a shared module subpackage .so
+  add --state|--param name:type[:default] [--object name] [...]
+                     Add state/param variables to an existing standalone object
 
   perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
                      annotations without overwriting any user code
@@ -58,15 +52,15 @@ Pure mode auto-detection:
 
 Examples:
   just-makeit new my_filter                                # project scaffold only
-  just-makeit new my_filter --component my_filter         # project + first component
-  just-makeit new my_bpf --component bpf --state center:double --state bw:double
+  just-makeit new my_filter --object my_filter            # project + first object
+  just-makeit new my_bpf --object bpf --state center:double --state bw:double
   just-makeit new my_filters --module filter              # project + one module
   just-makeit new my_dsp --module osc --module env        # project + two modules
-  just-makeit init engine --state rate:double:1.0         # stateful component
-  just-makeit init norm --pure --param scale:double:1.0   # scalar pure component
-  just-makeit init fir --pure --param taps:float[64]      # struct pure (array → struct)
-  just-makeit add --state order:int:4                     # add state var (stateful)
-  just-makeit add --param n_taps:int:16                   # add param (pure component)
+  just-makeit object engine --state rate:double:1.0       # standalone stateful object
+  just-makeit object norm --pure --param scale:double:1.0 # scalar pure object
+  just-makeit object fir --module filter                  # object in a module
+  just-makeit add --state order:int:4                     # add state var
+  just-makeit add --param n_taps:int:16                   # add param (pure object)
   just-makeit config                                      # show project config
   just-makeit config version 0.2.0                        # set version
   just-makeit build                                       # build wheel into dist/
@@ -133,7 +127,7 @@ def main() -> None:
 
         project = args[1]
         dest = None
-        component = None
+        object_name = None
         modules: list[str] = []
         basic = False
         perf = False
@@ -146,12 +140,12 @@ def main() -> None:
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok == "--component":
+            if tok == "--object":
                 i += 1
                 if i >= len(remaining):
-                    print("error: --component requires a name", file=sys.stderr)
+                    print("error: --object requires a name", file=sys.stderr)
                     sys.exit(1)
-                component = remaining[i]
+                object_name = remaining[i]
                 i += 1
             elif tok == "--module":
                 i += 1
@@ -196,63 +190,9 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, component, state_vars or None, modules=modules,
+        _new.run(project, dest, object_name, state_vars or None, modules=modules,
                  basic=basic, perf=perf, pure=pure,
                  arg_type=arg_type, return_type=return_type)
-
-    elif cmd == "init":
-        if len(args) < 2:
-            print("error: 'init' requires a component name.", file=sys.stderr)
-            print(
-                "Usage: just-makeit init <name> [--state name:type ...]",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        from . import _init
-
-        component = args[1]
-        perf: bool | None = None
-        pure = False
-        arg_type = "float _Complex"
-        return_type = None
-        state_vars: list[tuple[str, str, str]] = []
-
-        remaining = args[2:]
-        i = 0
-        while i < len(remaining):
-            tok = remaining[i]
-            if tok in ("--state", "--param"):
-                var, i = _parse_state_flags(remaining, i)
-                state_vars.append(var)
-            elif tok == "--perf":
-                perf = True
-                i += 1
-            elif tok == "--pure":
-                pure = True
-                i += 1
-            elif tok in ("--arg-type", "--return-type"):
-                i += 1
-                if i >= len(remaining):
-                    print(f"error: {tok} requires a type", file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                val = remaining[i]
-                if val not in T._CTYPE_META:
-                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
-                    sys.exit(1)
-                if tok == "--arg-type":
-                    arg_type = val
-                else:
-                    return_type = val
-                i += 1
-            else:
-                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
-                sys.exit(1)
-
-        _init.run(Path.cwd(), component, state_vars or None, perf=perf, pure=pure,
-                  arg_type=arg_type, return_type=return_type)
 
     elif cmd == "module":
         if len(args) < 2:
@@ -329,10 +269,10 @@ def main() -> None:
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok == "--component":
+            if tok == "--object":
                 i += 1
                 if i >= len(remaining):
-                    print("error: --component requires a name", file=sys.stderr)
+                    print("error: --object requires a name", file=sys.stderr)
                     sys.exit(1)
                 component = remaining[i]
                 i += 1

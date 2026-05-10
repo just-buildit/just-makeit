@@ -9,7 +9,7 @@ projects build and run correctly without any of it.
 **New project:**
 
 ```sh
-just-makeit new my_filter --component filter --perf
+just-makeit new my_filter --object filter --perf
 ```
 
 **Existing project** (preserves all user code):

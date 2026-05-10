@@ -43,8 +43,8 @@ CMake OBJECT library and links into both the Python `.so` and the combined
 shared library.  End users who don't use Python at all can consume it via the
 standard mechanisms below.
 
-This applies to all project layouts — standalone components (`just-makeit init`),
-multi-type modules (`just-makeit module` + `just-makeit object`), or a mix of both.
+This applies to all project layouts — standalone objects (`just-makeit object`),
+multi-type modules (`just-makeit module` + `just-makeit object --module`), or a mix of both.
 
 ______________________________________________________________________
 

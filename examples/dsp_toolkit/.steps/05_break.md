@@ -1,6 +1,6 @@
 ## 5. Both components are exported automatically
 
-After `just-makeit init`, `__init__.py` is updated in-place — the new import
+After `just-makeit object`, `__init__.py` is updated in-place — the new import
 and `__all__` entry are spliced in without touching anything else:
 
 ```python

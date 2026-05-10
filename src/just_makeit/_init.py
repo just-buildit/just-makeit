@@ -1,7 +1,7 @@
 """
-_init.py — `just-makeit init` command.
+_init.py — standalone object scaffolding (internal).
 
-Adds a new C extension component to an existing project.
+Called by `just-makeit object` (no --module) and `just-makeit new --object`.
 """
 
 import json

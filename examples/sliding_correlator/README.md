@@ -22,7 +22,7 @@ state layout, and different semantics — and the macro handles it identically.
 
 ```sh
 just-makeit new my_corr \
-    --component sliding_correlator \
+    --object sliding_correlator \
     --state "ref:float _Complex[16]" \
     --state "delay:float _Complex[16]"
 cd my_corr

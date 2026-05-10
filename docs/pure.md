@@ -20,7 +20,7 @@ ______________________________________________________________________
 ## Stateful (default)
 
 ```sh
-just-makeit new my_dsp --component agc \
+just-makeit new my_dsp --object agc \
     --state attack:double:0.01 \
     --state release:double:0.1 \
     --state envelope:double:0.0
@@ -73,7 +73,7 @@ ______________________________________________________________________
 ## Pure scalar
 
 ```sh
-just-makeit new my_dsp --component normalize \
+just-makeit new my_dsp --object normalize \
     --pure \
     --param scale:double:1.0 \
     --param offset:double:0.0
@@ -129,7 +129,7 @@ ______________________________________________________________________
 ## Pure struct
 
 ```sh
-just-makeit new my_dsp --component fir_pure \
+just-makeit new my_dsp --object fir_pure \
     --pure \
     --param coeffs:"float[16]" \
     --param delay:"float _Complex[16]"
@@ -291,11 +291,11 @@ flowchart TD
     Q2 -->|Yes| STATEFUL
     Q2 -->|"No — caller needs allocation\ncontrol, alignment, or direct\nstruct access"| STRUCT
 
-    SCALAR["<b>--pure</b> (scalar)\njust-makeit init comp --pure\n  --param scale:double:1.0\n───────────────────────\nno allocation · fully reentrant\ncomp(x, scale=1.0)\ncomp.steps(arr, scale=1.0)\ne.g. normalize, clip, dB, dither"]
+    SCALAR["<b>--pure</b> (scalar)\njust-makeit object comp --pure\n  --param scale:double:1.0\n───────────────────────\nno allocation · fully reentrant\ncomp(x, scale=1.0)\ncomp.steps(arr, scale=1.0)\ne.g. normalize, clip, dB, dither"]
 
-    STATEFUL["<b>stateful</b> (default)\njust-makeit init comp\n  --state gain:double:1.0\n───────────────────────\nlibrary owns opaque pointer\nobj = Comp(); obj.step(x)\ne.g. IIR filter, oscillator,\nPLL, running stats, AGC"]
+    STATEFUL["<b>stateful</b> (default)\njust-makeit object comp\n  --state gain:double:1.0\n───────────────────────\nlibrary owns opaque pointer\nobj = Comp(); obj.step(x)\ne.g. IIR filter, oscillator,\nPLL, running stats, AGC"]
 
-    STRUCT["<b>--pure</b> (struct)\njust-makeit init comp --pure\n  --param taps:float[64]\n───────────────────────\ncaller owns params_t\nstack · aligned_alloc · pool · mmap\nobj = Comp(); obj(x); obj.steps(arr)\ne.g. FIR, matched filter,\nN-channel convolution engine"]
+    STRUCT["<b>--pure</b> (struct)\njust-makeit object comp --pure\n  --param taps:float[64]\n───────────────────────\ncaller owns params_t\nstack · aligned_alloc · pool · mmap\nobj = Comp(); obj(x); obj.steps(arr)\ne.g. FIR, matched filter,\nN-channel convolution engine"]
 
     style SCALAR   fill:#1e3a5f,stroke:#4a9eff,color:#e8f4fd
     style STATEFUL fill:#1e3a2f,stroke:#4adf6f,color:#e8fdf0
@@ -333,7 +333,7 @@ ______________________________________________________________________
 `--pure` and `--perf` are orthogonal and composable:
 
 ```sh
-just-makeit init norm --pure --param scale:double:1.0
+just-makeit object norm --pure --param scale:double:1.0
 just-makeit perf   # adds JM_FORCEINLINE JM_HOT to norm_fn
 ```
 

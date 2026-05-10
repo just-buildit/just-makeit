@@ -34,7 +34,7 @@ def project(tmp_path_factory):
             "just-makeit",
             "new",
             "my_stats",
-            "--component",
+            "--object",
             "running_stats",
             "--state",
             "n:int32_t:0",

@@ -1,5 +1,31 @@
 # Changelog
 
+## \[0.9.0\] — 2026-05-10
+
+### Breaking
+
+- `just-makeit init` removed.  Use `just-makeit object <name>` (standalone,
+  own `.so`) or `just-makeit object <name> --module <mod>` (grouped into a
+  module subpackage).
+- `new --component name` renamed to `new --object name`.
+- `add --component name` renamed to `add --object name`.
+
+At the C level nothing changes — the generated `_core.h`, `_core.c`, OBJECT
+library, and Python binding are identical.  Only the CLI surface is unified:
+`object` is now the single command for adding any Python type, standalone or
+in-module.
+
+### Docs
+
+- README, workflow, commands, pure, perf, customization, c-library, and all
+  example docs updated to use `object`/`--object` throughout.
+- Quickstart restructured: **Standalone object** and **Module subpackage** are
+  now clearly labelled separate paths.
+- Commands table split `object` into two rows: one for standalone (no
+  `--module`), one for in-module (with `--module`).
+
+______________________________________________________________________
+
 ## \[0.8.4\] — 2026-05-10
 
 ### Added

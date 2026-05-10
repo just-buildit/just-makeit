@@ -3,6 +3,6 @@
 ```{01_scaffold.sh}
 ```
 
-`just-makeit new` with no `--component` creates the project scaffold only:
+`just-makeit new` with no `--object` creates the project scaffold only:
 `CMakeLists.txt`, `pyproject.toml`, `just-makeit.toml`, and the `native/`
 directory tree — but no component yet.  Types come next.

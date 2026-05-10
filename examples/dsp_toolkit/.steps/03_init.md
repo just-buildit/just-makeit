@@ -3,7 +3,7 @@
 ```{03_init.sh}
 ```
 
-`just-makeit init` adds `ema` alongside `gain` in the same project:
+`just-makeit object` adds `ema` alongside `gain` in the same project:
 
 - new C header, source, test, and benchmark under `native/`
 - new Python stub, test, and benchmark under `src/dsp_toolkit/`
