@@ -11,6 +11,7 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
@@ -26,20 +27,15 @@ jobs:
           sudo apt-get install -y cmake gcc 2>/dev/null || \
           brew install cmake 2>/dev/null || true
 
-      - name: Wait for PyPI index propagation
+      - name: Install just-makeit from PyPI (with retry)
         run: |
           VERSION="${{ github.event.workflow_run.head_branch }}"
           for i in $(seq 1 20); do
-            pip install "just-makeit==${VERSION#v}" --dry-run \
-              --no-cache-dir 2>/dev/null && break
+            pip install "just-makeit==${VERSION#v}" --no-cache-dir && break
             echo "Not yet, retry $i/20..."
             sleep 30
           done
-
-      - name: Install just-makeit from PyPI
-        run: |
-          VERSION="${{ github.event.workflow_run.head_branch }}"
-          pip install "just-makeit==${VERSION#v}" --no-cache-dir
+          pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
 
       # ── Python workflow ──────────────────────────────────────────────────────
 
