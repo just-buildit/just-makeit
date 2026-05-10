@@ -35,10 +35,16 @@ pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-confi
 
 ______________________________________________________________________
 
-  The same C code
-that drives the Python extension — compiled once as a CMake OBJECT library —
-also links into `lib<project>.so`.  End users who don't use Python at all can
-consume it via the standard mechanisms.
+## Overview
+
+Every just-makeit project ships a `lib<project>.so` in addition to its Python
+extensions.  The same C code drives both: each component compiles once as a
+CMake OBJECT library and links into both the Python `.so` and the combined
+shared library.  End users who don't use Python at all can consume it via the
+standard mechanisms below.
+
+This applies to all project layouts — standalone components (`just-makeit init`),
+multi-type modules (`just-makeit module` + `just-makeit object`), or a mix of both.
 
 ______________________________________________________________________
 
