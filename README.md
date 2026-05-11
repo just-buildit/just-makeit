@@ -139,22 +139,24 @@ ______________________________________________________________________
 just-makeit COMMAND
 ```
 
-| Command | Description |
-| ------- | ----------- |
-| `new <project>` | Create a new project scaffold |
-| `new <project> --module name [--module name ...]` | Project + one or more empty modules |
-| `module <name>` | Scaffold an empty extension module (subpackage `.so`) |
-| `object <name> --module name [--state ...] [--arg-type T] [--return-type T]` | Add a Python type to a module subpackage |
-| `new <project> --object name [--state ...] [--arg-type T] [--return-type T]` | Project + first standalone object |
-| `object <name> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone object (its own `.so`) |
-| `add --state name:type[:default] [--object name] [...]` | Add state variables to a standalone object |
-| `method <name> [--arg-type T] [--return-type T] [--variable-output] [--multi-output T ...]` | Add a named execute method to an object |
-| `property <name> --type T [--writable] [--field]` | Add a property; `--field` adds a struct field with auto-implemented getter/setter |
-| `perf` | Upgrade an existing project with performance annotations |
-| `config [key value]` | Show or edit project configuration |
-| `build [dir]` | Configure + build C, and package dist |
-| `test` | Build and run CTest + pytest |
-| `dry-run` | Preview what would be compiled |
+| Command           | Options                                                                           | Description                                      |
+| ----------------- | --------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `new <project>`   | `--module name` (repeatable)                                                      | Scaffold project + empty module subpackage(s)    |
+| `new <project>`   | `--object name [--state ...] [--arg-type T] [--return-type T] [--perf] [--pure]` | Scaffold project + first standalone object       |
+| `module <name>`   |                                                                                   | Scaffold an empty extension module               |
+| `object <name>`   | `--module name [--state ...] [--arg-type T] [--return-type T] [--perf] [--pure]` | Add a type to a module subpackage `.so`          |
+| `object <name>`   | `[--state ...] [--arg-type T] [--return-type T] [--perf] [--pure]`               | Add a standalone object (own `.so`)              |
+| `add`             | `--state name:type[:default] [--object name]`                                    | Add state variables to an existing object        |
+| `method <name>`   | `[--param n:T] [--arg-type T] [--return-type T] [--variable-output] [--multi-output T ...]` | Add a named execute method            |
+| `property <name>` | `--type T [--writable] [--field]`                                                 | Add a property (read-only or read-write)         |
+| `function <name>` | `--module mod [--param n:T] [--return-type T] [--doc "text"]`                    | Add a module-level function (no state handle)    |
+| `perf`            |                                                                                   | Apply performance annotations to existing project|
+| `config`          | `[key value]`                                                                     | Show or edit `just-makeit.toml`                  |
+| `build`           | `[dir]`                                                                           | Build C extensions and package a wheel           |
+| `test`            |                                                                                   | Run CTest + pytest                               |
+| `dry-run`         |                                                                                   | Preview what would be compiled                   |
+| `install-deps`    | `[path]`                                                                          | Install cmake, C compiler, numpy; create venv    |
+| `example`         | `[name]`                                                                          | Run a bundled end-to-end example                 |
 
 See [State Variable Types](https://just-buildit.github.io/just-makeit/types/) for supported types, defaults, and C/Python mappings.
 
