@@ -29,7 +29,7 @@ def test_readme_assembled(assemble_py):
 
     result = mod.assemble()
     readme = assemble_py.parent / "README.md"
-    current = readme.read_text() if readme.exists() else ""
+    current = readme.read_text(encoding="utf-8") if readme.exists() else ""
     assert current == result, (
         f"{readme.relative_to(Path(__file__).parent.parent)} is stale — "
         f"run: python3 {assemble_py.relative_to(Path(__file__).parent.parent)}"

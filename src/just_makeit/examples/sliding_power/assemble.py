@@ -30,7 +30,7 @@ def _resolve(md: str, step_dir: Path) -> str:
         fname = m.group(1)
         fpath = step_dir / fname
         lang = _EXT_LANG.get(fpath.suffix, "")
-        content = fpath.read_text().rstrip("\n")
+        content = fpath.read_text(encoding="utf-8").rstrip("\n")
         return f"```{lang}\n{content}\n```"
 
     return _REF_RE.sub(_sub, md)
@@ -39,7 +39,7 @@ def _resolve(md: str, step_dir: Path) -> str:
 def assemble() -> str:
     parts: list[str] = []
     for md_file in sorted(STEPS.glob("*.md")):
-        parts.append(_resolve(md_file.read_text().rstrip(), STEPS))
+        parts.append(_resolve(md_file.read_text(encoding="utf-8").rstrip(), STEPS))
     return "\n\n---\n\n".join(parts) + "\n"
 
 
@@ -47,13 +47,13 @@ def main() -> None:
     check = "--check" in sys.argv
     result = assemble()
     if check:
-        current = OUT.read_text() if OUT.exists() else ""
+        current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
         if current != result:
             print("README.md is stale — run: python3 assemble.py", file=sys.stderr)
             sys.exit(1)
         print("README.md is up to date.")
     else:
-        OUT.write_text(result)
+        OUT.write_text(result, encoding="utf-8")
         print(f"wrote {OUT}")
 
 
