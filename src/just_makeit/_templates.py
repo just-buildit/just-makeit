@@ -1057,6 +1057,7 @@ def make_state_ctx(
         "getset_def": "",
         "tp_getset_decl": "",
         "property_decls": "",
+        "property_struct_fields": "",
     }
 
 
@@ -1710,6 +1711,7 @@ def make_properties_ctx(
         "getset_def": "",
         "tp_getset_decl": "",
         "property_decls": "",
+        "property_struct_fields": "",
     }
     if not properties:
         return _EMPTY
@@ -1724,49 +1726,76 @@ def make_properties_ctx(
     getter_parts: list[str] = []
     getset_entries: list[str] = []
     decl_lines: list[str] = []
+    struct_field_lines: list[str] = []
 
     for p in properties:
         pname: str = p["name"]
         ctype: str = p.get("ctype", "size_t")
         writable: bool = p.get("writable", False)
+        field: bool = p.get("field", False)
 
         meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
-        to_py = meta["to_py"](f"{component}_get_{pname}(self->handle)")
         disp = _ctype_display(ctype)
 
-        getter = (
-            f"static PyObject *\n"
-            f"{Component}_getprop_{pname}({Component}Object *self,"
-            f" void *Py_UNUSED(closure))\n"
-            f"{{\n"
-            f"{guard}"
-            f"    /* <<IMPLEMENT: return the computed or stored value>> */\n"
-            f"    return {to_py};\n"
-            f"}}"
-        )
-        getter_parts.append(getter)
+        if field:
+            # Struct-backed property: direct struct field access,
+            # no extern C function declaration needed.
+            struct_field_lines.append(f"    {disp} {pname};")
+            to_py = meta["to_py"](f"self->handle->{pname}")
+            getter = (
+                f"static PyObject *\n"
+                f"{Component}_getprop_{pname}({Component}Object *self,"
+                f" void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"{guard}"
+                f"    return {to_py};\n"
+                f"}}"
+            )
+        else:
+            # Computed property: caller implements comp_get_pname().
+            to_py = meta["to_py"](f"{component}_get_{pname}(self->handle)")
+            getter = (
+                f"static PyObject *\n"
+                f"{Component}_getprop_{pname}({Component}Object *self,"
+                f" void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"{guard}"
+                f"    /* <<IMPLEMENT: return the computed or stored value>> */\n"
+                f"    return {to_py};\n"
+                f"}}"
+            )
+            decl_lines.append(
+                f"{disp} {component}_get_{pname}"
+                f"(const {component}_state_t *state);"
+            )
 
-        decl_lines.append(
-            f"{disp} {component}_get_{pname}(const {component}_state_t *state);"
-        )
+        getter_parts.append(getter)
 
         setter_name = "NULL"
         if writable:
             setter_name = f"(setter){Component}_setprop_{pname}"
             if "parse_type" in meta:
-                setter_body = (
+                parse_block = (
                     f"    {meta['parse_type']} v_raw = {meta['parse_zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw)) return -1;\n'
+                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw))'
+                    f" return -1;\n"
                     f"    {disp} v = {meta['to_c']('v')};\n"
-                    f"    {component}_set_{pname}(self->handle, v);\n"
-                    f"    return 0;\n"
                 )
             else:
-                setter_body = (
+                parse_block = (
                     f"    {disp} v = {meta['zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v)) return -1;\n'
+                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v))'
+                    f" return -1;\n"
+                )
+            if field:
+                assign_line = f"    self->handle->{pname} = v;\n"
+            else:
+                assign_line = (
                     f"    {component}_set_{pname}(self->handle, v);\n"
-                    f"    return 0;\n"
+                )
+                decl_lines.append(
+                    f"void {component}_set_{pname}"
+                    f"({component}_state_t *state, {disp} val);"
                 )
             setter = (
                 f"static int\n"
@@ -1777,14 +1806,12 @@ def make_properties_ctx(
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return -1;\n"
                 f"    }}\n"
-                f"{setter_body}"
+                f"{parse_block}"
+                f"{assign_line}"
+                f"    return 0;\n"
                 f"}}"
             )
             getter_parts.append(setter)
-            decl_lines.append(
-                f"void {component}_set_{pname}"
-                f"({component}_state_t *state, {disp} val);"
-            )
 
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
@@ -1802,11 +1829,16 @@ def make_properties_ctx(
     )
     tp_getset_decl = f"\n    .tp_getset    = {Component}_getset,"
     property_decls = "\n".join(decl_lines) + "\n" if decl_lines else ""
+    # Leading \n so it appends cleanly after state_struct_fields in the template.
+    property_struct_fields = (
+        "\n" + "\n".join(struct_field_lines) if struct_field_lines else ""
+    )
 
     return {
         "getset_def": getset_def,
         "tp_getset_decl": tp_getset_decl,
         "property_decls": property_decls,
+        "property_struct_fields": property_struct_fields,
     }
 
 
@@ -2452,7 +2484,7 @@ extern "C" {
  * Allocate with <<component>>_create().
  */
 typedef struct {
-<<state_struct_fields>>
+<<state_struct_fields>><<property_struct_fields>>
 } <<component>>_state_t;
 
 /**

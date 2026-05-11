@@ -262,6 +262,8 @@ def _dump(cfg: dict) -> str:
             lines.append(f'ctype = "{p["ctype"]}"')
             if p.get("writable"):
                 lines.append("writable = true")
+            if p.get("field"):
+                lines.append("field = true")
             lines.append("")
 
     return "\n".join(lines)

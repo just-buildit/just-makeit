@@ -106,7 +106,7 @@ just-makeit COMMAND
 | `object <name> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone object (its own `.so`) |
 | `add --state name:type[:default] [--object name] [...]` | Add state variables to a standalone object |
 | `method <name> [--arg-type T] [--return-type T] [--variable-output] [--multi-output T ...]` | Add a named execute method to an object |
-| `property <name> [--return-type T]` | Add a computed property to an object |
+| `property <name> --type T [--writable] [--field]` | Add a property; `--field` adds a struct field with auto-implemented getter/setter |
 | `perf` | Upgrade an existing project with performance annotations |
 | `config [key value]` | Show or edit project configuration |
 | `build [dir]` | Configure + build C, and package dist |

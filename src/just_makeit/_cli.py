@@ -405,6 +405,7 @@ def main() -> None:
         module = None
         ctype = "size_t"
         writable = False
+        field = False
 
         remaining = args[3:]
         i = 0
@@ -433,11 +434,16 @@ def main() -> None:
             elif tok == "--writable":
                 writable = True
                 i += 1
+            elif tok == "--field":
+                field = True
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _property.run(Path.cwd(), object_name, prop_name, module, ctype, writable)
+        _property.run(
+            Path.cwd(), object_name, prop_name, module, ctype, writable, field
+        )
 
     elif cmd == "function":
         if len(args) < 2:

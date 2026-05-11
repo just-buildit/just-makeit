@@ -8,15 +8,22 @@
   no-input (source/generator) object whose `step()` signature is
   `T comp_step(const comp_state_t *state)` with no input parameter, and whose
   `steps()` block processor is `void comp_steps(state, T *out, size_t n)`.
-  `method --multi-output T` now wires secondary out-pointer parameters into the
-  C stub declaration *and* the Python wrapper (stack-allocates each extra output,
-  calls C with `&outN`, returns a `PyTuple_Pack` tuple).
+- **`method --multi-output T`** now wires secondary out-pointer parameters into
+  the C stub declaration *and* the Python wrapper: stack-allocates each extra
+  output, calls C with `&outN`, returns a `PyTuple_Pack` tuple.
+- **`property --field`** on the `property` command: declares `T pname;` as a
+  struct field in `comp_state_t` and auto-implements the getter as
+  `return state->pname` and setter as `state->pname = v` — no manual
+  `<<IMPLEMENT>>` stubs needed. Computed (non-`--field`) properties are
+  unchanged.
 
 ### Fixed
 
 - `clib_common.h` now installed to the include prefix alongside component
   headers; previously excluded by CMake install rules, causing `fatal error:
   'clib_common.h' file not found` when compiling external C consumers.
+- `just-makeit add` now preserves field-backed property struct fields and
+  method declarations when regenerating `_core.h` and `ext.c`.
 
 ______________________________________________________________________
 

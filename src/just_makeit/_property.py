@@ -30,6 +30,7 @@ def run(
     module: str | None,
     ctype: str,
     writable: bool,
+    field: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -88,6 +89,8 @@ def run(
     prop_entry: dict = {"name": prop_name, "ctype": ctype}
     if writable:
         prop_entry["writable"] = True
+    if field:
+        prop_entry["field"] = True
     C.add_property(cfg, object_name, prop_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
@@ -137,8 +140,14 @@ def run(
 
     print()
     rw = "read/write" if writable else "read-only"
-    print(
-        f"Done!  Implement {object_name}_get_{prop_name}() in"
-        f" native/src/{object_name}/{object_name}_core.c"
-        f" (or _methods.c)  [{rw}]"
-    )
+    if field:
+        print(
+            f"Done!  Struct field '{prop_name}' added to"
+            f" {object_name}_state_t; getter/setter auto-implemented.  [{rw}]"
+        )
+    else:
+        print(
+            f"Done!  Implement {object_name}_get_{prop_name}() in"
+            f" native/src/{object_name}/{object_name}_core.c"
+            f" (or _methods.c)  [{rw}]"
+        )

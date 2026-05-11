@@ -166,6 +166,10 @@ def run(
     ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
     if new_style is None:
         ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
+        ctx.update(T.make_methods_ctx(component, ctx["Component"],
+                                      C.methods(cfg, component)))
+        ctx.update(T.make_properties_ctx(component, ctx["Component"],
+                                         C.properties(cfg, component)))
 
     def r(tmpl):
         return T.render(tmpl, ctx)

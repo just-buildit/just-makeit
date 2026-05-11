@@ -200,3 +200,78 @@ class TestPropertyNoUnreplacedPlaceholders:
         property_run(project, "buf", "dropped", None, "size_t", False)
         property_run(project, "buf", "threshold", None, "size_t", True)
         _check_no_placeholders(project)
+
+    def test_no_placeholders_field(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        _check_no_placeholders(project)
+
+
+class TestPropertyField:
+    """--field adds struct field + auto-implements getter/setter."""
+
+    def test_struct_field_in_core_h(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "uint32_t phase;" in h
+
+    def test_struct_field_not_in_create_params(self, project):
+        """Field-backed property must NOT appear as a constructor parameter."""
+        property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "buf_create(size_t capacity)" in h
+
+    def test_getter_uses_handle_field(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text()
+        assert "self->handle->phase" in ext
+
+    def test_getter_no_implement_comment(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text()
+        # Should not have <<IMPLEMENT>> in the getter for this property
+        assert "IMPLEMENT" not in ext
+
+    def test_writable_setter_assigns_field(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text()
+        assert "self->handle->phase = v;" in ext
+
+    def test_no_extern_decl_in_core_h(self, project):
+        """Field-backed property must not add buf_get_phase / buf_set_phase decls."""
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "buf_get_phase" not in h
+        assert "buf_set_phase" not in h
+
+    def test_config_stores_field_flag(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        cfg = load(project)
+        p = next(p for p in properties(cfg, "buf") if p["name"] == "phase")
+        assert p.get("field") is True
+
+    def test_multiple_field_props(self, project):
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        property_run(project, "buf", "phase_inc", None, "uint32_t", False, field=True)
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "uint32_t phase;" in h
+        assert "uint32_t phase_inc;" in h
+
+    def test_field_mixed_with_computed(self, project):
+        """Field-backed and computed properties coexist correctly."""
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        property_run(project, "buf", "status", None, "uint32_t", False)
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text()
+        assert "self->handle->phase" in ext
+        assert "buf_get_status(self->handle)" in ext
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "uint32_t phase;" in h
+        assert "buf_get_status" in h
+
+    def test_field_survives_add(self, project):
+        """Struct field must still be present after just-makeit add."""
+        from just_makeit._add import run as add_run
+        property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
+        add_run(project, "buf", [("gain", "float", "1.0f")])
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text()
+        assert "uint32_t phase;" in h
+        assert "float gain;" in h
