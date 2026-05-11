@@ -152,7 +152,7 @@ _NP_ENUM: dict[str, str] = {
     "np.clongdouble": "NPY_CLONGDOUBLE",
     "np.int8": "NPY_INT8",
     "np.int16": "NPY_INT16",
-    "np.int32": "NPY_INT",
+    "np.int32": "NPY_INT32",
     "np.int64": "NPY_INT64",
     "np.uint8": "NPY_UINT8",
     "np.uint16": "NPY_UINT16",
@@ -172,7 +172,7 @@ _ARRAY_DTYPE: dict[str, tuple[str, str]] = {
     "complex128": ("double _Complex", "NPY_COMPLEX128"),
     "int8":       ("int8_t",          "NPY_INT8"),
     "int16":      ("int16_t",         "NPY_INT16"),
-    "int32":      ("int32_t",         "NPY_INT"),
+    "int32":      ("int32_t",         "NPY_INT32"),
     "int64":      ("int64_t",         "NPY_INT64"),
     "uint8":      ("uint8_t",         "NPY_UINT8"),
     "uint16":     ("uint16_t",        "NPY_UINT16"),
@@ -1687,6 +1687,7 @@ def make_methods_ctx(
         ret_meta = _CTYPE_META.get(return_type)
         ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
 
+        out_type: str | None = m.get("out_type")
         has_params = bool(params)
         has_arg = arg_type != "void"
         if has_arg:
@@ -1777,25 +1778,37 @@ def make_methods_ctx(
                 f", {_ctype_display(rt)} *out{i + 1}"
                 for i, rt in enumerate(multi_output)
             )
+            out_type_param = (
+                f", {_ctype_display(out_type)} *out" if out_type else ""
+            )
             if has_params:
-                c_param_str = ", ".join(
-                    f"{_ctype_display(p['type'])} {p['name']}" for p in params
-                )
+                # Expand array params to (const elem_t *name, size_t name_len).
+                p_parts: list[str] = []
+                for p in params:
+                    if is_array_param_type(p["type"]):
+                        e_disp = _ctype_display(array_elem_ctype(p["type"]))
+                        p_parts.append(f"const {e_disp} *{p['name']}")
+                        p_parts.append(f"size_t {p['name']}_len")
+                    else:
+                        p_parts.append(
+                            f"{_ctype_display(p['type'])} {p['name']}"
+                        )
+                c_param_str = ", ".join(p_parts)
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
                     f"({component}_state_t *state,"
-                    f" {c_param_str}{extra_params});"
+                    f" {c_param_str}{extra_params}{out_type_param});"
                 )
             elif has_arg:
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
                     f"({component}_state_t *state,"
-                    f" {arg_disp} x{extra_params});"
+                    f" {arg_disp} x{extra_params}{out_type_param});"
                 )
             else:
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
-                    f"({component}_state_t *state{extra_params});"
+                    f"({component}_state_t *state{extra_params}{out_type_param});"
                 )
 
         # ── pre-allocated buffer fields + alloc + free ────────────────────────
@@ -1965,6 +1978,29 @@ def make_methods_ctx(
                     f"    return PyTuple_Pack({n},"
                     f" {', '.join(pack_parts)});\n"
                 )
+            elif out_type:
+                # Per-call output allocation: allocate ndarray of out_type
+                # sized to the first array param, pass pointer to C, return it.
+                out_disp = _ctype_display(out_type)
+                out_npy = _CTYPE_TO_NPY[out_type]
+                first_arr = next(
+                    (p["name"] for p in params
+                     if is_array_param_type(p["type"])), None
+                )
+                len_expr = f"{first_arr}_len" if first_arr else "0"
+                cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
+                ret_body = (
+                    f"    npy_intp _dims[] ="
+                    f" {{(npy_intp){len_expr}}};\n"
+                    f"    PyObject *_out ="
+                    f" PyArray_EMPTY(1, _dims, {out_npy}, 0);\n"
+                    f"    if (!_out) {{{cleanup_inline} return NULL; }}\n"
+                    f"    {component}_{name}({call_args_c},"
+                    f" ({out_disp} *)PyArray_DATA"
+                    f"((PyArrayObject *)_out));\n"
+                    f"{_p_cleanup}"
+                    f"    return _out;\n"
+                )
             elif ret_meta:
                 ret_expr = ret_meta["to_py"]("y")
                 ret_body = (
@@ -2064,15 +2100,23 @@ def make_properties_ctx(
                 f"}}"
             )
         else:
-            # Computed property: caller implements comp_get_pname().
+            # Computed property: if not backed by a state var, emit a
+            # placeholder comment to remind the caller to implement the
+            # getter; otherwise the getter calls the auto-generated
+            # state-var accessor and the comment would be misleading.
             to_py = meta["to_py"](f"{component}_get_{pname}(self->handle)")
+            implement_cmt = (
+                "    /* <<IMPLEMENT: return the computed or stored value>> */\n"
+                if pname not in state_var_names
+                else ""
+            )
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}({Component}Object *self,"
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
-                f"    /* <<IMPLEMENT: return the computed or stored value>> */\n"
+                f"{implement_cmt}"
                 f"    return {to_py};\n"
                 f"}}"
             )

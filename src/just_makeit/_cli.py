@@ -407,6 +407,7 @@ def main() -> None:
         variable_output = False
         multi_output: list[str] = []
         method_params: list[tuple[str, str]] = []
+        out_type: str | None = None
 
         remaining = args[3:]
         i = 0
@@ -465,6 +466,21 @@ def main() -> None:
                     sys.exit(1)
                 method_params.append((pname, ptype))
                 i += 1
+            elif tok == "--out-type":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --out-type requires a type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if val not in T._CTYPE_TO_NPY:
+                    print(
+                        f"error: --out-type '{val}' has no numpy equivalent.\n"
+                        f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                out_type = val
+                i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
                 if i >= len(remaining):
@@ -508,7 +524,7 @@ def main() -> None:
         _method.run(
             Path.cwd(), object_name, method_name, module,
             arg_type, return_type, variable_output, multi_output,
-            params=method_params,
+            params=method_params, out_type=out_type,
         )
 
     elif cmd == "property":

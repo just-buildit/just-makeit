@@ -88,6 +88,7 @@ def _methods_c_stub_fixed(
     return_type: str,
     multi_output: list[str] | None = None,
     params: list[tuple[str, str]] | None = None,
+    out_type: str | None = None,
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
     ret_disp = T._ctype_display(return_type)
@@ -102,6 +103,8 @@ def _methods_c_stub_fixed(
     extra_suppress = "".join(
         f" (void)out{i + 1};" for i in range(len(multi_output))
     )
+    out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
+    out_suppress = " (void)out;" if out_type else ""
 
     if params:
         param_parts: list[str] = []
@@ -117,16 +120,22 @@ def _methods_c_stub_fixed(
                 param_parts.append(f"{T._ctype_display(t)} {n}")
                 suppress_parts.append(f"(void){n};")
         param_str = ", ".join(param_parts)
-        c_params = f"{component}_state_t *state, {param_str}{extra_params}"
+        c_params = (
+            f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
+        )
         suppress_names = " ".join(suppress_parts)
-        suppress = f"    (void)state; {suppress_names}{extra_suppress}"
+        suppress = (
+            f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
+        )
     elif has_arg:
         arg_disp = T._ctype_display(arg_type)
-        c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}"
-        suppress = f"    (void)state; (void)x;{extra_suppress}"
+        c_params = (
+            f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+        )
+        suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
     else:
-        c_params = f"{component}_state_t *state{extra_params}"
-        suppress = f"    (void)state;{extra_suppress}"
+        c_params = f"{component}_state_t *state{extra_params}{out_param}"
+        suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
     zero = T._CTYPE_META[return_type]["zero"] if return_type in T._CTYPE_META else None
     ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
@@ -163,6 +172,7 @@ def _build_method_prototype(
     variable_output: bool,
     multi_output: list[str],
     params: list[tuple[str, str]],
+    out_type: str | None = None,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline)."""
     ret_disp = T._ctype_display(return_type)
@@ -174,6 +184,7 @@ def _build_method_prototype(
         f", {T._ctype_display(rt)} *out{i + 1}"
         for i, rt in enumerate(multi_output)
     )
+    out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
 
     if variable_output:
         step_param = (
@@ -198,15 +209,16 @@ def _build_method_prototype(
             else:
                 parts.append(f"{T._ctype_display(t)} {n}")
         c_params = (
-            f"{component}_state_t *state, {', '.join(parts)}{extra_params}"
+            f"{component}_state_t *state,"
+            f" {', '.join(parts)}{extra_params}{out_param}"
         )
     elif has_arg:
         c_params = (
             f"{component}_state_t *state, "
-            f"{T._ctype_display(arg_type)} x{extra_params}"
+            f"{T._ctype_display(arg_type)} x{extra_params}{out_param}"
         )
     else:
-        c_params = f"{component}_state_t *state{extra_params}"
+        c_params = f"{component}_state_t *state{extra_params}{out_param}"
 
     return f"{ret_disp} {component}_{name}({c_params});"
 
@@ -252,6 +264,7 @@ def run(
     variable_output: bool,
     multi_output: list[str],
     params: list[tuple[str, str]] | None = None,
+    out_type: str | None = None,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -308,7 +321,8 @@ def run(
         )
     else:
         stub = _methods_c_stub_fixed(
-            object_name, method_name, arg_type, return_type, multi_output, params
+            object_name, method_name, arg_type, return_type, multi_output,
+            params, out_type,
         )
     _append_to_methods_c(methods_c, object_name, stub)
 
@@ -318,7 +332,7 @@ def run(
     )
     prototype = _build_method_prototype(
         object_name, method_name, arg_type, return_type,
-        variable_output, multi_output, params,
+        variable_output, multi_output, params, out_type,
     )
     _update_impl_h_for_method(impl_h, object_name, prototype)
 
@@ -339,6 +353,8 @@ def run(
         method_entry["variable_output"] = True
     if multi_output:
         method_entry["multi_output"] = multi_output
+    if out_type:
+        method_entry["out_type"] = out_type
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)

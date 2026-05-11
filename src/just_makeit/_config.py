@@ -269,6 +269,8 @@ def _dump(cfg: dict) -> str:
                     for p in m["params"]
                 )
                 lines.append(f"params = [{parts}]")
+            if m.get("out_type"):
+                lines.append(f'out_type = "{m["out_type"]}"')
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
