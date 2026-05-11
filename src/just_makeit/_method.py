@@ -155,6 +155,83 @@ def _append_to_methods_c(path: Path, component: str, stub: str) -> None:
         print(f"  update  {path}")
 
 
+def _build_method_prototype(
+    component: str,
+    name: str,
+    arg_type: str,
+    return_type: str,
+    variable_output: bool,
+    multi_output: list[str],
+    params: list[tuple[str, str]],
+) -> str:
+    """Return C prototype declaration(s) for a method (no trailing newline)."""
+    ret_disp = T._ctype_display(return_type)
+    has_arg = arg_type != "void"
+    multi_output = multi_output or []
+    params = params or []
+
+    extra_params = "".join(
+        f", {T._ctype_display(rt)} *out{i + 1}"
+        for i, rt in enumerate(multi_output)
+    )
+
+    if variable_output:
+        step_param = (
+            f", const {T._ctype_display(arg_type)} *in, size_t n_in"
+            if has_arg
+            else ", size_t n"
+        )
+        return "\n".join([
+            f"size_t {component}_{name}_max_out"
+            f"({component}_state_t *state);",
+            f"size_t {component}_{name}({component}_state_t *state"
+            f"{step_param}, {ret_disp} *out{extra_params});",
+        ])
+
+    if params:
+        parts: list[str] = []
+        for n, t in params:
+            if T.is_array_param_type(t):
+                elem_disp = T._ctype_display(T.array_elem_ctype(t))
+                parts.append(f"const {elem_disp} *{n}")
+                parts.append(f"size_t {n}_len")
+            else:
+                parts.append(f"{T._ctype_display(t)} {n}")
+        c_params = (
+            f"{component}_state_t *state, {', '.join(parts)}{extra_params}"
+        )
+    elif has_arg:
+        c_params = (
+            f"{component}_state_t *state, "
+            f"{T._ctype_display(arg_type)} x{extra_params}"
+        )
+    else:
+        c_params = f"{component}_state_t *state{extra_params}"
+
+    return f"{ret_disp} {component}_{name}({c_params});"
+
+
+def _update_impl_h_for_method(
+    impl_h: Path, component: str, prototype: str
+) -> None:
+    """Inject prototype lines before #endif in *_impl.h (idempotent)."""
+    if not impl_h.exists():
+        return
+    text = impl_h.read_text(encoding="utf-8")
+    first_line = prototype.split("\n")[0]
+    if first_line in text:
+        return
+    endif_marker = f"#endif /* {component.upper()}_IMPL_H */"
+    if endif_marker not in text:
+        return
+    text = text.replace(
+        endif_marker,
+        prototype + "\n\n" + endif_marker,
+    )
+    impl_h.write_text(text, encoding="utf-8")
+    print(f"  update  {impl_h}")
+
+
 def _update_cmake_for_methods(cmake_path: Path, component: str) -> None:
     """Add {component}_methods.c to the OBJECT library in CMakeLists.txt."""
     text = cmake_path.read_text(encoding="utf-8")
@@ -234,6 +311,16 @@ def run(
             object_name, method_name, arg_type, return_type, multi_output, params
         )
     _append_to_methods_c(methods_c, object_name, stub)
+
+    # 1a. Inject prototype into *_impl.h so ext.c can see the declaration
+    impl_h = (
+        root / "native" / "inc" / object_name / f"{object_name}_impl.h"
+    )
+    prototype = _build_method_prototype(
+        object_name, method_name, arg_type, return_type,
+        variable_output, multi_output, params,
+    )
+    _update_impl_h_for_method(impl_h, object_name, prototype)
 
     # 2. Wire _methods.c into CMakeLists
     cmake_path = root / "native" / "src" / object_name / "CMakeLists.txt"

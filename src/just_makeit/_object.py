@@ -109,9 +109,28 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "object_list": object_list,
         "object_core_libs": object_core_libs,
     }
+    # Collocated objects (obj_name == module_name) share the same CMakeLists
+    # file as the module itself; their OBJECT library cmake must be prepended.
+    # If _methods.c already exists on disk (added by a prior 'jm method' call),
+    # preserve its inclusion in the add_library line.
+    collocated_cmake = ""
+    for obj, ctx_ in zip(object_names, comp_ctxs):
+        if obj == module:
+            obj_cmake = T.render(T.CMAKE_LISTS_OBJECT_CORE, ctx_)
+            methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
+            if methods_c.exists():
+                old_lib = (
+                    f"add_library({obj}_core OBJECT {obj}_core.c)"
+                )
+                new_lib = (
+                    f"add_library({obj}_core OBJECT"
+                    f" {obj}_core.c {obj}_methods.c)"
+                )
+                obj_cmake = obj_cmake.replace(old_lib, new_lib)
+            collocated_cmake += obj_cmake
     _write(
         root / "native" / "src" / module / "CMakeLists.txt",
-        T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
+        collocated_cmake + T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
         "update",
     )
 
