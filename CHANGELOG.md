@@ -1,5 +1,17 @@
 # Changelog
 
+## \[0.9.12\] — 2026-05-11
+
+### Fixed
+
+- **Duplicate getter/setter declarations in `_core.h`**: when a `--state`
+  variable also had a `jm property` added for it, both `make_state_ctx` and
+  `make_properties_ctx` emitted declarations for the same C functions.
+  `make_properties_ctx` now skips `property_decls` for any name already
+  covered by `make_state_ctx`.
+
+______________________________________________________________________
+
 ## \[0.9.11\] — 2026-05-11
 
 ### Fixed
