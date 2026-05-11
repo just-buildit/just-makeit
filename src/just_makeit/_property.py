@@ -95,9 +95,34 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # Regenerate ext.c
+    # Regenerate ext.c (and core.h for field-backed properties)
     if module:
         _regenerate_module(root, cfg, module, pkg)
+        # _regenerate_module only writes ext.c; field-backed properties also
+        # add a struct field to _core.h, so regenerate that too.
+        if field:
+            state_vars_list = C.state_vars(cfg, object_name)
+            arg_type_ = C.arg_type(cfg, object_name)
+            return_type_ = C.return_type(cfg, object_name)
+            pure_style = C.pure_style(cfg, object_name)
+            perf = C.is_perf(cfg)
+            Component = _to_title(object_name)
+            ctx, _ = _make_object_ctx(
+                object_name, module, pkg,
+                C.project_version(cfg),
+                state_vars_list, arg_type_, return_type_,
+                perf=perf,
+                pure=(pure_style is not None),
+                array_args=C.array_args(cfg, object_name),
+            )
+            ctx.update(T.make_methods_ctx(object_name, Component,
+                                          C.methods(cfg, object_name)))
+            ctx.update(T.make_properties_ctx(object_name, Component,
+                                             C.properties(cfg, object_name)))
+            core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+            if core_h.exists():
+                core_h.write_text(T.render(T.COMPONENT_CORE_H, ctx), encoding="utf-8")
+                print(f"  update  {core_h}")
     else:
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)

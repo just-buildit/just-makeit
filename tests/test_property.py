@@ -13,6 +13,7 @@ _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
+from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
 from just_makeit._config import load, properties
 
@@ -275,3 +276,35 @@ class TestPropertyField:
         h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
         assert "uint32_t phase;" in h
         assert "float gain;" in h
+
+
+class TestPropertyFieldModule:
+    """--field on a module object must update _core.h, not just _ext.c."""
+
+    @pytest.fixture()
+    def mod_project(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, modules=["sig"])
+        object_run(dest, "nco", "sig", [("freq", "float", "440.0f")])
+        return dest
+
+    def test_struct_field_written_to_core_h(self, mod_project):
+        property_run(mod_project, "nco", "phase", "sig", "uint32_t", False, field=True)
+        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
+        assert "uint32_t phase;" in h
+
+    def test_ext_c_uses_handle_field(self, mod_project):
+        property_run(mod_project, "nco", "phase", "sig", "uint32_t", False, field=True)
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(encoding="utf-8")
+        assert "self->handle->phase" in ext
+
+    def test_writable_setter_in_ext_c(self, mod_project):
+        property_run(mod_project, "nco", "phase", "sig", "uint32_t", True, field=True)
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(encoding="utf-8")
+        assert "self->handle->phase = v;" in ext
+
+    def test_no_extern_decl_in_core_h(self, mod_project):
+        property_run(mod_project, "nco", "phase", "sig", "uint32_t", True, field=True)
+        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
+        assert "nco_get_phase" not in h
+        assert "nco_set_phase" not in h
