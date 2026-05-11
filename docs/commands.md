@@ -25,9 +25,11 @@ any objects — the source of truth for all subsequent commands.
 | `--object name`               | Scaffold a first standalone object immediately (optional).                           |
 | `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`. |
 | `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
-| `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`.                        |
+| `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
 | `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no scalar output. |
 | `--pure`                      | Generate a stateless object. See [Stateful vs pure](pure.md).                       |
+| `--basic`                     | Generate a plain `Makefile` instead of a CMake project. Useful for quick prototypes that don't need a full build system. |
+| `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
 
 ______________________________________________________________________
 
@@ -114,9 +116,10 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `name` | Object name in `snake_case`. Becomes the C prefix and Python class name (title-cased). |
 | `--module name` | Target module. Without this flag the object is standalone (own `.so`). |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. |
-| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. |
+| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"` — `steps()` is not generated. |
 | `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no output. |
 | `--pure` | Generate a stateless object. |
+| `--perf` | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`. |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
@@ -471,7 +474,7 @@ just-makeit function apply_window \
 
 ______________________________________________________________________
 
-## `just-makeit property <object> <prop_name> [--module name] --type TYPE [--writable]`
+## `just-makeit property <object> <prop_name> [--module name] --type TYPE [--writable] [--field]`
 
 Add a read-only (or read-write) Python property to an existing object. Must be
 run from the project root.
@@ -480,6 +483,7 @@ run from the project root.
 just-makeit property nco phase --module source --type uint32_t
 just-makeit property nco phase_inc --module source --type uint32_t
 just-makeit property buffer capacity --type size_t --writable
+just-makeit property reader samples_read --module conv --type uint32_t --field
 ```
 
 Generates a `get_<prop>()` C function stub (and `set_<prop>()` if `--writable`)
@@ -495,6 +499,7 @@ getter (and setter) glue in the module `_ext.c`.
 | `--module name` | Module the object belongs to (required for module objects). |
 | `--type TYPE` | C type of the property value. |
 | `--writable` | Also generate a setter. Without this flag the property is read-only. |
+| `--field` | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
 
 ______________________________________________________________________
 

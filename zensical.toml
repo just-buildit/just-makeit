@@ -22,11 +22,16 @@ nav = [
   { "Roadmap"            = "roadmap.md"      },
   { "Examples" = [
     { "Overview"           = "examples/index.md"              },
+    { "Running stats"      = "examples/running_stats.md"      },
     { "FIR filter"         = "examples/fir_filter.md"         },
     { "Sliding power"      = "examples/sliding_power.md"      },
     { "Sliding correlator" = "examples/sliding_correlator.md" },
-    { "Running stats"      = "examples/running_stats.md"      },
+    { "Array processing"   = "examples/array_processing.md"   },
+    { "DSP toolkit"        = "examples/dsp_toolkit.md"        },
+    { "Filter module"      = "examples/filter_module.md"      },
+    { "IQ file"            = "examples/iqfile.md"             },
   ]},
+  { "C library"          = "c-library.md"         },
 ]
 
 # ----------------------------------------------------------------------------

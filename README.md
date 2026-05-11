@@ -296,8 +296,10 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`fir_filter/`](https://github.com/just-buildit/just-makeit/tree/main/examples/fir_filter) — 16-tap FIR filter processing complex I/Q signals, with perf annotations
 - [`sliding_correlator/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_correlator) — sliding window cross-correlation against a fixed reference sequence
 - [`sliding_power/`](https://github.com/just-buildit/just-makeit/tree/main/examples/sliding_power) — sliding window instantaneous signal power estimator
+- [`array_processing/`](https://github.com/just-buildit/just-makeit/tree/main/examples/array_processing) — all five array-processing patterns: auto `steps()`, methods, `--variable-output`, multi-output, `--arg-type type[]`
 - [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-object library (Gain + Ema); demonstrates multi-object workflow and `__init__.py` auto-splice
 - [`filter_module/`](https://github.com/just-buildit/just-makeit/tree/main/examples/filter_module) — `Fir` + `Biquad` in a single `filter` subpackage `.so` using `module` + `object`
+- [`iqfile/`](https://github.com/just-buildit/just-makeit/tree/main/examples/iqfile) — cf32 ↔ q15 IQ file converter; `--field` properties, generator object, `pip install -e .`, wheel build
 
 ______________________________________________________________________
 

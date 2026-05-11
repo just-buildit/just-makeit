@@ -52,6 +52,33 @@ Complex types are parsed via `Py_complex` (CPython format `"D"`) and cast to
 the target C type. `long double _Complex` is truncated to `double` at the
 Python boundary.
 
+### Fixed-length arrays
+
+Append `[N]` to any scalar type to embed a fixed-length C array directly inside
+the state struct.  `N` must be a positive integer literal.
+
+```sh
+--state "coeffs:float[16]"            # float coeffs[16];
+--state "delay:float _Complex[16]"    # float _Complex delay[16];
+--state "history:double[64]"          # double history[64];
+```
+
+The array lives **inside** the struct — one `malloc` for the whole object, no
+pointer chasing, no separate free.  This is the right choice for fixed-size
+delay lines, coefficient tables, and circular buffers whose length is known at
+code-generation time.
+
+Array fields do not support explicit defaults — they are always
+zero-initialized at construction.  There are no auto-generated getter/setter
+methods for array fields; access them directly in your C implementation via
+`state->coeffs[i]`.
+
+Array fields work with `--state` (standalone objects and `object --module`)
+and are recorded verbatim in `just-makeit.toml`, so `jm add` and `jm config`
+round-trip them correctly.
+
+______________________________________________________________________
+
 ## Defaults
 
 If you omit the default, the zero literal for the declared type is used:
