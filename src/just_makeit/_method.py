@@ -86,18 +86,28 @@ def _methods_c_stub_fixed(
     name: str,
     arg_type: str,
     return_type: str,
+    multi_output: list[str] | None = None,
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
+    multi_output = multi_output or []
+
+    extra_params = "".join(
+        f", {T._ctype_display(rt)} *out{i + 1}"
+        for i, rt in enumerate(multi_output)
+    )
+    extra_suppress = "".join(
+        f" (void)out{i + 1};" for i in range(len(multi_output))
+    )
 
     if has_arg:
         arg_disp = T._ctype_display(arg_type)
-        params = f"{component}_state_t *state, {arg_disp} x"
-        suppress = "    (void)state; (void)x;"
+        params = f"{component}_state_t *state, {arg_disp} x{extra_params}"
+        suppress = f"    (void)state; (void)x;{extra_suppress}"
     else:
-        params = f"{component}_state_t *state"
-        suppress = "    (void)state;"
+        params = f"{component}_state_t *state{extra_params}"
+        suppress = f"    (void)state;{extra_suppress}"
 
     zero = T._CTYPE_META[return_type]["zero"] if return_type in T._CTYPE_META else "0"
     lines = [
@@ -196,7 +206,9 @@ def run(
             object_name, method_name, arg_type, return_type, multi_output
         )
     else:
-        stub = _methods_c_stub_fixed(object_name, method_name, arg_type, return_type)
+        stub = _methods_c_stub_fixed(
+            object_name, method_name, arg_type, return_type, multi_output
+        )
     _append_to_methods_c(methods_c, object_name, stub)
 
     # 2. Wire _methods.c into CMakeLists

@@ -1482,14 +1482,20 @@ def make_methods_ctx(
                     f" {ret_disp} *out{extra_params});"
                 )
         else:
+            extra_params = "".join(
+                f", {_ctype_display(rt)} *out{i + 1}"
+                for i, rt in enumerate(multi_output)
+            )
             if has_arg:
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
-                    f"({component}_state_t *state, {arg_disp} x);"
+                    f"({component}_state_t *state,"
+                    f" {arg_disp} x{extra_params});"
                 )
             else:
                 decl_lines.append(
-                    f"{ret_disp} {component}_{name}({component}_state_t *state);"
+                    f"{ret_disp} {component}_{name}"
+                    f"({component}_state_t *state{extra_params});"
                 )
 
         # ── pre-allocated buffer fields + alloc + free ────────────────────────
@@ -1619,7 +1625,40 @@ def make_methods_ctx(
                 fn_sig = f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
                 meth_flags = "METH_NOARGS"
 
-            if ret_meta:
+            if multi_output:
+                extra_decls = "".join(
+                    f"    {_ctype_display(rt)} out{i + 1}"
+                    f" = {_CTYPE_META[rt]['zero']};\n"
+                    for i, rt in enumerate(multi_output)
+                )
+                extra_call = "".join(
+                    f", &out{i + 1}" for i in range(len(multi_output))
+                )
+                if ret_meta:
+                    call_line = (
+                        f"    {ret_disp} y ="
+                        f" {component}_{name}({call_args_c}{extra_call});\n"
+                    )
+                    py_primary = ret_meta["to_py"]("y")
+                else:
+                    call_line = (
+                        f"    {component}_{name}({call_args_c}{extra_call});\n"
+                    )
+                    py_primary = "Py_None"
+                pack_parts = [py_primary] + [
+                    _CTYPE_META[rt]["to_py"](f"out{i + 1}")
+                    if rt in _CTYPE_META
+                    else f"PyLong_FromLong(out{i + 1})"
+                    for i, rt in enumerate(multi_output)
+                ]
+                n = len(multi_output) + 1
+                ret_body = (
+                    f"{extra_decls}"
+                    f"{call_line}"
+                    f"    return PyTuple_Pack({n},"
+                    f" {', '.join(pack_parts)});\n"
+                )
+            elif ret_meta:
                 ret_expr = ret_meta["to_py"]("y")
                 ret_body = (
                     f"    {ret_disp} y = {component}_{name}({call_args_c});\n"

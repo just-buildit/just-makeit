@@ -186,6 +186,53 @@ class TestObjectCLI:
         assert "double rate;" in core
 
 
+class TestVoidArgTypeCLI:
+    """--arg-type void accepted by new and object commands."""
+
+    def test_new_void_arg_type(self, tmp_path):
+        r = _cli(
+            "new", "gen", str(tmp_path / "gen"),
+            "--object", "nco",
+            "--arg-type", "void",
+            "--return-type", "float",
+        )
+        assert r.returncode == 0
+
+    def test_new_void_generates_no_input_step(self, tmp_path):
+        dest = tmp_path / "gen"
+        _cli(
+            "new", "gen", str(dest),
+            "--object", "nco",
+            "--arg-type", "void",
+            "--return-type", "float",
+        )
+        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text()
+        assert "nco_step(const nco_state_t *state)" in h
+
+    def test_object_void_arg_type(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli(
+            "object", "osc",
+            "--arg-type", "void",
+            "--return-type", "float",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_object_void_generates_no_input_step(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli(
+            "object", "osc",
+            "--arg-type", "void",
+            "--return-type", "float",
+            cwd=dest,
+        )
+        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text()
+        assert "osc_step(const osc_state_t *state)" in h
+
+
 class TestAddCLI:
     def test_add_no_state_exits_1(self, tmp_path):
         dest = tmp_path / "comp"

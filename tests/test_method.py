@@ -369,3 +369,115 @@ class TestMethodNoUnreplacedPlaceholders:
             "void", "float _Complex", True, ["float _Complex"],
         )
         _check_no_placeholders(project)
+
+    def test_no_placeholders_fixed_multi_output(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        _check_no_placeholders(project)
+
+
+class TestMethodFixedMultiOutput:
+    """Fixed-output --multi-output: out-pointer params in C, tuple in Python."""
+
+    def test_c_stub_has_out_pointer_param(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text()
+        assert "uint8_t *out1" in text
+
+    def test_c_stub_suppresses_out_pointer(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text()
+        assert "(void)out1;" in text
+
+    def test_decl_has_out_pointer_param(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        h = (
+            project / "native" / "inc" / "nco" / "nco_core.h"
+        ).read_text()
+        assert "uint8_t *out1" in h
+
+    def test_ext_c_has_tuple_pack(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "PyTuple_Pack" in ext
+
+    def test_ext_c_stack_alloc_out(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "out1 = 0U" in ext
+
+    def test_ext_c_passes_addr_to_c(self, project):
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "&out1" in ext
+
+    def test_ext_c_no_array_buf(self, project):
+        """Fixed multi-output must NOT allocate a pre-allocated buffer."""
+        method_run(
+            project, "nco", "step_ovf", None,
+            "float", "float", False, ["uint8_t"],
+        )
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "_step_ovf_buf" not in ext
+
+    def test_noarg_fixed_multi_output(self, project):
+        """No-arg fixed method with multi-output still gets out-pointer."""
+        method_run(
+            project, "nco", "tick_ovf", None,
+            "void", "float", False, ["uint8_t"],
+        )
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text()
+        assert "uint8_t *out1" in text
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "PyTuple_Pack" in ext
+
+    def test_multiple_extra_outputs(self, project):
+        method_run(
+            project, "nco", "step_multi", None,
+            "float", "float", False, ["uint8_t", "uint32_t"],
+        )
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text()
+        assert "uint8_t *out1" in text
+        assert "uint32_t *out2" in text
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text()
+        assert "PyTuple_Pack(3," in ext

@@ -1,5 +1,25 @@
 # Changelog
 
+## \[0.9.7\] — 2026-05-10
+
+### Added
+
+- **`--arg-type void`** on `new --object` and `object` commands: generate a
+  no-input (source/generator) object whose `step()` signature is
+  `T comp_step(const comp_state_t *state)` with no input parameter, and whose
+  `steps()` block processor is `void comp_steps(state, T *out, size_t n)`.
+  `method --multi-output T` now wires secondary out-pointer parameters into the
+  C stub declaration *and* the Python wrapper (stack-allocates each extra output,
+  calls C with `&outN`, returns a `PyTuple_Pack` tuple).
+
+### Fixed
+
+- `clib_common.h` now installed to the include prefix alongside component
+  headers; previously excluded by CMake install rules, causing `fatal error:
+  'clib_common.h' file not found` when compiling external C consumers.
+
+______________________________________________________________________
+
 ## \[0.9.6\] — 2026-05-10
 
 ### Added

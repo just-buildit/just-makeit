@@ -105,7 +105,7 @@ just-makeit COMMAND
 | `new <project> --object name [--state ...] [--arg-type T] [--return-type T]` | Project + first standalone object |
 | `object <name> [--state ...] [--arg-type T] [--return-type T]` | Add a standalone object (its own `.so`) |
 | `add --state name:type[:default] [--object name] [...]` | Add state variables to a standalone object |
-| `method <name> [--arg-type T] [--return-type T] [--variable-output]` | Add a named execute method to an object |
+| `method <name> [--arg-type T] [--return-type T] [--variable-output] [--multi-output T ...]` | Add a named execute method to an object |
 | `property <name> [--return-type T]` | Add a computed property to an object |
 | `perf` | Upgrade an existing project with performance annotations |
 | `config [key value]` | Show or edit project configuration |
@@ -141,6 +141,12 @@ void engine_steps(
     const float complex *input,
     float complex       *output,
     size_t               n);
+
+// Generator / source object (--arg-type void): no input parameter
+static inline float
+nco_step(const nco_state_t *state);
+
+void nco_steps(nco_state_t *state, float *output, size_t n);
 
 // Getter / setter for each --state variable
 double engine_get_gain(const engine_state_t *state);

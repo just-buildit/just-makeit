@@ -190,9 +190,9 @@ def main() -> None:
                     sys.exit(1)
                 from . import _templates as T
                 val = remaining[i]
-                if val not in T._CTYPE_META:
+                if val != "void" and val not in T._CTYPE_META:
                     print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                           file=sys.stderr)
                     sys.exit(1)
                 if tok == "--arg-type":
@@ -282,9 +282,9 @@ def main() -> None:
                     sys.exit(1)
                 from . import _templates as T
                 val = remaining[i]
-                if val not in T._CTYPE_META:
+                if val != "void" and val not in T._CTYPE_META:
                     print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                           file=sys.stderr)
                     sys.exit(1)
                 if tok == "--arg-type":
