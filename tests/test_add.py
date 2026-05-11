@@ -22,43 +22,43 @@ def project(tmp_path):
 class TestAddStateVar:
     def test_add_single_var_header(self, project):
         add_run(project, None, [("order", "int", "4")])
-        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core
         assert "int order;" in core
 
     def test_add_single_var_core_c(self, project):
         add_run(project, None, [("order", "int", "4")])
-        c = (project / "native" / "src" / "comp" / "comp_core.c").read_text()
+        c = (project / "native" / "src" / "comp" / "comp_core.c").read_text(encoding="utf-8")
         assert "comp_get_gain" in c
         assert "comp_get_order" in c
 
     def test_add_single_var_ext_c(self, project):
         add_run(project, None, [("order", "int", "4")])
-        ext = (project / "native" / "src" / "comp" / "comp_ext.c").read_text()
+        ext = (project / "native" / "src" / "comp" / "comp_ext.c").read_text(encoding="utf-8")
         assert '"gain"' in ext
         assert '"order"' in ext
 
     def test_add_single_var_pyi(self, project):
         add_run(project, None, [("order", "int", "4")])
-        pyi = (project / "src" / "comp" / "comp.pyi").read_text()
+        pyi = (project / "src" / "comp" / "comp.pyi").read_text(encoding="utf-8")
         assert "gain: np.float64 = 1.0" in pyi
         assert "order: np.int32 = 4" in pyi
 
     def test_add_single_var_pytest(self, project):
         add_run(project, None, [("order", "int", "4")])
-        test = (project / "src" / "comp" / "tests" / "test_comp.py").read_text()
+        test = (project / "src" / "comp" / "tests" / "test_comp.py").read_text(encoding="utf-8")
         assert "get_order" in test
 
     def test_add_single_var_ctest(self, project):
         add_run(project, None, [("order", "int", "4")])
-        ct = (project / "native" / "tests" / "test_comp_core.c").read_text()
+        ct = (project / "native" / "tests" / "test_comp_core.c").read_text(encoding="utf-8")
         assert "comp_get_order" in ct
 
     def test_add_multiple_vars_at_once(self, project):
         add_run(
             project, None, [("bandwidth", "double", "200.0"), ("poles", "int", "2")]
         )
-        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double bandwidth;" in core
         assert "int poles;" in core
 
@@ -112,7 +112,7 @@ class TestAddValidation:
 
 class TestAddBackupRestore:
     def test_backup_restores_on_write_failure(self, project):
-        original_h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        original_h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
 
         # Make the .pyi path a directory so write_text fails there
         pyi = project / "src" / "comp" / "comp.pyi"
@@ -122,7 +122,7 @@ class TestAddBackupRestore:
         with pytest.raises((IsADirectoryError, OSError)):
             add_run(project, None, [("order", "int", "4")])
 
-        restored = (project / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        restored = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert restored == original_h
 
     def test_config_not_written_on_failure(self, project):

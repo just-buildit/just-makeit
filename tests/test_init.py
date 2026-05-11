@@ -69,20 +69,20 @@ class TestInitAddsFiles:
 
 class TestInitUpdatesCMake:
     def test_cmake_top_has_add_subdirectory(self, project_with_engine):
-        cmake = (project_with_engine / "CMakeLists.txt").read_text()
+        cmake = (project_with_engine / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/engine)" in cmake
 
     def test_component_cmake_has_targets(self, project_with_engine):
         cmake = (
             project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "Python3_add_library(engine" in cmake
         assert "engine_core" in cmake
 
     def test_second_component_appends(self, project):
         init_run(project, "engine", [("rate", "double", "1.0")])
         init_run(project, "parser", [("depth", "int", "8")])
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/engine)" in cmake
         assert "add_subdirectory(native/src/parser)" in cmake
 
@@ -114,14 +114,14 @@ class TestInitContent:
     def test_header_has_correct_typedef(self, project_with_engine):
         h = (
             project_with_engine / "native" / "inc" / "engine" / "engine_core.h"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "engine_state_t" in h
         assert "engine_create" in h
 
     def test_ext_c_has_correct_class(self, project_with_engine):
         ext = (
             project_with_engine / "native" / "src" / "engine" / "engine_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "EngineObject" in ext
         assert "PyInit_engine" in ext
 
@@ -152,7 +152,7 @@ class TestInitPreservesInit:
         init_run(project, "engine")
         init_path = project / "src" / "myproj" / "__init__.py"
         init_run(project, "parser")
-        text = init_path.read_text()
+        text = init_path.read_text(encoding="utf-8")
         assert "from .engine import Engine" in text
         assert "from .parser import Parser" in text
         assert '"Engine"' in text

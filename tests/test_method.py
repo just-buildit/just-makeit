@@ -39,7 +39,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in text
 
     def test_methods_c_has_execute_stub(self, project):
@@ -49,7 +49,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_cf32(" in text
 
     def test_methods_c_has_correct_header_include(self, project):
@@ -59,7 +59,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert '#include "nco/nco_core.h"' in text
 
     def test_second_method_appends_to_methods_c(self, project):
@@ -73,7 +73,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in text
         assert "nco_execute_u32_max_out" in text
 
@@ -84,7 +84,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_get_phase_max_out" not in text
         assert "nco_get_phase(" in text
 
@@ -95,7 +95,7 @@ class TestMethodCreatesStubs:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_process(" in text
         # _ctype_display("float _Complex") → "float complex"
         assert "float complex x" in text
@@ -109,7 +109,7 @@ class TestMethodUpdatesCMake:
         )
         cmake = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_methods.c" in cmake
 
     def test_cmake_object_lib_updated(self, project):
@@ -119,7 +119,7 @@ class TestMethodUpdatesCMake:
         )
         cmake = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert (
             "add_library(nco_core OBJECT nco_core.c nco_methods.c)" in cmake
         )
@@ -135,7 +135,7 @@ class TestMethodUpdatesCMake:
         )
         cmake = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert cmake.count("nco_methods.c") == 1
 
 
@@ -147,7 +147,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "_execute_cf32_buf" in ext
 
     def test_ext_c_has_malloc_alloc(self, project):
@@ -157,7 +157,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in ext
         assert "malloc(" in ext
 
@@ -168,7 +168,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "free(self->_execute_cf32_buf)" in ext
 
     def test_ext_c_has_zero_copy_wrapper(self, project):
@@ -178,7 +178,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyArray_SimpleNewFromData" in ext
         assert "PyArray_SetBaseObject" in ext
 
@@ -189,7 +189,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert '"execute_cf32"' in ext
 
     def test_ext_c_fixed_output_scalar_return(self, project):
@@ -199,7 +199,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_get_phase(self->handle)" in ext
         assert "PyArray_SimpleNewFromData" not in ext
 
@@ -210,7 +210,7 @@ class TestMethodUpdatesExtC:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "METH_NOARGS" in ext
 
     def test_core_h_has_method_decl(self, project):
@@ -220,7 +220,7 @@ class TestMethodUpdatesExtC:
         )
         h = (
             project / "native" / "inc" / "nco" / "nco_core.h"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in h
         assert "nco_execute_cf32(" in h
 
@@ -233,7 +233,7 @@ class TestMethodMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "_execute_iq_buf" in ext
         assert "_execute_iq_buf_1" in ext
 
@@ -244,7 +244,7 @@ class TestMethodMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyTuple_Pack" in ext
 
     def test_multi_output_stubs_in_methods_c(self, project):
@@ -254,7 +254,7 @@ class TestMethodMultiOutput:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "nco_execute_iq_max_out" in text
         assert "nco_execute_iq(" in text
 
@@ -388,7 +388,7 @@ class TestMethodFixedMultiOutput:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
 
     def test_c_stub_suppresses_out_pointer(self, project):
@@ -398,7 +398,7 @@ class TestMethodFixedMultiOutput:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "(void)out1;" in text
 
     def test_decl_has_out_pointer_param(self, project):
@@ -408,7 +408,7 @@ class TestMethodFixedMultiOutput:
         )
         h = (
             project / "native" / "inc" / "nco" / "nco_core.h"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in h
 
     def test_ext_c_has_tuple_pack(self, project):
@@ -418,7 +418,7 @@ class TestMethodFixedMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyTuple_Pack" in ext
 
     def test_ext_c_stack_alloc_out(self, project):
@@ -428,7 +428,7 @@ class TestMethodFixedMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "out1 = 0U" in ext
 
     def test_ext_c_passes_addr_to_c(self, project):
@@ -438,7 +438,7 @@ class TestMethodFixedMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "&out1" in ext
 
     def test_ext_c_no_array_buf(self, project):
@@ -449,7 +449,7 @@ class TestMethodFixedMultiOutput:
         )
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "_step_ovf_buf" not in ext
 
     def test_noarg_fixed_multi_output(self, project):
@@ -460,11 +460,11 @@ class TestMethodFixedMultiOutput:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyTuple_Pack" in ext
 
     def test_multiple_extra_outputs(self, project):
@@ -474,10 +474,10 @@ class TestMethodFixedMultiOutput:
         )
         text = (
             project / "native" / "src" / "nco" / "nco_methods.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
         assert "uint32_t *out2" in text
         ext = (
             project / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyTuple_Pack(3," in ext

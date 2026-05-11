@@ -88,7 +88,7 @@ class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
         dest = tmp_path / "bpf"
         _cli("new", "bpf", str(dest), "--object", "bpf", "--state", "cutoff:double")
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(encoding="utf-8")
         assert "double cutoff;" in core
 
     def test_state_flag_with_default(self, tmp_path):
@@ -97,7 +97,7 @@ class TestNewStateCLI:
             "new", "bpf", str(dest), "--object", "bpf", "--state", "gain:double:1.5"
         )
         assert r.returncode == 0
-        c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text()
+        c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text(encoding="utf-8")
         assert "state->gain = 1.5;" in c
 
     def test_multi_state_flags(self, tmp_path):
@@ -114,14 +114,14 @@ class TestNewStateCLI:
             "order:int:4",
         )
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text()
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(encoding="utf-8")
         assert "double cutoff;" in core
         assert "int order;" in core
 
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core
 
     def test_invalid_type_exits_1(self, tmp_path):
@@ -182,7 +182,7 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text()
+        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text(encoding="utf-8")
         assert "double rate;" in core
 
 
@@ -206,7 +206,7 @@ class TestVoidArgTypeCLI:
             "--arg-type", "void",
             "--return-type", "float",
         )
-        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text()
+        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
         assert "nco_step(const nco_state_t *state)" in h
 
     def test_object_void_arg_type(self, tmp_path):
@@ -229,7 +229,7 @@ class TestVoidArgTypeCLI:
             "--return-type", "float",
             cwd=dest,
         )
-        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text()
+        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text(encoding="utf-8")
         assert "osc_step(const osc_state_t *state)" in h
 
 
@@ -250,7 +250,7 @@ class TestAddCLI:
         _cli("new", "comp", str(dest), "--object", "comp")
         r = _cli("add", "--state", "order:int:4", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "int order;" in core
 
     def test_add_updates_config(self, tmp_path):

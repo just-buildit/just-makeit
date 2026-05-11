@@ -277,7 +277,7 @@ def _scaffold_perf(tmp_path_factory):
 
 def _has_avx512() -> bool:
     cpuinfo = Path("/proc/cpuinfo")
-    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text()
+    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text(encoding="utf-8")
 
 
 class TestStep7PerfScalar:

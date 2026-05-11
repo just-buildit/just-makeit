@@ -51,30 +51,30 @@ class TestFunctionsFileCreated:
         assert path.exists()
 
     def test_functions_c_has_stub(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_functions.c").read_text()
+        text = (fft_module / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
         assert "fft_global_setup(PyObject *self, PyObject *args)" in text
 
     def test_functions_c_has_implement_marker(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_functions.c").read_text()
+        text = (fft_module / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
         assert "<<IMPLEMENT: fft_global_setup>>" in text
 
     def test_functions_c_returns_none(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_functions.c").read_text()
+        text = (fft_module / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
         assert "Py_RETURN_NONE;" in text
 
     def test_functions_c_has_file_header(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_functions.c").read_text()
+        text = (fft_module / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
         assert "fft_functions.c" in text
         assert "#included from fft_ext.c" in text
 
 
 class TestExtCHeader:
     def test_include_added_to_ext_c(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '#include "fft_functions.c"' in ext
 
     def test_include_after_numpy(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         numpy_pos = ext.index("#include <numpy/arrayobject.h>")
         include_pos = ext.index('#include "fft_functions.c"')
         assert numpy_pos < include_pos
@@ -83,59 +83,59 @@ class TestExtCHeader:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         # No functions added
-        ext = (root / "native/src/fft/fft_ext.c").read_text()
+        ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "fft_functions.c" not in ext
 
 
 class TestExtCFooter:
     def test_pymethoddef_array_present(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "static PyMethodDef Fft_methods[]" in ext
 
     def test_pymethoddef_has_entry(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '"fft_global_setup", fft_global_setup, METH_VARARGS' in ext
 
     def test_pymethoddef_has_sentinel(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "{NULL, NULL, 0, NULL}" in ext
 
     def test_m_methods_not_null(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert ".m_methods = Fft_methods," in ext
 
     def test_m_methods_null_without_functions(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        ext = (root / "native/src/fft/fft_ext.c").read_text()
+        ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert ".m_methods = NULL," in ext
 
     def test_doc_string_in_methoddef(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text()
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '"Initialize FFT."' in ext
 
 
 class TestTwoFunctions:
     def test_second_stub_appended_to_functions_c(self, two_functions):
-        text = (two_functions / "native/src/fft/fft_functions.c").read_text()
+        text = (two_functions / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
         assert "fft_global_setup(PyObject *self, PyObject *args)" in text
         assert "fft1d_execute(PyObject *self, PyObject *args)" in text
 
     def test_both_entries_in_methoddef(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text()
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '"fft_global_setup", fft_global_setup' in ext
         assert '"fft1d_execute", fft1d_execute' in ext
 
     def test_first_entry_before_second(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text()
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert ext.index("fft_global_setup") < ext.index("fft1d_execute")
 
     def test_second_doc_in_methoddef(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text()
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '"Execute 1-D FFT."' in ext
 
     def test_default_doc_when_no_doc(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text()
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert '"fft_global_setup."' in ext
 
 
@@ -163,7 +163,7 @@ class TestConfig:
         assert cfg_module_functions(cfg, "fft") == []
 
     def test_toml_serializes_functions_section(self, fft_module):
-        toml_text = (fft_module / "just-makeit.toml").read_text()
+        toml_text = (fft_module / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[[module.fft.functions]]" in toml_text
         assert 'name = "fft_global_setup"' in toml_text
         assert 'doc = "Initialize FFT."' in toml_text
@@ -172,14 +172,14 @@ class TestConfig:
 class TestCoexistenceWithObjects:
     def test_objects_and_functions_both_present(self, module_with_objects_and_functions):
         root = module_with_objects_and_functions
-        ext = (root / "native/src/dsp/dsp_ext.c").read_text()
+        ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "NcoType" in ext
         assert "static PyMethodDef Dsp_methods[]" in ext
         assert '"global_setup", global_setup' in ext
 
     def test_include_present(self, module_with_objects_and_functions):
         root = module_with_objects_and_functions
-        ext = (root / "native/src/dsp/dsp_ext.c").read_text()
+        ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert '#include "dsp_functions.c"' in ext
 
     def test_adding_object_after_function_preserves_methods(self, tmp_path):
@@ -187,7 +187,7 @@ class TestCoexistenceWithObjects:
         new_run("dsp", root, modules=["dsp"])
         function_run(root, "global_setup", "dsp")
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
-        ext = (root / "native/src/dsp/dsp_ext.c").read_text()
+        ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "global_setup" in ext
         assert "NcoType" in ext
 
@@ -196,7 +196,7 @@ class TestCoexistenceWithObjects:
         new_run("dsp", root, modules=["dsp"])
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         function_run(root, "global_setup", "dsp")
-        ext = (root / "native/src/dsp/dsp_ext.c").read_text()
+        ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "global_setup" in ext
         assert "NcoType" in ext
 

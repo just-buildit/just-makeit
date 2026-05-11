@@ -37,8 +37,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install just-makeit from source
-        run: uv pip install --system .
+      - name: Install just-makeit as a tool
+        run: uv tool install .
 
       - name: Run jm-install-deps (pass temp venv path as first arg)
         run: jm-install-deps ${{ runner.temp }}/jm-smoke-venv

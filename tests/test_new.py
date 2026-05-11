@@ -89,7 +89,7 @@ class TestNewComponentFiles:
     def test_compile_commands_json(self, project):
         import json
 
-        data = json.loads((project / "compile_commands.json").read_text())
+        data = json.loads((project / "compile_commands.json").read_text(encoding="utf-8"))
         assert isinstance(data, list)
         assert len(data) == 4
         files = {e["file"] for e in data}
@@ -104,7 +104,7 @@ class TestNewScaffoldOnly:
         assert (scaffold / "CMakeLists.txt").exists()
 
     def test_minimal_init_py(self, scaffold):
-        init = (scaffold / "src" / "my_proj" / "__init__.py").read_text()
+        init = (scaffold / "src" / "my_proj" / "__init__.py").read_text(encoding="utf-8")
         assert "my_proj" in init
 
     def test_no_component_files(self, scaffold):
@@ -167,62 +167,62 @@ class TestNewContent:
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
     def test_cmake_top_has_project_name(self, project):
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "project(my_filter" in cmake
 
     def test_cmake_top_has_python_package_dir(self, project):
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "PYTHON_PACKAGE_DIR" in cmake
         assert "src/my_filter" in cmake
 
     def test_cmake_top_has_add_subdirectory(self, project):
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/my_filter)" in cmake
 
     def test_component_cmake_has_python3_add_library(self, project):
         cmake = (
             project / "native" / "src" / "my_filter" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "Python3_add_library(my_filter" in cmake
 
     def test_header_has_correct_typedef(self, project):
-        h = (project / "native" / "inc" / "my_filter" / "my_filter_core.h").read_text()
+        h = (project / "native" / "inc" / "my_filter" / "my_filter_core.h").read_text(encoding="utf-8")
         assert "my_filter_state_t" in h
         assert "my_filter_create" in h
         assert "my_filter_destroy" in h
         assert "my_filter_step" in h
 
     def test_ext_c_has_correct_class(self, project):
-        ext = (project / "native" / "src" / "my_filter" / "my_filter_ext.c").read_text()
+        ext = (project / "native" / "src" / "my_filter" / "my_filter_ext.c").read_text(encoding="utf-8")
         assert "MyFilterObject" in ext
         assert "PyInit_my_filter" in ext
 
     def test_python_init_imports_class(self, project):
-        init = (project / "src" / "my_filter" / "__init__.py").read_text()
+        init = (project / "src" / "my_filter" / "__init__.py").read_text(encoding="utf-8")
         assert "from .my_filter import MyFilter" in init
 
     def test_pyproject_uses_just_buildit(self, project):
-        toml = (project / "pyproject.toml").read_text()
+        toml = (project / "pyproject.toml").read_text(encoding="utf-8")
         assert 'build-backend = "just_buildit"' in toml
         assert 'command = "make just-build"' in toml
 
     def test_pyproject_has_project_name(self, project):
-        toml = (project / "pyproject.toml").read_text()
+        toml = (project / "pyproject.toml").read_text(encoding="utf-8")
         assert 'name = "my-filter"' in toml
 
     def test_cmake_top_has_combined_lib(self, project):
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_library(my_filter_lib SHARED" in cmake
         assert "add_library(my_filter_lib_static STATIC" in cmake
 
     def test_cmake_component_is_object_lib(self, project):
         cmake = (
             project / "native" / "src" / "my_filter" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "add_library(my_filter_core OBJECT" in cmake
 
     def test_umbrella_header_content(self, project):
-        h = (project / "native" / "inc" / "my_filter.h").read_text()
+        h = (project / "native" / "inc" / "my_filter.h").read_text(encoding="utf-8")
         assert "MY_FILTER_H" in h
 
     def test_umbrella_header_updated_by_init(self, tmp_path):
@@ -230,11 +230,11 @@ class TestNewContent:
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest)
         init_run(dest, "gain")
-        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text()
+        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text(encoding="utf-8")
         assert '#include "gain/gain_core.h"' in umbrella
 
     def test_pc_in_content(self, project):
-        pc = (project / "cmake" / "my-filter.pc.in").read_text()
+        pc = (project / "cmake" / "my-filter.pc.in").read_text(encoding="utf-8")
         assert "Name: my-filter" in pc
         assert "-lmy_filter" in pc
 
@@ -243,33 +243,33 @@ class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp")
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core_h
         assert "comp_get_gain" in core_h
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("cutoff", "double", "0.0")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double cutoff;" in core_h
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("gain", "double", "1.0"), ("order", "int", "4")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core_h
         assert "int order;" in core_h
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("alpha", "float", "0.0f")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text()
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "float alpha;" in core_h
 
     def test_reset_uses_default_not_zero(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, "comp", [("gain", "double", "1.5")])
-        c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text()
+        c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text(encoding="utf-8")
         assert "state->gain = 1.5;" in c
 
 
@@ -296,7 +296,7 @@ class TestNewWithModules:
     def test_module_add_subdirectory_in_cmake(self, tmp_path):
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest, modules=["audio"])
-        cmake = (dest / "CMakeLists.txt").read_text()
+        cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/audio)" in cmake
 
 
@@ -319,13 +319,19 @@ class TestNewValidation:
     def test_single_word_name(self, tmp_path):
         dest = tmp_path / "gain"
         run("gain", dest, "gain")
-        cmake = (dest / "CMakeLists.txt").read_text()
+        cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "project(gain" in cmake
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Generated C99 complex types are not supported by MSVC; "
+           "use MinGW or Clang on Windows to build generated projects.",
+)
 class TestNewBuild:
     """Integration test: new → cmake configure + build → CTest + pytest.
-    Skipped if cmake or a C compiler is not available.
+    Skipped if cmake or a C99-capable compiler is not available.
+    Skipped entirely on Windows (MSVC rejects float complex).
     """
 
     @pytest.fixture(scope="class")
@@ -335,7 +341,7 @@ class TestNewBuild:
         if not shutil.which("cmake"):
             pytest.skip("cmake not found")
         if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
-            pytest.skip("no C compiler found")
+            pytest.skip("no C99 compiler found")
         try:
             import numpy  # noqa: F401
         except ImportError:

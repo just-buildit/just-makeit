@@ -67,14 +67,14 @@ class TestSave:
     def test_no_component_no_state_section(self, tmp_path):
         cfg = from_new("p")
         save(tmp_path, cfg)
-        text = (tmp_path / FILENAME).read_text()
+        text = (tmp_path / FILENAME).read_text(encoding="utf-8")
         assert "[[" not in text
 
     def test_multiple_state_entries(self, tmp_path):
         cfg = from_new("p")
         add_component(cfg, "g", [("a", "double", "0.0"), ("b", "int", "0")])
         save(tmp_path, cfg)
-        text = (tmp_path / FILENAME).read_text()
+        text = (tmp_path / FILENAME).read_text(encoding="utf-8")
         assert text.count("[[g.state]]") == 2
 
 

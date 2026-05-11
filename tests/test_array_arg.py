@@ -36,59 +36,59 @@ def in_module(tmp_path):
 
 class TestArrayArgExtC:
     def test_h_obj_local(self, standalone):
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert "PyObject *h_obj = NULL;" in ext
 
     def test_from_otf_call(self, standalone):
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "NPY_FLOAT" in ext
 
     def test_array_len_extracted(self, standalone):
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert "h_len = (size_t)PyArray_SIZE(h_arr)" in ext
 
     def test_create_call_has_data_cast(self, standalone):
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert "(const float *)PyArray_DATA(h_arr), h_len" in ext
 
     def test_decref_after_create(self, standalone):
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert "Py_DECREF(h_arr);" in ext
         # decref must come before handle NULL check
         assert ext.index("Py_DECREF(h_arr)") < ext.index("if (!self->handle)")
 
     def test_required_array_before_optional_scalar(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text()
+        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
         # Format: O (required array) before | (optional scalars)
         assert '"O|i"' in ext
 
     def test_kwlist_array_before_scalar(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text()
+        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
         assert ext.index('"h"') < ext.index('"factor"')
 
     def test_array_only_steps_format(self, standalone):
         # fir has no scalar state vars — steps() format is "O|O" (input + optional out)
-        ext = (standalone / "native/src/fir/fir_ext.c").read_text()
+        ext = (standalone / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         assert '"O|O"' in ext
 
     def test_in_module_ext_has_array_parse(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text()
+        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "(const float *)PyArray_DATA(h_arr), h_len" in ext
 
 
 class TestArrayArgCoreH:
     def test_create_params_has_array(self, standalone):
-        h = (standalone / "native/inc/fir/fir_core.h").read_text()
+        h = (standalone / "native/inc/fir/fir_core.h").read_text(encoding="utf-8")
         assert "const float *h, size_t h_len" in h
 
     def test_create_params_array_before_scalar(self, in_module):
-        h = (in_module / "native/inc/hbdecim/hbdecim_core.h").read_text()
+        h = (in_module / "native/inc/hbdecim/hbdecim_core.h").read_text(encoding="utf-8")
         assert "const float *h, size_t h_len, int factor" in h
 
     def test_create_param_docs(self, standalone):
-        h = (standalone / "native/inc/fir/fir_core.h").read_text()
+        h = (standalone / "native/inc/fir/fir_core.h").read_text(encoding="utf-8")
         assert "h" in h  # array param documented
 
 
@@ -122,16 +122,16 @@ class TestMultipleArrayArgs:
         return root
 
     def test_both_obj_locals(self, dual):
-        ext = (dual / "native/src/resamp/resamp_ext.c").read_text()
+        ext = (dual / "native/src/resamp/resamp_ext.c").read_text(encoding="utf-8")
         assert "PyObject *h_obj = NULL;" in ext
         assert "PyObject *g_obj = NULL;" in ext
 
     def test_fmt_two_required(self, dual):
-        ext = (dual / "native/src/resamp/resamp_ext.c").read_text()
+        ext = (dual / "native/src/resamp/resamp_ext.c").read_text(encoding="utf-8")
         assert '"OO|d"' in ext
 
     def test_create_call_order(self, dual):
-        ext = (dual / "native/src/resamp/resamp_ext.c").read_text()
+        ext = (dual / "native/src/resamp/resamp_ext.c").read_text(encoding="utf-8")
         assert (
             "(const float *)PyArray_DATA(h_arr), h_len,"
             " (const double *)PyArray_DATA(g_arr), g_len,"
@@ -139,12 +139,12 @@ class TestMultipleArrayArgs:
         ) in ext
 
     def test_cleanup_on_second_failure(self, dual):
-        ext = (dual / "native/src/resamp/resamp_ext.c").read_text()
+        ext = (dual / "native/src/resamp/resamp_ext.c").read_text(encoding="utf-8")
         # If g FROM_OTF fails, h must be decreffed
         assert "Py_DECREF(h_arr)" in ext
 
     def test_create_params_order(self, dual):
-        h = (dual / "native/inc/resamp/resamp_core.h").read_text()
+        h = (dual / "native/inc/resamp/resamp_core.h").read_text(encoding="utf-8")
         assert (
             "const float *h, size_t h_len,"
             " const double *g, size_t g_len,"

@@ -137,57 +137,57 @@ class TestScalarPureContent:
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
     def test_header_has_fn_signature(self, scalar_pure):
-        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text()
+        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text(encoding="utf-8")
         assert "norm_fn(float complex x" in h
         assert "double scale" in h
 
     def test_header_has_steps_signature(self, scalar_pure):
-        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text()
+        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text(encoding="utf-8")
         assert "norm_steps(" in h
 
     def test_header_no_params_struct(self, scalar_pure):
-        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text()
+        h = (scalar_pure / "native" / "inc" / "norm" / "norm_core.h").read_text(encoding="utf-8")
         assert "norm_params_t" not in h
 
     def test_ext_exports_two_module_functions(self, scalar_pure):
-        ext = (scalar_pure / "native" / "src" / "norm" / "norm_ext.c").read_text()
+        ext = (scalar_pure / "native" / "src" / "norm" / "norm_ext.c").read_text(encoding="utf-8")
         assert "py_norm" in ext
         assert "py_norm_steps" in ext
         assert "PyInit_norm" in ext
 
     def test_ext_no_typeobject(self, scalar_pure):
-        ext = (scalar_pure / "native" / "src" / "norm" / "norm_ext.c").read_text()
+        ext = (scalar_pure / "native" / "src" / "norm" / "norm_ext.c").read_text(encoding="utf-8")
         assert "PyTypeObject" not in ext
 
     def test_pyi_has_functions_not_class(self, scalar_pure):
-        pyi = (scalar_pure / "src" / "my_norm" / "norm.pyi").read_text()
+        pyi = (scalar_pure / "src" / "my_norm" / "norm.pyi").read_text(encoding="utf-8")
         assert "def norm(" in pyi
         assert "def norm_steps(" in pyi
         assert "class Norm" not in pyi
 
     def test_pyi_has_scale_param(self, scalar_pure):
-        pyi = (scalar_pure / "src" / "my_norm" / "norm.pyi").read_text()
+        pyi = (scalar_pure / "src" / "my_norm" / "norm.pyi").read_text(encoding="utf-8")
         assert "scale" in pyi
 
     def test_init_py_pure_scalar_pattern(self, scalar_pure):
-        init = (scalar_pure / "src" / "my_norm" / "__init__.py").read_text()
+        init = (scalar_pure / "src" / "my_norm" / "__init__.py").read_text(encoding="utf-8")
         assert "from .norm import norm, norm_steps" in init
         assert "norm.steps = norm_steps" in init
 
     def test_pytest_imports_functions(self, scalar_pure):
-        test = (scalar_pure / "src" / "my_norm" / "tests" / "test_norm.py").read_text()
+        test = (scalar_pure / "src" / "my_norm" / "tests" / "test_norm.py").read_text(encoding="utf-8")
         assert "from my_norm import norm, norm_steps" in test
 
     def test_pytest_has_steps_attr_test(self, scalar_pure):
-        test = (scalar_pure / "src" / "my_norm" / "tests" / "test_norm.py").read_text()
+        test = (scalar_pure / "src" / "my_norm" / "tests" / "test_norm.py").read_text(encoding="utf-8")
         assert "test_steps_attr" in test
 
     def test_bench_py_imports_functions(self, scalar_pure):
-        bench = (scalar_pure / "src" / "my_norm" / "benchmarks" / "bench_norm.py").read_text()
+        bench = (scalar_pure / "src" / "my_norm" / "benchmarks" / "bench_norm.py").read_text(encoding="utf-8")
         assert "from my_norm import norm, norm_steps" in bench
 
     def test_test_c_calls_fn(self, scalar_pure):
-        c = (scalar_pure / "native" / "tests" / "test_norm_core.c").read_text()
+        c = (scalar_pure / "native" / "tests" / "test_norm_core.c").read_text(encoding="utf-8")
         assert "norm_fn(" in c
         assert "norm_steps(" in c
 
@@ -202,67 +202,67 @@ class TestStructPureContent:
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
     def test_header_has_params_struct(self, struct_pure):
-        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text()
+        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text(encoding="utf-8")
         assert "fir_params_t" in h
         assert "float taps[16]" in h
         assert "int n_taps" in h
 
     def test_header_has_alloc_helpers(self, struct_pure):
-        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text()
+        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text(encoding="utf-8")
         assert "fir_params_create" in h
         assert "fir_params_free" in h
         assert "fir_params_init" in h
 
     def test_header_fn_takes_params_ptr(self, struct_pure):
-        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text()
+        h = (struct_pure / "native" / "inc" / "fir" / "fir_core.h").read_text(encoding="utf-8")
         assert "fir_fn(float complex x, fir_params_t *params)" in h
 
     def test_core_c_has_calloc(self, struct_pure):
-        c = (struct_pure / "native" / "src" / "fir" / "fir_core.c").read_text()
+        c = (struct_pure / "native" / "src" / "fir" / "fir_core.c").read_text(encoding="utf-8")
         assert "calloc" in c
         assert "aligned_alloc" in c
 
     def test_core_c_has_params_init(self, struct_pure):
-        c = (struct_pure / "native" / "src" / "fir" / "fir_core.c").read_text()
+        c = (struct_pure / "native" / "src" / "fir" / "fir_core.c").read_text(encoding="utf-8")
         assert "fir_params_init" in c
         assert "memset" in c
 
     def test_ext_has_typeobject(self, struct_pure):
-        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text()
+        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text(encoding="utf-8")
         assert "PyTypeObject" in ext
 
     def test_ext_has_tp_call(self, struct_pure):
-        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text()
+        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text(encoding="utf-8")
         assert "tp_call" in ext
 
     def test_ext_no_step_method_name(self, struct_pure):
-        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text()
+        ext = (struct_pure / "native" / "src" / "fir" / "fir_ext.c").read_text(encoding="utf-8")
         assert '"step"' not in ext
 
     def test_pyi_has_class_not_functions(self, struct_pure):
-        pyi = (struct_pure / "src" / "my_fir" / "fir.pyi").read_text()
+        pyi = (struct_pure / "src" / "my_fir" / "fir.pyi").read_text(encoding="utf-8")
         assert "class Fir:" in pyi
         assert "def fir(" not in pyi
 
     def test_pyi_has_call_not_step(self, struct_pure):
-        pyi = (struct_pure / "src" / "my_fir" / "fir.pyi").read_text()
+        pyi = (struct_pure / "src" / "my_fir" / "fir.pyi").read_text(encoding="utf-8")
         assert "def __call__(" in pyi
         assert "def step(" not in pyi
 
     def test_init_py_imports_class(self, struct_pure):
-        init = (struct_pure / "src" / "my_fir" / "__init__.py").read_text()
+        init = (struct_pure / "src" / "my_fir" / "__init__.py").read_text(encoding="utf-8")
         assert "from .fir import Fir" in init
 
     def test_pytest_imports_class(self, struct_pure):
-        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text()
+        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text(encoding="utf-8")
         assert "from my_fir import Fir" in test
 
     def test_pytest_has_context_manager(self, struct_pure):
-        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text()
+        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text(encoding="utf-8")
         assert "test_context_manager" in test
 
     def test_pytest_has_destroy(self, struct_pure):
-        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text()
+        test = (struct_pure / "src" / "my_fir" / "tests" / "test_fir.py").read_text(encoding="utf-8")
         assert "test_destroy" in test
 
 
@@ -313,7 +313,7 @@ class TestInitPure:
         init_run(dest, "norm", [("scale", "double", "1.0")], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "norm") == "scalar"
-        h = (dest / "native" / "inc" / "norm" / "norm_core.h").read_text()
+        h = (dest / "native" / "inc" / "norm" / "norm_core.h").read_text(encoding="utf-8")
         assert "norm_fn(" in h
 
     def test_init_pure_struct(self, tmp_path):
@@ -323,5 +323,5 @@ class TestInitPure:
         init_run(dest, "fir", [("taps", "float[8]", "")], pure=True)
         cfg = C.load(dest)
         assert C.pure_style(cfg, "fir") == "struct"
-        h = (dest / "native" / "inc" / "fir" / "fir_core.h").read_text()
+        h = (dest / "native" / "inc" / "fir" / "fir_core.h").read_text(encoding="utf-8")
         assert "fir_params_t" in h
