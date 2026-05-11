@@ -131,6 +131,8 @@ def run(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     array_args: list[tuple[str, str]] = (),
+    no_state: bool = False,
+    no_step: bool = False,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -158,7 +160,7 @@ def run(
         )
         sys.exit(1)
 
-    vars_ = state_vars or [("gain", "double", "0.0")]
+    vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:
@@ -184,12 +186,13 @@ def run(
         pure_style = pure_ctx["pure_style"]
     else:
         ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
-                                    array_args=array_args))
+                                    array_args=array_args, no_state=no_state))
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
     if pure_style is None:
-        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type))
+        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type,
+                                   no_step=no_step))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -235,7 +238,7 @@ def run(
         core_c_tmpl = T.COMPONENT_CORE_C
         ext_c_tmpl = T.COMPONENT_EXT_C
         test_c_tmpl = T.COMPONENT_TEST_C
-        bench_c_tmpl = T.COMPONENT_BENCH_C
+        bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
         pyi_tmpl = T.COMPONENT_PYI
         pytest_tmpl = T.PYTEST_TEST
         bench_py_tmpl = T.COMPONENT_BENCH_PY
@@ -346,7 +349,8 @@ def run(
     # just-makeit.toml
     C.add_component(cfg, comp, vars_, pure=pure_style,
                     arg_type_=arg_type, return_type_=return_type,
-                    array_args_=array_args)
+                    array_args_=array_args,
+                    no_state_=no_state, no_step_=no_step)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

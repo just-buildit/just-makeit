@@ -83,10 +83,13 @@ def _obj_stub(cfg: dict, obj: str) -> str:
     obj_props    = C.properties(cfg, obj)
     state_names  = {n for n, _, _ in state_vars}
 
+    no_step  = C.is_no_step(cfg, obj)
+    no_state = C.is_no_state(cfg, obj)
+
     lines: list[str] = [f"class {Component}:"]
 
     # __init__
-    if state_vars:
+    if state_vars and not no_state:
         init_params = ", ".join(
             f"{n}: {_py(t)} = ..." for n, t, _ in state_vars
         )
@@ -95,7 +98,9 @@ def _obj_stub(cfg: dict, obj: str) -> str:
         lines.append("    def __init__(self) -> None: ...")
 
     # step() / steps()
-    if arg_type.endswith("[]"):
+    if no_step:
+        pass  # no step or steps stubs
+    elif arg_type.endswith("[]"):
         # Array-buffer object: step takes a whole numpy array, no steps().
         lines.append(
             f"    def step(self, x: {_py(arg_type)}) -> {_py(return_type)}: ..."

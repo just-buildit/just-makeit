@@ -27,12 +27,16 @@ Commands:
                      hosts multiple types added via 'object').
 
   object <name> [--module name] [--state|--param name:type[:default] ...] [--perf] [--pure]
-             [--arg-type TYPE] [--return-type TYPE]
+             [--arg-type TYPE] [--return-type TYPE] [--no-state] [--no-step]
                      Add a Python type to the project.
                      Without --module: standalone object with its own .so.
                      With --module:    type grouped into a shared module subpackage .so.
                      --arg-type TYPE    See 'new' above.
                      --return-type TYPE See 'new' above (void supported).
+                     --no-state         Omit default state var; generate <<IMPLEMENT>> stubs
+                                        in create/destroy/reset; no constructor args.
+                                        Mutually exclusive with --state.
+                     --no-step          Suppress step() and steps() entirely (both C and Python).
 
   method <object> <method_name> [--module name]
              [--param name:type ...] [--param name:type[] ...] [--return-type TYPE]
@@ -311,6 +315,8 @@ def main() -> None:
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
         array_args_obj: list[tuple[str, str]] = []
+        no_state = False
+        no_step = False
 
         remaining = args[2:]
         i = 0
@@ -384,13 +390,25 @@ def main() -> None:
                     sys.exit(1)
                 array_args_obj.append((aa_name, aa_dtype))
                 i += 1
+            elif tok == "--no-state":
+                no_state = True
+                i += 1
+            elif tok == "--no-step":
+                no_step = True
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _object.run(Path.cwd(), object_name, module, state_vars or None,
+        if no_state and state_vars:
+            print("error: --no-state and --state are mutually exclusive.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        _object.run(Path.cwd(), object_name, module,
+                    None if (no_state or not state_vars) else state_vars,
                     perf=perf, pure=pure, arg_type=arg_type, return_type=return_type,
-                    array_args=array_args_obj)
+                    array_args=array_args_obj, no_state=no_state, no_step=no_step)
 
     elif cmd == "method":
         if len(args) < 3:

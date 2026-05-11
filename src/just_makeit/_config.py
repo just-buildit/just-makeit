@@ -89,6 +89,16 @@ def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
     return cfg
 
 
+def is_no_state(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --no-state."""
+    return cfg.get(component, {}).get("no_state") == "true"
+
+
+def is_no_step(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --no-step."""
+    return cfg.get(component, {}).get("no_step") == "true"
+
+
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     """Return declared array constructor args for component as [(name, dtype), ...]."""
     return [
@@ -180,6 +190,8 @@ def add_component(
     arg_type_: str = "float _Complex",
     return_type_: str | None = None,
     array_args_: list[tuple[str, str]] = (),
+    no_state_: bool = False,
+    no_step_: bool = False,
 ) -> dict:
     entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
@@ -195,6 +207,10 @@ def add_component(
         entry["array_args"] = [
             {"name": n, "dtype": dt} for n, dt in array_args_
         ]
+    if no_state_:
+        entry["no_state"] = "true"
+    if no_step_:
+        entry["no_step"] = "true"
     cfg[component] = entry
     return cfg
 
@@ -234,7 +250,8 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        meta_keys = [k for k in ("pure", "arg_type", "return_type") if comp_data.get(k)]
+        meta_keys = [k for k in ("pure", "arg_type", "return_type", "no_state", "no_step")
+                     if comp_data.get(k)]
         if meta_keys:
             lines.append(f"[{comp}]")
             for k in meta_keys:

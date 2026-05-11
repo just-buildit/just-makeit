@@ -37,6 +37,8 @@ def _make_object_ctx(
     perf: bool = False,
     pure: bool = False,
     array_args: list[tuple[str, str]] = (),
+    no_state: bool = False,
+    no_step: bool = False,
 ) -> tuple[dict, str | None]:
     """Build the render ctx for an object.  Returns (ctx, pure_style)."""
     ctx = _make_component_ctx(component)
@@ -59,12 +61,13 @@ def _make_object_ctx(
         pure_style = pure_ctx["pure_style"]
     else:
         ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars,
-                                    array_args=array_args))
+                                    array_args=array_args, no_state=no_state))
         pure_style = None
 
     ctx.update(T.make_perf_ctx(perf))
     if pure_style is None:
-        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type))
+        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type,
+                                   no_step=no_step))
     return ctx, pure_style
 
 
@@ -87,6 +90,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             perf=perf,
             pure=(pure_style is not None),
             array_args=C.array_args(cfg, obj),
+            no_state=C.is_no_state(cfg, obj),
+            no_step=C.is_no_step(cfg, obj),
         )
         ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
                                       C.methods(cfg, obj)))
@@ -161,6 +166,8 @@ def run(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     array_args: list[tuple[str, str]] = (),
+    no_state: bool = False,
+    no_step: bool = False,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -187,7 +194,8 @@ def run(
         from . import _init
         _init.run(root, object_name, state_vars, perf=perf, pure=pure,
                   arg_type=arg_type, return_type=return_type,
-                  array_args=array_args, _hint=_hint)
+                  array_args=array_args, no_state=no_state, no_step=no_step,
+                  _hint=_hint)
         return
 
     # --module given -> in-module path
@@ -218,10 +226,11 @@ def run(
     if perf is None:
         perf = C.is_perf(cfg)
 
-    vars_ = state_vars or [("gain", "double", "0.0")]
+    vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
     ctx, pure_style = _make_object_ctx(
         object_name, module, pkg, version, vars_, arg_type, return_type,
         perf=perf, pure=pure, array_args=array_args,
+        no_state=no_state, no_step=no_step,
     )
 
     def r(tmpl):
@@ -242,13 +251,14 @@ def run(
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
-        r(T.COMPONENT_BENCH_C),
+        r(T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C),
     )
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)
     C.add_component(cfg, comp, vars_, pure=pure_style, arg_type_=arg_type,
-                    return_type_=return_type, array_args_=array_args)
+                    return_type_=return_type, array_args_=array_args,
+                    no_state_=no_state, no_step_=no_step)
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)

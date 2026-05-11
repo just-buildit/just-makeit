@@ -731,6 +731,7 @@ def make_state_ctx(
     state_vars: list[tuple[str, str, str]],
     array_args: list[tuple[str, str]] = (),
     roles: dict[str, str] | None = None,
+    no_state: bool = False,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -749,6 +750,48 @@ def make_state_ctx(
     parameters (e.g. filter coefficients, sample rate) that should survive a
     soft-reset of runtime state (e.g. phase accumulator, filter history).
     """
+    if no_state:
+        return {
+            "state_struct_fields":    "    /* <<IMPLEMENT: add fields >> */",
+            "create_params":          "void",
+            "create_param_docs":      " * @param (none)  Caller is responsible for all state management.",
+            "getter_setter_decls":    "",
+            "create_assignments":     "    /* <<IMPLEMENT: initialise state >> */",
+            "reset_assignments":      "    /* <<IMPLEMENT: restore defaults >> */",
+            "destroy_impl":           "    /* <<IMPLEMENT: free resources >> */\n",
+            "getter_setter_impls":    "",
+            "init_kwlist":            "NULL",
+            "init_locals":            "",
+            "init_post_parse":        "",
+            "init_parse_fmt":         "|",
+            "init_parse_args":        "",
+            "init_parse_block":       "    (void)args;\n    (void)kwds;\n",
+            "create_call_args":       "",
+            "getter_setter_methods_c":     "",
+            "getter_setter_pymethoddef":   "",
+            "init_params_pyi":        "",
+            "pyi_param_docs":         "    (none)",
+            "getter_setter_stubs_pyi":     "",
+            "py_create_args":         "",
+            "getter_setter_test_py":  "        pass  # no auto-state; add assertions for your fields",
+            "reset_test_py":          "        pass  # no auto-state; add assertions for your reset",
+            "c_create_args":          "",
+            "getter_setter_test_c":   "",
+            "reset_test_c":           f"    /* reset */\n    {component}_reset(obj);",
+            "array_args_parse_block": "",
+            "array_args_decref":      "",
+            "method_decls":           "",
+            "extra_buf_fields":       "",
+            "extra_buf_free":         "",
+            "extra_buf_alloc":        "",
+            "extra_methods_c":        "",
+            "extra_methods_pymethoddef": "",
+            "getset_def":             "",
+            "tp_getset_decl":         "",
+            "property_decls":         "",
+            "property_struct_fields": "",
+        }
+
     if roles is None:
         roles = {}
     for name, ct, _ in state_vars:
@@ -1314,6 +1357,7 @@ def make_state_ctx(
         "getter_setter_decls": getter_setter_decls,
         "create_assignments": create_assignments,
         "reset_assignments": reset_assignments,
+        "destroy_impl": "",
         "getter_setter_impls": getter_setter_impls,
         "init_kwlist": init_kwlist,
         "init_locals": init_locals,
@@ -2207,7 +2251,9 @@ def make_properties_ctx(
     }
 
 
-def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
+def make_step_ctx(
+    ctx: dict, arg_type: str, return_type: str, no_step: bool = False
+) -> dict[str, str]:
     """Pre-render step() and steps() C and Python bodies for stateful objects.
 
     Must be called AFTER make_sample_ctx() and make_perf_ctx() so that
@@ -2237,6 +2283,36 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
     omp_simd_hint  = ctx.get("omp_simd_hint", "")
     step_return    = ctx.get("step_return_expr", f"PyFloat_FromDouble((double)y)")
     is_void_return = (return_type == "void")
+
+    if no_step:
+        # --no-step: suppress step() and steps() entirely.
+        py_create_args = ctx.get("py_create_args", "")
+        _lifecycle = (
+            f"\n"
+            f"    def test_context_manager(self):\n"
+            f"        with {Component}({py_create_args}) as obj:\n"
+            f"            pass\n"
+            f"\n"
+            f"    def test_destroy(self):\n"
+            f"        obj = {Component}({py_create_args})\n"
+            f"        obj.destroy()\n"
+        )
+        return {
+            "step_header_decl":         "",
+            "step_impl_def":            "",
+            "steps_c_decl":             "",
+            "steps_c_impl":             "",
+            "step_ext_fn":              "",
+            "steps_ext_fn":             "",
+            "step_py_flags":            "METH_VARARGS",
+            "bench_steps_timing_block": "",
+            "steps_def_entry":          "",
+            "step_pymethoddef_entry":   "",
+            "step_c_smoke_test":        "    /* no step() generated (--no-step) */",
+            "pyi_step_methods":         "",
+            "step_pytest_methods":      "",
+            "lifecycle_pytest_methods": _lifecycle,
+        }
 
     if arg_type == "void":
         step_header_decl = (
@@ -2675,6 +2751,78 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
     else:
         steps_def_entry = ""
 
+    # step_pymethoddef_entry: PyMethodDef entry for step().
+    step_pymethoddef_entry = (
+        f'    {{"step",     (PyCFunction){Component}_step,     {step_py_flags},\n'
+        f'     "Process one sample. Returns a scalar."}},\n'
+    )
+
+    # step_c_smoke_test: C test smoke-test line.
+    _suffix = ctx.get("step_example_suffix", "")
+    step_c_smoke_test = (
+        f"    /* step: verify it runs without crashing */\n"
+        f"    (void){component}_step(obj{_suffix});"
+    )
+
+    # pyi_step_methods: def step / def steps stubs for .pyi.
+    in_py_hint  = ctx.get("in_py_hint", "float")
+    out_py_hint = ctx.get("out_py_hint", "float")
+    pyi_steps   = ctx.get("pyi_steps_stub", "")
+    pyi_step_methods = (
+        f"    def step(self, x: {in_py_hint}) -> {out_py_hint}:\n"
+        f'        """Process one sample."""\n'
+        + pyi_steps
+    )
+
+    # step_pytest_methods + lifecycle_pytest_methods: Python test methods.
+    py_create_args    = ctx.get("py_create_args", "")
+    in_py_test_val    = ctx.get("in_py_test_val", "1")
+    out_py_isinstance = ctx.get("out_py_isinstance", "float")
+    in_np_dtype       = ctx.get("in_np_dtype", "np.float32")
+    out_np_dtype      = ctx.get("out_np_dtype", "np.float32")
+    step_pytest_methods = (
+        f"\n"
+        f"    def test_step_runs(self):\n"
+        f"        obj = {Component}({py_create_args})\n"
+        f"        y = obj.step({in_py_test_val})\n"
+        f"        assert isinstance(y, {out_py_isinstance})\n"
+        f"\n"
+        f"    def test_steps_shape_dtype(self):\n"
+        f"        obj = {Component}({py_create_args})\n"
+        f"        x = np.ones(64, dtype={in_np_dtype})\n"
+        f"        y = obj.steps(x)\n"
+        f"        self.assertEqual(y.shape, (64,))\n"
+        f"        self.assertEqual(y.dtype, {out_np_dtype})\n"
+        f"\n"
+        f"    def test_steps_out_param(self):\n"
+        f"        x   = np.ones(64, dtype={in_np_dtype})\n"
+        f"        buf = np.zeros(64, dtype={out_np_dtype})\n"
+        f"        obj1 = {Component}({py_create_args})\n"
+        f"        ret = obj1.steps(x, buf)\n"
+        f"        self.assertIs(ret, buf)\n"
+        f"        obj2 = {Component}({py_create_args})\n"
+        f"        np.testing.assert_array_equal(ret, obj2.steps(x))\n"
+    ) if steps_ext_fn else (
+        f"\n"
+        f"    def test_step_runs(self):\n"
+        f"        obj = {Component}({py_create_args})\n"
+        f"        y = obj.step({in_py_test_val})\n"
+        f"        assert isinstance(y, {out_py_isinstance})\n"
+    )
+    lifecycle_pytest_methods = (
+        f"\n"
+        f"    def test_context_manager(self):\n"
+        f"        with {Component}({py_create_args}) as obj:\n"
+        f"            y = obj.step({in_py_test_val})\n"
+        f"        assert isinstance(y, {out_py_isinstance})\n"
+        f"\n"
+        f"    def test_destroy(self):\n"
+        f"        obj = {Component}({py_create_args})\n"
+        f"        obj.destroy()\n"
+        f"        with _raises(RuntimeError, match=\"destroyed\"):\n"
+        f"            obj.step({in_py_test_val})\n"
+    )
+
     return {
         "step_header_decl":         step_header_decl,
         "step_impl_def":            step_impl_def,
@@ -2685,6 +2833,11 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
         "step_py_flags":            step_py_flags,
         "bench_steps_timing_block": bench_steps_timing_block,
         "steps_def_entry":          steps_def_entry,
+        "step_pymethoddef_entry":   step_pymethoddef_entry,
+        "step_c_smoke_test":        step_c_smoke_test,
+        "pyi_step_methods":         pyi_step_methods,
+        "step_pytest_methods":      step_pytest_methods,
+        "lifecycle_pytest_methods": lifecycle_pytest_methods,
     }
 
 
@@ -3170,7 +3323,7 @@ COMPONENT_CORE_C = """\
 void
 <<component>>_destroy(<<component>>_state_t *state)
 {
-    free(state);
+<<destroy_impl>>    free(state);
 }
 
 void
@@ -3284,9 +3437,7 @@ static PyObject *
 static PyMethodDef <<Component>>_methods[] = {
     {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
      "Reset state to post-create defaults."},
-    {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
-     "Process one sample. Returns a scalar."},
-<<steps_def_entry>>
+<<step_pymethoddef_entry>><<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -3441,9 +3592,7 @@ static PyObject *
 static PyMethodDef <<Component>>_methods[] = {
     {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
      "Reset state to post-create defaults."},
-    {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
-     "Process one sample. Returns a scalar."},
-<<steps_def_entry>>
+<<step_pymethoddef_entry>><<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -3663,8 +3812,7 @@ int main(void)
 
 <<getter_setter_test_c>>
 
-    /* step: verify it runs without crashing */
-    (void)<<component>>_step(obj<<step_example_suffix>>);
+<<step_c_smoke_test>>
 
 <<reset_test_c>>
 
@@ -3730,6 +3878,22 @@ main(void)
     <<component>>_destroy(obj);
 <<bench_free_in>>
 <<bench_free_out>>
+    return 0;
+}
+"""
+
+# ── Minimal bench stub for --no-step objects ─────────────────────────────────
+
+NO_STEP_BENCH_C = """\
+/* bench_<<component>>_core.c — no step() to benchmark */
+#include "<<component>>/<<component>>_impl.h"
+#include <stdio.h>
+
+int
+main(void)
+{
+    printf("=== <<component>> benchmark ===\\n");
+    printf("  (no step() generated; implement step() to enable)\\n");
     return 0;
 }
 """
@@ -5018,10 +5182,7 @@ class <<Component>>:
     def __init__(self, <<init_params_pyi>>) -> None: ...
     def reset(self) -> None:
         \"\"\"Reset state to post-create defaults.\"\"\"
-    def step(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
-        \"\"\"Process one sample.\"\"\"
-<<pyi_steps_stub>>
-<<getter_setter_stubs_pyi>>
+<<pyi_step_methods>><<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"
     def __enter__(self) -> "<<Component>>": ...
@@ -5084,45 +5245,13 @@ class Test<<Component>>(unittest.TestCase):
     def test_create(self):
         obj = <<Component>>(<<py_create_args>>)
         self.assertIsNotNone(obj)
-
-    def test_step_runs(self):
-        obj = <<Component>>(<<py_create_args>>)
-        y = obj.step(<<in_py_test_val>>)
-        assert isinstance(y, <<out_py_isinstance>>)
-
-    def test_steps_shape_dtype(self):
-        obj = <<Component>>(<<py_create_args>>)
-        x = np.ones(64, dtype=<<in_np_dtype>>)
-        y = obj.steps(x)
-        self.assertEqual(y.shape, (64,))
-        self.assertEqual(y.dtype, <<out_np_dtype>>)
-
-    def test_steps_out_param(self):
-        x   = np.ones(64, dtype=<<in_np_dtype>>)
-        buf = np.zeros(64, dtype=<<out_np_dtype>>)
-        obj1 = <<Component>>(<<py_create_args>>)
-        ret = obj1.steps(x, buf)
-        self.assertIs(ret, buf)
-        obj2 = <<Component>>(<<py_create_args>>)
-        np.testing.assert_array_equal(ret, obj2.steps(x))
-
+<<step_pytest_methods>>
     def test_getter_setter(self):
 <<getter_setter_test_py>>
 
     def test_reset(self):
 <<reset_test_py>>
-
-    def test_context_manager(self):
-        with <<Component>>(<<py_create_args>>) as obj:
-            y = obj.step(<<in_py_test_val>>)
-        assert isinstance(y, <<out_py_isinstance>>)
-
-    def test_destroy(self):
-        obj = <<Component>>(<<py_create_args>>)
-        obj.destroy()
-        with _raises(RuntimeError, match="destroyed"):
-            obj.step(<<in_py_test_val>>)
-"""
+<<lifecycle_pytest_methods>>"""
 
 # ── .gitignore ───────────────────────────────────────────────────────────────
 
