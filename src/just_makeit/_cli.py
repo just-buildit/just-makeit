@@ -233,7 +233,21 @@ def main() -> None:
                     sys.exit(1)
                 from . import _templates as T
                 val = remaining[i]
-                if val != "void" and val not in T._CTYPE_META:
+                if val.endswith("[]"):
+                    if tok == "--return-type":
+                        print("error: --return-type cannot be an array type.\n"
+                              "Use a scalar type or void.", file=sys.stderr)
+                        sys.exit(1)
+                    elem = val[:-2]
+                    if elem not in T._CTYPE_META:
+                        print(
+                            f"error: --arg-type array element type '{elem}' "
+                            "is not supported.\n"
+                            f"Supported element types: "
+                            f"{', '.join(sorted(T._CTYPE_META))}",
+                            file=sys.stderr)
+                        sys.exit(1)
+                elif val != "void" and val not in T._CTYPE_META:
                     print(f"error: {tok} '{val}' is not a supported scalar type.\n"
                           f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                           file=sys.stderr)
@@ -325,7 +339,21 @@ def main() -> None:
                     sys.exit(1)
                 from . import _templates as T
                 val = remaining[i]
-                if val != "void" and val not in T._CTYPE_META:
+                if val.endswith("[]"):
+                    if tok == "--return-type":
+                        print("error: --return-type cannot be an array type.\n"
+                              "Use a scalar type or void.", file=sys.stderr)
+                        sys.exit(1)
+                    elem = val[:-2]
+                    if elem not in T._CTYPE_META:
+                        print(
+                            f"error: --arg-type array element type '{elem}' "
+                            "is not supported.\n"
+                            f"Supported element types: "
+                            f"{', '.join(sorted(T._CTYPE_META))}",
+                            file=sys.stderr)
+                        sys.exit(1)
+                elif val != "void" and val not in T._CTYPE_META:
                     print(f"error: {tok} '{val}' is not a supported scalar type.\n"
                           f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                           file=sys.stderr)
@@ -443,7 +471,21 @@ def main() -> None:
                     print(f"error: {tok} requires a type", file=sys.stderr)
                     sys.exit(1)
                 val = remaining[i]
-                if val != "void" and val not in T._CTYPE_META:
+                if val.endswith("[]"):
+                    if tok == "--return-type":
+                        print("error: --return-type cannot be an array type.\n"
+                              "Use a scalar type or void.", file=sys.stderr)
+                        sys.exit(1)
+                    elem = val[:-2]
+                    if elem not in T._CTYPE_META:
+                        print(
+                            f"error: --arg-type array element type '{elem}' "
+                            "is not supported.\n"
+                            f"Supported element types: "
+                            f"{', '.join(sorted(T._CTYPE_META))}",
+                            file=sys.stderr)
+                        sys.exit(1)
+                elif val != "void" and val not in T._CTYPE_META:
                     print(f"error: {tok} '{val}' is not a supported scalar type.\n"
                           f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                           file=sys.stderr)

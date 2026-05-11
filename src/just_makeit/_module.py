@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _stubs as S
 from . import _templates as T
 from ._init import _to_title, _write
 
@@ -82,6 +83,7 @@ def run(root: Path, module: str) -> None:
     }
     pkg_module_dir = root / "src" / pkg / module
     _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx))
+    _write(pkg_module_dir / "__init__.pyi", S.make_module_pyi(cfg, module))
 
     # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
     cmake_path = root / "CMakeLists.txt"

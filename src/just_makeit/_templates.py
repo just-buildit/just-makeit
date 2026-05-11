@@ -423,10 +423,27 @@ def make_sample_ctx(
         bench_steps_out_arg = " out, BENCH_N"
         bench_free_out     = "    free(out);"
 
+    # Bench inner-loop key: the indented for-loop that wraps the step() call.
+    # Scalar/void: iterate BENCH_N times per outer iteration.
+    # Array: no inner loop — one step() call processes the whole buffer.
+    _bench_inner_loop_scalar = (
+        "        for (int i = 0; i < BENCH_N; i++)\n            "
+    )
+
     if arg_type == "void":
         # Generator (or void-in/void-out) object.
         # Keys that reference input type are set to safe fallbacks; the actual
         # step/steps C and Python bodies are pre-rendered by make_step_ctx().
+        if is_void_return:
+            _pyi_steps = (
+                "    def steps(self, n: int = 1) -> None:\n"
+                "        \"\"\"Run n iterations.\"\"\"\n"
+            )
+        else:
+            _pyi_steps = (
+                f"    def steps(self, n: int = 1) -> NDArray[{out_np_dtype}]:\n"
+                "        \"\"\"Generate n output samples.\"\"\"\n"
+            )
         return {
             "arg_ctype":            "void",
             "return_ctype":         ret_disp,
@@ -458,6 +475,7 @@ def make_sample_ctx(
             "bench_in_loop":        "",
             "bench_step_input_arg": "",
             "bench_step_input_sep": "",
+            "bench_step_inner_loop": _bench_inner_loop_scalar,
             "bench_steps_in_arg":   "",
             "bench_free_in":        "",
             "bench_out_decl":       bench_out_decl,
@@ -471,6 +489,78 @@ def make_sample_ctx(
             "pure_x_fmt_char":      "",
             "pure_x_parse_arg":     "",
             "pure_x_to_c":          "",
+            "pyi_steps_stub":       _pyi_steps,
+        }
+
+    if arg_type.endswith("[]"):
+        # Array-buffer object: step(state, const elem_t *x, size_t x_len).
+        # steps() is not generated — the primary operation already takes a buffer.
+        elem_type = arg_type[:-2]
+        if elem_type not in _CTYPE_META:
+            supported = ", ".join(sorted(_CTYPE_META))
+            raise ValueError(
+                f"unsupported array element type '{elem_type}' in "
+                f"--arg-type '{arg_type}'."
+                f" Supported element types: void, {supported}"
+            )
+        samp = _CTYPE_META[elem_type]
+        elem_disp = _ctype_display(elem_type)
+        in_np_dtype = samp["py_type"]
+        in_np_enum  = _NP_ENUM[in_np_dtype]
+        return {
+            "arg_ctype":            elem_disp,
+            "return_ctype":         ret_disp,
+            "arg_zero":             "",
+            "step_example_suffix":  f", NULL, 0",
+            "step_example_lhs":     step_example_lhs,
+            "in_np_dtype":          in_np_dtype,
+            "out_np_dtype":         out_np_dtype,
+            "in_np_enum":           in_np_enum,
+            "out_np_enum":          _NP_ENUM[out_np_dtype],
+            "in_py_hint":           f"NDArray[{in_np_dtype}]",
+            "out_py_hint":          (
+                "None" if is_void_return
+                else _KIND_PY_ISINSTANCE[ret["kind"]]
+            ),
+            "out_py_isinstance":    (
+                "None" if is_void_return
+                else _KIND_PY_ISINSTANCE[ret["kind"]]
+            ),
+            "in_py_test_val":       f"np.zeros(4, dtype={in_np_dtype})",
+            "step_parse_block":     "",  # pre-rendered in make_step_ctx
+            "step_return_expr":     (
+                "Py_RETURN_NONE" if is_void_return
+                else ret["to_py"]("y")
+            ),
+            "bench_in_init":        _bench_in_init(elem_type, samp),
+            "bench_warmup":         _bench_warmup(samp),
+            "bench_in_decl":        (
+                f"    {elem_disp} *in  = "
+                f"malloc(BENCH_N * sizeof({elem_disp}));\n"
+                f"    if (!in) {{ fprintf(stderr, \"OOM\\n\"); return 1; }}"
+            ),
+            "bench_in_loop":        (
+                f"    for (int i = 0; i < BENCH_N; i++) "
+                f"in[i] = {_bench_in_init(elem_type, samp)};"
+            ),
+            # For array arg the step() call already processes the whole buffer;
+            # bench passes the pointer and length rather than a per-element index.
+            "bench_step_input_arg": "in, BENCH_N",
+            "bench_step_input_sep": ", ",
+            "bench_step_inner_loop": "        ",  # no inner loop
+            "bench_steps_in_arg":   "",           # no steps() for array arg
+            "bench_free_in":        "    free(in);",
+            "bench_out_decl":       bench_out_decl,
+            "bench_volatile_sink":  bench_volatile_sink,
+            "bench_sink_assign":    bench_sink_assign,
+            "bench_steps_out_arg":  bench_steps_out_arg,
+            "bench_free_out":       bench_free_out,
+            "test_arr_4_init":      "{0}",
+            "pure_x_local":         "",
+            "pure_x_fmt_char":      "",
+            "pure_x_parse_arg":     "",
+            "pure_x_to_c":          "",
+            "pyi_steps_stub":       "",  # no steps() for array arg
         }
 
     if arg_type not in _CTYPE_META:
@@ -531,10 +621,11 @@ def make_sample_ctx(
             f"    for (int i = 0; i < BENCH_N; i++) "
             f"in[i] = {_bench_in_init(arg_type, samp)};"
         ),
-        "bench_step_input_arg": "in[i]",
-        "bench_step_input_sep": ", ",
-        "bench_steps_in_arg":   " in,",
-        "bench_free_in":        "    free(in);",
+        "bench_step_input_arg":  "in[i]",
+        "bench_step_input_sep":  ", ",
+        "bench_step_inner_loop": _bench_inner_loop_scalar,
+        "bench_steps_in_arg":    " in,",
+        "bench_free_in":         "    free(in);",
         "bench_out_decl":       bench_out_decl,
         "bench_volatile_sink":  bench_volatile_sink,
         "bench_sink_assign":    bench_sink_assign,
@@ -545,6 +636,16 @@ def make_sample_ctx(
         "pure_x_fmt_char":      samp["fmt"],
         "pure_x_parse_arg":     pure_x_parse_arg,
         "pure_x_to_c":          pure_x_to_c,
+        "pyi_steps_stub":       (
+            f"    def steps(self, x: NDArray[{in_np_dtype}], "
+            f"out: NDArray[{out_np_dtype}] | None = None) "
+            f"-> NDArray[{out_np_dtype}]:\n"
+            "        \"\"\"Process a samples array. Returns ndarray, "
+            "or fills out= if supplied.\"\"\"\n"
+        ) if not is_void_return else (
+            f"    def steps(self, x: NDArray[{in_np_dtype}]) -> None:\n"
+            "        \"\"\"Process a block of input samples.\"\"\"\n"
+        ),
     }
 
 
@@ -2222,6 +2323,90 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
                 f"}}"
             )
             step_py_flags = "METH_NOARGS"
+    elif arg_type.endswith("[]"):
+        # Array-buffer object: step(state, const elem_t *x, size_t x_len).
+        # No steps() — the primary operation already operates on a buffer.
+        elem_type  = arg_type[:-2]
+        elem_disp  = _ctype_display(elem_type)
+        in_np_enum = ctx.get("in_np_enum", "NPY_COMPLEX64")
+        step_return = ctx.get("step_return_expr", "Py_RETURN_NONE")
+
+        step_header_decl = (
+            f"/* step() is a static inline defined in {component}_impl.h.\n"
+            f" * Include that header (not this one) from implementation files. */"
+        )
+        if is_void_return:
+            step_impl_def = (
+                f"{step_qualifier} void\n"
+                f"{component}_step(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {elem_disp} *x, size_t x_len)\n"
+                f"{{\n"
+                f"    (void)state; (void)x; (void)x_len; /* TODO: implement */\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    PyObject *x_obj = NULL;\n"
+                f'    if (!PyArg_ParseTuple(args, "O", &x_obj))\n'
+                f"        return NULL;\n"
+                f"    PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"        x_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!x_arr)\n"
+                f"        return NULL;\n"
+                f"    const {elem_disp} *x = "
+                f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
+                f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
+                f"    {component}_step(self->handle, x, x_len);\n"
+                f"    Py_DECREF(x_arr);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            )
+        else:
+            step_impl_def = (
+                f"{step_qualifier} {ret_disp}\n"
+                f"{component}_step(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {elem_disp} *x, size_t x_len)\n"
+                f"{{\n"
+                f"    (void)state; (void)x; (void)x_len; /* TODO: implement */\n"
+                f"    return ({ret_disp})0;\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    PyObject *x_obj = NULL;\n"
+                f'    if (!PyArg_ParseTuple(args, "O", &x_obj))\n'
+                f"        return NULL;\n"
+                f"    PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"        x_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!x_arr)\n"
+                f"        return NULL;\n"
+                f"    const {elem_disp} *x = "
+                f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
+                f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
+                f"    {ret_disp} y = {component}_step(self->handle, x, x_len);\n"
+                f"    Py_DECREF(x_arr);\n"
+                f"    return {step_return};\n"
+                f"}}"
+            )
+
+        steps_c_decl = ""
+        steps_c_impl = ""
+        steps_ext_fn = ""
+        step_py_flags = "METH_VARARGS"
     else:
         arg_disp       = ctx["arg_ctype"]
         in_np_enum     = ctx.get("in_np_enum", "NPY_COMPLEX64")
@@ -2413,14 +2598,42 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
         )
         step_py_flags = "METH_VARARGS"
 
+    # bench_steps_timing_block: the complete steps() timing section in bench_core.c,
+    # or "" when steps() is not generated (array arg objects).
+    si_arg = ctx.get("bench_steps_in_arg", "")
+    so_arg = ctx.get("bench_steps_out_arg", " BENCH_N")
+    if steps_ext_fn:
+        bench_steps_timing_block = (
+            f"    clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"    for (int r = 0; r < ITERATIONS; r++)\n"
+            f"        {component}_steps(obj,{si_arg}{so_arg});\n"
+            f"    clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+            f"    sec = elapsed_sec(&t0, &t1);\n"
+            f'    printf("  steps()  %8.1f MSa/s\\n",\n'
+            f"           (double)ITERATIONS * BENCH_N / sec / 1e6);"
+        )
+    else:
+        bench_steps_timing_block = ""
+
+    # steps_def_entry: PyMethodDef entry for steps(), or "" when absent.
+    if steps_ext_fn:
+        steps_def_entry = (
+            f'    {{"steps",    (PyCFunction){Component}_steps,    METH_VARARGS,\n'
+            f'     "Process a block of samples. Returns an ndarray."}},\n'
+        )
+    else:
+        steps_def_entry = ""
+
     return {
-        "step_header_decl": step_header_decl,
-        "step_impl_def":    step_impl_def,
-        "steps_c_decl":     steps_c_decl,
-        "steps_c_impl":     steps_c_impl,
-        "step_ext_fn":      step_ext_fn,
-        "steps_ext_fn":     steps_ext_fn,
-        "step_py_flags":    step_py_flags,
+        "step_header_decl":         step_header_decl,
+        "step_impl_def":            step_impl_def,
+        "steps_c_decl":             steps_c_decl,
+        "steps_c_impl":             steps_c_impl,
+        "step_ext_fn":              step_ext_fn,
+        "steps_ext_fn":             steps_ext_fn,
+        "step_py_flags":            step_py_flags,
+        "bench_steps_timing_block": bench_steps_timing_block,
+        "steps_def_entry":          steps_def_entry,
     }
 
 
@@ -3022,8 +3235,7 @@ static PyMethodDef <<Component>>_methods[] = {
      "Reset state to post-create defaults."},
     {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
      "Process one sample. Returns a scalar."},
-    {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a block of samples. Returns an ndarray."},
+<<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -3180,8 +3392,7 @@ static PyMethodDef <<Component>>_methods[] = {
      "Reset state to post-create defaults."},
     {"step",     (PyCFunction)<<Component>>_step,     <<step_py_flags>>,
      "Process one sample. Returns a scalar."},
-    {"steps",    (PyCFunction)<<Component>>_steps,    METH_VARARGS,
-     "Process a block of samples. Returns an ndarray."},
+<<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -3457,20 +3668,13 @@ main(void)
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
-        for (int i = 0; i < BENCH_N; i++)
-            <<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
+<<bench_step_inner_loop>><<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  step()   %8.1f MSa/s\\n",
            (double)ITERATIONS * BENCH_N / sec / 1e6);
 
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (int r = 0; r < ITERATIONS; r++)
-        <<component>>_steps(obj,<<bench_steps_in_arg>><<bench_steps_out_arg>>);
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    sec = elapsed_sec(&t0, &t1);
-    printf("  steps()  %8.1f MSa/s\\n",
-           (double)ITERATIONS * BENCH_N / sec / 1e6);
+<<bench_steps_timing_block>>
 
     <<component>>_destroy(obj);
 <<bench_free_in>>
@@ -4765,8 +4969,7 @@ class <<Component>>:
         \"\"\"Reset state to post-create defaults.\"\"\"
     def step(self, x: <<in_py_hint>>) -> <<out_py_hint>>:
         \"\"\"Process one sample.\"\"\"
-    def steps(self, x: NDArray[<<in_np_dtype>>], out: NDArray[<<out_np_dtype>>] | None = None) -> NDArray[<<out_np_dtype>>]:
-        \"\"\"Process a samples array. Returns ndarray, or fills out= if supplied.\"\"\"
+<<pyi_steps_stub>>
 <<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"

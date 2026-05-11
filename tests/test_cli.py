@@ -514,3 +514,54 @@ class TestDryRunCLI:
         r = _cli("dry-run", cwd=dest)
         assert r.returncode == 0
         assert "cmake" in r.stdout
+
+
+class TestArrayArgTypeCLI:
+    def test_array_arg_type_accepted(self, tmp_path):
+        dest = tmp_path / "proc"
+        r = _cli("new", "proc", str(dest), "--object", "filt",
+                 "--arg-type", "float _Complex[]",
+                 "--return-type", "float _Complex")
+        assert r.returncode == 0
+
+    def test_array_arg_bad_elem_type_exits_1(self, tmp_path):
+        dest = tmp_path / "proc"
+        r = _cli("new", "proc", str(dest), "--object", "filt",
+                 "--arg-type", "bogus_t[]")
+        assert r.returncode == 1
+        assert "array element type" in r.stderr
+
+    def test_array_return_type_rejected(self, tmp_path):
+        dest = tmp_path / "proc"
+        r = _cli("new", "proc", str(dest), "--object", "filt",
+                 "--arg-type", "float", "--return-type", "float[]")
+        assert r.returncode == 1
+        assert "cannot be an array type" in r.stderr
+
+    def test_array_arg_generates_ptr_len_in_c(self, tmp_path):
+        dest = tmp_path / "proc"
+        _cli("new", "proc", str(dest), "--object", "filt",
+             "--arg-type", "float[]", "--return-type", "float")
+        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "const float *x, size_t x_len" in core_h
+
+    def test_array_arg_no_steps_in_pymethoddef(self, tmp_path):
+        dest = tmp_path / "proc"
+        _cli("new", "proc", str(dest), "--object", "filt",
+             "--arg-type", "float _Complex[]", "--return-type", "float _Complex")
+        ext = (dest / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
+        assert "Filt_steps" not in ext
+
+    def test_object_cmd_array_arg_type(self, tmp_path):
+        dest = tmp_path / "proc"
+        _cli("new", "proc", str(dest), "--module", "dsp")
+        r = _cli("object", "filt", "--module", "dsp",
+                 "--arg-type", "float _Complex[]",
+                 "--return-type", "float _Complex",
+                 cwd=dest)
+        assert r.returncode == 0
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "PyArray_FROM_OTF" in ext
+        assert "Filt_steps" not in ext

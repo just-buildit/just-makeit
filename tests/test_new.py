@@ -504,3 +504,81 @@ class TestVoidReturn:
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
+
+
+# ── Array arg type (--arg-type "float _Complex[]") ────────────────────────────
+
+class TestArrayArgType:
+    @pytest.fixture()
+    def arr_obj(self, tmp_path):
+        dest = tmp_path / "proc"
+        run("proc", dest, "filt",
+            arg_type="float _Complex[]",
+            return_type="float _Complex")
+        return dest
+
+    def test_impl_h_step_has_ptr_len_params(self, arr_obj):
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "const float complex *x, size_t x_len" in h
+
+    def test_impl_h_step_returns_correct_type(self, arr_obj):
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "static inline float complex" in h
+
+    def test_impl_h_no_steps(self, arr_obj):
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "filt_steps" not in h
+
+    def test_bench_no_inner_sample_loop(self, arr_obj):
+        bench = (arr_obj / "native/benchmarks/bench_filt_core.c").read_text(
+            encoding="utf-8"
+        )
+        # The step() call should pass the full buffer, not index in[i].
+        assert "filt_step(obj, in, BENCH_N)" in bench
+        # in[i] appears only in the input-init loop, not in any step() call.
+        for line in bench.splitlines():
+            if "filt_step" in line:
+                assert "in[i]" not in line, line
+
+    def test_bench_no_steps_timing(self, arr_obj):
+        bench = (arr_obj / "native/benchmarks/bench_filt_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "filt_steps" not in bench
+
+    def test_ext_c_step_uses_pyarray(self, arr_obj):
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert "PyArray_FROM_OTF" in ext
+        assert "PyArray_DATA" in ext
+        assert "x_len" in ext
+
+    def test_ext_c_no_steps_method(self, arr_obj):
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert "Filt_steps" not in ext
+
+    def test_pyi_step_annotation(self, arr_obj):
+        pyi = (arr_obj / "src/proc/filt.pyi").read_text(encoding="utf-8")
+        assert "def step(self, x: NDArray[np.complex64]) -> complex:" in pyi
+
+    def test_pyi_no_steps(self, arr_obj):
+        pyi = (arr_obj / "src/proc/filt.pyi").read_text(encoding="utf-8")
+        assert "def steps" not in pyi
+
+    def test_no_stray_placeholders(self, arr_obj):
+        for path in arr_obj.rglob("*"):
+            if path.is_file() and path.suffix in (
+                ".py", ".c", ".h", ".toml", ".txt", ".pyi"
+            ):
+                text = path.read_text(encoding="utf-8")
+                m = _STRAY_PLACEHOLDER.search(text)
+                assert m is None, f"Stray placeholder in {path}"

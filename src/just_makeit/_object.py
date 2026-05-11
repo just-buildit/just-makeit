@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _stubs as S
 from . import _templates as T
 from ._init import (
     _make_component_ctx,
@@ -126,6 +127,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     }
     pkg_module_dir = root / "src" / pkg / module
     _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx), "update")
+
+    # Type stubs — regenerated in full every time the module changes.
+    _write(pkg_module_dir / "__init__.pyi", S.make_module_pyi(cfg, module), "update")
 
 
 def run(
