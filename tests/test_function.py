@@ -235,6 +235,100 @@ class TestValidation:
             function_run(root, "1bad_name", "fft")
 
 
+class TestFunctionTyped:
+    """--param name:type generates a typed C helper + parse block."""
+
+    @pytest.fixture()
+    def typed_fn(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "compute_window", "fft",
+                     params=[("n", "size_t"), ("beta", "float")],
+                     return_type="float")
+        return root
+
+    def test_functions_c_has_impl(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "_compute_window_impl" in text
+
+    def test_impl_has_named_params(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "size_t n" in text
+        assert "float beta" in text
+
+    def test_impl_suppresses_params(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "(void)n;" in text
+        assert "(void)beta;" in text
+
+    def test_impl_has_placeholder_return(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "return (float)" in text
+
+    def test_wrapper_has_parse_tuple(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        # size_t -> "K", float -> "f"
+        assert '"Kf"' in text
+
+    def test_wrapper_calls_impl(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "_compute_window_impl(n, beta)" in text
+
+    def test_wrapper_returns_float(self, typed_fn):
+        text = (typed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "PyFloat_FromDouble" in text
+
+    def test_complex_param_uses_raw_var(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "mix", "fft",
+                     params=[("z", "float _Complex")],
+                     return_type="float _Complex")
+        text = (root / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "z_raw" in text
+        assert '"D"' in text
+
+    def test_void_return_no_return_stmt(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "reset_fft", "fft",
+                     params=[("n", "size_t")],
+                     return_type="void")
+        text = (root / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "return (void)" not in text
+        assert "Py_RETURN_NONE" in text
+
+    def test_no_params_generates_untyped_stub(self, fft_module):
+        text = (fft_module / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "(void)self; (void)args;" in text
+        assert "PyArg_ParseTuple" not in text
+
+    def test_config_stores_params_and_return_type(self, typed_fn):
+        cfg = load(typed_fn)
+        fns = cfg_module_functions(cfg, "fft")
+        fn = next(f for f in fns if f["name"] == "compute_window")
+        assert fn["params"] == [{"name": "n", "type": "size_t"},
+                                 {"name": "beta", "type": "float"}]
+        assert fn["return_type"] == "float"
+
+    def test_config_no_return_type_for_void(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "reset_fft", "fft",
+                     params=[("n", "size_t")],
+                     return_type="void")
+        cfg = load(root)
+        fns = cfg_module_functions(cfg, "fft")
+        fn = next(f for f in fns if f["name"] == "reset_fft")
+        assert "return_type" not in fn
+
+    def test_no_stray_placeholders_typed(self, typed_fn):
+        for path in typed_fn.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+                m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
+                assert m is None, f"Stray placeholder in {path}"
+
+
 class TestNoStrayPlaceholders:
     def _check(self, root: Path) -> None:
         for path in root.rglob("*"):

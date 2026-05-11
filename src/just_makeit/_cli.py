@@ -29,14 +29,15 @@ Commands:
                      Without --module: standalone object with its own .so
                      With --module:    type grouped into a shared module subpackage .so
   method <object> <method_name> [--module name]
-             --arg-type TYPE --return-type TYPE [--variable-output]
-             [--multi-output TYPE ...]
+             [--param name:type ...] --return-type TYPE [--variable-output]
+             [--arg-type TYPE] [--multi-output TYPE ...]
                      Add a named execute method to an existing object
+                     --param name:type  Named typed parameter (repeatable; use instead of --arg-type)
                      --variable-output  Pre-allocates output buffer at init; returns zero-copy view
                      --multi-output T   Additional return types (produces a tuple); repeatable
   property <object> <prop_name> [--module name] --type TYPE [--writable]
                      Add a read-only (or read-write) Python property to an existing object
-  function <name> --module <mod> [--doc "text"]
+  function <name> --module <mod> [--param name:type ...] [--return-type TYPE] [--doc "text"]
                      Add a module-level function (no type object) to an existing module
   add --state|--param name:type[:default] [--object name] [...]
                      Add state/param variables to an existing standalone object
@@ -49,7 +50,7 @@ Commands:
   dry-run            Show what would get compiled without building
   install-deps [path]
                      Install cmake, a C compiler, and numpy; create a venv at path
-                     (default: /tmp/jm-venv on Linux/macOS, %%LOCALAPPDATA%%\jm-venv on Windows)
+                     (default: /tmp/jm-venv on Linux/macOS, %%LOCALAPPDATA%%\\jm-venv on Windows)
                      Pass --check to report status without making changes
   example [name]     Run a bundled end-to-end example (scaffold -> build -> test)
                      Omit name to list available examples
@@ -341,6 +342,7 @@ def main() -> None:
         return_type = "float _Complex"
         variable_output = False
         multi_output: list[str] = []
+        method_params: list[tuple[str, str]] = []
 
         remaining = args[3:]
         i = 0
@@ -368,6 +370,25 @@ def main() -> None:
                     sys.exit(1)
                 multi_output.append(val)
                 i += 1
+            elif tok == "--param":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --param requires name:type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if ":" not in val:
+                    print(f"error: --param '{val}' must be name:type", file=sys.stderr)
+                    sys.exit(1)
+                pname, ptype = val.split(":", 1)
+                if ptype not in T._CTYPE_META:
+                    print(
+                        f"error: --param type '{ptype}' is not a supported type.\n"
+                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                method_params.append((pname, ptype))
+                i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
                 if i >= len(remaining):
@@ -388,14 +409,16 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        if return_type not in T._CTYPE_META:
-            print(f"error: --return-type '{return_type}' is required and must be a scalar type.",
+        if return_type != "void" and return_type not in T._CTYPE_META:
+            print(f"error: --return-type '{return_type}' must be void or a scalar type.\n"
+                  f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                   file=sys.stderr)
             sys.exit(1)
 
         _method.run(
             Path.cwd(), object_name, method_name, module,
             arg_type, return_type, variable_output, multi_output,
+            params=method_params,
         )
 
     elif cmd == "property":
@@ -456,10 +479,13 @@ def main() -> None:
             print("error: 'function' requires a function name.", file=sys.stderr)
             sys.exit(1)
         from . import _function
+        from . import _templates as T
 
         fn_name = args[1]
         module = None
         doc = ""
+        fn_params: list[tuple[str, str]] = []
+        fn_return_type = "void"
 
         remaining = args[2:]
         i = 0
@@ -479,6 +505,40 @@ def main() -> None:
                     sys.exit(1)
                 doc = remaining[i]
                 i += 1
+            elif tok == "--param":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --param requires name:type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if ":" not in val:
+                    print(f"error: --param '{val}' must be name:type", file=sys.stderr)
+                    sys.exit(1)
+                pname, ptype = val.split(":", 1)
+                if ptype not in T._CTYPE_META:
+                    print(
+                        f"error: --param type '{ptype}' is not a supported type.\n"
+                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                fn_params.append((pname, ptype))
+                i += 1
+            elif tok == "--return-type":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --return-type requires a type", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if val != "void" and val not in T._CTYPE_META:
+                    print(
+                        f"error: --return-type '{val}' must be void or a scalar type.\n"
+                        f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                fn_return_type = val
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -490,7 +550,8 @@ def main() -> None:
             )
             sys.exit(1)
 
-        _function.run(Path.cwd(), fn_name, module, doc)
+        _function.run(Path.cwd(), fn_name, module, doc,
+                      params=fn_params, return_type=fn_return_type)
 
     elif cmd == "add":
         from . import _add

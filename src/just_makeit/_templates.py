@@ -204,6 +204,52 @@ def _ctype_display(ct: str) -> str:
     return ct.replace("_Complex", "complex")
 
 
+def _build_params_parse(
+    params: list[dict],
+) -> tuple[str, str]:
+    """Build parse block + C call args for a named multi-param method.
+
+    params: list of {"name": str, "type": str}
+
+    Returns (parse_block, call_args_c):
+      parse_block  — indented C code: declarations, PyArg_ParseTuple, conversions
+      call_args_c  — comma-sep names of post-conversion C variables
+    """
+    decl_lines: list[str] = []
+    addr_exprs: list[str] = []
+    fmt_chars:  list[str] = []
+    conv_lines: list[str] = []
+    call_args:  list[str] = []
+
+    for p in params:
+        pname = p["name"]
+        ptype = p["type"]
+        meta  = _CTYPE_META[ptype]
+        disp  = _ctype_display(ptype)
+        fmt_chars.append(meta["fmt"])
+
+        if "parse_type" in meta:
+            raw = f"{pname}_raw"
+            decl_lines.append(f"    {meta['parse_type']} {raw} = {meta['parse_zero']};")
+            addr_exprs.append(f"&{raw}")
+            conv_lines.append(f"    {disp} {pname} = {meta['to_c'](pname)};")
+        else:
+            decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
+            addr_exprs.append(f"&{pname}")
+
+        call_args.append(pname)
+
+    fmt_str  = "".join(fmt_chars)
+    addr_str = ", ".join(addr_exprs)
+    lines = (
+        decl_lines
+        + [f'    if (!PyArg_ParseTuple(args, "{fmt_str}", {addr_str}))',
+           "        return NULL;"]
+        + conv_lines
+    )
+    return "\n".join(lines) + "\n", ", ".join(call_args)
+
+
 def _step_parse_block(sample_type: str, samp: dict) -> str:
     """4-space-indented parse block for step(); ends without trailing newline.
 
@@ -1412,11 +1458,13 @@ def make_methods_ctx(
         variable_output: bool = m.get("variable_output", False)
         batch: bool = m.get("batch", False)
         multi_output: list[str] = m.get("multi_output", [])
+        params: list[dict] = m.get("params", [])  # [{name, type}, ...]
 
         ret_disp = _ctype_display(return_type)
         ret_meta = _CTYPE_META.get(return_type)
         ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
 
+        has_params = bool(params)
         has_arg = arg_type != "void"
         if has_arg:
             arg_disp = _ctype_display(arg_type)
@@ -1506,7 +1554,16 @@ def make_methods_ctx(
                 f", {_ctype_display(rt)} *out{i + 1}"
                 for i, rt in enumerate(multi_output)
             )
-            if has_arg:
+            if has_params:
+                c_param_str = ", ".join(
+                    f"{_ctype_display(p['type'])} {p['name']}" for p in params
+                )
+                decl_lines.append(
+                    f"{ret_disp} {component}_{name}"
+                    f"({component}_state_t *state,"
+                    f" {c_param_str}{extra_params});"
+                )
+            elif has_arg:
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
                     f"({component}_state_t *state,"
@@ -1634,7 +1691,12 @@ def make_methods_ctx(
             )
         else:
             # Fixed-output wrapper
-            if has_arg:
+            if has_params:
+                parse_block, _p_call = _build_params_parse(params)
+                call_args_c = f"self->handle, {_p_call}"
+                fn_sig = f"{Component}Object *self, PyObject *args"
+                meth_flags = "METH_VARARGS"
+            elif has_arg:
                 parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
                 call_args_c = f"self->handle, x"
                 fn_sig = f"{Component}Object *self, PyObject *args"

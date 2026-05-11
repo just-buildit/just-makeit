@@ -87,11 +87,13 @@ def _methods_c_stub_fixed(
     arg_type: str,
     return_type: str,
     multi_output: list[str] | None = None,
+    params: list[tuple[str, str]] | None = None,
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
+    params = params or []
 
     extra_params = "".join(
         f", {T._ctype_display(rt)} *out{i + 1}"
@@ -101,24 +103,31 @@ def _methods_c_stub_fixed(
         f" (void)out{i + 1};" for i in range(len(multi_output))
     )
 
-    if has_arg:
+    if params:
+        param_str = ", ".join(f"{T._ctype_display(t)} {n}" for n, t in params)
+        c_params = f"{component}_state_t *state, {param_str}{extra_params}"
+        suppress_names = " ".join(f"(void){n};" for n, _ in params)
+        suppress = f"    (void)state; {suppress_names}{extra_suppress}"
+    elif has_arg:
         arg_disp = T._ctype_display(arg_type)
-        params = f"{component}_state_t *state, {arg_disp} x{extra_params}"
+        c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}"
         suppress = f"    (void)state; (void)x;{extra_suppress}"
     else:
-        params = f"{component}_state_t *state{extra_params}"
+        c_params = f"{component}_state_t *state{extra_params}"
         suppress = f"    (void)state;{extra_suppress}"
 
-    zero = T._CTYPE_META[return_type]["zero"] if return_type in T._CTYPE_META else "0"
+    zero = T._CTYPE_META[return_type]["zero"] if return_type in T._CTYPE_META else None
+    ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
         f"{ret_disp}",
-        f"{component}_{name}({params})",
+        f"{component}_{name}({c_params})",
         "{",
         suppress,
-        f"    return ({ret_disp}){zero};",
-        "}",
     ]
+    if ret_line:
+        lines.append(ret_line)
+    lines.append("}")
     return "\n".join(lines) + "\n"
 
 
@@ -153,6 +162,7 @@ def run(
     return_type: str,
     variable_output: bool,
     multi_output: list[str],
+    params: list[tuple[str, str]] | None = None,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -199,6 +209,8 @@ def run(
     )
     print()
 
+    params = params or []
+
     # 1. Generate C stubs in _methods.c
     methods_c = root / "native" / "src" / object_name / f"{object_name}_methods.c"
     if variable_output:
@@ -207,7 +219,7 @@ def run(
         )
     else:
         stub = _methods_c_stub_fixed(
-            object_name, method_name, arg_type, return_type, multi_output
+            object_name, method_name, arg_type, return_type, multi_output, params
         )
     _append_to_methods_c(methods_c, object_name, stub)
 
@@ -222,6 +234,8 @@ def run(
         "arg_type": arg_type,
         "return_type": return_type,
     }
+    if params:
+        method_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if variable_output:
         method_entry["variable_output"] = True
     if multi_output:

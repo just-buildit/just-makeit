@@ -144,7 +144,7 @@ The Python class name is derived automatically:
 
 ______________________________________________________________________
 
-## `just-makeit method <object> <method_name> [--module name] --arg-type TYPE --return-type TYPE [--variable-output] [--multi-output TYPE ...]`
+## `just-makeit method <object> <method_name> [--module name] [--param name:type ...] --return-type TYPE [--variable-output] [--arg-type TYPE] [--multi-output TYPE ...]`
 
 Add a named execute method to an existing object. Must be run from the project
 root.
@@ -160,10 +160,60 @@ appended on subsequent calls) and the corresponding Python glue in the module
 | `object` | Object name (must already exist in `just-makeit.toml`). |
 | `method_name` | Snake-case name for the new method. |
 | `--module name` | Module the object belongs to (required for module objects). |
-| `--arg-type TYPE` | C type of the input element. Use `void` for count-only inputs (no input array). |
-| `--return-type TYPE` | C type of the primary output element. |
+| `--param name:type` | Named typed parameter. Repeatable. Use instead of `--arg-type` when the method takes multiple distinct scalar inputs. |
+| `--return-type TYPE` | C type of the return value (`void` for no return). |
+| `--arg-type TYPE` | C type of a single array-style input. Use `void` for count-only inputs. |
 | `--variable-output` | Pre-allocate output buffer at init; return zero-copy numpy view. See below. |
 | `--multi-output TYPE` | Add a second (or further) output array. Repeatable; produces a tuple return. |
+
+______________________________________________________________________
+
+### Named parameters (`--param`)
+
+Use `--param name:type` (repeatable) when the method takes multiple distinct
+typed scalar inputs. This generates named parameters in both the C stub and the
+Python wrapper.
+
+```sh
+just-makeit method nco configure --module dsp \
+    --param freq:float \
+    --param phase:float \
+    --param mode:int32_t \
+    --return-type void
+```
+
+Generated C stub (`nco_methods.c`):
+
+```c
+void
+nco_configure(nco_state_t *state, float freq, float phase, int32_t mode)
+{
+    (void)state; (void)freq; (void)phase; (void)mode;
+}
+```
+
+Generated Python wrapper in `nco_ext.c`:
+
+```c
+float freq = 0.0f;
+float phase = 0.0f;
+long mode_raw = 0L;
+if (!PyArg_ParseTuple(args, "ffl", &freq, &phase, &mode_raw))
+    return NULL;
+int32_t mode = (int32_t)mode_raw;
+nco_configure(self->handle, freq, phase, mode);
+Py_RETURN_NONE;
+```
+
+Python call:
+
+```python
+nco.configure(0.1, 0.0, 2)
+```
+
+All types in `_CTYPE_META` are supported as `--param` types (float, double,
+int, int32\_t, uint32\_t, size\_t, float \_Complex, etc.).
+`--param` and `--arg-type` are mutually exclusive per method.
 
 ______________________________________________________________________
 
@@ -301,6 +351,86 @@ just-makeit method nco steps_u32_ovf --module resample \
     --arg-type void --return-type uint32_t \
     --variable-output --multi-output uint8_t
 ```
+
+______________________________________________________________________
+
+## `just-makeit function <name> --module <mod> [--param name:type ...] [--return-type TYPE] [--doc "text"]`
+
+Add a module-level Python function (no type object, no state handle) to an
+existing module. Must be run from the project root.
+
+Creates or appends to `native/src/<module>/<module>_functions.c` and
+regenerates the module `_ext.c` to wire the new function into the
+`PyMethodDef` array.
+
+**Arguments**
+
+| Argument | Description |
+|----------|-------------|
+| `name` | Snake-case function name. |
+| `--module mod` | Module the function belongs to (required). |
+| `--param name:type` | Named typed parameter. Repeatable. |
+| `--return-type TYPE` | C return type (default: `void`). |
+| `--doc "text"` | Python docstring for the function. |
+
+**Without `--param`** — generates a minimal untyped stub you fill in yourself:
+
+```sh
+just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables."
+```
+
+```c
+/* <<IMPLEMENT: fft_global_setup>> */
+static PyObject *
+fft_global_setup(PyObject *self, PyObject *args)
+{
+    (void)self; (void)args;
+    Py_RETURN_NONE;
+}
+```
+
+**With `--param`** — generates a typed C helper + Python wrapper with a full
+parse block:
+
+```sh
+just-makeit function compute_window \
+    --module fft \
+    --param n:size_t \
+    --param beta:float \
+    --return-type float
+```
+
+```c
+/* <<IMPLEMENT: compute_window>> */
+static float
+_compute_window_impl(size_t n, float beta)
+{
+    (void)n; (void)beta;
+    return (float)0.0f; /* placeholder */
+}
+
+static PyObject *
+compute_window(PyObject *self, PyObject *args)
+{
+    (void)self;
+    unsigned long long n_raw = 0ULL;
+    float beta = 0.0f;
+    if (!PyArg_ParseTuple(args, "Kf", &n_raw, &beta))
+        return NULL;
+    size_t n = (size_t)n_raw;
+    return PyFloat_FromDouble((double)_compute_window_impl(n, beta));
+}
+```
+
+Python call:
+
+```python
+from my_pkg import fft
+w = fft.compute_window(512, 5.0)
+```
+
+Implement `_compute_window_impl` and delete the `(void)` suppression lines.
+The `_functions.c` file is never regenerated — your implementation is safe.
 
 ______________________________________________________________________
 

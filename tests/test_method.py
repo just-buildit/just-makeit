@@ -481,3 +481,111 @@ class TestMethodFixedMultiOutput:
             project / "native" / "src" / "nco" / "nco_ext.c"
         ).read_text(encoding="utf-8")
         assert "PyTuple_Pack(3," in ext
+
+
+class TestMethodWithParams:
+    """--param name:type generates named C params and typed Python wrapper."""
+
+    def test_c_stub_has_named_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "float freq" in text
+        assert "int32_t mode" in text
+
+    def test_c_stub_suppresses_named_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "(void)freq;" in text
+        assert "(void)mode;" in text
+
+    def test_c_stub_no_return_for_void(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float")])
+        text = (
+            project / "native" / "src" / "nco" / "nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "return (void)" not in text
+
+    def test_decl_has_named_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        h = (
+            project / "native" / "inc" / "nco" / "nco_core.h"
+        ).read_text(encoding="utf-8")
+        assert "float freq" in h
+        assert "int32_t mode" in h
+
+    def test_ext_c_parse_tuple_format(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text(encoding="utf-8")
+        # float -> "f", int32_t -> "l" (long intermediate)
+        assert '"fl"' in ext
+
+    def test_ext_c_meth_varargs(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float")])
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "METH_VARARGS" in ext
+
+    def test_ext_c_calls_c_function_with_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "nco_configure(self->handle, freq, mode)" in ext
+
+    def test_ext_c_scalar_return(self, project):
+        method_run(project, "nco", "get_snr", None,
+                   "void", "float", False, [],
+                   params=[("window", "int32_t")])
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "PyFloat_FromDouble" in ext
+        assert "nco_get_snr(self->handle, window)" in ext
+
+    def test_ext_c_complex_param_uses_raw_var(self, project):
+        method_run(project, "nco", "mix", None,
+                   "void", "float _Complex", False, [],
+                   params=[("lo", "float _Complex")])
+        ext = (
+            project / "native" / "src" / "nco" / "nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "lo_raw" in ext
+        assert '"D"' in ext
+
+    def test_config_stores_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        cfg = load(project)
+        m = next(m for m in methods(cfg, "nco") if m["name"] == "configure")
+        assert m.get("params") == [
+            {"name": "freq", "type": "float"},
+            {"name": "mode", "type": "int32_t"},
+        ]
+
+    def test_no_placeholders_with_params(self, project):
+        method_run(project, "nco", "configure", None,
+                   "void", "void", False, [],
+                   params=[("freq", "float"), ("mode", "int32_t")])
+        _check_no_placeholders(project)

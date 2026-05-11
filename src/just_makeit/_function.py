@@ -36,7 +36,7 @@ _FUNCTIONS_C_HEADER = """\
 
 """
 
-_FUNCTION_STUB = """\
+_FUNCTION_STUB_UNTYPED = """\
 /* <<IMPLEMENT: {fn_name}>> */
 static PyObject *
 {fn_name}(PyObject *self, PyObject *args)
@@ -47,8 +47,89 @@ static PyObject *
 """
 
 
-def _append_to_functions_c(path: Path, module: str, fn_name: str) -> None:
-    stub = _FUNCTION_STUB.format(fn_name=fn_name)
+def _function_stub_typed(
+    fn_name: str,
+    params: list[tuple[str, str]],
+    return_type: str,
+) -> str:
+    """Stub for a typed function: C helper + Python wrapper with parse block."""
+    from . import _templates as T
+
+    ret_disp = T._ctype_display(return_type)
+    ret_meta = T._CTYPE_META.get(return_type)
+
+    # C-level helper signature
+    if params:
+        c_param_str = ", ".join(f"{T._ctype_display(t)} {n}" for n, t in params)
+        suppress = "    " + " ".join(f"(void){n};" for n, _ in params)
+    else:
+        c_param_str = "void"
+        suppress = ""
+
+    if ret_meta:
+        zero = ret_meta["zero"]
+        c_ret_line = f"    return ({ret_disp}){zero}; /* placeholder */"
+    else:
+        c_ret_line = ""
+
+    c_helper = (
+        f"/* <<IMPLEMENT: {fn_name}>> */\n"
+        f"static {ret_disp}\n"
+        f"_{fn_name}_impl({c_param_str})\n"
+        f"{{\n"
+        + (suppress + "\n" if suppress else "")
+        + (c_ret_line + "\n" if c_ret_line else "")
+        + "}\n"
+    )
+
+    # Python wrapper
+    if params:
+        parse_block, call_args = T._build_params_parse(
+            [{"name": n, "type": t} for n, t in params]
+        )
+        meth_flags = "METH_VARARGS"
+        py_args = "PyObject *args"
+    else:
+        parse_block = "    (void)args;\n"
+        call_args = ""
+        meth_flags = "METH_NOARGS"
+        py_args = "PyObject *Py_UNUSED(args)"
+
+    if ret_meta:
+        ret_expr = ret_meta["to_py"](f"_{fn_name}_impl({call_args})")
+        ret_line = f"    return {ret_expr};"
+    else:
+        call_line = (
+            f"    _{fn_name}_impl({call_args});" if call_args
+            else f"    _{fn_name}_impl();"
+        )
+        ret_line = call_line + "\n    Py_RETURN_NONE;"
+
+    wrapper = (
+        f"static PyObject *\n"
+        f"{fn_name}(PyObject *self, {py_args})\n"
+        f"{{\n"
+        f"    (void)self;\n"
+        + parse_block
+        + f"{ret_line}\n"
+        + "}"
+    )
+
+    return c_helper + "\n" + wrapper + "\n"
+
+
+def _append_to_functions_c(
+    path: Path,
+    module: str,
+    fn_name: str,
+    params: list[tuple[str, str]] | None = None,
+    return_type: str = "void",
+) -> None:
+    params = params or []
+    if params or return_type != "void":
+        stub = _function_stub_typed(fn_name, params, return_type)
+    else:
+        stub = _FUNCTION_STUB_UNTYPED.format(fn_name=fn_name)
     if not path.exists():
         header = _FUNCTIONS_C_HEADER.format(module=module)
         path.write_text(header + stub, encoding="utf-8")
@@ -59,11 +140,14 @@ def _append_to_functions_c(path: Path, module: str, fn_name: str) -> None:
         print(f"  update  {path}")
 
 
+
 def run(
     root: Path,
     fn_name: str,
     module: str,
     doc: str = "",
+    params: list[tuple[str, str]] | None = None,
+    return_type: str = "void",
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -107,14 +191,20 @@ def run(
     )
     print()
 
+    params = params or []
+
     # Create or append to {module}_functions.c
     functions_c = root / "native" / "src" / module / f"{module}_functions.c"
-    _append_to_functions_c(functions_c, module, fn_name)
+    _append_to_functions_c(functions_c, module, fn_name, params, return_type)
 
     # Update config
     fn_entry: dict = {"name": fn_name}
     if doc:
         fn_entry["doc"] = doc
+    if params:
+        fn_entry["params"] = [{"name": n, "type": t} for n, t in params]
+    if return_type != "void":
+        fn_entry["return_type"] = return_type
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

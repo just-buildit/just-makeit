@@ -222,6 +222,14 @@ def _dump(cfg: dict) -> str:
             lines.append(f'name = "{fn["name"]}"')
             if fn.get("doc"):
                 lines.append(f'doc = "{fn["doc"]}"')
+            if fn.get("return_type"):
+                lines.append(f'return_type = "{fn["return_type"]}"')
+            if fn.get("params"):
+                parts = ", ".join(
+                    f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
+                    for p in fn["params"]
+                )
+                lines.append(f"params = [{parts}]")
             lines.append("")
 
     for comp in components(cfg):
@@ -255,6 +263,12 @@ def _dump(cfg: dict) -> str:
             if m.get("multi_output"):
                 mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
                 lines.append(f"multi_output = [{mo_str}]")
+            if m.get("params"):
+                parts = ", ".join(
+                    f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
+                    for p in m["params"]
+                )
+                lines.append(f"params = [{parts}]")
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
