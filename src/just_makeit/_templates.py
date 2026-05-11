@@ -1150,6 +1150,8 @@ def make_state_ctx(
             f'     "Set {name} from {py_type} array of length {size}."}},',
         ]
     getter_setter_pymethoddef = "\n".join(pmd_lines)
+    if pmd_lines:
+        getter_setter_pymethoddef += "\n"
 
     # ── PYI ──────────────────────────────────────────────────────────────────
 
@@ -1688,6 +1690,7 @@ def make_methods_ctx(
         ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
 
         out_type: str | None = m.get("out_type")
+        out_divisor: int = int(m.get("out_divisor", 1))
         has_params = bool(params)
         has_arg = arg_type != "void"
         if has_arg:
@@ -1980,14 +1983,18 @@ def make_methods_ctx(
                 )
             elif out_type:
                 # Per-call output allocation: allocate ndarray of out_type
-                # sized to the first array param, pass pointer to C, return it.
+                # sized to first_array_param_len / out_divisor, pass *out to C.
                 out_disp = _ctype_display(out_type)
                 out_npy = _CTYPE_TO_NPY[out_type]
                 first_arr = next(
                     (p["name"] for p in params
                      if is_array_param_type(p["type"])), None
                 )
-                len_expr = f"{first_arr}_len" if first_arr else "0"
+                raw_len = f"{first_arr}_len" if first_arr else "0"
+                if out_divisor > 1:
+                    len_expr = f"({raw_len} / {out_divisor})"
+                else:
+                    len_expr = raw_len
                 cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
                 ret_body = (
                     f"    npy_intp _dims[] ="

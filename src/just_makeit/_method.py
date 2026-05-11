@@ -265,6 +265,7 @@ def run(
     multi_output: list[str],
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
+    out_divisor: int = 1,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -355,6 +356,8 @@ def run(
         method_entry["multi_output"] = multi_output
     if out_type:
         method_entry["out_type"] = out_type
+    if out_divisor != 1:
+        method_entry["out_divisor"] = out_divisor
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)

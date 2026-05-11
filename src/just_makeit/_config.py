@@ -271,6 +271,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"params = [{parts}]")
             if m.get("out_type"):
                 lines.append(f'out_type = "{m["out_type"]}"')
+            if m.get("out_divisor") and m["out_divisor"] != 1:
+                lines.append(f'out_divisor = {m["out_divisor"]}')
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
