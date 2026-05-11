@@ -1,5 +1,19 @@
 # Changelog
 
+## \[0.9.11\] — 2026-05-11
+
+### Fixed
+
+- **Generated test scaffold**: `ALMOST_EQ_C(a, b, tol)` macro double-evaluated
+  `a`, silently calling a stateful `step()` twice for complex-returning objects
+  (LO, NCO, any `--return-type "float _Complex"`). Replaced with
+  `_almost_eq_c` / `_almost_eq` static inline functions and thin macro wrappers
+  so each argument is evaluated exactly once.
+- **Release checklist**: GitHub Release step was missing; `release.yml` only
+  publishes to PyPI and does not create GitHub Releases automatically.
+
+______________________________________________________________________
+
 ## \[0.9.10\] — 2026-05-11
 
 ### Fixed
