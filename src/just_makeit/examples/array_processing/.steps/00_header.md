@@ -25,7 +25,7 @@ Heap allocation only appears when the output size is not fixed at compile time.
 ## TL;DR — see it work first
 
 ```sh
-uvx git+https://github.com/just-buildit/just-makeit install-deps
+curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
 source /tmp/jm-venv/bin/activate
 just-makeit example array_processing
 # array_processing: PASSED
@@ -34,14 +34,21 @@ just-makeit example array_processing
 ## Prerequisites
 
 ```sh
-pip install just-makeit
-just-makeit install-deps --check   # report what is installed vs. what will be installed
-just-makeit install-deps           # install cmake, C compiler, numpy, and create a venv
+curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
 source /tmp/jm-venv/bin/activate
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-just-makeit install-deps ~/my-venv && source ~/my-venv/bin/activate
+curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh -s -- ~/my-venv
+source ~/my-venv/bin/activate
+```
+
+Or with `pip` if just-makeit is already installed:
+
+```sh
+pip install just-makeit
+just-makeit install-deps
+source /tmp/jm-venv/bin/activate
 ```

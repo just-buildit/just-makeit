@@ -13,10 +13,18 @@ coverage — all passing before you write a single line of code.
 
 ______________________________________________________________________
 
-## Try it now (no install required)
+## Try it now — no tools required
 
 ```sh
-# requires uv — https://docs.astral.sh/uv/getting-started/installation/
+curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
+source /tmp/jm-venv/bin/activate
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
+```
+
+Or with [`uv`](https://docs.astral.sh/uv/getting-started/installation/) if you already have it:
+
+```sh
 uvx git+https://github.com/just-buildit/just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 just-makeit new my_project --object engine --state gain:double:1.0
