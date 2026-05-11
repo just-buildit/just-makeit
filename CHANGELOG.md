@@ -1,5 +1,38 @@
 # Changelog
 
+## \[0.10.1\] — 2026-05-11
+
+### Added
+
+- **Type stubs** (`__init__.pyi`): every module subpackage now ships a
+  generated `.pyi` alongside its `__init__.py`, kept in sync by every
+  `object`, `method`, `property`, and `function` command. Standalone objects
+  already had `.pyi` files; module objects now do too. Type maps: `float` /
+  `double` → `float`, `*_Complex` → `complex`, arrays → `NDArray[np.dtype]`.
+- **`--arg-type type[]` for objects**: objects whose primary operation
+  processes a whole buffer in one call (decimators, packet framers, block
+  codecs) can now declare their input as an array type. The C step receives
+  `(const elem_t *x, size_t x_len)`; the Python wrapper uses
+  `PyArray_FROM_OTF`; `steps()` is not generated (the primary op already takes
+  a buffer). Supported element types: all scalar types accepted by `--arg-type`.
+- **`install.sh` bootstrap**: `curl`-pipeable installer requiring no pre-existing
+  tools (no uv, no pip). Detects Python ≥ 3.11, installs cmake + C compiler via
+  the system package manager, creates a venv, and pip-installs just-makeit +
+  numpy. Served from GitHub Pages for a short URL:
+  `. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)`
+  Sourcing via `. <(curl ...)` auto-activates the venv in the current shell.
+  Supports `--check`, `--force`, and a custom venv path argument.
+- **Example tests hardened**: all 8 bundled examples now assert type stubs are
+  generated with correct signatures. `array_processing` adds pattern 5
+  demonstrating `--arg-type type[]`. `test_readme_assembled.py` blocks stale
+  example READMEs in CI.
+- **Artifact CI tests all examples**: `artifact.yml` now runs
+  `just-makeit example <name>` for every bundled example after PyPI install,
+  testing the exact TL;DR shown in each README.
+- **+8 tests** (668 total): README assembled checks (8).
+
+______________________________________________________________________
+
 ## \[0.10.0\] — 2026-05-11
 
 ### Added
