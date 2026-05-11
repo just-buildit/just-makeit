@@ -120,6 +120,53 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj_decim)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_decim)
 
+    # ── Pattern 5: --arg-type type[] (array-buffer primary arg) ───────────────
+    # Objects whose primary operation processes a whole buffer in one call —
+    # no sample-by-sample loop, no auto-generated steps().
+
+    jm_new(
+        "my_buf",
+        root / "my_buf",
+        object_name="buf_proc",
+        arg_type="float _Complex[]",
+        return_type="int",
+        state_vars=[("count", "int32_t", "0")],
+    )
+    proj_buf = root / "my_buf"
+
+    # step() takes a numpy array, returns int — no steps() generated
+    core_h = (
+        proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
+    ).read_text()
+    assert "const float complex *x, size_t x_len" in core_h, (
+        "array arg not in step signature"
+    )
+    assert "buf_proc_steps" not in core_h, "steps() must not be generated for array arg"
+
+    _cmd(
+        [
+            "cmake", "-B", "build", "-S", ".",
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DPython3_EXECUTABLE={sys.executable}",
+        ],
+        cwd=proj_buf,
+    )
+    _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj_buf)
+    _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_buf)
+
+    # Type stub: step takes NDArray, returns int; no steps() line
+    pyi = (proj_buf / "src" / "my_buf" / "buf_proc.pyi").read_text()
+    assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi, (
+        f"array-arg step stub missing or wrong:\n{pyi}"
+    )
+    assert "def steps" not in pyi, "steps() stub must be absent for array-arg object"
+
+    # Also verify ema's pyi from pattern 1
+    ema_pyi = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+    assert "class Ema:" in ema_pyi
+    assert "def step(self, x: float) -> float:" in ema_pyi
+    assert "def steps(self, x: NDArray[np.float32]" in ema_pyi
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:

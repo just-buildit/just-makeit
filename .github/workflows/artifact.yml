@@ -37,6 +37,17 @@ jobs:
           done
           pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
 
+      # ── TL;DR: run all bundled examples ─────────────────────────────────────
+
+      - name: Run all examples (TL;DR smoke test)
+        run: |
+          for example in \
+            fir_filter running_stats sliding_power sliding_correlator \
+            array_processing dsp_toolkit filter_module iqfile; do
+            echo "=== just-makeit example $example ==="
+            just-makeit example "$example"
+          done
+
       # ── Python workflow ──────────────────────────────────────────────────────
 
       - name: Scaffold fir_filter project

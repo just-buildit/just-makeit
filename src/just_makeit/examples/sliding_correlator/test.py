@@ -61,6 +61,12 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
+    # 5. Verify type stub
+    pyi = (proj / "src" / "my_corr" / "sliding_correlator.pyi").read_text()
+    assert "class SlidingCorrelator:" in pyi
+    assert "def step(self, x: complex) -> complex:" in pyi
+    assert "def steps(self, x: NDArray[np.complex64]" in pyi
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:

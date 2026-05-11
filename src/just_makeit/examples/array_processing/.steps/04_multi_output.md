@@ -62,19 +62,3 @@ samples_copy = samples.copy()      # independent; survives next call
 The same "stale after next call" rule applies to every buffer produced by
 `--variable-output`.  The zero-copy design makes the steady-state path
 allocation-free; the copy obligation is the trade-off.
-
-### Choosing between the four patterns
-
-```
-Does output count equal input count?
-├─ Yes → use auto steps() or hand-written _steps()  (§1, §2)
-│         caller allocates output; object never holds a reference
-│
-└─ No → is the maximum output count knowable at init time?
-        ├─ Yes → --variable-output [--multi-output ...]  (§3, §4)
-        │         object owns the buffer; Python gets a zero-copy view
-        │         copy the view before calling again
-        │
-        └─ No  → allocate per call in the ext, return a fresh ndarray
-                  (hand-write the ext glue; just-makeit does not generate this)
-```

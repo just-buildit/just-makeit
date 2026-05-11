@@ -8,7 +8,7 @@ with multiple output streams.
 Along the way, each section explains **who owns the memory**, **when it is
 allocated**, and **what the Python caller can safely do with the returned array**.
 
-Four patterns, four sections:
+Five patterns, five sections:
 
 | # | Pattern | Output allocation | Who owns it |
 |---|---------|-------------------|-------------|
@@ -16,8 +16,9 @@ Four patterns, four sections:
 | 2 | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
 | 3 | `method --variable-output` | Allocated at `__init__`, re-used | Object (zero-copy view) |
 | 4 | `method --variable-output --multi-output` | Same — one buffer per stream | Object (tuple of views) |
+| 5 | `--arg-type type[]` (buffer primary arg) | Caller supplies input buffer | Caller (input) |
 
-All four patterns share a common rule: **inline `float[N]` state arrays in the
+All five patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
 Heap allocation only appears when the output size is not fixed at compile time.
 
@@ -480,18 +481,70 @@ The same "stale after next call" rule applies to every buffer produced by
 `--variable-output`.  The zero-copy design makes the steady-state path
 allocation-free; the copy obligation is the trade-off.
 
-### Choosing between the four patterns
+---
+
+## 5. `--arg-type type[]` — array-buffer primary arg
+
+Some objects are designed to consume an entire buffer in one call — a
+decimator, a packet framer, a block codec.  Wrapping them with a scalar
+`step()` + auto-generated `steps()` adds indirection that compilers cannot
+always eliminate.  Pass `[]` on the arg type to express this directly.
+
+```sh
+just-makeit new my_buf \
+    --object buf_proc \
+    --arg-type "float _Complex[]" \
+    --return-type int \
+    --state "count:int32_t:0"
+```
+
+The generated `step()` takes a numpy array and a length:
+
+```c
+int buf_proc_step(buf_proc_state_t *state,
+                  const float complex *x, size_t x_len)
+{
+    (void)x;
+    (void)x_len;
+    return 0; /* TODO: implement */
+}
+```
+
+`steps()` is **not** generated — the primary operation already takes a buffer.
+
+### What Python sees
+
+```python
+import numpy as np
+from my_buf import BufProc
+
+proc = BufProc()
+block = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
+n = proc.step(block)   # passes the whole array; returns int
+```
+
+### Type stub (`my_buf/src/my_buf/buf_proc.pyi`)
+
+```python
+class BufProc:
+    def __init__(self, count: np.int32 = 0) -> None: ...
+    def step(self, x: NDArray[np.complex64]) -> int:
+        """Process one sample."""
+    # no steps() — the primary op already takes a buffer
+```
+
+### Choosing between the five patterns
 
 ```
 Does output count equal input count?
-├─ Yes → use auto steps() or hand-written _steps()  (§1, §2)
-│         caller allocates output; object never holds a reference
+├─ Yes, and input is one sample → use step() + auto steps()          (§1)
 │
-└─ No → is the maximum output count knowable at init time?
-        ├─ Yes → --variable-output [--multi-output ...]  (§3, §4)
-        │         object owns the buffer; Python gets a zero-copy view
-        │         copy the view before calling again
-        │
-        └─ No  → allocate per call in the ext, return a fresh ndarray
-                  (hand-write the ext glue; just-makeit does not generate this)
+├─ Yes, but a method has a different return type → use jm method      (§2)
+│
+├─ No → is the maximum output count knowable at init time?
+│       ├─ Yes, one stream  → --variable-output                       (§3)
+│       └─ Yes, N streams   → --variable-output --multi-output        (§4)
+│
+└─ Primary op takes a whole buffer → --arg-type type[]                (§5)
+   (no steps() generated; step() accepts NDArray directly)
 ```

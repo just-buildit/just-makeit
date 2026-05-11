@@ -8,7 +8,7 @@ with multiple output streams.
 Along the way, each section explains **who owns the memory**, **when it is
 allocated**, and **what the Python caller can safely do with the returned array**.
 
-Four patterns, four sections:
+Five patterns, five sections:
 
 | # | Pattern | Output allocation | Who owns it |
 |---|---------|-------------------|-------------|
@@ -16,8 +16,9 @@ Four patterns, four sections:
 | 2 | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
 | 3 | `method --variable-output` | Allocated at `__init__`, re-used | Object (zero-copy view) |
 | 4 | `method --variable-output --multi-output` | Same — one buffer per stream | Object (tuple of views) |
+| 5 | `--arg-type type[]` (buffer primary arg) | Caller supplies input buffer | Caller (input) |
 
-All four patterns share a common rule: **inline `float[N]` state arrays in the
+All five patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
 Heap allocation only appears when the output size is not fixed at compile time.
 

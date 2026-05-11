@@ -181,6 +181,14 @@ print("filter_module: all checks passed")
         )
     print(result.stdout.strip())
 
+    # Verify module-level __init__.pyi stub
+    pyi = (dest / "src" / "my_filters" / "filter" / "__init__.pyi").read_text()
+    assert pyi.startswith("# filter/__init__.pyi")
+    assert "class Fir:" in pyi
+    assert "class Biquad:" in pyi
+    assert "import numpy as np" in pyi
+    assert "def steps(self, x: NDArray" in pyi
+
 
 if __name__ == "__main__":
     import tempfile

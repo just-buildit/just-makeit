@@ -90,6 +90,17 @@ print("ok")
         cwd=dest,
     )
 
+    # Verify type stubs for both components
+    gain_pyi = (dest / "src" / "dsp_toolkit" / "gain.pyi").read_text()
+    assert "class Gain:" in gain_pyi
+    assert "gain" in gain_pyi
+    assert "def step(self, x: float) -> float:" in gain_pyi
+
+    ema_pyi = (dest / "src" / "dsp_toolkit" / "ema.pyi").read_text()
+    assert "class Ema:" in ema_pyi
+    assert "def step(self, x: float) -> float:" in ema_pyi
+    assert "def steps(self, x: NDArray[np.float32]" in ema_pyi
+
 
 if __name__ == "__main__":
     import tempfile

@@ -64,6 +64,12 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
+    # 5. Verify type stub reflects all state (including newly added vars)
+    pyi = (proj / "src" / "my_stats" / "running_stats.pyi").read_text()
+    assert "class RunningStats:" in pyi
+    assert "min_val" in pyi
+    assert "max_val" in pyi
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:

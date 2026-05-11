@@ -87,3 +87,9 @@ print("ok")
     )
     assert r.returncode == 0, f"Python smoke test failed:\n{r.stdout}\n{r.stderr}"
     assert "ok" in r.stdout
+
+    # Verify type stub: complex arg -> float return, steps() present
+    pyi = (dest / "src" / "my_power" / "power_est.pyi").read_text()
+    assert "class PowerEst:" in pyi
+    assert "def step(self, x: complex) -> float:" in pyi
+    assert "def steps(self, x: NDArray[np.complex64]" in pyi
