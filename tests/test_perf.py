@@ -185,7 +185,7 @@ class TestPerfUpgrade:
         text = core.read_text(encoding="utf-8")
         text = text.replace("(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
                             "return x * 2.0f;")
-        core.write_text(text)
+        core.write_text(text, encoding="utf-8")
         # Re-run perf (idempotent) — body must survive
         perf_run(upgraded)
         assert "return x * 2.0f;" in core.read_text(encoding="utf-8")

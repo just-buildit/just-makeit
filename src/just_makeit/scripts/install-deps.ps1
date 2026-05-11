@@ -17,12 +17,18 @@
     Path for the Python virtual environment.
     Default: $env:LOCALAPPDATA\jm-venv
 
+.PARAMETER Check
+    Report what is installed and what will be installed without making
+    any changes.  Exits 1 if anything is missing, 0 if all present.
+
 .EXAMPLE
     .\install-deps.ps1
     .\install-deps.ps1 C:\my-venv
+    .\install-deps.ps1 --Check
 #>
 param(
-    [string]$VenvDir = (Join-Path $env:LOCALAPPDATA "jm-venv")
+    [string]$VenvDir = (Join-Path $env:LOCALAPPDATA "jm-venv"),
+    [switch]$Check
 )
 
 Set-StrictMode -Version Latest
@@ -32,6 +38,8 @@ $ErrorActionPreference = "Stop"
 
 function Info  { param($m) Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok    { param($m) Write-Host "    ok  $m" -ForegroundColor Green }
+function Skip  { param($m) Write-Host "    ok  $m  (already installed)" -ForegroundColor Green }
+function Will  { param($m) Write-Host "  -->  $m" -ForegroundColor Yellow }
 function Warn  { param($m) Write-Host "  warn  $m" -ForegroundColor Yellow }
 function Die   { param($m) Write-Host " error  $m" -ForegroundColor Red; exit 1 }
 
@@ -105,8 +113,30 @@ function Install-MinGWDirect {
 $NeedCmake = -not (Find-Exe "cmake")
 $NeedCC    = -not ((Find-Exe "gcc") -or (Find-Exe "clang") -or (Find-Exe "cl"))
 
-if (-not $NeedCmake) { Ok "cmake $(cmake --version | Select-Object -First 1)" }
-if (-not $NeedCC)    { Ok "C compiler found" }
+if (-not $NeedCmake) {
+    Skip "cmake $(cmake --version | Select-Object -First 1)"
+} else {
+    Will "cmake  (will install)"
+}
+if (-not $NeedCC) {
+    Skip "C compiler"
+} else {
+    Will "C compiler  (will install)"
+}
+if (-not ($NeedCmake -or $NeedCC)) {
+    Skip "no system packages needed"
+}
+
+if ($Check) {
+    Write-Host ""
+    if ($NeedCmake -or $NeedCC) {
+        Write-Host "Run without -Check to install."
+        exit 1
+    } else {
+        Write-Host "All build dependencies are already installed."
+        exit 0
+    }
+}
 
 if ($NeedCmake -or $NeedCC) {
 

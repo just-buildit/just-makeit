@@ -2460,7 +2460,7 @@ COMPONENT_CORE_H = """\
  * @file <<component>>_core.h
  * @brief <<Component>> component API.
  *
- * Lifecycle: create → [step / steps / reset]* → destroy
+ * Lifecycle: create -> [step / steps / reset]* -> destroy
  *
  * Example:
  * @code

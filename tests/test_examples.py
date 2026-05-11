@@ -50,6 +50,8 @@ def _load_run(example_dir: Path):
 # ── skip guard ────────────────────────────────────────────────────────────────
 
 def _skip_reason():
+    if sys.platform == "win32":
+        return "C99 float complex unsupported by MSVC"
     if not shutil.which("cmake"):
         return "cmake not found"
     if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):

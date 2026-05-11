@@ -1,10 +1,6 @@
 [build-system]
-requires = ["just-buildit"]
-build-backend = "just_buildit"
-
-[tool.just-buildit]
-package = "just_makeit"
-repair = false
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "just-makeit"
