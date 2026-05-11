@@ -233,6 +233,166 @@ class TestVoidArgTypeCLI:
         assert "osc_step(const osc_state_t *state)" in h
 
 
+class TestVoidReturnCLI:
+    """--return-type void accepted by new, object, method commands."""
+
+    def test_new_void_return_type(self, tmp_path):
+        r = _cli(
+            "new", "sink", str(tmp_path / "sink"),
+            "--object", "sink",
+            "--return-type", "void",
+        )
+        assert r.returncode == 0
+
+    def test_new_void_return_no_volatile_void_in_bench(self, tmp_path):
+        dest = tmp_path / "sink"
+        _cli("new", "sink", str(dest), "--object", "sink", "--return-type", "void")
+        bench = (dest / "native" / "benchmarks" / "bench_sink_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "volatile void" not in bench
+
+    def test_object_void_return_type(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "sink", "--return-type", "void", cwd=dest)
+        assert r.returncode == 0
+
+    def test_method_void_return_type(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        r = _cli(
+            "method", "nco", "reset_phase",
+            "--module", "dsp",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+
+class TestArrayParamCLI:
+    """--param name:type[] validated and scaffolded via CLI."""
+
+    @staticmethod
+    def _setup_module(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        return dest
+
+    def test_method_array_param_accepted(self, tmp_path):
+        dest = self._setup_module(tmp_path)
+        r = _cli(
+            "method", "nco", "process",
+            "--module", "dsp",
+            "--param", "ctrl:float _Complex[]",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_method_array_param_generates_ptr_len(self, tmp_path):
+        dest = self._setup_module(tmp_path)
+        _cli(
+            "method", "nco", "process",
+            "--module", "dsp",
+            "--param", "ctrl:float _Complex[]",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        text = (dest / "native/src/nco/nco_methods.c").read_text(encoding="utf-8")
+        assert "const float complex *ctrl" in text
+        assert "size_t ctrl_len" in text
+
+    def test_method_bad_array_elem_type_exits_1(self, tmp_path):
+        dest = self._setup_module(tmp_path)
+        r = _cli(
+            "method", "nco", "process",
+            "--module", "dsp",
+            "--param", "ctrl:bad_type[]",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+        assert "array element type" in r.stderr
+
+    def test_function_array_param_accepted(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "fft")
+        r = _cli(
+            "function", "apply_window",
+            "--module", "fft",
+            "--param", "data:float _Complex[]",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_function_bad_array_elem_type_exits_1(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "fft")
+        r = _cli(
+            "function", "apply_window",
+            "--module", "fft",
+            "--param", "data:bogus_t[]",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+        assert "array element type" in r.stderr
+
+    def test_method_bad_scalar_param_type_still_exits_1(self, tmp_path):
+        dest = self._setup_module(tmp_path)
+        r = _cli(
+            "method", "nco", "process",
+            "--module", "dsp",
+            "--param", "x:not_a_type",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+        assert "not a supported type" in r.stderr
+
+
+class TestHelpContent:
+    """Key concepts and new features appear in --help output."""
+
+    def test_help_mentions_void_return_type(self):
+        r = _cli("help")
+        assert "void" in r.stdout
+
+    def test_help_mentions_array_param_syntax(self):
+        r = _cli("help")
+        assert "type[]" in r.stdout
+
+    def test_help_mentions_method_command(self):
+        r = _cli("help")
+        assert "method" in r.stdout
+
+    def test_help_mentions_function_command(self):
+        r = _cli("help")
+        assert "function" in r.stdout
+
+    def test_help_mentions_param_flag(self):
+        r = _cli("help")
+        assert "--param" in r.stdout
+
+    def test_help_mentions_return_type_flag(self):
+        r = _cli("help")
+        assert "--return-type" in r.stdout
+
+    def test_help_has_array_param_example(self):
+        r = _cli("help")
+        assert "execute_ctrl" in r.stdout or "apply_window" in r.stdout
+
+    def test_help_mentions_sink_object(self):
+        r = _cli("help")
+        assert "sink" in r.stdout
+
+    def test_help_mentions_generator_object(self):
+        r = _cli("help")
+        assert "generator" in r.stdout or "gen" in r.stdout
+
+
 class TestAddCLI:
     def test_add_no_state_exits_1(self, tmp_path):
         dest = tmp_path / "comp"
