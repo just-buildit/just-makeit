@@ -304,9 +304,15 @@ def make_sample_ctx(
             "in_py_test_val":    "1",
             "step_parse_block":  "",
             "step_return_expr":  ret["to_py"]("y"),
-            "bench_in_init":     "0",
-            "bench_warmup":      "1",
-            "test_arr_4_init":   "{0}",
+            "bench_in_init":        "0",
+            "bench_warmup":         "1",
+            "bench_in_decl":        "",
+            "bench_in_loop":        "",
+            "bench_step_input_arg": "",
+            "bench_step_input_sep": "",
+            "bench_steps_in_arg":   "",
+            "bench_free_in":        "",
+            "test_arr_4_init":      "{0}",
             # pure_x_* not used with void; provide empty fallbacks
             "pure_x_local":      "",
             "pure_x_fmt_char":   "",
@@ -351,9 +357,22 @@ def make_sample_ctx(
         "in_py_test_val":      _KIND_PY_TEST_VAL[samp["kind"]],
         "step_parse_block":    _step_parse_block(arg_type, samp),
         "step_return_expr":    ret["to_py"]("y"),
-        "bench_in_init":       _bench_in_init(arg_type, samp),
-        "bench_warmup":        _bench_warmup(samp),
-        "test_arr_4_init":     _test_arr_4_init(arg_type, samp),
+        "bench_in_init":          _bench_in_init(arg_type, samp),
+        "bench_warmup":           _bench_warmup(samp),
+        "bench_in_decl":          (
+            f"    {_ctype_display(arg_type)} *in  = "
+            f"malloc(BENCH_N * sizeof({_ctype_display(arg_type)}));\n"
+            f"    if (!in) {{ fprintf(stderr, \"OOM\\n\"); return 1; }}"
+        ),
+        "bench_in_loop":          (
+            f"    for (int i = 0; i < BENCH_N; i++) "
+            f"in[i] = {_bench_in_init(arg_type, samp)};"
+        ),
+        "bench_step_input_arg":   "in[i]",
+        "bench_step_input_sep":   ", ",
+        "bench_steps_in_arg":     " in,",
+        "bench_free_in":          "    free(in);",
+        "test_arr_4_init":        _test_arr_4_init(arg_type, samp),
         "pure_x_local":        pure_x_local,
         "pure_x_fmt_char":     samp["fmt"],
         "pure_x_parse_arg":    pure_x_parse_arg,
@@ -3081,15 +3100,15 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 int
 main(void)
 {
-    <<arg_ctype>> *in  = malloc(BENCH_N * sizeof(<<arg_ctype>>));
+<<bench_in_decl>>
     <<return_ctype>> *out = malloc(BENCH_N * sizeof(<<return_ctype>>));
-    if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
-    for (int i = 0; i < BENCH_N; i++) in[i] = <<bench_in_init>>;
+    if (!out) { fprintf(stderr, "OOM\\n"); return 1; }
+<<bench_in_loop>>
 
     <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
 
     /* warmup */
-    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj, <<bench_warmup>>);
+    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
 
     struct timespec t0, t1;
     double sec;
@@ -3100,7 +3119,7 @@ main(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
         for (int i = 0; i < BENCH_N; i++)
-            (void)<<component>>_step(obj, in[i]);
+            (void)<<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  step()   %8.1f MSa/s\\n",
@@ -3108,14 +3127,15 @@ main(void)
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
-        <<component>>_steps(obj, in, out, BENCH_N);
+        <<component>>_steps(obj,<<bench_steps_in_arg>> out, BENCH_N);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  steps()  %8.1f MSa/s\\n",
            (double)ITERATIONS * BENCH_N / sec / 1e6);
 
     <<component>>_destroy(obj);
-    free(in); free(out);
+<<bench_free_in>>
+    free(out);
     return 0;
 }
 """
