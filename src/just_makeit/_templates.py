@@ -4022,8 +4022,7 @@ install(TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/native/inc/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
-    PATTERN "pyex_common.h" EXCLUDE
-    PATTERN "clib_common.h" EXCLUDE)
+    PATTERN "pyex_common.h" EXCLUDE)
 
 install(EXPORT <<project_underscore>>-targets
     FILE <<project_underscore>>-config.cmake
