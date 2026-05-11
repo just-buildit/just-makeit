@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.9.10\] — 2026-05-11
+
+### Fixed
+
+- **`property --field` on module objects** now updates `obj_core.h` in
+  addition to regenerating `module_ext.c`; previously the struct field
+  was silently omitted from the header.
+
+______________________________________________________________________
+
+
 ## \[0.9.9\] — 2026-05-10
 
 ### Added
