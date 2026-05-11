@@ -12,7 +12,6 @@ copyright        = "Copyright &copy; 2026 just-buildit contributors — MIT Lice
 
 nav = [
   { "Home"               = "index.md"        },
-  { "Overview"           = "overview.md"     },
   { "Workflow"           = "workflow.md"     },
   { "Commands"           = "commands.md"     },
   { "Stateful vs Pure"   = "pure.md"         },

@@ -16,25 +16,15 @@ ______________________________________________________________________
 ## Try it now — no tools required
 
 ```sh
+# create and source venv — just-makeit is on your PATH automatically
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+
+# single command = complete project — ready to customize
 just-makeit new my_project --object engine --state gain:double:1.0
+
+# build and test — ALL GREEN!
 cd my_project && make && make test
 ```
-
-`. <(curl ...)` sources the script into your current shell so the venv
-activates automatically — `just-makeit` is on your PATH immediately.
-
-```sh
-# Custom venv path:
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
-
-# Dry-run — report what would change without writing anything:
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- --check
-
-# Re-install even if already up to date:
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- --force
-```
-
 ______________________________________________________________________
 
 ## Installation
