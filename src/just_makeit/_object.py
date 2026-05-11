@@ -90,7 +90,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
                                       C.methods(cfg, obj)))
         ctx.update(T.make_properties_ctx(ctx["component"], ctx["Component"],
-                                         C.properties(cfg, obj)))
+                                         C.properties(cfg, obj),
+                                         frozenset(n for n, _, _ in state_vars)))
         comp_ctxs.append(ctx)
 
     # Module ext.c

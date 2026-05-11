@@ -264,7 +264,8 @@ def run(
         if not pure_style:
             ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
         ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
-        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name)))
+        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
+                                         frozenset(n for n, _, _ in state_vars_list)))
 
         def r(tmpl):
             return T.render(tmpl, ctx)

@@ -118,7 +118,8 @@ def run(
             ctx.update(T.make_methods_ctx(object_name, Component,
                                           C.methods(cfg, object_name)))
             ctx.update(T.make_properties_ctx(object_name, Component,
-                                             C.properties(cfg, object_name)))
+                                             C.properties(cfg, object_name),
+                                             frozenset(n for n, _, _ in state_vars_list)))
             core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
             if core_h.exists():
                 core_h.write_text(T.render(T.COMPONENT_CORE_H, ctx), encoding="utf-8")
@@ -149,7 +150,8 @@ def run(
         if not pure_style:
             ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
         ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
-        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name)))
+        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
+                                         frozenset(n for n, _, _ in state_vars_list)))
 
         def r(tmpl):
             return T.render(tmpl, ctx)

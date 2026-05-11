@@ -1721,8 +1721,12 @@ def make_properties_ctx(
     component: str,
     Component: str,
     properties: list[dict],
+    state_var_names: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
+
+    state_var_names: names already declared by make_state_ctx(); those are
+    excluded from property_decls to avoid duplicate C declarations.
 
     Each property dict has: name, ctype (a _CTYPE_META key), writable (bool).
     """
@@ -1783,10 +1787,11 @@ def make_properties_ctx(
                 f"    return {to_py};\n"
                 f"}}"
             )
-            decl_lines.append(
-                f"{disp} {component}_get_{pname}"
-                f"(const {component}_state_t *state);"
-            )
+            if pname not in state_var_names:
+                decl_lines.append(
+                    f"{disp} {component}_get_{pname}"
+                    f"(const {component}_state_t *state);"
+                )
 
         getter_parts.append(getter)
 
@@ -1812,10 +1817,11 @@ def make_properties_ctx(
                 assign_line = (
                     f"    {component}_set_{pname}(self->handle, v);\n"
                 )
-                decl_lines.append(
-                    f"void {component}_set_{pname}"
-                    f"({component}_state_t *state, {disp} val);"
-                )
+                if pname not in state_var_names:
+                    decl_lines.append(
+                        f"void {component}_set_{pname}"
+                        f"({component}_state_t *state, {disp} val);"
+                    )
             setter = (
                 f"static int\n"
                 f"{Component}_setprop_{pname}({Component}Object *self,"
