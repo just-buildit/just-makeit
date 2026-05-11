@@ -35,6 +35,9 @@ jobs:
       - name: Build Zensical site
         run: uv run --no-project --with "zensical>=0.0.29" zensical build --clean
 
+      - name: Copy install.sh into site root
+        run: cp install.sh site/install.sh
+
       - name: Configure Pages
         if: github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5

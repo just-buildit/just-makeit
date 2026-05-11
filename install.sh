@@ -3,11 +3,11 @@
 #
 # ── Recommended: source into the current shell so the venv activates immediately
 #
-#   . <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+#   . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 #
 # ── Piped form (venv path printed at the end; activate manually):
 #
-#   curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
+#   curl -fsSL https://just-buildit.github.io/just-makeit/install.sh | sh
 #   source /tmp/jm-venv/bin/activate
 #
 # ── Options (append after --):

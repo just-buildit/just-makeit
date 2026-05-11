@@ -6,7 +6,7 @@ Follow along to scaffold, implement, build, and use it yourself.
 ## TL;DR — see it work first
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 just-makeit example fir_filter
 # fir_filter: PASSED
 ```
@@ -14,13 +14,13 @@ just-makeit example fir_filter
 ## Prerequisites
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh) -- ~/my-venv
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
 Or with `pip` if just-makeit is already installed:

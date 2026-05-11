@@ -25,7 +25,7 @@ Heap allocation only appears when the output size is not fixed at compile time.
 ## TL;DR — see it work first
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 just-makeit example array_processing
 # array_processing: PASSED
 ```
@@ -33,13 +33,13 @@ just-makeit example array_processing
 ## Prerequisites
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh) -- ~/my-venv
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
 Or with `pip` if just-makeit is already installed:
