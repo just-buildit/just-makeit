@@ -4,7 +4,7 @@ _object.py — `just-makeit object` command.
 Adds a Python type to an existing project:
 
   Standalone (own .so):
-    just-makeit object gain                  # no --module → standalone
+    just-makeit object gain                  # no --module -> standalone
     from my_pkg import Gain
 
   In-module (shared .so subpackage):
@@ -158,7 +158,7 @@ def run(
 
     cfg = C.load(root)
 
-    # No --module → standalone object (own .so)
+    # No --module -> standalone object (own .so)
     if module is None:
         from . import _init
         _init.run(root, object_name, state_vars, perf=perf, pure=pure,
@@ -166,7 +166,7 @@ def run(
                   array_args=array_args, _hint=_hint)
         return
 
-    # --module given → in-module path
+    # --module given -> in-module path
     mods = C.modules(cfg)
     if module not in mods:
         print(

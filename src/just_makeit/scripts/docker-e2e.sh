@@ -39,7 +39,7 @@ echo "════════════════════════�
 DOCKER_EXTRA_ARGS=()
 
 if [[ "$MODE" == "local" ]]; then
-    echo "→ Building local wheel..."
+    echo "-> Building local wheel..."
     cd "$ROOT"
     pip install just-buildit --quiet 2>/dev/null || true
     python -m build --wheel --no-isolation -q 2>/dev/null || \

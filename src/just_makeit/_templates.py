@@ -143,7 +143,7 @@ _CTYPE_META: dict[str, dict] = {
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
 
-# Maps py_type → NumPy C-API enum constant (for ext.c array ops).
+# Maps py_type -> NumPy C-API enum constant (for ext.c array ops).
 _NP_ENUM: dict[str, str] = {
     "np.float32": "NPY_FLOAT",
     "np.float64": "NPY_DOUBLE",
@@ -182,7 +182,7 @@ _ARRAY_DTYPE: dict[str, tuple[str, str]] = {
 
 SUPPORTED_ARRAY_DTYPES: frozenset[str] = frozenset(_ARRAY_DTYPE)
 
-# Maps kind → Python isinstance target.
+# Maps kind -> Python isinstance target.
 _KIND_PY_ISINSTANCE: dict[str, str] = {
     "float": "float",
     "int": "int",
@@ -190,7 +190,7 @@ _KIND_PY_ISINSTANCE: dict[str, str] = {
     "str": "str",
 }
 
-# Maps kind → Python test input literal.
+# Maps kind -> Python test input literal.
 _KIND_PY_TEST_VAL: dict[str, str] = {
     "float": "1.0",
     "int": "1",
@@ -200,7 +200,7 @@ _KIND_PY_TEST_VAL: dict[str, str] = {
 
 
 def _ctype_display(ct: str) -> str:
-    """Internal key → C display form: 'float _Complex' → 'float complex'."""
+    """Internal key -> C display form: 'float _Complex' -> 'float complex'."""
     return ct.replace("_Complex", "complex")
 
 
@@ -215,7 +215,7 @@ def _step_parse_block(sample_type: str, samp: dict) -> str:
         parse_type = samp["parse_type"]
         parse_zero = samp["parse_zero"]
         fmt = samp["fmt"]
-        to_c_expr = samp["to_c"]("x")  # to_c("x") → "(type)x_raw..." using x_raw var
+        to_c_expr = samp["to_c"]("x")  # to_c("x") -> "(type)x_raw..." using x_raw var
         return (
             f'    {parse_type} x_raw = {parse_zero};\n'
             f'    if (!PyArg_ParseTuple(args, "{fmt}", &x_raw))\n'
@@ -286,7 +286,7 @@ def make_sample_ctx(
     out_np_dtype = ret["py_type"]
 
     if arg_type == "void":
-        # Generator object: step(state) → sample, steps(state, out, n).
+        # Generator object: step(state) -> sample, steps(state, out, n).
         # Keys that reference input type are set to safe fallbacks; the actual
         # step/steps C and Python bodies are pre-rendered by make_step_ctx().
         return {
@@ -396,7 +396,7 @@ def _py_sample_val(meta: dict) -> str:
     return "2"
 
 
-# Maps scalar element type → NumPy C-API enum constant (for array state).
+# Maps scalar element type -> NumPy C-API enum constant (for array state).
 _NP_DTYPE_ENUM: dict[str, str] = {
     "float": "NPY_FLOAT",
     "double": "NPY_DOUBLE",
@@ -1154,8 +1154,8 @@ def make_pure_ctx(
     """Return context keys for a pure (stateless / caller-managed) component.
 
     Auto-selects style:
-      'scalar' — scalar state only → params passed per call, no struct
-      'struct' — any array state   → caller-managed params_t struct
+      'scalar' — scalar state only -> params passed per call, no struct
+      'struct' — any array state   -> caller-managed params_t struct
     """
     for name, ct, _ in state_vars:
         if not is_valid_type(ct):
@@ -4558,6 +4558,6 @@ make test                # CTest + pytest
 
 ```bash
 pip install just-buildit
-just-makeit build        # wheel → dist/
+just-makeit build        # wheel -> dist/
 ```
 """

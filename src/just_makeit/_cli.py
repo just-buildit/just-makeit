@@ -55,9 +55,9 @@ Array types:  type[N]  e.g. float[64], double _Complex[32]
               Array fields are always zero-initialised; no default may be given.
 
 Pure mode auto-detection:
-  All scalar --param vars  → scalar style: params passed per call, module functions
+  All scalar --param vars  -> scalar style: params passed per call, module functions
                              e.g. normalize(x, scale=1.0); normalize.steps(arr)
-  Any array --param var    → struct style: caller-managed params_t, alloc helpers
+  Any array --param var    -> struct style: caller-managed params_t, alloc helpers
                              e.g. f = MyComp(cutoff=440.0); f(x); f.steps(arr)
 
 Examples:

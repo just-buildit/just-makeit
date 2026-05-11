@@ -154,7 +154,7 @@ def run(
     if style:
         pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], all_vars, arg_type_)
         ctx.update(pure_ctx)
-        # pure_style may change if state type mix changes (scalar→struct on array add)
+        # pure_style may change if state type mix changes (scalar->struct on array add)
         new_style = pure_ctx["pure_style"]
         templates = _PURE_SCALAR_TEMPLATES if new_style == "scalar" else _PURE_STRUCT_TEMPLATES
     else:
