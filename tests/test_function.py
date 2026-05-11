@@ -329,6 +329,80 @@ class TestFunctionTyped:
                 assert m is None, f"Stray placeholder in {path}"
 
 
+class TestFunctionWithArrayParam:
+    """--param name:type[] generates numpy array parse + const ptr/len in C impl."""
+
+    @pytest.fixture()
+    def arr_fn(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "apply_window", "fft",
+                     params=[("data", "float _Complex[]")],
+                     return_type="void")
+        return root
+
+    @pytest.fixture()
+    def mixed_fn(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "scale_buffer", "fft",
+                     params=[("gain", "float"), ("buf", "float[]")],
+                     return_type="void")
+        return root
+
+    def test_impl_has_const_ptr_param(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "const float complex *data" in text
+
+    def test_impl_has_len_param(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "size_t data_len" in text
+
+    def test_impl_suppresses_ptr_and_len(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "(void)data;" in text
+        assert "(void)data_len;" in text
+
+    def test_wrapper_has_pyarray_from_otf(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "PyArray_FROM_OTF" in text
+        assert "NPY_COMPLEX64" in text
+
+    def test_wrapper_format_has_O(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert '"O"' in text
+
+    def test_wrapper_passes_ptr_and_len(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "data_len" in text
+
+    def test_wrapper_has_decref(self, arr_fn):
+        text = (arr_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "Py_DECREF(data_arr)" in text
+
+    def test_mixed_scalar_and_array(self, mixed_fn):
+        text = (mixed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert "float gain" in text
+        assert "const float *buf" in text
+        assert "size_t buf_len" in text
+
+    def test_mixed_format_string(self, mixed_fn):
+        text = (mixed_fn / "native/src/fft/fft_functions.c").read_text(encoding="utf-8")
+        assert '"fO"' in text
+
+    def test_config_stores_array_type(self, arr_fn):
+        cfg = load(arr_fn)
+        fns = cfg_module_functions(cfg, "fft")
+        fn = next(f for f in fns if f["name"] == "apply_window")
+        assert fn.get("params") == [{"name": "data", "type": "float _Complex[]"}]
+
+    def test_no_stray_placeholders(self, arr_fn):
+        for path in arr_fn.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+                m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
+                assert m is None, f"Stray placeholder in {path}"
+
+
 class TestNoStrayPlaceholders:
     def _check(self, root: Path) -> None:
         for path in root.rglob("*"):

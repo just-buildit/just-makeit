@@ -589,3 +589,87 @@ class TestMethodWithParams:
                    "void", "void", False, [],
                    params=[("freq", "float"), ("mode", "int32_t")])
         _check_no_placeholders(project)
+
+
+class TestMethodWithArrayParam:
+    """--param name:type[] generates numpy array parse + const ptr/len signature."""
+
+    @pytest.fixture()
+    def arr_method(self, project):
+        method_run(project, "nco", "process", None,
+                   "void", "void", False, [],
+                   params=[("ctrl", "float _Complex[]")])
+        return project
+
+    @pytest.fixture()
+    def mixed_method(self, project):
+        method_run(project, "nco", "process_mixed", None,
+                   "void", "void", False, [],
+                   params=[("gain", "float"), ("buf", "float[]")])
+        return project
+
+    def test_c_stub_has_const_ptr_param(self, arr_method):
+        text = (
+            arr_method / "native/src/nco/nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "const float complex *ctrl" in text
+
+    def test_c_stub_has_len_param(self, arr_method):
+        text = (
+            arr_method / "native/src/nco/nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "size_t ctrl_len" in text
+
+    def test_c_stub_suppresses_ptr_and_len(self, arr_method):
+        text = (
+            arr_method / "native/src/nco/nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "(void)ctrl;" in text
+        assert "(void)ctrl_len;" in text
+
+    def test_ext_c_has_pyarray_from_otf(self, arr_method):
+        ext = (
+            arr_method / "native/src/nco/nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "PyArray_FROM_OTF" in ext
+        assert "NPY_COMPLEX64" in ext
+
+    def test_ext_c_format_has_O(self, arr_method):
+        ext = (
+            arr_method / "native/src/nco/nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert '"O"' in ext
+
+    def test_ext_c_passes_ptr_and_len(self, arr_method):
+        ext = (
+            arr_method / "native/src/nco/nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "ctrl_len" in ext
+
+    def test_ext_c_has_decref(self, arr_method):
+        ext = (
+            arr_method / "native/src/nco/nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "Py_DECREF(ctrl_arr)" in ext
+
+    def test_mixed_params_scalar_and_array(self, mixed_method):
+        text = (
+            mixed_method / "native/src/nco/nco_methods.c"
+        ).read_text(encoding="utf-8")
+        assert "float gain" in text
+        assert "const float *buf" in text
+        assert "size_t buf_len" in text
+
+    def test_mixed_format_string(self, mixed_method):
+        ext = (
+            mixed_method / "native/src/nco/nco_ext.c"
+        ).read_text(encoding="utf-8")
+        assert '"fO"' in ext
+
+    def test_config_stores_array_type(self, arr_method):
+        cfg = load(arr_method)
+        m = next(m for m in methods(cfg, "nco") if m["name"] == "process")
+        assert m.get("params") == [{"name": "ctrl", "type": "float _Complex[]"}]
+
+    def test_no_placeholders(self, arr_method):
+        _check_no_placeholders(arr_method)

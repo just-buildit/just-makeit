@@ -104,9 +104,21 @@ def _methods_c_stub_fixed(
     )
 
     if params:
-        param_str = ", ".join(f"{T._ctype_display(t)} {n}" for n, t in params)
+        param_parts: list[str] = []
+        suppress_parts: list[str] = []
+        for n, t in params:
+            if T.is_array_param_type(t):
+                elem_disp = T._ctype_display(T.array_elem_ctype(t))
+                param_parts.append(f"const {elem_disp} *{n}")
+                param_parts.append(f"size_t {n}_len")
+                suppress_parts.append(f"(void){n};")
+                suppress_parts.append(f"(void){n}_len;")
+            else:
+                param_parts.append(f"{T._ctype_display(t)} {n}")
+                suppress_parts.append(f"(void){n};")
+        param_str = ", ".join(param_parts)
         c_params = f"{component}_state_t *state, {param_str}{extra_params}"
-        suppress_names = " ".join(f"(void){n};" for n, _ in params)
+        suppress_names = " ".join(suppress_parts)
         suppress = f"    (void)state; {suppress_names}{extra_suppress}"
     elif has_arg:
         arg_disp = T._ctype_display(arg_type)

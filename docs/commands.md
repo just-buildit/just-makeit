@@ -26,7 +26,7 @@ any objects — the source of truth for all subsequent commands.
 | `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`. |
 | `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
 | `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`.                        |
-| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`.                         |
+| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no scalar output. |
 | `--pure`                      | Generate a stateless object. See [Stateful vs pure](pure.md).                       |
 
 ______________________________________________________________________
@@ -114,8 +114,8 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `name` | Object name in `snake_case`. Becomes the C prefix and Python class name (title-cased). |
 | `--module name` | Target module. Without this flag the object is standalone (own `.so`). |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. |
-| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. |
-| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. |
+| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. |
+| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no output. |
 | `--pure` | Generate a stateless object. |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
@@ -160,7 +160,8 @@ appended on subsequent calls) and the corresponding Python glue in the module
 | `object` | Object name (must already exist in `just-makeit.toml`). |
 | `method_name` | Snake-case name for the new method. |
 | `--module name` | Module the object belongs to (required for module objects). |
-| `--param name:type` | Named typed parameter. Repeatable. Use instead of `--arg-type` when the method takes multiple distinct scalar inputs. |
+| `--param name:type` | Named typed scalar parameter. Repeatable. |
+| `--param name:type[]` | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C. |
 | `--return-type TYPE` | C type of the return value (`void` for no return). |
 | `--arg-type TYPE` | C type of a single array-style input. Use `void` for count-only inputs. |
 | `--variable-output` | Pre-allocate output buffer at init; return zero-copy numpy view. See below. |
@@ -211,8 +212,32 @@ Python call:
 nco.configure(0.1, 0.0, 2)
 ```
 
-All types in `_CTYPE_META` are supported as `--param` types (float, double,
-int, int32\_t, uint32\_t, size\_t, float \_Complex, etc.).
+All scalar types in `_CTYPE_META` are supported as `--param` types (float,
+double, int, int32\_t, uint32\_t, size\_t, float \_Complex, etc.).
+
+**Array parameters** (`--param name:type[]`) generate a numpy array input.
+The C stub receives `(const elem_t *name, size_t name_len)` and the Python
+wrapper uses `PyArray_FROM_OTF` to convert the incoming numpy array:
+
+```sh
+just-makeit method resamp execute_ctrl --module resample \
+    --param ctrl:"float _Complex[]" \
+    --return-type size_t
+```
+
+Generated C stub:
+```c
+size_t
+resamp_execute_ctrl(resamp_state_t *state,
+                    const float complex *ctrl, size_t ctrl_len)
+{
+    (void)state; (void)ctrl; (void)ctrl_len;
+    return (size_t)0;
+}
+```
+
+Python call: `resamp.execute_ctrl(np.zeros(64, dtype=np.complex64))`
+
 `--param` and `--arg-type` are mutually exclusive per method.
 
 ______________________________________________________________________
@@ -369,7 +394,8 @@ regenerates the module `_ext.c` to wire the new function into the
 |----------|-------------|
 | `name` | Snake-case function name. |
 | `--module mod` | Module the function belongs to (required). |
-| `--param name:type` | Named typed parameter. Repeatable. |
+| `--param name:type` | Named typed scalar parameter. Repeatable. |
+| `--param name:type[]` | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C. |
 | `--return-type TYPE` | C return type (default: `void`). |
 | `--doc "text"` | Python docstring for the function. |
 
@@ -431,6 +457,17 @@ w = fft.compute_window(512, 5.0)
 
 Implement `_compute_window_impl` and delete the `(void)` suppression lines.
 The `_functions.c` file is never regenerated — your implementation is safe.
+
+**Array parameters** work identically to `jm method`: append `[]` to the type.
+The C helper receives `(const elem_t *name, size_t name_len)`; the Python
+wrapper performs `PyArray_FROM_OTF` + `Py_DECREF` automatically.
+
+```sh
+just-makeit function apply_window \
+    --module fft \
+    --param data:"float _Complex[]" \
+    --return-type void
+```
 
 ______________________________________________________________________
 

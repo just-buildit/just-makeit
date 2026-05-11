@@ -58,10 +58,25 @@ def _function_stub_typed(
     ret_disp = T._ctype_display(return_type)
     ret_meta = T._CTYPE_META.get(return_type)
 
-    # C-level helper signature
-    if params:
-        c_param_str = ", ".join(f"{T._ctype_display(t)} {n}" for n, t in params)
-        suppress = "    " + " ".join(f"(void){n};" for n, _ in params)
+    # C-level helper signature.
+    # Array params ("type[]") expand to (const elem_t *name, size_t name_len).
+    c_param_parts: list[str] = []
+    suppress_parts: list[str] = []
+    for n, t in params:
+        if T.is_array_param_type(t):
+            elem_ct = T.array_elem_ctype(t)
+            elem_disp = T._ctype_display(elem_ct)
+            c_param_parts.append(f"const {elem_disp} *{n}")
+            c_param_parts.append(f"size_t {n}_len")
+            suppress_parts.append(f"(void){n};")
+            suppress_parts.append(f"(void){n}_len;")
+        else:
+            c_param_parts.append(f"{T._ctype_display(t)} {n}")
+            suppress_parts.append(f"(void){n};")
+
+    if c_param_parts:
+        c_param_str = ", ".join(c_param_parts)
+        suppress = "    " + " ".join(suppress_parts)
     else:
         c_param_str = "void"
         suppress = ""
@@ -84,7 +99,7 @@ def _function_stub_typed(
 
     # Python wrapper
     if params:
-        parse_block, call_args = T._build_params_parse(
+        parse_block, call_args, cleanup = T._build_params_parse(
             [{"name": n, "type": t} for n, t in params]
         )
         meth_flags = "METH_VARARGS"
@@ -92,18 +107,19 @@ def _function_stub_typed(
     else:
         parse_block = "    (void)args;\n"
         call_args = ""
+        cleanup = ""
         meth_flags = "METH_NOARGS"
         py_args = "PyObject *Py_UNUSED(args)"
 
     if ret_meta:
         ret_expr = ret_meta["to_py"](f"_{fn_name}_impl({call_args})")
-        ret_line = f"    return {ret_expr};"
+        ret_line = f"{cleanup}    return {ret_expr};"
     else:
         call_line = (
             f"    _{fn_name}_impl({call_args});" if call_args
             else f"    _{fn_name}_impl();"
         )
-        ret_line = call_line + "\n    Py_RETURN_NONE;"
+        ret_line = call_line + f"\n{cleanup}    Py_RETURN_NONE;"
 
     wrapper = (
         f"static PyObject *\n"

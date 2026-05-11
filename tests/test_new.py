@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit new`."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -8,6 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run
+
+_STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
 
 # Fixture: new project with a component (the typical one-shot path).
@@ -410,3 +413,94 @@ class TestNewBuild:
             text=True,
         )
         assert r.returncode == 0, f"pytest failed:\n{r.stdout}\n{r.stderr}"
+
+
+class TestVoidReturn:
+    """--return-type void on jm new / jm object."""
+
+    @pytest.fixture()
+    def sink(self, tmp_path):
+        dest = tmp_path / "audio"
+        run("audio", dest, "sink",
+            state_vars=[("volume", "double", "1.0")],
+            return_type="void")
+        return dest
+
+    @pytest.fixture()
+    def void_gen(self, tmp_path):
+        dest = tmp_path / "audio"
+        run("audio", dest, "ticker",
+            state_vars=[("phase", "double", "0.0")],
+            arg_type="void",
+            return_type="void")
+        return dest
+
+    def test_step_returns_void_in_core_h(self, sink):
+        h = (sink / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        # step_impl_def spans two lines: "static inline void\nsink_step("
+        assert "static inline void" in h
+        assert "sink_step(" in h
+
+    def test_no_volatile_void_in_bench(self, sink):
+        bench = (sink / "native/benchmarks/bench_sink_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "volatile void" not in bench
+
+    def test_no_void_ptr_out_in_bench(self, sink):
+        bench = (sink / "native/benchmarks/bench_sink_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "void *out" not in bench
+        assert "sizeof(void)" not in bench
+
+    def test_bench_calls_step_without_assignment(self, sink):
+        bench = (sink / "native/benchmarks/bench_sink_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "sink_step(obj" in bench
+        assert "_sink = sink_step" not in bench
+
+    def test_steps_no_out_param_in_sink(self, sink):
+        c = (sink / "native/src/sink/sink_core.c").read_text(encoding="utf-8")
+        assert "void *output" not in c
+        assert "sink_steps(state, input, n)" in c or (
+            "const float complex    *input" in c and "size_t               n)" in c
+        )
+
+    def test_core_h_step_example_no_void_y(self, sink):
+        h = (sink / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        assert "void y = " not in h
+        assert "sink_step(obj" in h
+
+    def test_void_gen_no_volatile_void(self, void_gen):
+        bench = (void_gen / "native/benchmarks/bench_ticker_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "volatile void" not in bench
+
+    def test_void_gen_steps_takes_only_n(self, void_gen):
+        c = (void_gen / "native/src/ticker/ticker_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "ticker_steps(state, n)" in c or (
+            "ticker_steps(\n    ticker_state_t *state,\n    size_t" in c
+        )
+
+    def test_no_stray_placeholders_sink(self, sink):
+        for path in sink.rglob("*"):
+            if path.is_file() and path.suffix in (
+                ".py", ".c", ".h", ".toml", ".txt"
+            ):
+                text = path.read_text(encoding="utf-8")
+                m = _STRAY_PLACEHOLDER.search(text)
+                assert m is None, f"Stray placeholder in {path}"
+
+    def test_no_stray_placeholders_void_gen(self, void_gen):
+        for path in void_gen.rglob("*"):
+            if path.is_file() and path.suffix in (
+                ".py", ".c", ".h", ".toml", ".txt"
+            ):
+                text = path.read_text(encoding="utf-8")
+                m = _STRAY_PLACEHOLDER.search(text)
+                assert m is None, f"Stray placeholder in {path}"

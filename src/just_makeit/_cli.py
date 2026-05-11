@@ -380,10 +380,22 @@ def main() -> None:
                     print(f"error: --param '{val}' must be name:type", file=sys.stderr)
                     sys.exit(1)
                 pname, ptype = val.split(":", 1)
-                if ptype not in T._CTYPE_META:
+                if T.is_array_param_type(ptype):
+                    elem_ct = T.array_elem_ctype(ptype)
+                    if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
+                        print(
+                            f"error: --param array element type '{elem_ct}' is"
+                            f" not supported.\n"
+                            f"Supported element types: "
+                            f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                elif ptype not in T._CTYPE_META:
                     print(
                         f"error: --param type '{ptype}' is not a supported type.\n"
-                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                        f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
+                        f"Array syntax: name:type[]  e.g. ctrl:\"float _Complex[]\"",
                         file=sys.stderr,
                     )
                     sys.exit(1)
@@ -515,10 +527,22 @@ def main() -> None:
                     print(f"error: --param '{val}' must be name:type", file=sys.stderr)
                     sys.exit(1)
                 pname, ptype = val.split(":", 1)
-                if ptype not in T._CTYPE_META:
+                if T.is_array_param_type(ptype):
+                    elem_ct = T.array_elem_ctype(ptype)
+                    if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
+                        print(
+                            f"error: --param array element type '{elem_ct}'"
+                            f" is not supported.\n"
+                            f"Supported element types: "
+                            f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                elif ptype not in T._CTYPE_META:
                     print(
                         f"error: --param type '{ptype}' is not a supported type.\n"
-                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                        f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
+                        f"Array syntax: name:type[]  e.g. ctrl:\"float _Complex[]\"",
                         file=sys.stderr,
                     )
                     sys.exit(1)

@@ -164,7 +164,7 @@ _NP_ENUM: dict[str, str] = {
     "str": "NPY_OBJECT",
 }
 
-# Maps user-facing dtype strings (--array-arg name:dtype) to (C type, NPY enum).
+# Maps user-facing numpy dtype names to (C element type, NPY enum constant).
 _ARRAY_DTYPE: dict[str, tuple[str, str]] = {
     "float32":    ("float",           "NPY_FLOAT"),
     "float64":    ("double",          "NPY_DOUBLE"),
@@ -181,6 +181,23 @@ _ARRAY_DTYPE: dict[str, tuple[str, str]] = {
 }
 
 SUPPORTED_ARRAY_DTYPES: frozenset[str] = frozenset(_ARRAY_DTYPE)
+
+# Reverse of _ARRAY_DTYPE: C element type (with _Complex) -> NPY enum.
+_CTYPE_TO_NPY: dict[str, str] = {
+    c_type: npy_enum for c_type, npy_enum in _ARRAY_DTYPE.values()
+}
+
+SUPPORTED_ARRAY_CTYPES: frozenset[str] = frozenset(_CTYPE_TO_NPY)
+
+
+def is_array_param_type(ptype: str) -> bool:
+    """Return True if ptype is an array parameter spec (ends with '[]')."""
+    return ptype.endswith("[]")
+
+
+def array_elem_ctype(ptype: str) -> str:
+    """Strip '[]' suffix to get the element C type, e.g. 'float _Complex[]' -> 'float _Complex'."""
+    return ptype[:-2]
 
 # Maps kind -> Python isinstance target.
 _KIND_PY_ISINSTANCE: dict[str, str] = {
@@ -206,38 +223,79 @@ def _ctype_display(ct: str) -> str:
 
 def _build_params_parse(
     params: list[dict],
-) -> tuple[str, str]:
-    """Build parse block + C call args for a named multi-param method.
+) -> tuple[str, str, str]:
+    """Build parse block + C call args + cleanup for a named multi-param method.
 
     params: list of {"name": str, "type": str}
+      Scalar types come from _CTYPE_META.
+      Array types end with '[]', e.g. "float _Complex[]"; their element type
+      must be in _CTYPE_TO_NPY.  Array params expand to two C args:
+      (const elem_t *name, size_t name_len).
 
-    Returns (parse_block, call_args_c):
-      parse_block  — indented C code: declarations, PyArg_ParseTuple, conversions
-      call_args_c  — comma-sep names of post-conversion C variables
+    Returns (parse_block, call_args_c, cleanup):
+      parse_block  — indented C code: declarations, PyArg_ParseTuple, array
+                     conversion and error-exit paths with partial cleanup
+      call_args_c  — comma-sep C variables/expressions for the downstream call
+      cleanup      — Py_DECREF lines for all acquired numpy arrays (empty string
+                     when no array params); caller must emit before every return
     """
-    decl_lines: list[str] = []
-    addr_exprs: list[str] = []
-    fmt_chars:  list[str] = []
-    conv_lines: list[str] = []
-    call_args:  list[str] = []
+    decl_lines:  list[str] = []   # before PyArg_ParseTuple
+    addr_exprs:  list[str] = []   # &name args for PyArg_ParseTuple
+    fmt_chars:   list[str] = []   # format characters
+    conv_lines:  list[str] = []   # after PyArg_ParseTuple (scalars needing to_c)
+    arr_acq:     list[str] = []   # array acquisition lines (after ParseTuple)
+    call_args:   list[str] = []   # final C args to pass
+    arr_names:   list[str] = []   # arr variable names for Py_DECREF cleanup
 
     for p in params:
         pname = p["name"]
         ptype = p["type"]
-        meta  = _CTYPE_META[ptype]
-        disp  = _ctype_display(ptype)
-        fmt_chars.append(meta["fmt"])
 
-        if "parse_type" in meta:
-            raw = f"{pname}_raw"
-            decl_lines.append(f"    {meta['parse_type']} {raw} = {meta['parse_zero']};")
-            addr_exprs.append(f"&{raw}")
-            conv_lines.append(f"    {disp} {pname} = {meta['to_c'](pname)};")
+        if is_array_param_type(ptype):
+            elem_ct  = array_elem_ctype(ptype)
+            npy_enum = _CTYPE_TO_NPY[elem_ct]
+            elem_disp = _ctype_display(elem_ct)
+            obj_var  = f"{pname}_obj"
+            arr_var  = f"{pname}_arr"
+
+            decl_lines.append(f"    PyObject *{obj_var} = NULL;")
+            fmt_chars.append("O")
+            addr_exprs.append(f"&{obj_var}")
+
+            # Build error path: decref all arrays acquired so far.
+            prior_decrefs = "".join(
+                f" Py_DECREF({a});" for a in arr_names
+            )
+            arr_acq.append(
+                f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
+                f"PyArray_FROM_OTF(\n"
+                f"        {obj_var}, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
+            )
+            arr_acq.append(
+                f"    const {elem_disp} *{pname} = "
+                f"(const {elem_disp} *)PyArray_DATA({arr_var});\n"
+                f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var});"
+            )
+            arr_names.append(arr_var)
+            call_args.extend([pname, f"{pname}_len"])
         else:
-            decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
-            addr_exprs.append(f"&{pname}")
+            meta = _CTYPE_META[ptype]
+            disp = _ctype_display(ptype)
+            fmt_chars.append(meta["fmt"])
 
-        call_args.append(pname)
+            if "parse_type" in meta:
+                raw = f"{pname}_raw"
+                decl_lines.append(
+                    f"    {meta['parse_type']} {raw} = {meta['parse_zero']};"
+                )
+                addr_exprs.append(f"&{raw}")
+                conv_lines.append(f"    {disp} {pname} = {meta['to_c'](pname)};")
+            else:
+                decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
+                addr_exprs.append(f"&{pname}")
+
+            call_args.append(pname)
 
     fmt_str  = "".join(fmt_chars)
     addr_str = ", ".join(addr_exprs)
@@ -246,8 +304,10 @@ def _build_params_parse(
         + [f'    if (!PyArg_ParseTuple(args, "{fmt_str}", {addr_str}))',
            "        return NULL;"]
         + conv_lines
+        + arr_acq
     )
-    return "\n".join(lines) + "\n", ", ".join(call_args)
+    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names)
+    return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
 def _step_parse_block(sample_type: str, samp: dict) -> str:
@@ -316,40 +376,82 @@ def make_sample_ctx(
     arg_type    — C type for the step() input parameter x, or "void" for
                   generator objects that produce output from internal state only.
     return_type — C type for the step() return value (default: same as arg_type,
-                  or "float _Complex" when arg_type is "void").
+                  or "float _Complex" when arg_type is "void"). Pass "void" for
+                  sink/processor objects whose step() performs side effects only.
     """
     if return_type is None:
         return_type = arg_type if arg_type != "void" else "float _Complex"
 
-    if return_type not in _CTYPE_META:
+    is_void_return = (return_type == "void")
+
+    if not is_void_return and return_type not in _CTYPE_META:
         supported = ", ".join(sorted(_CTYPE_META))
         raise ValueError(
             f"unsupported --return-type value '{return_type}'."
-            f" Supported scalar types: {supported}"
+            f" Supported scalar types: void, {supported}"
         )
 
-    ret = _CTYPE_META[return_type]
-    out_np_dtype = ret["py_type"]
+    # Return-type-derived values (fallbacks used when return_type == "void").
+    if is_void_return:
+        ret_disp = "void"
+        out_np_dtype = "np.complex64"  # unused for void return; safe fallback
+    else:
+        ret = _CTYPE_META[return_type]
+        ret_disp = _ctype_display(return_type)
+        out_np_dtype = ret["py_type"]
+
+    # Bench keys that depend on the return type.
+    if is_void_return:
+        step_example_lhs   = ""
+        bench_out_decl     = ""
+        bench_volatile_sink = ""
+        bench_sink_assign  = ""
+        bench_steps_out_arg = " BENCH_N"
+        bench_free_out     = ""
+    else:
+        step_example_lhs   = f"{ret_disp} y = "
+        bench_out_decl     = (
+            f"    {ret_disp} *out = "
+            f"malloc(BENCH_N * sizeof({ret_disp}));\n"
+            f"    if (!out) {{ fprintf(stderr, \"OOM\\n\"); return 1; }}"
+        )
+        bench_volatile_sink = (
+            f"    /* volatile sink prevents DCE of the step() loop */\n"
+            f"    volatile {ret_disp} _sink;"
+        )
+        bench_sink_assign  = "_sink = "
+        bench_steps_out_arg = " out, BENCH_N"
+        bench_free_out     = "    free(out);"
 
     if arg_type == "void":
-        # Generator object: step(state) -> sample, steps(state, out, n).
+        # Generator (or void-in/void-out) object.
         # Keys that reference input type are set to safe fallbacks; the actual
         # step/steps C and Python bodies are pre-rendered by make_step_ctx().
         return {
-            "arg_ctype":         "void",
-            "return_ctype":      _ctype_display(return_type),
-            "arg_zero":          "",
-            "step_example_suffix": "",
-            "in_np_dtype":       out_np_dtype,  # unused for void; mirror out
-            "out_np_dtype":      out_np_dtype,
-            "in_np_enum":        _NP_ENUM[out_np_dtype],
-            "out_np_enum":       _NP_ENUM[out_np_dtype],
-            "in_py_hint":        "int",
-            "out_py_hint":       _KIND_PY_ISINSTANCE[ret["kind"]],
-            "out_py_isinstance": _KIND_PY_ISINSTANCE[ret["kind"]],
-            "in_py_test_val":    "1",
-            "step_parse_block":  "",
-            "step_return_expr":  ret["to_py"]("y"),
+            "arg_ctype":            "void",
+            "return_ctype":         ret_disp,
+            "arg_zero":             "",
+            "step_example_suffix":  "",
+            "step_example_lhs":     step_example_lhs,
+            "in_np_dtype":          out_np_dtype,
+            "out_np_dtype":         out_np_dtype,
+            "in_np_enum":           _NP_ENUM[out_np_dtype],
+            "out_np_enum":          _NP_ENUM[out_np_dtype],
+            "in_py_hint":           "int",
+            "out_py_hint":          (
+                "None" if is_void_return
+                else _KIND_PY_ISINSTANCE[ret["kind"]]
+            ),
+            "out_py_isinstance":    (
+                "None" if is_void_return
+                else _KIND_PY_ISINSTANCE[ret["kind"]]
+            ),
+            "in_py_test_val":       "1",
+            "step_parse_block":     "",
+            "step_return_expr":     (
+                "Py_RETURN_NONE" if is_void_return
+                else ret["to_py"]("y")
+            ),
             "bench_in_init":        "0",
             "bench_warmup":         "1",
             "bench_in_decl":        "",
@@ -358,12 +460,17 @@ def make_sample_ctx(
             "bench_step_input_sep": "",
             "bench_steps_in_arg":   "",
             "bench_free_in":        "",
+            "bench_out_decl":       bench_out_decl,
+            "bench_volatile_sink":  bench_volatile_sink,
+            "bench_sink_assign":    bench_sink_assign,
+            "bench_steps_out_arg":  bench_steps_out_arg,
+            "bench_free_out":       bench_free_out,
             "test_arr_4_init":      "{0}",
-            # pure_x_* not used with void; provide empty fallbacks
-            "pure_x_local":      "",
-            "pure_x_fmt_char":   "",
-            "pure_x_parse_arg":  "",
-            "pure_x_to_c":       "",
+            # pure_x_* not used with void arg; provide empty fallbacks
+            "pure_x_local":         "",
+            "pure_x_fmt_char":      "",
+            "pure_x_parse_arg":     "",
+            "pure_x_to_c":          "",
         }
 
     if arg_type not in _CTYPE_META:
@@ -389,40 +496,55 @@ def make_sample_ctx(
         pure_x_to_c = ""
 
     return {
-        "arg_ctype":           _ctype_display(arg_type),
-        "return_ctype":        _ctype_display(return_type),
-        "arg_zero":            samp["zero"],
-        "step_example_suffix": f", {samp['zero']}",
-        "in_np_dtype":         in_np_dtype,
-        "out_np_dtype":        out_np_dtype,
-        "in_np_enum":          _NP_ENUM[in_np_dtype],
-        "out_np_enum":         _NP_ENUM[out_np_dtype],
-        "in_py_hint":          _KIND_PY_ISINSTANCE[samp["kind"]],
-        "out_py_hint":         _KIND_PY_ISINSTANCE[ret["kind"]],
-        "out_py_isinstance":   _KIND_PY_ISINSTANCE[ret["kind"]],
-        "in_py_test_val":      _KIND_PY_TEST_VAL[samp["kind"]],
-        "step_parse_block":    _step_parse_block(arg_type, samp),
-        "step_return_expr":    ret["to_py"]("y"),
-        "bench_in_init":          _bench_in_init(arg_type, samp),
-        "bench_warmup":           _bench_warmup(samp),
-        "bench_in_decl":          (
-            f"    {_ctype_display(arg_type)} *in  = "
-            f"malloc(BENCH_N * sizeof({_ctype_display(arg_type)}));\n"
+        "arg_ctype":            _ctype_display(arg_type),
+        "return_ctype":         ret_disp,
+        "arg_zero":             samp["zero"],
+        "step_example_suffix":  f", {samp['zero']}",
+        "step_example_lhs":     step_example_lhs,
+        "in_np_dtype":          in_np_dtype,
+        "out_np_dtype":         out_np_dtype,
+        "in_np_enum":           _NP_ENUM[in_np_dtype],
+        "out_np_enum":          _NP_ENUM[out_np_dtype],
+        "in_py_hint":           _KIND_PY_ISINSTANCE[samp["kind"]],
+        "out_py_hint":          (
+            "None" if is_void_return
+            else _KIND_PY_ISINSTANCE[ret["kind"]]
+        ),
+        "out_py_isinstance":    (
+            "None" if is_void_return
+            else _KIND_PY_ISINSTANCE[ret["kind"]]
+        ),
+        "in_py_test_val":       _KIND_PY_TEST_VAL[samp["kind"]],
+        "step_parse_block":     _step_parse_block(arg_type, samp),
+        "step_return_expr":     (
+            "Py_RETURN_NONE" if is_void_return
+            else ret["to_py"]("y")
+        ),
+        "bench_in_init":        _bench_in_init(arg_type, samp),
+        "bench_warmup":         _bench_warmup(samp),
+        "bench_in_decl":        (
+            f"    {samp_disp} *in  = "
+            f"malloc(BENCH_N * sizeof({samp_disp}));\n"
             f"    if (!in) {{ fprintf(stderr, \"OOM\\n\"); return 1; }}"
         ),
-        "bench_in_loop":          (
+        "bench_in_loop":        (
             f"    for (int i = 0; i < BENCH_N; i++) "
             f"in[i] = {_bench_in_init(arg_type, samp)};"
         ),
-        "bench_step_input_arg":   "in[i]",
-        "bench_step_input_sep":   ", ",
-        "bench_steps_in_arg":     " in,",
-        "bench_free_in":          "    free(in);",
-        "test_arr_4_init":        _test_arr_4_init(arg_type, samp),
-        "pure_x_local":        pure_x_local,
-        "pure_x_fmt_char":     samp["fmt"],
-        "pure_x_parse_arg":    pure_x_parse_arg,
-        "pure_x_to_c":         pure_x_to_c,
+        "bench_step_input_arg": "in[i]",
+        "bench_step_input_sep": ", ",
+        "bench_steps_in_arg":   " in,",
+        "bench_free_in":        "    free(in);",
+        "bench_out_decl":       bench_out_decl,
+        "bench_volatile_sink":  bench_volatile_sink,
+        "bench_sink_assign":    bench_sink_assign,
+        "bench_steps_out_arg":  bench_steps_out_arg,
+        "bench_free_out":       bench_free_out,
+        "test_arr_4_init":      _test_arr_4_init(arg_type, samp),
+        "pure_x_local":         pure_x_local,
+        "pure_x_fmt_char":      samp["fmt"],
+        "pure_x_parse_arg":     pure_x_parse_arg,
+        "pure_x_to_c":          pure_x_to_c,
     }
 
 
@@ -1691,8 +1813,9 @@ def make_methods_ctx(
             )
         else:
             # Fixed-output wrapper
+            _p_cleanup = ""
             if has_params:
-                parse_block, _p_call = _build_params_parse(params)
+                parse_block, _p_call, _p_cleanup = _build_params_parse(params)
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
@@ -1737,6 +1860,7 @@ def make_methods_ctx(
                 ret_body = (
                     f"{extra_decls}"
                     f"{call_line}"
+                    f"{_p_cleanup}"
                     f"    return PyTuple_Pack({n},"
                     f" {', '.join(pack_parts)});\n"
                 )
@@ -1744,11 +1868,13 @@ def make_methods_ctx(
                 ret_expr = ret_meta["to_py"]("y")
                 ret_body = (
                     f"    {ret_disp} y = {component}_{name}({call_args_c});\n"
+                    f"{_p_cleanup}"
                     f"    return {ret_expr};\n"
                 )
             else:
                 ret_body = (
                     f"    {component}_{name}({call_args_c});\n"
+                    f"{_p_cleanup}"
                     f"    Py_RETURN_NONE;\n"
                 )
             wrapper = (
@@ -1958,6 +2084,7 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
     step_qualifier = ctx.get("step_qualifier", "static inline")
     omp_simd_hint  = ctx.get("omp_simd_hint", "")
     step_return    = ctx.get("step_return_expr", f"PyFloat_FromDouble((double)y)")
+    is_void_return = (return_type == "void")
 
     if arg_type == "void":
         step_header_decl = (
@@ -1965,76 +2092,136 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
             f" * Include that header (not this one) from implementation files.\n"
             f" * External C consumers use {component}_steps() declared below. */"
         )
-        step_impl_def = (
-            f"{step_qualifier} {ret_disp}\n"
-            f"{component}_step(const {component}_state_t *state)\n"
-            f"{{\n"
-            f"    (void)state; /* TODO: implement */\n"
-            f"    return ({ret_disp})0;\n"
-            f"}}"
-        )
-        steps_c_decl = (
-            f"/**\n"
-            f" * @brief Generate a block of output samples.\n"
-            f" *\n"
-            f" * @param state   Component state (mutated).\n"
-            f" * @param output  Output array (length >= n).\n"
-            f" * @param n       Number of samples to generate.\n"
-            f" */\n"
-            f"void {component}_steps(\n"
-            f"    {component}_state_t *state,\n"
-            f"    {ret_disp}          *output,\n"
-            f"    size_t               n);"
-        )
-        steps_c_impl = (
-            f"void {component}_steps(\n"
-            f"    {component}_state_t *state,\n"
-            f"    {ret_disp}          *output,\n"
-            f"    size_t               n)\n"
-            f"{{\n"
-            f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-            f"        output[i] = {component}_step(state);\n"
-            f"}}"
-        )
-        step_ext_fn = (
-            f"static PyObject *\n"
-            f"{Component}_step({Component}Object *self,"
-            f" PyObject *Py_UNUSED(ignored))\n"
-            f"{{\n"
-            f"    if (!self->handle) {{\n"
-            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    {ret_disp} y = {component}_step(self->handle);\n"
-            f"    return {step_return};\n"
-            f"}}"
-        )
-        steps_ext_fn = (
-            f"static PyObject *\n"
-            f"{Component}_steps({Component}Object *self, PyObject *args)\n"
-            f"{{\n"
-            f"    if (!self->handle) {{\n"
-            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    Py_ssize_t n = 1;\n"
-            f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
-            f"        return NULL;\n"
-            f"\n"
-            f"    npy_intp dims[] = {{n}};\n"
-            f"    PyObject *out_arr = PyArray_SimpleNew(1, dims, {out_np_enum});\n"
-            f"    if (!out_arr)\n"
-            f"        return NULL;\n"
-            f"\n"
-            f"    {component}_steps(\n"
-            f"        self->handle,\n"
-            f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out_arr),\n"
-            f"        (size_t)n);\n"
-            f"\n"
-            f"    return out_arr;\n"
-            f"}}"
-        )
-        step_py_flags = "METH_NOARGS"
+        if is_void_return:
+            # Void-in, void-out: sink/processor with no scalar I/O.
+            step_impl_def = (
+                f"{step_qualifier} void\n"
+                f"{component}_step({component}_state_t *state)\n"
+                f"{{\n"
+                f"    (void)state; /* TODO: implement */\n"
+                f"}}"
+            )
+            steps_c_decl = (
+                f"/**\n"
+                f" * @brief Process n iterations (no scalar output).\n"
+                f" *\n"
+                f" * @param state  Component state (mutated).\n"
+                f" * @param n     Number of iterations.\n"
+                f" */\n"
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    size_t               n);"
+            )
+            steps_c_impl = (
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    size_t               n)\n"
+                f"{{\n"
+                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                f"        {component}_step(state);\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self,"
+                f" PyObject *Py_UNUSED(ignored))\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    {component}_step(self->handle);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            )
+            steps_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_steps({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    Py_ssize_t n = 1;\n"
+                f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                f"        return NULL;\n"
+                f"    {component}_steps(self->handle, (size_t)n);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            )
+            step_py_flags = "METH_NOARGS"
+        else:
+            # Generator object: step(state) -> sample.
+            step_impl_def = (
+                f"{step_qualifier} {ret_disp}\n"
+                f"{component}_step(const {component}_state_t *state)\n"
+                f"{{\n"
+                f"    (void)state; /* TODO: implement */\n"
+                f"    return ({ret_disp})0;\n"
+                f"}}"
+            )
+            steps_c_decl = (
+                f"/**\n"
+                f" * @brief Generate a block of output samples.\n"
+                f" *\n"
+                f" * @param state   Component state (mutated).\n"
+                f" * @param output  Output array (length >= n).\n"
+                f" * @param n       Number of samples to generate.\n"
+                f" */\n"
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    {ret_disp}          *output,\n"
+                f"    size_t               n);"
+            )
+            steps_c_impl = (
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    {ret_disp}          *output,\n"
+                f"    size_t               n)\n"
+                f"{{\n"
+                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                f"        output[i] = {component}_step(state);\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self,"
+                f" PyObject *Py_UNUSED(ignored))\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    {ret_disp} y = {component}_step(self->handle);\n"
+                f"    return {step_return};\n"
+                f"}}"
+            )
+            steps_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_steps({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    Py_ssize_t n = 1;\n"
+                f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                f"        return NULL;\n"
+                f"\n"
+                f"    npy_intp dims[] = {{n}};\n"
+                f"    PyObject *out_arr = PyArray_SimpleNew(1, dims, {out_np_enum});\n"
+                f"    if (!out_arr)\n"
+                f"        return NULL;\n"
+                f"\n"
+                f"    {component}_steps(\n"
+                f"        self->handle,\n"
+                f"        ({ret_disp} *)PyArray_DATA((PyArrayObject *)out_arr),\n"
+                f"        (size_t)n);\n"
+                f"\n"
+                f"    return out_arr;\n"
+                f"}}"
+            )
+            step_py_flags = "METH_NOARGS"
     else:
         arg_disp       = ctx["arg_ctype"]
         in_np_enum     = ctx.get("in_np_enum", "NPY_COMPLEX64")
@@ -2045,54 +2232,126 @@ def make_step_ctx(ctx: dict, arg_type: str, return_type: str) -> dict[str, str]:
             f" * Include that header (not this one) from implementation files.\n"
             f" * External C consumers use {component}_steps() declared below. */"
         )
-        step_impl_def = (
-            f"{step_qualifier} {ret_disp}\n"
-            f"{component}_step(const {component}_state_t *state, {arg_disp} x)\n"
-            f"{{\n"
-            f"    (void)state; /* TODO: implement using state variables */\n"
-            f"    return ({ret_disp})x;\n"
-            f"}}"
-        )
-        steps_c_decl = (
-            f"/**\n"
-            f" * @brief Process a block of samples.\n"
-            f" *\n"
-            f" * @param state   Component state (mutated).\n"
-            f" * @param input   Input array (length >= n).\n"
-            f" * @param output  Output array (length >= n; may alias input for"
-            f" in-place).\n"
-            f" * @param n       Number of samples.\n"
-            f" */\n"
-            f"void {component}_steps(\n"
-            f"    {component}_state_t *state,\n"
-            f"    const {arg_disp}    *input,\n"
-            f"    {ret_disp}          *output,\n"
-            f"    size_t               n);"
-        )
-        steps_c_impl = (
-            f"void {component}_steps(\n"
-            f"    {component}_state_t *state,\n"
-            f"    const {arg_disp}    *input,\n"
-            f"    {ret_disp}          *output,\n"
-            f"    size_t               n)\n"
-            f"{{\n"
-            f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-            f"        output[i] = {component}_step(state, input[i]);\n"
-            f"}}"
-        )
-        step_ext_fn = (
-            f"static PyObject *\n"
-            f"{Component}_step({Component}Object *self, PyObject *args)\n"
-            f"{{\n"
-            f"    if (!self->handle) {{\n"
-            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"{step_parse}\n"
-            f"    {ret_disp} y = {component}_step(self->handle, x);\n"
-            f"    return {step_return};\n"
-            f"}}"
-        )
+        if is_void_return:
+            # Sink object: step(state, x) -> void.
+            step_impl_def = (
+                f"{step_qualifier} void\n"
+                f"{component}_step({component}_state_t *state, {arg_disp} x)\n"
+                f"{{\n"
+                f"    (void)state; (void)x; /* TODO: implement */\n"
+                f"}}"
+            )
+            steps_c_decl = (
+                f"/**\n"
+                f" * @brief Process a block of input samples (no output).\n"
+                f" *\n"
+                f" * @param state  Component state (mutated).\n"
+                f" * @param input  Input array (length >= n).\n"
+                f" * @param n     Number of samples.\n"
+                f" */\n"
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {arg_disp}    *input,\n"
+                f"    size_t               n);"
+            )
+            steps_c_impl = (
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {arg_disp}    *input,\n"
+                f"    size_t               n)\n"
+                f"{{\n"
+                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                f"        {component}_step(state, input[i]);\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"{step_parse}\n"
+                f"    {component}_step(self->handle, x);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            )
+            steps_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_steps({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    PyObject *in_obj = NULL;\n"
+                f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                f"        return NULL;\n"
+                f"\n"
+                f"    PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"        in_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!in_arr)\n"
+                f"        return NULL;\n"
+                f"\n"
+                f"    {component}_steps(\n"
+                f"        self->handle,\n"
+                f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
+                f"        (size_t)PyArray_SIZE(in_arr));\n"
+                f"    Py_DECREF(in_arr);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            )
+            step_py_flags = "METH_VARARGS"
+        else:
+            step_impl_def = (
+                f"{step_qualifier} {ret_disp}\n"
+                f"{component}_step(const {component}_state_t *state, {arg_disp} x)\n"
+                f"{{\n"
+                f"    (void)state; /* TODO: implement using state variables */\n"
+                f"    return ({ret_disp})x;\n"
+                f"}}"
+            )
+            steps_c_decl = (
+                f"/**\n"
+                f" * @brief Process a block of samples.\n"
+                f" *\n"
+                f" * @param state   Component state (mutated).\n"
+                f" * @param input   Input array (length >= n).\n"
+                f" * @param output  Output array (length >= n; may alias input for"
+                f" in-place).\n"
+                f" * @param n       Number of samples.\n"
+                f" */\n"
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {arg_disp}    *input,\n"
+                f"    {ret_disp}          *output,\n"
+                f"    size_t               n);"
+            )
+            steps_c_impl = (
+                f"void {component}_steps(\n"
+                f"    {component}_state_t *state,\n"
+                f"    const {arg_disp}    *input,\n"
+                f"    {ret_disp}          *output,\n"
+                f"    size_t               n)\n"
+                f"{{\n"
+                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                f"        output[i] = {component}_step(state, input[i]);\n"
+                f"}}"
+            )
+            step_ext_fn = (
+                f"static PyObject *\n"
+                f"{Component}_step({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"{step_parse}\n"
+                f"    {ret_disp} y = {component}_step(self->handle, x);\n"
+                f"    return {step_return};\n"
+                f"}}"
+            )
         steps_ext_fn = (
             f"static PyObject *\n"
             f"{Component}_steps({Component}Object *self, PyObject *args)\n"
@@ -2552,7 +2811,7 @@ COMPONENT_CORE_H = """\
  * Example:
  * @code
  * <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
- * <<return_ctype>> y = <<component>>_step(obj<<step_example_suffix>>);
+ * <<step_example_lhs>><<component>>_step(obj<<step_example_suffix>>);
  * <<component>>_destroy(obj);
  * @endcode
  */
@@ -3180,17 +3439,15 @@ int
 main(void)
 {
 <<bench_in_decl>>
-    <<return_ctype>> *out = malloc(BENCH_N * sizeof(<<return_ctype>>));
-    if (!out) { fprintf(stderr, "OOM\\n"); return 1; }
+<<bench_out_decl>>
 <<bench_in_loop>>
 
     <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
 
-    /* volatile sink prevents DCE of the step() loop */
-    volatile <<return_ctype>> _sink;
+<<bench_volatile_sink>>
 
     /* warmup */
-    for (int i = 0; i < 16; i++) _sink = <<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
+    for (int i = 0; i < 16; i++) <<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
 
     struct timespec t0, t1;
     double sec;
@@ -3201,7 +3458,7 @@ main(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
         for (int i = 0; i < BENCH_N; i++)
-            _sink = <<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
+            <<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  step()   %8.1f MSa/s\\n",
@@ -3209,7 +3466,7 @@ main(void)
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
-        <<component>>_steps(obj,<<bench_steps_in_arg>> out, BENCH_N);
+        <<component>>_steps(obj,<<bench_steps_in_arg>><<bench_steps_out_arg>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  steps()  %8.1f MSa/s\\n",
@@ -3217,7 +3474,7 @@ main(void)
 
     <<component>>_destroy(obj);
 <<bench_free_in>>
-    free(out);
+<<bench_free_out>>
     return 0;
 }
 """
