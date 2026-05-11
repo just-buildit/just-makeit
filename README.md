@@ -17,6 +17,24 @@ ______________________________________________________________________
 
 ```sh
 pip install just-makeit
+jm-install-deps        # cmake + C compiler + numpy, cross-platform
+```
+
+`jm-install-deps` detects your platform and installs system dependencies
+(cmake, a C compiler) via the available package manager, then creates a
+Python venv with numpy and just-makeit ready to use:
+
+| Platform | Detection order |
+|----------|----------------|
+| **Linux** | apt · dnf · pacman · zypper · apk |
+| **macOS** | Homebrew |
+| **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
+
+Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
+Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
+
+```sh
+jm-install-deps ~/my-venv
 ```
 
 ______________________________________________________________________
@@ -26,6 +44,7 @@ ______________________________________________________________________
 **Standalone object** — each type gets its own `.so`:
 
 ```sh
+pip install just-makeit && jm-install-deps
 just-makeit new my_project --object engine --state gain:double:1.0
 cd my_project && make && make test
 ```
