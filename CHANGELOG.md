@@ -1,5 +1,28 @@
 # Changelog
 
+## \[0.10.0\] — 2026-05-11
+
+### Added
+
+- **`--return-type void` for objects** (`jm new` / `jm object`): sink and
+  side-effect objects are now fully supported. The generated bench compiles
+  cleanly — no `volatile void` or `sizeof(void)`. `steps()` drops the output
+  array parameter; Python `step()` / `steps()` return `None`.
+- **Array parameters for methods and functions** (`--param name:type[]`):
+  `jm method` and `jm function` now accept numpy array inputs. The C stub
+  receives `(const elem_t *name, size_t name_len)`; the Python wrapper
+  generates `PyArray_FROM_OTF` + `Py_DECREF` automatically. Supported element
+  types: all fixed-width integer types, float, double, float _Complex,
+  double _Complex. Mixed scalar + array params are supported in a single call.
+- **CLI help overhauled**: `just-makeit help` now documents void return types,
+  array `--param` syntax with elem-type list, and real-world examples
+  (`execute_ctrl`, `apply_window`, sink/generator objects).
+- **+41 tests** (612 total): void return (10), method array param (11),
+  function array param (11), CLI void return (4), CLI array param (6),
+  help content (9).
+
+______________________________________________________________________
+
 ## \[0.9.13\] — 2026-05-11
 
 ### Added
