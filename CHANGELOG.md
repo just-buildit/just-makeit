@@ -1,5 +1,31 @@
 # Changelog
 
+## \[0.9.9\] — 2026-05-10
+
+### Added
+
+- **`jm-install-deps --check`** (`-Check` on Windows): reports what is already
+  installed and what will be installed without making any changes; exits 1 if
+  anything is missing, 0 if all present.
+- **Prerequisites section** added to all seven example READMEs showing
+  `jm-install-deps --check` / `jm-install-deps` / `source` workflow.
+
+### Fixed
+
+- **Windows: `uv tool install .` crash** — switched `just-makeit`'s own build
+  backend from `just-buildit` to `hatchling`; `just-buildit` called
+  `_python_link_flags()` unconditionally, which raises on Windows when the
+  Python import library is absent (GitHub Actions hosted tool cache).
+- **Windows: example build tests** — `test_examples.py` now skips on `win32`
+  (MSVC rejects C99 `float complex`, same reason as `TestNewBuild`).
+- **Windows: `UnicodeEncodeError` on cp1252 consoles** — replaced all Unicode
+  arrows (`→`) with ASCII `->` in `_cli.py` (`_USAGE`), `_templates.py`
+  (generated `README` and `*_core.h` lifecycle comment), and helper scripts.
+- **`test_perf.py`**: bare `write_text()` replaced with `write_text(encoding="utf-8")`.
+
+______________________________________________________________________
+
+
 ## \[0.9.7\] — 2026-05-10
 
 ### Added
