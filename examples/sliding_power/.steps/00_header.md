@@ -12,3 +12,18 @@ Two update strategies are shown:
 - **SIMD recompute** — horizontally sums the delay line with `JM_ADD_F32` /
   `JM_HSUM_F32` from `jm_simd.h`; used for periodic recalibration and as a
   clean demonstration of the v0.5 macro set.
+
+## Prerequisites
+
+```sh
+pip install just-makeit
+jm-install-deps --check      # report what is installed vs. what will be installed
+jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+source /tmp/jm-venv/bin/activate
+```
+
+Pass a custom path to keep the venv somewhere persistent:
+
+```sh
+jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+```

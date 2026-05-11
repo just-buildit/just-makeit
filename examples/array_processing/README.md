@@ -21,6 +21,21 @@ All four patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
 Heap allocation only appears when the output size is not fixed at compile time.
 
+## Prerequisites
+
+```sh
+pip install just-makeit
+jm-install-deps --check      # report what is installed vs. what will be installed
+jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+source /tmp/jm-venv/bin/activate
+```
+
+Pass a custom path to keep the venv somewhere persistent:
+
+```sh
+jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+```
+
 ---
 
 ## 1. Auto-generated `steps()` — free with every object
