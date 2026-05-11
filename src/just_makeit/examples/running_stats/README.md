@@ -9,8 +9,7 @@ Follow along to scaffold, implement, build, and use it yourself.
 ## TL;DR — see it work first
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
-source /tmp/jm-venv/bin/activate
+. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
 just-makeit example running_stats
 # running_stats: PASSED
 ```
@@ -18,22 +17,19 @@ just-makeit example running_stats
 ## Prerequisites
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
-source /tmp/jm-venv/bin/activate
+. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh -s -- ~/my-venv
-source ~/my-venv/bin/activate
+. <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh) -- ~/my-venv
 ```
 
 Or with `pip` if just-makeit is already installed:
 
 ```sh
-pip install just-makeit
-just-makeit install-deps
+pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 

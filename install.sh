@@ -1,45 +1,78 @@
 #!/usr/bin/env bash
 # Bootstrap installer for just-makeit — no uv, no pre-existing tools required.
 #
-# Usage:
+# ── Recommended: source into the current shell so the venv activates immediately
+#
+#   . <(curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh)
+#
+# ── Piped form (venv path printed at the end; activate manually):
+#
 #   curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh
 #   source /tmp/jm-venv/bin/activate
 #
-#   # Custom venv path:
-#   curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh -s -- ~/my-venv
+# ── Options (append after --):
 #
-#   # Check what would be installed without changing anything:
-#   curl -fsSL https://raw.githubusercontent.com/just-buildit/just-makeit/main/install.sh | sh -s -- --check
+#   . <(curl -fsSL ...) -- ~/my-venv     # custom venv path
+#   . <(curl -fsSL ...) -- --check       # report what would change, no writes
+#   . <(curl -fsSL ...) -- --force       # reinstall even if up to date
 #
-# What it does:
-#   1. Verifies Python >= 3.11 is available
-#   2. Creates a venv at VENV_DIR (default: /tmp/jm-venv)
-#   3. pip-installs just-makeit + numpy into the venv
-#   4. Installs cmake and a C compiler via the system package manager
 set -euo pipefail
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 CHECK=0
+FORCE=0
 VENV_DIR="/tmp/jm-venv"
 PYTHON="${PYTHON:-python3}"
 
 for arg in "$@"; do
     case "$arg" in
         --check) CHECK=1 ;;
-        -*)      printf 'Unknown flag: %s\n' "$arg" >&2; exit 1 ;;
+        --force) FORCE=1 ;;
+        -*)      printf 'Unknown flag: %s\n' "$arg" >&2; return 1 2>/dev/null || exit 1 ;;
         *)       VENV_DIR="$arg" ;;
     esac
 done
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 
+_tty() { [[ -t 1 ]]; }
+
 info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
 ok()    { printf '\033[1;32m    ok\033[0m  %s\n' "$*"; }
 skip()  { printf '\033[1;32m    ok\033[0m  %s  \033[2m(already installed)\033[0m\n' "$*"; }
 will()  { printf '\033[1;33m  --> \033[0m  %s\n' "$*"; }
 warn()  { printf '\033[1;33m warn\033[0m  %s\n' "$*"; }
-die()   { printf '\033[1;31merror\033[0m  %s\n' "$*" >&2; exit 1; }
+die()   {
+    printf '\033[1;31merror\033[0m  %s\n' "$*" >&2
+    return 1 2>/dev/null || exit 1
+}
+
+# Spinner: run a command in the background, show dots until it finishes.
+# Falls back to plain output when stdout is not a tty (CI, pipe).
+_spin() {
+    local label="$1"; shift
+    if ! _tty; then
+        info "$label"
+        "$@"
+        return
+    fi
+    "$@" &>/tmp/_jm_spin_out &
+    local pid=$!
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    printf '\033[1;34m==> \033[0m%s ' "$label"
+    while kill -0 "$pid" 2>/dev/null; do
+        printf '\033[1;34m%s\033[0m\b' "${frames:$((i % ${#frames})):1}"
+        sleep 0.1
+        i=$((i + 1))
+    done
+    wait "$pid" && printf '\033[1;32m✓\033[0m\n' || {
+        printf '\033[1;31m✗\033[0m\n'
+        cat /tmp/_jm_spin_out >&2
+        die "$label failed"
+    }
+}
 
 # ── 1. Python version check ───────────────────────────────────────────────────
 
@@ -48,8 +81,8 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
 fi
 
 PY_VERSION=$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info[0])')
-PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info[1])')
+PY_MINOR=$("$PYTHON"   -c 'import sys; print(sys.version_info[1])')
+PY_MAJOR=$("$PYTHON"   -c 'import sys; print(sys.version_info[0])')
 
 if [[ "$PY_MAJOR" -lt 3 || ("$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 11) ]]; then
     die "Python $PY_VERSION found, but 3.11+ is required."
@@ -86,7 +119,7 @@ if command -v cmake >/dev/null 2>&1; then
     skip "cmake $(cmake --version | head -1 | awk '{print $3}')"
 else
     NEED_CMAKE=1
-    will "cmake  (will install via ${MGR})"
+    will "cmake  (via ${MGR})"
 fi
 
 if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
@@ -94,71 +127,96 @@ if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
     skip "C compiler ($(command -v gcc 2>/dev/null || command -v clang 2>/dev/null || command -v cc 2>/dev/null))"
 else
     NEED_CC=1
-    will "C compiler  (will install via ${MGR})"
+    will "C compiler  (via ${MGR})"
 fi
 
-will "venv at ${VENV_DIR}  (just-makeit + numpy)"
+# ── 3. Check if just-makeit is already current in the venv ───────────────────
+
+JM_CURRENT=0
+if [[ $FORCE -eq 0 && -x "${VENV_DIR}/bin/python" ]]; then
+    _installed=$("${VENV_DIR}/bin/python" -c \
+        'from importlib.metadata import version; print(version("just-makeit"))' 2>/dev/null || true)
+    _latest=$(pip index versions just-makeit 2>/dev/null \
+        | grep -oP '(?<=just-makeit \()[\d.]+' | head -1 || true)
+    if [[ -n "$_installed" && "$_installed" == "$_latest" ]]; then
+        JM_CURRENT=1
+        skip "just-makeit ${_installed} in ${VENV_DIR}"
+    else
+        will "just-makeit ${_installed:-not installed} → ${_latest:-latest}  (${VENV_DIR})"
+    fi
+else
+    will "just-makeit  (${VENV_DIR})"
+fi
+
+# ── 4. --check: report and exit ──────────────────────────────────────────────
 
 if [[ $CHECK -eq 1 ]]; then
-    if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
+    if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 || $JM_CURRENT -eq 0 ]]; then
         printf '\nRun without --check to install.\n'
-        exit 1
+        return 1 2>/dev/null || exit 1
     else
-        printf '\nAll build dependencies are already installed.\n'
-        exit 0
+        printf '\nEverything is up to date.\n'
+        return 0 2>/dev/null || exit 0
     fi
 fi
 
-# ── 3. Install missing system deps ────────────────────────────────────────────
+# ── 5. Install missing system deps ───────────────────────────────────────────
 
-_install_apt()    { info "apt"; sudo apt-get update -qq && sudo apt-get install -y cmake gcc pkg-config; }
-_install_dnf()    { info "${MGR}"; sudo "$MGR" install -y cmake gcc pkgconf-pkg-config; }
-_install_pacman() { info "pacman"; sudo pacman -Sy --noconfirm cmake gcc pkgconf; }
-_install_zypper() { info "zypper"; sudo zypper install -y cmake gcc pkgconfig; }
-_install_apk()    { info "apk"; sudo apk add --no-cache cmake gcc musl-dev pkgconfig; }
+_install_apt()    { sudo apt-get update -qq && sudo apt-get install -y cmake gcc pkg-config; }
+_install_dnf()    { sudo "$MGR" install -y cmake gcc pkgconf-pkg-config; }
+_install_pacman() { sudo pacman -Sy --noconfirm cmake gcc pkgconf; }
+_install_zypper() { sudo zypper install -y cmake gcc pkgconfig; }
+_install_apk()    { sudo apk add --no-cache cmake gcc musl-dev pkgconfig; }
 _install_brew() {
     if command -v brew >/dev/null 2>&1; then
         [[ $NEED_CMAKE -eq 1 ]] && brew install cmake
-        if ! command -v cc >/dev/null 2>&1; then
-            warn "No C compiler found. Run: xcode-select --install"
-        fi
+        command -v cc >/dev/null 2>&1 || warn "No C compiler. Run: xcode-select --install"
     else
-        warn "Homebrew not found. Install from https://brew.sh"
+        warn "Homebrew not found — install from https://brew.sh"
     fi
 }
 
 if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
     case "$MGR" in
-        apt)           _install_apt ;;
-        dnf|dnf5)      _install_dnf ;;
-        pacman)        _install_pacman ;;
-        zypper)        _install_zypper ;;
-        apk)           _install_apk ;;
-        brew)          _install_brew ;;
-        *)             warn "Unknown package manager — install cmake + gcc manually." ;;
+        apt)      _spin "apt" _install_apt ;;
+        dnf|dnf5) _spin "${MGR}" _install_dnf ;;
+        pacman)   _spin "pacman" _install_pacman ;;
+        zypper)   _spin "zypper" _install_zypper ;;
+        apk)      _spin "apk" _install_apk ;;
+        brew)     _install_brew ;;
+        *)        warn "Unknown package manager — install cmake + gcc manually." ;;
     esac
 fi
 
-# ── 4. Create venv + install just-makeit ─────────────────────────────────────
+# ── 6. Create venv + install just-makeit ─────────────────────────────────────
 
-info "Creating venv at ${VENV_DIR}"
-"$PYTHON" -m venv "$VENV_DIR"
-ok "venv created"
+if [[ $JM_CURRENT -eq 0 ]]; then
+    _setup_venv() {
+        "$PYTHON" -m venv "$VENV_DIR"
+        "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
+        "${VENV_DIR}/bin/pip" install --quiet numpy just-makeit
+    }
+    _spin "Setting up venv at ${VENV_DIR}" _setup_venv
 
-VENV_PIP="${VENV_DIR}/bin/pip"
-VENV_PYTHON="${VENV_DIR}/bin/python"
+    VENV_PYTHON="${VENV_DIR}/bin/python"
+    ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
+    ok "just-makeit $("$VENV_PYTHON" -c \
+        'from importlib.metadata import version; print(version("just-makeit"))')"
+fi
 
-info "Installing just-makeit + numpy"
-"$VENV_PIP" install --quiet --upgrade pip
-"$VENV_PIP" install --quiet numpy just-makeit
-ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
-ok "just-makeit $("$VENV_PYTHON" -c 'from importlib.metadata import version; print(version("just-makeit"))')"
+# ── 7. Activate (only works when sourced; print hint otherwise) ───────────────
 
-# ── 5. Done ───────────────────────────────────────────────────────────────────
+_ACTIVATE="${VENV_DIR}/bin/activate"
 
-printf '\n'
-info "Done. Activate the venv and start building:"
-printf '\n'
-printf '    source %s/bin/activate\n' "$VENV_DIR"
-printf '    just-makeit new my_project --object my_object\n'
-printf '\n'
+# BASH_SOURCE[0] == "" when piped; differs from $0 when sourced via . <(...)
+if [[ "${BASH_SOURCE[0]:-}" != "${0}" ]]; then
+    # shellcheck source=/dev/null
+    source "$_ACTIVATE"
+    printf '\n'
+    info "Venv activated — just-makeit is ready:"
+    printf '\n    just-makeit new my_project --object my_object\n\n'
+else
+    printf '\n'
+    info "Done. Activate the venv:"
+    printf '\n    source %s\n\n' "$_ACTIVATE"
+fi
