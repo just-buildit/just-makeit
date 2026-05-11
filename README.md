@@ -13,16 +13,28 @@ coverage — all passing before you write a single line of code.
 
 ______________________________________________________________________
 
+## Try it now (no install required)
+
+```sh
+# requires uv — https://docs.astral.sh/uv/getting-started/installation/
+uvx git+https://github.com/just-buildit/just-makeit install-deps
+source /tmp/jm-venv/bin/activate
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
+```
+
+______________________________________________________________________
+
 ## Installation
 
 ```sh
 pip install just-makeit
-jm-install-deps        # cmake + C compiler + numpy, cross-platform
+just-makeit install-deps   # cmake + C compiler + numpy, cross-platform
 ```
 
-`jm-install-deps` detects your platform and installs system dependencies
-(cmake, a C compiler) via the available package manager, then creates a
-Python venv with numpy and just-makeit ready to use:
+`just-makeit install-deps` detects your platform and installs system
+dependencies (cmake, a C compiler) via the available package manager, then
+creates a Python venv with numpy and just-makeit ready to use:
 
 | Platform | Detection order |
 |----------|----------------|
@@ -34,7 +46,7 @@ Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
 Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
 
 ```sh
-jm-install-deps ~/my-venv
+just-makeit install-deps ~/my-venv
 ```
 
 ______________________________________________________________________
@@ -44,7 +56,7 @@ ______________________________________________________________________
 **Standalone object** — each type gets its own `.so`:
 
 ```sh
-pip install just-makeit && jm-install-deps
+pip install just-makeit && just-makeit install-deps
 just-makeit new my_project --object engine --state gain:double:1.0
 cd my_project && make && make test
 ```

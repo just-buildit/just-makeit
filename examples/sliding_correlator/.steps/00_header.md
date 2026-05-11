@@ -16,17 +16,28 @@ The goal of this example is to show that `JM_DEFINE_STEPS` is algorithm-agnostic
 the correlator uses complex multiply (not real×complex like FIR), a different
 state layout, and different semantics — and the macro handles it identically.
 
+## TL;DR — see it work first
+
+```sh
+git clone https://github.com/just-buildit/just-makeit
+cd just-makeit
+uvx git+https://github.com/just-buildit/just-makeit install-deps
+source /tmp/jm-venv/bin/activate
+python3 examples/sliding_correlator/test.py
+# sliding_correlator: PASSED
+```
+
 ## Prerequisites
 
 ```sh
 pip install just-makeit
-jm-install-deps --check      # report what is installed vs. what will be installed
-jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+just-makeit install-deps --check   # report what is installed vs. what will be installed
+just-makeit install-deps           # install cmake, C compiler, numpy, and create a venv
 source /tmp/jm-venv/bin/activate
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+just-makeit install-deps ~/my-venv && source ~/my-venv/bin/activate
 ```

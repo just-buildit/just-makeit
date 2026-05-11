@@ -6,19 +6,30 @@ an `Ema` (exponential moving average) component.
 Follow along to scaffold, implement, and combine them — and see the one place
 the generator currently needs a manual touch when you add a second component.
 
+## TL;DR — see it work first
+
+```sh
+git clone https://github.com/just-buildit/just-makeit
+cd just-makeit
+uvx git+https://github.com/just-buildit/just-makeit install-deps
+source /tmp/jm-venv/bin/activate
+python3 examples/dsp_toolkit/test.py
+# dsp_toolkit: PASSED
+```
+
 ## Prerequisites
 
 ```sh
 pip install just-makeit
-jm-install-deps --check      # report what is installed vs. what will be installed
-jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+just-makeit install-deps --check   # report what is installed vs. what will be installed
+just-makeit install-deps           # install cmake, C compiler, numpy, and create a venv
 source /tmp/jm-venv/bin/activate
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+just-makeit install-deps ~/my-venv && source ~/my-venv/bin/activate
 ```
 
 ---

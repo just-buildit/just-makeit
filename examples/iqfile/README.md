@@ -22,19 +22,30 @@ every major just-makeit feature in one project:
 | `pip install -e .` dev workflow | step 6 |
 | Wheel build (`just-makeit build`) | step 8 |
 
+## TL;DR — see it work first
+
+```sh
+git clone https://github.com/just-buildit/just-makeit
+cd just-makeit
+uvx git+https://github.com/just-buildit/just-makeit install-deps
+source /tmp/jm-venv/bin/activate
+python3 examples/iqfile/test.py
+# iqfile: PASSED
+```
+
 ## Prerequisites
 
 ```sh
 pip install just-makeit
-jm-install-deps --check      # report what is installed vs. what will be installed
-jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+just-makeit install-deps --check   # report what is installed vs. what will be installed
+just-makeit install-deps           # install cmake, C compiler, numpy, and create a venv
 source /tmp/jm-venv/bin/activate
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+just-makeit install-deps ~/my-venv && source ~/my-venv/bin/activate
 ```
 
 ---
@@ -161,6 +172,13 @@ root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 core_h = root / "native/inc/cf32_to_q15/cf32_to_q15_core.h"
 text = core_h.read_text(encoding="utf-8")
 
+if '<math.h>' not in text:
+    text = text.replace(
+        '#include "clib_common.h"',
+        '#include "clib_common.h"\n#include <math.h>',
+        1,
+    )
+
 OLD = """\
     (void)state; /* TODO: implement using state variables */
     return (int32_t)x;"""
@@ -227,7 +245,17 @@ NEW = """\
     return ((float)pair[0] + (float)pair[1] * I) / state->scale;"""
 
 assert OLD in text, "step stub not found — was it already patched?"
-core_h.write_text(text.replace(OLD, NEW, 1), encoding="utf-8")
+text = text.replace(OLD, NEW, 1)
+
+# Add eof getter declaration before the closing header guard #endif
+guard = "#endif /* Q15_TO_CF32_CORE_H */"
+assert guard in text, "header guard not found"
+text = text.replace(
+    guard,
+    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n" + guard,
+    1,
+)
+core_h.write_text(text, encoding="utf-8")
 print(f"patched  {core_h.relative_to(root)}")
 
 # ── samples_read counter + eof getter in _core.c ──────────────────────────
@@ -392,8 +420,8 @@ import sys
 import tempfile
 import numpy as np
 
-# Allow running before pip install -e . by adding src/ to the path.
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent.parent / "src"))
+# cwd is the project root when called from test.py; cmake builds the .so into src/.
+sys.path.insert(0, "src")
 
 from iqfile.conv import Cf32ToQ15, Q15ToCf32
 

@@ -22,17 +22,28 @@ every major just-makeit feature in one project:
 | `pip install -e .` dev workflow | step 6 |
 | Wheel build (`just-makeit build`) | step 8 |
 
+## TL;DR — see it work first
+
+```sh
+git clone https://github.com/just-buildit/just-makeit
+cd just-makeit
+uvx git+https://github.com/just-buildit/just-makeit install-deps
+source /tmp/jm-venv/bin/activate
+python3 examples/iqfile/test.py
+# iqfile: PASSED
+```
+
 ## Prerequisites
 
 ```sh
 pip install just-makeit
-jm-install-deps --check      # report what is installed vs. what will be installed
-jm-install-deps              # install cmake, C compiler, numpy, and create a venv
+just-makeit install-deps --check   # report what is installed vs. what will be installed
+just-makeit install-deps           # install cmake, C compiler, numpy, and create a venv
 source /tmp/jm-venv/bin/activate
 ```
 
 Pass a custom path to keep the venv somewhere persistent:
 
 ```sh
-jm-install-deps ~/my-venv && source ~/my-venv/bin/activate
+just-makeit install-deps ~/my-venv && source ~/my-venv/bin/activate
 ```

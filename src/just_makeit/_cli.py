@@ -47,6 +47,10 @@ Commands:
   build [dir]        Configure + build C, then package wheel into dir (default: dist/)
   test               Build and run CTest + pytest
   dry-run            Show what would get compiled without building
+  install-deps [path]
+                     Install cmake, a C compiler, and numpy; create a venv at path
+                     (default: /tmp/jm-venv on Linux/macOS, %%LOCALAPPDATA%%\jm-venv on Windows)
+                     Pass --check to report status without making changes
   help               Show this message
 
 Scalar types: double (default), float, int, int8_t…int64_t, uint8_t…uint64_t,
@@ -570,6 +574,12 @@ def main() -> None:
         from . import _build
 
         _build.cmd_dry_run()
+
+    elif cmd == "install-deps":
+        from . import _scripts
+        # Splice the subcommand out so _scripts sees only the remaining args.
+        sys.argv = [sys.argv[0]] + args[1:]
+        _scripts.install_deps()
 
     else:
         print(f"just-makeit: unknown command '{cmd}'", file=sys.stderr)
