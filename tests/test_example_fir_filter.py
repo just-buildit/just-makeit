@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-STEPS = Path(__file__).parent.parent / "examples" / "fir_filter" / ".steps"
+STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "fir_filter" / ".steps"
 PYTHON = sys.executable
 
 
@@ -180,7 +180,7 @@ class TestStep6AddState:
 def test_readme_up_to_date():
     r = _run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "examples" / "fir_filter",
+        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "fir_filter",
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
 

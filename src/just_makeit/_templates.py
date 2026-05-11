@@ -3124,8 +3124,11 @@ main(void)
 
     <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
 
+    /* volatile sink prevents DCE of the step() loop */
+    volatile <<return_ctype>> _sink;
+
     /* warmup */
-    for (int i = 0; i < 16; i++) (void)<<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
+    for (int i = 0; i < 16; i++) _sink = <<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
 
     struct timespec t0, t1;
     double sec;
@@ -3136,7 +3139,7 @@ main(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
         for (int i = 0; i < BENCH_N; i++)
-            (void)<<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
+            _sink = <<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  step()   %8.1f MSa/s\\n",
@@ -3468,8 +3471,11 @@ main(void)
     if (!in || !out) { fprintf(stderr, "OOM\\n"); return 1; }
     for (int i = 0; i < BENCH_N; i++) in[i] = <<bench_in_init>>;
 
+    /* volatile sink prevents DCE of the fn() loop */
+    volatile <<return_ctype>> _sink;
+
     for (int i = 0; i < 16; i++)
-        (void)<<component>>_fn(<<bench_warmup>><<c_fn_call_defaults>>);
+        _sink = <<component>>_fn(<<bench_warmup>><<c_fn_call_defaults>>);
 
     struct timespec t0, t1;
     double sec;
@@ -3480,7 +3486,7 @@ main(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int r = 0; r < ITERATIONS; r++)
         for (int i = 0; i < BENCH_N; i++)
-            (void)<<component>>_fn(in[i]<<c_fn_call_defaults>>);
+            _sink = <<component>>_fn(in[i]<<c_fn_call_defaults>>);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sec = elapsed_sec(&t0, &t1);
     printf("  fn()     %8.1f MSa/s\\n",

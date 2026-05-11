@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 PYTHON = sys.executable
-STEPS = Path(__file__).parent.parent / "examples" / "sliding_correlator" / ".steps"
+STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "sliding_correlator" / ".steps"
 
 
 def _run(cmd, cwd=None, env=None):
@@ -35,7 +35,7 @@ def _require(tool: str) -> None:
 def test_readme_up_to_date():
     r = _run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "examples" / "sliding_correlator",
+        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "sliding_correlator",
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
 

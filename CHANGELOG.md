@@ -1,5 +1,23 @@
 # Changelog
 
+## \[0.9.13\] — 2026-05-11
+
+### Added
+
+- **`just-makeit example <name>`**: run any bundled example end-to-end in a
+  temporary directory — no `git clone` required (`uvx just-makeit install-deps
+  && just-makeit example fir_filter`). All 8 examples are now shipped inside
+  the wheel under `just_makeit/examples/`.
+- **Bench template DCE fix**: `(void)step(obj)` in warmup and step-timing loops
+  is now `volatile <<return_ctype>> _sink = step(obj)` so the compiler cannot
+  dead-code-eliminate the measured loop at any optimisation level. Applies to
+  both the stateful-object bench and the pure-function bench.
+- **Example TL;DR blocks updated**: all 8 example READMEs now show the
+  `just-makeit example <name>` one-liner instead of the `git clone + python3
+  test.py` form.
+
+______________________________________________________________________
+
 ## \[0.9.12\] — 2026-05-11
 
 ### Fixed

@@ -51,6 +51,8 @@ Commands:
                      Install cmake, a C compiler, and numpy; create a venv at path
                      (default: /tmp/jm-venv on Linux/macOS, %%LOCALAPPDATA%%\jm-venv on Windows)
                      Pass --check to report status without making changes
+  example [name]     Run a bundled end-to-end example (scaffold -> build -> test)
+                     Omit name to list available examples
   help               Show this message
 
 Scalar types: double (default), float, int, int8_t…int64_t, uint8_t…uint64_t,
@@ -577,9 +579,12 @@ def main() -> None:
 
     elif cmd == "install-deps":
         from . import _scripts
-        # Splice the subcommand out so _scripts sees only the remaining args.
         sys.argv = [sys.argv[0]] + args[1:]
         _scripts.install_deps()
+
+    elif cmd == "example":
+        from . import _example
+        _example.run(args[1] if len(args) > 1 else None)
 
     else:
         print(f"just-makeit: unknown command '{cmd}'", file=sys.stderr)

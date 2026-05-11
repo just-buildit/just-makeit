@@ -21,7 +21,7 @@ examples = [
 ]
 
 for folder, out_name in examples:
-    src = ROOT / "examples" / folder / "README.md"
+    src = ROOT / "src" / "just_makeit" / "examples" / folder / "README.md"
     dst = DEST / out_name
     if not src.exists():
         print(f"  skip  {src} (not found)")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-STEPS = Path(__file__).parent.parent / "examples" / "running_stats" / ".steps"
+STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "running_stats" / ".steps"
 PYTHON = sys.executable
 
 
@@ -149,7 +149,7 @@ class TestStep6AddState:
 def test_readme_up_to_date():
     r = subprocess.run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "examples" / "running_stats",
+        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "running_stats",
         capture_output=True,
         text=True,
     )
