@@ -227,3 +227,6 @@ docs/examples/fir_filter.md
 docs/examples/sliding_power.md
 docs/examples/sliding_correlator.md
 docs/examples/running_stats.md
+my_project/
+test123/
+scaffold_feedback.md
