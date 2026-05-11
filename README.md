@@ -139,46 +139,46 @@ ______________________________________________________________________
 just-makeit COMMAND
 ```
 
-| Command           | Option                          | Description                                       |
-| ----------------- | ------------------------------- | ------------------------------------------------- |
-| `new <project>`   | `--module name`                 | Scaffold project + empty module subpackage(s)     |
-|                   | `--object name`                 | ...or scaffold project + first standalone object  |
-|                   | `--state name:type[:default]`   |                                                   |
-|                   | `--arg-type T`                  |                                                   |
-|                   | `--return-type T`               |                                                   |
-|                   | `--perf`                        |                                                   |
-|                   | `--pure`                        |                                                   |
-|                   | `--basic`                       |                                                   |
-| `module <name>`   |                                 | Scaffold an empty extension module                |
-| `object <name>`   | `--module name`                 | Add a type to a module subpackage / own `.so`     |
-|                   | `--state name:type[:default]`   |                                                   |
-|                   | `--arg-type T`                  |                                                   |
-|                   | `--return-type T`               |                                                   |
-|                   | `--perf`                        |                                                   |
-|                   | `--pure`                        |                                                   |
-| `add`             | `--state name:type[:default]`   | Add state variables to an existing object         |
-|                   | `--object name`                 |                                                   |
-| `method <name>`   | `--param name:type`             | Add a named execute method to an object           |
-|                   | `--param name:type[]`           |                                                   |
-|                   | `--arg-type T`                  |                                                   |
-|                   | `--return-type T`               |                                                   |
-|                   | `--variable-output`             |                                                   |
-|                   | `--multi-output T`              |                                                   |
-| `property <name>` | `--type T`                      | Add a property (read-only or read-write)          |
-|                   | `--writable`                    |                                                   |
-|                   | `--field`                       |                                                   |
-| `function <name>` | `--module mod`                  | Add a module-level function (no state handle)     |
-|                   | `--param name:type`             |                                                   |
-|                   | `--param name:type[]`           |                                                   |
-|                   | `--return-type T`               |                                                   |
-|                   | `--doc "text"`                  |                                                   |
-| `perf`            |                                 | Apply performance annotations to existing project |
-| `config`          | `[key value]`                   | Show or edit `just-makeit.toml`                   |
-| `build`           | `[dir]`                         | Build C extensions and package a wheel            |
-| `test`            |                                 | Run CTest + pytest                                |
-| `dry-run`         |                                 | Preview what would be compiled                    |
-| `install-deps`    | `[path]`                        | Install cmake, C compiler, numpy; create venv     |
-| `example`         | `[name]`                        | Run a bundled end-to-end example                  |
+| Command           | Option                          | Description                                                                     |
+| ----------------- | ------------------------------- | ------------------------------------------------------------------------------- |
+| `new <project>`   | `--module name`                 | Scaffold project + empty module subpackage; repeatable                          |
+|                   | `--object name`                 | Scaffold project + first standalone object instead                              |
+|                   | `--state name:type[:default]`   | Declare a state variable (struct field, constructor arg, getter/setter, reset)  |
+|                   | `--arg-type T`                  | C type for `step()` input; default `float _Complex`; `void` for generators; append `[]` for buffer-primary objects |
+|                   | `--return-type T`               | C type for `step()` return; default same as `--arg-type`; `void` for sinks     |
+|                   | `--perf`                        | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`             |
+|                   | `--pure`                        | Stateless object — no `create`/`destroy`, params passed directly to `step()`   |
+|                   | `--basic`                       | Plain `Makefile` instead of CMake                                               |
+| `module <name>`   |                                 | Scaffold an empty extension module (subpackage `.so`); add types with `object` |
+| `object <name>`   | `--module name`                 | Target module subpackage; omit for a standalone object with its own `.so`       |
+|                   | `--state name:type[:default]`   | Same as `new`                                                                   |
+|                   | `--arg-type T`                  | Same as `new`                                                                   |
+|                   | `--return-type T`               | Same as `new`                                                                   |
+|                   | `--perf`                        | Same as `new`                                                                   |
+|                   | `--pure`                        | Same as `new`                                                                   |
+| `add`             | `--state name:type[:default]`   | Add a state variable to an existing standalone object; repeatable               |
+|                   | `--object name`                 | Target object when the project has more than one                                |
+| `method <name>`   | `--param name:type`             | Named scalar parameter; repeatable                                              |
+|                   | `--param name:type[]`           | Named numpy array parameter; C receives `(const elem_t *name, size_t name_len)`|
+|                   | `--arg-type T`                  | Single array-style input (mutually exclusive with `--param`)                    |
+|                   | `--return-type T`               | C return type; `void` for no return                                             |
+|                   | `--variable-output`             | Pre-allocate output buffer at init; return zero-copy numpy view each call       |
+|                   | `--multi-output T`              | Add a parallel output array of type T; repeatable; implies `--variable-output`  |
+| `property <name>` | `--type T`                      | C type of the property value                                                    |
+|                   | `--writable`                    | Also generate a setter; omit for read-only                                      |
+|                   | `--field`                       | Add `T name;` to the state struct and auto-implement the getter                 |
+| `function <name>` | `--module mod`                  | Target module (required)                                                        |
+|                   | `--param name:type`             | Named scalar parameter; repeatable                                              |
+|                   | `--param name:type[]`           | Named numpy array parameter                                                     |
+|                   | `--return-type T`               | C return type; default `void`                                                   |
+|                   | `--doc "text"`                  | Python docstring for the function                                               |
+| `perf`            |                                 | Upgrade existing project with `jm_perf.h` performance annotations              |
+| `config`          | `[key value]`                   | Print config; or set `key` to `value` in `just-makeit.toml`                    |
+| `build`           | `[dir]`                         | Configure + build C extensions and package a wheel into `dir` (default `dist/`) |
+| `test`            |                                 | Build (if needed), then run CTest + pytest                                      |
+| `dry-run`         |                                 | Show what would be compiled without running any build steps                     |
+| `install-deps`    | `[path]`                        | Install cmake + C compiler via system package manager; create venv at `path`    |
+| `example`         | `[name]`                        | Run a bundled end-to-end example; omit `name` to list available examples        |
 
 See [State Variable Types](https://just-buildit.github.io/just-makeit/types/) for supported types, defaults, and C/Python mappings.
 
