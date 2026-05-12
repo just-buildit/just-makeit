@@ -19,6 +19,19 @@
   output array per call and pass `*out` to the C stub automatically. The array
   length is `in_len / out_divisor`. Use `--out-divisor 2` for CI8/CI16/CI32
   inputs where two raw bytes form one complex output sample.
+- **+21 tests** (705 total): `--arg-type T[]` standalone and in-module (21).
+
+### Fixed
+
+- **`--arg-type T[]` without `--return-type`** now correctly defaults to
+  `void` for both standalone and in-module objects. Previously, omitting
+  `--return-type` caused an internal error (the array element type was
+  propagated as the return type, which is not a scalar and raised a
+  `ValueError`/`KeyError` during template rendering). The fix affects four
+  sites: `make_sample_ctx` (default logic), `_init.py` and `_object.py`
+  (`make_step_ctx` call), and `_config.py` (TOML persistence — the bug also
+  caused the wrong value to be written to `just-makeit.toml`, which broke
+  module regeneration on reload).
 
 ______________________________________________________________________
 

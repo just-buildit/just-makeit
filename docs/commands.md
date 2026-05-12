@@ -26,7 +26,7 @@ any objects — the source of truth for all subsequent commands.
 | `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`. |
 | `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
 | `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
-| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no scalar output. |
+| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output. |
 | `--basic`                     | Generate a plain `Makefile` instead of a CMake project. Useful for quick prototypes that don't need a full build system. |
 | `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
 
@@ -121,7 +121,7 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `--module name` | Target module. Without this flag the object is standalone (own `.so`). |
 | `--state name:type[:default]` | Declare a state variable. Repeatable. |
 | `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"` — `steps()` is not generated. |
-| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no output. |
+| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no output. |
 | `--perf` | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`. |
 | `--no-state` | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
 | `--no-step` | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`. |

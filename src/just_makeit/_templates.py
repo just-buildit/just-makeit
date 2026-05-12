@@ -742,32 +742,54 @@ def _build_no_state_init_ctx(
     component: str,
     Component: str,
     params: list[tuple[str, str, str]],
+    array_args: list[tuple[str, str]] = (),
 ) -> dict[str, str]:
-    """Build the init-parse context keys for a --no-state object with --init-param.
+    """Build the init-parse context keys for a --no-state object.
 
-    Generates create_params, init_parse_block, create_call_args, pyi stubs,
-    and related keys from a list of (name, ctype, default) scalar params.
+    Handles both --array-arg (required positional numpy arrays) and
+    --init-param (optional scalar keyword args).  Array args come first
+    in kwlist and in the create() signature, matching the stateful path.
+
     The stateful path (state_struct_fields, getter/setters, reset, etc.) is
     intentionally excluded — callers manage all object state themselves.
     """
-    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in params]
-    create_params = ", ".join(scalar_param_parts) or "void"
+    _aa = list(array_args)
+    _aa_ctypes = [(_ARRAY_DTYPE[dt][0], _ARRAY_DTYPE[dt][1]) for _, dt in _aa]
 
-    doc_parts = [
+    arr_param_parts = [
+        f"const {ct} *{name}, size_t {name}_len"
+        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
+    ]
+    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in params]
+    create_params = ", ".join(arr_param_parts + scalar_param_parts) or "void"
+
+    arr_doc_parts = [
+        f" * @param {name}  Input {dt} array (length passed as {name}_len)."
+        for name, dt in _aa
+    ]
+    scalar_doc_parts = [
         f" * @param {name}  {name} (default: {dflt})."
         for name, _, dflt in params
     ]
+    all_docs = arr_doc_parts + scalar_doc_parts
     create_param_docs = (
-        "\n".join(doc_parts)
+        "\n".join(all_docs)
         or " * @param (none)  Caller is responsible for all state management."
     )
 
-    kwlist_items = [f'"{name}"' for name, _, __ in params] + ["NULL"]
+    kwlist_items = (
+        [f'"{name}"' for name, _ in _aa]
+        + [f'"{name}"' for name, _, __ in params]
+        + ["NULL"]
+    )
     init_kwlist = ", ".join(kwlist_items)
 
-    local_lines: list[str] = []
+    local_lines: list[str] = [
+        f"    PyObject *{name}_obj = NULL;" for name, _ in _aa
+    ]
     post_lines: list[str] = []
-    parse_args: list[str] = []
+    parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa]
+
     for name, ct, dflt in params:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
@@ -783,53 +805,117 @@ def _build_no_state_init_ctx(
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
+    array_fmt = "O" * len(_aa)
     scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in params)
-    init_parse_fmt = "|" + scalar_fmt_str
+    if params:
+        init_parse_fmt = array_fmt + "|" + scalar_fmt_str
+    else:
+        init_parse_fmt = array_fmt or "|"
 
     init_parse_args = ", ".join(parse_args)
-    create_call_args = ", ".join(name for name, _, __ in params)
 
-    init_parse_block = (
-        f"    static char *kwlist[] = {{{init_kwlist}}};\n"
-        f"{init_locals}\n"
-        f"\n"
-        f'    if (!PyArg_ParseTupleAndKeywords(args, kwds,'
-        f' "{init_parse_fmt}", kwlist,\n'
-        f"                                     {init_parse_args}))\n"
-        f"        return -1;\n"
-        f"{init_post_parse}"
+    arr_call_parts = [
+        f"(const {ct} *)PyArray_DATA({name}_arr), {name}_len"
+        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
+    ]
+    scalar_call_parts = [name for name, _, __ in params]
+    create_call_args = ", ".join(arr_call_parts + scalar_call_parts)
+
+    if _aa or params:
+        init_parse_block = (
+            f"    static char *kwlist[] = {{{init_kwlist}}};\n"
+            f"{init_locals}\n"
+            f"\n"
+            f'    if (!PyArg_ParseTupleAndKeywords(args, kwds,'
+            f' "{init_parse_fmt}", kwlist,\n'
+            f"                                     {init_parse_args}))\n"
+            f"        return -1;\n"
+            f"{init_post_parse}"
+        )
+    else:
+        init_parse_block = "    (void)args;\n    (void)kwds;\n"
+
+    # array_args_parse_block: FROM_OTF conversion after kwarg parse
+    aapb_lines: list[str] = []
+    already_allocated: list[str] = []
+    for (name, _), (ct, npy_enum) in zip(_aa, _aa_ctypes):
+        cleanup = "".join(
+            f" Py_DECREF({n}_arr);" for n in already_allocated
+        )
+        aapb_lines.append(
+            f"    PyArrayObject *{name}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+            f"        {name}_obj, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+            f"    if (!{name}_arr) {{{cleanup} return -1; }}\n"
+            f"    size_t {name}_len = (size_t)PyArray_SIZE({name}_arr);\n"
+        )
+        already_allocated.append(name)
+    array_args_parse_block = "".join(aapb_lines)
+    array_args_decref = "".join(
+        f"    Py_DECREF({name}_arr);\n" for name, _ in _aa
     )
 
-    init_params_pyi = ", ".join(
+    # pyi and test helpers
+    _NP_PY_TYPE: dict[str, str] = {
+        "float32": "np.float32", "float64": "np.float64",
+        "complex64": "np.complex64", "complex128": "np.complex128",
+        "int8": "np.int8", "int16": "np.int16",
+        "int32": "np.int32", "int64": "np.int64",
+        "uint8": "np.uint8", "uint16": "np.uint16",
+        "uint32": "np.uint32", "uint64": "np.uint64",
+        "uintp": "np.uintp", "intp": "np.intp",
+    }
+    arr_pyi_parts = [
+        f"{name}: npt.ArrayLike" for name, _ in _aa
+    ]
+    scalar_pyi_parts = [
         f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
         for name, ct, dflt in params
+    ]
+    init_params_pyi = ", ".join(arr_pyi_parts + scalar_pyi_parts)
+
+    arr_doc_pyi = "\n".join(
+        f"    {name} : array-like\n        {dt} coefficients."
+        for name, dt in _aa
     )
-    pyi_param_docs = "\n".join(
+    scalar_doc_pyi = "\n".join(
         f"    {name} : {_CTYPE_META[ct]['py_type']}, default {_py_default(ct, dflt)}\n"
         f"        {name} constructor parameter."
         for name, ct, dflt in params
     )
-    py_create_args = ", ".join(
-        _py_default(ct, dflt) for _, ct, dflt in params
+    pyi_param_docs = "\n".join(
+        p for p in [arr_doc_pyi, scalar_doc_pyi] if p
+    ) or "    (none)"
+
+    py_arr_args = [
+        f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})"
+        for _, dt in _aa
+    ]
+    py_scalar_args = [_py_default(ct, dflt) for _, ct, dflt in params]
+    py_create_args = ", ".join(py_arr_args + py_scalar_args)
+
+    c_arr_call_parts = ["NULL, 0" for _ in _aa]
+    c_create_args = ", ".join(
+        c_arr_call_parts + [dflt for _, _, dflt in params]
     )
-    c_create_args = ", ".join(dflt for _, _, dflt in params)
 
     test_obj = f"        obj = {Component}({py_create_args})"
 
     return {
-        "create_params":     create_params,
-        "create_param_docs": create_param_docs,
-        "init_kwlist":       init_kwlist,
-        "init_locals":       init_locals,
-        "init_post_parse":   init_post_parse,
-        "init_parse_fmt":    init_parse_fmt,
-        "init_parse_args":   init_parse_args,
-        "init_parse_block":  init_parse_block,
-        "create_call_args":  create_call_args,
-        "init_params_pyi":   init_params_pyi,
-        "pyi_param_docs":    pyi_param_docs,
-        "py_create_args":    py_create_args,
-        "c_create_args":     c_create_args,
+        "create_params":          create_params,
+        "create_param_docs":      create_param_docs,
+        "init_kwlist":            init_kwlist,
+        "init_locals":            init_locals,
+        "init_post_parse":        init_post_parse,
+        "init_parse_fmt":         init_parse_fmt,
+        "init_parse_args":        init_parse_args,
+        "init_parse_block":       init_parse_block,
+        "array_args_parse_block": array_args_parse_block,
+        "array_args_decref":      array_args_decref,
+        "create_call_args":       create_call_args,
+        "init_params_pyi":        init_params_pyi,
+        "pyi_param_docs":         pyi_param_docs,
+        "py_create_args":         py_create_args,
+        "c_create_args":          c_create_args,
         "getter_setter_test_py": (
             test_obj + "\n"
             "        pass  # no auto-state; add assertions for your fields"
@@ -908,8 +994,11 @@ def make_state_ctx(
             "property_decls":         "",
             "property_struct_fields": "",
         }
-        if init_params:
-            base.update(_build_no_state_init_ctx(component, Component, list(init_params)))
+        if init_params or array_args:
+            base.update(_build_no_state_init_ctx(
+                component, Component,
+                list(init_params), list(array_args),
+            ))
         return base
 
     if roles is None:

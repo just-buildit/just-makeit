@@ -494,6 +494,21 @@ decimator, a packet framer, a block codec.  Wrapping them with a scalar
 `step()` + auto-generated `steps()` adds indirection that compilers cannot
 always eliminate.  Pass `[]` on the arg type to express this directly.
 
+Omitting `--return-type` defaults to `void` — the natural choice for a
+pure consumer.  Add `--return-type T` to get a scalar back (e.g. a packet
+framer returning the number of packets emitted).
+
+**Void-return (default):**
+
+```sh
+just-makeit new my_sink \
+    --object buf_sink \
+    --arg-type "float _Complex[]" \
+    --state "count:int32_t:0"
+```
+
+**Scalar-return (explicit):**
+
 ```sh
 just-makeit new my_buf \
     --object buf_proc \
@@ -502,14 +517,21 @@ just-makeit new my_buf \
     --state "count:int32_t:0"
 ```
 
-The generated `step()` takes a numpy array and a length:
+The generated `step()` takes a pointer and length:
 
 ```c
+/* void-return variant */
+void buf_sink_step(buf_sink_state_t *state,
+                   const float complex *x, size_t x_len)
+{
+    (void)state; (void)x; (void)x_len; /* TODO: implement */
+}
+
+/* scalar-return variant */
 int buf_proc_step(buf_proc_state_t *state,
                   const float complex *x, size_t x_len)
 {
-    (void)x;
-    (void)x_len;
+    (void)x; (void)x_len;
     return 0; /* TODO: implement */
 }
 ```
@@ -520,11 +542,16 @@ int buf_proc_step(buf_proc_state_t *state,
 
 ```python
 import numpy as np
+from my_sink import BufSink
 from my_buf import BufProc
 
-proc = BufProc()
 block = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
-n = proc.step(block)   # passes the whole array; returns int
+
+sink = BufSink()
+sink.step(block)          # void — consumes the buffer
+
+proc = BufProc()
+n = proc.step(block)      # returns int — e.g. packets emitted
 ```
 
 ### Type stub (`my_buf/src/my_buf/buf_proc.pyi`)
