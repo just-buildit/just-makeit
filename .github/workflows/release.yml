@@ -40,7 +40,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msys2-sys }}
-          pacboy: gcc:p make:p
+          pacboy: gcc:p cmake:p make:p
           update: false
 
       - run: uv tool install .
