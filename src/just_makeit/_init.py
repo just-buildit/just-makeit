@@ -148,6 +148,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    impl_body: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -231,6 +232,12 @@ def run(
 
     # C headers
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
+    if impl_body is not None and not no_step:
+        from . import _impl as I
+        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        h_text = h_path.read_text(encoding="utf-8")
+        h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
+        h_path.write_text(h_text, encoding="utf-8")
 
     # C sources
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(core_c_tmpl))

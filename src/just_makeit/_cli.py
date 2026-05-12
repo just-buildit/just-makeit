@@ -29,6 +29,8 @@ Commands:
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --impl file::funcname       Lift step() body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   method <obj> <name> [OPTIONS] Add a named execute variant to an object.
     --module name               Module the object lives in.
@@ -37,6 +39,8 @@ Commands:
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
     --multi-output TYPE         Emit a second output array of this type.
+    --impl file::funcname       Lift method body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   property <obj> <name> [OPTIONS]  Add a Python property to an object.
     --module name               Module the object lives in.
@@ -49,6 +53,8 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --return-type TYPE          Return type (default: void).
     --doc "text"                Docstring shown in Python help().
+    --impl file::funcname       Lift function body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   add [OPTIONS]                 Append variables to the current object.
     --state name:type[:default] Add a state variable.
@@ -282,6 +288,8 @@ def main() -> None:
         array_args_obj: list[tuple[str, str]] = []
         no_state = False
         no_step = False
+        impl_spec: str | None = None
+        replacements: list[tuple[str, str]] = []
 
         remaining = args[2:]
         i = 0
@@ -358,6 +366,23 @@ def main() -> None:
             elif tok == "--no-step":
                 no_step = True
                 i += 1
+            elif tok == "--impl":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --impl requires file::funcname",
+                          file=sys.stderr)
+                    sys.exit(1)
+                impl_spec = remaining[i]
+                i += 1
+            elif tok == "--replace":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --replace requires old::new",
+                          file=sys.stderr)
+                    sys.exit(1)
+                from . import _impl as _I
+                replacements.append(_I.parse_replace(remaining[i]))
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -367,10 +392,15 @@ def main() -> None:
                   file=sys.stderr)
             sys.exit(1)
 
+        impl_body_obj: str | None = None
+        if impl_spec is not None:
+            from . import _impl as _I
+            impl_body_obj = _I.load_impl(impl_spec, replacements)
         _object.run(Path.cwd(), object_name, module,
                     None if (no_state or not state_vars) else state_vars,
                     perf=perf, arg_type=arg_type, return_type=return_type,
-                    array_args=array_args_obj, no_state=no_state, no_step=no_step)
+                    array_args=array_args_obj, no_state=no_state,
+                    no_step=no_step, impl_body=impl_body_obj)
 
     elif cmd == "method":
         if len(args) < 3:
@@ -389,6 +419,8 @@ def main() -> None:
         method_params: list[tuple[str, str]] = []
         out_type: str | None = None
         out_divisor: int = 1
+        impl_spec_m: str | None = None
+        replacements_m: list[tuple[str, str]] = []
 
         remaining = args[3:]
         i = 0
@@ -508,6 +540,23 @@ def main() -> None:
                 else:
                     return_type = val
                 i += 1
+            elif tok == "--impl":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --impl requires file::funcname",
+                          file=sys.stderr)
+                    sys.exit(1)
+                impl_spec_m = remaining[i]
+                i += 1
+            elif tok == "--replace":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --replace requires old::new",
+                          file=sys.stderr)
+                    sys.exit(1)
+                from . import _impl as _I
+                replacements_m.append(_I.parse_replace(remaining[i]))
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -518,10 +567,15 @@ def main() -> None:
                   file=sys.stderr)
             sys.exit(1)
 
+        impl_body_m: str | None = None
+        if impl_spec_m is not None:
+            from . import _impl as _I
+            impl_body_m = _I.load_impl(impl_spec_m, replacements_m)
         _method.run(
             Path.cwd(), object_name, method_name, module,
             arg_type, return_type, variable_output, multi_output,
             params=method_params, out_type=out_type, out_divisor=out_divisor,
+            impl_body=impl_body_m,
         )
 
     elif cmd == "property":
@@ -589,6 +643,8 @@ def main() -> None:
         doc = ""
         fn_params: list[tuple[str, str]] = []
         fn_return_type = "void"
+        impl_spec_f: str | None = None
+        replacements_f: list[tuple[str, str]] = []
 
         remaining = args[2:]
         i = 0
@@ -654,6 +710,23 @@ def main() -> None:
                     sys.exit(1)
                 fn_return_type = val
                 i += 1
+            elif tok == "--impl":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --impl requires file::funcname",
+                          file=sys.stderr)
+                    sys.exit(1)
+                impl_spec_f = remaining[i]
+                i += 1
+            elif tok == "--replace":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --replace requires old::new",
+                          file=sys.stderr)
+                    sys.exit(1)
+                from . import _impl as _I
+                replacements_f.append(_I.parse_replace(remaining[i]))
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -665,8 +738,13 @@ def main() -> None:
             )
             sys.exit(1)
 
+        impl_body_f: str | None = None
+        if impl_spec_f is not None:
+            from . import _impl as _I
+            impl_body_f = _I.load_impl(impl_spec_f, replacements_f)
         _function.run(Path.cwd(), fn_name, module, doc,
-                      params=fn_params, return_type=fn_return_type)
+                      params=fn_params, return_type=fn_return_type,
+                      impl_body=impl_body_f)
 
     elif cmd == "add":
         from . import _add

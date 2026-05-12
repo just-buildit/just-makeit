@@ -224,6 +224,7 @@ def run(
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
     out_divisor: int = 1,
+    impl_body: str | None = None,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -283,6 +284,9 @@ def run(
             object_name, method_name, arg_type, return_type, multi_output,
             params, out_type,
         )
+    if impl_body is not None:
+        from . import _impl as I
+        stub = I.inject_body_into_stub(stub, impl_body)
     _append_to_core_c(core_c, stub)
 
     # 2. Update config  (was step 3)

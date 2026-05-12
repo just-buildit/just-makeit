@@ -147,8 +147,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     # Subpackage __init__.py
     Components = [ctx["Component"] for ctx in comp_ctxs]
-    object_imports = ", ".join(Components)
-    object_all = ", ".join(f'"{C_}"' for C_ in Components)
+    fn_names = [f["name"] for f in functions]
+    all_exports = Components + fn_names
+    object_imports = ", ".join(all_exports)
+    object_all = ", ".join(f'"{name}"' for name in all_exports)
     init_ctx = {
         "module": module,
         "Module": Module,
@@ -173,6 +175,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    impl_body: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -200,7 +203,7 @@ def run(
         _init.run(root, object_name, state_vars, perf=perf,
                   arg_type=arg_type, return_type=return_type,
                   array_args=array_args, no_state=no_state, no_step=no_step,
-                  _hint=_hint)
+                  impl_body=impl_body, _hint=_hint)
         return
 
     # --module given -> in-module path
@@ -247,6 +250,12 @@ def run(
 
     # C library files (OBJECT lib only — no standalone Python module)
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
+    if impl_body is not None and not no_step:
+        from . import _impl as I
+        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        h_text = h_path.read_text(encoding="utf-8")
+        h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
+        h_path.write_text(h_text, encoding="utf-8")
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
     _write(
         root / "native" / "src" / comp / "CMakeLists.txt",

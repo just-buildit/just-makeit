@@ -42,8 +42,17 @@ def _inject_into_core_h(
 ) -> None:
     decl = T.fn_c_decl(fn_name, params, return_type)
     existing = path.read_text(encoding="utf-8")
-    marker = f"#endif /* {module.upper()}_CORE_H */"
-    existing = existing.replace(marker, f"{decl}\n{marker}")
+    # Inject inside the extern "C" block so the declaration has C linkage in
+    # C++ translation units.  Preferred anchor: the closing #ifdef __cplusplus
+    # guard.  Fall back to the #endif guard if the header omits the C++ block.
+    cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
+    if cplusplus_end in existing:
+        existing = existing.replace(
+            cplusplus_end, f"{decl}\n\n{cplusplus_end}"
+        )
+    else:
+        marker = f"#endif /* {module.upper()}_CORE_H */"
+        existing = existing.replace(marker, f"{decl}\n{marker}")
     path.write_text(existing, encoding="utf-8")
     print(f"  update  {path}")
 
@@ -55,6 +64,7 @@ def run(
     doc: str = "",
     params: list[tuple[str, str]] | None = None,
     return_type: str = "void",
+    impl_body: str | None = None,
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -102,7 +112,15 @@ def run(
 
     # Append C stub to <module>_core.c
     core_c = root / "native" / "src" / module / f"{module}_core.c"
-    _append_to_core_c(core_c, fn_name, params, return_type)
+    if impl_body is not None:
+        from . import _impl as I
+        stub = T.fn_c_stub(fn_name, params, return_type)
+        stub = I.inject_body_into_stub(stub, impl_body)
+        existing = core_c.read_text(encoding="utf-8")
+        core_c.write_text(existing + "\n" + stub, encoding="utf-8")
+        print(f"  update  {core_c}")
+    else:
+        _append_to_core_c(core_c, fn_name, params, return_type)
 
     # Inject declaration into <module>_core.h
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
