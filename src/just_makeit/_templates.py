@@ -1780,6 +1780,19 @@ def make_methods_ctx(
             arg_meta = _CTYPE_META[arg_type]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
+        # Doxygen for this method's _core.h declaration(s).
+        _param_docs = " * @param state  Must be non-NULL.\n"
+        if has_arg:
+            _param_docs += f" * @param x      Input ({_ctype_display(arg_type)}).\n"
+        for _p in params:
+            _pdisp = _ctype_display(_p["type"])
+            _param_docs += f" * @param {_p['name']}  {_pdisp} parameter.\n"
+        _ret_doc = (f" * @return Result ({ret_disp}).\n"
+                    if return_type != "void" else "")
+        _method_doc = (f"/**\n * @brief {name}.\n"
+                       f" *\n{_param_docs}{_ret_doc} */")
+        _ndecl = len(decl_lines)  # index before this method adds declarations
+
         # ── batch method (1:1-rate array transform, no pre-alloc buffer) ─────
         if batch:
             if has_arg:
@@ -1837,6 +1850,8 @@ def make_methods_ctx(
                 f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
                 f'     "{name}. 1:1-rate batch method. Returns ndarray."}},\n'
             )
+            for _j in range(_ndecl, len(decl_lines)):
+                decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
             continue
 
         # ── declarations for _core.h ─────────────────────────────────────────
@@ -1895,6 +1910,10 @@ def make_methods_ctx(
                     f"{ret_disp} {component}_{name}"
                     f"({component}_state_t *state{extra_params}{out_type_param});"
                 )
+
+        # Prefix any newly added declarations with Doxygen.
+        for _j in range(_ndecl, len(decl_lines)):
+            decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
 
         # ── pre-allocated buffer fields + alloc + free ────────────────────────
         if variable_output:
@@ -2240,6 +2259,11 @@ def make_properties_ctx(
             )
             if pname not in state_var_names:
                 decl_lines.append(
+                    f"/**\n"
+                    f" * @brief Get {pname}.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @return Current {pname} value ({disp}).\n"
+                    f" */\n"
                     f"{disp} {component}_get_{pname}"
                     f"(const {component}_state_t *state);"
                 )
@@ -2270,6 +2294,11 @@ def make_properties_ctx(
                 )
                 if pname not in state_var_names:
                     decl_lines.append(
+                        f"/**\n"
+                        f" * @brief Set {pname}.\n"
+                        f" * @param state  Must be non-NULL.\n"
+                        f" * @param val    New value ({disp}).\n"
+                        f" */\n"
                         f"void {component}_set_{pname}"
                         f"({component}_state_t *state, {disp} val);"
                     )
@@ -2387,6 +2416,10 @@ def make_step_ctx(
         if is_void_return:
             # Void-in, void-out: sink/processor with no scalar I/O.
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Advance state by one tick (no I/O).\n"
+                f" * @param state  Must be non-NULL; state is mutated.\n"
+                f" */\n"
                 f"{step_qualifier} void\n"
                 f"{component}_step({component}_state_t *state)\n"
                 f"{{\n"
@@ -2446,6 +2479,11 @@ def make_step_ctx(
             # Generator object: step(state) -> sample.
             _state_qual = "" if mutable else "const "
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Generate one output sample from internal state.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @return Next output sample ({ret_disp}).\n"
+                f" */\n"
                 f"{step_qualifier} {ret_disp}\n"
                 f"{component}_step({_state_qual}{component}_state_t *state)\n"
                 f"{{\n"
@@ -2529,6 +2567,12 @@ def make_step_ctx(
         )
         if is_void_return:
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Process one input buffer (no scalar output).\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @param x      Input array ({elem_disp}).\n"
+                f" * @param x_len  Number of elements in @p x.\n"
+                f" */\n"
                 f"{step_qualifier} void\n"
                 f"{component}_step(\n"
                 f"    {component}_state_t *state,\n"
@@ -2562,6 +2606,13 @@ def make_step_ctx(
             )
         else:
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Process one input buffer and return a result.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @param x      Input array ({elem_disp}).\n"
+                f" * @param x_len  Number of elements in @p x.\n"
+                f" * @return Result ({ret_disp}).\n"
+                f" */\n"
                 f"{step_qualifier} {ret_disp}\n"
                 f"{component}_step(\n"
                 f"    {component}_state_t *state,\n"
@@ -2611,6 +2662,11 @@ def make_step_ctx(
         if is_void_return:
             # Sink object: step(state, x) -> void.
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Consume one input sample (sink; no output).\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @param x      Input sample ({arg_disp}).\n"
+                f" */\n"
                 f"{step_qualifier} void\n"
                 f"{component}_step({component}_state_t *state, {arg_disp} x)\n"
                 f"{{\n"
@@ -2682,6 +2738,12 @@ def make_step_ctx(
         else:
             _state_qual = "" if mutable else "const "
             step_impl_def = (
+                f"/**\n"
+                f" * @brief Process one input sample.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @param x      Input sample ({arg_disp}).\n"
+                f" * @return Output sample ({ret_disp}).\n"
+                f" */\n"
                 f"{step_qualifier} {ret_disp}\n"
                 f"{component}_step({_state_qual}{component}_state_t *state, {arg_disp} x)\n"
                 f"{{\n"
@@ -4362,7 +4424,7 @@ NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-.PHONY: all build test bench bench-save bench-compare just-build clean help
+.PHONY: all build test bench bench-save bench-compare just-build docs clean help
 
 all: build
 
@@ -4402,6 +4464,12 @@ just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 \tcp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
 
+docs:
+\t@command -v doxygen >/dev/null 2>&1 || \
+\t  { echo "doxygen not found — install it first"; exit 1; }
+\tdoxygen Doxyfile
+\t@echo "Docs written to docs/doxygen/html/index.html"
+
 clean:
 \trm -rf $(BUILD_DIR)
 \tfind src -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
@@ -4415,8 +4483,32 @@ help:
 \t@echo "  make bench         Run C + Python benchmarks"
 \t@echo "  make bench-save    Save baseline (git describe tag)"
 \t@echo "  make bench-compare Compare against last saved baseline"
+\t@echo "  make docs          Generate Doxygen API docs"
 \t@echo "  make clean         Remove build artifacts"
 \t@echo ""
+"""
+
+# ── Doxyfile ─────────────────────────────────────────────────────────────────
+
+DOXYFILE = """\
+# Doxyfile — generated by just-makeit.  Edit freely.
+PROJECT_NAME           = "<<project>>"
+PROJECT_NUMBER         = <<version>>
+OUTPUT_DIRECTORY       = docs/doxygen
+INPUT                  = native/inc native/src
+RECURSIVE              = YES
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+FILE_PATTERNS          = *.h *.c
+EXCLUDE_PATTERNS       = */pyex_common.h */clib_common.h
+FULL_PATH_NAMES        = NO
+JAVADOC_AUTOBRIEF      = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
 """
 
 # ── pyproject.toml ───────────────────────────────────────────────────────────

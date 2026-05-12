@@ -74,6 +74,7 @@ def run(
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
     _write(root / "README.md", r(T.README_MD))
     _write(root / ".gitignore", r(T.GITIGNORE))
+    _write(root / "Doxyfile", r(T.DOXYFILE))
     _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
     _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
     _write(root / "native" / "inc" / f"{project}.h", r(T.UMBRELLA_H))
