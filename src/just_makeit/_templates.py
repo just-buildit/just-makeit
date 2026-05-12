@@ -4703,7 +4703,7 @@ SHELL      = /bin/sh
 BUILD_DIR  ?= build
 BUILD_TYPE ?= Release
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
-PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell which python3))
+PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
 .PHONY: all build test bench bench-save bench-compare just-build docs clean help
