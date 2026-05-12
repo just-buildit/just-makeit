@@ -107,6 +107,14 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     ]
 
 
+def init_params(cfg: dict, component: str) -> list[tuple[str, str, str]]:
+    """Return --init-param entries for component as [(name, type, default), ...]."""
+    return [
+        (p["name"], p["type"], p["default"])
+        for p in cfg.get(component, {}).get("init_params", [])
+    ]
+
+
 def methods(cfg: dict, component: str) -> list[dict]:
     """Return declared extra methods for component (empty list if none)."""
     return list(cfg.get(component, {}).get("methods", []))
@@ -181,6 +189,7 @@ def add_component(
     array_args_: list[tuple[str, str]] = (),
     no_state_: bool = False,
     no_step_: bool = False,
+    init_params_: list[tuple[str, str, str]] = (),
 ) -> dict:
     entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
@@ -198,6 +207,10 @@ def add_component(
         entry["no_state"] = "true"
     if no_step_:
         entry["no_step"] = "true"
+    if init_params_:
+        entry["init_params"] = [
+            {"name": n, "type": t, "default": d} for n, t, d in init_params_
+        ]
     cfg[component] = entry
     return cfg
 
@@ -254,6 +267,12 @@ def _dump(cfg: dict) -> str:
             lines.append(f'name = "{s["name"]}"')
             lines.append(f'type = "{s["type"]}"')
             lines.append(f'default = "{s["default"]}"')
+            lines.append("")
+        for p in comp_data.get("init_params", []):
+            lines.append(f"[[{comp}.init_params]]")
+            lines.append(f'name = "{p["name"]}"')
+            lines.append(f'type = "{p["type"]}"')
+            lines.append(f'default = "{p["default"]}"')
             lines.append("")
         for m in comp_data.get("methods", []):
             lines.append(f"[[{comp}.methods]]")

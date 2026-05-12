@@ -29,6 +29,7 @@ Commands:
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --init-param name:type[:default]  Constructor param for --no-state objects; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 
@@ -286,6 +287,7 @@ def main() -> None:
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
         array_args_obj: list[tuple[str, str]] = []
+        init_params_obj: list[tuple[str, str, str]] = []
         no_state = False
         no_step = False
         impl_spec: str | None = None
@@ -366,6 +368,9 @@ def main() -> None:
             elif tok == "--no-step":
                 no_step = True
                 i += 1
+            elif tok == "--init-param":
+                ip_var, i = _parse_state_flags(remaining, i)
+                init_params_obj.append(ip_var)
             elif tok == "--impl":
                 i += 1
                 if i >= len(remaining):
@@ -391,6 +396,10 @@ def main() -> None:
             print("error: --no-state and --state are mutually exclusive.",
                   file=sys.stderr)
             sys.exit(1)
+        if init_params_obj and not no_state:
+            print("error: --init-param requires --no-state.",
+                  file=sys.stderr)
+            sys.exit(1)
 
         impl_body_obj: str | None = None
         if impl_spec is not None:
@@ -400,7 +409,8 @@ def main() -> None:
                     None if (no_state or not state_vars) else state_vars,
                     perf=perf, arg_type=arg_type, return_type=return_type,
                     array_args=array_args_obj, no_state=no_state,
-                    no_step=no_step, impl_body=impl_body_obj)
+                    no_step=no_step, impl_body=impl_body_obj,
+                    init_params=init_params_obj)
 
     elif cmd == "method":
         if len(args) < 3:

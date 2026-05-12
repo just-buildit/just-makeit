@@ -149,6 +149,7 @@ def run(
     no_state: bool = False,
     no_step: bool = False,
     impl_body: str | None = None,
+    init_params: list[tuple[str, str, str]] = (),
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -197,7 +198,8 @@ def run(
     ctx.update(sample_ctx)
 
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
-                                array_args=array_args, no_state=no_state))
+                                array_args=array_args, no_state=no_state,
+                                init_params=init_params))
     ctx.update(T.make_perf_ctx(perf))
     ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type, no_step=no_step))
 
@@ -337,7 +339,8 @@ def run(
     C.add_component(cfg, comp, vars_,
                     arg_type_=arg_type, return_type_=return_type,
                     array_args_=array_args,
-                    no_state_=no_state, no_step_=no_step)
+                    no_state_=no_state, no_step_=no_step,
+                    init_params_=init_params)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

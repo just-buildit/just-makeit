@@ -89,11 +89,15 @@ def _obj_stub(cfg: dict, obj: str) -> str:
     lines: list[str] = [f"class {Component}:"]
 
     # __init__
+    ip = C.init_params(cfg, obj)
     if state_vars and not no_state:
-        init_params = ", ".join(
+        init_params_str = ", ".join(
             f"{n}: {_py(t)} = ..." for n, t, _ in state_vars
         )
-        lines.append(f"    def __init__(self, {init_params}) -> None: ...")
+        lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
+    elif ip:
+        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in ip)
+        lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
         lines.append("    def __init__(self) -> None: ...")
 

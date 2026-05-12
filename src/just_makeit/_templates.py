@@ -137,6 +137,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "s",
         "zero": "NULL",
         "py_type": "str",
+        "to_c": lambda n: n,
         "to_py": lambda v: f"PyUnicode_FromString({v})",
     },
 }
@@ -178,6 +179,8 @@ _ARRAY_DTYPE: dict[str, tuple[str, str]] = {
     "uint16":     ("uint16_t",        "NPY_UINT16"),
     "uint32":     ("uint32_t",        "NPY_UINT32"),
     "uint64":     ("uint64_t",        "NPY_UINT64"),
+    "uintp":      ("size_t",          "NPY_UINTP"),
+    "intp":       ("ptrdiff_t",       "NPY_INTP"),
 }
 
 SUPPORTED_ARRAY_DTYPES: frozenset[str] = frozenset(_ARRAY_DTYPE)
@@ -725,6 +728,109 @@ def is_valid_type(ctype: str) -> bool:
     return ctype in _CTYPE_META or parse_array_type(ctype) is not None
 
 
+def _build_no_state_init_ctx(
+    component: str,
+    Component: str,
+    params: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    """Build the init-parse context keys for a --no-state object with --init-param.
+
+    Generates create_params, init_parse_block, create_call_args, pyi stubs,
+    and related keys from a list of (name, ctype, default) scalar params.
+    The stateful path (state_struct_fields, getter/setters, reset, etc.) is
+    intentionally excluded — callers manage all object state themselves.
+    """
+    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in params]
+    create_params = ", ".join(scalar_param_parts) or "void"
+
+    doc_parts = [
+        f" * @param {name}  {name} (default: {dflt})."
+        for name, _, dflt in params
+    ]
+    create_param_docs = (
+        "\n".join(doc_parts)
+        or " * @param (none)  Caller is responsible for all state management."
+    )
+
+    kwlist_items = [f'"{name}"' for name, _, __ in params] + ["NULL"]
+    init_kwlist = ", ".join(kwlist_items)
+
+    local_lines: list[str] = []
+    post_lines: list[str] = []
+    parse_args: list[str] = []
+    for name, ct, dflt in params:
+        meta = _CTYPE_META[ct]
+        if meta.get("parse_type"):
+            local_lines.append(
+                f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};"
+            )
+            post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
+            parse_args.append(f"&{name}_raw")
+        else:
+            local_lines.append(f"    {ct} {name} = {dflt};")
+            parse_args.append(f"&{name}")
+
+    init_locals = "\n".join(local_lines)
+    init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
+
+    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in params)
+    init_parse_fmt = "|" + scalar_fmt_str
+
+    init_parse_args = ", ".join(parse_args)
+    create_call_args = ", ".join(name for name, _, __ in params)
+
+    init_parse_block = (
+        f"    static char *kwlist[] = {{{init_kwlist}}};\n"
+        f"{init_locals}\n"
+        f"\n"
+        f'    if (!PyArg_ParseTupleAndKeywords(args, kwds,'
+        f' "{init_parse_fmt}", kwlist,\n'
+        f"                                     {init_parse_args}))\n"
+        f"        return -1;\n"
+        f"{init_post_parse}"
+    )
+
+    init_params_pyi = ", ".join(
+        f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
+        for name, ct, dflt in params
+    )
+    pyi_param_docs = "\n".join(
+        f"    {name} : {_CTYPE_META[ct]['py_type']}, default {_py_default(ct, dflt)}\n"
+        f"        {name} constructor parameter."
+        for name, ct, dflt in params
+    )
+    py_create_args = ", ".join(
+        _py_default(ct, dflt) for _, ct, dflt in params
+    )
+    c_create_args = ", ".join(dflt for _, _, dflt in params)
+
+    test_obj = f"        obj = {Component}({py_create_args})"
+
+    return {
+        "create_params":     create_params,
+        "create_param_docs": create_param_docs,
+        "init_kwlist":       init_kwlist,
+        "init_locals":       init_locals,
+        "init_post_parse":   init_post_parse,
+        "init_parse_fmt":    init_parse_fmt,
+        "init_parse_args":   init_parse_args,
+        "init_parse_block":  init_parse_block,
+        "create_call_args":  create_call_args,
+        "init_params_pyi":   init_params_pyi,
+        "pyi_param_docs":    pyi_param_docs,
+        "py_create_args":    py_create_args,
+        "c_create_args":     c_create_args,
+        "getter_setter_test_py": (
+            test_obj + "\n"
+            "        pass  # no auto-state; add assertions for your fields"
+        ),
+        "reset_test_py": (
+            test_obj + "\n"
+            "        pass  # no auto-state; add assertions for your reset"
+        ),
+    }
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -732,6 +838,7 @@ def make_state_ctx(
     array_args: list[tuple[str, str]] = (),
     roles: dict[str, str] | None = None,
     no_state: bool = False,
+    init_params: list[tuple[str, str, str]] = (),
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -751,7 +858,7 @@ def make_state_ctx(
     soft-reset of runtime state (e.g. phase accumulator, filter history).
     """
     if no_state:
-        return {
+        base = {
             "state_struct_fields":    "    /* <<IMPLEMENT: add fields >> */",
             "create_params":          "void",
             "create_param_docs":      " * @param (none)  Caller is responsible for all state management.",
@@ -791,6 +898,9 @@ def make_state_ctx(
             "property_decls":         "",
             "property_struct_fields": "",
         }
+        if init_params:
+            base.update(_build_no_state_init_ctx(component, Component, list(init_params)))
+        return base
 
     if roles is None:
         roles = {}
