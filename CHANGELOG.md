@@ -1,5 +1,40 @@
 # Changelog
 
+## \[0.10.3\] — 2026-05-12
+
+### Fixed
+
+- **Gap #1 — `__init__.py` preservation**: `_regenerate_module` now merges new
+  class/function exports into an existing `__init__.py` instead of
+  overwriting it. User-written wrapper classes, docstrings, and other content
+  below the re-export line are left untouched. Also handles the empty-import
+  initial state (file created by `jm module` before any objects are added).
+- **Gap #2 — `batch` flag persistence**: `batch = true` is now written to
+  `just-makeit.toml` so regenerated methods use array-input wrappers
+  (`METH_VARARGS`) rather than reverting to `METH_NOARGS`. The `--batch` flag
+  is also wired through the CLI `method` command.
+- **Gap #3 — C body preservation on regeneration**: `_regenerate_module` now
+  extracts existing `static PyObject *` function bodies before overwriting
+  `module_ext.c` and splices them back in afterwards. Brace-counting (not
+  regex) handles parameters with nested parens such as `Py_UNUSED(ignored)`.
+- **Gap #4 — `--no-step` in mixed modules**: objects scaffolded with
+  `--no-step` no longer emit `step`/`steps` wrappers when co-resident in a
+  module with objects that do have a step.
+- **Gap #5 — phantom `module_core.h` include**: `module_ext.c` no longer
+  unconditionally includes `<module>/<module>_core.h`. The include is emitted
+  only when module-level functions are present (they are the only consumers
+  of that header).
+- **Gap #6 — CMakeLists external lib block propagation**: when a new object is
+  added to a module, `if(VAR) target_link_libraries/target_include_directories …
+  endif()` blocks found in sibling CMakeLists files are copied and adapted for
+  the new component automatically.
+
+### Added
+
+- **+11 tests** (716 total): `tests/test_module_gaps.py` covering all six gaps.
+
+______________________________________________________________________
+
 ## \[0.10.2\] — 2026-05-11
 
 ### Added

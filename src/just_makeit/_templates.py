@@ -3624,8 +3624,7 @@ MODULE_EXT_C_HEADER = """\
 #include <numpy/arrayobject.h>
 #include <complex.h>
 
-#include "<<module>>/<<module>>_core.h"
-"""
+<<module_core_include>>"""
 
 MODULE_EXT_C_FOOTER = """\
 
@@ -3810,7 +3809,20 @@ def render_module_ext_c(
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
     fn_ctx = make_functions_ctx(module, Module, list(functions))
-    header_ctx = {"module": module, "Module": Module, "object_list": object_list}
+    # Only include the module-level core header when there are module functions
+    # that use it.  Objects have their own per-component includes in
+    # COMPONENT_TYPE_SECTION; the module_core.h is only needed when module-
+    # level C functions (declared in module_core.h) are wired into the ext.c.
+    has_module_fns = bool(functions)
+    module_core_include = (
+        f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
+    )
+    header_ctx = {
+        "module": module,
+        "Module": Module,
+        "object_list": object_list,
+        "module_core_include": module_core_include,
+    }
     parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
 
     if fn_ctx["function_wrappers"]:

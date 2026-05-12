@@ -284,6 +284,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'return_type = "{m["return_type"]}"')
             if m.get("variable_output"):
                 lines.append("variable_output = true")
+            if m.get("batch"):
+                lines.append("batch = true")
             if m.get("multi_output"):
                 mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
                 lines.append(f"multi_output = [{mo_str}]")

@@ -111,11 +111,13 @@ class TestExtCHeader:
         include_pos = ext.index('#include "fft/fft_core.h"')
         assert numpy_pos < include_pos
 
-    def test_core_h_always_included_even_without_functions(self, tmp_path):
+    def test_core_h_omitted_without_functions(self, tmp_path):
+        # Gap #5: phantom include — module-level core.h must NOT appear when
+        # there are no module-level functions (it is only needed by those fns).
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
-        assert '#include "fft/fft_core.h"' in ext
+        assert '#include "fft/fft_core.h"' not in ext
 
 
 class TestExtCFooter:

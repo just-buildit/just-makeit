@@ -425,6 +425,7 @@ def main() -> None:
         arg_type = "void"
         return_type = "float _Complex"
         variable_output = False
+        batch_method = False
         multi_output: list[str] = []
         method_params: list[tuple[str, str]] = []
         out_type: str | None = None
@@ -445,6 +446,9 @@ def main() -> None:
                 i += 1
             elif tok == "--variable-output":
                 variable_output = True
+                i += 1
+            elif tok == "--batch":
+                batch_method = True
                 i += 1
             elif tok == "--multi-output":
                 i += 1
@@ -585,7 +589,7 @@ def main() -> None:
             Path.cwd(), object_name, method_name, module,
             arg_type, return_type, variable_output, multi_output,
             params=method_params, out_type=out_type, out_divisor=out_divisor,
-            impl_body=impl_body_m,
+            impl_body=impl_body_m, batch=batch_method,
         )
 
     elif cmd == "property":

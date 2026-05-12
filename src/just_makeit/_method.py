@@ -225,6 +225,7 @@ def run(
     out_type: str | None = None,
     out_divisor: int = 1,
     impl_body: str | None = None,
+    batch: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -299,6 +300,8 @@ def run(
         method_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if variable_output:
         method_entry["variable_output"] = True
+    if batch:
+        method_entry["batch"] = True
     if multi_output:
         method_entry["multi_output"] = multi_output
     if out_type:

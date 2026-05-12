@@ -12,6 +12,7 @@ Adds a Python type to an existing project:
     from my_pkg.filter import Fir
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -63,6 +64,203 @@ def _make_object_ctx(
     return ctx
 
 
+def _copy_external_cmake_blocks(
+    root: Path, new_comp: str, new_cmake_path: Path
+) -> None:
+    """Copy ``if(VAR) … endif()`` blocks from sibling CMakeLists to *new_comp*.
+
+    Looks at ``native/src/*/CMakeLists.txt`` files (excluding the new
+    component's own file) for ``if(SOME_VAR)`` blocks that contain
+    ``target_include_directories`` or ``target_link_libraries``.  The first
+    match is adapted (component name replaced) and appended to *new_cmake_path*
+    so the new OBJECT library gets the same external library wiring without
+    manual edits.
+
+    This handles projects like doppler-based extensions that set
+    ``if(DOPPLER_C_LIB)`` blocks — every new component inherits the same
+    conditional include/link paths automatically.
+    """
+    src_dir = root / "native" / "src"
+    if not src_dir.exists():
+        return
+
+    # Match a standalone if(VAR) … endif() block at the top level of cmake
+    block_pat = re.compile(
+        r'(if\s*\(\s*\w+\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))',
+        re.MULTILINE,
+    )
+
+    for cmake_file in sorted(src_dir.glob("*/CMakeLists.txt")):
+        if cmake_file.parent.name == new_comp:
+            continue
+        text = cmake_file.read_text(encoding="utf-8")
+        for m in block_pat.finditer(text):
+            block = m.group(1)
+            if ("target_include_directories" in block
+                    or "target_link_libraries" in block):
+                old_comp = cmake_file.parent.name
+                adapted = block.replace(old_comp, new_comp)
+                existing = new_cmake_path.read_text(encoding="utf-8")
+                if adapted not in existing:
+                    new_cmake_path.write_text(
+                        existing.rstrip("\n") + "\n\n" + adapted + "\n",
+                        encoding="utf-8",
+                    )
+                    print(f"  update  {new_cmake_path}  (external lib block)")
+                return  # one source file is enough
+
+
+def _merge_module_init(
+    existing: str, module: str, all_exports: list[str]
+) -> str:
+    """Merge new exports into an existing __init__.py without destroying content.
+
+    Updates only the ``from .<module> import ...`` line and ``__all__`` list to
+    include any newly added type/function names, leaving wrapper classes,
+    docstrings, and all other user content intact.
+
+    >>> src = '# dsp/__init__.py\\nfrom .dsp import Nco\\n__all__ = ["Nco"]\\n'
+    >>> print(_merge_module_init(src, 'dsp', ['Nco', 'Mixer']))
+    # dsp/__init__.py
+    from .dsp import Nco, Mixer
+    __all__ = ["Nco", "Mixer"]
+    <BLANKLINE>
+    """
+    # Match the import line whether it has names or is empty (e.g. after
+    # `just-makeit module foo` before any objects are added).
+    import_pat = re.compile(
+        rf'^from \.{re.escape(module)} import(.*)$', re.MULTILINE
+    )
+    all_pat = re.compile(r'^__all__\s*=\s*\[([^\]]*)\]', re.MULTILINE)
+
+    existing_names: list[str] = []
+    existing_set: set[str] = set()
+    m = import_pat.search(existing)
+    if m:
+        for n in m.group(1).split(','):
+            name = n.strip()
+            if name and name not in existing_set:
+                existing_names.append(name)
+                existing_set.add(name)
+
+    merged: list[str] = list(existing_names)
+    for name in all_exports:
+        if name not in existing_set:
+            merged.append(name)
+            existing_set.add(name)
+
+    if not merged:
+        return existing
+
+    imports_str = ", ".join(merged)
+    all_str = ", ".join(f'"{n}"' for n in merged)
+    new_import = f"from .{module} import {imports_str}"
+    new_all = f'__all__ = [{all_str}]'
+
+    result = import_pat.sub(new_import, existing) if m else existing
+    if all_pat.search(result):
+        result = all_pat.sub(new_all, result)
+    else:
+        result = result.rstrip('\n') + f"\n{new_all}\n"
+    return result
+
+
+def _extract_c_function_bodies(source: str) -> dict[str, str]:
+    """Extract ``static PyObject *`` function bodies from C source.
+
+    Returns ``{function_name: full_function_text}`` for every
+    ``static PyObject *`` function in *source*.  Used to preserve
+    user-edited implementations when regenerating module_ext.c.
+
+    Uses brace-counting rather than a regex for the body so that nested
+    braces and parentheses inside parameter lists (e.g. ``Py_UNUSED(...)``)
+    are handled correctly.
+    """
+    # Locate every "static PyObject *\n<name>(" header.
+    header_pat = re.compile(r'static PyObject \*\n(\w+)\(')
+    result: dict[str, str] = {}
+    for hm in header_pat.finditer(source):
+        fn_name = hm.group(1)
+        start = hm.start()
+        # Scan forward from the match to find the opening '{' of the body.
+        i = hm.end()
+        # Skip past the parameter list (balanced parens from the '(' we just
+        # passed — but header_pat consumed the '(' so depth starts at 1).
+        depth = 1
+        while i < len(source) and depth:
+            if source[i] == '(':
+                depth += 1
+            elif source[i] == ')':
+                depth -= 1
+            i += 1
+        # Now scan for the opening '{'.
+        while i < len(source) and source[i] != '{':
+            i += 1
+        if i >= len(source):
+            continue
+        brace_start = i
+        # Collect the full body using balanced brace counting.
+        depth = 0
+        end = brace_start
+        while end < len(source):
+            if source[end] == '{':
+                depth += 1
+            elif source[end] == '}':
+                depth -= 1
+                if depth == 0:
+                    end += 1
+                    break
+            end += 1
+        result[fn_name] = source[start:end]
+    return result
+
+
+def _restore_c_function_bodies(
+    new_source: str, preserved: dict[str, str]
+) -> str:
+    """Replace stub implementations in *new_source* with *preserved* bodies.
+
+    Only replaces functions that already existed in the old source AND still
+    exist in the newly generated source.  New functions (first-time stubs) are
+    left unchanged, so fresh scaffolded methods get their TODO stubs.
+    """
+    for fn_name, old_body in preserved.items():
+        # Locate the function in new_source using the same brace-counting
+        # approach (handles Py_UNUSED and other nested-paren params).
+        header_pat = re.compile(
+            r'static PyObject \*\n' + re.escape(fn_name) + r'\('
+        )
+        hm = header_pat.search(new_source)
+        if not hm:
+            continue
+        start = hm.start()
+        i = hm.end()
+        depth = 1
+        while i < len(new_source) and depth:
+            if new_source[i] == '(':
+                depth += 1
+            elif new_source[i] == ')':
+                depth -= 1
+            i += 1
+        while i < len(new_source) and new_source[i] != '{':
+            i += 1
+        if i >= len(new_source):
+            continue
+        depth = 0
+        end = i
+        while end < len(new_source):
+            if new_source[end] == '{':
+                depth += 1
+            elif new_source[end] == '}':
+                depth -= 1
+                if depth == 0:
+                    end += 1
+                    break
+            end += 1
+        new_source = new_source[:start] + old_body + new_source[end:]
+    return new_source
+
+
 def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
@@ -91,10 +289,20 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                                          frozenset(n for n, _, _ in state_vars)))
         comp_ctxs.append(ctx)
 
-    # Module ext.c
+    # Module ext.c — preserve any user-edited C function bodies before
+    # overwriting so that implementations added via `just-makeit method`
+    # (or manually edited) survive re-scaffolding.
     functions = C.module_functions(cfg, module)
+    ext_c_path = root / "native" / "src" / module / f"{module}_ext.c"
+    existing_bodies: dict[str, str] = {}
+    if ext_c_path.exists():
+        existing_bodies = _extract_c_function_bodies(
+            ext_c_path.read_text(encoding="utf-8")
+        )
     ext_c = T.render_module_ext_c(module, comp_ctxs, functions)
-    _write(root / "native" / "src" / module / f"{module}_ext.c", ext_c, "update")
+    if existing_bodies:
+        ext_c = _restore_c_function_bodies(ext_c, existing_bodies)
+    _write(ext_c_path, ext_c, "update")
 
     # Module CMakeLists
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
@@ -149,20 +357,28 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "update",
     )
 
-    # Subpackage __init__.py
+    # Subpackage __init__.py — merge new exports into existing file so that
+    # user-written wrapper classes and docstrings are not destroyed.
     Components = [ctx["Component"] for ctx in comp_ctxs]
     fn_names = [f["name"] for f in functions]
     all_exports = Components + fn_names
-    object_imports = ", ".join(all_exports)
-    object_all = ", ".join(f'"{name}"' for name in all_exports)
-    init_ctx = {
-        "module": module,
-        "Module": Module,
-        "object_imports": object_imports,
-        "object_all": object_all,
-    }
     pkg_module_dir = root / "src" / pkg / module
-    _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx), "update")
+    init_path = pkg_module_dir / "__init__.py"
+    if init_path.exists():
+        merged = _merge_module_init(
+            init_path.read_text(encoding="utf-8"), module, all_exports
+        )
+        _write(init_path, merged, "update")
+    else:
+        object_imports = ", ".join(all_exports)
+        object_all = ", ".join(f'"{name}"' for name in all_exports)
+        init_ctx = {
+            "module": module,
+            "Module": Module,
+            "object_imports": object_imports,
+            "object_all": object_all,
+        }
+        _write(init_path, T.render(T.MODULE_INIT_PY, init_ctx), "update")
 
     # Type stubs — regenerated in full every time the module changes.
     _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module), "update")
@@ -263,10 +479,12 @@ def run(
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
         h_path.write_text(h_text, encoding="utf-8")
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
-    _write(
-        root / "native" / "src" / comp / "CMakeLists.txt",
-        r(T.CMAKE_LISTS_OBJECT_CORE),
-    )
+    obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+    _write(obj_cmake_path, r(T.CMAKE_LISTS_OBJECT_CORE))
+    # Propagate any external-library cmake blocks from sibling objects so the
+    # new component picks up the same if(SOME_LIB) include/link wiring without
+    # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
+    _copy_external_cmake_blocks(root, comp, obj_cmake_path)
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
