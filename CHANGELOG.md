@@ -1,5 +1,38 @@
 # Changelog
 
+## \[0.10.4\] — 2026-05-12
+
+### Added
+
+- **PyMethodDef doctests**: all generated `ml_doc` strings now contain working
+  Python doctests (exact scalar values for scalar returns, shape/dtype checks
+  for array returns). Run them via `pytest --doctest-modules`.
+- **Doxygen scaffolding**: `jm new` now writes a `Doxyfile` configured for the
+  generated project so `doxygen` works out of the box.
+- **`jm-run-tests` entry point**: `jm-run-tests` (bundled with the PyPI
+  package) installs and runs the test suite via `uv run`, replacing per-CI
+  ad-hoc install commands in all workflows.
+- **`jm-install-deps` in all CI workflows**: `ci.yml` and `release.yml` now
+  use the packaged `jm-install-deps` / `jm-run-tests` entry points instead of
+  inline shell incantations.
+- **Dynamic example discovery**: `_EXAMPLES` is now assembled at import time by
+  walking `examples/` for subdirs that contain a `test.py`, so new examples are
+  picked up without editing `_example.py`.
+
+### Fixed
+
+- **Windows — CMake Python3 detection**: the generated `Makefile` now derives
+  `Python3_EXECUTABLE` via `sys.executable` (normalised to POSIX slashes with
+  `pathlib`) instead of `which python3`. Git Bash's `which` returns a
+  Unix-style path that Windows CMake 4.3 cannot execute.
+- **Windows — example tests**: `test_example_fir_filter`, `_running_stats`, and
+  `_sliding_correlator` now skip explicitly on Windows (matching the guard
+  already in `test_examples.py`). MinGW `gcc` is present on runners so the old
+  `_require("gcc")` guard did not fire, but CMake still selected MSVC which
+  rejects C99 `float complex`.
+
+______________________________________________________________________
+
 ## \[0.10.3\] — 2026-05-12
 
 ### Fixed
