@@ -1,7 +1,7 @@
 """Integration test: feed irregular bursts into Chunker, verify chunk output.
 
 Run from the project root after building:
-    python3 .steps/06_demo.py
+    python3 .steps/04_demo.py
 
 Constraint: with chunk_size=64 and an internal buf[256], the output buffer
 pre-allocated by --variable-output holds 256 samples (4 complete chunks).

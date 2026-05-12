@@ -76,7 +76,7 @@ def run(root: Path) -> None:
     assert "chunker_push" in core_c
 
     # 4. Patch in the real implementation
-    _cmd([sys.executable, str(STEPS / "04_patch.py")], cwd=proj)
+    _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=proj)
 
     # 5. CMake configure + build + CTest
     _cmd(
@@ -91,7 +91,7 @@ def run(root: Path) -> None:
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
     # 6. Python integration: feed irregular bursts, verify chunk boundaries
-    _cmd([sys.executable, str(STEPS / "06_demo.py")], cwd=proj)
+    _cmd([sys.executable, str(STEPS / "04_demo.py")], cwd=proj)
 
     # 7. Verify: push is in the Python extension; step is absent (--no-step)
     ext = (proj / "native/src/chunker/chunker_ext.c").read_text()

@@ -1,25 +1,6 @@
 ## 4. Use from Python
 
-```python
-import numpy as np
-from my_chunker import Chunker
-
-CHUNK = 64
-c = Chunker(chunk_size=CHUNK)
-
-# Feed samples in irregular bursts — output varies per call.
-for block in audio_source():
-    view = c.push(block)
-
-    # view is a zero-copy slice of the object's internal output buffer.
-    # len(view) is always a multiple of chunk_size (including zero).
-    if len(view) == 0:
-        continue    # not enough data yet — keep feeding
-
-    # Copy before the next push() call, which overwrites the same buffer.
-    chunks = view.copy().reshape(-1, CHUNK)
-    for chunk in chunks:
-        process(chunk)
+```{04_demo.py}
 ```
 
 ### Memory ownership diagram
