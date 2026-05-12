@@ -31,7 +31,7 @@ jobs:
         run: |
           VERSION="${{ github.event.workflow_run.head_branch }}"
           for i in $(seq 1 20); do
-            pip install "just-makeit==${VERSION#v}" --no-cache-dir && break
+            pip install "just-makeit==${VERSION#v}" numpy --no-cache-dir && break
             echo "Not yet, retry $i/20..."
             sleep 30
           done
