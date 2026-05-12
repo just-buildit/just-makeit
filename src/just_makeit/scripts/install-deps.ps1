@@ -112,6 +112,7 @@ function Install-MinGWDirect {
 
 $NeedCmake = -not (Find-Exe "cmake")
 $NeedCC    = -not ((Find-Exe "gcc") -or (Find-Exe "clang") -or (Find-Exe "cl"))
+$NeedMake  = -not ((Find-Exe "mingw32-make") -or (Find-Exe "make"))
 
 if (-not $NeedCmake) {
     Skip "cmake $(cmake --version | Select-Object -First 1)"
@@ -123,13 +124,18 @@ if (-not $NeedCC) {
 } else {
     Will "C compiler  (will install)"
 }
-if (-not ($NeedCmake -or $NeedCC)) {
+if (-not $NeedMake) {
+    Skip "make / mingw32-make"
+} else {
+    Will "make  (will install)"
+}
+if (-not ($NeedCmake -or $NeedCC -or $NeedMake)) {
     Skip "no system packages needed"
 }
 
 if ($Check) {
     Write-Host ""
-    if ($NeedCmake -or $NeedCC) {
+    if ($NeedCmake -or $NeedCC -or $NeedMake) {
         Write-Host "Run without -Check to install."
         exit 1
     } else {
@@ -138,7 +144,7 @@ if ($Check) {
     }
 }
 
-if ($NeedCmake -or $NeedCC) {
+if ($NeedCmake -or $NeedCC -or $NeedMake) {
 
     # 1. MSYS2 ─────────────────────────────────────────────────────────────────
     if ($env:MSYSTEM -or (Find-Exe "pacman")) {
@@ -146,6 +152,7 @@ if ($NeedCmake -or $NeedCC) {
         $pkgs = @()
         if ($NeedCmake) { $pkgs += "mingw-w64-x86_64-cmake" }
         if ($NeedCC)    { $pkgs += "mingw-w64-x86_64-gcc" }
+        if ($NeedMake)  { $pkgs += "mingw-w64-x86_64-make" }
         if ($pkgs) { & pacman -Sy --noconfirm @pkgs }
     }
 
@@ -155,9 +162,10 @@ if ($NeedCmake -or $NeedCC) {
         if ($NeedCmake) {
             & winget install --id Kitware.CMake -e --silent --accept-package-agreements
         }
-        if ($NeedCC) {
-            # LLVM/clang is the most reliably packaged compiler via winget
-            & winget install --id LLVM.LLVM -e --silent --accept-package-agreements
+        if ($NeedCC -or $NeedMake) {
+            # MinGW-w64 (LLVM/clang is an alternative but mingw bundles make)
+            & winget install --id GnuWin32.Make -e --silent --accept-package-agreements
+            & winget install --id MSYS2.MSYS2 -e --silent --accept-package-agreements
         }
     }
 
@@ -166,7 +174,7 @@ if ($NeedCmake -or $NeedCC) {
         Info "Chocolatey"
         $pkgs = @()
         if ($NeedCmake) { $pkgs += "cmake" }
-        if ($NeedCC)    { $pkgs += "mingw" }
+        if ($NeedCC -or $NeedMake) { $pkgs += "mingw" }
         if ($pkgs) { & choco install -y @pkgs }
     }
 
@@ -174,14 +182,14 @@ if ($NeedCmake -or $NeedCC) {
     elseif (Find-Exe "scoop") {
         Info "Scoop"
         if ($NeedCmake) { & scoop install cmake }
-        if ($NeedCC)    { & scoop install gcc }
+        if ($NeedCC -or $NeedMake) { & scoop install gcc }
     }
 
     # 5. Direct download fallback ──────────────────────────────────────────────
     else {
         Warn "No package manager found — falling back to direct download."
         if ($NeedCmake) { Install-CmakeDirect }
-        if ($NeedCC)    { Install-MinGWDirect }
+        if ($NeedCC -or $NeedMake) { Install-MinGWDirect }
     }
 }
 

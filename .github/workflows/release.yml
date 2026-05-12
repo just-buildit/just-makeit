@@ -6,11 +6,11 @@ on:
       - "v*"
 
 jobs:
-  test-unix:
+  test:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
@@ -21,33 +21,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - run: uv tool install .
-      - run: jm-run-tests
-
-  test-windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-        msys2-sys: [mingw64, ucrt64]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msys2-sys }}
-          pacboy: gcc:p cmake:p make:p
-          update: false
-
-      - run: uv tool install .
+      - run: jm-install-deps ${{ runner.temp }}/jm-venv
       - run: jm-run-tests
 
   build:
-    needs: [test-unix, test-windows]
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
