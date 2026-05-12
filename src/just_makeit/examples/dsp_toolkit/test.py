@@ -31,7 +31,7 @@ def run(root: Path) -> None:
     new_run(
         "dsp_toolkit",
         dest,
-        object_name="gain",
+        object_names=["gain"],
         state_vars=[("gain", "float", "1.0")],
         arg_type="float",
         return_type="float",

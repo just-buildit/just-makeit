@@ -10,94 +10,64 @@ _USAGE = """\
 Usage: just-makeit <command> [options]
 
 Commands:
-  new <proj> [dir] [--object name] [--state name:type[:default] ...] [--basic] [--perf] [--pure]
-             [--arg-type TYPE] [--return-type TYPE] [--module name ...]
-                     Create a new project; optionally scaffold a first object or module(s).
-                     --object name      Scaffold a standalone object (.so) in the same step.
-                     --module name      Scaffold an empty extension module; repeatable.
-                     --basic            Use a plain Makefile instead of CMake.
-                     --perf             Generate jm_perf.h with JM_HOT, JM_LIKELY, … macros.
-                     --pure             Generate a stateless object (scalar or struct params).
-                     --arg-type TYPE    C type for step()/fn() input x (default: float _Complex).
-                                        Use void for generator objects with no scalar input.
-                     --return-type TYPE C type for step()/fn() return value (default: --arg-type).
-                                        Use void for sink objects that consume input, return nothing.
+  new <proj> [dir] [OPTIONS]    Create a new project scaffold.
+    --object name               Also scaffold a standalone object; repeatable.
+    --module name               Also scaffold an extension module; repeatable.
+    --state name:type[:default] Initial state variable; repeatable.
+    --arg-type TYPE             step() input type (default: float _Complex).
+    --return-type TYPE          step() return type (default: --arg-type).
+    --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --basic                     Emit a plain Makefile instead of CMake.
 
-  module <name>      Scaffold a new Python extension module (subpackage .so that
-                     hosts multiple types added via 'object').
+  module <name>                 Add an extension module subpackage to a project.
 
-  object <name> [--module name] [--state|--param name:type[:default] ...] [--perf] [--pure]
-             [--arg-type TYPE] [--return-type TYPE] [--no-state] [--no-step]
-                     Add a Python type to the project.
-                     Without --module: standalone object with its own .so.
-                     With --module:    type grouped into a shared module subpackage .so.
-                     --arg-type TYPE    See 'new' above.
-                     --return-type TYPE See 'new' above (void supported).
-                     --no-state         Omit default state var; generate <<IMPLEMENT>> stubs
-                                        in create/destroy/reset; no constructor args.
-                                        Mutually exclusive with --state.
-                     --no-step          Suppress step() and steps() entirely (both C and Python).
+  object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
+    --module name               Place object inside this module's .so.
+    --state name:type[:default] State variable; repeatable.
+    --arg-type TYPE             step() input type (default: float _Complex).
+    --return-type TYPE          step() return type (default: --arg-type).
+    --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --no-state                  Generate empty state struct; user fills in fields manually.
+    --no-step                   Omit step() method.
 
-  method <object> <method_name> [--module name]
-             [--param name:type ...] [--param name:type[] ...] [--return-type TYPE]
-             [--variable-output] [--arg-type TYPE] [--multi-output TYPE ...]
-                     Add a named execute method to an existing object.
-                     --param name:type      Named scalar parameter; repeatable.
-                     --param name:type[]    Named numpy array parameter; repeatable.
-                                            Generates (const elem_t *name, size_t name_len) in C
-                                            and PyArray_FROM_OTF parse in the Python wrapper.
-                     --return-type TYPE     C return type (void = no return value).
-                     --arg-type TYPE        Single array-style input (alternative to --param).
-                     --variable-output      Pre-allocate output buffer at init; return zero-copy view.
-                     --multi-output TYPE    Extra return type (produces tuple); repeatable.
+  method <obj> <name> [OPTIONS] Add a named execute variant to an object.
+    --module name               Module the object lives in.
+    --param name:type           Input parameter; repeatable.
+    --arg-type TYPE             Bulk-input array type.
+    --return-type TYPE          Return type.
+    --variable-output           Output length determined at runtime.
+    --multi-output TYPE         Emit a second output array of this type.
 
-  property <object> <prop_name> [--module name] --type TYPE [--writable]
-                     Add a read-only (or read-write) Python property to an existing object.
+  property <obj> <name> [OPTIONS]  Add a Python property to an object.
+    --module name               Module the object lives in.
+    --type TYPE                 C type of the property value.
+    --writable                  Generate a setter in addition to the getter.
+    --field                     Back property with a struct field (no getter C fn).
 
-  function <name> --module <mod> [--param name:type ...] [--param name:type[] ...]
-             [--return-type TYPE] [--doc "text"]
-                     Add a module-level function (no type object) to an existing module.
-                     --param name:type      Named scalar parameter; repeatable.
-                     --param name:type[]    Named numpy array parameter; repeatable.
-                     --return-type TYPE     C return type (default: void).
-                     --doc "text"           Python docstring for the function.
+  function <name> [OPTIONS]     Add a module-level C function.
+    --module name               Module to add the function to (required).
+    --param name:type           Input parameter; repeatable.
+    --return-type TYPE          Return type (default: void).
+    --doc "text"                Docstring shown in Python help().
 
-  add --state|--param name:type[:default] [--object name] [...]
-                     Add state/param variables to an existing standalone object.
+  add [OPTIONS]                 Append variables to the current object.
+    --state name:type[:default] Add a state variable.
+    --param name:type[:default] Add a constructor parameter.
 
-  perf               Upgrade an existing project to use JM_FORCEINLINE / JM_HOT
-                     annotations without overwriting any user code.
-  config [key value] Show or edit project configuration.
-  build [dir]        Configure + build C, then package wheel into dir (default: dist/).
-  test               Build and run CTest + pytest.
-  dry-run            Show what would get compiled without building.
-  install-deps [path]
-                     Install cmake, a C compiler, and numpy; create a venv at path
-                     (default: /tmp/jm-venv on Linux/macOS, %%LOCALAPPDATA%%\\jm-venv on Windows).
-                     Pass --check to report status without making changes.
-  example [name]     Run a bundled end-to-end example (scaffold -> build -> test).
-                     Omit name to list available examples.
-  help               Show this message.
+  perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
+  config [key value]            Show all config keys, or get/set one value.
+  build [dir]                   Build C extensions and package a wheel (default: dist/).
+  test                          Build then run CTest + pytest.
+  dry-run                       Show what would be compiled without building.
+  install-deps [path]           Install cmake, C compiler, numpy, and create a venv.
+  example [name]                Run a bundled end-to-end example (omit name to list).
+  help                          Show this message.
 
-Scalar step/fn types (--arg-type / --return-type / scalar --param):
-  void, float, double, float _Complex, double _Complex, long double _Complex,
-  int, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t,
-  size_t, ptrdiff_t
-
-Array --param element types (append [] to the C type):
-  float[], double[], float _Complex[], double _Complex[],
-  int8_t[], int16_t[], int32_t[], int64_t[],
-  uint8_t[], uint16_t[], uint32_t[], uint64_t[]
-
-State/param field types (--state / --param for pure objects, type[N] for fixed arrays):
-  same scalar types above, plus type[N]  e.g. float[64], double _Complex[32]
-  Array fields are always zero-initialised; no default may be given.
-
-Pure mode auto-detection:
-  All scalar --param vars  -> scalar style: params passed per call, module functions
-                              e.g. normalize(x, scale=1.0); normalize.steps(arr)
-  Any array --param var    -> struct style: caller-managed params_t, alloc helpers
-                              e.g. f = MyComp(cutoff=440.0); f(x); f.steps(arr)
+Types (--arg-type / --return-type / --param / --state):
+  void  float  double  float _Complex  double _Complex
+  int  int8_t…int64_t  uint8_t…uint64_t  size_t  ptrdiff_t
+  Append [] for array params: float _Complex[]  int16_t[]  …
+  Append [N] for fixed-length state fields: float[64]  double _Complex[32]
 
 Examples:
   just-makeit new my_filter                                # project scaffold only
@@ -108,7 +78,7 @@ Examples:
   just-makeit object sink --arg-type "float _Complex" --return-type void  # sink object
   just-makeit object gen  --arg-type void --return-type "float _Complex"  # generator
   just-makeit object engine --state rate:double:1.0       # standalone stateful object
-  just-makeit object norm --pure --param scale:double:1.0 # scalar pure object
+  just-makeit object norm --state scale:double:1.0        # object with one state var
   just-makeit object fir --module filter                  # object in a module
   just-makeit method nco configure --module dsp \\
       --param freq:float --param phase:float --return-type void
@@ -190,11 +160,10 @@ def main() -> None:
 
         project = args[1]
         dest = None
-        object_name = None
+        object_names: list[str] = []
         modules: list[str] = []
         basic = False
         perf = False
-        pure = False
         arg_type = "float _Complex"
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
@@ -209,7 +178,7 @@ def main() -> None:
                 if i >= len(remaining):
                     print("error: --object requires a name", file=sys.stderr)
                     sys.exit(1)
-                object_name = remaining[i]
+                object_names.append(remaining[i])
                 i += 1
             elif tok == "--module":
                 i += 1
@@ -226,9 +195,6 @@ def main() -> None:
                 i += 1
             elif tok == "--perf":
                 perf = True
-                i += 1
-            elif tok == "--pure":
-                pure = True
                 i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
@@ -289,8 +255,8 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
-        _new.run(project, dest, object_name, state_vars or None, modules=modules,
-                 basic=basic, perf=perf, pure=pure,
+        _new.run(project, dest, object_names or None, state_vars or None,
+                 modules=modules, basic=basic, perf=perf,
                  arg_type=arg_type, return_type=return_type)
 
     elif cmd == "module":
@@ -310,7 +276,6 @@ def main() -> None:
         object_name = args[1]
         module = None
         perf: bool | None = None
-        pure = False
         arg_type = "float _Complex"
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
@@ -334,9 +299,6 @@ def main() -> None:
                 state_vars.append(var)
             elif tok == "--perf":
                 perf = True
-                i += 1
-            elif tok == "--pure":
-                pure = True
                 i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
@@ -407,7 +369,7 @@ def main() -> None:
 
         _object.run(Path.cwd(), object_name, module,
                     None if (no_state or not state_vars) else state_vars,
-                    perf=perf, pure=pure, arg_type=arg_type, return_type=return_type,
+                    perf=perf, arg_type=arg_type, return_type=return_type,
                     array_args=array_args_obj, no_state=no_state, no_step=no_step)
 
     elif cmd == "method":

@@ -24,7 +24,6 @@ from . import _templates as T
 
 _STATEFUL_TEMPLATES = [
     ("native/inc/{c}/{c}_core.h", T.COMPONENT_CORE_H),
-    ("native/inc/{c}/{c}_impl.h", T.COMPONENT_IMPL_H),
     ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
     ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
     ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
@@ -32,28 +31,6 @@ _STATEFUL_TEMPLATES = [
     ("src/{p}/{c}.pyi", T.COMPONENT_PYI),
     ("src/{p}/tests/test_{c}.py", T.PYTEST_TEST),
     ("src/{p}/benchmarks/bench_{c}.py", T.COMPONENT_BENCH_PY),
-]
-
-_PURE_SCALAR_TEMPLATES = [
-    ("native/inc/{c}/{c}_core.h", T.PURE_SCALAR_CORE_H),
-    ("native/src/{c}/{c}_core.c", T.PURE_SCALAR_CORE_C),
-    ("native/src/{c}/{c}_ext.c", T.PURE_SCALAR_EXT_C),
-    ("native/tests/test_{c}_core.c", T.PURE_SCALAR_TEST_C),
-    ("native/benchmarks/bench_{c}_core.c", T.PURE_SCALAR_BENCH_C),
-    ("src/{p}/{c}.pyi", T.PURE_SCALAR_PYI),
-    ("src/{p}/tests/test_{c}.py", T.PYTEST_PURE_SCALAR_TEST),
-    ("src/{p}/benchmarks/bench_{c}.py", T.PURE_SCALAR_BENCH_PY),
-]
-
-_PURE_STRUCT_TEMPLATES = [
-    ("native/inc/{c}/{c}_core.h", T.PURE_STRUCT_CORE_H),
-    ("native/src/{c}/{c}_core.c", T.PURE_STRUCT_CORE_C),
-    ("native/src/{c}/{c}_ext.c", T.PURE_STRUCT_EXT_C),
-    ("native/tests/test_{c}_core.c", T.PURE_STRUCT_TEST_C),
-    ("native/benchmarks/bench_{c}_core.c", T.PURE_STRUCT_BENCH_C),
-    ("src/{p}/{c}.pyi", T.PURE_STRUCT_PYI),
-    ("src/{p}/tests/test_{c}.py", T.PYTEST_PURE_STRUCT_TEST),
-    ("src/{p}/benchmarks/bench_{c}.py", T.PURE_STRUCT_BENCH_PY),
 ]
 
 
@@ -135,7 +112,6 @@ def run(
             sys.exit(1)
 
     all_vars = existing + new_vars
-    style = C.pure_style(cfg, component)
 
     ctx = _init._make_component_ctx(component)
     ctx.update(
@@ -150,27 +126,17 @@ def run(
     arg_type_ = C.arg_type(cfg, component)
     return_type_ = C.return_type(cfg, component)
     ctx.update(T.make_sample_ctx(arg_type_, return_type_))
-
-    if style:
-        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], all_vars, arg_type_)
-        ctx.update(pure_ctx)
-        # pure_style may change if state type mix changes (scalar->struct on array add)
-        new_style = pure_ctx["pure_style"]
-        templates = _PURE_SCALAR_TEMPLATES if new_style == "scalar" else _PURE_STRUCT_TEMPLATES
-    else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars,
-                                    array_args=C.array_args(cfg, component)))
-        templates = _STATEFUL_TEMPLATES
-        new_style = None
+    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars,
+                                array_args=C.array_args(cfg, component)))
+    templates = _STATEFUL_TEMPLATES
 
     ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
-    if new_style is None:
-        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
-        ctx.update(T.make_methods_ctx(component, ctx["Component"],
-                                      C.methods(cfg, component)))
-        ctx.update(T.make_properties_ctx(component, ctx["Component"],
-                                         C.properties(cfg, component),
-                                         frozenset(n for n, _, _ in all_vars)))
+    ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
+    ctx.update(T.make_methods_ctx(component, ctx["Component"],
+                                  C.methods(cfg, component)))
+    ctx.update(T.make_properties_ctx(component, ctx["Component"],
+                                     C.properties(cfg, component),
+                                     frozenset(n for n, _, _ in all_vars)))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -189,8 +155,6 @@ def run(
     cfg[component]["state"] = [
         {"name": n, "type": t, "default": d} for n, t, d in all_vars
     ]
-    if new_style and new_style != style:
-        cfg[component]["pure"] = new_style
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
     print()

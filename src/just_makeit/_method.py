@@ -9,11 +9,11 @@ Adds a named execute method to an existing object:
 For --variable-output methods:
   - Pre-allocates an output buffer in the Python Object struct (not in _state_t)
   - Returns a zero-copy NumPy view via PyArray_SimpleNewFromData — no per-call malloc
-  - Adds <<component>>_<name>_max_out() + <<component>>_<name>() stubs to _methods.c
+  - Appends <<component>>_<name>_max_out() + <<component>>_<name>() stubs to _core.c
   - Declarations go into _core.h via <<method_decls>> placeholder (regenerated)
 
 For fixed-output methods:
-  - Generates a simple wrapper calling <<component>>_<name>() in _methods.c
+  - Appends a simple stub for <<component>>_<name>() to _core.c
 """
 
 import sys
@@ -24,13 +24,6 @@ from . import _templates as T
 from ._init import _make_component_ctx, _to_title, _write
 from ._object import _make_object_ctx, _regenerate_module
 
-
-_METHODS_C_HEADER = """\
-#include "{component}/{component}_core.h"
-#include <complex.h>
-#include <stdlib.h>
-
-"""
 
 
 def _methods_c_stub_variable(
@@ -152,16 +145,11 @@ def _methods_c_stub_fixed(
     return "\n".join(lines) + "\n"
 
 
-def _append_to_methods_c(path: Path, component: str, stub: str) -> None:
-    """Create or append to native/src/{comp}/{comp}_methods.c."""
-    if not path.exists():
-        header = _METHODS_C_HEADER.replace("{component}", component)
-        path.write_text(header + stub, encoding="utf-8")
-        print(f"  create  {path}")
-    else:
-        existing = path.read_text(encoding="utf-8")
-        path.write_text(existing + "\n" + stub, encoding="utf-8")
-        print(f"  update  {path}")
+def _append_to_core_c(path: Path, stub: str) -> None:
+    """Append a method stub to native/src/{comp}/{comp}_core.c."""
+    existing = path.read_text(encoding="utf-8")
+    path.write_text(existing + "\n" + stub, encoding="utf-8")
+    print(f"  update  {path}")
 
 
 def _build_method_prototype(
@@ -222,36 +210,6 @@ def _build_method_prototype(
 
     return f"{ret_disp} {component}_{name}({c_params});"
 
-
-def _update_impl_h_for_method(
-    impl_h: Path, component: str, prototype: str
-) -> None:
-    """Inject prototype lines before #endif in *_impl.h (idempotent)."""
-    if not impl_h.exists():
-        return
-    text = impl_h.read_text(encoding="utf-8")
-    first_line = prototype.split("\n")[0]
-    if first_line in text:
-        return
-    endif_marker = f"#endif /* {component.upper()}_IMPL_H */"
-    if endif_marker not in text:
-        return
-    text = text.replace(
-        endif_marker,
-        prototype + "\n\n" + endif_marker,
-    )
-    impl_h.write_text(text, encoding="utf-8")
-    print(f"  update  {impl_h}")
-
-
-def _update_cmake_for_methods(cmake_path: Path, component: str) -> None:
-    """Add {component}_methods.c to the OBJECT library in CMakeLists.txt."""
-    text = cmake_path.read_text(encoding="utf-8")
-    old = f"add_library({component}_core OBJECT {component}_core.c)"
-    new = f"add_library({component}_core OBJECT {component}_core.c {component}_methods.c)"
-    if old in text and new not in text:
-        cmake_path.write_text(text.replace(old, new), encoding="utf-8")
-        print(f"  update  {cmake_path}")
 
 
 def run(
@@ -314,8 +272,8 @@ def run(
 
     params = params or []
 
-    # 1. Generate C stubs in _methods.c
-    methods_c = root / "native" / "src" / object_name / f"{object_name}_methods.c"
+    # 1. Append C stub to _core.c
+    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
     if variable_output:
         stub = _methods_c_stub_variable(
             object_name, method_name, arg_type, return_type, multi_output
@@ -325,24 +283,9 @@ def run(
             object_name, method_name, arg_type, return_type, multi_output,
             params, out_type,
         )
-    _append_to_methods_c(methods_c, object_name, stub)
+    _append_to_core_c(core_c, stub)
 
-    # 1a. Inject prototype into *_impl.h so ext.c can see the declaration
-    impl_h = (
-        root / "native" / "inc" / object_name / f"{object_name}_impl.h"
-    )
-    prototype = _build_method_prototype(
-        object_name, method_name, arg_type, return_type,
-        variable_output, multi_output, params, out_type,
-    )
-    _update_impl_h_for_method(impl_h, object_name, prototype)
-
-    # 2. Wire _methods.c into CMakeLists
-    cmake_path = root / "native" / "src" / object_name / "CMakeLists.txt"
-    if cmake_path.exists():
-        _update_cmake_for_methods(cmake_path, object_name)
-
-    # 3. Update config
+    # 2. Update config  (was step 3)
     method_entry: dict = {
         "name": method_name,
         "arg_type": arg_type,
@@ -363,7 +306,7 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # 4. Regenerate ext.c (with updated method wrappers)
+    # 3. Regenerate ext.c (with updated method wrappers)
     if module:
         _regenerate_module(root, cfg, module, pkg)
     else:
@@ -374,7 +317,6 @@ def run(
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)
         return_type_ = C.return_type(cfg, object_name)
-        pure_style = C.pure_style(cfg, object_name)
         perf = C.is_perf(cfg)
         version = C.project_version(cfg)
 
@@ -387,16 +329,12 @@ def run(
             "version": version,
         })
         ctx.update(T.make_sample_ctx(arg_type_, return_type_))
-        if pure_style:
-            ctx.update(T.make_pure_ctx(object_name, Component, state_vars_list, arg_type_))
-        else:
-            ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
-                                        array_args=C.array_args(cfg, object_name),
-                                        no_state=C.is_no_state(cfg, object_name)))
+        ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
+                                    array_args=C.array_args(cfg, object_name),
+                                    no_state=C.is_no_state(cfg, object_name)))
         ctx.update(T.make_perf_ctx(perf))
-        if not pure_style:
-            ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
-                                       no_step=C.is_no_step(cfg, object_name)))
+        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
+                                   no_step=C.is_no_step(cfg, object_name)))
         ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
         ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
                                          frozenset(n for n, _, _ in state_vars_list)))
@@ -415,4 +353,4 @@ def run(
             print(f"  update  {ext_c}")
 
     print()
-    print(f"Done!  Implement {object_name}_{method_name}() in {methods_c.name}")
+    print(f"Done!  Implement {object_name}_{method_name}() in {core_c.name}")

@@ -35,12 +35,11 @@ def _make_object_ctx(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     perf: bool = False,
-    pure: bool = False,
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
-) -> tuple[dict, str | None]:
-    """Build the render ctx for an object.  Returns (ctx, pure_style)."""
+) -> dict:
+    """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
     ctx.update(
         {
@@ -54,21 +53,11 @@ def _make_object_ctx(
         }
     )
     ctx.update(T.make_sample_ctx(arg_type, return_type))
-
-    if pure:
-        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], state_vars, arg_type)
-        ctx.update(pure_ctx)
-        pure_style = pure_ctx["pure_style"]
-    else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars,
-                                    array_args=array_args, no_state=no_state))
-        pure_style = None
-
+    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars,
+                                array_args=array_args, no_state=no_state))
     ctx.update(T.make_perf_ctx(perf))
-    if pure_style is None:
-        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type,
-                                   no_step=no_step))
-    return ctx, pure_style
+    ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type, no_step=no_step))
+    return ctx
 
 
 def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
@@ -82,13 +71,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         arg_type_ = C.arg_type(cfg, obj)
         return_type_ = C.return_type(cfg, obj)
         perf = C.is_perf(cfg)
-        pure_style = C.pure_style(cfg, obj)
-        ctx, _ = _make_object_ctx(
+        ctx = _make_object_ctx(
             obj, module, pkg,
             C.project_version(cfg),
             state_vars, arg_type_, return_type_,
             perf=perf,
-            pure=(pure_style is not None),
             array_args=C.array_args(cfg, obj),
             no_state=C.is_no_state(cfg, obj),
             no_step=C.is_no_step(cfg, obj),
@@ -106,18 +93,37 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     _write(root / "native" / "src" / module / f"{module}_ext.c", ext_c, "update")
 
     # Module CMakeLists
-    object_core_libs = "\n    ".join(f"{obj}_core" for obj in object_names)
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
+    # Collocated case: when an object shares the module name (e.g. module="fft",
+    # object="fft"), CMAKE_LISTS_OBJECT_CORE is prepended and already defines
+    # <mod>_core.  Non-collocated: we define <mod>_core separately so that
+    # module-level functions in <mod>_core.c are compiled and linked in.
+    has_collocated = module in object_names
+    if has_collocated:
+        # <mod>_core is the collocated object's OBJECT lib; it's already in
+        # object_names so it will appear in object_core_libs below.
+        module_core_lib_block = ""
+        libs_parts = [f"{obj}_core" for obj in object_names]
+    else:
+        module_core_lib_block = (
+            f"add_library({module}_core OBJECT {module}_core.c)\n"
+            f"target_include_directories({module}_core PRIVATE"
+            f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
+        )
+        libs_parts = [f"{module}_core"] + [f"{obj}_core" for obj in object_names]
+    object_core_libs = "\n    ".join(libs_parts)
     cmake_ctx = {
         "module": module,
         "Module": Module,
         "object_list": object_list,
         "object_core_libs": object_core_libs,
+        "module_core_lib_block": module_core_lib_block,
     }
-    # Collocated objects (obj_name == module_name) share the same CMakeLists
-    # file as the module itself; their OBJECT library cmake must be prepended.
-    # If _methods.c already exists on disk (added by a prior 'jm method' call),
-    # preserve its inclusion in the add_library line.
+    # Collocated objects share the same CMakeLists file as the module itself;
+    # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.
+    # Migration: if a legacy _methods.c exists on disk, preserve it in the
+    # CMakeLists so old projects don't break on regen.  New projects never
+    # have _methods.c — stubs go in _core.c.
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
         if obj == module:
@@ -153,7 +159,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx), "update")
 
     # Type stubs — regenerated in full every time the module changes.
-    _write(pkg_module_dir / "__init__.pyi", S.make_module_pyi(cfg, module), "update")
+    _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module), "update")
 
 
 def run(
@@ -162,7 +168,6 @@ def run(
     module: str | None,
     state_vars: list[tuple[str, str, str]] | None = None,
     perf: bool | None = None,
-    pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     array_args: list[tuple[str, str]] = (),
@@ -192,7 +197,7 @@ def run(
     # No --module -> standalone object (own .so)
     if module is None:
         from . import _init
-        _init.run(root, object_name, state_vars, perf=perf, pure=pure,
+        _init.run(root, object_name, state_vars, perf=perf,
                   arg_type=arg_type, return_type=return_type,
                   array_args=array_args, no_state=no_state, no_step=no_step,
                   _hint=_hint)
@@ -227,9 +232,9 @@ def run(
         perf = C.is_perf(cfg)
 
     vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
-    ctx, pure_style = _make_object_ctx(
+    ctx = _make_object_ctx(
         object_name, module, pkg, version, vars_, arg_type, return_type,
-        perf=perf, pure=pure, array_args=array_args,
+        perf=perf, array_args=array_args,
         no_state=no_state, no_step=no_step,
     )
 
@@ -242,7 +247,6 @@ def run(
 
     # C library files (OBJECT lib only — no standalone Python module)
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
-    _write(root / "native" / "inc" / comp / f"{comp}_impl.h", r(T.COMPONENT_IMPL_H))
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
     _write(
         root / "native" / "src" / comp / "CMakeLists.txt",
@@ -256,7 +260,7 @@ def run(
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)
-    C.add_component(cfg, comp, vars_, pure=pure_style, arg_type_=arg_type,
+    C.add_component(cfg, comp, vars_, arg_type_=arg_type,
                     return_type_=return_type, array_args_=array_args,
                     no_state_=no_state, no_step_=no_step)
 
@@ -305,7 +309,7 @@ def run(
 
     # compile_commands.json
     all_comps = C.components(cfg)
-    _write_compile_commands(root, all_comps)
+    _write_compile_commands(root, all_comps, C.modules(cfg))
 
     # Save config
     C.save(root, cfg)

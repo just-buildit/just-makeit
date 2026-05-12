@@ -21,7 +21,7 @@ from just_makeit._config import load, properties
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, "buf", [("capacity", "size_t", "1024")])
+    new_run("dsp", dest, ["buf"], [("capacity", "size_t", "1024")])
     return dest
 
 

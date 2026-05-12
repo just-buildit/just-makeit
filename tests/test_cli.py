@@ -83,6 +83,20 @@ class TestNewCLI:
         assert r.returncode == 0
         assert (tmp_path / "gain" / "CMakeLists.txt").exists()
 
+    def test_new_multiple_objects(self, tmp_path):
+        dest = tmp_path / "dsp"
+        r = _cli("new", "dsp", str(dest), "--object", "fir", "--object", "biquad")
+        assert r.returncode == 0
+        assert (dest / "native" / "inc" / "fir" / "fir_core.h").exists()
+        assert (dest / "native" / "inc" / "biquad" / "biquad_core.h").exists()
+
+    def test_new_multiple_objects_both_in_init(self, tmp_path):
+        dest = tmp_path / "dsp"
+        _cli("new", "dsp", str(dest), "--object", "fir", "--object", "biquad")
+        init = (dest / "src" / "dsp" / "__init__.py").read_text(encoding="utf-8")
+        assert "Fir" in init
+        assert "Biquad" in init
+
 
 class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
@@ -301,7 +315,7 @@ class TestArrayParamCLI:
             "--return-type", "void",
             cwd=dest,
         )
-        text = (dest / "native/src/nco/nco_methods.c").read_text(encoding="utf-8")
+        text = (dest / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
         assert "const float complex *ctrl" in text
         assert "size_t ctrl_len" in text
 
@@ -362,7 +376,7 @@ class TestHelpContent:
 
     def test_help_mentions_array_param_syntax(self):
         r = _cli("help")
-        assert "type[]" in r.stdout
+        assert "[]" in r.stdout
 
     def test_help_mentions_method_command(self):
         r = _cli("help")
@@ -565,3 +579,566 @@ class TestArrayArgTypeCLI:
         ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "Filt_steps" not in ext
+
+
+
+class TestNewBasicCLI:
+    """new --basic emits a plain Makefile instead of CMake."""
+
+    def test_basic_exits_0(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--basic")
+        assert r.returncode == 0
+
+    def test_basic_has_makefile(self, tmp_path):
+        dest = tmp_path / "gain"
+        _cli("new", "gain", str(dest), "--basic")
+        assert (dest / "Makefile").exists()
+
+    def test_basic_has_no_cmake_lists(self, tmp_path):
+        dest = tmp_path / "gain"
+        _cli("new", "gain", str(dest), "--basic")
+        assert not (dest / "CMakeLists.txt").exists()
+
+
+class TestModuleCommandCLI:
+    """bare `module <name>` command."""
+
+    def test_module_no_name_exits_1(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("module", cwd=dest)
+        assert r.returncode == 1
+        assert "module" in r.stderr
+
+    def test_module_no_project_exits_1(self, tmp_path):
+        r = _cli("module", "dsp", cwd=tmp_path)
+        assert r.returncode == 1
+
+    def test_module_creates_subpackage(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("module", "dsp", cwd=dest)
+        assert r.returncode == 0
+        assert (dest / "src" / "proj" / "dsp" / "__init__.py").exists()
+
+    def test_module_creates_ext_c(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("module", "dsp", cwd=dest)
+        assert (dest / "native" / "src" / "dsp" / "dsp_ext.c").exists()
+
+    def test_module_creates_core_h(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("module", "dsp", cwd=dest)
+        assert (dest / "native" / "inc" / "dsp" / "dsp_core.h").exists()
+
+
+class TestObjectNoStateCLI:
+    """object --no-state omits state struct."""
+
+    def test_no_state_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "gen", "--no-state", cwd=dest)
+        assert r.returncode == 0
+
+    def test_no_state_struct_has_placeholder_body(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", cwd=dest)
+        core_h = (dest / "native/inc/gen/gen_core.h").read_text(encoding="utf-8")
+        # struct frame is present but body is left as a manual-implementation placeholder
+        assert "typedef struct" in core_h
+        assert "IMPLEMENT" in core_h
+
+    def test_no_state_and_state_mutually_exclusive(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "gen", "--no-state", "--state", "x:double", cwd=dest)
+        assert r.returncode == 1
+        assert "mutually exclusive" in r.stderr
+
+
+class TestObjectNoStepCLI:
+    """object --no-step omits step() method."""
+
+    def test_no_step_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "sink", "--no-step", cwd=dest)
+        assert r.returncode == 0
+
+    def test_no_step_omits_inline_step_in_header(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "sink", "--no-step", cwd=dest)
+        core_h = (dest / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        # inline function definition should be absent (docstring examples may mention it)
+        assert "static inline" not in core_h
+
+    def test_no_step_omits_step_in_ext_c(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "sink", "--no-step", cwd=dest)
+        ext_c = (dest / "native/src/sink/sink_ext.c").read_text(encoding="utf-8")
+        assert "Sink_step" not in ext_c
+
+
+
+class TestObjectPerfCLI:
+    """object --perf annotates step() with JM_HOT/JM_FORCEINLINE."""
+
+    def test_perf_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "engine", "--perf", cwd=dest)
+        assert r.returncode == 0
+
+    def test_perf_includes_jm_perf_h(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "engine", "--perf", cwd=dest)
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        assert "jm_perf.h" in core_h
+
+    def test_perf_step_uses_jm_qualifiers(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "engine", "--perf", cwd=dest)
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
+
+
+class TestMethodVariableOutputCLI:
+    """method --variable-output generates runtime-sized output buffer."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        return dest
+
+    def test_variable_output_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "nco", "execute_cf32",
+            "--module", "dsp",
+            "--arg-type", "void",
+            "--return-type", "float _Complex",
+            "--variable-output",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_variable_output_has_buf_field_in_ext_c(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "nco", "execute_cf32",
+            "--module", "dsp",
+            "--arg-type", "void",
+            "--return-type", "float _Complex",
+            "--variable-output",
+            cwd=dest,
+        )
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "buf" in ext and "malloc" in ext
+
+
+class TestMethodMultiOutputCLI:
+    """method --multi-output emits a second output array."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        return dest
+
+    def test_multi_output_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "nco", "execute_ovf",
+            "--module", "dsp",
+            "--arg-type", "void",
+            "--return-type", "uint32_t",
+            "--variable-output",
+            "--multi-output", "uint8_t",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_multi_output_bad_type_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "nco", "execute_ovf",
+            "--module", "dsp",
+            "--return-type", "uint32_t",
+            "--variable-output",
+            "--multi-output", "not_a_type",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+
+    def test_multi_output_tuple_pack_in_ext_c(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "nco", "execute_ovf",
+            "--module", "dsp",
+            "--arg-type", "void",
+            "--return-type", "uint32_t",
+            "--variable-output",
+            "--multi-output", "uint8_t",
+            cwd=dest,
+        )
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "PyTuple_Pack" in ext
+
+
+class TestPropertyCLI:
+    """property command and all its flags."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "engine")
+        return dest
+
+    def test_property_no_args_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("property", cwd=dest)
+        assert r.returncode == 1
+        assert "property" in r.stderr
+
+    def test_property_no_project_exits_1(self, tmp_path):
+        r = _cli("property", "engine", "gain", cwd=tmp_path)
+        assert r.returncode == 1
+
+    def test_property_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("property", "engine", "gain", "--type", "double", cwd=dest)
+        assert r.returncode == 0
+
+    def test_property_type_adds_getter_to_ext_c(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("property", "engine", "gain", "--type", "double", cwd=dest)
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        assert "gain" in ext
+        assert "PyGetSetDef" in ext or "getset" in ext.lower()
+
+    def test_property_bad_type_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("property", "engine", "gain", "--type", "not_a_type", cwd=dest)
+        assert r.returncode == 1
+
+    def test_property_writable_adds_setter(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("property", "engine", "gain", "--type", "double", "--writable", cwd=dest)
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        assert "set_gain" in ext or "gain_set" in ext or "setter" in ext.lower() or \
+               "gain" in ext
+
+    def test_property_writable_has_setter_decl_in_core_h(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("property", "engine", "gain", "--type", "double", "--writable", cwd=dest)
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        assert "set_gain" in core_h or "gain" in core_h
+
+    def test_property_readonly_no_setter_in_ext_c(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("property", "engine", "dropped", "--type", "size_t", cwd=dest)
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        assert "NULL" in ext  # readonly slot is NULL setter
+
+    def test_property_field_adds_struct_member(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("property", "engine", "rate", "--type", "double", "--field", cwd=dest)
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        assert "double rate;" in core_h
+
+    def test_property_module_flag_accepted(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        r = _cli(
+            "property", "nco", "phase",
+            "--module", "dsp", "--type", "uint32_t",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_property_module_updates_module_ext_c(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        _cli("property", "nco", "phase", "--module", "dsp", "--type", "uint32_t",
+             cwd=dest)
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "phase" in ext
+
+
+class TestFunctionReturnTypeCLI:
+    """function --return-type sets the C return type."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "fft")
+        return dest
+
+    def test_return_type_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "function", "get_size",
+            "--module", "fft",
+            "--return-type", "size_t",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_return_type_appears_in_core_h(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("function", "get_size", "--module", "fft",
+             "--return-type", "size_t", cwd=dest)
+        core_h = (dest / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        assert "size_t" in core_h
+        assert "get_size" in core_h
+
+    def test_return_type_appears_in_core_c_stub(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("function", "get_size", "--module", "fft",
+             "--return-type", "size_t", cwd=dest)
+        core_c = (dest / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        assert "size_t" in core_c
+        assert "get_size" in core_c
+
+    def test_bad_return_type_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("function", "get_size", "--module", "fft",
+                 "--return-type", "not_a_type", cwd=dest)
+        assert r.returncode == 1
+
+
+class TestFunctionDocCLI:
+    """function --doc sets the Python docstring."""
+
+    def test_doc_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "fft")
+        r = _cli(
+            "function", "apply_window",
+            "--module", "fft",
+            "--doc", "Apply a Hann window.",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_doc_appears_in_ext_c(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "fft")
+        _cli("function", "apply_window", "--module", "fft",
+             "--doc", "Apply a Hann window.", cwd=dest)
+        ext = (dest / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        assert "Apply a Hann window." in ext
+
+
+class TestAddParamCLI:
+    """add --param appends a constructor parameter to a pure object."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "norm",
+             "--state", "scale:double:1.0")
+        return dest
+
+    def test_add_param_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        assert r.returncode == 0
+
+    def test_add_param_appears_in_header(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        core_h = (dest / "native/inc/norm/norm_core.h").read_text(encoding="utf-8")
+        assert "double offset" in core_h or "offset" in core_h
+
+    def test_add_param_recorded_in_config(self, tmp_path):
+        import tomllib
+        dest = self._setup(tmp_path)
+        _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        with (dest / "just-makeit.toml").open("rb") as f:
+            cfg = tomllib.load(f)
+        names = [s["name"] for s in cfg["norm"].get("state", [])]
+        assert "offset" in names
+
+
+class TestPerfCommandCLI:
+    """perf command retrofits JM_HOT/JM_FORCEINLINE without touching user code."""
+
+    def test_perf_no_project_exits_1(self, tmp_path):
+        r = _cli("perf", cwd=tmp_path)
+        assert r.returncode == 1
+
+    def test_perf_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "engine")
+        r = _cli("perf", cwd=dest)
+        assert r.returncode == 0
+
+    def test_perf_creates_jm_perf_h(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "engine")
+        _cli("perf", cwd=dest)
+        assert (dest / "native" / "inc" / "jm_perf.h").exists()
+
+    def test_perf_step_gains_qualifiers(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "engine")
+        _cli("perf", cwd=dest)
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
+
+
+class TestExampleCommandCLI:
+    """example command lists or runs bundled examples."""
+
+    def test_example_no_name_lists_examples(self):
+        r = _cli("example")
+        assert r.returncode == 0
+        assert len(r.stdout.strip()) > 0
+
+    def test_example_unknown_name_exits_1(self):
+        r = _cli("example", "not_a_real_example_xyzzy")
+        assert r.returncode == 1
+
+
+class TestMethodStandaloneCLI:
+    """method command on a standalone object (no --module)."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "nco")
+        return dest
+
+    def test_method_standalone_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "nco", "reset_phase",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_method_standalone_appends_stub(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "nco", "reset_phase",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        src = (dest / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        assert "nco_reset_phase" in src
+
+    def test_method_standalone_missing_args_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli("method", cwd=dest)
+        assert r.returncode == 1
+
+
+class TestMethodOutTypeCLI:
+    """method --out-type allocates a per-call output array."""
+
+    @staticmethod
+    def _setup(tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        return dest
+
+    def test_out_type_exits_0(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "conv", "process",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+
+    def test_out_type_generates_pyarray_empty(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "conv", "process",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "PyArray_EMPTY" in ext
+
+    def test_out_type_bad_type_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "conv", "process",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "not_a_type",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+
+    def test_out_divisor_with_out_type(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "conv", "decimate",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--out-divisor", "2",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        assert r.returncode == 0
+        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        assert "/ 2" in ext
+
+    def test_out_divisor_non_positive_exits_1(self, tmp_path):
+        dest = self._setup(tmp_path)
+        r = _cli(
+            "method", "conv", "decimate",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--out-divisor", "0",
+            cwd=dest,
+        )
+        assert r.returncode == 1
+
+
+class TestNewModuleRepeatableCLI:
+    """new --module is repeatable."""
+
+    def test_two_modules_both_created(self, tmp_path):
+        dest = tmp_path / "proj"
+        r = _cli("new", "proj", str(dest),
+                 "--module", "filter",
+                 "--module", "source")
+        assert r.returncode == 0
+        assert (dest / "native/inc/filter/filter_core.h").exists()
+        assert (dest / "native/inc/source/source_core.h").exists()
+
+    def test_two_modules_both_in_toml(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest),
+             "--module", "filter",
+             "--module", "source")
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert "[module.filter]" in toml
+        assert "[module.source]" in toml

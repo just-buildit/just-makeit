@@ -196,7 +196,7 @@ just-makeit method ema quantize \
     --return-type uint32_t
 ```
 
-The command writes a scalar C stub into `native/src/ema/ema_methods.c`:
+The command appends a scalar C stub to `native/src/ema/ema_core.c`:
 
 ```c
 uint32_t ema_quantize(ema_state_t *state, float x);
@@ -207,7 +207,7 @@ For **1:1-rate batch work** (output count equals input count), write the
 
 ```c
 /* Hand-written batch companion for ema_quantize().
- * Add this to native/src/ema/ema_methods.c after implementing the scalar stub.
+ * Add this to native/src/ema/ema_core.c after implementing the scalar stub.
  * The Python ext allocates out[] via PyArray_SimpleNew before calling this;
  * the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
@@ -285,7 +285,7 @@ just-makeit method hbdecim execute \
     --variable-output
 ```
 
-The command generates two C stubs in `native/src/hbdecim/hbdecim_methods.c`:
+The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
 | Stub | When called | Your job |
 |------|-------------|----------|
@@ -295,7 +295,7 @@ The command generates two C stubs in `native/src/hbdecim/hbdecim_methods.c`:
 Implement both:
 
 ```c
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * The Python ext calls this once at __init__ to size the pre-allocated
  * output buffer.  Return the largest n_out that execute() can ever produce
@@ -400,7 +400,7 @@ just-makeit method hbdecim execute_ovf \
     --multi-output uint8_t
 ```
 
-Generated stubs in `hbdecim_methods.c`:
+Generated stubs appended to `hbdecim_core.c`:
 
 ```c
 size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);
@@ -414,7 +414,7 @@ Both `out` and `ovf` are pre-allocated to `_max_out()` elements and owned by
 the object.  Your implementation fills both and returns the count:
 
 ```c
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * Two output arrays: primary (filtered samples) and secondary (overflow flags).
  * Both are pre-allocated by the ext to execute_ovf_max_out() elements.

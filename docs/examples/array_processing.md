@@ -8,7 +8,7 @@ with multiple output streams.
 Along the way, each section explains **who owns the memory**, **when it is
 allocated**, and **what the Python caller can safely do with the returned array**.
 
-Five patterns, five sections:
+Six patterns, six sections:
 
 | # | Pattern | Output allocation | Who owns it |
 |---|---------|-------------------|-------------|
@@ -17,8 +17,9 @@ Five patterns, five sections:
 | 3 | `method --variable-output` | Allocated at `__init__`, re-used | Object (zero-copy view) |
 | 4 | `method --variable-output --multi-output` | Same — one buffer per stream | Object (tuple of views) |
 | 5 | `--arg-type type[]` (buffer primary arg) | Caller supplies input buffer | Caller (input) |
+| 6 | `method --out-type` (per-call typed output array) | Per call (`PyArray_EMPTY`) | Caller (numpy) |
 
-All five patterns share a common rule: **inline `float[N]` state arrays in the
+All six patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
 Heap allocation only appears when the output size is not fixed at compile time.
 
@@ -196,7 +197,7 @@ just-makeit method ema quantize \
     --return-type uint32_t
 ```
 
-The command writes a scalar C stub into `native/src/ema/ema_methods.c`:
+The command appends a scalar C stub to `native/src/ema/ema_core.c`:
 
 ```c
 uint32_t ema_quantize(ema_state_t *state, float x);
@@ -207,7 +208,7 @@ For **1:1-rate batch work** (output count equals input count), write the
 
 ```c
 /* Hand-written batch companion for ema_quantize().
- * Add this to native/src/ema/ema_methods.c after implementing the scalar stub.
+ * Add this to native/src/ema/ema_core.c after implementing the scalar stub.
  * The Python ext allocates out[] via PyArray_SimpleNew before calling this;
  * the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
@@ -285,7 +286,7 @@ just-makeit method hbdecim execute \
     --variable-output
 ```
 
-The command generates two C stubs in `native/src/hbdecim/hbdecim_methods.c`:
+The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
 | Stub | When called | Your job |
 |------|-------------|----------|
@@ -295,7 +296,7 @@ The command generates two C stubs in `native/src/hbdecim/hbdecim_methods.c`:
 Implement both:
 
 ```c
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * The Python ext calls this once at __init__ to size the pre-allocated
  * output buffer.  Return the largest n_out that execute() can ever produce
@@ -400,7 +401,7 @@ just-makeit method hbdecim execute_ovf \
     --multi-output uint8_t
 ```
 
-Generated stubs in `hbdecim_methods.c`:
+Generated stubs appended to `hbdecim_core.c`:
 
 ```c
 size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);
@@ -414,7 +415,7 @@ Both `out` and `ovf` are pre-allocated to `_max_out()` elements and owned by
 the object.  Your implementation fills both and returns the count:
 
 ```c
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * Two output arrays: primary (filtered samples) and secondary (overflow flags).
  * Both are pre-allocated by the ext to execute_ovf_max_out() elements.
@@ -536,7 +537,103 @@ class BufProc:
     # no steps() — the primary op already takes a buffer
 ```
 
-### Choosing between the five patterns
+---
+
+## 6. `method --out-type` — per-call typed output array
+
+Use this when your method takes an **array input** via `--param` and needs to
+return an output array of a **different type** — and the output length is
+simply `input_length / divisor` (known per call, not at init).
+
+The difference from `--variable-output`:
+
+| | `--variable-output` | `--out-type` |
+|--|--|--|
+| Buffer lifetime | Pre-allocated at `__init__`; zero-copy view | Allocated fresh each call |
+| Output type | Same as `--return-type` | Independent `--out-type` |
+| Output length | `_max_out(state)` — set at init | `input_len / --out-divisor` |
+
+Classic use case: a type converter that takes a CI8 byte buffer and returns
+CF32 samples — output length is `input_bytes / 2`.
+
+```sh
+cd ..
+just-makeit new my_conv \
+    --object ci8_conv \
+    --state "gain:float:1.0"
+cd my_conv
+
+just-makeit method ci8_conv convert \
+    --param raw:int8_t[] \
+    --out-type "float _Complex" \
+    --out-divisor 2 \
+    --return-type void
+```
+
+`--out-divisor 2` means: output length = `raw_len / 2` (each complex sample
+is two bytes: one I + one Q).
+
+Generated C stub appended to `ci8_conv_core.c`:
+
+```c
+void
+ci8_conv_convert(ci8_conv_state_t *state,
+                 const int8_t *raw, size_t raw_len,
+                 float complex *out)
+{
+    (void)state; (void)raw; (void)raw_len; (void)out;
+}
+```
+
+Your implementation:
+
+```c
+void
+ci8_conv_convert(ci8_conv_state_t *state,
+                 const int8_t *raw, size_t raw_len,
+                 float complex *out)
+{
+    size_t n = raw_len / 2;
+    float scale = state->gain / 128.0f;
+    for (size_t i = 0; i < n; i++)
+        out[i] = (raw[2*i] + 1j * raw[2*i+1]) * scale;
+}
+```
+
+### What Python sees
+
+```python
+import numpy as np
+from my_conv import Ci8Conv
+
+conv = Ci8Conv(gain=1.0)
+raw = np.frombuffer(iq_bytes, dtype=np.int8)
+cf32 = conv.convert(raw)   # returns np.ndarray, dtype=complex64, shape (len(raw)//2,)
+```
+
+### Array ownership for `--out-type`
+
+```
+cf32 = conv.convert(raw)
+│
+├─ ext computes out_len = raw_len / 2
+│
+├─ ext calls PyArray_EMPTY(out_len, complex64)  ← one malloc, every call
+│
+├─ calls ci8_conv_convert(state, raw.data, raw_len, out.data)
+│    └─ no allocation; fills out[] in place
+│
+└─ returns ndarray to caller
+   ownership: caller
+   lifetime:  indefinite — object holds no reference to it
+```
+
+This is identical ownership to pattern 1 and 2 — a fresh array each call,
+owned by the caller, safe to hold indefinitely.
+
+---
+
+## Choosing between the six patterns
 
 ```
 Does output count equal input count?
@@ -548,6 +645,9 @@ Does output count equal input count?
 │       ├─ Yes, one stream  → --variable-output                       (§3)
 │       └─ Yes, N streams   → --variable-output --multi-output        (§4)
 │
-└─ Primary op takes a whole buffer → --arg-type type[]                (§5)
-   (no steps() generated; step() accepts NDArray directly)
+├─ Primary op takes a whole buffer → --arg-type type[]                (§5)
+│  (no steps() generated; step() accepts NDArray directly)
+│
+└─ Array input, typed output, length = input_len / N → --out-type     (§6)
+   (output array allocated per call; different type from input)
 ```

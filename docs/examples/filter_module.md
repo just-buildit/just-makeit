@@ -68,5 +68,5 @@ scratch.  `Fir` and `Biquad` are untouched.
 ## See also
 
 - [Commands — module](../commands.md#just-makeit-module-name)
-- [Commands — object](../commands.md#just-makeit-object-name---module-name---state-nametypedefault----pure---arg-type-type---return-type-type)
+- [Commands — object](../commands.md#just-makeit-object-name---module-name---state-nametypedefault----arg-type-type---return-type-type)
 - [dsp_toolkit example](dsp_toolkit.md) — standalone objects with `just-makeit object`

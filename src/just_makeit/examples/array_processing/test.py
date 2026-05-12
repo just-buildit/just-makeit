@@ -1,10 +1,12 @@
 """End-to-end test: array processing scaffold → method → variable-output.
 
-Exercises all four array processing patterns described in the README:
+Exercises all six array processing patterns described in the README:
   1. Auto-generated steps() on a stateful object
   2. just-makeit method (scalar stub, batch companion hand-written)
   3. just-makeit method --variable-output
   4. just-makeit method --variable-output --multi-output
+  5. --arg-type type[] (array-buffer primary arg)
+  6. just-makeit method --out-type (per-call typed output array)
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/array_processing/test.py
@@ -38,7 +40,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_arrays",
         root / "my_arrays",
-        object_name="ema",
+        object_names=["ema"],
         arg_type="float",
         return_type="float",
         state_vars=[
@@ -76,7 +78,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_decim",
         root / "my_decim",
-        object_name="hbdecim",
+        object_names=["hbdecim"],
         arg_type="float _Complex",
         return_type="float _Complex",
         state_vars=[
@@ -127,7 +129,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_buf",
         root / "my_buf",
-        object_name="buf_proc",
+        object_names=["buf_proc"],
         arg_type="float _Complex[]",
         return_type="int",
         state_vars=[("count", "int32_t", "0")],
@@ -166,6 +168,42 @@ def run(root: Path) -> None:
     assert "class Ema:" in ema_pyi
     assert "def step(self, x: float) -> float:" in ema_pyi
     assert "def steps(self, x: NDArray[np.float32]" in ema_pyi
+
+    # ── Pattern 6: --out-type (per-call typed output array) ───────────────────
+    # Method takes an array param; output array is a different type and length.
+
+    jm_new(
+        "my_conv",
+        root / "my_conv",
+        object_names=["ci8_conv"],
+        state_vars=[("gain", "float", "1.0")],
+    )
+    proj_conv = root / "my_conv"
+
+    from just_makeit._method import run as jm_method_conv
+    jm_method_conv(
+        root=proj_conv,
+        object_name="ci8_conv",
+        method_name="convert",
+        module=None,
+        arg_type="void",
+        return_type="void",
+        variable_output=False,
+        multi_output=[],
+        params=[("raw", "int8_t[]")],
+        out_type="float _Complex",
+        out_divisor=2,
+    )
+
+    # Verify ext has PyArray_EMPTY (per-call alloc) not pre-allocated buffer
+    ext = (proj_conv / "native/src/ci8_conv/ci8_conv_ext.c").read_text()
+    assert "PyArray_EMPTY" in ext, "out-type must use PyArray_EMPTY"
+    assert "/ 2" in ext, "out-divisor 2 must appear in length expression"
+
+    # Verify C stub has the *out parameter
+    src = (proj_conv / "native/src/ci8_conv/ci8_conv_core.c").read_text()
+    assert "float complex *out" in src, "*out param missing from stub"
+    assert "const int8_t *raw" in src, "raw array param missing from stub"
 
 
 if __name__ == "__main__":

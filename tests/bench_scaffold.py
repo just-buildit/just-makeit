@@ -35,7 +35,7 @@ def test_bench_new_with_component(benchmark, tmp_path):
         _new.run(
             "my_proj",
             dest=root,
-            object_name="engine",
+            object_names=["engine"],
             state_vars=[("gain", "double", "1.0")],
         )
 
@@ -72,6 +72,6 @@ def test_bench_new_multistate(benchmark, tmp_path):
     def run():
         counter[0] += 1
         root = tmp_path / f"proj_{counter[0]}"
-        _new.run("my_dsp", dest=root, object_name="bpf", state_vars=state)
+        _new.run("my_dsp", dest=root, object_names=["bpf"], state_vars=state)
 
     benchmark(run)

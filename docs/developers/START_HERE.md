@@ -48,7 +48,6 @@ just-makeit/
 │   ├── test_init.py          # internal `_init.run()` tests (standalone path)
 │   ├── test_cli.py           # CLI dispatch tests (subprocess)
 │   ├── test_add.py           # `add` command tests
-│   ├── test_pure.py          # --pure scaffolding tests
 │   ├── test_perf.py          # `perf` command tests
 │   ├── test_templates.py     # template rendering unit tests
 │   ├── test_config.py        # config load/save tests
@@ -57,7 +56,7 @@ just-makeit/
 ├── docs/                     # MkDocs source
 │   ├── developers/           # this directory
 │   ├── examples/             # per-example walkthroughs
-│   └── *.md                  # commands, workflow, types, pure, perf, c-library
+│   └── *.md                  # commands, workflow, types, perf, c-library
 ├── examples/                 # complete worked examples (shipped in repo)
 │   ├── running_stats/        # introductory walkthrough
 │   ├── fir_filter/           # perf annotations, array state
@@ -114,7 +113,7 @@ The constants are well-named (`COMPONENT_CORE_H`, `CMAKE_LISTS_COMPONENT`,
 
 `just-makeit.toml` is the source of truth for scaffolded state.  It records:
 - `[project]` — name, version, build system, perf flag
-- `[<comp>]` — state vars, pure style, arg/return types, for each standalone object
+- `[<comp>]` — state vars, arg/return types, for each standalone object
 - `[module.<name>]` — objects list for each module
 
 `_config.py` provides typed accessors (`components()`, `modules()`,

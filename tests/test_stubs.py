@@ -20,7 +20,7 @@ from just_makeit._stubs import make_module_pyi
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _pyi(root: Path, module: str, pkg: str) -> str:
-    return (root / "src" / pkg / module / "__init__.pyi").read_text(
+    return (root / "src" / pkg / module / f"{module}.pyi").read_text(
         encoding="utf-8"
     )
 
@@ -94,10 +94,10 @@ class TestStubFileCreated:
         root = tmp_path / "p"
         new_run("p", root)
         module_run(root, "dsp")
-        assert (root / "src" / "p" / "dsp" / "__init__.pyi").exists()
+        assert (root / "src" / "p" / "dsp" / "dsp.pyi").exists()
 
     def test_pyi_updated_after_object(self, basic_project):
-        assert (basic_project / "src" / "myproj" / "dsp" / "__init__.pyi").exists()
+        assert (basic_project / "src" / "myproj" / "dsp" / "dsp.pyi").exists()
 
     def test_pyi_updated_after_method(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -260,7 +260,7 @@ class TestStubHeader:
     def test_header_comment(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
         assert pyi.startswith(
-            "# dsp/__init__.pyi — type stubs for the dsp C extension."
+            "# dsp/dsp.pyi — type stubs for the dsp C extension."
         )
 
 

@@ -32,12 +32,11 @@ def _write(path: Path, content: str) -> None:
 def run(
     project: str,
     dest: Path | None = None,
-    object_name: str | None = None,
+    object_names: list[str] | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
     modules: list[str] | None = None,
     basic: bool = False,
     perf: bool = False,
-    pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
 ) -> None:
@@ -90,12 +89,13 @@ def run(
     print(f"  create  {root / C.FILENAME}")
     print()
 
-    if object_name:
+    if object_names:
         from . import _object
 
-        _object.run(root, object_name, None, state_vars, perf=perf, pure=pure,
-                    arg_type=arg_type, return_type=return_type, _hint=False)
-        print()
+        for obj in object_names:
+            _object.run(root, obj, None, state_vars, perf=perf,
+                        arg_type=arg_type, return_type=return_type, _hint=False)
+            print()
         print(f"Done!  cd {root.name} && make && make test")
     elif modules:
         from . import _module

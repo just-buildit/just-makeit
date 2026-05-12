@@ -6,7 +6,7 @@ input or output types** than the primary `step()`.
 ```{02_method_scalar.sh}
 ```
 
-The command writes a scalar C stub into `native/src/ema/ema_methods.c`:
+The command appends a scalar C stub to `native/src/ema/ema_core.c`:
 
 ```c
 uint32_t ema_quantize(ema_state_t *state, float x);

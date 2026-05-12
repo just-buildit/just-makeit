@@ -32,7 +32,7 @@ def run(root: Path) -> None:
     jm_new(
         "my_stats",
         root / "my_stats",
-        object_name="running_stats",
+        object_names=["running_stats"],
         state_vars=[
             ("n", "int32_t", "0"),
             ("mean", "double", "0.0"),

@@ -7,7 +7,7 @@ block size `B` can produce at most `ceil(B / 2)` outputs per call.
 ```{03_variable_output.sh}
 ```
 
-The command generates two C stubs in `native/src/hbdecim/hbdecim_methods.c`:
+The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
 | Stub | When called | Your job |
 |------|-------------|----------|

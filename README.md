@@ -75,7 +75,7 @@ my_project/
 │   │   ├── pyex_common.h           # Python extension includes
 │   │   ├── my_project.h            # umbrella header
 │   │   └── engine/
-│   │       └── engine_core.h       # object API  ← implement step() here
+│   │       └── engine_core.h       # public C API + inline step()
 │   ├── src/
 │   │   ├── my_project_lib.c        # combined C library stub (version symbol)
 │   │   └── engine/
@@ -99,6 +99,7 @@ my_project/
 ├── CMakeLists.txt
 ├── Makefile
 ├── pyproject.toml
+├── compile_commands.json
 └── just-makeit.toml
 ```
 
@@ -118,6 +119,19 @@ make && make test
 ```python
 from my_filters.filter import Fir, Biquad   # one .so, one import
 ```
+
+**What you get** (Python package layer):
+
+```
+src/
+└── my_filters/
+    ├── __init__.py
+    └── filter/
+        ├── __init__.py        # from .filter import Fir, Biquad
+        └── filter.pyi         # type stub for filter.so
+```
+
+One `.pyi` per `.so`, named to match the compiled extension.
 
 ______________________________________________________________________
 

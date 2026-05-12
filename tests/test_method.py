@@ -18,19 +18,20 @@ from just_makeit._config import load, methods
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, "nco", [("freq", "double", "0.0")])
+    new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")])
     return dest
 
 
 class TestMethodCreatesStubs:
-    def test_methods_c_created(self, project):
+    def test_core_c_has_stub_appended(self, project):
         method_run(
             project, "nco", "execute_cf32", None,
             "void", "float _Complex", True, [],
         )
-        assert (
-            project / "native" / "src" / "nco" / "nco_methods.c"
-        ).exists()
+        text = (
+            project / "native" / "src" / "nco" / "nco_core.c"
+        ).read_text(encoding="utf-8")
+        assert "nco_execute_cf32" in text
 
     def test_methods_c_has_max_out_stub(self, project):
         method_run(
@@ -38,7 +39,7 @@ class TestMethodCreatesStubs:
             "void", "float _Complex", True, [],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in text
 
@@ -48,19 +49,17 @@ class TestMethodCreatesStubs:
             "void", "float _Complex", True, [],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_execute_cf32(" in text
 
-    def test_methods_c_has_correct_header_include(self, project):
-        method_run(
-            project, "nco", "execute_cf32", None,
-            "void", "float _Complex", True, [],
-        )
+    def test_core_c_has_include(self, project):
+        # nco_core.c must already contain its own header include before any
+        # method stub is appended.
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
-        assert '#include "nco/nco_core.h"' in text
+        assert "nco_core.h" in text
 
     def test_second_method_appends_to_methods_c(self, project):
         method_run(
@@ -72,7 +71,7 @@ class TestMethodCreatesStubs:
             "void", "uint32_t", True, [],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_execute_cf32_max_out" in text
         assert "nco_execute_u32_max_out" in text
@@ -83,7 +82,7 @@ class TestMethodCreatesStubs:
             "void", "double", False, [],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_get_phase_max_out" not in text
         assert "nco_get_phase(" in text
@@ -94,15 +93,17 @@ class TestMethodCreatesStubs:
             "float _Complex", "float _Complex", False, [],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_process(" in text
         # _ctype_display("float _Complex") → "float complex"
         assert "float complex x" in text
 
 
-class TestMethodUpdatesCMake:
-    def test_cmake_has_methods_c(self, project):
+class TestMethodDoesNotModifyCMake:
+    """Method stubs go into _core.c; CMakeLists.txt must NOT be touched."""
+
+    def test_cmake_has_no_methods_c(self, project):
         method_run(
             project, "nco", "execute_cf32", None,
             "void", "float _Complex", True, [],
@@ -110,9 +111,9 @@ class TestMethodUpdatesCMake:
         cmake = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
         ).read_text(encoding="utf-8")
-        assert "nco_methods.c" in cmake
+        assert "nco_methods.c" not in cmake
 
-    def test_cmake_object_lib_updated(self, project):
+    def test_cmake_still_has_single_source(self, project):
         method_run(
             project, "nco", "execute_cf32", None,
             "void", "float _Complex", True, [],
@@ -120,11 +121,12 @@ class TestMethodUpdatesCMake:
         cmake = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
         ).read_text(encoding="utf-8")
-        assert (
-            "add_library(nco_core OBJECT nco_core.c nco_methods.c)" in cmake
-        )
+        assert "add_library(nco_core OBJECT nco_core.c)" in cmake
 
-    def test_cmake_not_duplicated_on_second_method(self, project):
+    def test_cmake_unchanged_after_two_methods(self, project):
+        cmake_before = (
+            project / "native" / "src" / "nco" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         method_run(
             project, "nco", "execute_cf32", None,
             "void", "float _Complex", True, [],
@@ -133,10 +135,10 @@ class TestMethodUpdatesCMake:
             project, "nco", "execute_u32", None,
             "void", "uint32_t", True, [],
         )
-        cmake = (
+        cmake_after = (
             project / "native" / "src" / "nco" / "CMakeLists.txt"
         ).read_text(encoding="utf-8")
-        assert cmake.count("nco_methods.c") == 1
+        assert cmake_before == cmake_after
 
 
 class TestMethodUpdatesExtC:
@@ -247,13 +249,13 @@ class TestMethodMultiOutput:
         ).read_text(encoding="utf-8")
         assert "PyTuple_Pack" in ext
 
-    def test_multi_output_stubs_in_methods_c(self, project):
+    def test_multi_output_stubs_in_core_c(self, project):
         method_run(
             project, "nco", "execute_iq", None,
             "void", "float _Complex", True, ["float _Complex"],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "nco_execute_iq_max_out" in text
         assert "nco_execute_iq(" in text
@@ -387,7 +389,7 @@ class TestMethodFixedMultiOutput:
             "float", "float", False, ["uint8_t"],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
 
@@ -397,7 +399,7 @@ class TestMethodFixedMultiOutput:
             "float", "float", False, ["uint8_t"],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "(void)out1;" in text
 
@@ -459,7 +461,7 @@ class TestMethodFixedMultiOutput:
             "void", "float", False, ["uint8_t"],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
         ext = (
@@ -473,7 +475,7 @@ class TestMethodFixedMultiOutput:
             "float", "float", False, ["uint8_t", "uint32_t"],
         )
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "uint8_t *out1" in text
         assert "uint32_t *out2" in text
@@ -491,7 +493,7 @@ class TestMethodWithParams:
                    "void", "void", False, [],
                    params=[("freq", "float"), ("mode", "int32_t")])
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "float freq" in text
         assert "int32_t mode" in text
@@ -501,7 +503,7 @@ class TestMethodWithParams:
                    "void", "void", False, [],
                    params=[("freq", "float"), ("mode", "int32_t")])
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "(void)freq;" in text
         assert "(void)mode;" in text
@@ -511,7 +513,7 @@ class TestMethodWithParams:
                    "void", "void", False, [],
                    params=[("freq", "float")])
         text = (
-            project / "native" / "src" / "nco" / "nco_methods.c"
+            project / "native" / "src" / "nco" / "nco_core.c"
         ).read_text(encoding="utf-8")
         assert "return (void)" not in text
 
@@ -610,19 +612,19 @@ class TestMethodWithArrayParam:
 
     def test_c_stub_has_const_ptr_param(self, arr_method):
         text = (
-            arr_method / "native/src/nco/nco_methods.c"
+            arr_method / "native/src/nco/nco_core.c"
         ).read_text(encoding="utf-8")
         assert "const float complex *ctrl" in text
 
     def test_c_stub_has_len_param(self, arr_method):
         text = (
-            arr_method / "native/src/nco/nco_methods.c"
+            arr_method / "native/src/nco/nco_core.c"
         ).read_text(encoding="utf-8")
         assert "size_t ctrl_len" in text
 
     def test_c_stub_suppresses_ptr_and_len(self, arr_method):
         text = (
-            arr_method / "native/src/nco/nco_methods.c"
+            arr_method / "native/src/nco/nco_core.c"
         ).read_text(encoding="utf-8")
         assert "(void)ctrl;" in text
         assert "(void)ctrl_len;" in text
@@ -654,7 +656,7 @@ class TestMethodWithArrayParam:
 
     def test_mixed_params_scalar_and_array(self, mixed_method):
         text = (
-            mixed_method / "native/src/nco/nco_methods.c"
+            mixed_method / "native/src/nco/nco_core.c"
         ).read_text(encoding="utf-8")
         assert "float gain" in text
         assert "const float *buf" in text

@@ -181,9 +181,9 @@ print("filter_module: all checks passed")
         )
     print(result.stdout.strip())
 
-    # Verify module-level __init__.pyi stub
-    pyi = (dest / "src" / "my_filters" / "filter" / "__init__.pyi").read_text()
-    assert pyi.startswith("# filter/__init__.pyi")
+    # Verify module-level type stub (named filter.pyi, not __init__.pyi)
+    pyi = (dest / "src" / "my_filters" / "filter" / "filter.pyi").read_text()
+    assert pyi.startswith("# filter/filter.pyi")
     assert "class Fir:" in pyi
     assert "class Biquad:" in pyi
     assert "import numpy as np" in pyi

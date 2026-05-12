@@ -467,14 +467,4 @@ just-makeit config version 0.2.0    # update version
 
 ______________________________________________________________________
 
-## Pure (stateless) objects
-
-```sh
-just-makeit object normalize --pure --param scale:double:1.0
-```
-
-See [Stateful vs pure objects](pure.md) for the decision guide.
-
-______________________________________________________________________
-
 See the [Roadmap](roadmap.md) for the full plan.

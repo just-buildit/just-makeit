@@ -18,7 +18,7 @@ from pathlib import Path
 from . import _config as C
 from . import _stubs as S
 from . import _templates as T
-from ._init import _to_title, _write
+from ._init import _to_title, _write, _write_compile_commands
 
 
 def run(root: Path, module: str) -> None:
@@ -58,6 +58,18 @@ def run(root: Path, module: str) -> None:
     print(f"just-makeit: scaffolding module '{module}' in project '{pkg}'")
     print()
 
+    mod_ctx = {"module": module, "Module": Module, "MODULE": module.upper()}
+
+    # C header and implementation for module-level functions
+    _write(
+        root / "native" / "inc" / module / f"{module}_core.h",
+        T.render(T.MODULE_CORE_H, mod_ctx),
+    )
+    _write(
+        root / "native" / "src" / module / f"{module}_core.c",
+        T.render(T.MODULE_CORE_C, mod_ctx),
+    )
+
     # Empty module ext.c (no types yet — populated by `just-makeit object`)
     ext_c = T.render_module_ext_c(module, [])
     _write(root / "native" / "src" / module / f"{module}_ext.c", ext_c)
@@ -67,7 +79,12 @@ def run(root: Path, module: str) -> None:
         "module": module,
         "Module": Module,
         "object_list": "",
-        "object_core_libs": "",
+        "object_core_libs": f"{module}_core",
+        "module_core_lib_block": (
+            f"add_library({module}_core OBJECT {module}_core.c)\n"
+            f"target_include_directories({module}_core PRIVATE"
+            f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
+        ),
     }
     _write(
         root / "native" / "src" / module / "CMakeLists.txt",
@@ -83,7 +100,7 @@ def run(root: Path, module: str) -> None:
     }
     pkg_module_dir = root / "src" / pkg / module
     _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx))
-    _write(pkg_module_dir / "__init__.pyi", S.make_module_pyi(cfg, module))
+    _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module))
 
     # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
     cmake_path = root / "CMakeLists.txt"
@@ -101,10 +118,20 @@ def run(root: Path, module: str) -> None:
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
 
+    # Ensure C test and benchmark directories exist (even before any objects
+    # or functions are added — users may want to write their own C tests).
+    for subdir in ("native/tests", "native/benchmarks"):
+        d = root / subdir
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+
     # Config
     C.scaffold_module(cfg, module)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
+
+    # compile_commands.json — include the new module's ext.c from the start
+    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
 
     print()
     print(f"Done!  Add types with: just-makeit object <name> --module {module}")

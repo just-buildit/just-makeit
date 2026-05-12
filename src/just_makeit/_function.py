@@ -1,20 +1,15 @@
 """
 _function.py — `just-makeit function` command.
 
-Adds a module-level Python function (no type object, no handle) to an existing
-module.  Canonical use cases: FFT module-level API, window utility functions,
-global setup calls.
+Adds a module-level C function to an existing module.
 
     just-makeit function fft_global_setup --module fft
     just-makeit function window_kaiser    --module fft
 
-On first call for a module, creates native/src/{module}/{module}_functions.c
-with a file header and the first stub.  Subsequent calls append stubs to the
-existing file.  The functions file is never regenerated — user code is safe.
-
-The module ext.c is regenerated (via _object._regenerate_module) each time to
-update the PyMethodDef array and .m_methods.  The header section gains
-#include "{module}_functions.c" on the first function.
+The C implementation stub is appended to native/src/{module}/{module}_core.c
+and the declaration is injected into native/inc/{module}/{module}_core.h.
+The Python wrapper (_bind_{fn_name}) is generated into {module}_ext.c the
+next time _regenerate_module runs (called here after updating the config).
 """
 
 import sys
@@ -22,139 +17,35 @@ from pathlib import Path
 
 from . import _config as C
 from . import _templates as T
-from ._init import _write
+from ._init import _write, _write_compile_commands
 from ._object import _regenerate_module
 
 
-_FUNCTIONS_C_HEADER = """\
-/*
- * {module}_functions.c — module-level function stubs.
- *
- * This file is #included from {module}_ext.c after the Python/NumPy headers.
- * Add any extra #includes you need here (your C library headers, etc.).
- */
-
-"""
-
-_FUNCTION_STUB_UNTYPED = """\
-/* <<IMPLEMENT: {fn_name}>> */
-static PyObject *
-{fn_name}(PyObject *self, PyObject *args)
-{{
-    (void)self; (void)args;
-    Py_RETURN_NONE;
-}}
-"""
-
-
-def _function_stub_typed(
+def _append_to_core_c(
+    path: Path,
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
-) -> str:
-    """Stub for a typed function: C helper + Python wrapper with parse block."""
-    from . import _templates as T
-
-    ret_disp = T._ctype_display(return_type)
-    ret_meta = T._CTYPE_META.get(return_type)
-
-    # C-level helper signature.
-    # Array params ("type[]") expand to (const elem_t *name, size_t name_len).
-    c_param_parts: list[str] = []
-    suppress_parts: list[str] = []
-    for n, t in params:
-        if T.is_array_param_type(t):
-            elem_ct = T.array_elem_ctype(t)
-            elem_disp = T._ctype_display(elem_ct)
-            c_param_parts.append(f"const {elem_disp} *{n}")
-            c_param_parts.append(f"size_t {n}_len")
-            suppress_parts.append(f"(void){n};")
-            suppress_parts.append(f"(void){n}_len;")
-        else:
-            c_param_parts.append(f"{T._ctype_display(t)} {n}")
-            suppress_parts.append(f"(void){n};")
-
-    if c_param_parts:
-        c_param_str = ", ".join(c_param_parts)
-        suppress = "    " + " ".join(suppress_parts)
-    else:
-        c_param_str = "void"
-        suppress = ""
-
-    if ret_meta:
-        zero = ret_meta["zero"]
-        c_ret_line = f"    return ({ret_disp}){zero}; /* placeholder */"
-    else:
-        c_ret_line = ""
-
-    c_helper = (
-        f"/* <<IMPLEMENT: {fn_name}>> */\n"
-        f"static {ret_disp}\n"
-        f"_{fn_name}_impl({c_param_str})\n"
-        f"{{\n"
-        + (suppress + "\n" if suppress else "")
-        + (c_ret_line + "\n" if c_ret_line else "")
-        + "}\n"
-    )
-
-    # Python wrapper
-    if params:
-        parse_block, call_args, cleanup = T._build_params_parse(
-            [{"name": n, "type": t} for n, t in params]
-        )
-        meth_flags = "METH_VARARGS"
-        py_args = "PyObject *args"
-    else:
-        parse_block = "    (void)args;\n"
-        call_args = ""
-        cleanup = ""
-        meth_flags = "METH_NOARGS"
-        py_args = "PyObject *Py_UNUSED(args)"
-
-    if ret_meta:
-        ret_expr = ret_meta["to_py"](f"_{fn_name}_impl({call_args})")
-        ret_line = f"{cleanup}    return {ret_expr};"
-    else:
-        call_line = (
-            f"    _{fn_name}_impl({call_args});" if call_args
-            else f"    _{fn_name}_impl();"
-        )
-        ret_line = call_line + f"\n{cleanup}    Py_RETURN_NONE;"
-
-    wrapper = (
-        f"static PyObject *\n"
-        f"{fn_name}(PyObject *self, {py_args})\n"
-        f"{{\n"
-        f"    (void)self;\n"
-        + parse_block
-        + f"{ret_line}\n"
-        + "}"
-    )
-
-    return c_helper + "\n" + wrapper + "\n"
-
-
-def _append_to_functions_c(
-    path: Path,
-    module: str,
-    fn_name: str,
-    params: list[tuple[str, str]] | None = None,
-    return_type: str = "void",
 ) -> None:
-    params = params or []
-    if params or return_type != "void":
-        stub = _function_stub_typed(fn_name, params, return_type)
-    else:
-        stub = _FUNCTION_STUB_UNTYPED.format(fn_name=fn_name)
-    if not path.exists():
-        header = _FUNCTIONS_C_HEADER.format(module=module)
-        path.write_text(header + stub, encoding="utf-8")
-        print(f"  create  {path}")
-    else:
-        existing = path.read_text(encoding="utf-8")
-        path.write_text(existing + "\n" + stub, encoding="utf-8")
-        print(f"  update  {path}")
+    stub = T.fn_c_stub(fn_name, params, return_type)
+    existing = path.read_text(encoding="utf-8")
+    path.write_text(existing + "\n" + stub, encoding="utf-8")
+    print(f"  update  {path}")
 
+
+def _inject_into_core_h(
+    path: Path,
+    fn_name: str,
+    params: list[tuple[str, str]],
+    return_type: str,
+    module: str,
+) -> None:
+    decl = T.fn_c_decl(fn_name, params, return_type)
+    existing = path.read_text(encoding="utf-8")
+    marker = f"#endif /* {module.upper()}_CORE_H */"
+    existing = existing.replace(marker, f"{decl}\n{marker}")
+    path.write_text(existing, encoding="utf-8")
+    print(f"  update  {path}")
 
 
 def run(
@@ -209,9 +100,13 @@ def run(
 
     params = params or []
 
-    # Create or append to {module}_functions.c
-    functions_c = root / "native" / "src" / module / f"{module}_functions.c"
-    _append_to_functions_c(functions_c, module, fn_name, params, return_type)
+    # Append C stub to <module>_core.c
+    core_c = root / "native" / "src" / module / f"{module}_core.c"
+    _append_to_core_c(core_c, fn_name, params, return_type)
+
+    # Inject declaration into <module>_core.h
+    core_h = root / "native" / "inc" / module / f"{module}_core.h"
+    _inject_into_core_h(core_h, fn_name, params, return_type, module)
 
     # Update config
     fn_entry: dict = {"name": fn_name}
@@ -225,8 +120,11 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # Regenerate module ext.c (updates PyMethodDef + #include)
+    # Regenerate module ext.c (updates _bind_ wrappers + PyMethodDef)
     _regenerate_module(root, cfg, module, pkg)
 
+    # compile_commands.json
+    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
+
     print()
-    print(f"Done!  Implement {fn_name}() in {functions_c.name}")
+    print(f"Done!  Implement {fn_name}() in {core_c.name}")

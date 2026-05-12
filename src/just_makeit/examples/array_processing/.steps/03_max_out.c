@@ -1,4 +1,4 @@
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * The Python ext calls this once at __init__ to size the pre-allocated
  * output buffer.  Return the largest n_out that execute() can ever produce

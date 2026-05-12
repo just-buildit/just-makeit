@@ -17,7 +17,7 @@ _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "my_filter"
-    run("my_filter", dest, "my_filter")
+    run("my_filter", dest, ["my_filter"])
     return dest
 
 
@@ -145,7 +145,7 @@ class TestNewConfig:
     def test_config_records_custom_state(self, tmp_path):
         dest = tmp_path / "comp"
         run(
-            "comp", dest, "comp", [("cutoff", "double", "440.0"), ("order", "int", "4")]
+            "comp", dest, ["comp"], [("cutoff", "double", "440.0"), ("order", "int", "4")]
         )
         import tomllib
 
@@ -245,33 +245,33 @@ class TestNewContent:
 class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp")
+        run("comp", dest, ["comp"])
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core_h
         assert "comp_get_gain" in core_h
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp", [("cutoff", "double", "0.0")])
+        run("comp", dest, ["comp"], [("cutoff", "double", "0.0")])
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double cutoff;" in core_h
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp", [("gain", "double", "1.0"), ("order", "int", "4")])
+        run("comp", dest, ["comp"], [("gain", "double", "1.0"), ("order", "int", "4")])
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "double gain;" in core_h
         assert "int order;" in core_h
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp", [("alpha", "float", "0.0f")])
+        run("comp", dest, ["comp"], [("alpha", "float", "0.0f")])
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
         assert "float alpha;" in core_h
 
     def test_reset_uses_default_not_zero(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, "comp", [("gain", "double", "1.5")])
+        run("comp", dest, ["comp"], [("gain", "double", "1.5")])
         c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text(encoding="utf-8")
         assert "state->gain = 1.5;" in c
 
@@ -321,7 +321,7 @@ class TestNewValidation:
 
     def test_single_word_name(self, tmp_path):
         dest = tmp_path / "gain"
-        run("gain", dest, "gain")
+        run("gain", dest, ["gain"])
         cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "project(gain" in cmake
 
@@ -351,7 +351,7 @@ class TestNewBuild:
             pytest.skip("numpy not importable")
 
         root = tmp_path_factory.mktemp("built") / "gain"
-        run("gain", root, "gain")
+        run("gain", root, ["gain"])
 
         import subprocess
 
@@ -421,7 +421,7 @@ class TestVoidReturn:
     @pytest.fixture()
     def sink(self, tmp_path):
         dest = tmp_path / "audio"
-        run("audio", dest, "sink",
+        run("audio", dest, ["sink"],
             state_vars=[("volume", "double", "1.0")],
             return_type="void")
         return dest
@@ -429,7 +429,7 @@ class TestVoidReturn:
     @pytest.fixture()
     def void_gen(self, tmp_path):
         dest = tmp_path / "audio"
-        run("audio", dest, "ticker",
+        run("audio", dest, ["ticker"],
             state_vars=[("phase", "double", "0.0")],
             arg_type="void",
             return_type="void")
@@ -512,24 +512,24 @@ class TestArrayArgType:
     @pytest.fixture()
     def arr_obj(self, tmp_path):
         dest = tmp_path / "proc"
-        run("proc", dest, "filt",
+        run("proc", dest, ["filt"],
             arg_type="float _Complex[]",
             return_type="float _Complex")
         return dest
 
-    def test_impl_h_step_has_ptr_len_params(self, arr_obj):
+    def test_core_h_step_has_ptr_len_params(self, arr_obj):
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float complex *x, size_t x_len" in h
 
-    def test_impl_h_step_returns_correct_type(self, arr_obj):
+    def test_core_h_step_returns_correct_type(self, arr_obj):
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "static inline float complex" in h
 
-    def test_impl_h_no_steps(self, arr_obj):
+    def test_core_h_no_steps(self, arr_obj):
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
             encoding="utf-8"
         )

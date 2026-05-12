@@ -74,7 +74,11 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     print(f"  update  {init_py}")
 
 
-def _write_compile_commands(root: Path, all_components: list[str]) -> None:
+def _write_compile_commands(
+    root: Path,
+    all_components: list[str],
+    all_modules: list[str] | None = None,
+) -> None:
     r = root.resolve()
     python_inc = sysconfig.get_path("include")
     try:
@@ -89,32 +93,44 @@ def _write_compile_commands(root: Path, all_components: list[str]) -> None:
         base_inc.append(python_inc)
     if numpy_inc:
         base_inc.append(numpy_inc)
+    base_flags = "cc -std=c99 -Wall -Wextra -fPIC " + " ".join(
+        f"-I{d}" for d in base_inc
+    )
+
+    def _entry(src_rel: str, flags: str) -> dict:
+        abs_src = str(r / src_rel)
+        return {
+            "directory": str(r),
+            "command": f"{flags} -c {abs_src} -o /dev/null",
+            "file": abs_src,
+        }
 
     entries = []
+
     for comp in all_components:
         comp_inc = base_inc + [str(r / "native" / "inc" / comp)]
-        inc_flags = " ".join(f"-I{d}" for d in comp_inc)
-        base = f"cc -std=c99 -Wall -Wextra -fPIC {inc_flags}"
+        comp_flags = "cc -std=c99 -Wall -Wextra -fPIC " + " ".join(
+            f"-I{d}" for d in comp_inc
+        )
         test_flags = (
             f"cc -std=c99 -Wall"
             f" -I{r / 'native' / 'inc'}"
             f" -I{r / 'native' / 'inc' / comp}"
         )
-
-        def _entry(src_rel, flags):
-            abs_src = str(r / src_rel)
-            return {
-                "directory": str(r),
-                "command": f"{flags} -c {abs_src} -o /dev/null",
-                "file": abs_src,
-            }
-
+        entries.append(_entry(f"native/src/{comp}/{comp}_core.c", comp_flags))
+        # Standalone objects have their own _ext.c; module objects do not
+        # (they share <module>_ext.c, added below in the modules loop).
+        ext_c = r / "native" / "src" / comp / f"{comp}_ext.c"
+        if ext_c.exists():
+            entries.append(_entry(f"native/src/{comp}/{comp}_ext.c", comp_flags))
         entries += [
-            _entry(f"native/src/{comp}/{comp}_core.c", base),
-            _entry(f"native/src/{comp}/{comp}_ext.c", base),
             _entry(f"native/tests/test_{comp}_core.c", test_flags),
             _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
         ]
+
+    for mod in (all_modules or []):
+        entries.append(_entry(f"native/src/{mod}/{mod}_ext.c", base_flags))
+        entries.append(_entry(f"native/src/{mod}/{mod}_core.c", base_flags))
 
     dest = root / "compile_commands.json"
     verb = "create" if not dest.exists() else "update"
@@ -127,7 +143,6 @@ def run(
     component: str,
     state_vars: list[tuple[str, str, str]] | None = None,
     perf: bool | None = None,
-    pure: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     array_args: list[tuple[str, str]] = (),
@@ -180,19 +195,10 @@ def run(
     sample_ctx = T.make_sample_ctx(arg_type, return_type)
     ctx.update(sample_ctx)
 
-    if pure:
-        pure_ctx = T.make_pure_ctx(ctx["component"], ctx["Component"], vars_, arg_type)
-        ctx.update(pure_ctx)
-        pure_style = pure_ctx["pure_style"]
-    else:
-        ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
-                                    array_args=array_args, no_state=no_state))
-        pure_style = None
-
+    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
+                                array_args=array_args, no_state=no_state))
     ctx.update(T.make_perf_ctx(perf))
-    if pure_style is None:
-        ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type,
-                                   no_step=no_step))
+    ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type, no_step=no_step))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -213,44 +219,18 @@ def run(
         if not simd_h.exists():
             _write(simd_h, T.JM_SIMD_H)
 
-    if pure_style == "scalar":
-        core_h_tmpl = T.PURE_SCALAR_CORE_H
-        core_c_tmpl = T.PURE_SCALAR_CORE_C
-        ext_c_tmpl = T.PURE_SCALAR_EXT_C
-        test_c_tmpl = T.PURE_SCALAR_TEST_C
-        bench_c_tmpl = T.PURE_SCALAR_BENCH_C
-        pyi_tmpl = T.PURE_SCALAR_PYI
-        pytest_tmpl = T.PYTEST_PURE_SCALAR_TEST
-        bench_py_tmpl = T.PURE_SCALAR_BENCH_PY
-        init_py_tmpl = T.PACKAGE_INIT_PY_PURE_SCALAR
-    elif pure_style == "struct":
-        core_h_tmpl = T.PURE_STRUCT_CORE_H
-        core_c_tmpl = T.PURE_STRUCT_CORE_C
-        ext_c_tmpl = T.PURE_STRUCT_EXT_C
-        test_c_tmpl = T.PURE_STRUCT_TEST_C
-        bench_c_tmpl = T.PURE_STRUCT_BENCH_C
-        pyi_tmpl = T.PURE_STRUCT_PYI
-        pytest_tmpl = T.PYTEST_PURE_STRUCT_TEST
-        bench_py_tmpl = T.PURE_STRUCT_BENCH_PY
-        init_py_tmpl = T.PACKAGE_INIT_PY
-    else:
-        core_h_tmpl = T.COMPONENT_CORE_H
-        core_c_tmpl = T.COMPONENT_CORE_C
-        ext_c_tmpl = T.COMPONENT_EXT_C
-        test_c_tmpl = T.COMPONENT_TEST_C
-        bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
-        pyi_tmpl = T.COMPONENT_PYI
-        pytest_tmpl = T.PYTEST_TEST
-        bench_py_tmpl = T.COMPONENT_BENCH_PY
-        init_py_tmpl = T.PACKAGE_INIT_PY
+    core_h_tmpl = T.COMPONENT_CORE_H
+    core_c_tmpl = T.COMPONENT_CORE_C
+    ext_c_tmpl = T.COMPONENT_EXT_C
+    test_c_tmpl = T.COMPONENT_TEST_C
+    bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
+    pyi_tmpl = T.COMPONENT_PYI
+    pytest_tmpl = T.PYTEST_TEST
+    bench_py_tmpl = T.COMPONENT_BENCH_PY
+    init_py_tmpl = T.PACKAGE_INIT_PY
 
     # C headers
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
-    if pure_style is None:
-        _write(
-            root / "native" / "inc" / comp / f"{comp}_impl.h",
-            r(T.COMPONENT_IMPL_H),
-        )
 
     # C sources
     _write(root / "native" / "src" / comp / f"{comp}_core.c", r(core_c_tmpl))
@@ -331,7 +311,7 @@ def run(
 
         # compile_commands.json
         all_comps = C.components(cfg) + [comp]
-        _write_compile_commands(root, all_comps)
+        _write_compile_commands(root, all_comps, C.modules(cfg))
 
     else:
         # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile
@@ -347,7 +327,7 @@ def run(
         print(f"  update  {mf_path}")
 
     # just-makeit.toml
-    C.add_component(cfg, comp, vars_, pure=pure_style,
+    C.add_component(cfg, comp, vars_,
                     arg_type_=arg_type, return_type_=return_type,
                     array_args_=array_args,
                     no_state_=no_state, no_step_=no_step)

@@ -67,9 +67,9 @@ def run(root: Path) -> None:
     # 7. Round-trip demo (module objects don't generate Python tests; demo is our integration check)
     _cmd([sys.executable, str(STEPS / "07_demo.py")], cwd=proj)
 
-    # 8. Verify module-level __init__.pyi stub
-    pyi = (proj / "src" / "iqfile" / "conv" / "__init__.pyi").read_text()
-    assert pyi.startswith("# conv/__init__.pyi")
+    # 8. Verify module-level type stub (named conv.pyi, not __init__.pyi)
+    pyi = (proj / "src" / "iqfile" / "conv" / "conv.pyi").read_text()
+    assert pyi.startswith("# conv/conv.pyi")
     assert "class Cf32ToQ15:" in pyi
     assert "class Q15ToCf32:" in pyi
     assert "import numpy as np" in pyi

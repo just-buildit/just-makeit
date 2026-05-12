@@ -1,4 +1,4 @@
-/* Implement in native/src/hbdecim/hbdecim_methods.c.
+/* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * Two output arrays: primary (filtered samples) and secondary (overflow flags).
  * Both are pre-allocated by the ext to execute_ovf_max_out() elements.

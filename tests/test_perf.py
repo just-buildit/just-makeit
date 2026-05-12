@@ -16,14 +16,14 @@ from just_makeit._config import load, is_perf
 @pytest.fixture()
 def perf_project(tmp_path):
     dest = tmp_path / "myproj"
-    new_run("myproj", dest, "mycomp", perf=True)
+    new_run("myproj", dest, ["mycomp"], perf=True)
     return dest
 
 
 @pytest.fixture()
 def plain_project(tmp_path):
     dest = tmp_path / "myproj"
-    new_run("myproj", dest, "mycomp")
+    new_run("myproj", dest, ["mycomp"])
     return dest
 
 
@@ -160,7 +160,7 @@ class TestPerfUpgrade:
     @pytest.fixture()
     def upgraded(self, tmp_path):
         dest = tmp_path / "myproj"
-        new_run("myproj", dest, "mycomp")
+        new_run("myproj", dest, ["mycomp"])
         perf_run(dest)
         return dest
 
@@ -199,7 +199,7 @@ class TestPerfUpgrade:
 
     def test_multi_component(self, tmp_path):
         dest = tmp_path / "multi"
-        new_run("multi", dest, "alpha")
+        new_run("multi", dest, ["alpha"])
         init_run(dest, "beta")
         perf_run(dest)
         for comp in ("alpha", "beta"):
@@ -208,7 +208,7 @@ class TestPerfUpgrade:
 
     def test_already_perf_is_noop(self, tmp_path, capsys):
         dest = tmp_path / "already"
-        new_run("already", dest, "mycomp", perf=True)
+        new_run("already", dest, ["mycomp"], perf=True)
         perf_run(dest)
         out = capsys.readouterr().out
         assert "already enabled" in out
@@ -225,7 +225,7 @@ class TestJmSimdHPresence:
 
     def test_written_by_perf_upgrade(self, tmp_path):
         dest = tmp_path / "upg"
-        new_run("upg", dest, "mycomp")
+        new_run("upg", dest, ["mycomp"])
         assert not (dest / "native" / "inc" / "jm_simd.h").exists()
         perf_run(dest)
         assert (dest / "native" / "inc" / "jm_simd.h").exists()

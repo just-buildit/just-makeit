@@ -1,5 +1,27 @@
 # Changelog
 
+## \[0.10.2\] — 2026-05-11
+
+### Added
+
+- **`--no-state` for `jm object`**: suppress the default auto-generated state
+  variable, constructor arguments, and getter/setter scaffolding. Emits
+  `<<IMPLEMENT>>` stubs in the C struct body and `create()`/`destroy()`/`reset()`
+  so you fill in the real domain-specific constructor signature by hand.
+  Mutually exclusive with `--state`. All downstream commands (`jm method`,
+  `jm property`) detect the flag from TOML and regenerate correctly.
+- **`--no-step` for `jm object`**: suppress `step()` and `steps()` from all C
+  and Python output. Lifecycle scaffolding (`create`, `destroy`, `reset`) is
+  still generated. The bench stub becomes a minimal printf with no volatile
+  sink. Use for objects whose interface is entirely via named `jm method` calls
+  (e.g. FIR filters, decimators, block processors).
+- **`--out-type TYPE` and `--out-divisor N` for `jm method`**: allocate an
+  output array per call and pass `*out` to the C stub automatically. The array
+  length is `in_len / out_divisor`. Use `--out-divisor 2` for CI8/CI16/CI32
+  inputs where two raw bytes form one complex output sample.
+
+______________________________________________________________________
+
 ## \[0.10.1\] — 2026-05-11
 
 ### Added
@@ -178,7 +200,7 @@ ______________________________________________________________________
 ### Fixed
 
 - `_perf.py`: `static inline → JM_FORCEINLINE JM_HOT` upgrade now patches
-  `_core.h` (where the inline step lives) instead of the thin `_impl.h` wrapper.
+  `_core.h` (where the inline step lives).
 - `_init.py`: `arg_type` / `return_type` now persisted to `just-makeit.toml`
   for standalone objects; previously the default `float _Complex` was reloaded
   when `just-makeit method` re-rendered `_core.h`.

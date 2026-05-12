@@ -164,16 +164,6 @@ def from_new(
     return {"project": proj}
 
 
-def pure_style(cfg: dict, component: str) -> str | None:
-    """Return 'scalar', 'struct', or None (stateful / not pure)."""
-    v = cfg.get(component, {}).get("pure")
-    return v if v in ("scalar", "struct") else None
-
-
-def is_pure_component(cfg: dict, component: str) -> bool:
-    return pure_style(cfg, component) is not None
-
-
 def arg_type(cfg: dict, component: str) -> str:
     return cfg.get(component, {}).get("arg_type", "float _Complex")
 
@@ -186,7 +176,6 @@ def add_component(
     cfg: dict,
     component: str,
     vars_: list[tuple[str, str, str]],
-    pure: str | None = None,
     arg_type_: str = "float _Complex",
     return_type_: str | None = None,
     array_args_: list[tuple[str, str]] = (),
@@ -196,8 +185,6 @@ def add_component(
     entry: dict = {
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
     }
-    if pure:
-        entry["pure"] = pure
     if arg_type_ != "float _Complex":
         entry["arg_type"] = arg_type_
     rt = return_type_ if return_type_ is not None else arg_type_
@@ -250,7 +237,7 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        meta_keys = [k for k in ("pure", "arg_type", "return_type", "no_state", "no_step")
+        meta_keys = [k for k in ("arg_type", "return_type", "no_state", "no_step")
                      if comp_data.get(k)]
         if meta_keys:
             lines.append(f"[{comp}]")

@@ -7,7 +7,7 @@ three or more streams.
 ```{04_multi_output.sh}
 ```
 
-Generated stubs in `hbdecim_methods.c`:
+Generated stubs appended to `hbdecim_core.c`:
 
 ```c
 size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);

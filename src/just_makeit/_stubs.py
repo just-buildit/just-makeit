@@ -222,7 +222,7 @@ def make_module_pyi(cfg: dict, module: str) -> str:
     """
     needs_numpy = _uses_numpy(cfg, module)
     parts: list[str] = [
-        f"# {module}/__init__.pyi — type stubs for the {module} C extension."
+        f"# {module}/{module}.pyi — type stubs for the {module} C extension."
     ]
     if needs_numpy:
         parts.append("import numpy as np")

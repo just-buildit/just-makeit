@@ -42,31 +42,9 @@ Real algorithms are hot. The generated code should be ready for it.
 
 ______________________________________________________________________
 
-## v0.3 — Pure / stateless mode ✓ shipped
+## v0.3 — Benchmarks and example test runner ✓ shipped
 
-Not every algorithm needs state. Some are better expressed as a pure function
-with no lifecycle overhead.
-
-**Planned and delivered:**
-
-- `--pure` flag on `new` and `init` — auto-detects style from declared params:
-  - **Scalar-only params** → scalar style: params passed per call as function
-    arguments; Python exports module-level `comp(x, **params)` and
-    `comp.steps(arr, **params)` functions.
-  - **Any array param** → struct style: caller-managed `comp_params_t` with
-    `_params_create()` (calloc), `_params_free()`, `_params_init()` (for
-    stack/pool/`aligned_alloc`/`mmap` allocation patterns); Python exposes a
-    callable class (`obj(x)` via `tp_call`, context-manager support).
-- `--param` flag — idiomatic synonym for `--state` when used with `--pure`;
-  both are accepted everywhere with identical semantics.
-- `pure` field in `just-makeit.toml` — persisted so `just-makeit add --param`
-  regenerates the correct template set; auto-promotes scalar→struct if an
-  array param is added.
-- `docs/pure.md` — full cost/benefit analysis, allocation pattern guide with
-  concrete C examples (heap, stack, SIMD-aligned, N-channel array, arena,
-  mmap), and a Mermaid decision flowchart.
-
-**Delivered beyond plan:**
+**Delivered:**
 
 - C and Python benchmarks generated with every component (`make bench`,
   `make bench-save`, `make bench-compare`; pytest-benchmark + doppler-style
@@ -77,8 +55,6 @@ with no lifecycle overhead.
   enforces that every example directory ships a test driver.
 - `examples/README.md` — contributor guide explaining the `.steps/` naming
   convention, `assemble.py` weaving, and the `test.py` contract.
-- `examples/fir_filter` step 8 — pure FIR variant demonstrating struct-style
-  caller-managed params and multi-channel usage.
 - `docs/examples/` retired — stale duplicate of `examples/*/README.md`.
 
 ______________________________________________________________________

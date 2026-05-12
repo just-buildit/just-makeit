@@ -104,15 +104,13 @@ def run(
             state_vars_list = C.state_vars(cfg, object_name)
             arg_type_ = C.arg_type(cfg, object_name)
             return_type_ = C.return_type(cfg, object_name)
-            pure_style = C.pure_style(cfg, object_name)
             perf = C.is_perf(cfg)
             Component = _to_title(object_name)
-            ctx, _ = _make_object_ctx(
+            ctx = _make_object_ctx(
                 object_name, module, pkg,
                 C.project_version(cfg),
                 state_vars_list, arg_type_, return_type_,
                 perf=perf,
-                pure=(pure_style is not None),
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
                 no_step=C.is_no_step(cfg, object_name),
@@ -130,7 +128,6 @@ def run(
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)
         return_type_ = C.return_type(cfg, object_name)
-        pure_style = C.pure_style(cfg, object_name)
         perf = C.is_perf(cfg)
         version = C.project_version(cfg)
 
@@ -143,16 +140,12 @@ def run(
             "version": version,
         })
         ctx.update(T.make_sample_ctx(arg_type_, return_type_))
-        if pure_style:
-            ctx.update(T.make_pure_ctx(object_name, Component, state_vars_list, arg_type_))
-        else:
-            ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
-                                        array_args=C.array_args(cfg, object_name),
-                                        no_state=C.is_no_state(cfg, object_name)))
+        ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
+                                    array_args=C.array_args(cfg, object_name),
+                                    no_state=C.is_no_state(cfg, object_name)))
         ctx.update(T.make_perf_ctx(perf))
-        if not pure_style:
-            ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
-                                       no_step=C.is_no_step(cfg, object_name)))
+        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
+                                   no_step=C.is_no_step(cfg, object_name)))
         ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
         ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
                                          frozenset(n for n, _, _ in state_vars_list)))
@@ -180,5 +173,5 @@ def run(
         print(
             f"Done!  Implement {object_name}_get_{prop_name}() in"
             f" native/src/{object_name}/{object_name}_core.c"
-            f" (or _methods.c)  [{rw}]"
+            f"  [{rw}]"
         )

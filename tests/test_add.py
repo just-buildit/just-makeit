@@ -15,7 +15,7 @@ from just_makeit._config import load, state_vars
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "comp"
-    new_run("comp", dest, "comp", [("gain", "double", "1.0")])
+    new_run("comp", dest, ["comp"], [("gain", "double", "1.0")])
     return dest
 
 

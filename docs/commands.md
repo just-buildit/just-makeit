@@ -1,6 +1,6 @@
 # Commands
 
-## `just-makeit new <proj> [--object name] [--state name:type[:default] ...]`
+## `just-makeit new <proj> [--object name ...] [--state name:type[:default] ...]`
 
 Create a new project. Optionally scaffold a first object in the same step.
 
@@ -22,12 +22,11 @@ any objects — the source of truth for all subsequent commands.
 | Argument                      | Description                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------ |
 | `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
-| `--object name`               | Scaffold a first standalone object immediately (optional).                           |
+| `--object name`               | Scaffold a standalone object immediately. Repeatable.                                |
 | `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`. |
 | `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
 | `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
 | `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no scalar output. |
-| `--pure`                      | Generate a stateless object. See [Stateful vs pure](pure.md).                       |
 | `--basic`                     | Generate a plain `Makefile` instead of a CMake project. Useful for quick prototypes that don't need a full build system. |
 | `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
 
@@ -47,27 +46,32 @@ Creates:
 
 | File | Purpose |
 |------|---------|
-| `native/src/<name>/<name>_ext.c` | C extension (empty — no types yet) |
+| `native/inc/<name>/<name>_core.h` | Public C API — declare module-level functions here |
+| `native/src/<name>/<name>_core.c` | Implementation — write module-level functions here |
+| `native/src/<name>/<name>_ext.c` | Python binding (auto-generated) |
 | `native/src/<name>/CMakeLists.txt` | Python module target |
 | `src/<pkg>/<name>/__init__.py` | Subpackage init (empty exports) |
 
 Appends `add_subdirectory(native/src/<name>)` to the root `CMakeLists.txt`
 and records `[module.<name>]` with an empty `objects` list in `just-makeit.toml`.
 
-Types are added with `just-makeit object`.
+Types are added with `just-makeit object`.  Module-level functions are added
+with `just-makeit function`.
 
 ______________________________________________________________________
 
-## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--pure] [--arg-type TYPE] [--return-type TYPE]`
+## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--arg-type TYPE] [--return-type TYPE]`
 
-Add a Python type to the project.  Must be run from the project root.
+Add a stateful Python type to the project.  Use this when the algorithm needs
+persistent state (history, coefficients, a cursor, a running accumulator).
+For stateless operations, use [`just-makeit function`](#just-makeit-function-name---module-mod---param-nametype----return-type-type---doc-text) instead.
+Must be run from the project root.
 
 **Without `--module` — standalone object (own `.so`):**
 
 ```sh
 just-makeit object engine --state rate:double:1.0
 just-makeit object ema --arg-type float --return-type float --state alpha:double:0.1 --state prev:float:0.0
-just-makeit object normalize --pure --param scale:double:1.0
 ```
 
 Creates the full standalone set of files, updates the top-level `CMakeLists.txt`,
@@ -118,8 +122,9 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `--state name:type[:default]` | Declare a state variable. Repeatable. |
 | `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"` — `steps()` is not generated. |
 | `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type`. Use `void` for sink objects that consume input but produce no output. |
-| `--pure` | Generate a stateless object. |
 | `--perf` | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`. |
+| `--no-state` | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
+| `--no-step` | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`. |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
@@ -152,9 +157,8 @@ ______________________________________________________________________
 Add a named execute method to an existing object. Must be run from the project
 root.
 
-Each method generates a C stub in `<obj>_methods.c` (created on first call,
-appended on subsequent calls) and the corresponding Python glue in the module
-`_ext.c`.
+Each method appends a C stub to `<obj>_core.c` and regenerates the module
+`_ext.c` with the new Python glue.
 
 **Arguments**
 
@@ -169,6 +173,8 @@ appended on subsequent calls) and the corresponding Python glue in the module
 | `--arg-type TYPE` | C type of a single array-style input. Use `void` for count-only inputs. |
 | `--variable-output` | Pre-allocate output buffer at init; return zero-copy numpy view. See below. |
 | `--multi-output TYPE` | Add a second (or further) output array. Repeatable; produces a tuple return. |
+| `--out-type TYPE` | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`. |
+| `--out-divisor N` | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes). |
 
 ______________________________________________________________________
 
@@ -186,7 +192,7 @@ just-makeit method nco configure --module dsp \
     --return-type void
 ```
 
-Generated C stub (`nco_methods.c`):
+Generated C stub appended to `nco_core.c`:
 
 ```c
 void
@@ -269,15 +275,15 @@ just-makeit method nco steps_ctrl --module source \
     --arg-type float --return-type float
 ```
 
-Generated C stub (`nco_methods.c`) — start here, then expand to a batch
-signature in the `.c` file:
+Generated C stub appended to `nco_core.c` — start here, then expand to a
+batch signature in place:
 
 ```c
 uint32_t nco_steps_u32(nco_state_t *state);
 float    nco_steps_ctrl(nco_state_t *state, float x);
 ```
 
-Expand to the batch signature in `nco_methods.c`:
+Expand to the batch signature in `nco_core.c`:
 
 ```c
 void nco_steps_u32(nco_state_t *state, size_t n, uint32_t *output);
@@ -330,7 +336,7 @@ just-makeit method hbdecim execute_ovf --module resample \
     --variable-output --multi-output uint8_t
 ```
 
-Generated C stubs (`hbdecim_methods.c`):
+Generated C stubs appended to `hbdecim_core.c`:
 
 ```c
 /* Return maximum output samples possible given current state. */
@@ -384,12 +390,14 @@ ______________________________________________________________________
 
 ## `just-makeit function <name> --module <mod> [--param name:type ...] [--return-type TYPE] [--doc "text"]`
 
-Add a module-level Python function (no type object, no state handle) to an
-existing module. Must be run from the project root.
+Add a stateless C function to an existing module.  Use this for algorithms
+that need no persistent state — no struct, no create/destroy, no lifecycle.
+Must be run from the project root.
 
-Creates or appends to `native/src/<module>/<module>_functions.c` and
-regenerates the module `_ext.c` to wire the new function into the
-`PyMethodDef` array.
+Appends a C stub to `native/src/<module>/<module>_core.c` (never regenerated
+— your implementation is safe) and injects the declaration into
+`native/inc/<module>/<module>_core.h`.  Then regenerates `<module>_ext.c` to
+add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 
 **Arguments**
 
@@ -402,24 +410,41 @@ regenerates the module `_ext.c` to wire the new function into the
 | `--return-type TYPE` | C return type (default: `void`). |
 | `--doc "text"` | Python docstring for the function. |
 
-**Without `--param`** — generates a minimal untyped stub you fill in yourself:
+**Without `--param`** — generates a void stub in `_core.c` and a minimal
+Python wrapper in `_ext.c`:
 
 ```sh
 just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables."
 ```
 
+`fft_core.c` (yours to implement):
 ```c
 /* <<IMPLEMENT: fft_global_setup>> */
-static PyObject *
-fft_global_setup(PyObject *self, PyObject *args)
+void
+fft_global_setup(void)
 {
-    (void)self; (void)args;
+}
+```
+
+`fft_core.h` (declaration injected automatically):
+```c
+void fft_global_setup(void);
+```
+
+`fft_ext.c` (auto-generated Python wrapper):
+```c
+static PyObject *
+_bind_fft_global_setup(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    (void)self;
+    (void)args;
+    fft_global_setup();
     Py_RETURN_NONE;
 }
 ```
 
-**With `--param`** — generates a typed C helper + Python wrapper with a full
-parse block:
+**With `--param`** — generates a typed stub in `_core.c` (with suppress lines
+and a placeholder return) and a full parse block in the `_ext.c` wrapper:
 
 ```sh
 just-makeit function compute_window \
@@ -429,17 +454,26 @@ just-makeit function compute_window \
     --return-type float
 ```
 
+`fft_core.c`:
 ```c
 /* <<IMPLEMENT: compute_window>> */
-static float
-_compute_window_impl(size_t n, float beta)
+float
+compute_window(size_t n, float beta)
 {
     (void)n; (void)beta;
     return (float)0.0f; /* placeholder */
 }
+```
 
+`fft_core.h`:
+```c
+float compute_window(size_t n, float beta);
+```
+
+`fft_ext.c` (auto-generated):
+```c
 static PyObject *
-compute_window(PyObject *self, PyObject *args)
+_bind_compute_window(PyObject *self, PyObject *args)
 {
     (void)self;
     unsigned long long n_raw = 0ULL;
@@ -447,7 +481,7 @@ compute_window(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "Kf", &n_raw, &beta))
         return NULL;
     size_t n = (size_t)n_raw;
-    return PyFloat_FromDouble((double)_compute_window_impl(n, beta));
+    return PyFloat_FromDouble((double)compute_window(n, beta));
 }
 ```
 
@@ -458,11 +492,11 @@ from my_pkg import fft
 w = fft.compute_window(512, 5.0)
 ```
 
-Implement `_compute_window_impl` and delete the `(void)` suppression lines.
-The `_functions.c` file is never regenerated — your implementation is safe.
+Implement `compute_window` in `fft_core.c` and delete the `(void)` suppression
+lines.
 
 **Array parameters** work identically to `jm method`: append `[]` to the type.
-The C helper receives `(const elem_t *name, size_t name_len)`; the Python
+The C stub receives `(const elem_t *name, size_t name_len)`; the Python
 wrapper performs `PyArray_FROM_OTF` + `Py_DECREF` automatically.
 
 ```sh
@@ -487,7 +521,7 @@ just-makeit property reader samples_read --module conv --type uint32_t --field
 ```
 
 Generates a `get_<prop>()` C function stub (and `set_<prop>()` if `--writable`)
-that you implement in `<obj>_core.c` or `<obj>_methods.c`, plus the Python
+that you implement in `<obj>_core.c`, plus the Python
 getter (and setter) glue in the module `_ext.c`.
 
 **Arguments**
