@@ -24,15 +24,15 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install build deps
-        run: |
-          sudo apt-get install -y cmake gcc 2>/dev/null || \
-          brew install cmake 2>/dev/null || true
+        run: sh src/just_makeit/scripts/install-build-deps.sh
 
       - name: Install just-makeit from PyPI (with retry)
         run: |

@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: uv run --no-project --with pytest --with numpy --with just-buildit pytest -v
+      - run: sh src/just_makeit/scripts/run-tests.sh
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
