@@ -1196,3 +1196,104 @@ class TestNewModuleRepeatableCLI:
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[module.filter]" in toml
         assert "[module.source]" in toml
+
+
+class TestScriptCLI:
+    """script command emits a correct CLI reconstruction."""
+
+    def test_script_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--object", "engine",
+             "--state", "rate:double:1.0")
+        r = _cli("script", cwd=dest)
+        assert r.returncode == 0
+
+    def test_script_starts_with_new(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("script", cwd=dest)
+        assert "just-makeit new proj" in r.stdout
+
+    def test_script_standalone_object(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "just-makeit object engine" in r.stdout
+        assert "--state rate:double:1.0" in r.stdout
+
+    def test_script_module_object(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "just-makeit module dsp" in r.stdout
+        assert "just-makeit object nco" in r.stdout
+        assert "--module dsp" in r.stdout
+
+    def test_script_no_duplicate_object_cmds(self, tmp_path):
+        """Module objects must not also appear as standalone object commands."""
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert r.stdout.count("just-makeit object nco") == 1
+
+    def test_script_mutable_flag(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", "--arg-type", "void",
+             "--return-type", "float _Complex", "--mutable", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--mutable" in r.stdout
+
+    def test_script_return_type_emitted_when_differs_from_arg_type(self, tmp_path):
+        """--arg-type void --return-type 'float _Complex' must appear explicitly."""
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", "--arg-type", "void",
+             "--return-type", "float _Complex", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert '--return-type "float _Complex"' in r.stdout
+
+    def test_script_return_type_omitted_when_matches_arg_type(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "filt", "--arg-type", "float",
+             "--return-type", "float", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--return-type float" not in r.stdout
+
+    def test_script_method(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        _cli("method", "nco", "execute", "--module", "dsp",
+             "--arg-type", "void", "--return-type", "float _Complex",
+             "--variable-output", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "just-makeit method nco execute" in r.stdout
+        assert "--variable-output" in r.stdout
+
+    def test_script_property(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", cwd=dest)
+        _cli("property", "nco", "phase", "--type", "uint32_t",
+             "--writable", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "just-makeit property nco phase" in r.stdout
+        assert "--writable" in r.stdout
+
+    def test_script_function(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("function", "dsp_init", "--module", "dsp",
+             "--doc", "Initialize.", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "just-makeit function dsp_init" in r.stdout
+        assert "--module dsp" in r.stdout
+
+    def test_script_no_toml_exits_1(self, tmp_path):
+        r = _cli("script", cwd=tmp_path)
+        assert r.returncode == 1

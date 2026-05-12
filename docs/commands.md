@@ -578,6 +578,28 @@ are restored and `just-makeit.toml` is left unchanged.
 
 ______________________________________________________________________
 
+## `just-makeit script`
+
+Print a shell script to stdout that fully reconstructs the current project
+from scratch via CLI commands.  Must be run from the project root.
+
+```sh
+just-makeit script              # print to stdout
+just-makeit script > rebuild.sh # save to file
+```
+
+Reads `just-makeit.toml` and emits one command per scaffold step in the
+correct order: `new` → `module` → `object` → `method` → `property` →
+`function`.  The output is a valid shell script that, when run from the
+parent directory, produces an identical `just-makeit.toml`.
+
+**Note:** `--impl` / `--replace` are not stored in `just-makeit.toml` (the
+lifted body is patched directly into the generated files), so they are not
+reproduced.  Implemented function and step bodies are preserved in your C
+source files and are unaffected.
+
+______________________________________________________________________
+
 ## `just-makeit perf`
 
 Upgrade an existing project to use performance annotations without

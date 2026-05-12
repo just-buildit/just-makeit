@@ -187,6 +187,7 @@ just-makeit COMMAND
 |                   | `--doc "text"`                  | Python docstring for the function                                               |
 |                   | `--impl file::funcname`         | Lift function body from `funcname` in `file`                                   |
 |                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
+| `script`          |                                 | Print a shell script that fully reconstructs the project from `just-makeit.toml` |
 | `perf`            |                                 | Upgrade existing project with `jm_perf.h` performance annotations              |
 | `config`          | `[key value]`                   | Print config; or set `key` to `value` in `just-makeit.toml`                    |
 | `build`           | `[dir]`                         | Configure + build C extensions and package a wheel into `dir` (default `dist/`) |

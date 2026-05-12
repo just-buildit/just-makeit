@@ -64,6 +64,7 @@ Commands:
     --param name:type[:default] Add a constructor parameter.
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
+  script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
@@ -804,6 +805,11 @@ def main() -> None:
         from . import _perf
 
         _perf.run(Path.cwd())
+
+    elif cmd == "script":
+        from . import _script
+
+        _script.run(Path.cwd())
 
     elif cmd == "config":
         from . import _config as C
