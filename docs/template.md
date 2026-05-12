@@ -39,9 +39,9 @@ One field is generated for each `--state name:type` flag.
 
 ```c
 typedef struct {
-    double gain;
-    double bandwidth;
-    int    order;
+    float   gain;
+    float   bandwidth;
+    int32_t order;
 } <component>_state_t;
 ```
 
@@ -54,7 +54,7 @@ One parameter per `--state` var, in declaration order.
  * @return Heap-allocated state, or NULL on allocation failure.
  * @note Caller must call <component>_destroy() when done.
  */
-<component>_state_t *<component>_create(double gain, double bandwidth, int order);
+<component>_state_t *<component>_create(float gain, float bandwidth, int32_t order);
 ```
 
 ### Destructor
@@ -104,14 +104,14 @@ void <component>_steps(
 ### Getter / setter (one pair per `--state` var)
 
 ```c
-double <component>_get_gain(const <component>_state_t *state);
-void   <component>_set_gain(<component>_state_t *state, double gain);
+float   <component>_get_gain(const <component>_state_t *state);
+void    <component>_set_gain(<component>_state_t *state, float gain);
 
-double <component>_get_bandwidth(const <component>_state_t *state);
-void   <component>_set_bandwidth(<component>_state_t *state, double bandwidth);
+float   <component>_get_bandwidth(const <component>_state_t *state);
+void    <component>_set_bandwidth(<component>_state_t *state, float bandwidth);
 
-int    <component>_get_order(const <component>_state_t *state);
-void   <component>_set_order(<component>_state_t *state, int order);
+int32_t <component>_get_order(const <component>_state_t *state);
+void    <component>_set_order(<component>_state_t *state, int32_t order);
 ```
 
 ______________________________________________________________________

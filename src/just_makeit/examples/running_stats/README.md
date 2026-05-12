@@ -78,7 +78,7 @@ static inline float complex running_stats_step(const running_stats_state_t *stat
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
 static inline float complex running_stats_step(running_stats_state_t *state, float complex x) {
-    double sample = creal(x);
+    double sample = (double)crealf(x);
     state->n++;
     double delta = sample - state->mean;
     state->mean += delta / (double)state->n;
@@ -144,14 +144,14 @@ After `make`, the combined shared library is at `build/libmy_stats.so`.
 int main(void) {
     running_stats_state_t *s = running_stats_create(0, 0.0, 0.0);
 
-    double        data[] = {2, 4, 4, 4, 5, 5, 7, 9};
+    float         data[] = {2, 4, 4, 4, 5, 5, 7, 9};
     float complex y;
     for (int i = 0; i < 8; i++)
-        y = running_stats_step(s, (float)data[i] + 0.0f * I);
+        y = running_stats_step(s, data[i] + 0.0f * I);
 
-    printf("n:        %d\n", running_stats_get_n(s));      /* 8     */
-    printf("mean:     %.4f\n", running_stats_get_mean(s)); /* 5.0000 */
-    printf("variance: %.4f\n", (double)cimagf(y));         /* 4.0000 */
+    printf("n:        %d\n", running_stats_get_n(s));        /* 8     */
+    printf("mean:     %.4f\n", running_stats_get_mean(s));   /* 5.0000 */
+    printf("variance: %.4f\n", (double)cimagf(y));           /* 4.0000 */
 
     running_stats_reset(s);
     printf("after reset: n=%d mean=%.1f\n", running_stats_get_n(s),

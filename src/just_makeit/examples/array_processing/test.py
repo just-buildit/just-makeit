@@ -44,7 +44,7 @@ def run(root: Path) -> None:
         arg_type="float",
         return_type="float",
         state_vars=[
-            ("alpha", "double", "0.1"),
+            ("alpha", "float", "0.1f"),
             ("prev", "float", "0.0"),
         ],
     )
@@ -131,7 +131,7 @@ def run(root: Path) -> None:
         root / "my_buf",
         object_names=["buf_proc"],
         arg_type="float _Complex[]",
-        return_type="int",
+        return_type="int32_t",
         state_vars=[("count", "int32_t", "0")],
     )
     proj_buf = root / "my_buf"

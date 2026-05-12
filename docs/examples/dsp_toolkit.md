@@ -79,8 +79,8 @@ gain_step(const gain_state_t *state, float x)
 just-makeit object ema \
     --arg-type float \
     --return-type float \
-    --state "alpha:double:0.1" \
-    --state "prev:float:0.0"
+    --state "alpha:float:0.1f" \
+    --state "prev:float:0.0f"
 ```
 
 `just-makeit object` adds `ema` alongside `gain` in the same project:
@@ -94,7 +94,7 @@ State:
 
 | Name    | Type     | Default | Role                         |
 | ------- | -------- | ------- | ---------------------------- |
-| `alpha` | `double` | `0.1`   | Smoothing factor (0 < α < 1) |
+| `alpha` | `float`  | `0.1f`  | Smoothing factor (0 < α < 1) |
 | `prev`  | `float`  | `0.0`   | Previous output sample       |
 
 ---

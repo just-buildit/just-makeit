@@ -12,8 +12,8 @@ scaffolding matches your object from the start:
 
 ```sh
 just-makeit new my_filter \
-    --state cutoff_freq:double:440.0 \
-    --state num_taps:int:32
+    --state cutoff_freq:float:440.0f \
+    --state num_taps:int32_t:32
 ```
 
 This generates the struct, constructor parameters, getter/setter pairs,
@@ -24,7 +24,7 @@ ______________________________________________________________________
 ## 2. Add state variables to an existing object
 
 ```sh
-just-makeit add --object my_filter --state drive:double:1.0
+just-makeit add --object my_filter --state drive:float:1.0f
 ```
 
 Regenerates the six state-sensitive files from the updated state list.
@@ -41,9 +41,9 @@ ______________________________________________________________________
 
 ```sh
 just-makeit object bpf \
-    --state center_freq:double:1000.0 \
-    --state bandwidth:double:200.0    \
-    --state order:int:4
+    --state center_freq:float:1000.0f \
+    --state bandwidth:float:200.0f    \
+    --state order:int32_t:4
 ```
 
 Adds a `bpf/` object directory, updates `CMakeLists.txt`, registers the
@@ -79,8 +79,8 @@ allocations, nested structs), add them directly to the struct in
 
 ```c
 typedef struct {
-    double cutoff_freq;
-    int    num_taps;
+    float    cutoff_freq;
+    int32_t  num_taps;
     float  coeffs[64];       /* add manually */
     float  delay_line[64];   /* add manually */
 } my_filter_state_t;

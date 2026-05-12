@@ -44,7 +44,7 @@ def run(root: Path) -> None:
     init_run(
         dest,
         "ema",
-        state_vars=[("alpha", "double", "0.1"), ("prev", "float", "0.0")],
+        state_vars=[("alpha", "float", "0.1f"), ("prev", "float", "0.0f")],
         arg_type="float",
         return_type="float",
         _hint=False,

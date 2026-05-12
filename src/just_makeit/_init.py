@@ -177,7 +177,7 @@ def run(
         )
         sys.exit(1)
 
-    vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
+    vars_ = [] if no_state else (state_vars or [("gain", "float", "0.0f")])
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:

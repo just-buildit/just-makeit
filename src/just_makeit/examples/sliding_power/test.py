@@ -23,7 +23,7 @@ def run(root: Path) -> None:
         state_vars=[
             ("delay", "float[64]", ""),
             ("sum_sq", "double", "0.0"),
-            ("pos", "int", "0"),
+            ("pos", "uint32_t", "0"),
         ],
         perf=True,
         arg_type="float _Complex",

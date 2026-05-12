@@ -9,12 +9,12 @@ version = "0.1.0"
 
 [[engine.state]]
 name = "rate"
-type = "double"
-default = "1.0"
+type = "float"
+default = "1.0f"
 
 [[parser.state]]
 name = "depth"
-type = "int"
+type = "int32_t"
 default = "8"
 """
 

@@ -29,9 +29,9 @@ cd my_filters
 just-makeit module filter
 
 just-makeit object fir    --module filter --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
-just-makeit object biquad --module filter --state "b0:double:1.0" --state "b1:double:0.0" --state "b2:double:0.0" \
-                                          --state "a1:double:0.0" --state "a2:double:0.0" \
-                                          --state "w1:double:0.0" --state "w2:double:0.0"
+just-makeit object biquad --module filter --state "b0:float:1.0f" --state "b1:float:0.0f" --state "b2:float:0.0f" \
+                                          --state "a1:float:0.0f" --state "a2:float:0.0f" \
+                                          --state "w1:float:0.0f" --state "w2:float:0.0f"
 ```
 
 After these three commands:
@@ -57,7 +57,7 @@ src/my_filters/
 Adding a third type later is one command:
 
 ```sh
-just-makeit object iir --module filter --state "sos:double[20]" --state "zi:double[10]"
+just-makeit object iir --module filter --state "sos:float[20]" --state "zi:float[10]"
 ```
 
 `filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are regenerated from

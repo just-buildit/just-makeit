@@ -247,7 +247,7 @@ class TestNewStateVars:
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"])
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
-        assert "double gain;" in core_h
+        assert "float gain;" in core_h
         assert "comp_get_gain" in core_h
 
     def test_custom_single_var(self, tmp_path):

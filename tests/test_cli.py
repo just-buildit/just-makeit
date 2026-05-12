@@ -136,7 +136,7 @@ class TestNewStateCLI:
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
         core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
-        assert "double gain;" in core
+        assert "float gain;" in core
 
     def test_invalid_type_exits_1(self, tmp_path):
         r = _cli(

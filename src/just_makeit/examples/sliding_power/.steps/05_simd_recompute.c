@@ -14,7 +14,7 @@ power_est_recompute(power_est_state_t *state)
         acc = JM_ADD_F32(acc, JM_LOAD_F32(state->delay + k));
     float power = JM_HSUM_F32(acc) * (1.0f / 64.0f);
 
-    /* Sync the recursive accumulator so both paths agree */
+    /* Sync the double accumulator so both paths agree */
     state->sum_sq = (double)power * 64.0;
     return power;
 }
