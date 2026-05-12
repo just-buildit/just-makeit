@@ -133,10 +133,12 @@ class TestStep5C:
         gcc_cmd += ["-lm", "-o", "demo"]
         r = _run(gcc_cmd, cwd=project)
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
-        exe = "demo.exe" if sys.platform == "win32" else "./demo"
-        env = None
         if sys.platform == "win32":
+            exe = str(project / "demo.exe")
             env = {**os.environ, "PATH": f"{build_dir};{os.environ.get('PATH', '')}"}
+        else:
+            exe = "./demo"
+            env = None
         r = _run([exe], cwd=project, env=env)
         assert r.returncode == 0, f"demo failed:\n{r.stderr}"
         return r.stdout

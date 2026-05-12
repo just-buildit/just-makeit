@@ -4,6 +4,7 @@ Called by tests/test_examples.py as: run(root: Path) -> None
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,8 +13,12 @@ HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
 
-def _cmd(args, cwd):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def _make_env():
+    return {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
+
+
+def _cmd(args, cwd, **kw):
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kw)
     if r.returncode != 0:
         raise AssertionError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"
@@ -60,7 +65,7 @@ def run(root: Path) -> None:
     _cmd([sys.executable, str(STEPS / "04_patch.py")], cwd=dest)
 
     # Build
-    _cmd(["make"], cwd=dest)
+    _cmd(["make"], cwd=dest, env=_make_env())
 
     # C tests
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=dest)

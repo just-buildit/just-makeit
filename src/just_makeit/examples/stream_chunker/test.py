@@ -13,6 +13,10 @@ Also runnable directly: python3 examples/stream_chunker/test.py
 import subprocess
 import sys
 import tempfile
+
+
+def _cmake_gen():
+    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -82,6 +86,7 @@ def run(root: Path) -> None:
     _cmd(
         [
             "cmake", "-B", "build", "-S", ".",
+            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],

@@ -5,9 +5,15 @@ Called by tests/test_examples.py as: run(root: Path) -> None
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _make_env():
+    """Return env with PYTHON pinned to sys.executable (POSIX path for cmake)."""
+    return {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 
 def run(root: Path) -> None:
@@ -58,12 +64,14 @@ def run(root: Path) -> None:
     )
     header.write_text(stub_re.sub(impl, text))
 
+    env = _make_env()
+
     # Build
-    r = subprocess.run(["make"], cwd=dest, capture_output=True, text=True)
+    r = subprocess.run(["make"], cwd=dest, env=env, capture_output=True, text=True)
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     # C tests
-    r = subprocess.run(["make", "test"], cwd=dest, capture_output=True, text=True)
+    r = subprocess.run(["make", "test"], cwd=dest, env=env, capture_output=True, text=True)
     assert r.returncode == 0, f"make test failed:\n{r.stdout}\n{r.stderr}"
 
     # Python smoke test — step() now returns float, not complex
