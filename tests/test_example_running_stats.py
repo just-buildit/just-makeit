@@ -16,6 +16,8 @@ def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
 
 
 def _require(name: str) -> None:
+    if sys.platform == "win32":
+        pytest.skip("C99 float complex unsupported by MSVC")
     if not shutil.which(name):
         pytest.skip(f"{name} not found")
 
