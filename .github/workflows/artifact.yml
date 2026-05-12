@@ -490,3 +490,71 @@ jobs:
           grep 'no_state = "true"' just-makeit.toml
           grep 'no_step = "true"' just-makeit.toml
           grep '[[gen.init_params]]' just-makeit.toml
+
+      # ── doctest verification ─────────────────────────────────────────────────
+
+      - name: Scaffold generator object and verify step/steps docstrings
+        run: |
+          just-makeit new osc_doctest --object osc \
+            --arg-type void \
+            --return-type "float _Complex"
+          cd osc_doctest
+          make
+
+      - name: pytest --doctest-modules passes on placeholder implementation
+        working-directory: osc_doctest
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0, 'src')
+          from osc_doctest import Osc
+
+          # step(): must have signature line, description, and exact expected value
+          assert '>>>' in Osc.step.__doc__, \
+              f'no doctest in step(): {Osc.step.__doc__!r}'
+          assert 'obj.step()' in Osc.step.__doc__, \
+              f'wrong step() call: {Osc.step.__doc__!r}'
+          assert '0j' in Osc.step.__doc__, \
+              f'no expected value in step(): {Osc.step.__doc__!r}'
+
+          # steps(): must check shape and dtype (implementation-independent)
+          assert 'y.shape' in Osc.steps.__doc__, \
+              f'no shape check in steps(): {Osc.steps.__doc__!r}'
+          assert 'y.dtype' in Osc.steps.__doc__, \
+              f'no dtype check in steps(): {Osc.steps.__doc__!r}'
+
+          print('docstring structure: ok')
+          "
+          pytest --doctest-modules src/ -v
+
+      - name: Scaffold object with extra method and verify method docstrings
+        run: |
+          just-makeit new meth_doctest
+          cd meth_doctest
+          just-makeit object mixer
+          just-makeit method mixer demod \
+            --arg-type "float _Complex" \
+            --return-type float
+          make
+
+      - name: pytest --doctest-modules passes for extra-method doctests
+        working-directory: meth_doctest
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0, 'src')
+          from meth_doctest import Mixer
+
+          # step() doctest present
+          assert '>>>' in Mixer.step.__doc__, \
+              f'no doctest in step(): {Mixer.step.__doc__!r}'
+
+          # demod() doctest: scalar input, scalar return value
+          assert '>>>' in Mixer.demod.__doc__, \
+              f'no doctest in demod(): {Mixer.demod.__doc__!r}'
+          assert 'obj.demod(' in Mixer.demod.__doc__, \
+              f'no call example in demod(): {Mixer.demod.__doc__!r}'
+          assert '0.0' in Mixer.demod.__doc__, \
+              f'no expected value in demod(): {Mixer.demod.__doc__!r}'
+
+          print('method docstring structure: ok')
+          "
+          pytest --doctest-modules src/ -v
