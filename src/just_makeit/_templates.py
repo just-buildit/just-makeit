@@ -44,6 +44,7 @@ def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
         "kind": "int",
         "fmt": fmt,
         "zero": zero,
+        "py_zero": "0",
         "py_type": np_type,
         "parse_type": parse_type,
         "parse_zero": parse_zero,
@@ -58,6 +59,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "float",
         "fmt": "d",
         "zero": "0.0",
+        "py_zero": "0.0",
         "py_type": "np.float64",
         "to_py": lambda v: f"PyFloat_FromDouble({v})",
     },
@@ -65,6 +67,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "float",
         "fmt": "f",
         "zero": "0.0f",
+        "py_zero": "0.0",
         "py_type": "np.float32",
         "to_py": lambda v: f"PyFloat_FromDouble((double){v})",
     },
@@ -73,6 +76,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "int",
         "fmt": "i",
         "zero": "0",
+        "py_zero": "0",
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
     },
@@ -105,6 +109,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "complex",
         "fmt": "D",
         "zero": "0.0f + 0.0f * I",
+        "py_zero": "0j",
         "py_type": "np.complex64",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -115,6 +120,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "complex",
         "fmt": "D",
         "zero": "0.0 + 0.0 * I",
+        "py_zero": "0j",
         "py_type": "np.complex128",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -125,6 +131,7 @@ _CTYPE_META: dict[str, dict] = {
         "kind": "complex",
         "fmt": "D",
         "zero": "0.0L + 0.0L * I",
+        "py_zero": "0j",
         "py_type": "np.clongdouble",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -143,6 +150,27 @@ _CTYPE_META: dict[str, dict] = {
 }
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
+
+
+def _build_ml_doc(lines: list[str]) -> str:
+    """Render a list of logical doc lines into adjacent C string literals.
+
+    Each item in *lines* becomes one C string literal ending with ``\\n``.
+    Continuation lines are indented with 5 spaces so the result slots
+    cleanly into the 4th element of a PyMethodDef entry::
+
+        pmd = (
+            f'    {{"step", (PyCFunction)Nco_step, METH_VARARGS,\\n'
+            f'     {_build_ml_doc(lines)}}},\\n'
+        )
+
+    Special characters (backslashes, double-quotes) inside *lines* are
+    escaped for the C string literal automatically.
+    """
+    def _esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in lines)
+
 
 # Maps py_type -> NumPy C-API enum constant (for ext.c array ops).
 _NP_ENUM: dict[str, str] = {
@@ -1706,6 +1734,8 @@ def make_methods_ctx(
     component: str,
     Component: str,
     methods: list[dict],
+    pkg: str = "",
+    py_create_args: str = "",
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1716,6 +1746,10 @@ def make_methods_ctx(
     batch=True generates a 1:1-rate array method:
       C: void comp_name(state_t *, [const arg_t *in,] size_t n, ret_t *out)
       Python: allocates output array each call with PyArray_SimpleNew.
+
+    pkg and py_create_args are used in the generated PyMethodDef docstrings
+    to produce working doctests; omitting them produces functional but
+    package-anonymous examples.
     """
     _KIND_TO_PY: dict[str, str] = {
         "float": "float", "int": "int", "complex": "complex", "str": "str",
@@ -1793,6 +1827,27 @@ def make_methods_ctx(
                        f" *\n{_param_docs}{_ret_doc} */")
         _ndecl = len(decl_lines)  # index before this method adds declarations
 
+        # Example input value for doctest — determined by arg_type.
+        if not has_arg:
+            _in_example = ""
+            _in_dtype_str = ""
+        elif arg_type.endswith("[]"):
+            _elem = arg_type[:-2]
+            _in_dtype_str = _CTYPE_META[_elem]["py_type"] if _elem in _CTYPE_META else "np.float32"
+            _in_example = f"np.zeros(4, dtype={_in_dtype_str})"
+        elif arg_type in _CTYPE_META:
+            _in_dtype_str = _CTYPE_META[arg_type]["py_type"]
+            _kind = _CTYPE_META[arg_type]["kind"]
+            _in_example = _KIND_PY_TEST_VAL.get(_kind, "1")
+        else:
+            _in_dtype_str = "np.float32"
+            _in_example = "x"
+        _from_line = (
+            [f"    >>> from {pkg} import {Component}"]
+            if pkg else []
+        )
+        _obj_line = f"    >>> obj = {Component}({py_create_args})"
+
         # ── batch method (1:1-rate array transform, no pre-alloc buffer) ─────
         if batch:
             if has_arg:
@@ -1846,9 +1901,36 @@ def make_methods_ctx(
                     f"}}"
                 )
             method_c_parts.append(wrapper)
+            _ret_np_str = _CTYPE_META[return_type]["py_type"].replace("np.", "")
+            _batch_sig = (
+                f"{name}({'x' if has_arg else 'n'}) -> ndarray"
+            )
+            _batch_doc_lines = [
+                _batch_sig,
+                "",
+                f"1:1-rate batch transform. Returns an ndarray of"
+                f" dtype {_ret_np_str}.",
+                "",
+                "    >>> import numpy as np",
+                *_from_line,
+                _obj_line,
+            ]
+            if has_arg:
+                _batch_doc_lines += [
+                    f"    >>> x = np.zeros(4, dtype={_in_dtype_str})",
+                    f"    >>> y = obj.{name}(x)",
+                ]
+            else:
+                _batch_doc_lines.append(f"    >>> y = obj.{name}(4)")
+            _batch_doc_lines += [
+                "    >>> y.shape",
+                "    (4,)",
+                "    >>> y.dtype",
+                f"    dtype('{_ret_np_str}')",
+            ]
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
-                f'     "{name}. 1:1-rate batch method. Returns ndarray."}},\n'
+                f'     {_build_ml_doc(_batch_doc_lines)}}},\n'
             )
             for _j in range(_ndecl, len(decl_lines)):
                 decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
@@ -2025,9 +2107,37 @@ def make_methods_ctx(
                     f"    return arr;\n"
                     f"}}"
                 )
+            _all_rts_vo = [return_type] + list(multi_output)
+            _dtype_strs_vo = [
+                _CTYPE_META[rt]["py_type"].replace("np.", "")
+                for rt in _all_rts_vo
+            ]
+            _ret_hint_vo = (
+                f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
+                if len(_all_rts_vo) > 1 else "ndarray"
+            )
+            _vo_doc_lines = [
+                f"{name}({'x' if has_arg else 'n=1'}) -> {_ret_hint_vo}",
+                "",
+                "Zero-copy view into pre-allocated output buffer.",
+                "",
+                "    >>> import numpy as np",
+                *_from_line,
+                _obj_line,
+            ]
+            if has_arg:
+                _vo_doc_lines.append(
+                    f"    >>> y = obj.{name}({_in_example})"
+                )
+            else:
+                _vo_doc_lines.append(f"    >>> y = obj.{name}(4)")
+            _vo_doc_lines += [
+                f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}.dtype",
+                f"    dtype('{_dtype_strs_vo[0]}')",
+            ]
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
-                f'     "{name}. Zero-copy view into pre-allocated output buffer."}},\n'
+                f'     {_build_ml_doc(_vo_doc_lines)}}},\n'
             )
         else:
             # Fixed-output wrapper
@@ -2131,9 +2241,56 @@ def make_methods_ctx(
                 f"{ret_body}"
                 f"}}"
             )
+            # Fixed-output: build doctest example based on params/arg/return.
+            _fix_sig_in = (
+                f"{'x' if has_arg else ''}"
+                + (", " if has_arg and has_params else "")
+                + ", ".join(p["name"] for p in params)
+            )
+            _fix_ret_hint = (
+                "ndarray" if out_type or multi_output
+                else _pyi_scalar(return_type)
+            )
+            _fix_doc_lines = [
+                f"{name}({_fix_sig_in}) -> {_fix_ret_hint}".rstrip(),
+                "",
+                f"{name}.",
+            ]
+            if has_arg or has_params:
+                _fix_doc_lines += ["", "    >>> import numpy as np"]
+            else:
+                _fix_doc_lines.append("")
+            _fix_doc_lines += [*_from_line, _obj_line]
+            # Call line with representative args
+            _call_parts: list[str] = []
+            if has_arg:
+                _call_parts.append(_in_example if _in_example else "x")
+            for _p in params:
+                _pt = _p["type"]
+                if _pt.endswith("[]"):
+                    _pe = _pt[:-2]
+                    _pe_str = _CTYPE_META[_pe]["py_type"] if _pe in _CTYPE_META else "np.float32"
+                    _call_parts.append(f"np.zeros(4, dtype={_pe_str})")
+                elif _pt in _CTYPE_META:
+                    _call_parts.append(_CTYPE_META[_pt].get("py_zero", "0"))
+                else:
+                    _call_parts.append("0")
+            _call_str = ", ".join(_call_parts)
+            if out_type or multi_output:
+                _fix_doc_lines.append(
+                    f"    >>> y = obj.{name}({_call_str})"
+                )
+                _fix_doc_lines.append("    >>> y.ndim")
+                _fix_doc_lines.append("    1")
+            elif return_type != "void" and return_type in _CTYPE_META:
+                _py_z = _CTYPE_META[return_type].get("py_zero", "0")
+                _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
+                _fix_doc_lines.append(f"    {_py_z}")
+            else:
+                _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){Component}_{name}, {meth_flags},\n'
-                f'     "{name}."}},\n'
+                f'     {_build_ml_doc(_fix_doc_lines)}}},\n'
             )
 
         method_c_parts.append(wrapper)
@@ -2162,8 +2319,30 @@ def make_methods_ctx(
         else:
             ret_ann = _pyi_scalar(return_type)
         sig = ", ".join(param_parts)
-        stub = (f"    def {name}(self, {sig}) -> {ret_ann}: ..."
-                if sig else f"    def {name}(self) -> {ret_ann}: ...")
+        _pyi_ret_desc = (
+            f"Returns\n        -------\n        {ret_ann}\n            Output.\n        "
+            if ret_ann != "None" else ""
+        )
+        _pyi_param_desc = ""
+        for _pp in (["x"] if has_arg else []) + [p["name"] for p in params]:
+            _pyi_param_desc += f"        {_pp}\n            Input.\n"
+        _pyi_params_section = (
+            f"        Parameters\n        ----------\n{_pyi_param_desc}        "
+            if _pyi_param_desc else "        "
+        )
+        _pyi_doc = (
+            f'        """{name}.\n\n'
+            f'{_pyi_params_section}\n'
+            f'        {_pyi_ret_desc}\n'
+            f'        """\n'
+            if (sig or ret_ann != "None")
+            else f'        """{name}."""\n'
+        )
+        stub = (
+            f"    def {name}(self, {sig}) -> {ret_ann}:\n{_pyi_doc}"
+            if sig else
+            f"    def {name}(self) -> {ret_ann}:\n{_pyi_doc}"
+        )
         pyi_lines.append(stub)
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
@@ -2869,11 +3048,75 @@ def make_step_ctx(
     else:
         bench_steps_timing_block = ""
 
+    # Build ml_doc lines for step() and steps() using context values.
+    _pkg          = ctx.get("package", "")
+    _create       = ctx.get("py_create_args", "")
+    _in_val       = ctx.get("in_py_test_val", "1")
+    _out_np_str   = ctx.get("out_np_dtype", "np.complex64").replace("np.", "")
+    _in_np_str    = ctx.get("in_np_dtype", "np.complex64")
+    _is_void_arg  = (arg_type == "void")
+    _is_arr_arg   = arg_type.endswith("[]")
+    _from_pkg     = ([f"    >>> from {_pkg} import {Component}"] if _pkg else [])
+    _obj_create   = f"    >>> obj = {Component}({_create})"
+
+    # Signature and description for step().
+    _ret_hint_step = "None" if is_void_return else ret_disp
+    if _is_void_arg and is_void_return:
+        _step_sig  = f"step() -> None"
+        _step_desc = "Advance state by one tick (no I/O)."
+    elif _is_void_arg:
+        _step_sig  = f"step() -> {_ret_hint_step}"
+        _step_desc = f"Generate one output sample from internal state."
+    elif _is_arr_arg and is_void_return:
+        _step_sig  = "step(x) -> None"
+        _step_desc = "Process an input buffer (no scalar output)."
+    elif _is_arr_arg:
+        _step_sig  = f"step(x) -> {_ret_hint_step}"
+        _step_desc = "Process an input buffer and return a result."
+    elif is_void_return:
+        _step_sig  = "step(x) -> None"
+        _step_desc = "Consume one input sample (sink; no output)."
+    else:
+        _step_sig  = f"step(x) -> {_ret_hint_step}"
+        _step_desc = "Process one input sample."
+
+    _step_doc_lines: list[str] = [_step_sig, "", _step_desc, ""]
+    if _is_arr_arg:
+        _step_doc_lines.append("    >>> import numpy as np")
+    _step_doc_lines += [*_from_pkg, _obj_create]
+    _step_call = f"obj.step()" if _is_void_arg else f"obj.step({_in_val})"
+    _step_doc_lines.append(f"    >>> {_step_call}")
+    if not is_void_return and return_type in _CTYPE_META:
+        _step_doc_lines.append(
+            f"    {_CTYPE_META[return_type].get('py_zero', '0')}"
+        )
+
     # steps_def_entry: PyMethodDef entry for steps(), or "" when absent.
     if steps_ext_fn:
+        if _is_void_arg:
+            _steps_sig  = "steps(n=1) -> ndarray" if not is_void_return else "steps(n=1)"
+            _steps_desc = (
+                "Generate n output samples."
+                if not is_void_return else "Run n iterations."
+            )
+            _steps_call  = "    >>> y = obj.steps(4)"
+        else:
+            _steps_sig  = "steps(x[, out]) -> ndarray"
+            _steps_desc = "Process a block of samples in batch."
+            _steps_call  = f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
+        _steps_doc_lines: list[str] = [_steps_sig, "", _steps_desc, ""]
+        _steps_doc_lines.append("    >>> import numpy as np")
+        _steps_doc_lines += [*_from_pkg, _obj_create, _steps_call]
+        if not is_void_return:
+            _steps_doc_lines += [
+                "    >>> y.shape",
+                "    (4,)",
+                "    >>> y.dtype",
+                f"    dtype('{_out_np_str}')",
+            ]
         steps_def_entry = (
             f'    {{"steps",    (PyCFunction){Component}_steps,    METH_VARARGS,\n'
-            f'     "Process a block of samples. Returns an ndarray."}},\n'
+            f'     {_build_ml_doc(_steps_doc_lines)}}},\n'
         )
     else:
         steps_def_entry = ""
@@ -2881,7 +3124,7 @@ def make_step_ctx(
     # step_pymethoddef_entry: PyMethodDef entry for step().
     step_pymethoddef_entry = (
         f'    {{"step",     (PyCFunction){Component}_step,     {step_py_flags},\n'
-        f'     "Process one sample. Returns a scalar."}},\n'
+        f'     {_build_ml_doc(_step_doc_lines)}}},\n'
     )
 
     # step_c_smoke_test: C test smoke-test line.
@@ -2895,9 +3138,48 @@ def make_step_ctx(
     in_py_hint  = ctx.get("in_py_hint", "float")
     out_py_hint = ctx.get("out_py_hint", "float")
     pyi_steps   = ctx.get("pyi_steps_stub", "")
+
+    # Build a Parameters/Returns docstring for the .pyi step stub.
+    if _is_void_arg and is_void_return:
+        _pyi_step_doc = '        """Advance state by one tick (no I/O)."""\n'
+        _pyi_step_self = "self"
+    elif _is_void_arg:
+        _pyi_step_doc = (
+            f'        """Generate one output sample from internal state.\n\n'
+            f'        Returns\n'
+            f'        -------\n'
+            f'        {out_py_hint}\n'
+            f'            Output sample.\n'
+            f'        """\n'
+        )
+        _pyi_step_self = "self"
+    elif is_void_return:
+        _pyi_step_doc = (
+            f'        """Consume one input sample (no output).\n\n'
+            f'        Parameters\n'
+            f'        ----------\n'
+            f'        x : {in_py_hint}\n'
+            f'            Input sample.\n'
+            f'        """\n'
+        )
+        _pyi_step_self = f"self, x: {in_py_hint}"
+    else:
+        _pyi_step_doc = (
+            f'        """Process one input sample.\n\n'
+            f'        Parameters\n'
+            f'        ----------\n'
+            f'        x : {in_py_hint}\n'
+            f'            Input sample.\n\n'
+            f'        Returns\n'
+            f'        -------\n'
+            f'        {out_py_hint}\n'
+            f'            Output sample.\n'
+            f'        """\n'
+        )
+        _pyi_step_self = f"self, x: {in_py_hint}"
     pyi_step_methods = (
-        f"    def step(self, x: {in_py_hint}) -> {out_py_hint}:\n"
-        f'        """Process one sample."""\n'
+        f"    def step({_pyi_step_self}) -> {out_py_hint}:\n"
+        f"{_pyi_step_doc}"
         + pyi_steps
     )
 

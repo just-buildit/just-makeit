@@ -134,7 +134,9 @@ def run(
     ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
                                mutable=C.is_mutable(cfg, component)))
     ctx.update(T.make_methods_ctx(component, ctx["Component"],
-                                  C.methods(cfg, component)))
+                                  C.methods(cfg, component),
+                                  pkg=ctx.get("package", ""),
+                                  py_create_args=ctx.get("py_create_args", "")))
     ctx.update(T.make_properties_ctx(component, ctx["Component"],
                                      C.properties(cfg, component),
                                      frozenset(n for n, _, _ in all_vars)))

@@ -285,7 +285,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             init_params=C.init_params(cfg, obj),
         )
         ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
-                                      C.methods(cfg, obj)))
+                                      C.methods(cfg, obj),
+                                      pkg=pkg,
+                                      py_create_args=ctx.get("py_create_args", "")))
         ctx.update(T.make_properties_ctx(ctx["component"], ctx["Component"],
                                          C.properties(cfg, obj),
                                          frozenset(n for n, _, _ in state_vars)))

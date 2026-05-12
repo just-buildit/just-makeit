@@ -204,7 +204,8 @@ def run(
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
     ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
-    ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"], []))
+    ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"], [],
+                                   pkg=pkg, py_create_args=ctx.get("py_create_args", "")))
 
     def r(tmpl):
         return T.render(tmpl, ctx)

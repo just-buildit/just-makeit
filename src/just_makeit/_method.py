@@ -342,7 +342,9 @@ def run(
         ctx.update(T.make_perf_ctx(perf))
         ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
                                    no_step=C.is_no_step(cfg, object_name)))
-        ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name)))
+        ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name),
+                                      pkg=pkg,
+                                      py_create_args=ctx.get("py_create_args", "")))
         ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
                                          frozenset(n for n, _, _ in state_vars_list)))
 
