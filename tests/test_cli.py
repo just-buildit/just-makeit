@@ -659,6 +659,13 @@ class TestObjectNoStateCLI:
         assert r.returncode == 1
         assert "mutually exclusive" in r.stderr
 
+    def test_no_state_persisted_in_toml(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", cwd=dest)
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'no_state = "true"' in toml
+
 
 class TestObjectNoStepCLI:
     """object --no-step omits step() method."""
@@ -684,6 +691,12 @@ class TestObjectNoStepCLI:
         ext_c = (dest / "native/src/sink/sink_ext.c").read_text(encoding="utf-8")
         assert "Sink_step" not in ext_c
 
+    def test_no_step_persisted_in_toml(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "sink", "--no-step", cwd=dest)
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'no_step = "true"' in toml
 
 
 class TestObjectMutableCLI:
@@ -1175,6 +1188,33 @@ class TestMethodOutTypeCLI:
         )
         assert r.returncode == 1
 
+    def test_out_type_persisted_in_toml(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "conv", "process",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'out_type = "float"' in toml
+
+    def test_out_divisor_persisted_in_toml(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli(
+            "method", "conv", "decimate",
+            "--module", "dsp",
+            "--param", "data:float[]",
+            "--out-type", "float",
+            "--out-divisor", "4",
+            "--return-type", "void",
+            cwd=dest,
+        )
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert "out_divisor = 4" in toml
+
 
 class TestNewModuleRepeatableCLI:
     """new --module is repeatable."""
@@ -1296,4 +1336,200 @@ class TestScriptCLI:
 
     def test_script_no_toml_exits_1(self, tmp_path):
         r = _cli("script", cwd=tmp_path)
+        assert r.returncode == 1
+
+    def test_script_no_state_flag(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--no-state" in r.stdout
+
+    def test_script_no_step_flag(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "sink", "--no-step", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--no-step" in r.stdout
+
+    def test_script_init_param(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--init-param" in r.stdout
+        assert "n:int:16" in r.stdout
+
+    def test_script_method_batch(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        _cli("method", "conv", "run", "--module", "dsp",
+             "--batch", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--batch" in r.stdout
+
+    def test_script_method_out_type(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        _cli("method", "conv", "process", "--module", "dsp",
+             "--param", "data:float[]", "--out-type", "float",
+             "--return-type", "void", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert '--out-type "float"' in r.stdout or "--out-type float" in r.stdout
+
+    def test_script_method_out_divisor(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        _cli("method", "conv", "decimate", "--module", "dsp",
+             "--param", "data:float[]", "--out-type", "float",
+             "--out-divisor", "4", "--return-type", "void", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--out-divisor 4" in r.stdout
+
+    def test_script_method_out_divisor_1_not_emitted(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        _cli("method", "conv", "process", "--module", "dsp",
+             "--param", "data:float[]", "--out-type", "float",
+             "--out-divisor", "1", "--return-type", "void", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--out-divisor" not in r.stdout
+
+    def test_script_method_multi_output(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "conv", "--module", "dsp", cwd=dest)
+        _cli("method", "conv", "run", "--module", "dsp",
+             "--multi-output", "float", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--multi-output" in r.stdout
+
+    def test_script_property_field(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", cwd=dest)
+        _cli("property", "nco", "phase", "--type", "uint32_t",
+             "--field", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--field" in r.stdout
+
+    def test_script_array_arg(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "buf", "--arg-type", "float[]", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--arg-type" in r.stdout
+        assert "float[]" in r.stdout
+
+    def test_script_function_params(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("function", "add_two", "--module", "dsp",
+             "--param", "x:float", "--param", "y:float",
+             "--return-type", "float", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--param x:float" in r.stdout
+        assert "--param y:float" in r.stdout
+        assert "--return-type float" in r.stdout
+
+
+class TestInitParamCLI:
+    """object --init-param provides constructor args for --no-state objects."""
+
+    def test_init_param_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "gen", "--no-state",
+                 "--init-param", "n:int:16", cwd=dest)
+        assert r.returncode == 0
+
+    def test_init_param_without_no_state_exits_1(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "gen", "--init-param", "n:int:16", cwd=dest)
+        assert r.returncode == 1
+        assert "--init-param requires --no-state" in r.stderr
+
+    def test_init_param_constructor_arg_in_core_c(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", "--init-param", "n:int:16",
+             cwd=dest)
+        core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
+        assert "int n" in core_c
+
+    def test_multiple_init_params(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "gen", "--no-state",
+                 "--init-param", "n:int:16",
+                 "--init-param", "order:int:4",
+                 cwd=dest)
+        assert r.returncode == 0
+        core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
+        assert "int n" in core_c
+        assert "int order" in core_c
+
+    def test_init_param_persisted_in_toml(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert "[[gen.init_params]]" in toml
+        assert 'name = "n"' in toml
+
+    def test_init_param_default_optional_in_python(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        ext_c = (dest / "native/src/gen/gen_ext.c").read_text(encoding="utf-8")
+        assert "16" in ext_c
+
+
+class TestImplCLI:
+    """--impl file::funcname lifts a body into the generated step() stub."""
+
+    def test_impl_object(self, tmp_path):
+        src_file = tmp_path / "algo.c"
+        src_file.write_text(
+            "float complex my_step(void) { return 0.0f; }\n",
+            encoding="utf-8",
+        )
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "nco",
+                 "--arg-type", "void",
+                 "--return-type", "float _Complex",
+                 "--impl", f"{src_file}::my_step",
+                 cwd=dest)
+        assert r.returncode == 0
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        assert "return 0.0f" in core_h
+
+    def test_impl_method(self, tmp_path):
+        src_file = tmp_path / "algo.c"
+        src_file.write_text(
+            "void run(void) { /* body */ }\n",
+            encoding="utf-8",
+        )
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest), "--module", "dsp")
+        _cli("object", "proc", "--module", "dsp", cwd=dest)
+        r = _cli("method", "proc", "run", "--module", "dsp",
+                 "--impl", f"{src_file}::run",
+                 cwd=dest)
+        assert r.returncode == 0
+        core_c = (dest / "native/src/proc/proc_core.c").read_text(encoding="utf-8")
+        assert "/* body */" in core_c
+
+    def test_impl_missing_file_exits_1(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "nco",
+                 "--impl", "/nonexistent/file.c::my_func",
+                 cwd=dest)
         assert r.returncode == 1

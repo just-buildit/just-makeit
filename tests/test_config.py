@@ -9,8 +9,14 @@ from just_makeit._config import (
     FILENAME,
     _dump,
     add_component,
+    add_method,
+    add_property,
     components,
     from_new,
+    init_params,
+    is_mutable,
+    is_no_state,
+    is_no_step,
     load,
     project_name,
     project_version,
@@ -182,3 +188,136 @@ class TestDump:
         assert 'name = "rate"' in text
         assert 'type = "double"' in text
         assert 'default = "1.0"' in text
+
+
+class TestAddComponentFlags:
+    def test_no_state_stored_as_string_true(self):
+        cfg = from_new("p")
+        add_component(cfg, "gen", [], no_state_=True)
+        assert cfg["gen"]["no_state"] == "true"
+
+    def test_no_step_stored_as_string_true(self):
+        cfg = from_new("p")
+        add_component(cfg, "sink", [], no_step_=True)
+        assert cfg["sink"]["no_step"] == "true"
+
+    def test_mutable_stored_as_string_true(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [], mutable_=True)
+        assert cfg["nco"]["mutable"] == "true"
+
+    def test_is_no_state_reader(self):
+        cfg = from_new("p")
+        add_component(cfg, "gen", [], no_state_=True)
+        assert is_no_state(cfg, "gen") is True
+        assert is_no_state(cfg, "missing") is False
+
+    def test_is_no_step_reader(self):
+        cfg = from_new("p")
+        add_component(cfg, "sink", [], no_step_=True)
+        assert is_no_step(cfg, "sink") is True
+        assert is_no_step(cfg, "missing") is False
+
+    def test_is_mutable_reader(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [], mutable_=True)
+        assert is_mutable(cfg, "nco") is True
+        assert is_mutable(cfg, "missing") is False
+
+    def test_arg_type_non_default_stored(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [], arg_type_="void")
+        assert cfg["nco"]["arg_type"] == "void"
+
+    def test_arg_type_default_not_stored(self):
+        cfg = from_new("p")
+        add_component(cfg, "gain", [], arg_type_="float _Complex")
+        assert "arg_type" not in cfg["gain"]
+
+    def test_return_type_void_stored(self):
+        cfg = from_new("p")
+        add_component(cfg, "sink", [], return_type_="void")
+        assert cfg["sink"]["return_type"] == "void"
+
+    def test_return_type_same_as_default_not_stored(self):
+        cfg = from_new("p")
+        add_component(cfg, "gain", [], return_type_="float _Complex")
+        assert "return_type" not in cfg["gain"]
+
+    def test_init_params_stored_and_read_back(self):
+        cfg = from_new("p")
+        add_component(cfg, "gen", [], no_state_=True,
+                      init_params_=[("n", "int", "16"), ("order", "int", "4")])
+        result = init_params(cfg, "gen")
+        assert result == [("n", "int", "16"), ("order", "int", "4")]
+
+
+class TestDumpFlagFields:
+    def test_dump_no_state(self):
+        cfg = from_new("p")
+        add_component(cfg, "gen", [], no_state_=True)
+        assert 'no_state = "true"' in _dump(cfg)
+
+    def test_dump_no_step(self):
+        cfg = from_new("p")
+        add_component(cfg, "sink", [], no_step_=True)
+        assert 'no_step = "true"' in _dump(cfg)
+
+    def test_dump_mutable(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [], mutable_=True)
+        assert 'mutable = "true"' in _dump(cfg)
+
+    def test_dump_init_params_section(self):
+        cfg = from_new("p")
+        add_component(cfg, "gen", [], no_state_=True,
+                      init_params_=[("n", "int", "16")])
+        text = _dump(cfg)
+        assert "[[gen.init_params]]" in text
+        assert 'name = "n"' in text
+        assert 'type = "int"' in text
+        assert 'default = "16"' in text
+
+    def test_dump_method_batch(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [])
+        add_method(cfg, "nco", {"name": "run", "batch": True})
+        assert "batch = true" in _dump(cfg)
+
+    def test_dump_method_out_type(self):
+        cfg = from_new("p")
+        add_component(cfg, "conv", [])
+        add_method(cfg, "conv", {"name": "proc", "out_type": "float"})
+        assert 'out_type = "float"' in _dump(cfg)
+
+    def test_dump_method_out_divisor(self):
+        cfg = from_new("p")
+        add_component(cfg, "conv", [])
+        add_method(cfg, "conv", {"name": "proc", "out_divisor": 4})
+        assert "out_divisor = 4" in _dump(cfg)
+
+    def test_dump_method_out_divisor_1_not_written(self):
+        cfg = from_new("p")
+        add_component(cfg, "conv", [])
+        add_method(cfg, "conv", {"name": "proc", "out_divisor": 1})
+        assert "out_divisor" not in _dump(cfg)
+
+    def test_dump_property_field(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [])
+        add_property(cfg, "nco", {"name": "phase", "ctype": "uint32_t", "field": True})
+        assert "field = true" in _dump(cfg)
+
+    def test_dump_property_writable(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [])
+        add_property(cfg, "nco", {"name": "phase", "ctype": "uint32_t", "writable": True})
+        assert "writable = true" in _dump(cfg)
+
+    def test_dump_build_make(self):
+        cfg = from_new("p", basic=True)
+        assert 'build = "make"' in _dump(cfg)
+
+    def test_dump_build_cmake_not_written(self):
+        cfg = from_new("p")
+        assert "build" not in _dump(cfg)

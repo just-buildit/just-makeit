@@ -36,6 +36,9 @@ def _object_flags(cfg: dict, comp: str, module: str | None = None) -> list[str]:
     if module:
         parts.append(_flag("--module", module))
 
+    for name, dtype in C.array_args(cfg, comp):
+        parts.append(_flag("--array-arg", f"{name}:{dtype}"))
+
     for name, typ, default in C.state_vars(cfg, comp):
         val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--state", val))
@@ -87,6 +90,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     rt = m.get("return_type", "")
     if rt:
         parts.append(_flag("--return-type", rt))
+
+    if m.get("batch"):
+        parts.append(_bool_flag("--batch"))
 
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))

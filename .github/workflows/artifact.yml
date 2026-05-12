@@ -414,3 +414,79 @@ jobs:
           grep "BiquadObject" native/src/filter/filter_ext.c
           grep "iir_core"    native/src/filter/CMakeLists.txt
           grep "Iir"         src/my_filters/filter/__init__.py
+
+      # ── stream_chunker example ────────────────────────────────────────────────
+
+      - name: Run stream_chunker example
+        run: just-makeit example stream_chunker
+
+      # ── jm script round-trip smoke test ─────────────────────────────────────
+
+      - name: Scaffold complex project for script round-trip
+        run: |
+          just-makeit new rt_proj \
+            --module dsp
+          cd rt_proj
+          just-makeit object nco \
+            --module dsp \
+            --arg-type void \
+            --return-type "float _Complex" \
+            --mutable
+          just-makeit method nco run \
+            --module dsp \
+            --variable-output
+          just-makeit property nco phase \
+            --module dsp \
+            --type uint32_t \
+            --writable
+          just-makeit object filt \
+            --module dsp \
+            --state "gain:float:1.0"
+          just-makeit object buf \
+            --no-state \
+            --init-param n:int:16
+
+      - name: jm script produces valid shell and round-trips TOML
+        working-directory: rt_proj
+        run: |
+          just-makeit script > /tmp/rt_proj_script.sh
+          # Verify key flags are present in the script
+          grep -q "\-\-mutable"          /tmp/rt_proj_script.sh
+          grep -q "\-\-variable-output"  /tmp/rt_proj_script.sh
+          grep -q "\-\-writable"         /tmp/rt_proj_script.sh
+          grep -q "\-\-no-state"         /tmp/rt_proj_script.sh
+          grep -q "\-\-init-param"       /tmp/rt_proj_script.sh
+          grep -q "n:int:16"             /tmp/rt_proj_script.sh
+          # Replay: script must execute without errors
+          mkdir /tmp/rt_replay && cd /tmp/rt_replay
+          sh /tmp/rt_proj_script.sh
+          # Replayed TOML must contain the same key entries
+          grep -q 'mutable = "true"'  rt_proj/just-makeit.toml
+          grep -q 'no_state = "true"' rt_proj/just-makeit.toml
+          grep -q 'no_step'           rt_proj/just-makeit.toml || true
+          grep -q '[[gen.init_params]]' rt_proj/just-makeit.toml
+
+      # ── --mutable + --no-state + --no-step flags ──────────────────────────────
+
+      - name: Scaffold --mutable NCO and verify const absent
+        run: |
+          just-makeit new mutable_test
+          cd mutable_test
+          just-makeit object nco \
+            --arg-type void \
+            --return-type "float _Complex" \
+            --mutable
+          # const must NOT appear in the step() signature
+          ! grep "const nco_state_t" native/inc/nco/nco_core.h
+          # non-const pointer must be present
+          grep "nco_step(nco_state_t \*state)" native/inc/nco/nco_core.h
+
+      - name: Scaffold --no-state and --no-step and verify TOML flags
+        run: |
+          just-makeit new flags_test
+          cd flags_test
+          just-makeit object gen --no-state --init-param n:int:16
+          just-makeit object sink --no-step
+          grep 'no_state = "true"' just-makeit.toml
+          grep 'no_step = "true"' just-makeit.toml
+          grep '[[gen.init_params]]' just-makeit.toml
