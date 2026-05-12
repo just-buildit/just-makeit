@@ -4,11 +4,18 @@ on:
   workflow_run:
     workflows: ["Release"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to test (e.g. 0.10.2)"
+        required: true
 
 jobs:
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,7 +36,7 @@ jobs:
 
       - name: Install just-makeit from PyPI (with retry)
         run: |
-          VERSION="${{ github.event.workflow_run.head_branch }}"
+          VERSION="${{ github.event.inputs.version || github.event.workflow_run.head_branch }}"
           for i in $(seq 1 20); do
             pip install "just-makeit==${VERSION#v}" numpy --no-cache-dir && break
             echo "Not yet, retry $i/20..."
