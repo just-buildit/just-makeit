@@ -125,6 +125,9 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `--perf` | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`. |
 | `--no-state` | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
 | `--no-step` | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`. |
+| `--init-param name:type[:default]` | Declare a constructor parameter for `--no-state` objects. Repeatable. Generates a typed constructor argument in both C and Python; not stored as a struct field. Requires `--no-state`. |
+| `--impl file::funcname` | Lift the `step()` body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. The function body is extracted verbatim and substitutions from `--replace` are applied before insertion. |
+| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. Use to rename identifiers from the source file to match the generated struct/param names. |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
@@ -175,6 +178,8 @@ Each method appends a C stub to `<obj>_core.c` and regenerates the module
 | `--multi-output TYPE` | Add a second (or further) output array. Repeatable; produces a tuple return. |
 | `--out-type TYPE` | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`. |
 | `--out-divisor N` | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes). |
+| `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
+| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. |
 
 ______________________________________________________________________
 
@@ -409,6 +414,8 @@ add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 | `--param name:type[]` | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C. |
 | `--return-type TYPE` | C return type (default: `void`). |
 | `--doc "text"` | Python docstring for the function. |
+| `--impl file::funcname` | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
+| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. |
 
 **Without `--param`** — generates a void stub in `_core.c` and a minimal
 Python wrapper in `_ext.c`:
@@ -546,11 +553,12 @@ from the project root.
 just-makeit add --state order:int:4
 just-makeit add --state threshold:double:0.5 --state window:int:64
 just-makeit add --object parser --state depth:int:8
+just-makeit add --param n_taps:int:16
 ```
 
 When the project has a single standalone object `--object` may be omitted.
 
-`add` regenerates the six state-sensitive files from the merged state list:
+`add` accepts `--state` and `--param` (repeatable, mixable in one call) and regenerates the six state-sensitive files from the merged state list:
 
 - `native/inc/<obj>/<obj>_core.h`
 - `native/src/<obj>/<obj>_core.c`

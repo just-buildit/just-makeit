@@ -146,12 +146,11 @@ just-makeit COMMAND
 | Command           | Option                          | Description                                                                     |
 | ----------------- | ------------------------------- | ------------------------------------------------------------------------------- |
 | `new <project>`   | `--module name`                 | Scaffold project + empty module subpackage; repeatable                          |
-|                   | `--object name`                 | Scaffold project + first standalone object instead                              |
+|                   | `--object name`                 | Scaffold project + standalone object; repeatable                                |
 |                   | `--state name:type[:default]`   | Declare a state variable (struct field, constructor arg, getter/setter, reset)  |
 |                   | `--arg-type T`                  | C type for `step()` input; default `float _Complex`; `void` for generators; append `[]` for buffer-primary objects |
 |                   | `--return-type T`               | C type for `step()` return; default same as `--arg-type`; `void` for sinks     |
 |                   | `--perf`                        | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`             |
-|                   | `--pure`                        | Stateless object — no `create`/`destroy`, params passed directly to `step()`   |
 |                   | `--basic`                       | Plain `Makefile` instead of CMake                                               |
 | `module <name>`   |                                 | Scaffold an empty extension module (subpackage `.so`); add types with `object` |
 | `object <name>`   | `--module name`                 | Target module subpackage; omit for a standalone object with its own `.so`       |
@@ -159,15 +158,24 @@ just-makeit COMMAND
 |                   | `--arg-type T`                  | Same as `new`                                                                   |
 |                   | `--return-type T`               | Same as `new`                                                                   |
 |                   | `--perf`                        | Same as `new`                                                                   |
-|                   | `--pure`                        | Same as `new`                                                                   |
-| `add`             | `--state name:type[:default]`   | Add a state variable to an existing standalone object; repeatable               |
+|                   | `--no-state`                    | Suppress auto-generated state, constructor args, and getter/setter scaffolding  |
+|                   | `--no-step`                     | Suppress `step()` and `steps()`; use for method-only objects                   |
+|                   | `--init-param name:type[:default]` | Constructor param for `--no-state` objects; repeatable                       |
+|                   | `--impl file::funcname`         | Lift `step()` body from `funcname` in `file`                                   |
+|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
+| `add`             | `--state name:type[:default]`   | Add a state variable to an existing object; repeatable                          |
+|                   | `--param name:type[:default]`   | Add a constructor parameter to an existing object; repeatable                   |
 |                   | `--object name`                 | Target object when the project has more than one                                |
 | `method <name>`   | `--param name:type`             | Named scalar parameter; repeatable                                              |
 |                   | `--param name:type[]`           | Named numpy array parameter; C receives `(const elem_t *name, size_t name_len)`|
 |                   | `--arg-type T`                  | Single array-style input (mutually exclusive with `--param`)                    |
 |                   | `--return-type T`               | C return type; `void` for no return                                             |
 |                   | `--variable-output`             | Pre-allocate output buffer at init; return zero-copy numpy view each call       |
-|                   | `--multi-output T`              | Add a parallel output array of type T; repeatable; implies `--variable-output`  |
+|                   | `--multi-output T`              | Add a parallel output array of type T; repeatable                               |
+|                   | `--out-type TYPE`               | Allocate output array per call; C stub receives `*out`; length = `in_len / out_divisor` |
+|                   | `--out-divisor N`               | Divide input length by N for output array length (default 1); use `2` for CI8/CI16 inputs |
+|                   | `--impl file::funcname`         | Lift method body from `funcname` in `file`                                     |
+|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
 | `property <name>` | `--type T`                      | C type of the property value                                                    |
 |                   | `--writable`                    | Also generate a setter; omit for read-only                                      |
 |                   | `--field`                       | Add `T name;` to the state struct and auto-implement the getter                 |
@@ -176,6 +184,8 @@ just-makeit COMMAND
 |                   | `--param name:type[]`           | Named numpy array parameter                                                     |
 |                   | `--return-type T`               | C return type; default `void`                                                   |
 |                   | `--doc "text"`                  | Python docstring for the function                                               |
+|                   | `--impl file::funcname`         | Lift function body from `funcname` in `file`                                   |
+|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
 | `perf`            |                                 | Upgrade existing project with `jm_perf.h` performance annotations              |
 | `config`          | `[key value]`                   | Print config; or set `key` to `value` in `just-makeit.toml`                    |
 | `build`           | `[dir]`                         | Configure + build C extensions and package a wheel into `dir` (default `dist/`) |
@@ -328,6 +338,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`dsp_toolkit/`](https://github.com/just-buildit/just-makeit/tree/main/examples/dsp_toolkit) — two-object library (Gain + Ema); demonstrates multi-object workflow and `__init__.py` auto-splice
 - [`filter_module/`](https://github.com/just-buildit/just-makeit/tree/main/examples/filter_module) — `Fir` + `Biquad` in a single `filter` subpackage `.so` using `module` + `object`
 - [`iqfile/`](https://github.com/just-buildit/just-makeit/tree/main/examples/iqfile) — cf32 ↔ q15 IQ file converter; `--field` properties, generator object, `pip install -e .`, wheel build
+- [`stream_chunker/`](https://github.com/just-buildit/just-makeit/tree/main/examples/stream_chunker) — stream re-framer with `--no-step` and `--variable-output`; variable-size input → fixed-size output chunks
 
 ______________________________________________________________________
 
