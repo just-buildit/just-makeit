@@ -26,8 +26,6 @@ def _run(cmd, cwd=None, env=None):
 
 def _require(tool: str) -> None:
     import shutil
-    if sys.platform == "win32":
-        pytest.skip("C99 float complex unsupported by MSVC")
     if shutil.which(tool) is None:
         pytest.skip(f"{tool} not found")
 

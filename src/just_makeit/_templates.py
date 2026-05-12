@@ -4706,6 +4706,16 @@ NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
+# On Windows (OS=Windows_NT is always set by the OS itself, regardless of
+# shell), force the MinGW Makefiles generator so CMake uses gcc instead of
+# MSVC.  MSVC does not support C99 float complex; gcc does.
+ifeq ($(OS), Windows_NT)
+CMAKE_GENERATOR ?= MinGW Makefiles
+CMAKE_GEN_FLAG  := -G "$(CMAKE_GENERATOR)"
+else
+CMAKE_GEN_FLAG  :=
+endif
+
 .PHONY: all build test bench bench-save bench-compare just-build docs clean help
 
 all: build
@@ -4714,6 +4724,7 @@ $(BUILD_DIR)/CMakeCache.txt:
 \t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
 \t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
 \tcmake -B $(BUILD_DIR) -S . \\
+\t\t$(CMAKE_GEN_FLAG) \\
 \t\t-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \\
 \t\t-DPython3_EXECUTABLE=$(PYTHON) \\
 \t\t-DCMAKE_EXPORT_COMPILE_COMMANDS=ON

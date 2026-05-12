@@ -20,6 +20,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install MSYS2 + MinGW toolchain (Windows only)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-make
+          update: false
+
       - run: uv tool install .
       - run: jm-run-tests
 
