@@ -6,11 +6,11 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-unix:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
@@ -20,12 +20,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install MSYS2 + MinGW toolchain (Windows only)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+      - run: uv tool install .
+      - run: jm-run-tests
+
+  test-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        msys2-sys: [mingw64, ucrt64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
         with:
-          msystem: MINGW64
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-make
+          python-version: ${{ matrix.python-version }}
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msys2-sys }}
+          pacboy: gcc:p make:p
           update: false
 
       - run: uv tool install .
