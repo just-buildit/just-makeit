@@ -196,7 +196,8 @@ def add_component(
     }
     if arg_type_ != "float _Complex":
         entry["arg_type"] = arg_type_
-    rt = return_type_ if return_type_ is not None else arg_type_
+    rt = (return_type_ if return_type_ is not None
+          else "void" if arg_type_.endswith("[]") else arg_type_)
     if rt != "float _Complex":
         entry["return_type"] = rt
     if array_args_:

@@ -58,7 +58,8 @@ def _make_object_ctx(
                                 array_args=array_args, no_state=no_state,
                                 init_params=init_params))
     ctx.update(T.make_perf_ctx(perf))
-    ctx.update(T.make_step_ctx(ctx, arg_type, return_type or arg_type, no_step=no_step))
+    _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
+    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step))
     return ctx
 
 

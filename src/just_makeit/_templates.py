@@ -383,11 +383,21 @@ def make_sample_ctx(
                   sink/processor objects whose step() performs side effects only.
     """
     if return_type is None:
-        return_type = arg_type if arg_type != "void" else "float _Complex"
+        if arg_type.endswith("[]"):
+            return_type = "void"   # array-input step() is void by default
+        elif arg_type == "void":
+            return_type = "float _Complex"
+        else:
+            return_type = arg_type
 
     is_void_return = (return_type == "void")
 
-    if not is_void_return and return_type not in _CTYPE_META:
+    # Skip scalar validation for array arg — the [] path handles return type
+    # separately below; the only invalid case is a non-scalar, non-void
+    # return type on a scalar-input object.
+    if (not is_void_return
+            and not arg_type.endswith("[]")
+            and return_type not in _CTYPE_META):
         supported = ", ".join(sorted(_CTYPE_META))
         raise ValueError(
             f"unsupported --return-type value '{return_type}'."
