@@ -35,3 +35,16 @@ def install_deps() -> None:
 
 def docker_e2e() -> None:
     _run_sh("docker-e2e.sh")
+
+
+def run_tests() -> None:
+    import subprocess
+    result = subprocess.run([
+        "uv", "run", "--no-project",
+        "--with", "pytest",
+        "--with", "numpy",
+        "--with", "just-buildit",
+        "pytest", "-v",
+        *sys.argv[1:],
+    ])
+    sys.exit(result.returncode)

@@ -40,12 +40,7 @@ jobs:
           pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
 
       - name: Install build deps
-        run: |
-          sh "$(python3 -c "
-          import just_makeit
-          from pathlib import Path
-          print(Path(just_makeit.__file__).parent / 'scripts' / 'install-build-deps.sh')
-          ")"
+        run: jm-install-deps
 
       # ── TL;DR: run all bundled examples ─────────────────────────────────────
 

@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: sh src/just_makeit/scripts/run-tests.sh
+      - run: uv tool install .
+      - run: jm-run-tests
 
   build:
     needs: test
