@@ -39,6 +39,7 @@ def _make_object_ctx(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    mutable: bool = False,
     init_params: list[tuple[str, str, str]] = (),
 ) -> dict:
     """Build the render ctx for an object."""
@@ -60,7 +61,7 @@ def _make_object_ctx(
                                 init_params=init_params))
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step))
+    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
     return ctx
 
 
@@ -280,6 +281,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             array_args=C.array_args(cfg, obj),
             no_state=C.is_no_state(cfg, obj),
             no_step=C.is_no_step(cfg, obj),
+            mutable=C.is_mutable(cfg, obj),
             init_params=C.init_params(cfg, obj),
         )
         ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
@@ -395,6 +397,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    mutable: bool = False,
     impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     _hint: bool = True,
@@ -424,7 +427,8 @@ def run(
         _init.run(root, object_name, state_vars, perf=perf,
                   arg_type=arg_type, return_type=return_type,
                   array_args=array_args, no_state=no_state, no_step=no_step,
-                  impl_body=impl_body, init_params=init_params, _hint=_hint)
+                  mutable=mutable, impl_body=impl_body,
+                  init_params=init_params, _hint=_hint)
         return
 
     # --module given -> in-module path
@@ -459,7 +463,7 @@ def run(
     ctx = _make_object_ctx(
         object_name, module, pkg, version, vars_, arg_type, return_type,
         perf=perf, array_args=array_args,
-        no_state=no_state, no_step=no_step,
+        no_state=no_state, no_step=no_step, mutable=mutable,
         init_params=init_params,
     )
 
@@ -496,7 +500,7 @@ def run(
     C.add_component(cfg, comp, vars_, arg_type_=arg_type,
                     return_type_=return_type, array_args_=array_args,
                     no_state_=no_state, no_step_=no_step,
-                    init_params_=init_params)
+                    mutable_=mutable, init_params_=init_params)
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)

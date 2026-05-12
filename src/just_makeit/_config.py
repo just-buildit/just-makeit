@@ -89,6 +89,11 @@ def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
     return cfg
 
 
+def is_mutable(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --mutable."""
+    return cfg.get(component, {}).get("mutable") == "true"
+
+
 def is_no_state(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-state."""
     return cfg.get(component, {}).get("no_state") == "true"
@@ -189,6 +194,7 @@ def add_component(
     array_args_: list[tuple[str, str]] = (),
     no_state_: bool = False,
     no_step_: bool = False,
+    mutable_: bool = False,
     init_params_: list[tuple[str, str, str]] = (),
 ) -> dict:
     entry: dict = {
@@ -208,6 +214,8 @@ def add_component(
         entry["no_state"] = "true"
     if no_step_:
         entry["no_step"] = "true"
+    if mutable_:
+        entry["mutable"] = "true"
     if init_params_:
         entry["init_params"] = [
             {"name": n, "type": t, "default": d} for n, t, d in init_params_
@@ -251,7 +259,7 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        meta_keys = [k for k in ("arg_type", "return_type", "no_state", "no_step")
+        meta_keys = [k for k in ("arg_type", "return_type", "no_state", "no_step", "mutable")
                      if comp_data.get(k)]
         if meta_keys:
             lines.append(f"[{comp}]")

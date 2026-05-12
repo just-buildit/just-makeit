@@ -158,6 +158,7 @@ just-makeit COMMAND
 |                   | `--arg-type T`                  | Same as `new`                                                                   |
 |                   | `--return-type T`               | Same as `new`                                                                   |
 |                   | `--perf`                        | Same as `new`                                                                   |
+|                   | `--mutable`                     | Remove `const` from the state pointer in `step()`; use for mutating generators |
 |                   | `--no-state`                    | Suppress auto-generated state, constructor args, and getter/setter scaffolding  |
 |                   | `--no-step`                     | Suppress `step()` and `steps()`; use for method-only objects                   |
 |                   | `--init-param name:type[:default]` | Constructor param for `--no-state` objects; repeatable                       |

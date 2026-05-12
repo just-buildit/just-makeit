@@ -131,7 +131,8 @@ def run(
     templates = _STATEFUL_TEMPLATES
 
     ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
-    ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_))
+    ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
+                               mutable=C.is_mutable(cfg, component)))
     ctx.update(T.make_methods_ctx(component, ctx["Component"],
                                   C.methods(cfg, component)))
     ctx.update(T.make_properties_ctx(component, ctx["Component"],

@@ -2274,7 +2274,8 @@ def make_properties_ctx(
 
 
 def make_step_ctx(
-    ctx: dict, arg_type: str, return_type: str, no_step: bool = False
+    ctx: dict, arg_type: str, return_type: str,
+    no_step: bool = False, mutable: bool = False,
 ) -> dict[str, str]:
     """Pre-render step() and steps() C and Python bodies for stateful objects.
 
@@ -2398,9 +2399,10 @@ def make_step_ctx(
             step_py_flags = "METH_NOARGS"
         else:
             # Generator object: step(state) -> sample.
+            _state_qual = "" if mutable else "const "
             step_impl_def = (
                 f"{step_qualifier} {ret_disp}\n"
-                f"{component}_step(const {component}_state_t *state)\n"
+                f"{component}_step({_state_qual}{component}_state_t *state)\n"
                 f"{{\n"
                 f"    (void)state; /* TODO: implement */\n"
                 f"    return ({ret_disp})0;\n"
@@ -2633,9 +2635,10 @@ def make_step_ctx(
             )
             step_py_flags = "METH_VARARGS"
         else:
+            _state_qual = "" if mutable else "const "
             step_impl_def = (
                 f"{step_qualifier} {ret_disp}\n"
-                f"{component}_step(const {component}_state_t *state, {arg_disp} x)\n"
+                f"{component}_step({_state_qual}{component}_state_t *state, {arg_disp} x)\n"
                 f"{{\n"
                 f"    (void)state; /* TODO: implement using state variables */\n"
                 f"    return ({ret_disp})x;\n"

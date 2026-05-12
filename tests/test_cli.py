@@ -686,6 +686,60 @@ class TestObjectNoStepCLI:
 
 
 
+class TestObjectMutableCLI:
+    """object --mutable removes const from the state pointer in step()."""
+
+    def test_mutable_exits_0(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("object", "nco", "--mutable",
+                 "--arg-type", "void",
+                 "--return-type", "float _Complex",
+                 cwd=dest)
+        assert r.returncode == 0
+
+    def test_mutable_removes_const_from_step(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", "--mutable",
+             "--arg-type", "void",
+             "--return-type", "float _Complex",
+             cwd=dest)
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        assert "nco_step(nco_state_t *state)" in core_h
+        assert "nco_step(const nco_state_t *state)" not in core_h
+
+    def test_immutable_default_has_const(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco",
+             "--arg-type", "void",
+             "--return-type", "float _Complex",
+             cwd=dest)
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        assert "nco_step(const nco_state_t *state)" in core_h
+
+    def test_mutable_scalar_arg_removes_const(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "filt", "--mutable",
+             "--arg-type", "float", "--return-type", "float",
+             cwd=dest)
+        core_h = (dest / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        assert "filt_step(filt_state_t *state, float x)" in core_h
+        assert "filt_step(const filt_state_t *state, float x)" not in core_h
+
+    def test_mutable_persisted_in_toml(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "nco", "--mutable",
+             "--arg-type", "void",
+             "--return-type", "float _Complex",
+             cwd=dest)
+        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'mutable = "true"' in toml
+
+
 class TestObjectPerfCLI:
     """object --perf annotates step() with JM_HOT/JM_FORCEINLINE."""
 

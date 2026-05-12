@@ -37,6 +37,7 @@ def run(
     modules: list[str] | None = None,
     basic: bool = False,
     perf: bool = False,
+    mutable: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
 ) -> None:
@@ -94,6 +95,7 @@ def run(
 
         for obj in object_names:
             _object.run(root, obj, None, state_vars, perf=perf,
+                        mutable=mutable,
                         arg_type=arg_type, return_type=return_type, _hint=False)
             print()
         print(f"Done!  cd {root.name} && make && make test")

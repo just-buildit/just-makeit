@@ -148,6 +148,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    mutable: bool = False,
     impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     _hint: bool = True,
@@ -202,7 +203,7 @@ def run(
                                 init_params=init_params))
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step))
+    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -341,7 +342,7 @@ def run(
                     arg_type_=arg_type, return_type_=return_type,
                     array_args_=array_args,
                     no_state_=no_state, no_step_=no_step,
-                    init_params_=init_params)
+                    mutable_=mutable, init_params_=init_params)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

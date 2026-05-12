@@ -17,6 +17,7 @@ Commands:
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --mutable                   Remove const from state pointer in step().
     --basic                     Emit a plain Makefile instead of CMake.
 
   module <name>                 Add an extension module subpackage to a project.
@@ -27,6 +28,7 @@ Commands:
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
     --init-param name:type[:default]  Constructor param for --no-state objects; repeatable.
@@ -83,7 +85,8 @@ Examples:
   just-makeit new my_filters --module filter              # project + one module
   just-makeit new my_dsp --module osc --module env        # project + two modules
   just-makeit object sink --arg-type "float _Complex" --return-type void  # sink object
-  just-makeit object gen  --arg-type void --return-type "float _Complex"  # generator
+  just-makeit object gen  --arg-type void --return-type "float _Complex"  # read-only generator
+  just-makeit object nco  --arg-type void --return-type "float _Complex" --mutable  # mutating generator (NCO, counter)
   just-makeit object engine --state rate:double:1.0       # standalone stateful object
   just-makeit object norm --state scale:double:1.0        # object with one state var
   just-makeit object fir --module filter                  # object in a module
@@ -171,6 +174,7 @@ def main() -> None:
         modules: list[str] = []
         basic = False
         perf = False
+        mutable = False
         arg_type = "float _Complex"
         return_type = None
         state_vars: list[tuple[str, str, str]] = []
@@ -202,6 +206,9 @@ def main() -> None:
                 i += 1
             elif tok == "--perf":
                 perf = True
+                i += 1
+            elif tok == "--mutable":
+                mutable = True
                 i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
@@ -263,7 +270,7 @@ def main() -> None:
                 sys.exit(1)
 
         _new.run(project, dest, object_names or None, state_vars or None,
-                 modules=modules, basic=basic, perf=perf,
+                 modules=modules, basic=basic, perf=perf, mutable=mutable,
                  arg_type=arg_type, return_type=return_type)
 
     elif cmd == "module":
@@ -290,6 +297,7 @@ def main() -> None:
         init_params_obj: list[tuple[str, str, str]] = []
         no_state = False
         no_step = False
+        mutable = False
         impl_spec: str | None = None
         replacements: list[tuple[str, str]] = []
 
@@ -309,6 +317,9 @@ def main() -> None:
                 state_vars.append(var)
             elif tok == "--perf":
                 perf = True
+                i += 1
+            elif tok == "--mutable":
+                mutable = True
                 i += 1
             elif tok in ("--arg-type", "--return-type"):
                 i += 1
@@ -409,7 +420,7 @@ def main() -> None:
                     None if (no_state or not state_vars) else state_vars,
                     perf=perf, arg_type=arg_type, return_type=return_type,
                     array_args=array_args_obj, no_state=no_state,
-                    no_step=no_step, impl_body=impl_body_obj,
+                    no_step=no_step, mutable=mutable, impl_body=impl_body_obj,
                     init_params=init_params_obj)
 
     elif cmd == "method":
