@@ -24,15 +24,10 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install build deps
-        run: sh src/just_makeit/scripts/install-build-deps.sh
 
       - name: Install just-makeit from PyPI (with retry)
         run: |
@@ -43,6 +38,14 @@ jobs:
             sleep 30
           done
           pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+
+      - name: Install build deps
+        run: |
+          sh "$(python3 -c "
+          import just_makeit
+          from pathlib import Path
+          print(Path(just_makeit.__file__).parent / 'scripts' / 'install-build-deps.sh')
+          ")"
 
       # ── TL;DR: run all bundled examples ─────────────────────────────────────
 
