@@ -12,35 +12,39 @@ import subprocess
 import sys
 from pathlib import Path
 
-_EXAMPLES = [
-    "array_processing",
-    "dsp_toolkit",
-    "filter_module",
-    "fir_filter",
-    "iqfile",
-    "running_stats",
-    "sliding_correlator",
-    "sliding_power",
-]
+def _examples_root() -> Path | None:
+    """Return the examples/ directory, searching installed then editable paths."""
+    import just_makeit
+
+    pkg = Path(just_makeit.__file__).parent
+    for candidate in (pkg / "examples", pkg.parent.parent / "examples"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _discover() -> list[str]:
+    """Return sorted list of example names found on disk."""
+    root = _examples_root()
+    if root is None:
+        return []
+    return sorted(
+        d.name for d in root.iterdir()
+        if d.is_dir() and (d / "test.py").exists()
+    )
+
+
+# Kept for callers that import _EXAMPLES directly (e.g. CI).
+_EXAMPLES = _discover()
 
 
 def _find(name: str) -> Path | None:
     """Return path to the named example directory, or None."""
-    import just_makeit
-
-    pkg = Path(just_makeit.__file__).parent
-
-    # Wheel install: examples bundled alongside the package via force-include.
-    bundled = pkg / "examples" / name
-    if bundled.is_dir() and (bundled / "test.py").exists():
-        return bundled
-
-    # Editable / development install: examples/ lives at the repo root.
-    dev = pkg.parent.parent / "examples" / name
-    if dev.is_dir() and (dev / "test.py").exists():
-        return dev
-
-    return None
+    root = _examples_root()
+    if root is None:
+        return None
+    candidate = root / name
+    return candidate if candidate.is_dir() and (candidate / "test.py").exists() else None
 
 
 def run(name: str | None) -> None:
