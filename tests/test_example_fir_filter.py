@@ -5,6 +5,7 @@ fails, or expected output is not produced, the test fails — keeping the README
 honest.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -123,24 +124,20 @@ class TestStep5C:
         demo_c = project / "demo.c"
         shutil.copy(STEPS / "05_demo.c", demo_c)
         build_dir = str(project / "build")
-        r = _run(
-            [
-                "gcc",
-                "-O2",
-                "-std=c99",
-                "-Inative/inc",
-                "demo.c",
-                f"-L{build_dir}",
-                "-lmy_fir",
-                f"-Wl,-rpath,{build_dir}",
-                "-lm",
-                "-o",
-                "demo",
-            ],
-            cwd=project,
-        )
+        gcc_cmd = [
+            "gcc", "-O2", "-std=c99", "-Inative/inc", "demo.c",
+            f"-L{build_dir}", "-lmy_fir",
+        ]
+        if sys.platform != "win32":
+            gcc_cmd += [f"-Wl,-rpath,{build_dir}"]
+        gcc_cmd += ["-lm", "-o", "demo"]
+        r = _run(gcc_cmd, cwd=project)
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
-        r = _run(["./demo"], cwd=project)
+        exe = "demo.exe" if sys.platform == "win32" else "./demo"
+        env = None
+        if sys.platform == "win32":
+            env = {**os.environ, "PATH": f"{build_dir};{os.environ.get('PATH', '')}"}
+        r = _run([exe], cwd=project, env=env)
         assert r.returncode == 0, f"demo failed:\n{r.stderr}"
         return r.stdout
 

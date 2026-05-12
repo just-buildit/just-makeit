@@ -25,11 +25,14 @@
   `Python3_EXECUTABLE` via `sys.executable` (normalised to POSIX slashes with
   `pathlib`) instead of `which python3`. Git Bash's `which` returns a
   Unix-style path that Windows CMake 4.3 cannot execute.
-- **Windows — example tests**: `test_example_fir_filter`, `_running_stats`, and
-  `_sliding_correlator` now skip explicitly on Windows (matching the guard
-  already in `test_examples.py`). MinGW `gcc` is present on runners so the old
-  `_require("gcc")` guard did not fire, but CMake still selected MSVC which
-  rejects C99 `float complex`.
+- **Windows — example integration tests fully pass**: the generated `Makefile`
+  now forces `-G "MinGW Makefiles"` when `OS=Windows_NT` so CMake picks `gcc`
+  instead of MSVC (which rejects C99 `float complex`). Test fixtures no longer
+  skip on Windows; `./demo` → `demo.exe`, DLL directory prepended to `PATH` at
+  runtime, `-Wl,-rpath` omitted on Windows, and `pytest-benchmark` moved from
+  required to optional deps in the generated `pyproject.toml` so `uv pip
+  install -e .` no longer tries to overwrite the locked `pytest.exe` in the
+  test runner venv.
 
 ______________________________________________________________________
 
