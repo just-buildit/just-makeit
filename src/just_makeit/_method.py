@@ -358,6 +358,10 @@ def run(
         if ext_c.exists():
             ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
+        pyi_path = root / "src" / pkg / f"{object_name}.pyi"
+        if pyi_path.exists():
+            pyi_path.write_text(r(T.COMPONENT_PYI), encoding="utf-8")
+            print(f"  update  {pyi_path}")
 
     print()
     print(f"Done!  Implement {object_name}_{method_name}() in {core_c.name}")

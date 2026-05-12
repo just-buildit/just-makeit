@@ -138,6 +138,8 @@ def _obj_stub(cfg: dict, obj: str) -> str:
         m_ret    = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg    = m.get("arg_type", "void")
+        m_var    = m.get("variable_output", False)
+        m_multi  = m.get("multi_output", [])
 
         param_parts: list[str] = []
         if m_arg != "void":
@@ -145,13 +147,19 @@ def _obj_stub(cfg: dict, obj: str) -> str:
         for p in m_params:
             param_parts.append(f"{p['name']}: {_py(p['type'])}")
 
+        if m_var:
+            all_rts  = [m_ret] + list(m_multi)
+            ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
+            ret_ann  = (f"tuple[{', '.join(ndarrays)}]"
+                        if len(ndarrays) > 1 else ndarrays[0])
+        else:
+            ret_ann = _py(m_ret)
+
         sig = ", ".join(param_parts)
         if sig:
-            lines.append(
-                f"    def {m_name}(self, {sig}) -> {_py(m_ret)}: ..."
-            )
+            lines.append(f"    def {m_name}(self, {sig}) -> {ret_ann}: ...")
         else:
-            lines.append(f"    def {m_name}(self) -> {_py(m_ret)}: ...")
+            lines.append(f"    def {m_name}(self) -> {ret_ann}: ...")
 
     # properties
     for prop in obj_props:
@@ -191,6 +199,8 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
         if at not in ("void",) or rt not in ("void",):
             return True
         for m in C.methods(cfg, obj):
+            if m.get("variable_output"):
+                return True
             for p in m.get("params", []):
                 if p["type"].endswith("[]"):
                     return True

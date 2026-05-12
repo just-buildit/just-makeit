@@ -299,6 +299,9 @@ def main() -> None:
         no_state = False
         no_step = False
         mutable = False
+        variable_output_obj = False
+        multi_output_obj: list[str] = []
+        method_name_obj = "run"
         impl_spec: str | None = None
         replacements: list[tuple[str, str]] = []
 
@@ -383,6 +386,31 @@ def main() -> None:
             elif tok == "--init-param":
                 ip_var, i = _parse_state_flags(remaining, i)
                 init_params_obj.append(ip_var)
+            elif tok == "--variable-output":
+                variable_output_obj = True
+                i += 1
+            elif tok == "--multi-output":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --multi-output requires a C type",
+                          file=sys.stderr)
+                    sys.exit(1)
+                from . import _templates as T
+                mo_val = remaining[i]
+                if mo_val not in T._CTYPE_META:
+                    print(f"error: --multi-output type '{mo_val}' not supported.\n"
+                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                multi_output_obj.append(mo_val)
+                i += 1
+            elif tok == "--method-name":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --method-name requires a name", file=sys.stderr)
+                    sys.exit(1)
+                method_name_obj = remaining[i]
+                i += 1
             elif tok == "--impl":
                 i += 1
                 if i >= len(remaining):
@@ -404,6 +432,9 @@ def main() -> None:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
+        if variable_output_obj:
+            no_step = True
+
         if no_state and state_vars:
             print("error: --no-state and --state are mutually exclusive.",
                   file=sys.stderr)
@@ -422,7 +453,10 @@ def main() -> None:
                     perf=perf, arg_type=arg_type, return_type=return_type,
                     array_args=array_args_obj, no_state=no_state,
                     no_step=no_step, mutable=mutable, impl_body=impl_body_obj,
-                    init_params=init_params_obj)
+                    init_params=init_params_obj,
+                    variable_output=variable_output_obj,
+                    multi_output=multi_output_obj,
+                    method_name=method_name_obj)
 
     elif cmd == "method":
         if len(args) < 3:

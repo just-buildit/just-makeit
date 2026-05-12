@@ -400,6 +400,9 @@ def run(
     mutable: bool = False,
     impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
+    variable_output: bool = False,
+    multi_output: list[str] = (),
+    method_name: str = "run",
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -428,7 +431,14 @@ def run(
                   arg_type=arg_type, return_type=return_type,
                   array_args=array_args, no_state=no_state, no_step=no_step,
                   mutable=mutable, impl_body=impl_body,
-                  init_params=init_params, _hint=_hint)
+                  init_params=init_params,
+                  _hint=_hint and not variable_output)
+        if variable_output:
+            from . import _method as _M
+            _rt = return_type or arg_type
+            _M.run(root, object_name, method_name, module=None,
+                   arg_type="void", return_type=_rt,
+                   variable_output=True, multi_output=list(multi_output))
         return
 
     # --module given -> in-module path
@@ -553,5 +563,12 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    print()
-    print(f"Done!  Rebuild with: cmake --build build")
+    if variable_output:
+        from . import _method as _M
+        _rt = return_type or arg_type
+        _M.run(root, object_name, method_name, module=module,
+               arg_type="void", return_type=_rt,
+               variable_output=True, multi_output=list(multi_output))
+    else:
+        print()
+        print(f"Done!  Rebuild with: cmake --build build")

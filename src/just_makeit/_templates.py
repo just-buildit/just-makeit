@@ -1717,6 +1717,20 @@ def make_methods_ctx(
       C: void comp_name(state_t *, [const arg_t *in,] size_t n, ret_t *out)
       Python: allocates output array each call with PyArray_SimpleNew.
     """
+    _KIND_TO_PY: dict[str, str] = {
+        "float": "float", "int": "int", "complex": "complex", "str": "str",
+    }
+
+    def _pyi_scalar(ctype: str) -> str:
+        if ctype == "void":
+            return "None"
+        meta = _CTYPE_META.get(ctype)
+        return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
+
+    def _pyi_ndarray(ctype: str) -> str:
+        meta = _CTYPE_META.get(ctype)
+        return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
+
     _EMPTY: dict[str, str] = {
         "method_decls": "",
         "extra_buf_fields": "",
@@ -1724,6 +1738,7 @@ def make_methods_ctx(
         "extra_buf_alloc": "",
         "extra_methods_c": "",
         "extra_methods_pymethoddef": "",
+        "pyi_extra_methods": "",
     }
     if not methods:
         return _EMPTY
@@ -1741,6 +1756,7 @@ def make_methods_ctx(
     buf_alloc: list[str] = []
     method_c_parts: list[str] = []
     pmd_lines: list[str] = []
+    pyi_lines: list[str] = []
 
     for m in methods:
         name: str = m["name"]
@@ -2103,6 +2119,34 @@ def make_methods_ctx(
 
         method_c_parts.append(wrapper)
 
+        # pyi stub for this method
+        m_var   = variable_output
+        m_multi = multi_output
+        param_parts: list[str] = []
+        if arg_type != "void":
+            if arg_type.endswith("[]"):
+                elem = arg_type[:-2]
+                param_parts.append(f"x: {_pyi_ndarray(elem)}")
+            else:
+                param_parts.append(f"x: {_pyi_scalar(arg_type)}")
+        for p in params:
+            pt = p["type"]
+            if pt.endswith("[]"):
+                param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
+            else:
+                param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}")
+        if m_var:
+            all_rts  = [return_type] + list(m_multi)
+            ndarrays = [_pyi_ndarray(rt) for rt in all_rts]
+            ret_ann  = (f"tuple[{', '.join(ndarrays)}]"
+                        if len(ndarrays) > 1 else ndarrays[0])
+        else:
+            ret_ann = _pyi_scalar(return_type)
+        sig = ", ".join(param_parts)
+        stub = (f"    def {name}(self, {sig}) -> {ret_ann}: ..."
+                if sig else f"    def {name}(self) -> {ret_ann}: ...")
+        pyi_lines.append(stub)
+
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
     return {
@@ -2112,6 +2156,7 @@ def make_methods_ctx(
         "extra_buf_alloc": "".join(buf_alloc),
         "extra_methods_c": "\n\n".join(method_c_parts),
         "extra_methods_pymethoddef": "".join(pmd_lines),
+        "pyi_extra_methods": "\n".join(pyi_lines) + "\n" if pyi_lines else "",
     }
 
 
@@ -4431,7 +4476,7 @@ class <<Component>>:
     def __init__(self, <<init_params_pyi>>) -> None: ...
     def reset(self) -> None:
         \"\"\"Reset state to post-create defaults.\"\"\"
-<<pyi_step_methods>><<getter_setter_stubs_pyi>>
+<<pyi_step_methods>><<pyi_extra_methods>><<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"
     def __enter__(self) -> "<<Component>>": ...
