@@ -5,12 +5,13 @@ Usage: just-makeit <command> [options]
 
 Commands:
   new <proj> [dir] [OPTIONS]    Create a new project scaffold.
-    --object name               Also scaffold a standalone object.
+    --object name               Also scaffold a standalone object; repeatable.
     --module name               Also scaffold an extension module; repeatable.
     --state name:type[:default] Initial state variable; repeatable.
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --mutable                   Remove const from state pointer in step().
     --basic                     Emit a plain Makefile instead of CMake.
 
   module <name>                 Add an extension module subpackage to a project.
@@ -21,8 +22,12 @@ Commands:
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
+    --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --init-param name:type[:default]  Constructor param for --no-state objects; repeatable.
+    --impl file::funcname       Lift step() body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   method <obj> <name> [OPTIONS] Add a named execute variant to an object.
     --module name               Module the object lives in.
@@ -31,6 +36,10 @@ Commands:
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
     --multi-output TYPE         Emit a second output array of this type.
+    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
+    --out-divisor N             Divide input length by N for output array length (default: 1).
+    --impl file::funcname       Lift method body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   property <obj> <name> [OPTIONS]  Add a Python property to an object.
     --module name               Module the object lives in.
@@ -43,18 +52,22 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --return-type TYPE          Return type (default: void).
     --doc "text"                Docstring shown in Python help().
+    --impl file::funcname       Lift function body from funcname in file.
+    --replace old::new          String substitution on --impl body; repeatable.
 
   add [OPTIONS]                 Append variables to the current object.
     --state name:type[:default] Add a state variable.
     --param name:type[:default] Add a constructor parameter.
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
+  script                        Print a shell script that reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
   install-deps [path]           Install cmake, C compiler, numpy, and create a venv.
   example [name]                Run a bundled end-to-end example (omit name to list).
+  version                       Show just-makeit's version.
   help                          Show this message.
 
 Types (--arg-type / --return-type / --param / --state):
@@ -70,7 +83,8 @@ Examples:
   just-makeit new my_filters --module filter              # project + one module
   just-makeit new my_dsp --module osc --module env        # project + two modules
   just-makeit object sink --arg-type "float _Complex" --return-type void  # sink object
-  just-makeit object gen  --arg-type void --return-type "float _Complex"  # generator
+  just-makeit object gen  --arg-type void --return-type "float _Complex"  # read-only generator
+  just-makeit object nco  --arg-type void --return-type "float _Complex" --mutable  # mutating generator
   just-makeit object engine --state rate:double:1.0       # standalone stateful object
   just-makeit object norm --state scale:double:1.0        # object with one state var
   just-makeit object fir --module filter                  # object in a module
@@ -87,7 +101,7 @@ Examples:
   just-makeit property nco phase --module dsp --type uint32_t
   just-makeit property buffer dropped --type size_t
   just-makeit add --state order:int:4                     # add state var
-  just-makeit add --state n_taps:int:16
+  just-makeit add --param n_taps:int:16                   # add constructor parameter
   just-makeit config                                      # show project config
   just-makeit config version 0.2.0                        # set version
   just-makeit build                                       # build wheel into dist/

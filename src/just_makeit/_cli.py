@@ -103,7 +103,7 @@ Examples:
   just-makeit property nco phase --module dsp --type uint32_t
   just-makeit property buffer dropped --type size_t
   just-makeit add --state order:int:4                     # add state var
-  just-makeit add --param n_taps:int:16                   # add param (pure object)
+  just-makeit add --param n_taps:int:16                   # add constructor parameter
   just-makeit config                                      # show project config
   just-makeit config version 0.2.0                        # set version
   just-makeit build                                       # build wheel into dist/
