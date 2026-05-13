@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+#
+# just-makeit example sandbox — Windows (MinGW/GCC)
+#
+# Requires a Windows Docker engine (Windows containers mode).
+#
+# Build from repo root:
+#   docker build -f docker/Dockerfile.examples-windows -t jm-examples-windows .
+#
+# Run:
+#   docker run -it --rm jm-examples-windows
+
+FROM python:3.12-windowsservercore-ltsc2022
+
+SHELL ["powershell", "-Command", \
+       "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
+
+# ── Install Chocolatey ────────────────────────────────────────────────────────
+RUN Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [Net.ServicePointManager]::SecurityProtocol = 'Tls12'; \
+    iex ((New-Object Net.WebClient).DownloadString( \
+        'https://community.chocolatey.org/install.ps1'))
+
+# ── Install MinGW (gcc + mingw32-make) and cmake via Chocolatey ───────────────
+RUN choco install -y mingw cmake --no-progress
+
+# Add MinGW bin alongside the Chocolatey shims already in PATH.
+# The exact subdirectory may vary between chocolatey/mingw releases;
+# glob-resolve to avoid hard-coding the version number.
+RUN $mingw_lib = 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin'; \
+    if (Test-Path $mingw_lib) { \
+        $cur = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
+        [Environment]::SetEnvironmentVariable('Path', "$mingw_lib;$cur", 'Machine'); \
+        Write-Host "Added $mingw_lib to system PATH" \
+    } else { \
+        Write-Warning "MinGW bin not found at expected path — shims only" \
+    }
+
+# cmake installs to C:\Program Files\CMake\bin; chocolatey also creates a shim.
+# Verify both tools are reachable before continuing.
+RUN gcc --version; mingw32-make --version; cmake --version
+
+# ── Install just-makeit from PyPI ─────────────────────────────────────────────
+RUN pip install --no-cache-dir --upgrade pip; \
+    pip install --no-cache-dir numpy just-makeit
+
+# ── Scaffold and build all bundled examples ───────────────────────────────────
+COPY docker/build_examples.py C:\build_examples.py
+RUN python C:\build_examples.py C:\Users\ContainerAdministrator\examples
+
+# ── Welcome message ──────────────────────────────────────────────────────────
+COPY docker/motd.ps1 C:\motd.ps1
+
+WORKDIR C:\Users\ContainerAdministrator\examples
+CMD ["powershell", "-NoExit", "-File", "C:\\motd.ps1"]
