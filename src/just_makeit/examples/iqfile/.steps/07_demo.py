@@ -29,7 +29,7 @@ print(f"wrote    {N} complex samples -> {q15_path}  ({os.path.getsize(q15_path)}
 print(f"written: {writer.samples_written} samples")
 
 # ── Read q15 -> cf32 ──────────────────────────────────────────────────────
-fd = os.open(q15_path, os.O_RDONLY)
+fd = os.open(q15_path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
 reader = Q15ToCf32(fd=fd)
 recovered = reader.steps(N)
 

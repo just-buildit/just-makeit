@@ -3703,7 +3703,7 @@ COMPONENT_CORE_C = """\
 <<component>>_state_t *
 <<component>>_create(<<create_params>>)
 {
-    <<component>>_state_t *state = malloc(sizeof(*state));
+    <<component>>_state_t *state = calloc(1, sizeof(*state));
     if (!state)
         return NULL;
 <<create_assignments>>

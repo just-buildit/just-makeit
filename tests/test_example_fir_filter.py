@@ -16,6 +16,7 @@ import pytest
 
 STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "fir_filter" / ".steps"
 PYTHON = sys.executable
+_MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 
 def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
@@ -65,7 +66,7 @@ def project(tmp_path_factory):
     assert r.returncode == 0, f"patch failed:\n{r.stderr}"
 
     # Step 3 — build
-    r = _run(["make"], cwd=root)
+    r = _run(["make"], cwd=root, env=_MAKE_ENV)
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     return root
@@ -78,7 +79,7 @@ def project(tmp_path_factory):
 
 class TestStep3Build:
     def test_make_test_passes(self, project):
-        r = _run(["make", "test"], cwd=project)
+        r = _run(["make", "test"], cwd=project, env=_MAKE_ENV)
         assert r.returncode == 0, f"make test failed:\n{r.stdout}\n{r.stderr}"
         assert "passed" in r.stdout
 
@@ -167,7 +168,7 @@ class TestStep6AddState:
             cwd=project,
         )
         assert r.returncode == 0, f"add failed:\n{r.stderr}"
-        r = _run(["make", "test"], cwd=project)
+        r = _run(["make", "test"], cwd=project, env=_MAKE_ENV)
         assert r.returncode == 0, f"make test after add failed:\n{r.stdout}"
 
 
@@ -268,7 +269,7 @@ def _scaffold_perf(tmp_path_factory):
     r = _run([PYTHON, str(STEPS / "07_patch.py")], cwd=root)
     assert r.returncode == 0, f"step-7 patch failed:\n{r.stderr}"
 
-    r = _run(["make"], cwd=root)
+    r = _run(["make"], cwd=root, env=_MAKE_ENV)
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     return root

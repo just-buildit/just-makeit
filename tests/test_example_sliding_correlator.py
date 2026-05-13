@@ -7,10 +7,13 @@ Covers:
   - multi-block state continuity across steps() calls
 """
 
+import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+_MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 import pytest
 
@@ -64,7 +67,7 @@ def _scaffold_plain(tmp_path_factory):
     r = _run([PYTHON, str(STEPS / "02_patch.py")], cwd=root)
     assert r.returncode == 0, f"step patch failed:\n{r.stderr}"
 
-    r = _run(["make"], cwd=root)
+    r = _run(["make"], cwd=root, env=_MAKE_ENV)
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     return root
@@ -98,7 +101,7 @@ def _scaffold_perf(tmp_path_factory):
     r = _run([PYTHON, str(STEPS / "04_patch.py")], cwd=root)
     assert r.returncode == 0, f"JM_DEFINE_STEPS patch failed:\n{r.stderr}"
 
-    r = _run(["make"], cwd=root)
+    r = _run(["make"], cwd=root, env=_MAKE_ENV)
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     return root
