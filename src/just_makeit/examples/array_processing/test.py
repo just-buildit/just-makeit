@@ -212,6 +212,11 @@ def run(root: Path) -> None:
     assert "float complex *out" in src, "*out param missing from stub"
     assert "const int8_t *raw" in src, "raw array param missing from stub"
 
+    # my_conv was created only for structural verification; remove it so it
+    # doesn't appear as an unbuilt project in the examples directory.
+    import shutil
+    shutil.rmtree(proj_conv, ignore_errors=True)
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
