@@ -1,5 +1,20 @@
 # Changelog
 
+## \[0.10.8\] — 2026-05-13
+
+### Fixed
+
+- **Windows — generated Makefile `SHELL`**: switched from `SHELL = sh.exe` to
+  `SHELL = cmd.exe` on `Windows_NT`.  MinGW's `sh.exe` is present in the
+  distribution but its MSYS2 DLL dependencies are not on `PATH` inside a
+  Windows container, so invoking it raised "The system cannot find the path
+  specified."  The `test` target and the dependency-check lines in
+  `$(BUILD_DIR)/CMakeCache.txt` are now written with OS-specific `ifeq` blocks:
+  Windows uses `2>nul` redirects and a Python one-liner to handle pytest exit
+  code 5 (no tests collected); non-Windows keeps the original POSIX shell forms.
+  `NPROC` and `PYTHON` variable defaults also have Windows-specific branches
+  (`NPROC ?= 4`; `python` instead of `python3`).
+
 ## \[0.10.7\] — 2026-05-13
 
 ### Fixed

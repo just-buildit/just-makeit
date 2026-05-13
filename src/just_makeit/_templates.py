@@ -4695,11 +4695,12 @@ MAKEFILE_SIMPLE = """\
 #   make help        Show this message
 
 ifeq ($(OS), Windows_NT)
-SHELL  := sh.exe
+SHELL  := cmd.exe
+PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python)
 else
 SHELL  := /bin/sh
-endif
 PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python3)
+endif
 CC     ?= cc
 CFLAGS ?= -O2 -fPIC -std=c99 -Wall
 
@@ -4719,10 +4720,15 @@ all: $(TARGETS)
 # ── Fixed targets ─────────────────────────────────────────────────────────────
 
 test: all $(C_TESTS)
+ifeq ($(OS), Windows_NT)
+\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest
+\t$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"
+else
 \t@for t in $(C_TESTS); do echo "--- $$t ---" && ./$$t || exit 1; done
 \t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
 \t$(PYTHON) -m pytest src/ -v; ret=$$?; \
 \t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
+endif
 
 just-build: all
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
@@ -4768,15 +4774,18 @@ MAKEFILE = """\
 #   make help         Show this message
 
 ifeq ($(OS), Windows_NT)
-SHELL      = sh.exe
+SHELL      = cmd.exe
+NPROC      ?= 4
+PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())"))
+BENCH_TAG  ?= $(shell git describe --tags --dirty 2>nul)
 else
 SHELL      = /bin/sh
-endif
-BUILD_DIR  ?= build
-BUILD_TYPE ?= Release
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
+endif
+BUILD_DIR  ?= build
+BUILD_TYPE ?= Release
 
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
 # shell), force the MinGW Makefiles generator so CMake uses gcc instead of
@@ -4793,8 +4802,13 @@ endif
 all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
+ifeq ($(OS), Windows_NT)
+\t$(PYTHON) -c "import numpy" 2>nul || $(PYTHON) -m pip install numpy
+\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest
+else
 \t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
 \t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
+endif
 \tcmake -B $(BUILD_DIR) -S . \\
 \t\t$(CMAKE_GEN_FLAG) \\
 \t\t-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \\
@@ -4809,8 +4823,12 @@ build: $(BUILD_DIR)/CMakeCache.txt
 
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
+ifeq ($(OS), Windows_NT)
+\t$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"
+else
 \t$(PYTHON) -m pytest src/ -v; ret=$$?; \
 \t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
+endif
 
 bench: build
 \t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
