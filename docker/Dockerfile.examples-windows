@@ -30,10 +30,10 @@ RUN choco install -y mingw cmake --no-progress
 RUN $mingw_lib = 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin'; \
     if (Test-Path $mingw_lib) { \
         $cur = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
-        [Environment]::SetEnvironmentVariable('Path', "$mingw_lib;$cur", 'Machine'); \
-        Write-Host "Added $mingw_lib to system PATH" \
+        [Environment]::SetEnvironmentVariable('Path', ($mingw_lib + ';' + $cur), 'Machine'); \
+        Write-Host ('Added ' + $mingw_lib + ' to system PATH') \
     } else { \
-        Write-Warning "MinGW bin not found at expected path — shims only" \
+        Write-Warning 'MinGW bin not found at expected path - shims only' \
     }
 
 # cmake installs to C:\Program Files\CMake\bin; chocolatey also creates a shim.
