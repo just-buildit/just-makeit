@@ -12,16 +12,11 @@ FROM python:3.12-slim-trixie
 
 ENV JM_HOME=/home/just-makeit
 
-# ── Install just-makeit and numpy from local source ──────────────────────────
-# Install from the repo so the image always reflects the current code, not
-# whatever version happens to be on PyPI at build time.
+# ── Install just-makeit and numpy from PyPI ──────────────────────────────────
 # numpy must be globally reachable so cmake's find_package(Python3 ... NumPy)
 # succeeds when cmake is invoked with -DPython3_EXECUTABLE=$(which python3).
-COPY src/ /tmp/jm-src/src/
-COPY pyproject.toml /tmp/jm-src/pyproject.toml
-COPY README.md /tmp/jm-src/README.md
 RUN python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir numpy /tmp/jm-src
+    python -m pip install --no-cache-dir numpy just-makeit
 
 # ── Install build deps (cmake, gcc) ──────────────────────────────────────────
 RUN just-makeit install-deps
