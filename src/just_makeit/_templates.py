@@ -4277,6 +4277,9 @@ target_link_libraries(<<module>> PRIVATE
     <<object_core_libs>>
     Python3::NumPy)
 target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    target_link_options(<<module>> PRIVATE -static-libgcc)
+endif()
 set_target_properties(<<module>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>")
 """
@@ -4563,6 +4566,9 @@ target_link_libraries(<<component>> PRIVATE
     <<component>>_core
     Python3::NumPy)
 target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    target_link_options(<<component>> PRIVATE -static-libgcc)
+endif()
 set_target_properties(<<component>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
 

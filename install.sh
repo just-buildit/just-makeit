@@ -162,11 +162,14 @@ fi
 
 # ── 5. Install missing system deps ───────────────────────────────────────────
 
-_install_apt()    { sudo apt-get update -qq && sudo apt-get install -y cmake gcc pkg-config; }
-_install_dnf()    { sudo "$MGR" install -y cmake gcc pkgconf-pkg-config; }
-_install_pacman() { sudo pacman -Sy --noconfirm cmake gcc pkgconf; }
-_install_zypper() { sudo zypper install -y cmake gcc pkgconfig; }
-_install_apk()    { sudo apk add --no-cache cmake gcc musl-dev pkgconfig; }
+SUDO=""
+[[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
+
+_install_apt()    { $SUDO apt-get update -qq && $SUDO apt-get install -y cmake gcc pkg-config; }
+_install_dnf()    { $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config; }
+_install_pacman() { $SUDO pacman -Sy --noconfirm cmake gcc pkgconf; }
+_install_zypper() { $SUDO zypper install -y cmake gcc pkgconfig; }
+_install_apk()    { $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig; }
 _install_brew() {
     if command -v brew >/dev/null 2>&1; then
         [[ $NEED_CMAKE -eq 1 ]] && brew install cmake
