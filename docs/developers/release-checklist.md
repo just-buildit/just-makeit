@@ -3,7 +3,7 @@
 ## Before you start
 
 - [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally (537 passed as of v0.9.10)
+- [ ] `uv run pytest` passes locally (831 passed as of v0.10.7)
 - [ ] CI badge on `main` is green
 
 ______________________________________________________________________
@@ -66,26 +66,13 @@ This kicks off `release.yml`: test → build wheel → publish to PyPI.
 
 ______________________________________________________________________
 
-## 5. Create the GitHub Release
-
-`release.yml` only publishes to PyPI — it does **not** create a GitHub Release.
-Create one manually after the tag is pushed:
-
-```sh
-gh release create vX.Y.Z \
-  --title "vX.Y.Z" \
-  --latest \
-  --notes "$(sed -n '/^\#\# \[X\.Y\.Z\]/,/^---/p' CHANGELOG.md | head -n -2)"
-```
-
-Or just paste the relevant CHANGELOG section as the notes in the GitHub UI.
-
-______________________________________________________________________
-
-## 6. Verify the release
+## 5. Verify the release
 
 Watch [release.yml](https://github.com/just-buildit/just-makeit/actions/workflows/release.yml)
-complete all three jobs: `test`, `build`, `publish`.
+complete all four jobs: `test`, `build`, `publish`, `github-release`.
+
+The `github-release` job creates the GitHub Release automatically using the
+relevant CHANGELOG section as the release notes — no manual step needed.
 
 After publish, `artifact.yml` fires automatically and:
 - Installs `just-makeit==X.Y.Z` from PyPI (retries for up to 10 min for CDN propagation)
@@ -98,7 +85,7 @@ any other reason, investigate before the next release.
 
 ______________________________________________________________________
 
-## 7. Post-release
+## 6. Post-release
 
 - [ ] Confirm `pip install just-makeit==X.Y.Z` works locally
 - [ ] GitHub repo top-right shows the new version as "Latest release"
@@ -114,7 +101,7 @@ ______________________________________________________________________
 | Tagged before CI green | Delete the tag locally and on remote, fix CI, re-tag |
 | PyPI CDN lag causes `artifact.yml` to fail | Wait — retry loop runs for 10 min; if it still fails, check the logs |
 | `artifact.yml` uses old CLI flags | Keep `artifact.yml` in sync with any CLI renames |
-| GitHub repo still shows old version | `gh release create vX.Y.Z --latest …` — PyPI publish does not create GitHub Releases |
+| GitHub repo still shows old version | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest` |
 
 To delete a tag and re-tag:
 

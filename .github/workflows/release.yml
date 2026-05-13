@@ -55,3 +55,34 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section for this tag
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"          # e.g. v0.10.7
+          VER="${TAG#v}"                    # strip leading v → 0.10.7
+          # Pull the block from ## [VER] down to the next ## heading (exclusive).
+          NOTES=$(awk "/^## \\\[${VER}\\\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --latest \
+            --notes "${{ steps.notes.outputs.notes }}"
