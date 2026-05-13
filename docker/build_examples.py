@@ -9,6 +9,7 @@ each scaffolded project lands at DEST/<project-name>/.
 
 import importlib.util
 import sys
+import traceback
 from pathlib import Path
 
 if len(sys.argv) < 2:
@@ -35,8 +36,9 @@ for name in _EXAMPLES:
     try:
         mod.run(dest)
         print(f"  [{name}] PASSED", flush=True)
-    except Exception as exc:
-        print(f"  [{name}] FAILED: {exc}", flush=True)
+    except Exception:
+        print(f"  [{name}] FAILED:", flush=True)
+        traceback.print_exc()
         failed.append(name)
 
 if failed:
