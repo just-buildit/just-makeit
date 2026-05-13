@@ -4328,6 +4328,10 @@ MODULE_CORE_C = """\
 
 MODULE_INIT_PY = """\
 # <<module>>/__init__.py — re-export all types from the C extension.
+import os as _os, sys as _sys
+if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+    _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
+del _os, _sys
 from .<<module>> import <<object_imports>>
 
 __all__ = [<<object_all>>]
@@ -4868,7 +4872,10 @@ PACKAGE_INIT_PY_MINIMAL = """\
 
 PACKAGE_INIT_PY = """\
 \"\"\"<<package>> — <<Component>> component.\"\"\"
-
+import os as _os, sys as _sys
+if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+    _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
+del _os, _sys
 from .<<component>> import <<Component>>
 
 __all__ = ["<<Component>>"]
