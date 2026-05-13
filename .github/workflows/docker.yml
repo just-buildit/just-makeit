@@ -1,0 +1,151 @@
+name: Docker examples
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docker/**
+      - src/just_makeit/examples/**
+      - src/just_makeit/_example.py
+  pull_request:
+    paths:
+      - docker/**
+      - src/just_makeit/examples/**
+      - src/just_makeit/_example.py
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ── Linux ─────────────────────────────────────────────────────────────────────
+  linux:
+    name: Linux image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build into the local daemon so the smoke test can run it.
+      # GHA layer cache keeps subsequent builds fast.
+      - name: Build Linux image
+        run: |
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to   type=gha,mode=max \
+            --load \
+            -t jm-examples-linux:ci \
+            -f docker/Dockerfile.examples-linux \
+            .
+
+      # Verify every example scaffolded a compiled .so file.
+      - name: Smoke-test — compiled .so present for all examples
+        run: |
+          docker run --rm \
+            --workdir /home/just-makeit/examples \
+            jm-examples-linux:ci \
+            python3 - <<'PYEOF'
+          import pathlib, sys
+          missing = []
+          for proj in sorted(pathlib.Path(".").iterdir()):
+              if not proj.is_dir():
+                  continue
+              sos = list(proj.rglob("*.so"))
+              if sos:
+                  print(f"  ok   {proj.name}  ({sos[0].name})")
+              else:
+                  print(f"  MISS {proj.name}")
+                  missing.append(proj.name)
+          if missing:
+              sys.exit(f"no .so in: {missing}")
+          PYEOF
+
+      # Push latest + sha tags on every push to main.
+      - name: Tag and push to GHCR
+        if: github.event_name == 'push'
+        run: |
+          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
+          docker tag jm-examples-linux:ci ${BASE}:latest
+          docker tag jm-examples-linux:ci ${BASE}:sha-${{ github.sha }}
+          docker push ${BASE}:latest
+          docker push ${BASE}:sha-${{ github.sha }}
+
+  # ── Windows ───────────────────────────────────────────────────────────────────
+  windows:
+    name: Windows image
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub's windows-latest runner ships Docker Desktop; switch it to
+      # Windows containers mode so we can build a windowsservercore image.
+      - name: Switch Docker to Windows containers mode
+        shell: powershell
+        run: |
+          $cli = 'C:\Program Files\Docker\Docker\DockerCli.exe'
+          if (Test-Path $cli) {
+              & $cli -SwitchDaemon
+              Start-Sleep -Seconds 20
+          } else {
+              # Fallback: restart daemon without the Linux-mode flag
+              Write-Warning "DockerCli.exe not found; restarting daemon directly"
+              Stop-Service docker -ErrorAction SilentlyContinue
+              & dockerd --unregister-service 2>$null
+              & dockerd --register-service
+              Start-Service docker
+              Start-Sleep -Seconds 15
+          }
+          docker version
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows image
+        shell: powershell
+        run: |
+          docker build `
+            -f docker/Dockerfile.examples-windows `
+            -t jm-examples-windows:ci `
+            .
+
+      # Check the nine project dirs are present and contain a built .pyd.
+      - name: Smoke-test — .pyd files present for all examples
+        shell: powershell
+        run: |
+          docker run --rm jm-examples-windows:ci powershell -Command @'
+            $base = "C:\Users\ContainerAdministrator\examples"
+            $missing = @()
+            foreach ($proj in Get-ChildItem $base -Directory | Sort-Object Name) {
+                $pyds = Get-ChildItem $proj.FullName -Recurse -Filter "*.pyd" -ErrorAction SilentlyContinue
+                if ($pyds) {
+                    Write-Host "  ok   $($proj.Name)  ($($pyds[0].Name))"
+                } else {
+                    Write-Host "  MISS $($proj.Name)"
+                    $missing += $proj.Name
+                }
+            }
+            if ($missing) { exit 1 }
+          '@
+
+      - name: Tag and push to GHCR
+        if: github.event_name == 'push'
+        shell: powershell
+        run: |
+          $base = "ghcr.io/${{ github.repository_owner }}/jm-examples-windows"
+          docker tag jm-examples-windows:ci "${base}:latest"
+          docker tag jm-examples-windows:ci "${base}:sha-${{ github.sha }}"
+          docker push "${base}:latest"
+          docker push "${base}:sha-${{ github.sha }}"
