@@ -1,10 +1,4 @@
-"""
-_cli.py — just-makeit command-line interface.
-
-TODO: this file is getting unwieldy. Refactor into separate modules for each 
-command, e.g. _cli_new.py, _cli_object.py, etc. The main() function would 
-then just dispatch to the appropriate module based on the command.
-"""
+"""_cli.py — just-makeit command-line interface."""
 
 import sys
 from pathlib import Path
@@ -118,48 +112,6 @@ Examples:
 """
 
 
-def _parse_state_flags(
-    remaining: list[str], i: int
-) -> tuple[list[tuple[str, str, str]], int]:
-    """Parse one --state flag starting at index i. Returns (vars, new_i)."""
-    from . import _templates as T
-
-    i += 1
-    if i >= len(remaining):
-        print("error: --state requires name:type[:default]", file=sys.stderr)
-        sys.exit(1)
-    spec = remaining[i]
-    parts = spec.split(":", 2)
-    if len(parts) < 2:
-        print(
-            f"error: --state '{spec}' must be in name:type[:default] format",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    name, ctype = parts[0], parts[1]
-    if not T.is_valid_type(ctype):
-        supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-        print(
-            f"error: unsupported type '{ctype}'.\n"
-            f"Scalar types: {supported}\n"
-            f"Array syntax: type[N]  e.g. float[64]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    arr = T.parse_array_type(ctype)
-    if arr is not None:
-        if len(parts) == 3:
-            print(
-                f"warning: default ignored for array type '{ctype}' "
-                f"(arrays are always zero-initialised)",
-                file=sys.stderr,
-            )
-        default = ""
-    else:
-        default = parts[2] if len(parts) == 3 else T._CTYPE_META[ctype]["zero"]
-    return (name, ctype, default), i + 1
-
-
 def main() -> None:
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
@@ -169,484 +121,30 @@ def main() -> None:
     cmd = args[0]
 
     if cmd == "new":
-        if len(args) < 2:
-            print("error: 'new' requires a project name.", file=sys.stderr)
-            sys.exit(1)
-        from . import _new
-
-        project = args[1]
-        dest = None
-        object_names: list[str] = []
-        modules: list[str] = []
-        basic = False
-        perf = False
-        mutable = False
-        arg_type = "float _Complex"
-        return_type = None
-        state_vars: list[tuple[str, str, str]] = []
-        array_args_new: list[tuple[str, str]] = []
-
-        remaining = args[2:]
-        i = 0
-        while i < len(remaining):
-            tok = remaining[i]
-            if tok == "--object":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --object requires a name", file=sys.stderr)
-                    sys.exit(1)
-                object_names.append(remaining[i])
-                i += 1
-            elif tok == "--module":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --module requires a name", file=sys.stderr)
-                    sys.exit(1)
-                modules.append(remaining[i])
-                i += 1
-            elif tok in ("--state", "--param"):
-                var, i = _parse_state_flags(remaining, i)
-                state_vars.append(var)
-            elif tok == "--basic":
-                basic = True
-                i += 1
-            elif tok == "--perf":
-                perf = True
-                i += 1
-            elif tok == "--mutable":
-                mutable = True
-                i += 1
-            elif tok in ("--arg-type", "--return-type"):
-                i += 1
-                if i >= len(remaining):
-                    print(f"error: {tok} requires a type", file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                val = remaining[i]
-                if val.endswith("[]"):
-                    if tok == "--return-type":
-                        print("error: --return-type cannot be an array type.\n"
-                              "Use a scalar type or void.", file=sys.stderr)
-                        sys.exit(1)
-                    elem = val[:-2]
-                    if elem not in T._CTYPE_META:
-                        print(
-                            f"error: --arg-type array element type '{elem}' "
-                            "is not supported.\n"
-                            f"Supported element types: "
-                            f"{', '.join(sorted(T._CTYPE_META))}",
-                            file=sys.stderr)
-                        sys.exit(1)
-                elif val != "void" and val not in T._CTYPE_META:
-                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
-                    sys.exit(1)
-                if tok == "--arg-type":
-                    arg_type = val
-                else:
-                    return_type = val
-                i += 1
-            elif tok == "--array-arg":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --array-arg requires name:dtype", file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                val = remaining[i]
-                if ":" not in val:
-                    print(f"error: --array-arg '{val}' must be name:dtype",
-                          file=sys.stderr)
-                    sys.exit(1)
-                aa_name, aa_dtype = val.split(":", 1)
-                if aa_dtype not in T.SUPPORTED_ARRAY_DTYPES:
-                    print(
-                        f"error: --array-arg dtype '{aa_dtype}' not supported.\n"
-                        f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                array_args_new.append((aa_name, aa_dtype))
-                i += 1
-            elif dest is None and not tok.startswith("-"):
-                dest = Path(tok)
-                i += 1
-            else:
-                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
-                sys.exit(1)
-
-        _new.run(project, dest, object_names or None, state_vars or None,
-                 modules=modules, basic=basic, perf=perf, mutable=mutable,
-                 arg_type=arg_type, return_type=return_type)
+        from ._cli_new import run as _cmd_new
+        _cmd_new(args[1:])
 
     elif cmd == "module":
         if len(args) < 2:
             print("error: 'module' requires a module name.", file=sys.stderr)
             sys.exit(1)
         from . import _module
-
         _module.run(Path.cwd(), args[1])
 
     elif cmd == "object":
-        if len(args) < 2:
-            print("error: 'object' requires an object name.", file=sys.stderr)
-            sys.exit(1)
-        from . import _object
-
-        object_name = args[1]
-        module = None
-        perf: bool | None = None
-        arg_type = "float _Complex"
-        return_type = None
-        state_vars: list[tuple[str, str, str]] = []
-        array_args_obj: list[tuple[str, str]] = []
-        init_params_obj: list[tuple[str, str, str]] = []
-        no_state = False
-        no_step = False
-        mutable = False
-        variable_output_obj = False
-        multi_output_obj: list[str] = []
-        method_name_obj = "run"
-        impl_spec: str | None = None
-        replacements: list[tuple[str, str]] = []
-
-        remaining = args[2:]
-        i = 0
-        while i < len(remaining):
-            tok = remaining[i]
-            if tok == "--module":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --module requires a name", file=sys.stderr)
-                    sys.exit(1)
-                module = remaining[i]
-                i += 1
-            elif tok in ("--state", "--param"):
-                var, i = _parse_state_flags(remaining, i)
-                state_vars.append(var)
-            elif tok == "--perf":
-                perf = True
-                i += 1
-            elif tok == "--mutable":
-                mutable = True
-                i += 1
-            elif tok in ("--arg-type", "--return-type"):
-                i += 1
-                if i >= len(remaining):
-                    print(f"error: {tok} requires a type", file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                val = remaining[i]
-                if val.endswith("[]"):
-                    if tok == "--return-type":
-                        print("error: --return-type cannot be an array type.\n"
-                              "Use a scalar type or void.", file=sys.stderr)
-                        sys.exit(1)
-                    elem = val[:-2]
-                    if elem not in T._CTYPE_META:
-                        print(
-                            f"error: --arg-type array element type '{elem}' "
-                            "is not supported.\n"
-                            f"Supported element types: "
-                            f"{', '.join(sorted(T._CTYPE_META))}",
-                            file=sys.stderr)
-                        sys.exit(1)
-                elif val != "void" and val not in T._CTYPE_META:
-                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
-                    sys.exit(1)
-                if tok == "--arg-type":
-                    arg_type = val
-                else:
-                    return_type = val
-                i += 1
-            elif tok == "--array-arg":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --array-arg requires name:dtype", file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                val = remaining[i]
-                if ":" not in val:
-                    print(f"error: --array-arg '{val}' must be name:dtype",
-                          file=sys.stderr)
-                    sys.exit(1)
-                aa_name, aa_dtype = val.split(":", 1)
-                if aa_dtype not in T.SUPPORTED_ARRAY_DTYPES:
-                    print(
-                        f"error: --array-arg dtype '{aa_dtype}' not supported.\n"
-                        f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                array_args_obj.append((aa_name, aa_dtype))
-                i += 1
-            elif tok == "--no-state":
-                no_state = True
-                i += 1
-            elif tok == "--no-step":
-                no_step = True
-                i += 1
-            elif tok == "--init-param":
-                ip_var, i = _parse_state_flags(remaining, i)
-                init_params_obj.append(ip_var)
-            elif tok == "--variable-output":
-                variable_output_obj = True
-                i += 1
-            elif tok == "--multi-output":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --multi-output requires a C type",
-                          file=sys.stderr)
-                    sys.exit(1)
-                from . import _templates as T
-                mo_val = remaining[i]
-                if mo_val not in T._CTYPE_META:
-                    print(f"error: --multi-output type '{mo_val}' not supported.\n"
-                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
-                    sys.exit(1)
-                multi_output_obj.append(mo_val)
-                i += 1
-            elif tok == "--method-name":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --method-name requires a name", file=sys.stderr)
-                    sys.exit(1)
-                method_name_obj = remaining[i]
-                i += 1
-            elif tok == "--impl":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --impl requires file::funcname",
-                          file=sys.stderr)
-                    sys.exit(1)
-                impl_spec = remaining[i]
-                i += 1
-            elif tok == "--replace":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --replace requires old::new",
-                          file=sys.stderr)
-                    sys.exit(1)
-                from . import _impl as _I
-                replacements.append(_I.parse_replace(remaining[i]))
-                i += 1
-            else:
-                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
-                sys.exit(1)
-
-        if variable_output_obj:
-            no_step = True
-
-        if no_state and state_vars:
-            print("error: --no-state and --state are mutually exclusive.",
-                  file=sys.stderr)
-            sys.exit(1)
-        if init_params_obj and not no_state:
-            print("error: --init-param requires --no-state.",
-                  file=sys.stderr)
-            sys.exit(1)
-
-        impl_body_obj: str | None = None
-        if impl_spec is not None:
-            from . import _impl as _I
-            impl_body_obj = _I.load_impl(impl_spec, replacements)
-        _object.run(Path.cwd(), object_name, module,
-                    None if (no_state or not state_vars) else state_vars,
-                    perf=perf, arg_type=arg_type, return_type=return_type,
-                    array_args=array_args_obj, no_state=no_state,
-                    no_step=no_step, mutable=mutable, impl_body=impl_body_obj,
-                    init_params=init_params_obj,
-                    variable_output=variable_output_obj,
-                    multi_output=multi_output_obj,
-                    method_name=method_name_obj)
+        from ._cli_object import run as _cmd_object
+        _cmd_object(args[1:])
 
     elif cmd == "method":
-        if len(args) < 3:
-            print("error: 'method' requires an object name and a method name.", file=sys.stderr)
-            sys.exit(1)
-        from . import _method
-        from . import _templates as T
-
-        object_name = args[1]
-        method_name = args[2]
-        module = None
-        arg_type = "void"
-        return_type = "float _Complex"
-        variable_output = False
-        batch_method = False
-        multi_output: list[str] = []
-        method_params: list[tuple[str, str]] = []
-        out_type: str | None = None
-        out_divisor: int = 1
-        impl_spec_m: str | None = None
-        replacements_m: list[tuple[str, str]] = []
-
-        remaining = args[3:]
-        i = 0
-        while i < len(remaining):
-            tok = remaining[i]
-            if tok == "--module":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --module requires a name", file=sys.stderr)
-                    sys.exit(1)
-                module = remaining[i]
-                i += 1
-            elif tok == "--variable-output":
-                variable_output = True
-                i += 1
-            elif tok == "--batch":
-                batch_method = True
-                i += 1
-            elif tok == "--multi-output":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --multi-output requires a type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if val not in T._CTYPE_META:
-                    print(f"error: --multi-output '{val}' is not a supported type.",
-                          file=sys.stderr)
-                    sys.exit(1)
-                multi_output.append(val)
-                i += 1
-            elif tok == "--param":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --param requires name:type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if ":" not in val:
-                    print(f"error: --param '{val}' must be name:type", file=sys.stderr)
-                    sys.exit(1)
-                pname, ptype = val.split(":", 1)
-                if T.is_array_param_type(ptype):
-                    elem_ct = T.array_elem_ctype(ptype)
-                    if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
-                        print(
-                            f"error: --param array element type '{elem_ct}' is"
-                            f" not supported.\n"
-                            f"Supported element types: "
-                            f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
-                            file=sys.stderr,
-                        )
-                        sys.exit(1)
-                elif ptype not in T._CTYPE_META:
-                    print(
-                        f"error: --param type '{ptype}' is not a supported type.\n"
-                        f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
-                        f"Array syntax: name:type[]  e.g. ctrl:\"float _Complex[]\"",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                method_params.append((pname, ptype))
-                i += 1
-            elif tok == "--out-divisor":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --out-divisor requires an integer", file=sys.stderr)
-                    sys.exit(1)
-                try:
-                    out_divisor = int(remaining[i])
-                    if out_divisor < 1:
-                        raise ValueError
-                except ValueError:
-                    print(
-                        f"error: --out-divisor must be a positive integer",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                i += 1
-            elif tok == "--out-type":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --out-type requires a type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if val not in T._CTYPE_TO_NPY:
-                    print(
-                        f"error: --out-type '{val}' has no numpy equivalent.\n"
-                        f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                out_type = val
-                i += 1
-            elif tok in ("--arg-type", "--return-type"):
-                i += 1
-                if i >= len(remaining):
-                    print(f"error: {tok} requires a type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if val.endswith("[]"):
-                    if tok == "--return-type":
-                        print("error: --return-type cannot be an array type.\n"
-                              "Use a scalar type or void.", file=sys.stderr)
-                        sys.exit(1)
-                    elem = val[:-2]
-                    if elem not in T._CTYPE_META:
-                        print(
-                            f"error: --arg-type array element type '{elem}' "
-                            "is not supported.\n"
-                            f"Supported element types: "
-                            f"{', '.join(sorted(T._CTYPE_META))}",
-                            file=sys.stderr)
-                        sys.exit(1)
-                elif val != "void" and val not in T._CTYPE_META:
-                    print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                          f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
-                    sys.exit(1)
-                if tok == "--arg-type":
-                    arg_type = val
-                else:
-                    return_type = val
-                i += 1
-            elif tok == "--impl":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --impl requires file::funcname",
-                          file=sys.stderr)
-                    sys.exit(1)
-                impl_spec_m = remaining[i]
-                i += 1
-            elif tok == "--replace":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --replace requires old::new",
-                          file=sys.stderr)
-                    sys.exit(1)
-                from . import _impl as _I
-                replacements_m.append(_I.parse_replace(remaining[i]))
-                i += 1
-            else:
-                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
-                sys.exit(1)
-
-        if return_type != "void" and return_type not in T._CTYPE_META:
-            print(f"error: --return-type '{return_type}' must be void or a scalar type.\n"
-                  f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                  file=sys.stderr)
-            sys.exit(1)
-
-        impl_body_m: str | None = None
-        if impl_spec_m is not None:
-            from . import _impl as _I
-            impl_body_m = _I.load_impl(impl_spec_m, replacements_m)
-        _method.run(
-            Path.cwd(), object_name, method_name, module,
-            arg_type, return_type, variable_output, multi_output,
-            params=method_params, out_type=out_type, out_divisor=out_divisor,
-            impl_body=impl_body_m, batch=batch_method,
-        )
+        from ._cli_method import run as _cmd_method
+        _cmd_method(args[1:])
 
     elif cmd == "property":
         if len(args) < 3:
-            print("error: 'property' requires an object name and a property name.",
-                  file=sys.stderr)
+            print(
+                "error: 'property' requires an object name and a property name.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         from . import _property
         from . import _templates as T
@@ -676,9 +174,11 @@ def main() -> None:
                     sys.exit(1)
                 val = remaining[i]
                 if val not in T._CTYPE_META:
-                    print(f"error: --type '{val}' is not a supported scalar type.\n"
-                          f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                          file=sys.stderr)
+                    print(
+                        f"error: --type '{val}' is not a supported scalar type.\n"
+                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
                 ctype = val
                 i += 1
@@ -697,122 +197,12 @@ def main() -> None:
         )
 
     elif cmd == "function":
-        if len(args) < 2:
-            print("error: 'function' requires a function name.", file=sys.stderr)
-            sys.exit(1)
-        from . import _function
-        from . import _templates as T
-
-        fn_name = args[1]
-        module = None
-        doc = ""
-        fn_params: list[tuple[str, str]] = []
-        fn_return_type = "void"
-        impl_spec_f: str | None = None
-        replacements_f: list[tuple[str, str]] = []
-
-        remaining = args[2:]
-        i = 0
-        while i < len(remaining):
-            tok = remaining[i]
-            if tok == "--module":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --module requires a name", file=sys.stderr)
-                    sys.exit(1)
-                module = remaining[i]
-                i += 1
-            elif tok == "--doc":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --doc requires a string", file=sys.stderr)
-                    sys.exit(1)
-                doc = remaining[i]
-                i += 1
-            elif tok == "--param":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --param requires name:type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if ":" not in val:
-                    print(f"error: --param '{val}' must be name:type", file=sys.stderr)
-                    sys.exit(1)
-                pname, ptype = val.split(":", 1)
-                if T.is_array_param_type(ptype):
-                    elem_ct = T.array_elem_ctype(ptype)
-                    if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
-                        print(
-                            f"error: --param array element type '{elem_ct}'"
-                            f" is not supported.\n"
-                            f"Supported element types: "
-                            f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
-                            file=sys.stderr,
-                        )
-                        sys.exit(1)
-                elif ptype not in T._CTYPE_META:
-                    print(
-                        f"error: --param type '{ptype}' is not a supported type.\n"
-                        f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
-                        f"Array syntax: name:type[]  e.g. ctrl:\"float _Complex[]\"",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                fn_params.append((pname, ptype))
-                i += 1
-            elif tok == "--return-type":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --return-type requires a type", file=sys.stderr)
-                    sys.exit(1)
-                val = remaining[i]
-                if val != "void" and val not in T._CTYPE_META:
-                    print(
-                        f"error: --return-type '{val}' must be void or a scalar type.\n"
-                        f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                fn_return_type = val
-                i += 1
-            elif tok == "--impl":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --impl requires file::funcname",
-                          file=sys.stderr)
-                    sys.exit(1)
-                impl_spec_f = remaining[i]
-                i += 1
-            elif tok == "--replace":
-                i += 1
-                if i >= len(remaining):
-                    print("error: --replace requires old::new",
-                          file=sys.stderr)
-                    sys.exit(1)
-                from . import _impl as _I
-                replacements_f.append(_I.parse_replace(remaining[i]))
-                i += 1
-            else:
-                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
-                sys.exit(1)
-
-        if module is None:
-            print(
-                "error: 'function' requires --module (functions must belong to a module).",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        impl_body_f: str | None = None
-        if impl_spec_f is not None:
-            from . import _impl as _I
-            impl_body_f = _I.load_impl(impl_spec_f, replacements_f)
-        _function.run(Path.cwd(), fn_name, module, doc,
-                      params=fn_params, return_type=fn_return_type,
-                      impl_body=impl_body_f)
+        from ._cli_function import run as _cmd_function
+        _cmd_function(args[1:])
 
     elif cmd == "add":
         from . import _add
+        from ._cli_parse import parse_state_flag
 
         component = None
         state_vars: list[tuple[str, str, str]] = []
@@ -828,26 +218,27 @@ def main() -> None:
                 component = remaining[i]
                 i += 1
             elif tok in ("--state", "--param"):
-                var, i = _parse_state_flags(remaining, i)
+                var, i = parse_state_flag(remaining, i)
                 state_vars.append(var)
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
         if not state_vars:
-            print("error: 'add' requires at least one --state or --param flag.", file=sys.stderr)
+            print(
+                "error: 'add' requires at least one --state or --param flag.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         _add.run(Path.cwd(), component, state_vars)
 
     elif cmd == "perf":
         from . import _perf
-
         _perf.run(Path.cwd())
 
     elif cmd == "script":
         from . import _script
-
         _script.run(Path.cwd())
 
     elif cmd == "config":
@@ -888,17 +279,14 @@ def main() -> None:
 
     elif cmd == "build":
         from . import _build
-
         _build.cmd_build(args[1:])
 
     elif cmd == "test":
         from . import _build
-
         _build.cmd_test(args[1:])
 
     elif cmd == "dry-run":
         from . import _build
-
         _build.cmd_dry_run()
 
     elif cmd == "install-deps":
@@ -912,7 +300,6 @@ def main() -> None:
 
     elif cmd == "version":
         from . import __version__
-
         print(__version__)
 
     else:
