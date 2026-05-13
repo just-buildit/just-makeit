@@ -4279,6 +4279,16 @@ target_link_libraries(<<module>> PRIVATE
 target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_link_options(<<module>> PRIVATE -static-libgcc)
+    get_filename_component(_gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    foreach(_dll IN ITEMS libwinpthread-1.dll)
+        if(EXISTS "${_gcc_bin}/${_dll}")
+            add_custom_command(TARGET <<module>> POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_gcc_bin}/${_dll}"
+                    "$<TARGET_FILE_DIR:<<module>>>"
+                VERBATIM)
+        endif()
+    endforeach()
 endif()
 set_target_properties(<<module>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>")
@@ -4568,6 +4578,16 @@ target_link_libraries(<<component>> PRIVATE
 target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_link_options(<<component>> PRIVATE -static-libgcc)
+    get_filename_component(_gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    foreach(_dll IN ITEMS libwinpthread-1.dll)
+        if(EXISTS "${_gcc_bin}/${_dll}")
+            add_custom_command(TARGET <<component>> POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_gcc_bin}/${_dll}"
+                    "$<TARGET_FILE_DIR:<<component>>>"
+                VERBATIM)
+        endif()
+    endforeach()
 endif()
 set_target_properties(<<component>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
