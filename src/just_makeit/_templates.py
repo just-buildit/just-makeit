@@ -4285,13 +4285,19 @@ if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
             add_custom_command(TARGET <<module>> POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_gcc_bin}/${_dll}"
-                    "$<TARGET_FILE_DIR:<<module>>>"
+                    "${PYTHON_PACKAGE_DIR}/<<module>>"
                 VERBATIM)
         endif()
     endforeach()
 endif()
 set_target_properties(<<module>> PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>")
+    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>"
+    RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module>>")
+add_custom_command(TARGET <<module>> POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:<<module>>>"
+        "${PYTHON_PACKAGE_DIR}/<<module>>/$<TARGET_FILE_NAME:<<module>>>"
+    VERBATIM)
 """
 
 MODULE_CORE_H = """\
@@ -4588,13 +4594,19 @@ if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
             add_custom_command(TARGET <<component>> POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_gcc_bin}/${_dll}"
-                    "$<TARGET_FILE_DIR:<<component>>>"
+                    "${PYTHON_PACKAGE_DIR}"
                 VERBATIM)
         endif()
     endforeach()
 endif()
 set_target_properties(<<component>> PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
+    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
+add_custom_command(TARGET <<component>> POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:<<component>>>"
+        "${PYTHON_PACKAGE_DIR}/$<TARGET_FILE_NAME:<<component>>>"
+    VERBATIM)
 
 add_executable(test_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
