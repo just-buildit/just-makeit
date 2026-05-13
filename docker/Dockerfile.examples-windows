@@ -53,9 +53,14 @@ RUN $candidates = @( `
 # Verify build tools are reachable before continuing.
 RUN gcc --version; mingw32-make --version; make --version; cmake --version
 
-# ── Install numpy and just-makeit from PyPI ───────────────────────────────────
+# ── Install numpy and just-makeit from local source ──────────────────────────
+# Install from the repo so the image always reflects the current code, not
+# whatever version happens to be on PyPI at build time.
+COPY src/ C:\jm-src\src\
+COPY pyproject.toml C:\jm-src\pyproject.toml
+COPY README.md C:\jm-src\README.md
 RUN python -m pip install --no-cache-dir --upgrade pip; `
-    pip install --no-cache-dir numpy just-makeit
+    pip install --no-cache-dir numpy C:\jm-src
 
 # ── Scaffold and build all bundled examples ───────────────────────────────────
 COPY docker/build_examples.py C:\build_examples.py
