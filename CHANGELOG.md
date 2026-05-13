@@ -1,5 +1,14 @@
 # Changelog
 
+## \[0.10.9\] — 2026-05-13
+
+### Fixed
+
+- **`array_processing` example — leftover `my_conv` directory**: the example
+  scaffolds `my_conv` for a structural assertion then deletes it, so it no
+  longer appears as an unbuilt project in the Docker examples directory and
+  fails the `.pyd`-presence smoke test.
+
 ## \[0.10.8\] — 2026-05-13
 
 ### Fixed
@@ -14,10 +23,6 @@
   code 5 (no tests collected); non-Windows keeps the original POSIX shell forms.
   `NPROC` and `PYTHON` variable defaults also have Windows-specific branches
   (`NPROC ?= 4`; `python` instead of `python3`).
-- **`array_processing` example — leftover `my_conv` directory**: the example
-  scaffolds `my_conv` for a structural assertion then deletes it, so it no
-  longer appears as an unbuilt project in the Docker examples directory and
-  fails the `.pyd`-presence smoke test.
 
 ## \[0.10.7\] — 2026-05-13
 
