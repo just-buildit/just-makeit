@@ -1,5 +1,29 @@
 # Changelog
 
+## \[0.10.5\] — 2026-05-12
+
+### Fixed
+
+- **Docker / rootless containers**: `jm-install-deps` and `just-makeit
+  install-deps` no longer call `sudo` when running as root (e.g. inside a
+  Docker `RUN` step). Previously, `install-deps.sh` hardcoded `sudo` in every
+  package-manager invocation; it now omits `sudo` when `id -u` returns 0.
+- **Windows — `.pyd` import after `pip install -e .`**: test fixtures for
+  `fir_filter`, `running_stats`, and `sliding_correlator` now pass
+  `PYTHON=sys.executable` to `make`, ensuring CMake links the extension against
+  the same Python SOABI that the test runner uses. Without this, MinGW's
+  `sh.exe` could resolve `python3` to a different interpreter and produce a
+  `.pyd` with a mismatched SOABI tag.
+- **Windows — iqfile binary read corruption**: `07_demo.py` now opens the q15
+  file with `O_BINARY` so the Windows UCRT does not perform CR/LF translation
+  on binary sample data.
+- **Uninitialized field-backed properties**: the generated `_core.c` now uses
+  `calloc` instead of `malloc` in the `create()` function. Fields added after
+  initial scaffolding via `jm property --field` are now guaranteed to be
+  zero-initialised rather than containing heap garbage.
+
+______________________________________________________________________
+
 ## \[0.10.4\] — 2026-05-12
 
 ### Added
