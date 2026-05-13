@@ -4672,7 +4672,11 @@ MAKEFILE_SIMPLE = """\
 #   make clean       Remove build artifacts
 #   make help        Show this message
 
+ifeq ($(OS), Windows_NT)
+SHELL  := sh.exe
+else
 SHELL  := /bin/sh
+endif
 PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python3)
 CC     ?= cc
 CFLAGS ?= -O2 -fPIC -std=c99 -Wall
@@ -4741,7 +4745,11 @@ MAKEFILE = """\
 #   make clean        Remove build artifacts
 #   make help         Show this message
 
+ifeq ($(OS), Windows_NT)
+SHELL      = sh.exe
+else
 SHELL      = /bin/sh
+endif
 BUILD_DIR  ?= build
 BUILD_TYPE ?= Release
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)

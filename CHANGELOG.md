@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.10.6\] — 2026-05-13
+
+### Fixed
+
+- **Windows — generated Makefile `SHELL`**: both Makefile templates now use
+  `SHELL = sh.exe` on `Windows_NT` instead of `SHELL = /bin/sh`, so
+  `mingw32-make` uses MinGW's bundled `sh.exe` rather than falling back to
+  `cmd.exe`.  Without this, the `test` target's `ret=$$?; [ $$ret -eq 0 ]`
+  syntax failed with `'[' is not recognized as an internal or external command`.
+
 ## \[0.10.5\] — 2026-05-12
 
 ### Fixed
