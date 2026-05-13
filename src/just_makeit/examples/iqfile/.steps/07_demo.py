@@ -32,9 +32,9 @@ print(f"written: {writer.samples_written} samples")
 fd = os.open(q15_path, os.O_RDONLY)
 reader = Q15ToCf32(fd=fd)
 recovered = reader.steps(N)
-os.close(fd)
 
 print(f"read:    {reader.samples_read} samples,  eof={reader.eof}")
+os.close(fd)
 
 # ── Verify round-trip fidelity ────────────────────────────────────────────
 scale = 32767.0

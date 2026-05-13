@@ -1,5 +1,9 @@
 """
 _cli.py — just-makeit command-line interface.
+
+TODO: this file is getting unwieldy. Refactor into separate modules for each 
+command, e.g. _cli_new.py, _cli_object.py, etc. The main() function would 
+then just dispatch to the appropriate module based on the command.
 """
 
 import sys
@@ -71,6 +75,7 @@ Commands:
   dry-run                       Show what would be compiled without building.
   install-deps [path]           Install cmake, C compiler, numpy, and create a venv.
   example [name]                Run a bundled end-to-end example (omit name to list).
+  version                       Show just-makeit's version.
   help                          Show this message.
 
 Types (--arg-type / --return-type / --param / --state):
@@ -904,6 +909,11 @@ def main() -> None:
     elif cmd == "example":
         from . import _example
         _example.run(args[1] if len(args) > 1 else None)
+
+    elif cmd == "version":
+        from . import __version__
+
+        print(__version__)
 
     else:
         print(f"just-makeit: unknown command '{cmd}'", file=sys.stderr)
