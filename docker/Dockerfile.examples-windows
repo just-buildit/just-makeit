@@ -35,8 +35,23 @@ RUN $mingw_lib = 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin'
         Write-Warning 'MinGW bin not found at expected path - shims only' `
     }
 
+# Create make.exe alias so examples that call ["make"] work on Windows.
+# choco's mingw installs mingw32-make.exe but not make.exe; search both
+# the fixed choco lib path and the actual install location.
+RUN $candidates = @( `
+        'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin', `
+        'C:\ProgramData\mingw64\mingw64\bin' `
+    ); `
+    $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'mingw32-make.exe') } | Select-Object -First 1; `
+    if ($bin) { `
+        Copy-Item (Join-Path $bin 'mingw32-make.exe') (Join-Path $bin 'make.exe'); `
+        Write-Host ('Created make.exe in ' + $bin) `
+    } else { `
+        throw 'mingw32-make.exe not found in any candidate path' `
+    }
+
 # Verify build tools are reachable before continuing.
-RUN gcc --version; mingw32-make --version; cmake --version
+RUN gcc --version; mingw32-make --version; make --version; cmake --version
 
 # ── Install numpy and just-makeit from PyPI ───────────────────────────────────
 RUN python -m pip install --no-cache-dir --upgrade pip; `
