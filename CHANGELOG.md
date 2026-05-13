@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.10.7\] — 2026-05-13
+
+### Fixed
+
+- **Generated pytest — void-input generators**: `test_step_runs`,
+  `test_steps_shape_dtype`, `test_context_manager`, and `test_destroy` now
+  emit `obj.step()` (no argument) and `obj.steps(64)` (integer count) for
+  objects scaffolded with `--arg-type void`.  Previously all four tests
+  passed a value to `step()` and an ndarray to `steps()`, which caused
+  `TypeError` at runtime for generator objects.
+
 ## \[0.10.6\] — 2026-05-13
 
 ### Fixed
