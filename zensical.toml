@@ -32,6 +32,11 @@ nav = [
     { "IQ file"            = "examples/iqfile.md"             },
   ]},
   { "C library"          = "c-library.md"         },
+  { "For Developers" = [
+    { "Start Here"         = "developers/START_HERE.md"       },
+    { "pkg-config & CMake" = "developers/pkg-config.md"       },
+    { "Release checklist"  = "developers/release-checklist.md"},
+  ]},
 ]
 
 # ----------------------------------------------------------------------------
