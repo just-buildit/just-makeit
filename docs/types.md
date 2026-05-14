@@ -129,3 +129,11 @@ def set_channel(self, value: np.uint8) -> None: ...
 - `reset()` restores every field to its declared default, not the zero literal.
 - The C struct is opaque — always access fields through the generated
   getter/setter API.
+
+---
+
+## See also
+
+- [doppler — Type System](https://doppler-dsp.github.io/doppler/types/) —
+  how doppler uses these C types in its DSP APIs (CF32, CF64, integer IQ
+  pairs, `dp_sample_type_t`).
