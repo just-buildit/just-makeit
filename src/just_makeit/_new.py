@@ -9,6 +9,7 @@ scaffolds one or more empty extension modules.
 import sys
 from pathlib import Path
 
+from . import _color as Color
 from . import _config as C
 from . import _templates as T
 
@@ -122,7 +123,7 @@ def run(
                         mutable=mutable,
                         arg_type=arg_type, return_type=return_type, _hint=False)
             print()
-        print(f"Done!  cd {root.name} && make && make test")
+        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && make && make test')}")
     elif modules:
         from . import _module
 
@@ -134,11 +135,11 @@ def run(
         for mod in modules:
             _module.run(root, mod)
         print()
-        print(f"Done!  cd {root.name} && just-makeit object <name> --module <module>")
+        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name> --module <module>')}")
     else:
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
         )
         _write(root / ".benchmarks" / ".gitkeep", "")
         print()
-        print(f"Done!  cd {root.name} && just-makeit object <name>")
+        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name>')}")

@@ -16,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 
+from . import _color as Color
 from . import _config as C
 from . import _stubs as S
 from . import _templates as T
@@ -605,4 +606,4 @@ def run(
                variable_output=True, multi_output=list(multi_output))
     else:
         print()
-        print(f"Done!  Rebuild with: cmake --build build")
+        print(f"{Color.done('Done!')}  {Color.cmd('cmake --build build')}")
