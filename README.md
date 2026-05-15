@@ -1,3 +1,8 @@
+---
+title: just-makeit
+hide_title: true
+---
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/just-buildit/just-makeit/main/docs/assets/logo-wordmark.png" alt="just-makeit" width="540">
 </p>

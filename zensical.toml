@@ -43,9 +43,10 @@ nav = [
 # Theme
 # ----------------------------------------------------------------------------
 [project.theme]
-logo     = "assets/logo.svg"
-favicon  = "assets/logo.svg"
-language = "en"
+logo       = "assets/logo.svg"
+favicon    = "assets/logo.svg"
+language   = "en"
+custom_dir = "docs/overrides"
 
 [project.theme.font]
 text = "Inter"
