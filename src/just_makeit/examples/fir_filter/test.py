@@ -85,8 +85,8 @@ def _install_smoke(proj: Path) -> None:
     )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=consumer)
 
-    # Step 5: pkg-config smoke (skipped if pkg-config is not on PATH)
-    if not shutil.which("pkg-config"):
+    # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
+    if sys.platform == "win32" or not shutil.which("pkg-config"):
         return
     pc_dir = next(
         (p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None
