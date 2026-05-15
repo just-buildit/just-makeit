@@ -17,43 +17,66 @@ coverage — all passing before you write a single line of code.
 
 ______________________________________________________________________
 
-## Try it now — no tools required
+## Try it now
 
-```sh
-# create and source venv — just-makeit is on your PATH automatically
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+=== "curl"
 
-# single command = complete project — ready to customize
-just-makeit new my_project --object engine --state gain:double:1.0
+    No tools required — one command bootstraps cmake, a C compiler, numpy,
+    and just-makeit into a ready-to-use venv:
 
-# build and test — ALL GREEN!
-cd my_project && make && make test
-```
-______________________________________________________________________
+    ```sh
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
+    ```
 
-## Installation
+    Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
+    Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
 
-```sh
-pip install just-makeit
-just-makeit install-deps   # cmake + C compiler + numpy, cross-platform
-```
+    ```sh
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
+    ```
 
-`just-makeit install-deps` detects your platform and installs system
-dependencies (cmake, a C compiler) via the available package manager, then
-creates a Python venv with numpy and just-makeit ready to use:
+=== "pip"
 
-| Platform | Detection order |
-|----------|----------------|
-| **Linux** | apt · dnf · pacman · zypper · apk |
-| **macOS** | Homebrew |
-| **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
+    ```sh
+    pip install just-makeit
+    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
+    ```
 
-Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
-Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
+    `install-deps` detects your platform and installs system dependencies via
+    the available package manager:
 
-```sh
-just-makeit install-deps ~/my-venv
-```
+    | Platform | Detection order |
+    |----------|----------------|
+    | **Linux** | apt · dnf · pacman · zypper · apk |
+    | **macOS** | Homebrew |
+    | **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
+
+=== "uv"
+
+    ```sh
+    uv tool install just-makeit
+    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
+    ```
+
+=== "docker"
+
+    ```sh
+    docker run --rm -it python:3.12 bash
+    ```
+
+    Then inside the container:
+
+    ```sh
+    pip install just-makeit && just-makeit install-deps
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
+    ```
 
 ______________________________________________________________________
 
