@@ -1,5 +1,66 @@
 # Changelog
 
+## \[0.11.0\] — 2026-05-15
+
+### Added
+
+- **`--pytest` and `--pytest-benchmark` flags for `just-makeit new` and
+  `just-makeit object`**: scaffold pure pytest test files (no unittest shim)
+  and `pytest-benchmark` bench files. Both flags are stored in
+  `just-makeit.toml` and inherited by subsequent `object`, `add`, and `init`
+  commands from the project config.
+
+- **Auto-generated Python test suites, benchmarks, and numpy-style `.pyi`
+  stubs**: generated pytest suites cover `create`, `step`, `steps`,
+  getters/setters, reset, context manager, and destroy with doctest examples
+  and type-annotated signatures. Bench files exercise both single-step and
+  block-processing throughput using stdlib `time.perf_counter` (default) or
+  `pytest-benchmark` (with `--pytest-benchmark`).
+
+- **`--batch` flag for `just-makeit method`**: generates a 1:1-rate array
+  transform — C stub `(state, const in_t *in, size_t n, out_t *out)` and a
+  Python wrapper that allocates the output array per call. Previously this
+  pattern required writing the Python glue manually.
+
+- **New generated file `cmake/<project>-config.cmake.in`**: every
+  `just-makeit new` project now scaffolds a proper CMake package config
+  wrapper with `@PACKAGE_INIT@`, enabling relocatable `find_package` support
+  after `cmake --install`.
+
+### Fixed
+
+- **Generated pkg-config file used absolute paths**: `cmake/<project>.pc.in`
+  used `@CMAKE_INSTALL_FULL_LIBDIR@` and `@CMAKE_INSTALL_FULL_INCLUDEDIR@`,
+  baking the install prefix in at configure time. This broke DESTDIR staging
+  and installs to non-default prefixes. Now uses relocatable
+  `${exec_prefix}/@CMAKE_INSTALL_LIBDIR@` and
+  `${prefix}/@CMAKE_INSTALL_INCLUDEDIR@`.
+
+- **CMake config install lacked `@PACKAGE_INIT@`**: `install(EXPORT ... FILE
+  ...-config.cmake)` made the targets file serve as the config file, omitting
+  the `PACKAGE_PREFIX_DIR` setup that `CMakePackageConfigHelpers` provides.
+  Consumers using `find_package` after a DESTDIR-staged or prefix-changed
+  install would get the build-tree prefix. The install section now uses
+  `configure_package_config_file` with `@PACKAGE_INIT@`; the targets file is
+  correctly named `<project>-targets.cmake`.
+
+### Docs
+
+- **CLI help and all docs now consistent with all implemented flags**:
+  `--batch` (method), `--pytest`, `--pytest-benchmark`, and `--mutable` (new)
+  were implemented but missing from `--help`, `docs/cli.md`,
+  `docs/commands.md`, and `README.md`. All four locations are now in sync.
+
+- **`docs/commands.md` method narrative updated**: the 1:1-rate array section
+  now leads with `--batch` (the automated path) and moves manual glue writing
+  to a secondary note.
+
+- **pkg-config & CMake package config guide** added to `docs/developers/`
+  covering both toolchain ecosystems, install layout, common pitfalls,
+  relocatability, and platform notes (Debian multiarch, macOS, MSYS2/Windows).
+
+______________________________________________________________________
+
 ## \[0.10.9\] — 2026-05-13
 
 ### Fixed
