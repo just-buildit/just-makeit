@@ -182,16 +182,14 @@ def from_new(
     pytest_: bool = False,
     pytest_benchmark_: bool = False,
 ) -> dict:
-    proj: dict = {"name": name, "version": version}
-    if basic:
-        proj["build"] = "make"
-    if perf:
-        proj["perf"] = "true"
-    if pytest_:
-        proj["pytest"] = "true"
-    if pytest_benchmark_:
-        proj["pytest_benchmark"] = "true"
-    return {"project": proj}
+    return {"project": {
+        "name":             name,
+        "version":          version,
+        "build":            "make" if basic else "cmake",
+        "perf":             "true" if perf else "false",
+        "pytest":           "true" if pytest_ else "false",
+        "pytest_benchmark": "true" if pytest_benchmark_ else "false",
+    }}
 
 
 def arg_type(cfg: dict, component: str) -> str:
@@ -214,25 +212,20 @@ def add_component(
     mutable_: bool = False,
     init_params_: list[tuple[str, str, str]] = (),
 ) -> dict:
-    entry: dict = {
-        "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_]
-    }
-    if arg_type_ != "float _Complex":
-        entry["arg_type"] = arg_type_
     rt = (return_type_ if return_type_ is not None
           else "void" if arg_type_.endswith("[]") else arg_type_)
-    if rt != "float _Complex":
-        entry["return_type"] = rt
+    entry: dict = {
+        "arg_type":    arg_type_,
+        "return_type": rt,
+        "mutable":     "true" if mutable_ else "false",
+        "no_state":    "true" if no_state_ else "false",
+        "no_step":     "true" if no_step_ else "false",
+        "state":       [{"name": n, "type": t, "default": d} for n, t, d in vars_],
+    }
     if array_args_:
         entry["array_args"] = [
             {"name": n, "dtype": dt} for n, dt in array_args_
         ]
-    if no_state_:
-        entry["no_state"] = "true"
-    if no_step_:
-        entry["no_step"] = "true"
-    if mutable_:
-        entry["mutable"] = "true"
     if init_params_:
         entry["init_params"] = [
             {"name": n, "type": t, "default": d} for n, t, d in init_params_
@@ -248,8 +241,6 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
-            if k == "build" and v == "cmake":
-                continue  # cmake is default, don't write it
             lines.append(f'{k} = "{v}"')
         lines.append("")
 
@@ -276,13 +267,12 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        meta_keys = [k for k in ("arg_type", "return_type", "no_state", "no_step", "mutable")
-                     if comp_data.get(k)]
-        if meta_keys:
-            lines.append(f"[{comp}]")
-            for k in meta_keys:
+        scalar_keys = ("arg_type", "return_type", "mutable", "no_state", "no_step")
+        lines.append(f"[{comp}]")
+        for k in scalar_keys:
+            if k in comp_data:
                 lines.append(f'{k} = "{comp_data[k]}"')
-            lines.append("")
+        lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
             lines.append(f'name = "{a["name"]}"')

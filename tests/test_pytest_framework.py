@@ -83,10 +83,11 @@ class TestConfigFlags:
         text = _dump(cfg)
         assert 'pytest_benchmark = "true"' in text
 
-    def test_flags_absent_from_toml_when_not_set(self):
+    def test_flags_default_false_in_toml_when_not_set(self):
         cfg = from_new("proj")
         text = _dump(cfg)
-        assert "pytest" not in text
+        assert 'pytest = "false"' in text
+        assert 'pytest_benchmark = "false"' in text
 
     def test_round_trip_via_save_load(self, tmp_path):
         cfg = from_new("proj", pytest_=True, pytest_benchmark_=True)

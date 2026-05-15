@@ -229,20 +229,20 @@ class TestAddComponentFlags:
         add_component(cfg, "nco", [], arg_type_="void")
         assert cfg["nco"]["arg_type"] == "void"
 
-    def test_arg_type_default_not_stored(self):
+    def test_arg_type_default_stored(self):
         cfg = from_new("p")
         add_component(cfg, "gain", [], arg_type_="float _Complex")
-        assert "arg_type" not in cfg["gain"]
+        assert cfg["gain"]["arg_type"] == "float _Complex"
 
     def test_return_type_void_stored(self):
         cfg = from_new("p")
         add_component(cfg, "sink", [], return_type_="void")
         assert cfg["sink"]["return_type"] == "void"
 
-    def test_return_type_same_as_default_not_stored(self):
+    def test_return_type_default_stored(self):
         cfg = from_new("p")
         add_component(cfg, "gain", [], return_type_="float _Complex")
-        assert "return_type" not in cfg["gain"]
+        assert cfg["gain"]["return_type"] == "float _Complex"
 
     def test_init_params_stored_and_read_back(self):
         cfg = from_new("p")
@@ -318,6 +318,6 @@ class TestDumpFlagFields:
         cfg = from_new("p", basic=True)
         assert 'build = "make"' in _dump(cfg)
 
-    def test_dump_build_cmake_not_written(self):
+    def test_dump_build_cmake_written(self):
         cfg = from_new("p")
-        assert "build" not in _dump(cfg)
+        assert 'build = "cmake"' in _dump(cfg)
