@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SRC = Path(__file__).parent.parent / "src"
 
@@ -405,6 +407,19 @@ class TestHelpContent:
     def test_help_mentions_generator_object(self):
         r = _cli("help")
         assert "generator" in r.stdout or "gen" in r.stdout
+
+    @pytest.mark.parametrize("flag", [
+        "--state", "--object", "--module", "--arg-type", "--return-type",
+        "--perf", "--basic", "--mutable", "--pytest", "--pytest-benchmark",
+        "--no-state", "--no-step", "--init-param",
+        "--param", "--variable-output", "--multi-output", "--batch",
+        "--out-type", "--out-divisor",
+        "--type", "--writable", "--field",
+        "--impl", "--replace", "--doc",
+    ])
+    def test_help_mentions_flag(self, flag):
+        r = _cli("help")
+        assert flag in r.stdout, f"Flag {flag!r} missing from --help output"
 
 
 class TestAddCLI:

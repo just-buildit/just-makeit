@@ -6,9 +6,7 @@ command into a fresh directory, then compare the two just-makeit.toml files.
 If a flag is correctly stored in TOML and correctly emitted by `jm script`,
 the replayed TOML will be identical to the original.
 
-Known gaps (documented as xfail):
-  - --array-arg: now emitted by jm script (fixed).
-  - --batch: now emitted by jm script (fixed).
+Known intentional gap:
   - --impl / --replace: intentionally not stored in TOML; tested separately
     in TestImplCLI in test_cli.py.
 """
@@ -190,6 +188,18 @@ class TestObjectFlagsRoundTrip:
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
+    def test_array_arg_round_trip(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "fir",
+             "--arg-type", "float _Complex[]",
+             "--array-arg", "coeffs:float32",
+             "--state", "gain:float:1.0f", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--array-arg coeffs:float32" in r.stdout
+        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        assert orig == replay
+
 
 # ── Project flag round-trips ──────────────────────────────────────────────────
 
@@ -294,6 +304,17 @@ class TestMethodFlagsRoundTrip:
              "--return-type", "void", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--out-divisor" not in r.stdout
+        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        assert orig == replay
+
+    def test_batch_round_trip(self, tmp_path):
+        dest = self._setup(tmp_path)
+        _cli("method", "nco", "process", "--module", "dsp",
+             "--arg-type", "float _Complex",
+             "--return-type", "float _Complex",
+             "--batch", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--batch" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
