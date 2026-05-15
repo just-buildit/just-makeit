@@ -6,13 +6,13 @@ on:
     branches: [main]
     paths:
       - docker/**
-      - src/just_makeit/examples/**
-      - src/just_makeit/_example.py
+      - src/just_makeit/**
+      - pyproject.toml
   pull_request:
     paths:
       - docker/**
-      - src/just_makeit/examples/**
-      - src/just_makeit/_example.py
+      - src/just_makeit/**
+      - pyproject.toml
 
 permissions:
   contents: read
@@ -68,6 +68,25 @@ jobs:
           if missing:
               sys.exit(f"no .so in: {missing}")
           PYEOF
+
+      # Verify that the fir_filter install placed a working pkg-config file.
+      - name: Smoke-test — pkg-config resolves installed fir_filter library
+        run: |
+          docker run --rm jm-examples-linux:ci bash -c '
+            set -euo pipefail
+            PC_DIR=$(find /home/just-makeit/examples/my_fir/install \
+                          -type d -name pkgconfig 2>/dev/null | head -1)
+            if [ -z "$PC_DIR" ]; then
+              echo "ERROR: no pkgconfig dir found under my_fir/install" >&2
+              exit 1
+            fi
+            export PKG_CONFIG_PATH="$PC_DIR"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+            pkg-config --modversion my-fir
+            pkg-config --cflags my-fir
+            pkg-config --libs my-fir
+            echo "pkg-config OK"
+          '
 
       # Push latest + sha tags on every push to main.
       - name: Tag and push to GHCR

@@ -53,11 +53,13 @@ RUN $candidates = @( `
 # Verify build tools are reachable before continuing.
 RUN gcc --version; mingw32-make --version; make --version; cmake --version
 
-# ── Install numpy and just-makeit from PyPI ───────────────────────────────────
+# ── Install numpy, pytest, and just-makeit from local source ─────────────────
+# Installing from source ensures the image always reflects the current HEAD.
+COPY . C:\src
 RUN python -m pip install --no-cache-dir --upgrade pip; `
-    pip install --no-cache-dir numpy just-makeit
+    pip install --no-cache-dir numpy pytest C:\src
 
-# ── Scaffold and build all bundled examples ───────────────────────────────────
+# ── Scaffold, build, and test all bundled examples ────────────────────────────
 COPY docker/build_examples.py C:\build_examples.py
 RUN python C:\build_examples.py C:\Users\ContainerAdministrator\examples
 

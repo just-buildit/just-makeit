@@ -12,16 +12,19 @@ FROM python:3.12-slim-trixie
 
 ENV JM_HOME=/home/just-makeit
 
-# ── Install just-makeit and numpy from PyPI ──────────────────────────────────
+# ── Install just-makeit from local source + numpy ────────────────────────────
 # numpy must be globally reachable so cmake's find_package(Python3 ... NumPy)
 # succeeds when cmake is invoked with -DPython3_EXECUTABLE=$(which python3).
+# Installing from source (not PyPI) ensures the Docker image always reflects
+# the current HEAD — no version lag.
+COPY . /src
 RUN python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir numpy just-makeit
+    python -m pip install --no-cache-dir numpy pytest /src
 
-# ── Install build deps (cmake, gcc) ──────────────────────────────────────────
+# ── Install build deps (cmake, gcc, pkg-config) ───────────────────────────────
 RUN just-makeit install-deps
 
-# ── Scaffold and build all bundled examples ───────────────────────────────────
+# ── Scaffold, build, and test all bundled examples ────────────────────────────
 RUN mkdir -p ${JM_HOME}/examples
 COPY docker/build_examples.py /tmp/build_examples.py
 RUN python3 /tmp/build_examples.py ${JM_HOME}/examples
