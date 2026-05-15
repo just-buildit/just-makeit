@@ -200,6 +200,19 @@ class TestObjectFlagsRoundTrip:
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
+    def test_array_arg_ctype_normalizes_to_dtype(self, tmp_path):
+        """C type input (e.g. float) is accepted and stored as dtype name (float32)."""
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("object", "fir",
+             "--arg-type", "float _Complex[]",
+             "--array-arg", "coeffs:float",
+             "--state", "gain:float:1.0f", cwd=dest)
+        r = _cli("script", cwd=dest)
+        assert "--array-arg coeffs:float32" in r.stdout
+        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        assert orig == replay
+
 
 # ── Project flag round-trips ──────────────────────────────────────────────────
 
@@ -213,11 +226,11 @@ class TestProjectFlagsRoundTrip:
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
-    def test_basic_persisted_and_replayed(self, tmp_path):
+    def test_build_system_make_persisted_and_replayed(self, tmp_path):
         dest = tmp_path / "proj"
-        _cli("new", "proj", str(dest), "--basic")
+        _cli("new", "proj", str(dest), "--build-system", "make")
         r = _cli("script", cwd=dest)
-        assert "--basic" in r.stdout
+        assert "--build-system make" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 

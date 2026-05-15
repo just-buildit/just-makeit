@@ -98,10 +98,27 @@ class TestArrayArgConfig:
         aa = cfg_array_args(cfg, "fir")
         assert aa == [("h", "float32")]
 
-    def test_config_records_dtype(self, in_module):
+    def test_config_records_type(self, in_module):
         cfg = load(in_module)
         aa = cfg_array_args(cfg, "hbdecim")
         assert aa[0] == ("h", "float32")
+
+    def test_legacy_dtype_key_still_loads(self, tmp_path):
+        """TOML written with the old 'dtype' key must still load correctly."""
+        from just_makeit._config import FILENAME
+        root = tmp_path / "dsp"
+        root.mkdir()
+        (root / FILENAME).write_text(
+            '[project]\nname = "dsp"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\n'
+            'pytest = "false"\npytest_benchmark = "false"\n\n'
+            "[fir]\narg_type = \"float _Complex\"\nreturn_type = \"float _Complex\"\n"
+            'mutable = "false"\nno_state = "false"\nno_step = "false"\n\n'
+            '[[fir.array_args]]\nname = "h"\ndtype = "float32"\n',
+            encoding="utf-8",
+        )
+        cfg = load(root)
+        assert cfg_array_args(cfg, "fir") == [("h", "float32")]
 
     def test_config_no_array_args_is_empty(self, tmp_path):
         root = tmp_path / "dsp"

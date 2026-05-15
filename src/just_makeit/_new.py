@@ -55,7 +55,7 @@ def run(
     object_names: list[str] | None = None,
     state_vars: list[tuple[str, str, str]] | None = None,
     modules: list[str] | None = None,
-    basic: bool = False,
+    build_system: str = "cmake",
     perf: bool = False,
     mutable: bool = False,
     arg_type: str = "float _Complex",
@@ -88,7 +88,7 @@ def run(
     print(f"just-makeit: creating project '{project}' in {root}")
     print()
 
-    if not basic:
+    if build_system == "cmake":
         _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
         _write(root / "Makefile", r(T.MAKEFILE))
     else:
@@ -104,12 +104,12 @@ def run(
         _write(root / "native" / "inc" / "jm_perf.h", r(T.JM_PERF_H))
         _write(root / "native" / "inc" / "jm_simd.h", T.JM_SIMD_H)
 
-    if not basic:
+    if build_system == "cmake":
         _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))
         _write(root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN))
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
-    cfg = C.from_new(project, basic=basic, perf=perf,
+    cfg = C.from_new(project, build_system=build_system, perf=perf,
                      pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")

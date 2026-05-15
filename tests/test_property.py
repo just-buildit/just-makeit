@@ -128,11 +128,11 @@ class TestPropertyUpdatesConfig:
         names = [p["name"] for p in properties(cfg, "buf")]
         assert "dropped" in names
 
-    def test_config_records_ctype(self, project):
+    def test_config_records_type(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
         cfg = load(project)
         p = next(p for p in properties(cfg, "buf") if p["name"] == "dropped")
-        assert p["ctype"] == "size_t"
+        assert p["type"] == "size_t"
 
     def test_config_readonly_no_writable_flag(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)

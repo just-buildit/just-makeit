@@ -220,6 +220,21 @@ _CTYPE_TO_NPY: dict[str, str] = {
 
 SUPPORTED_ARRAY_CTYPES: frozenset[str] = frozenset(_CTYPE_TO_NPY)
 
+# C type -> canonical dtype name (reverse of the ctype column in _ARRAY_DTYPE).
+_CTYPE_TO_DTYPE: dict[str, str] = {
+    c_type: dtype for dtype, (c_type, _) in _ARRAY_DTYPE.items()
+}
+
+
+def normalize_array_dtype(s: str) -> str | None:
+    """Return the canonical dtype name for s, accepting both dtype and C-type forms.
+
+    Returns None if s is not a recognised dtype or C element type.
+    """
+    if s in _ARRAY_DTYPE:
+        return s
+    return _CTYPE_TO_DTYPE.get(s)
+
 
 def is_array_param_type(ptype: str) -> bool:
     """Return True if ptype is an array parameter spec (ends with '[]')."""
@@ -2633,7 +2648,7 @@ def make_properties_ctx(
     state_var_names: names already declared by make_state_ctx(); those are
     excluded from property_decls to avoid duplicate C declarations.
 
-    Each property dict has: name, ctype (a _CTYPE_META key), writable (bool).
+    Each property dict has: name, type (a _CTYPE_META key), writable (bool).
     """
     _EMPTY: dict[str, str] = {
         "getset_def": "",
@@ -2658,7 +2673,7 @@ def make_properties_ctx(
 
     for p in properties:
         pname: str = p["name"]
-        ctype: str = p.get("ctype", "size_t")
+        ctype: str = p.get("type") or p.get("ctype", "size_t")
         writable: bool = p.get("writable", False)
         field: bool = p.get("field", False)
 

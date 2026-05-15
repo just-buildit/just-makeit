@@ -155,7 +155,7 @@ just-makeit COMMAND
 |                   | `--arg-type T`                  | C type for `step()` input; default `float _Complex`; `void` for generators; append `[]` for buffer-primary objects |
 |                   | `--return-type T`               | C type for `step()` return; default same as `--arg-type`; `void` for sinks     |
 |                   | `--perf`                        | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`             |
-|                   | `--basic`                       | Plain `Makefile` instead of CMake                                               |
+|                   | `--build-system <cmake\|make>`  | Build system; default `cmake`; use `make` for a plain `Makefile`               |
 |                   | `--mutable`                     | Remove `const` from the state pointer in `step()`; use for mutating generators  |
 |                   | `--pytest`                      | Generate pure pytest tests (no unittest shim)                                   |
 |                   | `--pytest-benchmark`            | Generate pytest-benchmark bench files                                           |

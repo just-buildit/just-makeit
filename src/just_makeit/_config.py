@@ -107,7 +107,7 @@ def is_no_step(cfg: dict, component: str) -> bool:
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     """Return declared array constructor args for component as [(name, dtype), ...]."""
     return [
-        (a["name"], a["dtype"])
+        (a["name"], a.get("type") or a.get("dtype", ""))
         for a in cfg.get(component, {}).get("array_args", [])
     ]
 
@@ -158,7 +158,7 @@ def project_version(cfg: dict) -> str:
 
 
 def build_system(cfg: dict) -> str:
-    """Return 'cmake' (default) or 'make' (--basic mode)."""
+    """Return 'cmake' (default) or 'make'."""
     return cfg.get("project", {}).get("build", "cmake")
 
 
@@ -177,7 +177,7 @@ def is_pytest_benchmark(cfg: dict) -> bool:
 def from_new(
     name: str,
     version: str = "0.1.0",
-    basic: bool = False,
+    build_system: str = "cmake",
     perf: bool = False,
     pytest_: bool = False,
     pytest_benchmark_: bool = False,
@@ -185,7 +185,7 @@ def from_new(
     return {"project": {
         "name":             name,
         "version":          version,
-        "build":            "make" if basic else "cmake",
+        "build":            build_system,
         "perf":             "true" if perf else "false",
         "pytest":           "true" if pytest_ else "false",
         "pytest_benchmark": "true" if pytest_benchmark_ else "false",
@@ -224,7 +224,7 @@ def add_component(
     }
     if array_args_:
         entry["array_args"] = [
-            {"name": n, "dtype": dt} for n, dt in array_args_
+            {"name": n, "type": dt} for n, dt in array_args_
         ]
     if init_params_:
         entry["init_params"] = [
@@ -276,7 +276,7 @@ def _dump(cfg: dict) -> str:
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
             lines.append(f'name = "{a["name"]}"')
-            lines.append(f'dtype = "{a["dtype"]}"')
+            lines.append(f'type = "{a.get("type") or a.get("dtype", "")}"')
             lines.append("")
         for s in comp_data.get("state", []):
             lines.append(f"[[{comp}.state]]")
@@ -318,7 +318,7 @@ def _dump(cfg: dict) -> str:
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
             lines.append(f'name = "{p["name"]}"')
-            lines.append(f'ctype = "{p["ctype"]}"')
+            lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
             if p.get("writable"):
                 lines.append("writable = true")
             if p.get("field"):

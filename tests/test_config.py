@@ -302,20 +302,68 @@ class TestDumpFlagFields:
         add_method(cfg, "conv", {"name": "proc", "out_divisor": 1})
         assert "out_divisor" not in _dump(cfg)
 
+    def test_dump_property_type(self):
+        cfg = from_new("p")
+        add_component(cfg, "nco", [])
+        add_property(cfg, "nco", {"name": "phase", "type": "uint32_t"})
+        assert 'type = "uint32_t"' in _dump(cfg)
+
     def test_dump_property_field(self):
         cfg = from_new("p")
         add_component(cfg, "nco", [])
-        add_property(cfg, "nco", {"name": "phase", "ctype": "uint32_t", "field": True})
+        add_property(cfg, "nco", {"name": "phase", "type": "uint32_t", "field": True})
         assert "field = true" in _dump(cfg)
 
     def test_dump_property_writable(self):
         cfg = from_new("p")
         add_component(cfg, "nco", [])
-        add_property(cfg, "nco", {"name": "phase", "ctype": "uint32_t", "writable": True})
+        add_property(cfg, "nco", {"name": "phase", "type": "uint32_t", "writable": True})
         assert "writable = true" in _dump(cfg)
 
+    def test_dump_array_arg_type(self):
+        cfg = from_new("p")
+        add_component(cfg, "fir", [], array_args_=[("h", "float32")])
+        assert 'type = "float32"' in _dump(cfg)
+
+
+class TestBackwardCompat:
+    """Old TOML keys (ctype, dtype) must still load correctly."""
+
+    def test_property_ctype_key_loads(self, tmp_path):
+        (tmp_path / FILENAME).write_text(
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\n'
+            'pytest = "false"\npytest_benchmark = "false"\n\n'
+            '[nco]\narg_type = "float _Complex"\nreturn_type = "float _Complex"\n'
+            'mutable = "false"\nno_state = "false"\nno_step = "false"\n\n'
+            '[[nco.properties]]\nname = "phase"\nctype = "uint32_t"\n',
+            encoding="utf-8",
+        )
+        cfg = load(tmp_path)
+        props = cfg["nco"]["properties"]
+        assert props[0].get("ctype") == "uint32_t"
+        # dump must re-emit under the new 'type' key
+        text = _dump(cfg)
+        assert 'type = "uint32_t"' in text
+
+    def test_array_arg_dtype_key_loads(self, tmp_path):
+        (tmp_path / FILENAME).write_text(
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\n'
+            'pytest = "false"\npytest_benchmark = "false"\n\n'
+            '[fir]\narg_type = "float _Complex"\nreturn_type = "float _Complex"\n'
+            'mutable = "false"\nno_state = "false"\nno_step = "false"\n\n'
+            '[[fir.array_args]]\nname = "h"\ndtype = "float32"\n',
+            encoding="utf-8",
+        )
+        cfg = load(tmp_path)
+        from just_makeit._config import array_args
+        assert array_args(cfg, "fir") == [("h", "float32")]
+        text = _dump(cfg)
+        assert 'type = "float32"' in text
+
     def test_dump_build_make(self):
-        cfg = from_new("p", basic=True)
+        cfg = from_new("p", build_system="make")
         assert 'build = "make"' in _dump(cfg)
 
     def test_dump_build_cmake_written(self):

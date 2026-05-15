@@ -410,8 +410,8 @@ class TestHelpContent:
 
     @pytest.mark.parametrize("flag", [
         "--state", "--object", "--module", "--arg-type", "--return-type",
-        "--perf", "--basic", "--mutable", "--pytest", "--pytest-benchmark",
-        "--no-state", "--no-step", "--init-param",
+        "--perf", "--build-system", "--basic", "--mutable", "--pytest",
+        "--pytest-benchmark", "--no-state", "--no-step", "--init-param",
         "--param", "--variable-output", "--multi-output", "--batch",
         "--out-type", "--out-divisor",
         "--type", "--writable", "--field",
@@ -597,22 +597,48 @@ class TestArrayArgTypeCLI:
 
 
 
-class TestNewBasicCLI:
-    """new --basic emits a plain Makefile instead of CMake."""
+class TestNewBuildSystemCLI:
+    """--build-system selects cmake (default) or make."""
 
-    def test_basic_exits_0(self, tmp_path):
-        r = _cli("new", "gain", str(tmp_path / "gain"), "--basic")
+    def test_cmake_is_default(self, tmp_path):
+        dest = tmp_path / "gain"
+        r = _cli("new", "gain", str(dest))
+        assert r.returncode == 0
+        assert (dest / "CMakeLists.txt").exists()
+
+    def test_build_system_cmake_explicit(self, tmp_path):
+        dest = tmp_path / "gain"
+        r = _cli("new", "gain", str(dest), "--build-system", "cmake")
+        assert r.returncode == 0
+        assert (dest / "CMakeLists.txt").exists()
+
+    def test_build_system_make_exits_0(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--build-system", "make")
         assert r.returncode == 0
 
-    def test_basic_has_makefile(self, tmp_path):
+    def test_build_system_make_has_makefile(self, tmp_path):
         dest = tmp_path / "gain"
-        _cli("new", "gain", str(dest), "--basic")
+        _cli("new", "gain", str(dest), "--build-system", "make")
         assert (dest / "Makefile").exists()
 
-    def test_basic_has_no_cmake_lists(self, tmp_path):
+    def test_build_system_make_has_no_cmake_lists(self, tmp_path):
         dest = tmp_path / "gain"
-        _cli("new", "gain", str(dest), "--basic")
+        _cli("new", "gain", str(dest), "--build-system", "make")
         assert not (dest / "CMakeLists.txt").exists()
+
+    def test_build_system_invalid_exits_1(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--build-system", "meson")
+        assert r.returncode == 1
+
+    def test_basic_deprecated_alias_still_works(self, tmp_path):
+        dest = tmp_path / "gain"
+        r = _cli("new", "gain", str(dest), "--basic")
+        assert r.returncode == 0
+        assert not (dest / "CMakeLists.txt").exists()
+
+    def test_basic_deprecated_prints_warning(self, tmp_path):
+        r = _cli("new", "gain", str(tmp_path / "gain"), "--basic")
+        assert "deprecated" in r.stderr
 
 
 class TestModuleCommandCLI:

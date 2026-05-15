@@ -99,7 +99,7 @@ ______________________________________________________________________
 | New flag added to CLI but not to `_config.py` | Flag silently dropped on `jm script` replay | Add a round-trip test |
 | New flag added but Makefile/template content not asserted | Wrong content ships | Add a content assertion in the relevant `test_*.py` |
 | `make test` runner choice | Shipped wrong once (v0.11.0) | `TestMakeTestRunner` in `test_new.py` now covers both Makefile variants and both modes |
-| Help text completeness | New flags invisible in `--help` | No systematic test; manual review on each release |
+| Help text completeness | New flags invisible in `--help` | `test_help_mentions_flag` in `test_cli.py` (parametrized, covers every flag) |
 | Windows-specific template paths | Only exercised in Docker CI | Docker Windows job (`docker.yml`) |
 | `--impl` / `--replace` | Intentionally not stored in TOML | Tested in `TestImplCLI` in `test_cli.py` |
 
@@ -138,7 +138,7 @@ ______________________________________________________________________
   no orphan tab-only recipe line.
 - With `--pytest`: `pytest src/` present, `unittest discover` absent.
 
-Both the CMake `Makefile` and the `--basic` `Makefile` are covered.  Update
+Both the CMake `Makefile` and the `--build-system make` `Makefile` are covered.  Update
 these assertions if you intentionally change the runner logic.
 
 ______________________________________________________________________

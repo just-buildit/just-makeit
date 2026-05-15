@@ -17,7 +17,7 @@ def run(args: list[str]) -> None:
     dest = None
     object_names: list[str] = []
     modules: list[str] = []
-    basic = False
+    build_system = "cmake"
     perf = False
     pytest_ = False
     pytest_benchmark_ = False
@@ -47,8 +47,23 @@ def run(args: list[str]) -> None:
         elif tok in ("--state", "--param"):
             var, i = parse_state_flag(remaining, i)
             state_vars.append(var)
+        elif tok == "--build-system":
+            i += 1
+            if i >= len(remaining):
+                print("error: --build-system requires a value (cmake, make)",
+                      file=sys.stderr)
+                sys.exit(1)
+            val = remaining[i]
+            if val not in ("cmake", "make"):
+                print(f"error: --build-system '{val}' is not valid. "
+                      "Choose cmake or make.", file=sys.stderr)
+                sys.exit(1)
+            build_system = val
+            i += 1
         elif tok == "--basic":
-            basic = True
+            print("warning: --basic is deprecated; use --build-system make",
+                  file=sys.stderr)
+            build_system = "make"
             i += 1
         elif tok == "--perf":
             perf = True
@@ -100,6 +115,6 @@ def run(args: list[str]) -> None:
             sys.exit(1)
 
     _new.run(project, dest, object_names or None, state_vars or None,
-             modules=modules, basic=basic, perf=perf, mutable=mutable,
-             arg_type=arg_type, return_type=return_type,
+             modules=modules, build_system=build_system, perf=perf,
+             mutable=mutable, arg_type=arg_type, return_type=return_type,
              pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)

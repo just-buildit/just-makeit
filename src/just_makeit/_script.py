@@ -115,7 +115,7 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if module:
         parts.append(_flag("--module", module))
 
-    parts.append(_flag("--type", p["ctype"]))
+    parts.append(_flag("--type", p.get("type") or p.get("ctype", "size_t")))
 
     if p.get("writable"):
         parts.append(_bool_flag("--writable"))
@@ -165,7 +165,7 @@ def run(root: Path) -> None:
     cfg = C.load(root)
     project = C.project_name(cfg)
     version = C.project_version(cfg)
-    basic = C.build_system(cfg) == "make"
+    bs = C.build_system(cfg)
     perf = C.is_perf(cfg)
     mods = C.modules(cfg)
     module_owned = {obj for mod in mods for obj in C.module_objects(cfg, mod)}
@@ -175,8 +175,8 @@ def run(root: Path) -> None:
 
     # ── new ──────────────────────────────────────────────────────────────────
     new_flags: list[str] = []
-    if basic:
-        new_flags.append(_bool_flag("--basic"))
+    if bs == "make":
+        new_flags.append(f"--build-system make")
     if perf:
         new_flags.append(_bool_flag("--perf"))
     if C.is_pytest(cfg):

@@ -86,7 +86,7 @@ def run(
     print()
 
     # Update config
-    prop_entry: dict = {"name": prop_name, "ctype": ctype}
+    prop_entry: dict = {"name": prop_name, "type": ctype}
     if writable:
         prop_entry["writable"] = True
     if field:

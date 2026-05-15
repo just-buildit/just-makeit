@@ -368,7 +368,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # properties
     for prop in obj_props:
         p_name    = prop["name"]
-        p_ctype   = prop["ctype"]
+        p_ctype   = prop.get("type") or prop.get("ctype", "size_t")
         p_write   = prop.get("writable", False) or (p_name in state_names)
         py_t      = _py(p_ctype)
         lines += [

@@ -91,14 +91,16 @@ def run(args: list[str]) -> None:
                       file=sys.stderr)
                 sys.exit(1)
             aa_name, aa_dtype = val.split(":", 1)
-            if aa_dtype not in T.SUPPORTED_ARRAY_DTYPES:
+            canonical = T.normalize_array_dtype(aa_dtype)
+            if canonical is None:
                 print(
-                    f"error: --array-arg dtype '{aa_dtype}' not supported.\n"
-                    f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}",
+                    f"error: --array-arg type '{aa_dtype}' not supported.\n"
+                    f"Accepted dtype names: {', '.join(sorted(T.SUPPORTED_ARRAY_DTYPES))}\n"
+                    f"Accepted C types: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            array_args_obj.append((aa_name, aa_dtype))
+            array_args_obj.append((aa_name, canonical))
             i += 1
         elif tok == "--no-state":
             no_state = True

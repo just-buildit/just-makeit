@@ -263,7 +263,7 @@ class TestMakeTestRunner:
 
     def _makefile_simple(self, tmp_path, **kwargs) -> str:
         dest = tmp_path / "proj"
-        run("proj", dest, basic=True, **kwargs)
+        run("proj", dest, build_system="make", **kwargs)
         return (dest / "Makefile").read_text(encoding="utf-8")
 
     # ── CMake Makefile (default) ───────────────────────────────────────────
@@ -284,21 +284,21 @@ class TestMakeTestRunner:
         mk = self._makefile(tmp_path, pytest_=True)
         assert "unittest discover" not in mk
 
-    # ── Basic Makefile (--basic) ───────────────────────────────────────────
+    # ── Plain Makefile (--build-system make) ──────────────────────────────
 
-    def test_basic_default_uses_unittest(self, tmp_path):
+    def test_make_default_uses_unittest(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
         assert "unittest discover" in mk
 
-    def test_basic_default_no_pytest_invocation(self, tmp_path):
+    def test_make_default_no_pytest_invocation(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
         assert "pytest src/" not in mk
 
-    def test_basic_pytest_flag_uses_pytest(self, tmp_path):
+    def test_make_pytest_flag_uses_pytest(self, tmp_path):
         mk = self._makefile_simple(tmp_path, pytest_=True)
         assert "pytest src/" in mk
 
-    def test_basic_pytest_flag_no_unittest(self, tmp_path):
+    def test_make_pytest_flag_no_unittest(self, tmp_path):
         mk = self._makefile_simple(tmp_path, pytest_=True)
         assert "unittest discover" not in mk
 
@@ -309,7 +309,7 @@ class TestMakeTestRunner:
         mk = self._makefile(tmp_path)
         assert "\n\t\n" not in mk
 
-    def test_basic_default_no_orphan_tab_line(self, tmp_path):
+    def test_make_default_no_orphan_tab_line(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
         assert "\n\t\n" not in mk
 

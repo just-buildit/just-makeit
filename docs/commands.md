@@ -27,7 +27,8 @@ any objects — the source of truth for all subsequent commands.
 | `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
 | `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
 | `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output. |
-| `--basic`                     | Generate a plain `Makefile` instead of a CMake project. Useful for quick prototypes that don't need a full build system. |
+| `--build-system <cmake\|make>` | Build system to use. Default: `cmake`. Use `make` for a plain `Makefile` without CMake — useful for quick prototypes. |
+| `--basic`                     | Deprecated alias for `--build-system make`. |
 | `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
 | `--mutable`                   | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO). |
 | `--pytest`                    | Generate pure pytest tests instead of the default `unittest`-compatible shim. |

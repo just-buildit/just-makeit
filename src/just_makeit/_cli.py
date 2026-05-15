@@ -16,7 +16,8 @@ Commands:
     --return-type TYPE          step() return type (default: --arg-type).
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
     --mutable                   Remove const from state pointer in step().
-    --basic                     Emit a plain Makefile instead of CMake.
+    --build-system <cmake|make> Build system to use (default: cmake).
+    --basic                     Deprecated alias for --build-system make.
     --pytest                    Generate pure pytest tests (no unittest shim).
     --pytest-benchmark          Generate pytest-benchmark bench files.
 
