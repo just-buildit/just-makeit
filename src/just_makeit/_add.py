@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -156,10 +157,14 @@ def run(
     print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'")
     print()
 
+    # Bump mtime by 2 s so GNU Make (1-s timestamp resolution on Windows)
+    # always considers these source files newer than cached object files.
+    _future = time.time() + 2
     with _backup(paths):
         for pat, tmpl in templates:
             path = root / _expand(pat, component, pkg)
             path.write_text(r(tmpl), encoding="utf-8")
+            os.utime(path, times=(_future, _future))
             print(f"  update  {path}")
 
     cfg[component]["state"] = [
