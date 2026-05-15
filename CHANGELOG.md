@@ -1,5 +1,16 @@
 # Changelog
 
+## \[0.11.1\] — 2026-05-15
+
+### Fixed
+
+- **`make test` now uses `unittest` by default**: projects scaffolded without
+  `--pytest` were incorrectly generating a `make test` target that invoked
+  pytest. The default runner is now `python -m unittest discover`; pytest is
+  only used when `--pytest` was passed to `just-makeit new`.
+
+______________________________________________________________________
+
 ## \[0.11.0\] — 2026-05-15
 
 ### Added
