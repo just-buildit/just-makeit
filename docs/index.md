@@ -73,7 +73,7 @@ ______________________________________________________________________
     Then inside the container:
 
     ```sh
-    pip install just-makeit && just-makeit install-deps
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     just-makeit new my_project --object engine --state gain:double:1.0
     cd my_project && make && make test
     ```
