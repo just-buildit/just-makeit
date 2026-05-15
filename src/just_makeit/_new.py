@@ -13,13 +13,32 @@ from . import _config as C
 from . import _templates as T
 
 
-def _make_project_ctx(project: str, version: str = "0.1.0") -> dict[str, str]:
+def _make_project_ctx(
+    project: str,
+    version: str = "0.1.0",
+    pytest_: bool = False,
+) -> dict[str, str]:
+    if pytest_:
+        ensure_win  = '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
+        ensure_unix = '\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest\n'
+        cmd_win  = '$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,\'-m\',\'pytest\',\'src/\',\'-v\']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"'
+        cmd_unix = '$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret'
+    else:
+        ensure_win  = ""
+        ensure_unix = ""
+        cmd_win  = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
+        cmd_unix = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
     return {
         "package": project,
         "PACKAGE": project.upper(),
         "project": project.replace("_", "-"),
         "project_underscore": project,
         "version": version,
+        "ensure_pytest_win":  ensure_win,
+        "ensure_pytest_unix": ensure_unix,
+        "py_test_cmd_win":    cmd_win,
+        "py_test_cmd_unix":   cmd_unix,
+        "py_test_label":      "pytest" if pytest_ else "unittest",
     }
 
 
@@ -60,7 +79,7 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _make_project_ctx(project)
+    ctx = _make_project_ctx(project, pytest_=pytest_)
 
     def r(tmpl):
         return T.render(tmpl, ctx)

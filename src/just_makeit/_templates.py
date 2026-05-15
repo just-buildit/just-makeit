@@ -5038,7 +5038,7 @@ MAKEFILE_SIMPLE = """\
 #
 # Targets:
 #   make             Build extension(s)
-#   make test        C tests + pytest
+#   make test        C tests + <<py_test_label>>
 #   make just-build  PEP 517 hook for just-buildit
 #   make clean       Remove build artifacts
 #   make help        Show this message
@@ -5070,13 +5070,10 @@ all: $(TARGETS)
 
 test: all $(C_TESTS)
 ifeq ($(OS), Windows_NT)
-\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest
-\t$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"
+<<ensure_pytest_win>>\t<<py_test_cmd_win>>
 else
 \t@for t in $(C_TESTS); do echo "--- $$t ---" && ./$$t || exit 1; done
-\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
-\t$(PYTHON) -m pytest src/ -v; ret=$$?; \
-\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
+<<ensure_pytest_unix>>\t<<py_test_cmd_unix>>
 endif
 
 just-build: all
@@ -5092,7 +5089,7 @@ help:
 \t@echo "<<project>> build targets"
 \t@echo ""
 \t@echo "  make          Build extension(s)"
-\t@echo "  make test     Run C tests + pytest"
+\t@echo "  make test     Run C tests + <<py_test_label>>"
 \t@echo "  make clean    Remove build artifacts"
 \t@echo ""
 """
@@ -5114,7 +5111,7 @@ MAKEFILE = """\
 #
 # Targets:
 #   make              Configure + build (Release)
-#   make test         CTest + pytest
+#   make test         CTest + <<py_test_label>>
 #   make bench        C + Python benchmarks (output only)
 #   make just-build   PEP 517 hook for just-buildit
 #   make clean        Remove build artifacts
@@ -5149,10 +5146,10 @@ all: build
 $(BUILD_DIR)/CMakeCache.txt:
 ifeq ($(OS), Windows_NT)
 \t$(PYTHON) -c "import numpy" 2>nul || $(PYTHON) -m pip install numpy
-\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest
+<<ensure_pytest_win>>
 else
 \t@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
-\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest
+<<ensure_pytest_unix>>
 endif
 \tcmake -B $(BUILD_DIR) -S . \\
 \t\t$(CMAKE_GEN_FLAG) \\
@@ -5169,10 +5166,9 @@ build: $(BUILD_DIR)/CMakeCache.txt
 test: build
 \tctest --test-dir $(BUILD_DIR) --output-on-failure
 ifeq ($(OS), Windows_NT)
-\t$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"
+\t<<py_test_cmd_win>>
 else
-\t$(PYTHON) -m pytest src/ -v; ret=$$?; \
-\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret
+\t<<py_test_cmd_unix>>
 endif
 
 bench: build
@@ -5200,7 +5196,7 @@ help:
 \t@echo "<<project>> build targets"
 \t@echo ""
 \t@echo "  make               Configure + build"
-\t@echo "  make test          Run CTest + pytest"
+\t@echo "  make test          Run CTest + <<py_test_label>>"
 \t@echo "  make bench         Run C + Python benchmarks"
 \t@echo "  make docs          Generate Doxygen API docs"
 \t@echo "  make clean         Remove build artifacts"
