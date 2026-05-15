@@ -253,6 +253,67 @@ class TestNewContent:
         assert "check_required_components(my_filter)" in cfg
 
 
+class TestMakeTestRunner:
+    """Regression: make test must use unittest by default, pytest only with --pytest."""
+
+    def _makefile(self, tmp_path, **kwargs) -> str:
+        dest = tmp_path / "proj"
+        run("proj", dest, **kwargs)
+        return (dest / "Makefile").read_text(encoding="utf-8")
+
+    def _makefile_simple(self, tmp_path, **kwargs) -> str:
+        dest = tmp_path / "proj"
+        run("proj", dest, basic=True, **kwargs)
+        return (dest / "Makefile").read_text(encoding="utf-8")
+
+    # ── CMake Makefile (default) ───────────────────────────────────────────
+
+    def test_cmake_default_uses_unittest(self, tmp_path):
+        mk = self._makefile(tmp_path)
+        assert "unittest discover" in mk
+
+    def test_cmake_default_no_pytest_invocation(self, tmp_path):
+        mk = self._makefile(tmp_path)
+        assert "pytest src/" not in mk
+
+    def test_cmake_pytest_flag_uses_pytest(self, tmp_path):
+        mk = self._makefile(tmp_path, pytest_=True)
+        assert "pytest src/" in mk
+
+    def test_cmake_pytest_flag_no_unittest(self, tmp_path):
+        mk = self._makefile(tmp_path, pytest_=True)
+        assert "unittest discover" not in mk
+
+    # ── Basic Makefile (--basic) ───────────────────────────────────────────
+
+    def test_basic_default_uses_unittest(self, tmp_path):
+        mk = self._makefile_simple(tmp_path)
+        assert "unittest discover" in mk
+
+    def test_basic_default_no_pytest_invocation(self, tmp_path):
+        mk = self._makefile_simple(tmp_path)
+        assert "pytest src/" not in mk
+
+    def test_basic_pytest_flag_uses_pytest(self, tmp_path):
+        mk = self._makefile_simple(tmp_path, pytest_=True)
+        assert "pytest src/" in mk
+
+    def test_basic_pytest_flag_no_unittest(self, tmp_path):
+        mk = self._makefile_simple(tmp_path, pytest_=True)
+        assert "unittest discover" not in mk
+
+    # ── No double-tab orphan line ──────────────────────────────────────────
+
+    def test_cmake_default_no_orphan_tab_line(self, tmp_path):
+        """Empty ensure block must not leave a bare tab-only recipe line."""
+        mk = self._makefile(tmp_path)
+        assert "\n\t\n" not in mk
+
+    def test_basic_default_no_orphan_tab_line(self, tmp_path):
+        mk = self._makefile_simple(tmp_path)
+        assert "\n\t\n" not in mk
+
+
 class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"

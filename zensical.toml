@@ -35,6 +35,7 @@ nav = [
   { "C library"          = "c-library.md"         },
   { "For Developers" = [
     { "Start Here"         = "developers/START_HERE.md"       },
+    { "Test philosophy"    = "developers/testing.md"          },
     { "pkg-config & CMake" = "developers/pkg-config.md"       },
     { "Release checklist"  = "developers/release-checklist.md"},
   ]},
