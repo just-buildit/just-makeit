@@ -197,7 +197,8 @@ if [[ $JM_CURRENT -eq 0 ]]; then
     _setup_venv() {
         "$PYTHON" -m venv "$VENV_DIR"
         "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
-        "${VENV_DIR}/bin/pip" install --quiet numpy just-makeit
+        "${VENV_DIR}/bin/pip" install --quiet numpy
+        "${VENV_DIR}/bin/pip" install --quiet --upgrade just-makeit
     }
     _spin "Setting up venv at ${VENV_DIR}" _setup_venv
 
