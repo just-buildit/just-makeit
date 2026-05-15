@@ -141,20 +141,26 @@ jobs:
             -t jm-examples-windows:ci `
             .
 
-      # Check the nine project dirs are present and contain a built .pyd.
-      - name: Smoke-test — .pyd files present for all examples
+      # Check that every built example contains a .pyd.
+      # Scaffold-only examples (no build\ dir) are skipped — they have no
+      # compiled extension by design (e.g. pytest_style verifies generated
+      # file content only).
+      - name: Smoke-test — .pyd files present for all built examples
         shell: powershell
         run: |
           docker run --rm jm-examples-windows:ci powershell -Command @'
-            $base = "C:\Users\ContainerAdministrator\examples"
+            $base = 'C:\Users\ContainerAdministrator\examples'
             $missing = @()
             foreach ($proj in Get-ChildItem $base -Directory | Sort-Object Name) {
-                $pyds = Get-ChildItem $proj.FullName -Recurse -Filter "*.pyd" -ErrorAction SilentlyContinue
+                $hasBuild = Test-Path (Join-Path $proj.FullName 'build')
+                $pyds = Get-ChildItem $proj.FullName -Recurse -Filter '*.pyd' -ErrorAction SilentlyContinue
                 if ($pyds) {
                     Write-Host "  ok   $($proj.Name)  ($($pyds[0].Name))"
-                } else {
+                } elseif ($hasBuild) {
                     Write-Host "  MISS $($proj.Name)"
                     $missing += $proj.Name
+                } else {
+                    Write-Host "  skip $($proj.Name)  (scaffold-only)"
                 }
             }
             if ($missing) { exit 1 }
