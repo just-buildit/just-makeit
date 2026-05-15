@@ -37,21 +37,21 @@ A fully populated example covering every section:
 
 ```toml
 [project]
-name    = "my_project"
-version = "0.1.0"
-# build = "make"           # present only when --basic was used
-# perf  = "true"           # present only when --perf was used
-# pytest = "true"          # present only when --pytest was used
-# pytest_benchmark = "true"
+name             = "my_project"
+version          = "0.1.0"
+build            = "make"    # only written when --basic; omitted for CMake (default)
+perf             = "true"    # only written when --perf
+pytest           = "true"    # only written when --pytest
+pytest_benchmark = "true"    # only written when --pytest-benchmark; requires --pytest
 
 # ── Standalone object ─────────────────────────────────────────────────────────
 
 [engine]
 arg_type    = "float _Complex"   # omitted when default
 return_type = "float _Complex"   # omitted when same as arg_type
-# mutable  = "true"              # present when --mutable was used
-# no_state = "true"              # present when --no-state was used
-# no_step  = "true"              # present when --no-step was used
+mutable     = "true"             # only written when --mutable
+no_state    = "true"             # only written when --no-state
+no_step     = "true"             # only written when --no-step
 
 [[engine.state]]
 name    = "gain"
