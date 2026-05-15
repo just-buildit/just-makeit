@@ -130,7 +130,7 @@ def set_channel(self, value: np.uint8) -> None: ...
 - The C struct is opaque — always access fields through the generated
   getter/setter API.
 
----
+______________________________________________________________________
 
 ## See also
 

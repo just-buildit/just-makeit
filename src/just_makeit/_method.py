@@ -21,9 +21,8 @@ from pathlib import Path
 
 from . import _config as C
 from . import _templates as T
-from ._init import _make_component_ctx, _to_title, _write
-from ._object import _make_object_ctx, _regenerate_module
-
+from ._init import _make_component_ctx, _to_title
+from ._object import _regenerate_module
 
 
 def _methods_c_stub_variable(
@@ -45,13 +44,13 @@ def _methods_c_stub_variable(
 
     all_extra = list(multi_output)
     extra_out_params = "".join(
-        f", {T._ctype_display(rt)} *out{i+1}" for i, rt in enumerate(all_extra)
+        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(all_extra)
     )
 
     lines = [
         f"/* <<IMPLEMENT: return maximum possible output samples for {name}"
         f" given current state >> */",
-        f"size_t",
+        "size_t",
         f"{component}_{name}_max_out({component}_state_t *state)",
         "{",
         "    (void)state;",
@@ -60,11 +59,11 @@ def _methods_c_stub_variable(
         "",
         f"/* <<IMPLEMENT: process{' input and' if has_arg else ''} write results"
         f" into out[0..n_out-1]; return actual output count >> */",
-        f"size_t",
+        "size_t",
         f"{component}_{name}({component}_state_t *state"
         f"{step_param}, {ret_disp} *out{extra_out_params})",
         "{",
-        f"    (void)state;",
+        "    (void)state;",
     ]
     if has_arg:
         lines.append("    (void)in; (void)n_in;")
@@ -90,12 +89,9 @@ def _methods_c_stub_fixed(
     params = params or []
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}"
-        for i, rt in enumerate(multi_output)
+        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(multi_output)
     )
-    extra_suppress = "".join(
-        f" (void)out{i + 1};" for i in range(len(multi_output))
-    )
+    extra_suppress = "".join(f" (void)out{i + 1};" for i in range(len(multi_output)))
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
     out_suppress = " (void)out;" if out_type else ""
 
@@ -113,18 +109,12 @@ def _methods_c_stub_fixed(
                 param_parts.append(f"{T._ctype_display(t)} {n}")
                 suppress_parts.append(f"(void){n};")
         param_str = ", ".join(param_parts)
-        c_params = (
-            f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
-        )
+        c_params = f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
         suppress_names = " ".join(suppress_parts)
-        suppress = (
-            f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
-        )
+        suppress = f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
     elif has_arg:
         arg_disp = T._ctype_display(arg_type)
-        c_params = (
-            f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
-        )
+        c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
         suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
@@ -169,8 +159,7 @@ def _build_method_prototype(
     params = params or []
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}"
-        for i, rt in enumerate(multi_output)
+        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(multi_output)
     )
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
 
@@ -180,12 +169,13 @@ def _build_method_prototype(
             if has_arg
             else ", size_t n"
         )
-        return "\n".join([
-            f"size_t {component}_{name}_max_out"
-            f"({component}_state_t *state);",
-            f"size_t {component}_{name}({component}_state_t *state"
-            f"{step_param}, {ret_disp} *out{extra_params});",
-        ])
+        return "\n".join(
+            [
+                f"size_t {component}_{name}_max_out({component}_state_t *state);",
+                f"size_t {component}_{name}({component}_state_t *state"
+                f"{step_param}, {ret_disp} *out{extra_params});",
+            ]
+        )
 
     if params:
         parts: list[str] = []
@@ -197,8 +187,7 @@ def _build_method_prototype(
             else:
                 parts.append(f"{T._ctype_display(t)} {n}")
         c_params = (
-            f"{component}_state_t *state,"
-            f" {', '.join(parts)}{extra_params}{out_param}"
+            f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
         )
     elif has_arg:
         c_params = (
@@ -209,7 +198,6 @@ def _build_method_prototype(
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
 
     return f"{ret_disp} {component}_{name}({c_params});"
-
 
 
 def run(
@@ -282,11 +270,17 @@ def run(
         )
     else:
         stub = _methods_c_stub_fixed(
-            object_name, method_name, arg_type, return_type, multi_output,
-            params, out_type,
+            object_name,
+            method_name,
+            arg_type,
+            return_type,
+            multi_output,
+            params,
+            out_type,
         )
     if impl_body is not None:
         from . import _impl as I
+
         stub = I.inject_body_into_stub(stub, impl_body)
     _append_to_core_c(core_c, stub)
 
@@ -318,8 +312,6 @@ def run(
         _regenerate_module(root, cfg, module, pkg)
     else:
         # Standalone: regenerate _core.h (adds method_decls) + _ext.c
-        from . import _init as _init_mod
-        from . import _add as _add_mod
 
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)
@@ -328,25 +320,48 @@ def run(
         version = C.project_version(cfg)
 
         ctx = _make_component_ctx(object_name)
-        ctx.update({
-            "package": pkg,
-            "PACKAGE": pkg.upper(),
-            "project": pkg.replace("_", "-"),
-            "project_underscore": pkg,
-            "version": version,
-        })
+        ctx.update(
+            {
+                "package": pkg,
+                "PACKAGE": pkg.upper(),
+                "project": pkg.replace("_", "-"),
+                "project_underscore": pkg,
+                "version": version,
+            }
+        )
         ctx.update(T.make_sample_ctx(arg_type_, return_type_))
-        ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
-                                    array_args=C.array_args(cfg, object_name),
-                                    no_state=C.is_no_state(cfg, object_name)))
+        ctx.update(
+            T.make_state_ctx(
+                object_name,
+                Component,
+                state_vars_list,
+                array_args=C.array_args(cfg, object_name),
+                no_state=C.is_no_state(cfg, object_name),
+            )
+        )
         ctx.update(T.make_perf_ctx(perf))
-        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
-                                   no_step=C.is_no_step(cfg, object_name)))
-        ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name),
-                                      pkg=pkg,
-                                      py_create_args=ctx.get("py_create_args", "")))
-        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
-                                         frozenset(n for n, _, _ in state_vars_list)))
+        ctx.update(
+            T.make_step_ctx(
+                ctx, arg_type_, return_type_, no_step=C.is_no_step(cfg, object_name)
+            )
+        )
+        ctx.update(
+            T.make_methods_ctx(
+                object_name,
+                Component,
+                C.methods(cfg, object_name),
+                pkg=pkg,
+                py_create_args=ctx.get("py_create_args", ""),
+            )
+        )
+        ctx.update(
+            T.make_properties_ctx(
+                object_name,
+                Component,
+                C.properties(cfg, object_name),
+                frozenset(n for n, _, _ in state_vars_list),
+            )
+        )
 
         def r(tmpl):
             return T.render(tmpl, ctx)

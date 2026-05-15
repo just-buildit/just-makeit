@@ -11,7 +11,6 @@ Verifies that scaffolding with both flags produces:
 This test does not build any C code — it only inspects generated file content.
 """
 
-import sys
 import tempfile
 from pathlib import Path
 
@@ -44,9 +43,9 @@ def run(root: Path) -> None:
     assert 'pytest_benchmark = "true"' in toml_text
 
     # 3. Test file is pure pytest (no unittest shim)
-    test_py = (
-        proj / "src" / "dsp_algo" / "tests" / "test_dsp_algo.py"
-    ).read_text(encoding="utf-8")
+    test_py = (proj / "src" / "dsp_algo" / "tests" / "test_dsp_algo.py").read_text(
+        encoding="utf-8"
+    )
     assert "import unittest" not in test_py, "no unittest import"
     assert "import pytest" in test_py, "must import pytest"
     assert "compatibility shim" not in test_py, "no shim comment"
@@ -76,14 +75,14 @@ def run(root: Path) -> None:
 
     # 5. Second object inherits flags from project config (no flags needed)
     jm_init(proj, "filter2", [("bw", "double", "0.1")])
-    test2 = (
-        proj / "src" / "dsp_algo" / "tests" / "test_filter2.py"
-    ).read_text(encoding="utf-8")
+    test2 = (proj / "src" / "dsp_algo" / "tests" / "test_filter2.py").read_text(
+        encoding="utf-8"
+    )
     assert "import unittest" not in test2, "inherited: no unittest"
     assert "import pytest" in test2, "inherited: uses pytest"
-    bench2 = (
-        proj / "src" / "dsp_algo" / "benchmarks" / "bench_filter2.py"
-    ).read_text(encoding="utf-8")
+    bench2 = (proj / "src" / "dsp_algo" / "benchmarks" / "bench_filter2.py").read_text(
+        encoding="utf-8"
+    )
     assert "perf_counter" not in bench2, "inherited: no perf_counter"
     assert "@pytest.fixture" in bench2, "inherited: pytest-benchmark"
 

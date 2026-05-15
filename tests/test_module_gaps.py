@@ -19,7 +19,6 @@ Gap #6: External lib CMake blocks — if(DOPPLER_C_LIB) … endif() blocks are
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -31,6 +30,7 @@ from just_makeit._method import run as method_run
 # ---------------------------------------------------------------------------
 # Gap #1 — __init__.py preservation
 # ---------------------------------------------------------------------------
+
 
 class TestInitPyPreservation:
     def test_user_content_survives_second_object(self, tmp_path):
@@ -85,13 +85,16 @@ class TestInitPyPreservation:
 # Gap #2 — batch flag persistence
 # ---------------------------------------------------------------------------
 
+
 class TestBatchFlagPersistence:
     def test_batch_written_to_config(self, tmp_path):
         root = tmp_path / "pkg"
         new_run("pkg", root)
         object_run(root, "nco", None, state_vars=[("freq", "float", "0.0f")])
         method_run(
-            root, "nco", "process",
+            root,
+            "nco",
+            "process",
             module=None,
             arg_type="float _Complex",
             return_type="float _Complex",
@@ -108,7 +111,9 @@ class TestBatchFlagPersistence:
         new_run("pkg", root)
         object_run(root, "nco", None, state_vars=[("freq", "float", "0.0f")])
         method_run(
-            root, "nco", "process",
+            root,
+            "nco",
+            "process",
             module=None,
             arg_type="float _Complex",
             return_type="float _Complex",
@@ -117,16 +122,20 @@ class TestBatchFlagPersistence:
             batch=True,
         )
 
-        ext_c = (
-            root / "native" / "src" / "nco" / "nco_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (root / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         # A batch method takes an array argument; it cannot be METH_NOARGS.
-        assert "METH_NOARGS" not in ext_c or "process" not in ext_c.split("METH_NOARGS")[0].split("\n")[-1]
+        assert (
+            "METH_NOARGS" not in ext_c
+            or "process" not in ext_c.split("METH_NOARGS")[0].split("\n")[-1]
+        )
 
 
 # ---------------------------------------------------------------------------
 # Gap #3 — C body preservation on regeneration
 # ---------------------------------------------------------------------------
+
 
 class TestCBodyPreservation:
     def test_existing_method_body_not_overwritten(self, tmp_path):
@@ -135,7 +144,9 @@ class TestCBodyPreservation:
         new_run("pkg", root, modules=["dsp"])
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         method_run(
-            root, "nco", "get_freq",
+            root,
+            "nco",
+            "get_freq",
             module="dsp",
             arg_type="void",
             return_type="float",
@@ -149,7 +160,7 @@ class TestCBodyPreservation:
         sentinel = "/* SENTINEL: user-edited body */"
         patched = original.replace(
             'PyErr_SetString(PyExc_RuntimeError, "destroyed")',
-            f"{sentinel}\n    PyErr_SetString(PyExc_RuntimeError, \"destroyed\")",
+            f'{sentinel}\n    PyErr_SetString(PyExc_RuntimeError, "destroyed")',
             1,
         )
         assert sentinel in patched, (
@@ -168,6 +179,7 @@ class TestCBodyPreservation:
 # Gap #4 — no-step objects in a mixed module
 # ---------------------------------------------------------------------------
 
+
 class TestNoStepInModule:
     def test_no_step_object_has_no_step_wrappers(self, tmp_path):
         """An object added with --no-step must not generate step/steps wrappers."""
@@ -178,9 +190,9 @@ class TestNoStepInModule:
         # No-step object.
         object_run(root, "util", "dsp", state_vars=[], no_step=True)
 
-        ext_c = (
-            root / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         # The nco wrappers should be present.
         assert "Nco_step" in ext_c
         # No step wrapper should be emitted for util.
@@ -191,15 +203,16 @@ class TestNoStepInModule:
         new_run("pkg", root, modules=["dsp"])
         object_run(root, "util", "dsp", state_vars=[], no_step=True)
 
-        core_c = (
-            root / "native" / "src" / "util" / "util_core.c"
-        ).read_text(encoding="utf-8")
+        core_c = (root / "native" / "src" / "util" / "util_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "util_step" not in core_c
 
 
 # ---------------------------------------------------------------------------
 # Gap #5 — phantom module_core.h include
 # ---------------------------------------------------------------------------
+
 
 class TestPhantomCoreHInclude:
     def test_no_include_without_functions(self, tmp_path):
@@ -208,9 +221,9 @@ class TestPhantomCoreHInclude:
         new_run("pkg", root, modules=["dsp"])
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
 
-        ext_c = (
-            root / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '#include "dsp/dsp_core.h"' not in ext_c
 
     def test_include_present_with_functions(self, tmp_path):
@@ -222,15 +235,16 @@ class TestPhantomCoreHInclude:
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         function_run(root, "global_setup", "dsp", doc="Global setup.")
 
-        ext_c = (
-            root / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '#include "dsp/dsp_core.h"' in ext_c
 
 
 # ---------------------------------------------------------------------------
 # Gap #6 — CMakeLists external lib block propagation
 # ---------------------------------------------------------------------------
+
 
 class TestCMakeExternalLibBlocks:
     def test_external_block_copied_to_new_object(self, tmp_path):
@@ -256,9 +270,9 @@ class TestCMakeExternalLibBlocks:
         # Add a sibling object — _copy_external_cmake_blocks should fire.
         object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
 
-        mixer_cmake = (
-            root / "native" / "src" / "mixer" / "CMakeLists.txt"
-        ).read_text(encoding="utf-8")
+        mixer_cmake = (root / "native" / "src" / "mixer" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "DOPPLER_C_LIB" in mixer_cmake
         assert "mixer" in mixer_cmake  # placeholder replaced with new comp name
         assert "nco" not in mixer_cmake  # old comp name not left behind

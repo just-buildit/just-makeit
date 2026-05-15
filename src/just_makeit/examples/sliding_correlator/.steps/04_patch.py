@@ -10,10 +10,10 @@ import pathlib
 import re
 import sys
 
-header  = pathlib.Path("native/inc/sliding_correlator/sliding_correlator_core.h")
-core_c  = pathlib.Path("native/src/sliding_correlator/sliding_correlator_core.c")
+header = pathlib.Path("native/inc/sliding_correlator/sliding_correlator_core.h")
+core_c = pathlib.Path("native/src/sliding_correlator/sliding_correlator_core.c")
 batch_h = pathlib.Path(__file__).with_name("04_step_batch.h")
-kernel  = pathlib.Path(__file__).with_name("04_kernel.c")
+kernel = pathlib.Path(__file__).with_name("04_kernel.c")
 
 # ── 1. Insert step_batch() into header ───────────────────────────────────────
 

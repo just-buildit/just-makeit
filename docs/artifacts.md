@@ -7,7 +7,7 @@ one-line annotations.
 Files omitted from all trees for brevity: `README.md`, `.gitignore`,
 `.benchmarks/.gitkeep`.
 
----
+______________________________________________________________________
 
 ## 1. Module function
 
@@ -52,7 +52,7 @@ mylib/
 └── just-makeit.toml
 ```
 
----
+______________________________________________________________________
 
 ## 2. Standalone object
 
@@ -105,7 +105,7 @@ Two C sources per object, always: `engine_core.c` (algorithm) and
 `engine_ext.c` (Python glue).  Adding methods with `just-makeit method`
 appends stubs to `engine_core.c` — no third file is ever created.
 
----
+______________________________________________________________________
 
 ## 3. Module with one object
 
@@ -159,7 +159,7 @@ The object directory (`filt/`) holds only `_core.c` — there is no
 `filt_ext.c`.  The module-level `dsp_ext.c` is the shared Python binding for
 every object in `dsp`.
 
----
+______________________________________________________________________
 
 ## 4. Module with two objects
 
@@ -222,7 +222,7 @@ One `.so`, one `.pyi`, one `__init__.py` — regardless of how many objects the
 module contains.  `dsp_ext.c` is regenerated in full each time an object,
 method, or property is added.
 
----
+______________________________________________________________________
 
 ## 5. Multiple modules
 
@@ -291,17 +291,17 @@ Each module is independent: separate `.so`, separate stub, separate
 `__init__.py`.  The C object libraries (`fir_core`, `reader_core`) are linked
 into their respective module `.so` files.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| Pattern | Command | `.so` files | `_ext.c` files | `_core.c` files |
-|---------|---------|-------------|----------------|-----------------|
-| Module function | `new --module` + `function` | 1 | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) |
-| Standalone object | `new --object` | 1 per object | 1 per object | 1 per object |
-| Module, 1 object | `new --module` + `object --module` | 1 | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + 1 per object |
-| Module, N objects | same, repeated | 1 | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + N objects |
-| M modules, N objects each | same | M | M | M (`<mod>_core.c`) + N objects |
+| Pattern                   | Command                            | `.so` files  | `_ext.c` files    | `_core.c` files                   |
+| ------------------------- | ---------------------------------- | ------------ | ----------------- | --------------------------------- |
+| Module function           | `new --module` + `function`        | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`)                |
+| Standalone object         | `new --object`                     | 1 per object | 1 per object      | 1 per object                      |
+| Module, 1 object          | `new --module` + `object --module` | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + 1 per object |
+| Module, N objects         | same, repeated                     | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + N objects    |
+| M modules, N objects each | same                               | M            | M                 | M (`<mod>_core.c`) + N objects    |
 
 **Invariant**: every unit (object or module) has exactly one `_core.c` (user
 code) and one `_ext.c` (auto-generated Python binding).  For standalone

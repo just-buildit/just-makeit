@@ -10,11 +10,11 @@ ______________________________________________________________________
 
 ## 1. Decide the version number
 
-| Change type | Bump |
-|---|---|
+| Change type                                  | Bump            |
+| -------------------------------------------- | --------------- |
 | Breaking CLI change (rename, remove command) | minor (`0.X.0`) |
-| New command or flag | minor (`0.X.0`) |
-| Bug fix, docs, internal refactor | patch (`0.X.Y`) |
+| New command or flag                          | minor (`0.X.0`) |
+| Bug fix, docs, internal refactor             | patch (`0.X.Y`) |
 
 We are pre-1.0 so breaking changes bump minor, not major.
 
@@ -75,6 +75,7 @@ The `github-release` job creates the GitHub Release automatically using the
 relevant CHANGELOG section as the release notes — no manual step needed.
 
 After publish, `artifact.yml` fires automatically and:
+
 - Installs `just-makeit==X.Y.Z` from PyPI (retries for up to 10 min for CDN propagation)
 - Scaffolds the `fir_filter` standalone workflow end-to-end (cmake build + test)
 - Scaffolds the `filter_module` module/object workflow end-to-end
@@ -95,13 +96,13 @@ ______________________________________________________________________
 
 ## Common pitfalls
 
-| Mistake | Fix |
-|---|---|
-| Pushed tag without `v` prefix | Push `vX.Y.Z` — release workflow ignores bare version tags |
-| Tagged before CI green | Delete the tag locally and on remote, fix CI, re-tag |
-| PyPI CDN lag causes `artifact.yml` to fail | Wait — retry loop runs for 10 min; if it still fails, check the logs |
-| `artifact.yml` uses old CLI flags | Keep `artifact.yml` in sync with any CLI renames |
-| GitHub repo still shows old version | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest` |
+| Mistake                                    | Fix                                                                                                                         |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Pushed tag without `v` prefix              | Push `vX.Y.Z` — release workflow ignores bare version tags                                                                  |
+| Tagged before CI green                     | Delete the tag locally and on remote, fix CI, re-tag                                                                        |
+| PyPI CDN lag causes `artifact.yml` to fail | Wait — retry loop runs for 10 min; if it still fails, check the logs                                                        |
+| `artifact.yml` uses old CLI flags          | Keep `artifact.yml` in sync with any CLI renames                                                                            |
+| GitHub repo still shows old version        | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest` |
 
 To delete a tag and re-tag:
 

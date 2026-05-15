@@ -3,21 +3,21 @@
 A complete reference for shipping installable C libraries that consumers
 can find with both `pkg-config` and CMake's `find_package`.
 
----
+______________________________________________________________________
 
 ## Why Both?
 
 Two different toolchain ecosystems consume installed C libraries:
 
-| Tool | Used by |
-|------|---------|
+| Tool         | Used by                                                       |
+| ------------ | ------------------------------------------------------------- |
 | `pkg-config` | Makefiles, Meson, Python cffi/ctypes, autoconf, shell scripts |
-| CMake config | Any project using `find_package(MyLib REQUIRED)` |
+| CMake config | Any project using `find_package(MyLib REQUIRED)`              |
 
 They are independent systems. Supporting both takes about 30 extra lines of
 CMake and two small template files — always do both.
 
----
+______________________________________________________________________
 
 ## File Layout
 
@@ -34,7 +34,7 @@ them. If your project uses subdirectories (e.g. a `c/` subdirectory for the
 library), put `cmake/` there — CMake resolves the path relative to the
 `CMakeLists.txt` that calls `configure_file`.
 
----
+______________________________________________________________________
 
 ## The pkg-config Template (`mylib.pc.in`)
 
@@ -72,6 +72,7 @@ Cflags: -I${includedir}
 ### Common Pitfalls
 
 **Using absolute paths directly.**
+
 ```ini
 # WRONG — not relocatable
 libdir=/usr/local/lib
@@ -98,7 +99,7 @@ If a public header of yours `#include`s a header from another library,
 that library belongs in `Requires` (or `Cflags` if header-only). The
 consumer's compiler must find it.
 
----
+______________________________________________________________________
 
 ## The CMake Config Template (`mylibConfig.cmake.in`)
 
@@ -143,6 +144,7 @@ propagates `REQUIRED`/`QUIET` correctly to the caller.
 ### Common Pitfalls
 
 **Using plain `configure_file` instead of `configure_package_config_file`.**
+
 ```cmake
 # WRONG — paths baked in, not relocatable
 configure_file(cmake/mylibConfig.cmake.in ...)
@@ -155,6 +157,7 @@ configure_package_config_file(cmake/mylibConfig.cmake.in ...)
 helper macros. Plain `configure_file` does string substitution only.
 
 **Not using imported targets (the old variables pattern).**
+
 ```cmake
 # OUTDATED — avoid
 set(MYLIB_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
@@ -168,7 +171,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/mylibTargets.cmake")
 Imported targets carry include paths, compile definitions and transitive
 dependencies automatically. Consumers do not need to set anything manually.
 
----
+______________________________________________________________________
 
 ## CMakeLists.txt Wiring
 
@@ -256,12 +259,12 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
 
 `write_basic_package_version_file` takes a `COMPATIBILITY` argument:
 
-| Mode | Meaning |
-|------|---------|
+| Mode               | Meaning                                                  |
+| ------------------ | -------------------------------------------------------- |
 | `SameMajorVersion` | 1.x satisfies requests for 1.y (safe default for semver) |
-| `SameMinorVersion` | 1.2.x satisfies 1.2.y (stricter, use for unstable APIs) |
-| `AnyNewerVersion` | 2.0 satisfies a request for 1.0 (dangerous, avoid) |
-| `ExactVersion` | Only exact match (too strict for most use) |
+| `SameMinorVersion` | 1.2.x satisfies 1.2.y (stricter, use for unstable APIs)  |
+| `AnyNewerVersion`  | 2.0 satisfies a request for 1.0 (dangerous, avoid)       |
+| `ExactVersion`     | Only exact match (too strict for most use)               |
 
 `SameMajorVersion` is the right default for any library following semver.
 
@@ -278,7 +281,7 @@ target_link_libraries(app PRIVATE mylib::mylib)
 The double-colon makes it clear the target is an imported CMake target
 (not a raw library name), and prevents name collisions across packages.
 
----
+______________________________________________________________________
 
 ## What Gets Installed Where
 
@@ -300,7 +303,7 @@ After `cmake --install build --prefix /usr/local`:
 │       └── mylib.pc
 ```
 
----
+______________________________________________________________________
 
 ## Verifying the Install
 
@@ -339,7 +342,7 @@ gcc -o /tmp/smoke /tmp/smoke.c \
 
 Run it as `bash test_install.sh "$HOME/.local"` for non-root installs.
 
----
+______________________________________________________________________
 
 ## Platform Notes
 
@@ -353,6 +356,7 @@ export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 ```
 
 For CMake:
+
 ```sh
 cmake -DCMAKE_PREFIX_PATH="$HOME/.local" ..
 ```
@@ -366,6 +370,7 @@ on Debian/Ubuntu. This is correct — pkg-config scans that path
 automatically. Do not hardcode `lib`; always use `${CMAKE_INSTALL_LIBDIR}`.
 
 The smoke test above should probe both paths:
+
 ```sh
 PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib/$(gcc -dumpmachine)/pkgconfig"
 ```
@@ -398,7 +403,7 @@ endforeach()
   the stale `CMakeCache.txt` and reconfigure — cached `NOTFOUND` values
   are not automatically re-evaluated.
 
----
+______________________________________________________________________
 
 ## Quick Checklist
 

@@ -3,12 +3,12 @@
 **The three approaches compute the same quantity** — they differ only in
 how they maintain the running sum.
 
-| Approach | Cost per sample | Drift |
-|---|---|---|
-| Standard MA (full recompute) | O(N) adds | none — always exact |
-| Recursive O(1), float32 acc | O(1) | grows as √n |
-| Recursive O(1), double acc | O(1) | negligible |
-| Recursive + periodic recompute | O(1) amortised | bounded |
+| Approach                       | Cost per sample | Drift               |
+| ------------------------------ | --------------- | ------------------- |
+| Standard MA (full recompute)   | O(N) adds       | none — always exact |
+| Recursive O(1), float32 acc    | O(1)            | grows as √n         |
+| Recursive O(1), double acc     | O(1)            | negligible          |
+| Recursive + periodic recompute | O(1) amortised  | bounded             |
 
 **Why drift happens in the recursive form:**
 Each `step()` does `sum_sq += new² − old²`.  On paper this is exact, but in

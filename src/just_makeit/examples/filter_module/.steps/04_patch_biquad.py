@@ -1,10 +1,11 @@
 """Patch biquad_step stub: drop const, add DF2T body."""
+
 import pathlib
 import re
 import sys
 
 header = pathlib.Path("native/inc/biquad/biquad_core.h")
-text   = header.read_text()
+text = header.read_text()
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float\s*\n"

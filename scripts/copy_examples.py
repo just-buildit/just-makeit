@@ -5,6 +5,7 @@ Run from the project root:
 
 The output files are gitignored — only docs/examples/index.md is tracked.
 """
+
 import shutil
 from pathlib import Path
 
@@ -13,11 +14,11 @@ DEST = ROOT / "docs" / "examples"
 DEST.mkdir(exist_ok=True)
 
 examples = [
-    ("running_stats",      "running_stats.md"),
-    ("fir_filter",         "fir_filter.md"),
+    ("running_stats", "running_stats.md"),
+    ("fir_filter", "fir_filter.md"),
     ("sliding_correlator", "sliding_correlator.md"),
-    ("sliding_power",      "sliding_power.md"),
-    ("dsp_toolkit",        "dsp_toolkit.md"),
+    ("sliding_power", "sliding_power.md"),
+    ("dsp_toolkit", "dsp_toolkit.md"),
 ]
 
 for folder, out_name in examples:

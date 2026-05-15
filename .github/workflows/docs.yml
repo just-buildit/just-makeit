@@ -38,6 +38,9 @@ jobs:
       - name: Copy install.sh into site root
         run: cp install.sh site/install.sh
 
+      - name: Copy quickstart.sh into site root
+        run: cp quickstart.sh site/quickstart.sh
+
       - name: Configure Pages
         if: github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5

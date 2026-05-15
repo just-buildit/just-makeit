@@ -128,6 +128,7 @@ def main() -> None:
 
     if cmd == "new":
         from ._cli_new import run as _cmd_new
+
         _cmd_new(args[1:])
 
     elif cmd == "module":
@@ -135,14 +136,17 @@ def main() -> None:
             print("error: 'module' requires a module name.", file=sys.stderr)
             sys.exit(1)
         from . import _module
+
         _module.run(Path.cwd(), args[1])
 
     elif cmd == "object":
         from ._cli_object import run as _cmd_object
+
         _cmd_object(args[1:])
 
     elif cmd == "method":
         from ._cli_method import run as _cmd_method
+
         _cmd_method(args[1:])
 
     elif cmd == "property":
@@ -204,6 +208,7 @@ def main() -> None:
 
     elif cmd == "function":
         from ._cli_function import run as _cmd_function
+
         _cmd_function(args[1:])
 
     elif cmd == "add":
@@ -241,10 +246,12 @@ def main() -> None:
 
     elif cmd == "perf":
         from . import _perf
+
         _perf.run(Path.cwd())
 
     elif cmd == "script":
         from . import _script
+
         _script.run(Path.cwd())
 
     elif cmd == "config":
@@ -285,27 +292,33 @@ def main() -> None:
 
     elif cmd == "build":
         from . import _build
+
         _build.cmd_build(args[1:])
 
     elif cmd == "test":
         from . import _build
+
         _build.cmd_test(args[1:])
 
     elif cmd == "dry-run":
         from . import _build
+
         _build.cmd_dry_run()
 
     elif cmd == "install-deps":
         from . import _scripts
+
         sys.argv = [sys.argv[0]] + args[1:]
         _scripts.install_deps()
 
     elif cmd == "example":
         from . import _example
+
         _example.run(args[1] if len(args) > 1 else None)
 
     elif cmd == "version":
         from . import __version__
+
         print(__version__)
 
     else:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _templates as T
-from ._init import _write, _write_compile_commands
+from ._init import _write_compile_commands
 from ._object import _regenerate_module
 
 
@@ -47,9 +47,7 @@ def _inject_into_core_h(
     # guard.  Fall back to the #endif guard if the header omits the C++ block.
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
-        existing = existing.replace(
-            cplusplus_end, f"{decl}\n\n{cplusplus_end}"
-        )
+        existing = existing.replace(cplusplus_end, f"{decl}\n\n{cplusplus_end}")
     else:
         marker = f"#endif /* {module.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{decl}\n{marker}")
@@ -114,6 +112,7 @@ def run(
     core_c = root / "native" / "src" / module / f"{module}_core.c"
     if impl_body is not None:
         from . import _impl as I
+
         stub = T.fn_c_stub(fn_name, params, return_type)
         stub = I.inject_body_into_stub(stub, impl_body)
         existing = core_c.read_text(encoding="utf-8")

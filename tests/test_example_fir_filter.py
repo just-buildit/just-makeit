@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "fir_filter" / ".steps"
+STEPS = (
+    Path(__file__).parent.parent
+    / "src"
+    / "just_makeit"
+    / "examples"
+    / "fir_filter"
+    / ".steps"
+)
 PYTHON = sys.executable
 _MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
@@ -126,8 +133,13 @@ class TestStep5C:
         shutil.copy(STEPS / "05_demo.c", demo_c)
         build_dir = str(project / "build")
         gcc_cmd = [
-            "gcc", "-O2", "-std=c99", "-Inative/inc", "demo.c",
-            f"-L{build_dir}", "-lmy_fir",
+            "gcc",
+            "-O2",
+            "-std=c99",
+            "-Inative/inc",
+            "demo.c",
+            f"-L{build_dir}",
+            "-lmy_fir",
         ]
         if sys.platform != "win32":
             gcc_cmd += [f"-Wl,-rpath,{build_dir}"]
@@ -180,7 +192,11 @@ class TestStep6AddState:
 def test_readme_up_to_date():
     r = _run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "fir_filter",
+        cwd=Path(__file__).parent.parent
+        / "src"
+        / "just_makeit"
+        / "examples"
+        / "fir_filter",
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
 
@@ -250,11 +266,17 @@ def _scaffold_perf(tmp_path_factory):
 
     r = _run(
         [
-            "just-makeit", "new", "my_fir",
-            "--object", "fir_filter",
-            "--state", "coeffs:float[16]",
-            "--state", "delay:float _Complex[16]",
-            "--state", "gain:float:1.0",
+            "just-makeit",
+            "new",
+            "my_fir",
+            "--object",
+            "fir_filter",
+            "--state",
+            "coeffs:float[16]",
+            "--state",
+            "delay:float _Complex[16]",
+            "--state",
+            "gain:float:1.0",
         ],
         cwd=root.parent,
     )
@@ -326,7 +348,11 @@ class TestStep7PerfSIMD:
 
         r = _run(
             [
-                "cmake", "-B", "build", "-S", ".",
+                "cmake",
+                "-B",
+                "build",
+                "-S",
+                ".",
                 "-DCMAKE_BUILD_TYPE=Release",
                 "-DENABLE_SIMD=ON",
                 f"-DPython3_EXECUTABLE={PYTHON}",

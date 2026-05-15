@@ -1,10 +1,11 @@
 """Patch fir_step stub: drop const, add delay-line + convolution body."""
+
 import pathlib
 import re
 import sys
 
 header = pathlib.Path("native/inc/fir/fir_core.h")
-text   = header.read_text()
+text = header.read_text()
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float complex\s*\n"

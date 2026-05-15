@@ -5,7 +5,6 @@ so contributors can't add .steps/ content and forget to regenerate.
 """
 
 import importlib.util
-import sys
 from pathlib import Path
 
 import pytest

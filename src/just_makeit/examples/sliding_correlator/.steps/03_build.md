@@ -3,7 +3,7 @@
 ```{03_build.sh}
 ```
 
-Quick sanity check — identity correlator (ref = [1, 0, …, 0]) passes the
+Quick sanity check — identity correlator (ref = \[1, 0, …, 0\]) passes the
 input through unchanged:
 
 ```python

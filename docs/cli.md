@@ -110,4 +110,4 @@ Examples:
   just-makeit build                                       # build wheel into dist/
   just-makeit test                                        # run all tests
   just-makeit dry-run                                     # preview build plan
-  ```
+```

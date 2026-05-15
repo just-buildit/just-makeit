@@ -31,22 +31,22 @@ print("FIR impulse response (first 4):", ir[:4].real.round(4))
 
 # ── Biquad: real low-pass at cutoff = 0.1 * fs, Q = 0.707 ───────────────────
 fc, Q = 0.1, 0.707
-w0    = 2 * math.pi * fc
+w0 = 2 * math.pi * fc
 alpha = math.sin(w0) / (2 * Q)
-c     = math.cos(w0)
-a0    = 1 + alpha
+c = math.cos(w0)
+a0 = 1 + alpha
 
 bq = Biquad(
     b0=(1 - c) / 2 / a0,
-    b1=(1 - c)     / a0,
+    b1=(1 - c) / a0,
     b2=(1 - c) / 2 / a0,
-    a1=-2 * c      / a0,
+    a1=-2 * c / a0,
     a2=(1 - alpha) / a0,
 )
 
-t   = np.arange(512, dtype=np.float32) / 512
-lo  = np.cos(2 * math.pi * 0.05 * t)   # 0.05*fs — passband
-hi  = np.cos(2 * math.pi * 0.40 * t)   # 0.40*fs — stopband
+t = np.arange(512, dtype=np.float32) / 512
+lo = np.cos(2 * math.pi * 0.05 * t)  # 0.05*fs — passband
+hi = np.cos(2 * math.pi * 0.40 * t)  # 0.40*fs — stopband
 
 out_lo = bq.steps(lo)
 bq.reset()

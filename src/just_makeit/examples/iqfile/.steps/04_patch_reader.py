@@ -1,4 +1,5 @@
 """Implement q15_to_cf32_step(), samples_read counter, and eof getter."""
+
 from pathlib import Path
 import sys
 
@@ -8,7 +9,7 @@ root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 core_h = root / "native/inc/q15_to_cf32/q15_to_cf32_core.h"
 text = core_h.read_text(encoding="utf-8")
 
-if '<unistd.h>' not in text:
+if "<unistd.h>" not in text:
     text = text.replace(
         '#include "clib_common.h"',
         '#include "clib_common.h"\n#include <unistd.h>',
@@ -45,7 +46,7 @@ core_c = root / "native/src/q15_to_cf32/q15_to_cf32_core.c"
 text = core_c.read_text(encoding="utf-8")
 
 # Add <unistd.h> if needed (steps() calls read/lseek)
-if '<unistd.h>' not in text:
+if "<unistd.h>" not in text:
     text = text.replace(
         '#include "q15_to_cf32/q15_to_cf32_core.h"',
         '#include "q15_to_cf32/q15_to_cf32_core.h"\n#include <unistd.h>',

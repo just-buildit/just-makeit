@@ -10,17 +10,16 @@ Exercises:
   - Python: both types importable from the same subpackage
   - Python: basic correctness of Fir (impulse response) and Biquad (passband/stopband)
 """
+
 from __future__ import annotations
 
-import math
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 
-HERE  = Path(__file__).parent
+HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
 
@@ -39,7 +38,7 @@ def _cmd(args, cwd, **kw):
 
 def run(root: Path) -> None:
     from just_makeit._module import run as module_run
-    from just_makeit._new    import run as new_run
+    from just_makeit._new import run as new_run
     from just_makeit._object import run as object_run
 
     dest = root / "my_filters"
@@ -60,19 +59,19 @@ def run(root: Path) -> None:
         "fir",
         module="filter",
         state_vars=[
-            ("coeffs", "float[16]",          ""),
-            ("delay",  "float _Complex[16]",  ""),
-            ("gain",   "float",               "1.0"),
+            ("coeffs", "float[16]", ""),
+            ("delay", "float _Complex[16]", ""),
+            ("gain", "float", "1.0"),
         ],
     )
 
     ext_c = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text()
-    assert "FirObject"   in ext_c
+    assert "FirObject" in ext_c
     assert "PyInit_filter" in ext_c
-    assert "BiquadObject" not in ext_c   # not added yet
+    assert "BiquadObject" not in ext_c  # not added yet
 
     init_py = (dest / "src" / "my_filters" / "filter" / "__init__.py").read_text()
-    assert "Fir"   in init_py
+    assert "Fir" in init_py
     assert "Biquad" not in init_py
 
     # ── 3b. Add Biquad object (real float, different arg/return type) ─────────
@@ -94,24 +93,24 @@ def run(root: Path) -> None:
     )
 
     ext_c = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text()
-    assert "FirObject"    in ext_c
+    assert "FirObject" in ext_c
     assert "BiquadObject" in ext_c
     assert "PyInit_filter" in ext_c
 
     init_py = (dest / "src" / "my_filters" / "filter" / "__init__.py").read_text()
-    assert "Fir"   in init_py
+    assert "Fir" in init_py
     assert "Biquad" in init_py
 
     cmake_txt = (dest / "native" / "src" / "filter" / "CMakeLists.txt").read_text()
-    assert "fir_core"    in cmake_txt
+    assert "fir_core" in cmake_txt
     assert "biquad_core" in cmake_txt
 
     toml = (dest / "just-makeit.toml").read_text()
-    assert '"fir"'    in toml
+    assert '"fir"' in toml
     assert '"biquad"' in toml
 
     # ── 4. Patch step stubs ───────────────────────────────────────────────────
-    _cmd([sys.executable, str(STEPS / "04_patch_fir.py")],    cwd=dest)
+    _cmd([sys.executable, str(STEPS / "04_patch_fir.py")], cwd=dest)
     _cmd([sys.executable, str(STEPS / "04_patch_biquad.py")], cwd=dest)
 
     # ── 5. Build ──────────────────────────────────────────────────────────────
@@ -123,7 +122,10 @@ def run(root: Path) -> None:
     # ── 7. Python smoke tests ─────────────────────────────────────────────────
     # Fir: impulse response of a 3-tap box filter
     result = subprocess.run(
-        [sys.executable, "-c", f"""
+        [
+            sys.executable,
+            "-c",
+            """
 import sys; sys.path.insert(0, 'src')
 import numpy as np
 from my_filters.filter import Fir, Biquad
@@ -136,16 +138,16 @@ fir.set_coeffs(h)
 
 imp = np.zeros(16, dtype=np.complex64); imp[0] = 1.0
 ir  = fir.steps(imp)
-assert abs(ir[0].real - 1/3) < 1e-5, f"ir[0]={{ir[0].real}}"
-assert abs(ir[1].real - 1/3) < 1e-5, f"ir[1]={{ir[1].real}}"
-assert abs(ir[2].real - 1/3) < 1e-5, f"ir[2]={{ir[2].real}}"
-assert abs(ir[3].real)       < 1e-5, f"ir[3]={{ir[3].real}}"
+assert abs(ir[0].real - 1/3) < 1e-5, f"ir[0]={ir[0].real}"
+assert abs(ir[1].real - 1/3) < 1e-5, f"ir[1]={ir[1].real}"
+assert abs(ir[2].real - 1/3) < 1e-5, f"ir[2]={ir[2].real}"
+assert abs(ir[3].real)       < 1e-5, f"ir[3]={ir[3].real}"
 
 # --- Biquad: passthrough (b0=1, all others 0) ---
 bq = Biquad(b0=1.0)
 x  = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
 y  = bq.steps(x)
-assert all(abs(float(y[i]) - float(x[i])) < 1e-5 for i in range(4)), f"passthrough failed: {{y}}"
+assert all(abs(float(y[i]) - float(x[i])) < 1e-5 for i in range(4)), f"passthrough failed: {y}"
 
 # --- Biquad: low-pass spectral test ---
 import math
@@ -173,12 +175,15 @@ bq3 = Biquad(
     a2=(1 - alpha) / a0,
 )
 p_hi = float(np.mean(bq3.steps(hi)**2))
-assert p_lo > 0.3,      f"passband too low: {{p_lo}}"
-assert p_hi < 0.01,     f"stopband too high: {{p_hi}}"
+assert p_lo > 0.3,      f"passband too low: {p_lo}"
+assert p_hi < 0.01,     f"stopband too high: {p_hi}"
 
 print("filter_module: all checks passed")
-"""],
-        cwd=dest, capture_output=True, text=True,
+""",
+        ],
+        cwd=dest,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -197,6 +202,7 @@ print("filter_module: all checks passed")
 
 if __name__ == "__main__":
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         run(Path(tmp))
     print("filter_module: PASSED")

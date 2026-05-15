@@ -57,25 +57,43 @@ def _make_object_ctx(
         }
     )
     ctx.update(T.make_sample_ctx(arg_type, return_type))
-    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], state_vars,
-                                array_args=array_args, no_state=no_state,
-                                init_params=init_params))
+    ctx.update(
+        T.make_state_ctx(
+            ctx["component"],
+            ctx["Component"],
+            state_vars,
+            array_args=array_args,
+            no_state=no_state,
+            init_params=init_params,
+        )
+    )
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
     ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
     # Re-generate pyi_examples now that package and Component are in ctx.
     # make_state_ctx emits placeholder text; we replace it with the real values.
-    scalar_state = [
-        (n, ct, dflt)
-        for n, ct, dflt in (state_vars or [])
-        if not T.parse_array_type(ct)
-    ] if not no_state else []
+    scalar_state = (
+        [
+            (n, ct, dflt)
+            for n, ct, dflt in (state_vars or [])
+            if not T.parse_array_type(ct)
+        ]
+        if not no_state
+        else []
+    )
     has_aa = bool(array_args)
     import_line = f"from {pkg} import {ctx['Component']}"
-    ctx["pyi_examples"] = T._pyi_examples_block(
-        scalar_state, has_aa, import_line,
-        ctx.get("py_create_args", ""), ctx["Component"],
-    ) if (scalar_state or has_aa) else ""
+    ctx["pyi_examples"] = (
+        T._pyi_examples_block(
+            scalar_state,
+            has_aa,
+            import_line,
+            ctx.get("py_create_args", ""),
+            ctx["Component"],
+        )
+        if (scalar_state or has_aa)
+        else ""
+    )
     return ctx
 
 
@@ -101,7 +119,7 @@ def _copy_external_cmake_blocks(
 
     # Match a standalone if(VAR) … endif() block at the top level of cmake
     block_pat = re.compile(
-        r'(if\s*\(\s*\w+\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))',
+        r"(if\s*\(\s*\w+\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))",
         re.MULTILINE,
     )
 
@@ -111,8 +129,10 @@ def _copy_external_cmake_blocks(
         text = cmake_file.read_text(encoding="utf-8")
         for m in block_pat.finditer(text):
             block = m.group(1)
-            if ("target_include_directories" in block
-                    or "target_link_libraries" in block):
+            if (
+                "target_include_directories" in block
+                or "target_link_libraries" in block
+            ):
                 old_comp = cmake_file.parent.name
                 adapted = block.replace(old_comp, new_comp)
                 existing = new_cmake_path.read_text(encoding="utf-8")
@@ -125,9 +145,7 @@ def _copy_external_cmake_blocks(
                 return  # one source file is enough
 
 
-def _merge_module_init(
-    existing: str, module: str, all_exports: list[str]
-) -> str:
+def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
     Updates only the ``from .<module> import ...`` line and ``__all__`` list to
@@ -143,16 +161,14 @@ def _merge_module_init(
     """
     # Match the import line whether it has names or is empty (e.g. after
     # `just-makeit module foo` before any objects are added).
-    import_pat = re.compile(
-        rf'^from \.{re.escape(module)} import(.*)$', re.MULTILINE
-    )
-    all_pat = re.compile(r'^__all__\s*=\s*\[([^\]]*)\]', re.MULTILINE)
+    import_pat = re.compile(rf"^from \.{re.escape(module)} import(.*)$", re.MULTILINE)
+    all_pat = re.compile(r"^__all__\s*=\s*\[([^\]]*)\]", re.MULTILINE)
 
     existing_names: list[str] = []
     existing_set: set[str] = set()
     m = import_pat.search(existing)
     if m:
-        for n in m.group(1).split(','):
+        for n in m.group(1).split(","):
             name = n.strip()
             if name and name not in existing_set:
                 existing_names.append(name)
@@ -170,13 +186,13 @@ def _merge_module_init(
     imports_str = ", ".join(merged)
     all_str = ", ".join(f'"{n}"' for n in merged)
     new_import = f"from .{module} import {imports_str}"
-    new_all = f'__all__ = [{all_str}]'
+    new_all = f"__all__ = [{all_str}]"
 
     result = import_pat.sub(new_import, existing) if m else existing
     if all_pat.search(result):
         result = all_pat.sub(new_all, result)
     else:
-        result = result.rstrip('\n') + f"\n{new_all}\n"
+        result = result.rstrip("\n") + f"\n{new_all}\n"
     return result
 
 
@@ -192,7 +208,7 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
     are handled correctly.
     """
     # Locate every "static PyObject *\n<name>(" header.
-    header_pat = re.compile(r'static PyObject \*\n(\w+)\(')
+    header_pat = re.compile(r"static PyObject \*\n(\w+)\(")
     result: dict[str, str] = {}
     for hm in header_pat.finditer(source):
         fn_name = hm.group(1)
@@ -203,13 +219,13 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
         # passed — but header_pat consumed the '(' so depth starts at 1).
         depth = 1
         while i < len(source) and depth:
-            if source[i] == '(':
+            if source[i] == "(":
                 depth += 1
-            elif source[i] == ')':
+            elif source[i] == ")":
                 depth -= 1
             i += 1
         # Now scan for the opening '{'.
-        while i < len(source) and source[i] != '{':
+        while i < len(source) and source[i] != "{":
             i += 1
         if i >= len(source):
             continue
@@ -218,9 +234,9 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
         depth = 0
         end = brace_start
         while end < len(source):
-            if source[end] == '{':
+            if source[end] == "{":
                 depth += 1
-            elif source[end] == '}':
+            elif source[end] == "}":
                 depth -= 1
                 if depth == 0:
                     end += 1
@@ -230,9 +246,7 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
     return result
 
 
-def _restore_c_function_bodies(
-    new_source: str, preserved: dict[str, str]
-) -> str:
+def _restore_c_function_bodies(new_source: str, preserved: dict[str, str]) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
     Only replaces functions that already existed in the old source AND still
@@ -242,9 +256,7 @@ def _restore_c_function_bodies(
     for fn_name, old_body in preserved.items():
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
-        header_pat = re.compile(
-            r'static PyObject \*\n' + re.escape(fn_name) + r'\('
-        )
+        header_pat = re.compile(r"static PyObject \*\n" + re.escape(fn_name) + r"\(")
         hm = header_pat.search(new_source)
         if not hm:
             continue
@@ -252,21 +264,21 @@ def _restore_c_function_bodies(
         i = hm.end()
         depth = 1
         while i < len(new_source) and depth:
-            if new_source[i] == '(':
+            if new_source[i] == "(":
                 depth += 1
-            elif new_source[i] == ')':
+            elif new_source[i] == ")":
                 depth -= 1
             i += 1
-        while i < len(new_source) and new_source[i] != '{':
+        while i < len(new_source) and new_source[i] != "{":
             i += 1
         if i >= len(new_source):
             continue
         depth = 0
         end = i
         while end < len(new_source):
-            if new_source[end] == '{':
+            if new_source[end] == "{":
                 depth += 1
-            elif new_source[end] == '}':
+            elif new_source[end] == "}":
                 depth -= 1
                 if depth == 0:
                     end += 1
@@ -288,9 +300,13 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         return_type_ = C.return_type(cfg, obj)
         perf = C.is_perf(cfg)
         ctx = _make_object_ctx(
-            obj, module, pkg,
+            obj,
+            module,
+            pkg,
             C.project_version(cfg),
-            state_vars, arg_type_, return_type_,
+            state_vars,
+            arg_type_,
+            return_type_,
             perf=perf,
             array_args=C.array_args(cfg, obj),
             no_state=C.is_no_state(cfg, obj),
@@ -298,13 +314,23 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             mutable=C.is_mutable(cfg, obj),
             init_params=C.init_params(cfg, obj),
         )
-        ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"],
-                                      C.methods(cfg, obj),
-                                      pkg=pkg,
-                                      py_create_args=ctx.get("py_create_args", "")))
-        ctx.update(T.make_properties_ctx(ctx["component"], ctx["Component"],
-                                         C.properties(cfg, obj),
-                                         frozenset(n for n, _, _ in state_vars)))
+        ctx.update(
+            T.make_methods_ctx(
+                ctx["component"],
+                ctx["Component"],
+                C.methods(cfg, obj),
+                pkg=pkg,
+                py_create_args=ctx.get("py_create_args", ""),
+            )
+        )
+        ctx.update(
+            T.make_properties_ctx(
+                ctx["component"],
+                ctx["Component"],
+                C.properties(cfg, obj),
+                frozenset(n for n, _, _ in state_vars),
+            )
+        )
         comp_ctxs.append(ctx)
 
     # Module ext.c — preserve any user-edited C function bodies before
@@ -360,13 +386,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             obj_cmake = T.render(T.CMAKE_LISTS_OBJECT_CORE, ctx_)
             methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
             if methods_c.exists():
-                old_lib = (
-                    f"add_library({obj}_core OBJECT {obj}_core.c)"
-                )
-                new_lib = (
-                    f"add_library({obj}_core OBJECT"
-                    f" {obj}_core.c {obj}_methods.c)"
-                )
+                old_lib = f"add_library({obj}_core OBJECT {obj}_core.c)"
+                new_lib = f"add_library({obj}_core OBJECT {obj}_core.c {obj}_methods.c)"
                 obj_cmake = obj_cmake.replace(old_lib, new_lib)
             collocated_cmake += obj_cmake
     _write(
@@ -443,18 +464,36 @@ def run(
     # No --module -> standalone object (own .so)
     if module is None:
         from . import _init
-        _init.run(root, object_name, state_vars, perf=perf,
-                  arg_type=arg_type, return_type=return_type,
-                  array_args=array_args, no_state=no_state, no_step=no_step,
-                  mutable=mutable, impl_body=impl_body,
-                  init_params=init_params,
-                  _hint=_hint and not variable_output)
+
+        _init.run(
+            root,
+            object_name,
+            state_vars,
+            perf=perf,
+            arg_type=arg_type,
+            return_type=return_type,
+            array_args=array_args,
+            no_state=no_state,
+            no_step=no_step,
+            mutable=mutable,
+            impl_body=impl_body,
+            init_params=init_params,
+            _hint=_hint and not variable_output,
+        )
         if variable_output:
             from . import _method as _M
+
             _rt = return_type or arg_type
-            _M.run(root, object_name, method_name, module=None,
-                   arg_type="void", return_type=_rt,
-                   variable_output=True, multi_output=list(multi_output))
+            _M.run(
+                root,
+                object_name,
+                method_name,
+                module=None,
+                arg_type="void",
+                return_type=_rt,
+                variable_output=True,
+                multi_output=list(multi_output),
+            )
         return
 
     # --module given -> in-module path
@@ -487,9 +526,18 @@ def run(
 
     vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
     ctx = _make_object_ctx(
-        object_name, module, pkg, version, vars_, arg_type, return_type,
-        perf=perf, array_args=array_args,
-        no_state=no_state, no_step=no_step, mutable=mutable,
+        object_name,
+        module,
+        pkg,
+        version,
+        vars_,
+        arg_type,
+        return_type,
+        perf=perf,
+        array_args=array_args,
+        no_state=no_state,
+        no_step=no_step,
+        mutable=mutable,
         init_params=init_params,
     )
 
@@ -497,13 +545,16 @@ def run(
         return T.render(tmpl, ctx)
 
     comp = ctx["component"]
-    print(f"just-makeit: adding object '{comp}' to module '{module}' in project '{pkg}'")
+    print(
+        f"just-makeit: adding object '{comp}' to module '{module}' in project '{pkg}'"
+    )
     print()
 
     # C library files (OBJECT lib only — no standalone Python module)
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
     if impl_body is not None and not no_step:
         from . import _impl as I
+
         h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
@@ -527,12 +578,10 @@ def run(
     if not tests_init.exists():
         _write(tests_init, T.TESTS_INIT_PY)
     test_py_tmpl = (
-        T.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg)
-        else T.MODULE_PYTEST_TEST
+        T.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg) else T.MODULE_PYTEST_TEST
     )
     bench_py_tmpl = (
-        T.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg)
-        else T.MODULE_BENCH_PY
+        T.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg) else T.MODULE_BENCH_PY
     )
     _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(test_py_tmpl))
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
@@ -542,10 +591,18 @@ def run(
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)
-    C.add_component(cfg, comp, vars_, arg_type_=arg_type,
-                    return_type_=return_type, array_args_=array_args,
-                    no_state_=no_state, no_step_=no_step,
-                    mutable_=mutable, init_params_=init_params)
+    C.add_component(
+        cfg,
+        comp,
+        vars_,
+        arg_type_=arg_type,
+        return_type_=return_type,
+        array_args_=array_args,
+        no_state_=no_state,
+        no_step_=no_step,
+        mutable_=mutable,
+        init_params_=init_params,
+    )
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
@@ -600,10 +657,18 @@ def run(
 
     if variable_output:
         from . import _method as _M
+
         _rt = return_type or arg_type
-        _M.run(root, object_name, method_name, module=module,
-               arg_type="void", return_type=_rt,
-               variable_output=True, multi_output=list(multi_output))
+        _M.run(
+            root,
+            object_name,
+            method_name,
+            module=module,
+            arg_type="void",
+            return_type=_rt,
+            variable_output=True,
+            multi_output=list(multi_output),
+        )
     else:
         print()
         print(f"{Color.done('Done!')}  {Color.cmd('cmake --build build')}")

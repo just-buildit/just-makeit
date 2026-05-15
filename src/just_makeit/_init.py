@@ -57,8 +57,9 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
 
     # Append Component to __all__ = [...] (handles single- and multi-line).
     # If __all__ is absent entirely, append it.
-    all_re = re.compile(r'(__all__\s*=\s*\[)(.*?)(\])', re.DOTALL)
+    all_re = re.compile(r"(__all__\s*=\s*\[)(.*?)(\])", re.DOTALL)
     if all_re.search(text):
+
         def _splice_all(m: re.Match) -> str:
             inner = m.group(2)
             if f'"{Component}"' in inner or f"'{Component}'" in inner:
@@ -66,6 +67,7 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
             stripped = inner.rstrip()
             sep = ", " if stripped.rstrip(",") else ""
             return f'{m.group(1)}{stripped.rstrip(",")}{sep}"{Component}"{m.group(3)}'
+
         text = all_re.sub(_splice_all, text)
     else:
         text = text.rstrip("\n") + f'\n\n__all__ = ["{Component}"]\n'
@@ -128,7 +130,7 @@ def _write_compile_commands(
             _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
         ]
 
-    for mod in (all_modules or []):
+    for mod in all_modules or []:
         entries.append(_entry(f"native/src/{mod}/{mod}_ext.c", base_flags))
         entries.append(_entry(f"native/src/{mod}/{mod}_core.c", base_flags))
 
@@ -198,25 +200,46 @@ def run(
     sample_ctx = T.make_sample_ctx(arg_type, return_type)
     ctx.update(sample_ctx)
 
-    ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], vars_,
-                                array_args=array_args, no_state=no_state,
-                                init_params=init_params))
+    ctx.update(
+        T.make_state_ctx(
+            ctx["component"],
+            ctx["Component"],
+            vars_,
+            array_args=array_args,
+            no_state=no_state,
+            init_params=init_params,
+        )
+    )
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
     ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
-    ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"], [],
-                                   pkg=pkg, py_create_args=ctx.get("py_create_args", "")))
+    ctx.update(
+        T.make_methods_ctx(
+            ctx["component"],
+            ctx["Component"],
+            [],
+            pkg=pkg,
+            py_create_args=ctx.get("py_create_args", ""),
+        )
+    )
     # Re-generate pyi_examples with the actual package name (not placeholder).
-    scalar_state = [
-        (n, ct, dflt)
-        for n, ct, dflt in (vars_ or [])
-        if not T.parse_array_type(ct)
-    ] if not no_state else []
+    scalar_state = (
+        [(n, ct, dflt) for n, ct, dflt in (vars_ or []) if not T.parse_array_type(ct)]
+        if not no_state
+        else []
+    )
     import_line = f"from {pkg} import {ctx['Component']}"
-    ctx["pyi_examples"] = T._pyi_examples_block(
-        scalar_state, bool(array_args), import_line,
-        ctx.get("py_create_args", ""), ctx["Component"],
-    ) if scalar_state else ""
+    ctx["pyi_examples"] = (
+        T._pyi_examples_block(
+            scalar_state,
+            bool(array_args),
+            import_line,
+            ctx.get("py_create_args", ""),
+            ctx["Component"],
+        )
+        if scalar_state
+        else ""
+    )
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -243,9 +266,7 @@ def run(
     test_c_tmpl = T.COMPONENT_TEST_C
     bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
     pyi_tmpl = T.COMPONENT_PYI
-    pytest_tmpl = (
-        T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
-    )
+    pytest_tmpl = T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
     bench_py_tmpl = (
         T.COMPONENT_BENCH_PYTEST_BM
         if C.is_pytest_benchmark(cfg)
@@ -257,6 +278,7 @@ def run(
     _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
     if impl_body is not None and not no_step:
         from . import _impl as I
+
         h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
@@ -333,8 +355,7 @@ def run(
             # not guaranteed to include the objects in the output binary.
             if f"{pkg}_lib" in cmake_text:
                 cmake_text += (
-                    f"target_sources({pkg}_lib PRIVATE"
-                    f" $<TARGET_OBJECTS:{comp}_core>)\n"
+                    f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
                 )
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
@@ -357,11 +378,18 @@ def run(
         print(f"  update  {mf_path}")
 
     # just-makeit.toml
-    C.add_component(cfg, comp, vars_,
-                    arg_type_=arg_type, return_type_=return_type,
-                    array_args_=array_args,
-                    no_state_=no_state, no_step_=no_step,
-                    mutable_=mutable, init_params_=init_params)
+    C.add_component(
+        cfg,
+        comp,
+        vars_,
+        arg_type_=arg_type,
+        return_type_=return_type,
+        array_args_=array_args,
+        no_state_=no_state,
+        no_step_=no_step,
+        mutable_=mutable,
+        init_params_=init_params,
+    )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

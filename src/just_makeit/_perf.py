@@ -32,9 +32,9 @@ def _patch_core_h(header: Path, comp: str) -> bool:
             '#include "clib_common.h"\n#include "jm_perf.h"',
         )
     qualifier_re = re.compile(
-        r'\bstatic inline\b(\s+\S.*?\n' + re.escape(comp) + r'_step\b)'
+        r"\bstatic inline\b(\s+\S.*?\n" + re.escape(comp) + r"_step\b)"
     )
-    text = qualifier_re.sub(r'JM_FORCEINLINE JM_HOT\1', text)
+    text = qualifier_re.sub(r"JM_FORCEINLINE JM_HOT\1", text)
     if text != original:
         header.write_text(text, encoding="utf-8")
         return True

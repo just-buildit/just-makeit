@@ -33,7 +33,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -55,7 +55,7 @@ Three state variables — all zero by default, so `RunningStats()` needs no argu
 
 Variance = `m2 / (n - 1)` once `n > 1`.
 
----
+______________________________________________________________________
 
 ## 2. Implement
 
@@ -89,7 +89,7 @@ static inline float complex running_stats_step(running_stats_state_t *state, flo
 }
 ```
 
----
+______________________________________________________________________
 
 ## 3. Build and test
 
@@ -98,7 +98,7 @@ make
 make test
 ```
 
----
+______________________________________________________________________
 
 ## 4. Try it from Python
 
@@ -129,7 +129,7 @@ print(f"final mean from steps(): {y_all[-1].real:.4f}")  # 5.0000
 print(f"final var  from steps(): {y_all[-1].imag:.4f}")  # 4.0000
 ```
 
----
+______________________________________________________________________
 
 ## 5. Try it from C
 
@@ -168,7 +168,7 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
     -lm -o demo && ./demo
 ```
 
----
+______________________________________________________________________
 
 ## 6. Add more state
 

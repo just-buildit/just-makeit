@@ -19,20 +19,20 @@ any objects — the source of truth for all subsequent commands.
 
 **Arguments**
 
-| Argument                      | Description                                                                          |
-| ----------------------------- | ------------------------------------------------------------------------------------ |
-| `project`                     | Project name in `snake_case`. Used as the Python package name and distribution name. |
-| `--object name`               | Scaffold a standalone object immediately. Repeatable.                                |
-| `--module name`               | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`. |
-| `--state name:type[:default]` | Declare a state variable for the object. Repeatable.                                 |
-| `--arg-type TYPE`             | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
-| `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output. |
-| `--build-system <cmake\|make>` | Build system to use. Default: `cmake`. Use `make` for a plain `Makefile` without CMake — useful for quick prototypes. |
-| `--basic`                     | Deprecated alias for `--build-system make`. |
-| `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
-| `--mutable`                   | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO). |
-| `--pytest`                    | Generate pure pytest tests instead of the default `unittest`-compatible shim. |
-| `--pytest-benchmark`          | Generate `pytest-benchmark` bench files alongside the pytest tests. |
+| Argument                       | Description                                                                                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`                      | Project name in `snake_case`. Used as the Python package name and distribution name.                                                                                                                                       |
+| `--object name`                | Scaffold a standalone object immediately. Repeatable.                                                                                                                                                                      |
+| `--module name`                | Scaffold an empty extension module immediately. Repeatable; mutually exclusive with `--object`.                                                                                                                            |
+| `--state name:type[:default]`  | Declare a state variable for the object. Repeatable.                                                                                                                                                                       |
+| `--arg-type TYPE`              | C type for `step()` input `x`. Defaults to `float _Complex`. Use `void` for generator objects with no scalar input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"`. |
+| `--return-type TYPE`           | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output.                  |
+| `--build-system <cmake\|make>` | Build system to use. Default: `cmake`. Use `make` for a plain `Makefile` without CMake — useful for quick prototypes.                                                                                                      |
+| `--basic`                      | Deprecated alias for `--build-system make`.                                                                                                                                                                                |
+| `--perf`                       | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md).                                                                           |
+| `--mutable`                    | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO).                                                                                                |
+| `--pytest`                     | Generate pure pytest tests instead of the default `unittest`-compatible shim.                                                                                                                                              |
+| `--pytest-benchmark`           | Generate `pytest-benchmark` bench files alongside the pytest tests.                                                                                                                                                        |
 
 ______________________________________________________________________
 
@@ -48,13 +48,13 @@ just-makeit module osc
 
 Creates:
 
-| File | Purpose |
-|------|---------|
-| `native/inc/<name>/<name>_core.h` | Public C API — declare module-level functions here |
-| `native/src/<name>/<name>_core.c` | Implementation — write module-level functions here |
-| `native/src/<name>/<name>_ext.c` | Python binding (auto-generated) |
-| `native/src/<name>/CMakeLists.txt` | Python module target |
-| `src/<pkg>/<name>/__init__.py` | Subpackage init (empty exports) |
+| File                               | Purpose                                            |
+| ---------------------------------- | -------------------------------------------------- |
+| `native/inc/<name>/<name>_core.h`  | Public C API — declare module-level functions here |
+| `native/src/<name>/<name>_core.c`  | Implementation — write module-level functions here |
+| `native/src/<name>/<name>_ext.c`   | Python binding (auto-generated)                    |
+| `native/src/<name>/CMakeLists.txt` | Python module target                               |
+| `src/<pkg>/<name>/__init__.py`     | Subpackage init (empty exports)                    |
 
 Appends `add_subdirectory(native/src/<name>)` to the root `CMakeLists.txt`
 and records `[module.<name>]` with an empty `objects` list in `just-makeit.toml`.
@@ -90,57 +90,57 @@ just-makeit object biquad --module filter --state "b0:double:1.0" --state "a1:do
 
 **Per-object files created** (same for both modes):
 
-| File | Purpose |
-|------|---------|
-| `native/inc/<obj>/<obj>_core.h` | Header: struct, inline `_step`, getters/setters |
-| `native/src/<obj>/<obj>_core.c` | Source: create/destroy/reset/steps |
-| `native/src/<obj>/CMakeLists.txt` | OBJECT library + C test + bench |
-| `native/tests/test_<obj>_core.c` | C test with `CHECK` macro counter |
-| `native/benchmarks/bench_<obj>_core.c` | C benchmark |
+| File                                   | Purpose                                         |
+| -------------------------------------- | ----------------------------------------------- |
+| `native/inc/<obj>/<obj>_core.h`        | Header: struct, inline `_step`, getters/setters |
+| `native/src/<obj>/<obj>_core.c`        | Source: create/destroy/reset/steps              |
+| `native/src/<obj>/CMakeLists.txt`      | OBJECT library + C test + bench                 |
+| `native/tests/test_<obj>_core.c`       | C test with `CHECK` macro counter               |
+| `native/benchmarks/bench_<obj>_core.c` | C benchmark                                     |
 
 **Additional files for standalone objects** (no `--module`):
 
-| File | Purpose |
-|------|---------|
-| `native/src/<obj>/<obj>_ext.c` | Python C extension (own `.so`) |
-| `src/<pkg>/<obj>.pyi` | Type stub |
-| `src/<pkg>/tests/test_<obj>.py` | pytest suite |
+| File                            | Purpose                        |
+| ------------------------------- | ------------------------------ |
+| `native/src/<obj>/<obj>_ext.c`  | Python C extension (own `.so`) |
+| `src/<pkg>/<obj>.pyi`           | Type stub                      |
+| `src/<pkg>/tests/test_<obj>.py` | pytest suite                   |
 
 **Module files regenerated** after each `just-makeit object --module`:
 
-| File | What changes |
-|------|-------------|
+| File                                 | What changes                                   |
+| ------------------------------------ | ---------------------------------------------- |
 | `native/src/<module>/<module>_ext.c` | New type block added; `PyMODINIT_FUNC` updated |
-| `native/src/<module>/CMakeLists.txt` | New `<obj>_core` added to link list |
-| `src/<pkg>/<module>/__init__.py` | New type added to import and `__all__` |
-| `src/<pkg>/<module>/<module>.pyi` | Type stub regenerated with new type |
+| `native/src/<module>/CMakeLists.txt` | New `<obj>_core` added to link list            |
+| `src/<pkg>/<module>/__init__.py`     | New type added to import and `__all__`         |
+| `src/<pkg>/<module>/<module>.pyi`    | Type stub regenerated with new type            |
 
 **Per-object files created for module objects:**
 
-| File | Purpose |
-|------|---------|
-| `src/<pkg>/<module>/tests/test_<obj>.py` | pytest suite (API, getters/setters, reset, lifecycle) |
-| `src/<pkg>/<module>/benchmarks/bench_<obj>.py` | pytest-benchmark throughput suite |
+| File                                           | Purpose                                               |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| `src/<pkg>/<module>/tests/test_<obj>.py`       | pytest suite (API, getters/setters, reset, lifecycle) |
+| `src/<pkg>/<module>/benchmarks/bench_<obj>.py` | pytest-benchmark throughput suite                     |
 
 The module `_ext.c` is always fully regenerated from the complete object list
 — never patched — so adding a third type never disturbs the first two.
 
 **Arguments**
 
-| Argument | Description |
-|----------|-------------|
-| `name` | Object name in `snake_case`. Becomes the C prefix and Python class name (title-cased). |
-| `--module name` | Target module. Without this flag the object is standalone (own `.so`). |
-| `--state name:type[:default]` | Declare a state variable. Repeatable. |
-| `--arg-type TYPE` | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"` — `steps()` is not generated. |
-| `--return-type TYPE` | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no output. |
-| `--perf` | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`. |
-| `--mutable` | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO that advances phase, a counter). The default `const` is correct for pure-computation objects; `--mutable` opts out. |
-| `--no-state` | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
-| `--no-step` | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`. |
-| `--init-param name:type[:default]` | Declare a constructor parameter for `--no-state` objects. Repeatable. Generates a typed constructor argument in both C and Python; not stored as a struct field. Requires `--no-state`. |
-| `--impl file::funcname` | Lift the `step()` body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. The function body is extracted verbatim and substitutions from `--replace` are applied before insertion. |
-| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. Use to rename identifiers from the source file to match the generated struct/param names. |
+| Argument                           | Description                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                             | Object name in `snake_case`. Becomes the C prefix and Python class name (title-cased).                                                                                                                                                                                                                                                                                                    |
+| `--module name`                    | Target module. Without this flag the object is standalone (own `.so`).                                                                                                                                                                                                                                                                                                                    |
+| `--state name:type[:default]`      | Declare a state variable. Repeatable.                                                                                                                                                                                                                                                                                                                                                     |
+| `--arg-type TYPE`                  | C type for `step()` input. Defaults to `float _Complex`. Use `void` for generator objects with no input. Append `[]` for objects whose primary operation takes a whole buffer: `--arg-type "float _Complex[]"` — `steps()` is not generated.                                                                                                                                              |
+| `--return-type TYPE`               | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no output.                                                                                                                                                                                        |
+| `--perf`                           | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`.                                                                                                                                                                                                                                                                                                                       |
+| `--mutable`                        | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO that advances phase, a counter). The default `const` is correct for pure-computation objects; `--mutable` opts out.                                                                                                                                             |
+| `--no-state`                       | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
+| `--no-step`                        | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`.                                                                                                                                                          |
+| `--init-param name:type[:default]` | Declare a constructor parameter for `--no-state` objects. Repeatable. Generates a typed constructor argument in both C and Python; not stored as a struct field. Requires `--no-state`.                                                                                                                                                                                                   |
+| `--impl file::funcname`            | Lift the `step()` body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. The function body is extracted verbatim and substitutions from `--replace` are applied before insertion.                                                                                                                                                                               |
+| `--replace old::new`               | String substitution applied to the body lifted by `--impl`. Repeatable. Use to rename identifiers from the source file to match the generated struct/param names.                                                                                                                                                                                                                         |
 
 See [State Variable Types](types.md) for supported types, defaults, and C/Python mappings.
 
@@ -178,22 +178,22 @@ Each method appends a C stub to `<obj>_core.c` and regenerates the module
 
 **Arguments**
 
-| Argument | Description |
-|----------|-------------|
-| `object` | Object name (must already exist in `just-makeit.toml`). |
-| `method_name` | Snake-case name for the new method. |
-| `--module name` | Module the object belongs to (required for module objects). |
-| `--param name:type` | Named typed scalar parameter. Repeatable. |
-| `--param name:type[]` | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C. |
-| `--return-type TYPE` | C type of the return value (`void` for no return). |
-| `--arg-type TYPE` | C type of a single array-style input. Use `void` for count-only inputs. |
-| `--variable-output` | Pre-allocate output buffer at init; return zero-copy numpy view. See below. |
-| `--multi-output TYPE` | Add a second (or further) output array. Repeatable; produces a tuple return. |
-| `--out-type TYPE` | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`. |
-| `--out-divisor N` | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes). |
-| `--batch` | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
-| `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
-| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. |
+| Argument                | Description                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`                | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                          |
+| `method_name`           | Snake-case name for the new method.                                                                                                                                                                                                                                                                                              |
+| `--module name`         | Module the object belongs to (required for module objects).                                                                                                                                                                                                                                                                      |
+| `--param name:type`     | Named typed scalar parameter. Repeatable.                                                                                                                                                                                                                                                                                        |
+| `--param name:type[]`   | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                                                                                                                                                                                   |
+| `--return-type TYPE`    | C type of the return value (`void` for no return).                                                                                                                                                                                                                                                                               |
+| `--arg-type TYPE`       | C type of a single array-style input. Use `void` for count-only inputs.                                                                                                                                                                                                                                                          |
+| `--variable-output`     | Pre-allocate output buffer at init; return zero-copy numpy view. See below.                                                                                                                                                                                                                                                      |
+| `--multi-output TYPE`   | Add a second (or further) output array. Repeatable; produces a tuple return.                                                                                                                                                                                                                                                     |
+| `--out-type TYPE`       | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`.                                                                                 |
+| `--out-divisor N`       | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes).                                                                                    |
+| `--batch`               | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
+| `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                                                                                                                                                                                                 |
+| `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
 
 ______________________________________________________________________
 
@@ -241,7 +241,7 @@ nco.configure(0.1, 0.0, 2)
 ```
 
 All scalar types in `_CTYPE_META` are supported as `--param` types (float,
-double, int, int32\_t, uint32\_t, size\_t, float \_Complex, etc.).
+double, int, int32_t, uint32_t, size_t, float \_Complex, etc.).
 
 **Array parameters** (`--param name:type[]`) generate a numpy array input.
 The C stub receives `(const elem_t *name, size_t name_len)` and the Python
@@ -254,6 +254,7 @@ just-makeit method resamp execute_ctrl --module resample \
 ```
 
 Generated C stub:
+
 ```c
 size_t
 resamp_execute_ctrl(resamp_state_t *state,
@@ -364,13 +365,13 @@ out = decim.execute(block)   # zero-copy view; valid until next call
 This is the right choice when the **maximum output count is bounded by the
 object's state and knowable at init time**:
 
-| Use case | `_max_out` returns | Appropriate? |
-|----------|--------------------|-------------|
-| Decimator, fixed ratio `R`, block size `B` | `ceil(B / R)` | Yes |
-| Buffer / FIFO with fixed capacity `C` | `C` | Yes |
-| FIR filter, 1:1 rate | unknown at init | No — use per-call alloc |
-| NCO extended outputs, 1:1 rate | unknown at init | No — use per-call alloc |
-| Overflow/carry detector, 1:1 rate | unknown at init | No — use per-call alloc |
+| Use case                                   | `_max_out` returns | Appropriate?            |
+| ------------------------------------------ | ------------------ | ----------------------- |
+| Decimator, fixed ratio `R`, block size `B` | `ceil(B / R)`      | Yes                     |
+| Buffer / FIFO with fixed capacity `C`      | `C`                | Yes                     |
+| FIR filter, 1:1 rate                       | unknown at init    | No — use per-call alloc |
+| NCO extended outputs, 1:1 rate             | unknown at init    | No — use per-call alloc |
+| Overflow/carry detector, 1:1 rate          | unknown at init    | No — use per-call alloc |
 
 **Warning:** if `_max_out` returns 0 (the placeholder default), `malloc(0)`
 behaviour is implementation-defined.  Always implement `_max_out` to return a
@@ -406,16 +407,16 @@ add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 
 **Arguments**
 
-| Argument | Description |
-|----------|-------------|
-| `name` | Snake-case function name. |
-| `--module mod` | Module the function belongs to (required). |
-| `--param name:type` | Named typed scalar parameter. Repeatable. |
-| `--param name:type[]` | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C. |
-| `--return-type TYPE` | C return type (default: `void`). |
-| `--doc "text"` | Python docstring for the function. |
+| Argument                | Description                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `name`                  | Snake-case function name.                                                                          |
+| `--module mod`          | Module the function belongs to (required).                                                         |
+| `--param name:type`     | Named typed scalar parameter. Repeatable.                                                          |
+| `--param name:type[]`   | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.     |
+| `--return-type TYPE`    | C return type (default: `void`).                                                                   |
+| `--doc "text"`          | Python docstring for the function.                                                                 |
 | `--impl file::funcname` | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
-| `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. |
+| `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                            |
 
 **Without `--param`** — generates a void stub in `_core.c` and a minimal
 Python wrapper in `_ext.c`:
@@ -425,6 +426,7 @@ just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables.
 ```
 
 `fft_core.c` (yours to implement):
+
 ```c
 /* <<IMPLEMENT: fft_global_setup>> */
 void
@@ -434,11 +436,13 @@ fft_global_setup(void)
 ```
 
 `fft_core.h` (declaration injected automatically):
+
 ```c
 void fft_global_setup(void);
 ```
 
 `fft_ext.c` (auto-generated Python wrapper):
+
 ```c
 static PyObject *
 _bind_fft_global_setup(PyObject *self, PyObject *Py_UNUSED(args))
@@ -462,6 +466,7 @@ just-makeit function compute_window \
 ```
 
 `fft_core.c`:
+
 ```c
 /* <<IMPLEMENT: compute_window>> */
 float
@@ -473,11 +478,13 @@ compute_window(size_t n, float beta)
 ```
 
 `fft_core.h`:
+
 ```c
 float compute_window(size_t n, float beta);
 ```
 
 `fft_ext.c` (auto-generated):
+
 ```c
 static PyObject *
 _bind_compute_window(PyObject *self, PyObject *args)
@@ -533,14 +540,14 @@ getter (and setter) glue in the module `_ext.c`.
 
 **Arguments**
 
-| Argument | Description |
-|----------|-------------|
-| `object` | Object name (must already exist in `just-makeit.toml`). |
-| `prop_name` | Snake-case property name. |
-| `--module name` | Module the object belongs to (required for module objects). |
-| `--type TYPE` | C type of the property value. |
-| `--writable` | Also generate a setter. Without this flag the property is read-only. |
-| `--field` | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
+| Argument        | Description                                                                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`        | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                 |
+| `prop_name`     | Snake-case property name.                                                                                                                                                                                                                               |
+| `--module name` | Module the object belongs to (required for module objects).                                                                                                                                                                                             |
+| `--type TYPE`   | C type of the property value.                                                                                                                                                                                                                           |
+| `--writable`    | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
+| `--field`       | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
 
 ______________________________________________________________________
 

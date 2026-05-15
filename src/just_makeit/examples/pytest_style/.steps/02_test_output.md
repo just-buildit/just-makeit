@@ -7,6 +7,7 @@
 ```
 
 Key differences from the default output:
+
 - No `import unittest` or `class TestDspAlgo(unittest.TestCase)`
 - `pytest.approx` instead of the `_approx` shim alias
 - `pytest.raises` instead of the `_raises` shim alias

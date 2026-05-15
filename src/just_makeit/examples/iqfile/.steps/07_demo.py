@@ -1,4 +1,5 @@
 """Round-trip demo: cf32 -> q15 file -> cf32, verify fidelity."""
+
 import os
 import sys
 import tempfile
@@ -18,14 +19,16 @@ signal *= 0.9 / np.max(np.abs(signal))
 
 # ── Write cf32 -> q15 ─────────────────────────────────────────────────────
 writer = Cf32ToQ15()
-packed = writer.steps(signal)                   # int32 array, shape (N,)
-q15    = packed.view(np.int16)                  # int16 view, shape (2N,)
+packed = writer.steps(signal)  # int32 array, shape (N,)
+q15 = packed.view(np.int16)  # int16 view, shape (2N,)
 
 with tempfile.NamedTemporaryFile(suffix=".q15", delete=False) as f:
     q15_path = f.name
     q15.tofile(f)
 
-print(f"wrote    {N} complex samples -> {q15_path}  ({os.path.getsize(q15_path)} bytes)")
+print(
+    f"wrote    {N} complex samples -> {q15_path}  ({os.path.getsize(q15_path)} bytes)"
+)
 print(f"written: {writer.samples_written} samples")
 
 # ── Read q15 -> cf32 ──────────────────────────────────────────────────────
@@ -38,7 +41,7 @@ os.close(fd)
 
 # ── Verify round-trip fidelity ────────────────────────────────────────────
 scale = 32767.0
-quantisation_noise_floor = 1.0 / scale          # ≈ -90 dB
+quantisation_noise_floor = 1.0 / scale  # ≈ -90 dB
 err = np.max(np.abs(signal - recovered))
 
 print(f"max err: {err:.6f}  (floor ~{quantisation_noise_floor:.6f})")

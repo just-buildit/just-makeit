@@ -16,7 +16,7 @@ instead of standalone timing scripts.
 Both flags are project-level: set once on `just-makeit new`, inherited
 automatically by every subsequent `just-makeit object` call.
 
----
+______________________________________________________________________
 
 ## 1. Scaffold with both flags
 
@@ -41,7 +41,7 @@ pytest_benchmark = "true"
 Every subsequent `just-makeit object` call reads these flags and generates the
 matching test/bench style automatically — no need to repeat the flags per object.
 
----
+______________________________________________________________________
 
 ## 2. Generated test file (pure pytest)
 
@@ -104,12 +104,13 @@ def test_destroy():
 ```
 
 Key differences from the default output:
+
 - No `import unittest` or `class TestDspAlgo(unittest.TestCase)`
 - `pytest.approx` instead of the `_approx` shim alias
 - `pytest.raises` instead of the `_raises` shim alias
 - Plain `assert` — no `self.assertEqual` / `self.assertIs`
 
----
+______________________________________________________________________
 
 ## 3. Generated bench file (pytest-benchmark)
 

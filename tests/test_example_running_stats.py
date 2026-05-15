@@ -10,7 +10,14 @@ _MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 import pytest
 
-STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "running_stats" / ".steps"
+STEPS = (
+    Path(__file__).parent.parent
+    / "src"
+    / "just_makeit"
+    / "examples"
+    / "running_stats"
+    / ".steps"
+)
 PYTHON = sys.executable
 
 
@@ -98,8 +105,13 @@ class TestStep5C:
         shutil.copy(STEPS / "05_demo.c", project / "demo.c")
         build_dir = str(project / "build")
         gcc_cmd = [
-            "gcc", "-O2", "-std=c99", "-Inative/inc", "demo.c",
-            f"-L{build_dir}", "-lmy_stats",
+            "gcc",
+            "-O2",
+            "-std=c99",
+            "-Inative/inc",
+            "demo.c",
+            f"-L{build_dir}",
+            "-lmy_stats",
         ]
         if sys.platform != "win32":
             gcc_cmd += [f"-Wl,-rpath,{build_dir}"]
@@ -150,7 +162,11 @@ class TestStep6AddState:
 def test_readme_up_to_date():
     r = subprocess.run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "running_stats",
+        cwd=Path(__file__).parent.parent
+        / "src"
+        / "just_makeit"
+        / "examples"
+        / "running_stats",
         capture_output=True,
         text=True,
     )

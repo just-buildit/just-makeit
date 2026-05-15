@@ -4,7 +4,7 @@
 
 Tests: 439 passed, 32 skipped.  All features through `--array-arg` are done.
 
----
+______________________________________________________________________
 
 ## Step 3: `just-makeit function`
 
@@ -22,6 +22,7 @@ just-makeit function window_kaiser    --module fft
 ### What gets generated
 
 **`native/src/{module}/{module}_functions.c`** (created once, never regenerated):
+
 ```c
 #include <Python.h>
 #include <numpy/arrayobject.h>
@@ -70,18 +71,22 @@ regenerated when functions are added, updating the `PyMethodDef` array and
 ### Template changes required
 
 **`MODULE_EXT_C_HEADER`** — add:
+
 ```
 <<module_functions_include>>
 ```
+
 Empty string when no functions; `#include "{module}_functions.c"\n` when any
 exist.
 
 **`MODULE_EXT_C_FOOTER`** — replace `.m_methods = NULL` with:
+
 ```
 <<module_methods_def>>
 ...
     .m_methods = <<module_m_methods>>,
 ```
+
 Where `module_methods_def` is either empty string (no functions) or the full
 `PyMethodDef` array, and `module_m_methods` is either `NULL` or `Filter_methods`.
 
@@ -110,13 +115,13 @@ Update `_dump()`.
 
 ### Files to create/touch
 
-| File | Change |
-|---|---|
-| `src/just_makeit/_function.py` | New — `run(root, fn_name, module, doc)` |
-| `src/just_makeit/_cli.py` | Add `function` subcommand |
+| File                            | Change                                                                                                                |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `src/just_makeit/_function.py`  | New — `run(root, fn_name, module, doc)`                                                                               |
+| `src/just_makeit/_cli.py`       | Add `function` subcommand                                                                                             |
 | `src/just_makeit/_templates.py` | `make_functions_ctx()`, update `MODULE_EXT_C_HEADER` + `MODULE_EXT_C_FOOTER`, add defaults to `render_module_ext_c()` |
-| `src/just_makeit/_config.py` | `module_functions()`, `add_module_function()`, update `_dump()` |
-| `src/just_makeit/_object.py` | `_regenerate_module()` must read and pass functions ctx |
+| `src/just_makeit/_config.py`    | `module_functions()`, `add_module_function()`, update `_dump()`                                                       |
+| `src/just_makeit/_object.py`    | `_regenerate_module()` must read and pass functions ctx                                                               |
 
 ### Validation / edge cases
 
@@ -128,6 +133,7 @@ Update `_dump()`.
 ### Tests to write
 
 `tests/test_function.py`:
+
 - `{module}_functions.c` created with stub
 - `{module}_ext.c` footer has `PyMethodDef` array and `.m_methods = {Module}_methods`
 - `{module}_ext.c` header has `#include "{module}_functions.c"`
@@ -136,7 +142,7 @@ Update `_dump()`.
 - No stray placeholders
 - Missing module → exit 1; duplicate name → exit 1
 
----
+______________________________________________________________________
 
 ## Step 4: Doppler migration
 
@@ -153,32 +159,34 @@ Update `_dump()`.
 
 Current extensions (`python/ext/`):
 
-| File | Lines | Assessment |
-|---|---|---|
-| `_nco.c` | 477 | Scaffold + hand-write methods.c |
-| `_hbdecim.c` | 250 | Scaffold with `--array-arg h:float32`, hand-write execute |
-| `_resamp.c` | 278 | Hand-write init (2D shape dims needed); scaffold rest |
-| `_ddc.c` | 306 | Clean scaffold, scalars only |
-| `_buffer.c` | 673 | Fully hand-written (double-mapped mmap, not a standard object) |
-| `_fft.c` | 258 | Module-level only; `just-makeit function` for wiring, hand-write bodies |
-| `_accumulator.c` | 498 | Hand-written additions |
-| `_delay.c` | 299 | Scaffold + hand-write execute |
-| `_stream.c` | 940 | Fully hand-written (complex state machine) |
-| `_resamp_dpmfs.c` | 287 | Variant of Resamp; same constraints |
-| `dp_window.c` | 159 | Module-level functions (like FFT) |
+| File              | Lines | Assessment                                                              |
+| ----------------- | ----- | ----------------------------------------------------------------------- |
+| `_nco.c`          | 477   | Scaffold + hand-write methods.c                                         |
+| `_hbdecim.c`      | 250   | Scaffold with `--array-arg h:float32`, hand-write execute               |
+| `_resamp.c`       | 278   | Hand-write init (2D shape dims needed); scaffold rest                   |
+| `_ddc.c`          | 306   | Clean scaffold, scalars only                                            |
+| `_buffer.c`       | 673   | Fully hand-written (double-mapped mmap, not a standard object)          |
+| `_fft.c`          | 258   | Module-level only; `just-makeit function` for wiring, hand-write bodies |
+| `_accumulator.c`  | 498   | Hand-written additions                                                  |
+| `_delay.c`        | 299   | Scaffold + hand-write execute                                           |
+| `_stream.c`       | 940   | Fully hand-written (complex state machine)                              |
+| `_resamp_dpmfs.c` | 287   | Variant of Resamp; same constraints                                     |
+| `dp_window.c`     | 159   | Module-level functions (like FFT)                                       |
 
 ### Component-by-component breakdown
 
----
+______________________________________________________________________
 
 #### NCO
 
 **Scaffold command:**
+
 ```
 just-makeit object nco --module dsp --state "norm_freq:float:0.0f"
 ```
 
 **Execute methods** (6 variants) — all hand-write in `_methods.c`:
+
 - `execute_cf32(n=1)` → `complex64[n]` — free-running, no input
 - `execute_cf32_ctrl(x_or_n)` → `complex64[n]` — takes float32 control array OR int n
 - `execute_u32(n=1)` → `uint32[n]`
@@ -198,16 +206,18 @@ automatically. Doppler uses `get_freq`/`set_freq` — either rename state var to
 `freq` or rename in `_methods.c`.
 
 **Properties** — `get_phase` and `get_phase_inc` return read-only computed values:
+
 ```
 just-makeit property nco phase     --type uint32_t
 just-makeit property nco phase_inc --type uint32_t
 ```
 
----
+______________________________________________________________________
 
 #### HBDecim
 
 **Scaffold command:**
+
 ```
 just-makeit object hbdecim --module dsp \
     --array-arg "h:float32" \
@@ -220,6 +230,7 @@ Since `h_len == num_taps`, drop the redundant scalar: just use `h_len`.
 Implement `hbdecim_create(const float *h, size_t h_len)` in `_core.c` stub.
 
 **Properties:**
+
 ```
 just-makeit property hbdecim rate     --type double
 just-makeit property hbdecim num_taps --type size_t
@@ -227,6 +238,7 @@ just-makeit property hbdecim num_taps --type size_t
 
 **Execute:**
 The doppler execute uses per-call alloc + slice, not pre-allocated buffer:
+
 ```c
 size_t max_out = (num_in + 1) / 2 + num_taps + 2;
 PyObject *out = PyArray_SimpleNew(1, &max_out, NPY_COMPLEX64);
@@ -236,16 +248,16 @@ size_t n_out = dp_hbdecim_cf32_execute(...);
 
 **Options:**
 a. Use `--variable-output`: implement `hbdecim_execute_max_out()` with the
-   worst-case formula; returns a pre-allocated view. Caller always gets
-   max_out samples (zero-padded). If the caller needs the exact count, they
-   must slice in Python. This is the zero-alloc path.
+worst-case formula; returns a pre-allocated view. Caller always gets
+max_out samples (zero-padded). If the caller needs the exact count, they
+must slice in Python. This is the zero-alloc path.
 b. Hand-write execute in `_methods.c` using per-call alloc + trim (matches
-   existing doppler behavior exactly). Recommended for correctness match.
+existing doppler behavior exactly). Recommended for correctness match.
 
 Recommendation: **option b** — hand-write execute in `_methods.c`. Don't use
 `just-makeit method` for execute on these.
 
----
+______________________________________________________________________
 
 #### Resamp
 
@@ -257,15 +269,15 @@ where `bank_len = L*N` total — C can't recover L and N from this.
 
 **Options:**
 a. Add `--array-arg-2d` support: generate `create(bank_ptr, L, N, rate)` from
-   `PyArray_DIM(arr, 0)` and `PyArray_DIM(arr, 1)`. Needs a new flag.
+`PyArray_DIM(arr, 0)` and `PyArray_DIM(arr, 1)`. Needs a new flag.
 b. Hand-write `__init__` — override in `_methods.c`. Since `_init` is currently
-   only in `_ext.c` (generated), this means the `_create()` stub in `_core.c`
-   is never called from Python and can be left as a no-op. Instead, override
-   `_init` by writing a custom `ResampCf32_init` in `_methods.c` and
-   patching `tp_init` in the generated type. This is awkward.
+only in `_ext.c` (generated), this means the `_create()` stub in `_core.c`
+is never called from Python and can be left as a no-op. Instead, override
+`_init` by writing a custom `ResampCf32_init` in `_methods.c` and
+patching `tp_init` in the generated type. This is awkward.
 c. **Cleanest**: scaffold without `--array-arg`, mark `_init` as custom in
-   `_methods.c`, and call `dp_resamp_cf32_create()` directly there.
-   The generated `_core.c` stub `resamp_create()` is ignored.
+`_methods.c`, and call `dp_resamp_cf32_create()` directly there.
+The generated `_core.c` stub `resamp_create()` is ignored.
 
 Recommendation: **option c** for Resamp — scaffold with scalars only, hand-write
 `__init__` in `_methods.c`. Note: this requires a way to override `tp_init`
@@ -274,11 +286,12 @@ from `_methods.c`, which the generated ext.c doesn't support.
 **Alternative (practical)**: scaffold completely by hand for Resamp — it's
 278 lines total, all custom. Don't scaffold it at all with just-makeit.
 
----
+______________________________________________________________________
 
 #### DDC
 
 **Scaffold command (clean fit):**
+
 ```
 just-makeit object ddc --module dsp \
     --state "norm_freq:float:0.0f" \
@@ -291,7 +304,7 @@ Same as HBDecim — per-call alloc + formula for max_out. Hand-write in `_method
 
 **Additional methods:** `set_freq`, `get_freq` — generated from state var `norm_freq`.
 
----
+______________________________________________________________________
 
 #### Buffer
 
@@ -303,11 +316,12 @@ circular buffer; `wait()` returns a zero-copy view into mmap'd memory;
 Write a single `_buffer.c` equivalent in `_methods.c` (or a dedicated file)
 and wire it into the module manually.
 
----
+______________________________________________________________________
 
 #### FFT
 
 **Scaffold command:**
+
 ```
 just-makeit module fft              # create the module
 just-makeit function fft_global_setup --module fft
@@ -320,26 +334,28 @@ just-makeit function fft2d_execute_inplace --module fft
 This wires up `PyMethodDef` and `.m_methods`.  The function bodies in
 `fft_functions.c` are fully hand-written (dtype dispatch, shape handling).
 
----
+______________________________________________________________________
 
 #### Accumulator / Delay
 
 **Delay (299 lines):** Simple scalar state + `execute(x) -> cf32 array`.
+
 ```
 just-makeit object delay --module dsp --state "delay_samples:size_t:0"
 ```
+
 Hand-write `execute` in `_methods.c` (variable-output with known size = delay_samples).
 
 **Accumulator (498 lines):** More complex state.  Scaffold scalars + hand-write
 all execute variants in `_methods.c`.
 
----
+______________________________________________________________________
 
 #### Stream (940 lines)
 
 Fully hand-written.  Complex state machine, not expressible in just-makeit.
 
----
+______________________________________________________________________
 
 ### Migration sequence
 
@@ -391,23 +407,24 @@ just-makeit function fft2d_execute_inplace   --module fft
 #    These go directly into their module's ext.c or _methods.c
 ```
 
----
+______________________________________________________________________
 
 ### Known gaps / future just-makeit features
 
-| Gap | Severity | Fix |
-|---|---|---|
-| Resamp: 2D array needs L and N dims separately | Medium | Add `--array-arg-2d name:dtype` variant |
-| `_ctrl` execute: dual dispatch (int vs array) | Medium | Hand-write; `just-makeit method` can't express this |
-| execute with per-call alloc + trim (not pre-alloc) | Low | Hand-write; use `_methods.c` override |
-| `tp_init` override from `_methods.c` | Low | Out of scope; scaffold without `_init` override |
-| Classmethods (FIR `from_real()`) | Low | Hand-add to generated ext.c after scaffolding |
+| Gap                                                | Severity | Fix                                                 |
+| -------------------------------------------------- | -------- | --------------------------------------------------- |
+| Resamp: 2D array needs L and N dims separately     | Medium   | Add `--array-arg-2d name:dtype` variant             |
+| `_ctrl` execute: dual dispatch (int vs array)      | Medium   | Hand-write; `just-makeit method` can't express this |
+| execute with per-call alloc + trim (not pre-alloc) | Low      | Hand-write; use `_methods.c` override               |
+| `tp_init` override from `_methods.c`               | Low      | Out of scope; scaffold without `_init` override     |
+| Classmethods (FIR `from_real()`)                   | Low      | Hand-add to generated ext.c after scaffolding       |
 
----
+______________________________________________________________________
 
 ### What "done" looks like
 
 After the migration:
+
 - `just-makeit build` compiles cleanly
 - `just-makeit test` passes all existing doppler Python tests
 - The generated `just-makeit.toml` captures the full component/method/property/function topology

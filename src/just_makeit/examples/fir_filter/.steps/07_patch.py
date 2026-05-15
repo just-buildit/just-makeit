@@ -10,10 +10,10 @@ import pathlib
 import re
 import sys
 
-header  = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
-core_c  = pathlib.Path("native/src/fir_filter/fir_filter_core.c")
+header = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
+core_c = pathlib.Path("native/src/fir_filter/fir_filter_core.c")
 batch_h = pathlib.Path(__file__).with_name("07_step_batch.h")
-kernel  = pathlib.Path(__file__).with_name("07_kernel.c")
+kernel = pathlib.Path(__file__).with_name("07_kernel.c")
 
 # ── 1. Insert step_batch() into header ───────────────────────────────────────
 
@@ -49,8 +49,10 @@ else:
         re.DOTALL,
     )
     if not fn_re.search(ctext):
-        print("ERROR: fir_filter_steps not found — already patched or file changed",
-              file=sys.stderr)
+        print(
+            "ERROR: fir_filter_steps not found — already patched or file changed",
+            file=sys.stderr,
+        )
         sys.exit(1)
     ctext = fn_re.sub(kernel.read_text().strip(), ctext)
     core_c.write_text(ctext)

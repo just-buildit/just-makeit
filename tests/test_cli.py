@@ -104,7 +104,9 @@ class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
         dest = tmp_path / "bpf"
         _cli("new", "bpf", str(dest), "--object", "bpf", "--state", "cutoff:double")
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(encoding="utf-8")
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double cutoff;" in core
 
     def test_state_flag_with_default(self, tmp_path):
@@ -130,14 +132,18 @@ class TestNewStateCLI:
             "order:int:4",
         )
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(encoding="utf-8")
+        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double cutoff;" in core
         assert "int order;" in core
 
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "float gain;" in core
 
     def test_invalid_type_exits_1(self, tmp_path):
@@ -198,7 +204,9 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text(encoding="utf-8")
+        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double rate;" in core
 
 
@@ -207,20 +215,30 @@ class TestVoidArgTypeCLI:
 
     def test_new_void_arg_type(self, tmp_path):
         r = _cli(
-            "new", "gen", str(tmp_path / "gen"),
-            "--object", "nco",
-            "--arg-type", "void",
-            "--return-type", "float",
+            "new",
+            "gen",
+            str(tmp_path / "gen"),
+            "--object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float",
         )
         assert r.returncode == 0
 
     def test_new_void_generates_no_input_step(self, tmp_path):
         dest = tmp_path / "gen"
         _cli(
-            "new", "gen", str(dest),
-            "--object", "nco",
-            "--arg-type", "void",
-            "--return-type", "float",
+            "new",
+            "gen",
+            str(dest),
+            "--object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float",
         )
         h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
         assert "nco_step(const nco_state_t *state)" in h
@@ -229,9 +247,12 @@ class TestVoidArgTypeCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         r = _cli(
-            "object", "osc",
-            "--arg-type", "void",
-            "--return-type", "float",
+            "object",
+            "osc",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -240,9 +261,12 @@ class TestVoidArgTypeCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli(
-            "object", "osc",
-            "--arg-type", "void",
-            "--return-type", "float",
+            "object",
+            "osc",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float",
             cwd=dest,
         )
         h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text(encoding="utf-8")
@@ -254,9 +278,13 @@ class TestVoidReturnCLI:
 
     def test_new_void_return_type(self, tmp_path):
         r = _cli(
-            "new", "sink", str(tmp_path / "sink"),
-            "--object", "sink",
-            "--return-type", "void",
+            "new",
+            "sink",
+            str(tmp_path / "sink"),
+            "--object",
+            "sink",
+            "--return-type",
+            "void",
         )
         assert r.returncode == 0
 
@@ -279,9 +307,13 @@ class TestVoidReturnCLI:
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "nco", "--module", "dsp", cwd=dest)
         r = _cli(
-            "method", "nco", "reset_phase",
-            "--module", "dsp",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "reset_phase",
+            "--module",
+            "dsp",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -300,10 +332,15 @@ class TestArrayParamCLI:
     def test_method_array_param_accepted(self, tmp_path):
         dest = self._setup_module(tmp_path)
         r = _cli(
-            "method", "nco", "process",
-            "--module", "dsp",
-            "--param", "ctrl:float _Complex[]",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "ctrl:float _Complex[]",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -311,10 +348,15 @@ class TestArrayParamCLI:
     def test_method_array_param_generates_ptr_len(self, tmp_path):
         dest = self._setup_module(tmp_path)
         _cli(
-            "method", "nco", "process",
-            "--module", "dsp",
-            "--param", "ctrl:float _Complex[]",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "ctrl:float _Complex[]",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         text = (dest / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
@@ -324,10 +366,15 @@ class TestArrayParamCLI:
     def test_method_bad_array_elem_type_exits_1(self, tmp_path):
         dest = self._setup_module(tmp_path)
         r = _cli(
-            "method", "nco", "process",
-            "--module", "dsp",
-            "--param", "ctrl:bad_type[]",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "ctrl:bad_type[]",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -337,9 +384,12 @@ class TestArrayParamCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "fft")
         r = _cli(
-            "function", "apply_window",
-            "--module", "fft",
-            "--param", "data:float _Complex[]",
+            "function",
+            "apply_window",
+            "--module",
+            "fft",
+            "--param",
+            "data:float _Complex[]",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -348,9 +398,12 @@ class TestArrayParamCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "fft")
         r = _cli(
-            "function", "apply_window",
-            "--module", "fft",
-            "--param", "data:bogus_t[]",
+            "function",
+            "apply_window",
+            "--module",
+            "fft",
+            "--param",
+            "data:bogus_t[]",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -359,10 +412,15 @@ class TestArrayParamCLI:
     def test_method_bad_scalar_param_type_still_exits_1(self, tmp_path):
         dest = self._setup_module(tmp_path)
         r = _cli(
-            "method", "nco", "process",
-            "--module", "dsp",
-            "--param", "x:not_a_type",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "x:not_a_type",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -408,15 +466,37 @@ class TestHelpContent:
         r = _cli("help")
         assert "generator" in r.stdout or "gen" in r.stdout
 
-    @pytest.mark.parametrize("flag", [
-        "--state", "--object", "--module", "--arg-type", "--return-type",
-        "--perf", "--build-system", "--basic", "--mutable", "--pytest",
-        "--pytest-benchmark", "--no-state", "--no-step", "--init-param",
-        "--param", "--variable-output", "--multi-output", "--batch",
-        "--out-type", "--out-divisor",
-        "--type", "--writable", "--field",
-        "--impl", "--replace", "--doc",
-    ])
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--state",
+            "--object",
+            "--module",
+            "--arg-type",
+            "--return-type",
+            "--perf",
+            "--build-system",
+            "--basic",
+            "--mutable",
+            "--pytest",
+            "--pytest-benchmark",
+            "--no-state",
+            "--no-step",
+            "--init-param",
+            "--param",
+            "--variable-output",
+            "--multi-output",
+            "--batch",
+            "--out-type",
+            "--out-divisor",
+            "--type",
+            "--writable",
+            "--field",
+            "--impl",
+            "--replace",
+            "--doc",
+        ],
+    )
     def test_help_mentions_flag(self, flag):
         r = _cli("help")
         assert flag in r.stdout, f"Flag {flag!r} missing from --help output"
@@ -439,7 +519,9 @@ class TestAddCLI:
         _cli("new", "comp", str(dest), "--object", "comp")
         r = _cli("add", "--state", "order:int:4", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "int order;" in core
 
     def test_add_updates_config(self, tmp_path):
@@ -548,53 +630,93 @@ class TestDryRunCLI:
 class TestArrayArgTypeCLI:
     def test_array_arg_type_accepted(self, tmp_path):
         dest = tmp_path / "proc"
-        r = _cli("new", "proc", str(dest), "--object", "filt",
-                 "--arg-type", "float _Complex[]",
-                 "--return-type", "float _Complex")
+        r = _cli(
+            "new",
+            "proc",
+            str(dest),
+            "--object",
+            "filt",
+            "--arg-type",
+            "float _Complex[]",
+            "--return-type",
+            "float _Complex",
+        )
         assert r.returncode == 0
 
     def test_array_arg_bad_elem_type_exits_1(self, tmp_path):
         dest = tmp_path / "proc"
-        r = _cli("new", "proc", str(dest), "--object", "filt",
-                 "--arg-type", "bogus_t[]")
+        r = _cli(
+            "new", "proc", str(dest), "--object", "filt", "--arg-type", "bogus_t[]"
+        )
         assert r.returncode == 1
         assert "array element type" in r.stderr
 
     def test_array_return_type_rejected(self, tmp_path):
         dest = tmp_path / "proc"
-        r = _cli("new", "proc", str(dest), "--object", "filt",
-                 "--arg-type", "float", "--return-type", "float[]")
+        r = _cli(
+            "new",
+            "proc",
+            str(dest),
+            "--object",
+            "filt",
+            "--arg-type",
+            "float",
+            "--return-type",
+            "float[]",
+        )
         assert r.returncode == 1
         assert "cannot be an array type" in r.stderr
 
     def test_array_arg_generates_ptr_len_in_c(self, tmp_path):
         dest = tmp_path / "proc"
-        _cli("new", "proc", str(dest), "--object", "filt",
-             "--arg-type", "float[]", "--return-type", "float")
-        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
-            encoding="utf-8"
+        _cli(
+            "new",
+            "proc",
+            str(dest),
+            "--object",
+            "filt",
+            "--arg-type",
+            "float[]",
+            "--return-type",
+            "float",
         )
+        core_h = (dest / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
         assert "const float *x, size_t x_len" in core_h
 
     def test_array_arg_no_steps_in_pymethoddef(self, tmp_path):
         dest = tmp_path / "proc"
-        _cli("new", "proc", str(dest), "--object", "filt",
-             "--arg-type", "float _Complex[]", "--return-type", "float _Complex")
+        _cli(
+            "new",
+            "proc",
+            str(dest),
+            "--object",
+            "filt",
+            "--arg-type",
+            "float _Complex[]",
+            "--return-type",
+            "float _Complex",
+        )
         ext = (dest / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
         assert "Filt_steps" not in ext
 
     def test_object_cmd_array_arg_type(self, tmp_path):
         dest = tmp_path / "proc"
         _cli("new", "proc", str(dest), "--module", "dsp")
-        r = _cli("object", "filt", "--module", "dsp",
-                 "--arg-type", "float _Complex[]",
-                 "--return-type", "float _Complex",
-                 cwd=dest)
+        r = _cli(
+            "object",
+            "filt",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "float _Complex[]",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         assert r.returncode == 0
         ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "Filt_steps" not in ext
-
 
 
 class TestNewBuildSystemCLI:
@@ -775,19 +897,31 @@ class TestObjectMutableCLI:
     def test_mutable_exits_0(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "nco", "--mutable",
-                 "--arg-type", "void",
-                 "--return-type", "float _Complex",
-                 cwd=dest)
+        r = _cli(
+            "object",
+            "nco",
+            "--mutable",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         assert r.returncode == 0
 
     def test_mutable_removes_const_from_step(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--mutable",
-             "--arg-type", "void",
-             "--return-type", "float _Complex",
-             cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--mutable",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
         assert "nco_step(nco_state_t *state)" in core_h
         assert "nco_step(const nco_state_t *state)" not in core_h
@@ -795,19 +929,31 @@ class TestObjectMutableCLI:
     def test_immutable_default_has_const(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco",
-             "--arg-type", "void",
-             "--return-type", "float _Complex",
-             cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
         assert "nco_step(const nco_state_t *state)" in core_h
 
     def test_mutable_scalar_arg_removes_const(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "filt", "--mutable",
-             "--arg-type", "float", "--return-type", "float",
-             cwd=dest)
+        _cli(
+            "object",
+            "filt",
+            "--mutable",
+            "--arg-type",
+            "float",
+            "--return-type",
+            "float",
+            cwd=dest,
+        )
         core_h = (dest / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
         assert "filt_step(filt_state_t *state, float x)" in core_h
         assert "filt_step(const filt_state_t *state, float x)" not in core_h
@@ -815,10 +961,16 @@ class TestObjectMutableCLI:
     def test_mutable_persisted_in_toml(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--mutable",
-             "--arg-type", "void",
-             "--return-type", "float _Complex",
-             cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--mutable",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'mutable = "true"' in toml
 
@@ -860,10 +1012,15 @@ class TestMethodVariableOutputCLI:
     def test_variable_output_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "nco", "execute_cf32",
-            "--module", "dsp",
-            "--arg-type", "void",
-            "--return-type", "float _Complex",
+            "method",
+            "nco",
+            "execute_cf32",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
             "--variable-output",
             cwd=dest,
         )
@@ -872,10 +1029,15 @@ class TestMethodVariableOutputCLI:
     def test_variable_output_has_buf_field_in_ext_c(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "nco", "execute_cf32",
-            "--module", "dsp",
-            "--arg-type", "void",
-            "--return-type", "float _Complex",
+            "method",
+            "nco",
+            "execute_cf32",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
             "--variable-output",
             cwd=dest,
         )
@@ -896,12 +1058,18 @@ class TestMethodMultiOutputCLI:
     def test_multi_output_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "nco", "execute_ovf",
-            "--module", "dsp",
-            "--arg-type", "void",
-            "--return-type", "uint32_t",
+            "method",
+            "nco",
+            "execute_ovf",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "uint32_t",
             "--variable-output",
-            "--multi-output", "uint8_t",
+            "--multi-output",
+            "uint8_t",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -909,11 +1077,16 @@ class TestMethodMultiOutputCLI:
     def test_multi_output_bad_type_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "nco", "execute_ovf",
-            "--module", "dsp",
-            "--return-type", "uint32_t",
+            "method",
+            "nco",
+            "execute_ovf",
+            "--module",
+            "dsp",
+            "--return-type",
+            "uint32_t",
             "--variable-output",
-            "--multi-output", "not_a_type",
+            "--multi-output",
+            "not_a_type",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -921,12 +1094,18 @@ class TestMethodMultiOutputCLI:
     def test_multi_output_tuple_pack_in_ext_c(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "nco", "execute_ovf",
-            "--module", "dsp",
-            "--arg-type", "void",
-            "--return-type", "uint32_t",
+            "method",
+            "nco",
+            "execute_ovf",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "uint32_t",
             "--variable-output",
-            "--multi-output", "uint8_t",
+            "--multi-output",
+            "uint8_t",
             cwd=dest,
         )
         ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
@@ -973,8 +1152,12 @@ class TestPropertyCLI:
         dest = self._setup(tmp_path)
         _cli("property", "engine", "gain", "--type", "double", "--writable", cwd=dest)
         ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
-        assert "set_gain" in ext or "gain_set" in ext or "setter" in ext.lower() or \
-               "gain" in ext
+        assert (
+            "set_gain" in ext
+            or "gain_set" in ext
+            or "setter" in ext.lower()
+            or "gain" in ext
+        )
 
     def test_property_writable_has_setter_decl_in_core_h(self, tmp_path):
         dest = self._setup(tmp_path)
@@ -999,8 +1182,13 @@ class TestPropertyCLI:
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "nco", "--module", "dsp", cwd=dest)
         r = _cli(
-            "property", "nco", "phase",
-            "--module", "dsp", "--type", "uint32_t",
+            "property",
+            "nco",
+            "phase",
+            "--module",
+            "dsp",
+            "--type",
+            "uint32_t",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -1009,8 +1197,16 @@ class TestPropertyCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "nco", "--module", "dsp", cwd=dest)
-        _cli("property", "nco", "phase", "--module", "dsp", "--type", "uint32_t",
-             cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "phase",
+            "--module",
+            "dsp",
+            "--type",
+            "uint32_t",
+            cwd=dest,
+        )
         ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "phase" in ext
 
@@ -1027,33 +1223,57 @@ class TestFunctionReturnTypeCLI:
     def test_return_type_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "function", "get_size",
-            "--module", "fft",
-            "--return-type", "size_t",
+            "function",
+            "get_size",
+            "--module",
+            "fft",
+            "--return-type",
+            "size_t",
             cwd=dest,
         )
         assert r.returncode == 0
 
     def test_return_type_appears_in_core_h(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("function", "get_size", "--module", "fft",
-             "--return-type", "size_t", cwd=dest)
+        _cli(
+            "function",
+            "get_size",
+            "--module",
+            "fft",
+            "--return-type",
+            "size_t",
+            cwd=dest,
+        )
         core_h = (dest / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
         assert "size_t" in core_h
         assert "get_size" in core_h
 
     def test_return_type_appears_in_core_c_stub(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("function", "get_size", "--module", "fft",
-             "--return-type", "size_t", cwd=dest)
+        _cli(
+            "function",
+            "get_size",
+            "--module",
+            "fft",
+            "--return-type",
+            "size_t",
+            cwd=dest,
+        )
         core_c = (dest / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
         assert "size_t" in core_c
         assert "get_size" in core_c
 
     def test_bad_return_type_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)
-        r = _cli("function", "get_size", "--module", "fft",
-                 "--return-type", "not_a_type", cwd=dest)
+        r = _cli(
+            "function",
+            "get_size",
+            "--module",
+            "fft",
+            "--return-type",
+            "not_a_type",
+            cwd=dest,
+        )
         assert r.returncode == 1
 
 
@@ -1064,9 +1284,12 @@ class TestFunctionDocCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "fft")
         r = _cli(
-            "function", "apply_window",
-            "--module", "fft",
-            "--doc", "Apply a Hann window.",
+            "function",
+            "apply_window",
+            "--module",
+            "fft",
+            "--doc",
+            "Apply a Hann window.",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -1074,8 +1297,15 @@ class TestFunctionDocCLI:
     def test_doc_appears_in_ext_c(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "fft")
-        _cli("function", "apply_window", "--module", "fft",
-             "--doc", "Apply a Hann window.", cwd=dest)
+        _cli(
+            "function",
+            "apply_window",
+            "--module",
+            "fft",
+            "--doc",
+            "Apply a Hann window.",
+            cwd=dest,
+        )
         ext = (dest / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "Apply a Hann window." in ext
 
@@ -1086,8 +1316,9 @@ class TestAddParamCLI:
     @staticmethod
     def _setup(tmp_path):
         dest = tmp_path / "proj"
-        _cli("new", "proj", str(dest), "--object", "norm",
-             "--state", "scale:double:1.0")
+        _cli(
+            "new", "proj", str(dest), "--object", "norm", "--state", "scale:double:1.0"
+        )
         return dest
 
     def test_add_param_exits_0(self, tmp_path):
@@ -1103,6 +1334,7 @@ class TestAddParamCLI:
 
     def test_add_param_recorded_in_config(self, tmp_path):
         import tomllib
+
         dest = self._setup(tmp_path)
         _cli("add", "--param", "offset:double:0.0", cwd=dest)
         with (dest / "just-makeit.toml").open("rb") as f:
@@ -1163,8 +1395,11 @@ class TestMethodStandaloneCLI:
     def test_method_standalone_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "nco", "reset_phase",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "reset_phase",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -1172,8 +1407,11 @@ class TestMethodStandaloneCLI:
     def test_method_standalone_appends_stub(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "nco", "reset_phase",
-            "--return-type", "void",
+            "method",
+            "nco",
+            "reset_phase",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         src = (dest / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
@@ -1198,11 +1436,17 @@ class TestMethodOutTypeCLI:
     def test_out_type_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "conv", "process",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--return-type", "void",
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -1210,11 +1454,17 @@ class TestMethodOutTypeCLI:
     def test_out_type_generates_pyarray_empty(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "conv", "process",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--return-type", "void",
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
@@ -1223,10 +1473,15 @@ class TestMethodOutTypeCLI:
     def test_out_type_bad_type_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "conv", "process",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "not_a_type",
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "not_a_type",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -1234,12 +1489,19 @@ class TestMethodOutTypeCLI:
     def test_out_divisor_with_out_type(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "conv", "decimate",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--out-divisor", "2",
-            "--return-type", "void",
+            "method",
+            "conv",
+            "decimate",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "2",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         assert r.returncode == 0
@@ -1249,11 +1511,17 @@ class TestMethodOutTypeCLI:
     def test_out_divisor_non_positive_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)
         r = _cli(
-            "method", "conv", "decimate",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--out-divisor", "0",
+            "method",
+            "conv",
+            "decimate",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "0",
             cwd=dest,
         )
         assert r.returncode == 1
@@ -1261,11 +1529,17 @@ class TestMethodOutTypeCLI:
     def test_out_type_persisted_in_toml(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "conv", "process",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--return-type", "void",
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
@@ -1274,12 +1548,19 @@ class TestMethodOutTypeCLI:
     def test_out_divisor_persisted_in_toml(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
-            "method", "conv", "decimate",
-            "--module", "dsp",
-            "--param", "data:float[]",
-            "--out-type", "float",
-            "--out-divisor", "4",
-            "--return-type", "void",
+            "method",
+            "conv",
+            "decimate",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "4",
+            "--return-type",
+            "void",
             cwd=dest,
         )
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
@@ -1291,18 +1572,14 @@ class TestNewModuleRepeatableCLI:
 
     def test_two_modules_both_created(self, tmp_path):
         dest = tmp_path / "proj"
-        r = _cli("new", "proj", str(dest),
-                 "--module", "filter",
-                 "--module", "source")
+        r = _cli("new", "proj", str(dest), "--module", "filter", "--module", "source")
         assert r.returncode == 0
         assert (dest / "native/inc/filter/filter_core.h").exists()
         assert (dest / "native/inc/source/source_core.h").exists()
 
     def test_two_modules_both_in_toml(self, tmp_path):
         dest = tmp_path / "proj"
-        _cli("new", "proj", str(dest),
-             "--module", "filter",
-             "--module", "source")
+        _cli("new", "proj", str(dest), "--module", "filter", "--module", "source")
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[module.filter]" in toml
         assert "[module.source]" in toml
@@ -1313,8 +1590,9 @@ class TestScriptCLI:
 
     def test_script_exits_0(self, tmp_path):
         dest = tmp_path / "proj"
-        _cli("new", "proj", str(dest), "--object", "engine",
-             "--state", "rate:double:1.0")
+        _cli(
+            "new", "proj", str(dest), "--object", "engine", "--state", "rate:double:1.0"
+        )
         r = _cli("script", cwd=dest)
         assert r.returncode == 0
 
@@ -1352,8 +1630,16 @@ class TestScriptCLI:
     def test_script_mutable_flag(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--arg-type", "void",
-             "--return-type", "float _Complex", "--mutable", cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            "--mutable",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--mutable" in r.stdout
 
@@ -1361,16 +1647,24 @@ class TestScriptCLI:
         """--arg-type void --return-type 'float _Complex' must appear explicitly."""
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--arg-type", "void",
-             "--return-type", "float _Complex", cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert '--return-type "float _Complex"' in r.stdout
 
     def test_script_return_type_omitted_when_matches_arg_type(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "filt", "--arg-type", "float",
-             "--return-type", "float", cwd=dest)
+        _cli(
+            "object", "filt", "--arg-type", "float", "--return-type", "float", cwd=dest
+        )
         r = _cli("script", cwd=dest)
         assert "--return-type float" not in r.stdout
 
@@ -1378,9 +1672,19 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "nco", "--module", "dsp", cwd=dest)
-        _cli("method", "nco", "execute", "--module", "dsp",
-             "--arg-type", "void", "--return-type", "float _Complex",
-             "--variable-output", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "execute",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            "--variable-output",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "just-makeit method nco execute" in r.stdout
         assert "--variable-output" in r.stdout
@@ -1389,8 +1693,7 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "nco", cwd=dest)
-        _cli("property", "nco", "phase", "--type", "uint32_t",
-             "--writable", cwd=dest)
+        _cli("property", "nco", "phase", "--type", "uint32_t", "--writable", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "just-makeit property nco phase" in r.stdout
         assert "--writable" in r.stdout
@@ -1398,8 +1701,9 @@ class TestScriptCLI:
     def test_script_function(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
-        _cli("function", "dsp_init", "--module", "dsp",
-             "--doc", "Initialize.", cwd=dest)
+        _cli(
+            "function", "dsp_init", "--module", "dsp", "--doc", "Initialize.", cwd=dest
+        )
         r = _cli("script", cwd=dest)
         assert "just-makeit function dsp_init" in r.stdout
         assert "--module dsp" in r.stdout
@@ -1434,8 +1738,7 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "conv", "--module", "dsp", cwd=dest)
-        _cli("method", "conv", "run", "--module", "dsp",
-             "--batch", cwd=dest)
+        _cli("method", "conv", "run", "--module", "dsp", "--batch", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--batch" in r.stdout
 
@@ -1443,9 +1746,20 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "conv", "--module", "dsp", cwd=dest)
-        _cli("method", "conv", "process", "--module", "dsp",
-             "--param", "data:float[]", "--out-type", "float",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert '--out-type "float"' in r.stdout or "--out-type float" in r.stdout
 
@@ -1453,9 +1767,22 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "conv", "--module", "dsp", cwd=dest)
-        _cli("method", "conv", "decimate", "--module", "dsp",
-             "--param", "data:float[]", "--out-type", "float",
-             "--out-divisor", "4", "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "conv",
+            "decimate",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "4",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--out-divisor 4" in r.stdout
 
@@ -1463,9 +1790,22 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "conv", "--module", "dsp", cwd=dest)
-        _cli("method", "conv", "process", "--module", "dsp",
-             "--param", "data:float[]", "--out-type", "float",
-             "--out-divisor", "1", "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "conv",
+            "process",
+            "--module",
+            "dsp",
+            "--param",
+            "data:float[]",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "1",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--out-divisor" not in r.stdout
 
@@ -1473,8 +1813,16 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "conv", "--module", "dsp", cwd=dest)
-        _cli("method", "conv", "run", "--module", "dsp",
-             "--multi-output", "float", cwd=dest)
+        _cli(
+            "method",
+            "conv",
+            "run",
+            "--module",
+            "dsp",
+            "--multi-output",
+            "float",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--multi-output" in r.stdout
 
@@ -1482,8 +1830,7 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "nco", cwd=dest)
-        _cli("property", "nco", "phase", "--type", "uint32_t",
-             "--field", cwd=dest)
+        _cli("property", "nco", "phase", "--type", "uint32_t", "--field", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
 
@@ -1498,9 +1845,19 @@ class TestScriptCLI:
     def test_script_function_params(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
-        _cli("function", "add_two", "--module", "dsp",
-             "--param", "x:float", "--param", "y:float",
-             "--return-type", "float", cwd=dest)
+        _cli(
+            "function",
+            "add_two",
+            "--module",
+            "dsp",
+            "--param",
+            "x:float",
+            "--param",
+            "y:float",
+            "--return-type",
+            "float",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--param x:float" in r.stdout
         assert "--param y:float" in r.stdout
@@ -1513,8 +1870,7 @@ class TestInitParamCLI:
     def test_init_param_exits_0(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "gen", "--no-state",
-                 "--init-param", "n:int:16", cwd=dest)
+        r = _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
         assert r.returncode == 0
 
     def test_init_param_without_no_state_exits_1(self, tmp_path):
@@ -1527,18 +1883,23 @@ class TestInitParamCLI:
     def test_init_param_constructor_arg_in_core_c(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16",
-             cwd=dest)
+        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
         core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
         assert "int n" in core_c
 
     def test_multiple_init_params(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "gen", "--no-state",
-                 "--init-param", "n:int:16",
-                 "--init-param", "order:int:4",
-                 cwd=dest)
+        r = _cli(
+            "object",
+            "gen",
+            "--no-state",
+            "--init-param",
+            "n:int:16",
+            "--init-param",
+            "order:int:4",
+            cwd=dest,
+        )
         assert r.returncode == 0
         core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
         assert "int n" in core_c
@@ -1571,11 +1932,17 @@ class TestImplCLI:
         )
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "nco",
-                 "--arg-type", "void",
-                 "--return-type", "float _Complex",
-                 "--impl", f"{src_file}::my_step",
-                 cwd=dest)
+        r = _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            "--impl",
+            f"{src_file}::my_step",
+            cwd=dest,
+        )
         assert r.returncode == 0
         core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
         assert "return 0.0f" in core_h
@@ -1589,9 +1956,16 @@ class TestImplCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli("object", "proc", "--module", "dsp", cwd=dest)
-        r = _cli("method", "proc", "run", "--module", "dsp",
-                 "--impl", f"{src_file}::run",
-                 cwd=dest)
+        r = _cli(
+            "method",
+            "proc",
+            "run",
+            "--module",
+            "dsp",
+            "--impl",
+            f"{src_file}::run",
+            cwd=dest,
+        )
         assert r.returncode == 0
         core_c = (dest / "native/src/proc/proc_core.c").read_text(encoding="utf-8")
         assert "/* body */" in core_c
@@ -1599,7 +1973,5 @@ class TestImplCLI:
     def test_impl_missing_file_exits_1(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "nco",
-                 "--impl", "/nonexistent/file.c::my_func",
-                 cwd=dest)
+        r = _cli("object", "nco", "--impl", "/nonexistent/file.c::my_func", cwd=dest)
         assert r.returncode == 1

@@ -13,18 +13,18 @@ ______________________________________________________________________
 
 ## What is stored
 
-| Category | Stored in TOML |
-|---|---|
-| Project name and version | Yes |
-| Build system (`--build-system`) | Yes |
-| Performance annotations (`--perf`) | Yes |
-| Test runner (`--pytest`, `--pytest-benchmark`) | Yes |
-| Objects and their state variables | Yes |
-| `arg-type`, `return-type`, `--mutable`, `--no-state`, `--no-step` | Yes |
-| Constructor parameters (`--init-param`) | Yes |
-| Extra methods, properties, module-level functions | Yes |
-| Module subpackage structure | Yes |
-| `--impl` / `--replace` lifted code | **No** — patched directly into source |
+| Category                                                          | Stored in TOML                        |
+| ----------------------------------------------------------------- | ------------------------------------- |
+| Project name and version                                          | Yes                                   |
+| Build system (`--build-system`)                                   | Yes                                   |
+| Performance annotations (`--perf`)                                | Yes                                   |
+| Test runner (`--pytest`, `--pytest-benchmark`)                    | Yes                                   |
+| Objects and their state variables                                 | Yes                                   |
+| `arg-type`, `return-type`, `--mutable`, `--no-state`, `--no-step` | Yes                                   |
+| Constructor parameters (`--init-param`)                           | Yes                                   |
+| Extra methods, properties, module-level functions                 | Yes                                   |
+| Module subpackage structure                                       | Yes                                   |
+| `--impl` / `--replace` lifted code                                | **No** — patched directly into source |
 
 `--impl` bodies are written into the generated C files once and then owned by
 you; they are not round-tripped through TOML.
@@ -39,113 +39,117 @@ there, no flags required.
 
 === "File tree"
 
-    ```
-    my_project/
-    ├── just-makeit.toml
-    ├── CMakeLists.txt
-    ├── Makefile
-    ├── pyproject.toml
-    ├── cmake/
-    │   ├── my_project-config.cmake.in
-    │   └── my-project.pc.in
-    ├── native/
-    │   ├── inc/
-    │   │   ├── my_project.h
-    │   │   ├── clib_common.h
-    │   │   ├── pyex_common.h
-    │   │   └── engine/
-    │   │       └── engine_core.h
-    │   ├── src/
-    │   │   ├── my_project_lib.c
-    │   │   └── engine/
-    │   │       ├── engine_core.c
-    │   │       ├── engine_ext.c
-    │   │       └── CMakeLists.txt
-    │   ├── tests/
-    │   │   └── test_engine_core.c
-    │   └── benchmarks/
-    │       └── bench_engine_core.c
-    └── src/
-        └── my_project/
-            ├── __init__.py
-            ├── engine.pyi
-            ├── tests/
-            │   └── test_engine.py
-            └── benchmarks/
-                └── bench_engine.py
-    ```
+````
+```
+my_project/
+├── just-makeit.toml
+├── CMakeLists.txt
+├── Makefile
+├── pyproject.toml
+├── cmake/
+│   ├── my_project-config.cmake.in
+│   └── my-project.pc.in
+├── native/
+│   ├── inc/
+│   │   ├── my_project.h
+│   │   ├── clib_common.h
+│   │   ├── pyex_common.h
+│   │   └── engine/
+│   │       └── engine_core.h
+│   ├── src/
+│   │   ├── my_project_lib.c
+│   │   └── engine/
+│   │       ├── engine_core.c
+│   │       ├── engine_ext.c
+│   │       └── CMakeLists.txt
+│   ├── tests/
+│   │   └── test_engine_core.c
+│   └── benchmarks/
+│       └── bench_engine_core.c
+└── src/
+    └── my_project/
+        ├── __init__.py
+        ├── engine.pyi
+        ├── tests/
+        │   └── test_engine.py
+        └── benchmarks/
+            └── bench_engine.py
+```
+````
 
 === "just-makeit.toml"
 
-    ```toml
-    [project]
-    name             = "my_project"
-    version          = "0.1.0"
-    build            = "cmake"
-    perf             = "false"
-    pytest           = "false"
-    pytest_benchmark = "false"
+````
+```toml
+[project]
+name             = "my_project"
+version          = "0.1.0"
+build            = "cmake"
+perf             = "false"
+pytest           = "false"
+pytest_benchmark = "false"
 
-    # One section per object, named after the object.
-    [engine]
-    arg_type    = "float _Complex"
-    return_type = "float _Complex"
-    mutable     = "false"
-    no_state    = "false"
-    no_step     = "false"
+# One section per object, named after the object.
+[engine]
+arg_type    = "float _Complex"
+return_type = "float _Complex"
+mutable     = "false"
+no_state    = "false"
+no_step     = "false"
 
-    # One entry per --state declaration.
-    [[engine.state]]
-    name    = "gain"
-    type    = "double"
-    default = "1.0"
+# One entry per --state declaration.
+[[engine.state]]
+name    = "gain"
+type    = "double"
+default = "1.0"
 
-    # One entry per --init-param.
-    [[engine.init_params]]
-    name    = "order"
-    type    = "int"
-    default = "4"
+# One entry per --init-param.
+[[engine.init_params]]
+name    = "order"
+type    = "int"
+default = "4"
 
-    # One entry per --array-arg.
-    [[engine.array_args]]
-    name = "coeffs"
-    type = "float32"
+# One entry per --array-arg.
+[[engine.array_args]]
+name = "coeffs"
+type = "float32"
 
-    # One entry per `just-makeit method`.
-    [[engine.methods]]
-    name        = "normalize"
-    return_type = "void"
-    params      = [{name = "scale", type = "double"}]
+# One entry per `just-makeit method`.
+[[engine.methods]]
+name        = "normalize"
+return_type = "void"
+params      = [{name = "scale", type = "double"}]
 
-    # One entry per `just-makeit property`.
-    [[engine.properties]]
-    name     = "peak"
-    type     = "double"
-    writable = true
-    field    = true
+# One entry per `just-makeit property`.
+[[engine.properties]]
+name     = "peak"
+type     = "double"
+writable = true
+field    = true
 
-    # Module subpackage, named after the module.
-    [module.filter]
-    objects = ["fir", "biquad"]
+# Module subpackage, named after the module.
+[module.filter]
+objects = ["fir", "biquad"]
 
-    [[module.filter.functions]]
-    name        = "design_lowpass"
-    return_type = "void"
-    doc         = "Compute FIR coefficients for a lowpass filter."
-    params      = [{name = "cutoff", type = "double"}]
+[[module.filter.functions]]
+name        = "design_lowpass"
+return_type = "void"
+doc         = "Compute FIR coefficients for a lowpass filter."
+params      = [{name = "cutoff", type = "double"}]
 
-    [fir]
-    arg_type    = "float _Complex"
-    return_type = "float _Complex"
-    mutable     = "false"
-    no_state    = "false"
-    no_step     = "false"
+[fir]
+arg_type    = "float _Complex"
+return_type = "float _Complex"
+mutable     = "false"
+no_state    = "false"
+no_step     = "false"
 
-    [[fir.state]]
-    name    = "coeffs"
-    type    = "float[16]"
-    default = "0.0f"
-    ```
+[[fir.state]]
+name    = "coeffs"
+type    = "float[16]"
+default = "0.0f"
+```
+````
 
 ______________________________________________________________________
 
@@ -153,45 +157,45 @@ ______________________________________________________________________
 
 ### `[project]`
 
-| Key | Type | Default | Set by |
-|---|---|---|---|
-| `name` | string | — | `just-makeit new <name>` |
-| `version` | string | `"0.1.0"` | `just-makeit new` / `just-makeit config version X` |
-| `build` | `"cmake"` or `"make"` | `"cmake"` | `--build-system make` |
-| `perf` | `"true"` or `"false"` | `"false"` | `--perf` |
-| `pytest` | `"true"` or `"false"` | `"false"` | `--pytest` |
-| `pytest_benchmark` | `"true"` or `"false"` | `"false"` | `--pytest-benchmark` |
+| Key                | Type                  | Default   | Set by                                             |
+| ------------------ | --------------------- | --------- | -------------------------------------------------- |
+| `name`             | string                | —         | `just-makeit new <name>`                           |
+| `version`          | string                | `"0.1.0"` | `just-makeit new` / `just-makeit config version X` |
+| `build`            | `"cmake"` or `"make"` | `"cmake"` | `--build-system make`                              |
+| `perf`             | `"true"` or `"false"` | `"false"` | `--perf`                                           |
+| `pytest`           | `"true"` or `"false"` | `"false"` | `--pytest`                                         |
+| `pytest_benchmark` | `"true"` or `"false"` | `"false"` | `--pytest-benchmark`                               |
 
 ### `[<object>]`
 
 One section per standalone object or module-member object.  The section name
 is whatever you passed to `just-makeit object <name>`.
 
-| Key | Type | Default | Set by |
-|---|---|---|---|
-| `arg_type` | string | `"float _Complex"` | `--arg-type` |
-| `return_type` | string | same as `arg_type` | `--return-type` |
-| `mutable` | `"true"` or `"false"` | `"false"` | `--mutable` |
-| `no_state` | `"true"` or `"false"` | `"false"` | `--no-state` |
-| `no_step` | `"true"` or `"false"` | `"false"` | `--no-step` |
+| Key           | Type                  | Default            | Set by          |
+| ------------- | --------------------- | ------------------ | --------------- |
+| `arg_type`    | string                | `"float _Complex"` | `--arg-type`    |
+| `return_type` | string                | same as `arg_type` | `--return-type` |
+| `mutable`     | `"true"` or `"false"` | `"false"`          | `--mutable`     |
+| `no_state`    | `"true"` or `"false"` | `"false"`          | `--no-state`    |
+| `no_step`     | `"true"` or `"false"` | `"false"`          | `--no-step`     |
 
 ### `[[<object>.state]]`
 
 One entry per `--state` declaration.
 
-| Key | Type | Notes |
-|---|---|---|
-| `name` | string | Valid C identifier |
-| `type` | string | C type; append `[N]` for fixed arrays |
-| `default` | string | C initialiser expression |
+| Key       | Type   | Notes                                 |
+| --------- | ------ | ------------------------------------- |
+| `name`    | string | Valid C identifier                    |
+| `type`    | string | C type; append `[N]` for fixed arrays |
+| `default` | string | C initialiser expression              |
 
 ### `[[<object>.array_args]]`
 
 Fixed-size array constructor arguments added with `--array-arg`.
 
-| Key | Type | Notes |
-|---|---|---|
-| `name` | string | Argument name |
+| Key    | Type   | Notes                                                                                                                                                         |
+| ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name` | string | Argument name                                                                                                                                                 |
 | `type` | string | Stored as NumPy dtype name (`float32`, `float64`, `complex64`, …); C types (`float`, `double`, `float _Complex`, …) are also accepted on input and normalised |
 
 ### `[[<object>.init_params]]`
@@ -203,46 +207,46 @@ reset).  Same `name` / `type` / `default` keys as `state`.
 
 One entry per `just-makeit method` call.
 
-| Key | Type | Notes |
-|---|---|---|
-| `name` | string | Method name |
-| `arg_type` | string | Array-style input type |
-| `return_type` | string | C return type |
-| `params` | array of `{name, type}` | Named scalar / array parameters |
-| `variable_output` | bool | `--variable-output` |
-| `batch` | bool | `--batch` |
-| `multi_output` | array of strings | `--multi-output` types |
-| `out_type` | string | `--out-type` |
-| `out_divisor` | int | `--out-divisor` (default `1`; omitted from TOML when `1`) |
+| Key               | Type                    | Notes                                                     |
+| ----------------- | ----------------------- | --------------------------------------------------------- |
+| `name`            | string                  | Method name                                               |
+| `arg_type`        | string                  | Array-style input type                                    |
+| `return_type`     | string                  | C return type                                             |
+| `params`          | array of `{name, type}` | Named scalar / array parameters                           |
+| `variable_output` | bool                    | `--variable-output`                                       |
+| `batch`           | bool                    | `--batch`                                                 |
+| `multi_output`    | array of strings        | `--multi-output` types                                    |
+| `out_type`        | string                  | `--out-type`                                              |
+| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`) |
 
 ### `[[<object>.properties]]`
 
 One entry per `just-makeit property` call.
 
-| Key | Type | Notes |
-|---|---|---|
-| `name` | string | Property name |
-| `type` | string | C type of the value |
-| `writable` | bool | `--writable` |
-| `field` | bool | `--field` (adds struct member, auto-implements getter) |
+| Key        | Type   | Notes                                                  |
+| ---------- | ------ | ------------------------------------------------------ |
+| `name`     | string | Property name                                          |
+| `type`     | string | C type of the value                                    |
+| `writable` | bool   | `--writable`                                           |
+| `field`    | bool   | `--field` (adds struct member, auto-implements getter) |
 
 ### `[module.<name>]`
 
-| Key | Type | Notes |
-|---|---|---|
-| `objects` | array of strings | Objects in declaration order |
-| `functions` | array | Module-level functions (see below) |
+| Key         | Type             | Notes                              |
+| ----------- | ---------------- | ---------------------------------- |
+| `objects`   | array of strings | Objects in declaration order       |
+| `functions` | array            | Module-level functions (see below) |
 
 ### `[[module.<name>.functions]]`
 
 One entry per `just-makeit function` call.
 
-| Key | Type | Notes |
-|---|---|---|
-| `name` | string | Function name |
-| `return_type` | string | C return type |
-| `doc` | string | Python docstring |
-| `params` | array of `{name, type}` | Parameters |
+| Key           | Type                    | Notes            |
+| ------------- | ----------------------- | ---------------- |
+| `name`        | string                  | Function name    |
+| `return_type` | string                  | C return type    |
+| `doc`         | string                  | Python docstring |
+| `params`      | array of `{name, type}` | Parameters       |
 
 ______________________________________________________________________
 
@@ -317,9 +321,9 @@ exactly how the project was built.  Anyone can reproduce the generated
 structure without needing to remember the original command sequence.
 
 !!! note
-    `--impl` / `--replace` lifted code is not stored in TOML.  If you used
-    these flags, the patched C bodies are in your source files — keep them in
-    version control.
+`--impl` / `--replace` lifted code is not stored in TOML.  If you used
+these flags, the patched C bodies are in your source files — keep them in
+version control.
 
 ______________________________________________________________________
 

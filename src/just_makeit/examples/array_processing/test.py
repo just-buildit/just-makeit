@@ -68,7 +68,11 @@ def run(root: Path) -> None:
 
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
@@ -118,7 +122,11 @@ def run(root: Path) -> None:
 
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
@@ -143,9 +151,7 @@ def run(root: Path) -> None:
     proj_buf = root / "my_buf"
 
     # step() takes a numpy array, returns int — no steps() generated
-    core_h = (
-        proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
-    ).read_text()
+    core_h = (proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h").read_text()
     assert "const float complex *x, size_t x_len" in core_h, (
         "array arg not in step signature"
     )
@@ -153,7 +159,11 @@ def run(root: Path) -> None:
 
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
@@ -188,6 +198,7 @@ def run(root: Path) -> None:
     proj_conv = root / "my_conv"
 
     from just_makeit._method import run as jm_method_conv
+
     jm_method_conv(
         root=proj_conv,
         object_name="ci8_conv",
@@ -215,6 +226,7 @@ def run(root: Path) -> None:
     # my_conv was created only for structural verification; remove it so it
     # doesn't appear as an unbuilt project in the examples directory.
     import shutil
+
     shutil.rmtree(proj_conv, ignore_errors=True)
 
 

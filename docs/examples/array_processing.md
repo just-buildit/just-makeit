@@ -10,14 +10,14 @@ allocated**, and **what the Python caller can safely do with the returned array*
 
 Six patterns, six sections:
 
-| # | Pattern | Output allocation | Who owns it |
-|---|---------|-------------------|-------------|
-| 1 | Auto-generated `steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
-| 2 | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
-| 3 | `method --variable-output` | Allocated at `__init__`, re-used | Object (zero-copy view) |
-| 4 | `method --variable-output --multi-output` | Same — one buffer per stream | Object (tuple of views) |
-| 5 | `--arg-type type[]` (buffer primary arg) | Caller supplies input buffer | Caller (input) |
-| 6 | `method --out-type` (per-call typed output array) | Per call (`PyArray_EMPTY`) | Caller (numpy) |
+| #   | Pattern                                           | Output allocation                     | Who owns it             |
+| --- | ------------------------------------------------- | ------------------------------------- | ----------------------- |
+| 1   | Auto-generated `steps()`                          | Per call (or zero if `out=` supplied) | Caller (numpy)          |
+| 2   | `method` scalar stub + hand-written `_steps()`    | Per call (or zero if `out=` supplied) | Caller (numpy)          |
+| 3   | `method --variable-output`                        | Allocated at `__init__`, re-used      | Object (zero-copy view) |
+| 4   | `method --variable-output --multi-output`         | Same — one buffer per stream          | Object (tuple of views) |
+| 5   | `--arg-type type[]` (buffer primary arg)          | Caller supplies input buffer          | Caller (input)          |
+| 6   | `method --out-type` (per-call typed output array) | Per call (`PyArray_EMPTY`)            | Caller (numpy)          |
 
 All six patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
@@ -50,7 +50,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Auto-generated `steps()` — free with every object
 
@@ -66,9 +66,9 @@ cd my_arrays
 
 Every `just-makeit object` generates both `step()` and `steps()`:
 
-| C function | Signature |
-|---|---|
-| `ema_step` | `float ema_step(ema_state_t *s, float x)` |
+| C function  | Signature                                                               |
+| ----------- | ----------------------------------------------------------------------- |
+| `ema_step`  | `float ema_step(ema_state_t *s, float x)`                               |
 | `ema_steps` | `void ema_steps(ema_state_t *s, const float *in, float *out, size_t n)` |
 
 `steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`
@@ -182,7 +182,7 @@ a separate allocation, a separate free, and careful ownership accounting.
 just-makeit avoids this entirely by embedding arrays inline whenever the length
 is fixed at code-generation time.
 
----
+______________________________________________________________________
 
 ## 2. `method` — scalar stub + hand-written `_steps()`
 
@@ -260,7 +260,7 @@ If the maximum output count depends on object state and is knowable at init
 time (e.g. a decimator), `--variable-output` is more ergonomic — it removes
 the per-call allocation from the caller's responsibility. See §3.
 
----
+______________________________________________________________________
 
 ## 3. `method --variable-output` — pre-allocated, zero-copy batch
 
@@ -288,10 +288,10 @@ just-makeit method hbdecim execute \
 
 The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
-| Stub | When called | Your job |
-|------|-------------|----------|
-| `hbdecim_execute_max_out(state)` | Once at Python `__init__` | Return the output bound |
-| `hbdecim_execute(state, in, n_in, out)` | Every Python call | Fill `out`, return actual count |
+| Stub                                    | When called               | Your job                        |
+| --------------------------------------- | ------------------------- | ------------------------------- |
+| `hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
+| `hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
 
 Implement both:
 
@@ -374,15 +374,15 @@ you need to retain more than one block.
 
 ### When to use `--variable-output`
 
-| Use case | `_max_out` returns | Appropriate? |
-|---|---|---|
-| Decimator, ratio R, block size B | `ceil(B / R)` | Yes |
-| FIFO with fixed capacity C | `C` | Yes |
-| FIR filter, 1:1 rate | unknown at init | No — output size = input size; use auto `steps()` |
-| Integrator / accumulator | 1 per sample | No — use scalar `step()` |
-| Overflow detector, 1:1 rate | unknown at init | No — use scalar method + hand-written `_steps()` |
+| Use case                         | `_max_out` returns | Appropriate?                                      |
+| -------------------------------- | ------------------ | ------------------------------------------------- |
+| Decimator, ratio R, block size B | `ceil(B / R)`      | Yes                                               |
+| FIFO with fixed capacity C       | `C`                | Yes                                               |
+| FIR filter, 1:1 rate             | unknown at init    | No — output size = input size; use auto `steps()` |
+| Integrator / accumulator         | 1 per sample       | No — use scalar `step()`                          |
+| Overflow detector, 1:1 rate      | unknown at init    | No — use scalar method + hand-written `_steps()`  |
 
----
+______________________________________________________________________
 
 ## 4. `method --variable-output --multi-output` — parallel output streams
 
@@ -485,7 +485,7 @@ The same "stale after next call" rule applies to every buffer produced by
 `--variable-output`.  The zero-copy design makes the steady-state path
 allocation-free; the copy obligation is the trade-off.
 
----
+______________________________________________________________________
 
 ## 5. `--arg-type type[]` — array-buffer primary arg
 
@@ -564,7 +564,7 @@ class BufProc:
     # no steps() — the primary op already takes a buffer
 ```
 
----
+______________________________________________________________________
 
 ## 6. `method --out-type` — per-call typed output array
 
@@ -574,11 +574,11 @@ simply `input_length / divisor` (known per call, not at init).
 
 The difference from `--variable-output`:
 
-| | `--variable-output` | `--out-type` |
-|--|--|--|
-| Buffer lifetime | Pre-allocated at `__init__`; zero-copy view | Allocated fresh each call |
-| Output type | Same as `--return-type` | Independent `--out-type` |
-| Output length | `_max_out(state)` — set at init | `input_len / --out-divisor` |
+|                 | `--variable-output`                         | `--out-type`                |
+| --------------- | ------------------------------------------- | --------------------------- |
+| Buffer lifetime | Pre-allocated at `__init__`; zero-copy view | Allocated fresh each call   |
+| Output type     | Same as `--return-type`                     | Independent `--out-type`    |
+| Output length   | `_max_out(state)` — set at init             | `input_len / --out-divisor` |
 
 Classic use case: a type converter that takes a CI8 byte buffer and returns
 CF32 samples — output length is `input_bytes / 2`.
@@ -658,7 +658,7 @@ cf32 = conv.convert(raw)
 This is identical ownership to pattern 1 and 2 — a fresh array each call,
 owned by the caller, safe to hold indefinitely.
 
----
+______________________________________________________________________
 
 ## Choosing between the six patterns
 

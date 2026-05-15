@@ -9,6 +9,7 @@ Three demonstrations:
 Run from anywhere — no C build required:
     python3 examples/sliding_power/.steps/06_compare.py
 """
+
 import math
 import random
 import struct
@@ -17,12 +18,14 @@ import sys
 N = 64
 CAL_EVERY = 1000
 
+
 def f32(x):
     return struct.unpack("f", struct.pack("f", x))[0]
 
 
 # ---------------------------------------------------------------------------
 # Three accumulator strategies, parametric on accumulator precision
+
 
 class RecursiveNoCal:
     def __init__(self, double_acc=True):
@@ -80,14 +83,15 @@ class StandardMA:
 # ---------------------------------------------------------------------------
 # Demo 1: burst tracking
 
+
 def demo_burst():
     print("=" * 68)
     print("Demo 1: Power tracking on a burst signal")
-    print(f"  Window N={N}  (response time = N/2 ≈ {N//2} samples)")
+    print(f"  Window N={N}  (response time = N/2 ≈ {N // 2} samples)")
     print("=" * 68)
 
     rec = RecursiveNoCal()
-    ma  = StandardMA()
+    ma = StandardMA()
 
     rng = random.Random(42)
 
@@ -95,14 +99,16 @@ def demo_burst():
         return f32(rng.gauss(0, math.sqrt(power)))
 
     segments = [
-        ("noise P=1.0",  200, 1.0),
-        ("silence P=0",  100, 0.0),
+        ("noise P=1.0", 200, 1.0),
+        ("silence P=0", 100, 0.0),
         ("noise P=0.25", 200, 0.25),
-        ("silence P=0",   64, 0.0),
-        ("noise P=1.0",  128, 1.0),
+        ("silence P=0", 64, 0.0),
+        ("noise P=1.0", 128, 1.0),
     ]
 
-    print(f"  {'sample':>7}  {'segment':<16}  {'recursive':>10}  {'std MA':>10}  {'diff':>10}")
+    print(
+        f"  {'sample':>7}  {'segment':<16}  {'recursive':>10}  {'std MA':>10}  {'diff':>10}"
+    )
     print("  " + "-" * 60)
 
     n = 0
@@ -111,7 +117,9 @@ def demo_burst():
             x = noise(pwr)
             r = rec.step(x * x)
             m = ma.step(x * x)
-        print(f"  {n + length:>7d}  {label:<16}  {r:>10.4f}  {m:>10.4f}  {abs(r-m):>10.2e}")
+        print(
+            f"  {n + length:>7d}  {label:<16}  {r:>10.4f}  {m:>10.4f}  {abs(r - m):>10.2e}"
+        )
         n += length
 
     print()
@@ -122,6 +130,7 @@ def demo_burst():
 # ---------------------------------------------------------------------------
 # Demo 2: drift — float32 accumulator
 
+
 def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
     print("=" * 68)
     print("Demo 2: Drift over long run — float32 accumulator")
@@ -130,12 +139,13 @@ def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
 
     rec = RecursiveNoCal(double_acc=False)
     cal = RecursiveCalibrated(double_acc=False)
-    ma  = StandardMA()
+    ma = StandardMA()
 
     rng = random.Random(0)
-    true_power = 1.0  # unit-variance noise
 
-    print(f"  {'sample':>10}  {'no-cal':>10}  {'calibrated':>10}  {'std MA':>10}  {'err(no-cal)':>12}  {'err(cal)':>10}")
+    print(
+        f"  {'sample':>10}  {'no-cal':>10}  {'calibrated':>10}  {'std MA':>10}  {'err(no-cal)':>12}  {'err(cal)':>10}"
+    )
     print("  " + "-" * 72)
 
     for n in range(n_samples):
@@ -146,7 +156,9 @@ def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
         m = ma.step(msq)
 
         if n % print_every == (print_every - 1):
-            print(f"  {n+1:>10,d}  {r:>10.4f}  {c:>10.4f}  {m:>10.4f}  {abs(r-m):>12.2e}  {abs(c-m):>10.2e}")
+            print(
+                f"  {n + 1:>10,d}  {r:>10.4f}  {c:>10.4f}  {m:>10.4f}  {abs(r - m):>12.2e}  {abs(c - m):>10.2e}"
+            )
 
     print()
     print("  → Float32 accumulator drifts measurably. Calibration corrects it.")
@@ -156,6 +168,7 @@ def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
 # ---------------------------------------------------------------------------
 # Demo 3: same long run with double accumulator (C code's actual behavior)
 
+
 def demo_drift_f64(n_samples=5_000_000, print_every=500_000):
     print("=" * 68)
     print("Demo 3: Same run — double accumulator (what the C code uses)")
@@ -163,7 +176,7 @@ def demo_drift_f64(n_samples=5_000_000, print_every=500_000):
     print("=" * 68)
 
     rec = RecursiveNoCal(double_acc=True)
-    ma  = StandardMA()
+    ma = StandardMA()
 
     rng = random.Random(0)
 
@@ -177,7 +190,7 @@ def demo_drift_f64(n_samples=5_000_000, print_every=500_000):
         m = ma.step(msq)
 
         if n % print_every == (print_every - 1):
-            print(f"  {n+1:>10,d}  {r:>10.4f}  {m:>10.4f}  {abs(r-m):>12.2e}")
+            print(f"  {n + 1:>10,d}  {r:>10.4f}  {m:>10.4f}  {abs(r - m):>12.2e}")
 
     print()
     print("  → Double accumulator: error stays at float32 quantization noise floor.")

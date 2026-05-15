@@ -9,10 +9,10 @@ block size `B` can produce at most `ceil(B / 2)` outputs per call.
 
 The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
-| Stub | When called | Your job |
-|------|-------------|----------|
-| `hbdecim_execute_max_out(state)` | Once at Python `__init__` | Return the output bound |
-| `hbdecim_execute(state, in, n_in, out)` | Every Python call | Fill `out`, return actual count |
+| Stub                                    | When called               | Your job                        |
+| --------------------------------------- | ------------------------- | ------------------------------- |
+| `hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
+| `hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
 
 Implement both:
 
@@ -63,10 +63,10 @@ you need to retain more than one block.
 
 ### When to use `--variable-output`
 
-| Use case | `_max_out` returns | Appropriate? |
-|---|---|---|
-| Decimator, ratio R, block size B | `ceil(B / R)` | Yes |
-| FIFO with fixed capacity C | `C` | Yes |
-| FIR filter, 1:1 rate | unknown at init | No — output size = input size; use auto `steps()` |
-| Integrator / accumulator | 1 per sample | No — use scalar `step()` |
-| Overflow detector, 1:1 rate | unknown at init | No — use scalar method + hand-written `_steps()` |
+| Use case                         | `_max_out` returns | Appropriate?                                      |
+| -------------------------------- | ------------------ | ------------------------------------------------- |
+| Decimator, ratio R, block size B | `ceil(B / R)`      | Yes                                               |
+| FIFO with fixed capacity C       | `C`                | Yes                                               |
+| FIR filter, 1:1 rate             | unknown at init    | No — output size = input size; use auto `steps()` |
+| Integrator / accumulator         | 1 per sample       | No — use scalar `step()`                          |
+| Overflow detector, 1:1 rate      | unknown at init    | No — use scalar method + hand-written `_steps()`  |

@@ -3,7 +3,7 @@
 Run from the project root after `pip install -e .`:
     python3 .steps/04_demo.py
 """
-import cmath
+
 import math
 import numpy as np
 from my_power import PowerEst
@@ -29,7 +29,8 @@ print(f"silence power (expect 0.000): {y.real:.4f}")
 
 # --- steps() on a block ---------------------------------------------------
 est.reset()
-block = np.array([math.sin(2 * math.pi * n / 16) for n in range(128)],
-                 dtype=np.complex64)
+block = np.array(
+    [math.sin(2 * math.pi * n / 16) for n in range(128)], dtype=np.complex64
+)
 out = est.steps(block)
 print(f"steps() final power (expect ~0.500): {out[-1].real:.4f}")

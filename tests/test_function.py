@@ -212,7 +212,9 @@ class TestConfig:
 
 
 class TestCoexistenceWithObjects:
-    def test_objects_and_functions_both_present(self, module_with_objects_and_functions):
+    def test_objects_and_functions_both_present(
+        self, module_with_objects_and_functions
+    ):
         root = module_with_objects_and_functions
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "NcoType" in ext
@@ -268,9 +270,13 @@ class TestFunctionTyped:
     def typed_fn(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "compute_window", "fft",
-                     params=[("n", "size_t"), ("beta", "float")],
-                     return_type="float")
+        function_run(
+            root,
+            "compute_window",
+            "fft",
+            params=[("n", "size_t"), ("beta", "float")],
+            return_type="float",
+        )
         return root
 
     def test_core_c_has_stub(self, typed_fn):
@@ -311,9 +317,13 @@ class TestFunctionTyped:
     def test_complex_param_uses_raw_var(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "mix", "fft",
-                     params=[("z", "float _Complex")],
-                     return_type="float _Complex")
+        function_run(
+            root,
+            "mix",
+            "fft",
+            params=[("z", "float _Complex")],
+            return_type="float _Complex",
+        )
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "z_raw" in ext
         assert '"D"' in ext
@@ -321,18 +331,18 @@ class TestFunctionTyped:
     def test_void_return_no_return_stmt_in_core(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "reset_fft", "fft",
-                     params=[("n", "size_t")],
-                     return_type="void")
+        function_run(
+            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+        )
         text = (root / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
         assert "return (void)" not in text
 
     def test_void_return_py_return_none_in_ext(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "reset_fft", "fft",
-                     params=[("n", "size_t")],
-                     return_type="void")
+        function_run(
+            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+        )
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "Py_RETURN_NONE" in ext
 
@@ -348,16 +358,18 @@ class TestFunctionTyped:
         cfg = load(typed_fn)
         fns = cfg_module_functions(cfg, "fft")
         fn = next(f for f in fns if f["name"] == "compute_window")
-        assert fn["params"] == [{"name": "n", "type": "size_t"},
-                                 {"name": "beta", "type": "float"}]
+        assert fn["params"] == [
+            {"name": "n", "type": "size_t"},
+            {"name": "beta", "type": "float"},
+        ]
         assert fn["return_type"] == "float"
 
     def test_config_no_return_type_for_void(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "reset_fft", "fft",
-                     params=[("n", "size_t")],
-                     return_type="void")
+        function_run(
+            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+        )
         cfg = load(root)
         fns = cfg_module_functions(cfg, "fft")
         fn = next(f for f in fns if f["name"] == "reset_fft")
@@ -377,18 +389,26 @@ class TestFunctionWithArrayParam:
     def arr_fn(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "apply_window", "fft",
-                     params=[("data", "float _Complex[]")],
-                     return_type="void")
+        function_run(
+            root,
+            "apply_window",
+            "fft",
+            params=[("data", "float _Complex[]")],
+            return_type="void",
+        )
         return root
 
     @pytest.fixture()
     def mixed_fn(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        function_run(root, "scale_buffer", "fft",
-                     params=[("gain", "float"), ("buf", "float[]")],
-                     return_type="void")
+        function_run(
+            root,
+            "scale_buffer",
+            "fft",
+            params=[("gain", "float"), ("buf", "float[]")],
+            return_type="void",
+        )
         return root
 
     def test_core_c_has_const_ptr_param(self, arr_fn):
@@ -452,9 +472,7 @@ class TestFunctionWithArrayParam:
 class TestNoStrayPlaceholders:
     def _check(self, root: Path) -> None:
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt"
-            ):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}: {m.group()!r}"

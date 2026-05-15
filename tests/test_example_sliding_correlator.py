@@ -18,32 +18,44 @@ _MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 import pytest
 
 PYTHON = sys.executable
-STEPS = Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "sliding_correlator" / ".steps"
+STEPS = (
+    Path(__file__).parent.parent
+    / "src"
+    / "just_makeit"
+    / "examples"
+    / "sliding_correlator"
+    / ".steps"
+)
 
 
 def _run(cmd, cwd=None, env=None):
-    return subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True, env=env
-    )
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
 
 
 def _require(tool: str) -> None:
     import shutil
+
     if shutil.which(tool) is None:
         pytest.skip(f"{tool} not found")
 
 
 # ── README currency ───────────────────────────────────────────────────────────
 
+
 def test_readme_up_to_date():
     r = _run(
         [PYTHON, "assemble.py", "--check"],
-        cwd=Path(__file__).parent.parent / "src" / "just_makeit" / "examples" / "sliding_correlator",
+        cwd=Path(__file__).parent.parent
+        / "src"
+        / "just_makeit"
+        / "examples"
+        / "sliding_correlator",
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"
 
 
 # ── Integration helpers ───────────────────────────────────────────────────────
+
 
 def _scaffold_plain(tmp_path_factory):
     """Scaffold my_corr, implement step(), build and install."""
@@ -55,10 +67,15 @@ def _scaffold_plain(tmp_path_factory):
 
     r = _run(
         [
-            "just-makeit", "new", "my_corr",
-            "--object", "sliding_correlator",
-            "--state", "ref:float _Complex[16]",
-            "--state", "delay:float _Complex[16]",
+            "just-makeit",
+            "new",
+            "my_corr",
+            "--object",
+            "sliding_correlator",
+            "--state",
+            "ref:float _Complex[16]",
+            "--state",
+            "delay:float _Complex[16]",
         ],
         cwd=root.parent,
     )
@@ -83,10 +100,15 @@ def _scaffold_perf(tmp_path_factory):
 
     r = _run(
         [
-            "just-makeit", "new", "my_corr",
-            "--object", "sliding_correlator",
-            "--state", "ref:float _Complex[16]",
-            "--state", "delay:float _Complex[16]",
+            "just-makeit",
+            "new",
+            "my_corr",
+            "--object",
+            "sliding_correlator",
+            "--state",
+            "ref:float _Complex[16]",
+            "--state",
+            "delay:float _Complex[16]",
         ],
         cwd=root.parent,
     )
@@ -180,6 +202,7 @@ def _approx(got, expected, atol=1e-5):
 
 # ── Plain scaffold tests ──────────────────────────────────────────────────────
 
+
 class TestStepPlain:
     @pytest.fixture(scope="class")
     def installed(self, tmp_path_factory):
@@ -210,6 +233,7 @@ class TestStepPlain:
 
 
 # ── Perf + JM_DEFINE_STEPS tests ─────────────────────────────────────────────
+
 
 class TestStepPerf:
     @pytest.fixture(scope="class")

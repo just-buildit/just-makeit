@@ -38,18 +38,30 @@ def run(root: Path) -> None:
     proj = root / "iqfile"
 
     # 2. Add converter objects
-    jm_object(proj, "cf32_to_q15", "conv",
-               [("scale", "float", "32767.0f")],
-               arg_type="float _Complex", return_type="int32_t")
-    jm_object(proj, "q15_to_cf32", "conv",
-               [("fd", "int32_t", "-1"), ("scale", "float", "32767.0f")],
-               arg_type="void", return_type="float _Complex")
+    jm_object(
+        proj,
+        "cf32_to_q15",
+        "conv",
+        [("scale", "float", "32767.0f")],
+        arg_type="float _Complex",
+        return_type="int32_t",
+    )
+    jm_object(
+        proj,
+        "q15_to_cf32",
+        "conv",
+        [("fd", "int32_t", "-1"), ("scale", "float", "32767.0f")],
+        arg_type="void",
+        return_type="float _Complex",
+    )
 
     # 3. Add properties
-    jm_property(proj, "cf32_to_q15", "samples_written", "conv", "uint32_t",
-                False, field=True)
-    jm_property(proj, "q15_to_cf32", "samples_read", "conv", "uint32_t",
-                False, field=True)
+    jm_property(
+        proj, "cf32_to_q15", "samples_written", "conv", "uint32_t", False, field=True
+    )
+    jm_property(
+        proj, "q15_to_cf32", "samples_read", "conv", "uint32_t", False, field=True
+    )
     jm_property(proj, "q15_to_cf32", "eof", "conv", "int32_t", False)
 
     # 4. Implement C kernels
@@ -59,7 +71,11 @@ def run(root: Path) -> None:
     # 5. CMake configure + build + CTest
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",

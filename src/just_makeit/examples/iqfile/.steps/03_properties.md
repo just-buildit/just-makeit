@@ -5,11 +5,11 @@
 
 Three properties across the two types:
 
-| Object | Property | Kind | Type | Notes |
-|--------|----------|------|------|-------|
-| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `step()` |
-| `Q15ToCf32` | `samples_read` | `--field` | `uint32_t` | incremented by `step()` |
-| `Q15ToCf32` | `eof` | computed | `int32_t` | implement via `read()` return value |
+| Object      | Property          | Kind      | Type       | Notes                               |
+| ----------- | ----------------- | --------- | ---------- | ----------------------------------- |
+| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `step()`             |
+| `Q15ToCf32` | `samples_read`    | `--field` | `uint32_t` | incremented by `step()`             |
+| `Q15ToCf32` | `eof`             | computed  | `int32_t`  | implement via `read()` return value |
 
 **Field-backed** (`--field`): adds `uint32_t samples_written;` to the state
 struct and auto-implements the getter as `return state->samples_written` — no

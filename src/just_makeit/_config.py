@@ -182,14 +182,16 @@ def from_new(
     pytest_: bool = False,
     pytest_benchmark_: bool = False,
 ) -> dict:
-    return {"project": {
-        "name":             name,
-        "version":          version,
-        "build":            build_system,
-        "perf":             "true" if perf else "false",
-        "pytest":           "true" if pytest_ else "false",
-        "pytest_benchmark": "true" if pytest_benchmark_ else "false",
-    }}
+    return {
+        "project": {
+            "name": name,
+            "version": version,
+            "build": build_system,
+            "perf": "true" if perf else "false",
+            "pytest": "true" if pytest_ else "false",
+            "pytest_benchmark": "true" if pytest_benchmark_ else "false",
+        }
+    }
 
 
 def arg_type(cfg: dict, component: str) -> str:
@@ -212,20 +214,23 @@ def add_component(
     mutable_: bool = False,
     init_params_: list[tuple[str, str, str]] = (),
 ) -> dict:
-    rt = (return_type_ if return_type_ is not None
-          else "void" if arg_type_.endswith("[]") else arg_type_)
+    rt = (
+        return_type_
+        if return_type_ is not None
+        else "void"
+        if arg_type_.endswith("[]")
+        else arg_type_
+    )
     entry: dict = {
-        "arg_type":    arg_type_,
+        "arg_type": arg_type_,
         "return_type": rt,
-        "mutable":     "true" if mutable_ else "false",
-        "no_state":    "true" if no_state_ else "false",
-        "no_step":     "true" if no_step_ else "false",
-        "state":       [{"name": n, "type": t, "default": d} for n, t, d in vars_],
+        "mutable": "true" if mutable_ else "false",
+        "no_state": "true" if no_state_ else "false",
+        "no_step": "true" if no_step_ else "false",
+        "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_],
     }
     if array_args_:
-        entry["array_args"] = [
-            {"name": n, "type": dt} for n, dt in array_args_
-        ]
+        entry["array_args"] = [{"name": n, "type": dt} for n, dt in array_args_]
     if init_params_:
         entry["init_params"] = [
             {"name": n, "type": t, "default": d} for n, t, d in init_params_
@@ -313,7 +318,7 @@ def _dump(cfg: dict) -> str:
             if m.get("out_type"):
                 lines.append(f'out_type = "{m["out_type"]}"')
             if m.get("out_divisor") and m["out_divisor"] != 1:
-                lines.append(f'out_divisor = {m["out_divisor"]}')
+                lines.append(f"out_divisor = {m['out_divisor']}")
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")

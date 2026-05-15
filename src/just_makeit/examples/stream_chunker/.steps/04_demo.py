@@ -29,10 +29,10 @@ c = Chunker(chunk_size=CHUNK)
 
 # Irregular bursts that collectively push 281 samples.
 # Max single burst = 180; worst-case output = 3 chunks = 192 samples < 256.
-bursts = [7, 50, 1, 40, 180, 3]      # sum = 281
+bursts = [7, 50, 1, 40, 180, 3]  # sum = 281
 # Expected: floor(281 / 64) = 4 complete chunks (256 samples), 25 buffered.
 
-collected = []   # copies of complete-chunk views
+collected = []  # copies of complete-chunk views
 total_in = 0
 
 for size in bursts:
@@ -41,14 +41,14 @@ for size in bursts:
     # view is a zero-copy slice of the object's internal output buffer.
     # It becomes stale on the next push() call — copy immediately.
     if len(view):
-        assert len(view) % CHUNK == 0, \
+        assert len(view) % CHUNK == 0, (
             f"output length {len(view)} is not a multiple of chunk_size {CHUNK}"
+        )
         collected.append(view.copy())
     total_in += size
 
 total_out = sum(len(v) for v in collected)
-assert total_out == 4 * CHUNK, \
-    f"expected {4 * CHUNK} output samples, got {total_out}"
+assert total_out == 4 * CHUNK, f"expected {4 * CHUNK} output samples, got {total_out}"
 
 # Verify that the first burst (7 samples) produced no output
 assert len(collected[0]) >= CHUNK, "first non-empty view should be ≥ one chunk"
@@ -60,7 +60,9 @@ assert len(view) == CHUNK, "after reset: one full chunk in → one chunk out"
 
 print("stream_chunker demo: PASSED")
 print(f"  fed {total_in} samples in {len(bursts)} irregular bursts")
-print(f"  received {total_out} output samples ({total_out // CHUNK} complete "
-      f"{CHUNK}-sample chunks)")
+print(
+    f"  received {total_out} output samples ({total_out // CHUNK} complete "
+    f"{CHUNK}-sample chunks)"
+)
 print(f"  {total_in - total_out} samples remain buffered (flushed on reset)")
 print(f"  {len(collected)} non-empty push() calls (some bursts produced 0 output)")

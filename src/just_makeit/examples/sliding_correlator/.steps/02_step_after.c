@@ -1,5 +1,6 @@
 // after
-static inline float complex sliding_correlator_step(sliding_correlator_state_t *state, float complex x) {
+static inline float complex sliding_correlator_step(sliding_correlator_state_t *state,
+                                                    float complex               x) {
     memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));
     state->delay[0] = x;
 

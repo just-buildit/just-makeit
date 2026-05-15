@@ -31,8 +31,8 @@ Replace `sliding_correlator_steps` in `native/src/sliding_correlator/sliding_cor
 chunked fill, SIMD dispatch (AVX-512 or AVX2), scalar tail.  The three
 constants keep each concern separate:
 
-| constant      | concern      | meaning                                             |
-|---------------|--------------|-----------------------------------------------------|
-| `CORR_LENGTH` | algorithm    | history depth (`delay[]` entries)                   |
-| `CORR_BATCH`  | parallelism  | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`)  |
-| `CORR_CHUNK`  | tuning       | samples per scratch-buffer fill                     |
+| constant      | concern     | meaning                                            |
+| ------------- | ----------- | -------------------------------------------------- |
+| `CORR_LENGTH` | algorithm   | history depth (`delay[]` entries)                  |
+| `CORR_BATCH`  | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
+| `CORR_CHUNK`  | tuning      | samples per scratch-buffer fill                    |

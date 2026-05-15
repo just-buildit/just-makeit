@@ -176,7 +176,7 @@ def run(root: Path) -> None:
     # ── new ──────────────────────────────────────────────────────────────────
     new_flags: list[str] = []
     if bs == "make":
-        new_flags.append(f"--build-system make")
+        new_flags.append("--build-system make")
     if perf:
         new_flags.append(_bool_flag("--perf"))
     if C.is_pytest(cfg):
@@ -246,9 +246,7 @@ def run(root: Path) -> None:
     for mod in mods:
         for fn in C.module_functions(cfg, mod):
             flags = _function_flags(fn, mod)
-            fn_lines.append(
-                _render_cmd(["just-makeit", "function", fn["name"]], flags)
-            )
+            fn_lines.append(_render_cmd(["just-makeit", "function", fn["name"]], flags))
     if fn_lines:
         lines += fn_lines
         lines.append("\n")

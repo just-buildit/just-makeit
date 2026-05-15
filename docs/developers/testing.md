@@ -94,14 +94,14 @@ ______________________________________________________________________
 
 ## What is NOT automatically tested
 
-| Gap | Risk | Mitigation |
-|---|---|---|
-| New flag added to CLI but not to `_config.py` | Flag silently dropped on `jm script` replay | Add a round-trip test |
-| New flag added but Makefile/template content not asserted | Wrong content ships | Add a content assertion in the relevant `test_*.py` |
-| `make test` runner choice | Shipped wrong once (v0.11.0) | `TestMakeTestRunner` in `test_new.py` now covers both Makefile variants and both modes |
-| Help text completeness | New flags invisible in `--help` | `test_help_mentions_flag` in `test_cli.py` (parametrized, covers every flag) |
-| Windows-specific template paths | Only exercised in Docker CI | Docker Windows job (`docker.yml`) |
-| `--impl` / `--replace` | Intentionally not stored in TOML | Tested in `TestImplCLI` in `test_cli.py` |
+| Gap                                                       | Risk                                        | Mitigation                                                                             |
+| --------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| New flag added to CLI but not to `_config.py`             | Flag silently dropped on `jm script` replay | Add a round-trip test                                                                  |
+| New flag added but Makefile/template content not asserted | Wrong content ships                         | Add a content assertion in the relevant `test_*.py`                                    |
+| `make test` runner choice                                 | Shipped wrong once (v0.11.0)                | `TestMakeTestRunner` in `test_new.py` now covers both Makefile variants and both modes |
+| Help text completeness                                    | New flags invisible in `--help`             | `test_help_mentions_flag` in `test_cli.py` (parametrized, covers every flag)           |
+| Windows-specific template paths                           | Only exercised in Docker CI                 | Docker Windows job (`docker.yml`)                                                      |
+| `--impl` / `--replace`                                    | Intentionally not stored in TOML            | Tested in `TestImplCLI` in `test_cli.py`                                               |
 
 ______________________________________________________________________
 
@@ -110,25 +110,25 @@ ______________________________________________________________________
 ### Adding a new flag
 
 1. Wire it into `_config.py` (`from_new` / `add_component` / save/load).
-2. Wire it into `_script.py` so it re-emits.
-3. Add a content assertion in the relevant `test_*.py` (what does the
+1. Wire it into `_script.py` so it re-emits.
+1. Add a content assertion in the relevant `test_*.py` (what does the
    generated file actually contain?).
-4. Add a round-trip test in `test_toml_roundtrip.py`.
-5. Add a CLI test in `test_cli.py` (flag accepted, stored, error on bad value).
+1. Add a round-trip test in `test_toml_roundtrip.py`.
+1. Add a CLI test in `test_cli.py` (flag accepted, stored, error on bad value).
 
 ### Adding a new example
 
 1. Create `src/just_makeit/examples/<name>/assemble.py` and `README.md`.
-2. Create `src/just_makeit/examples/<name>/test.py` with `run(root: Path)`.
+1. Create `src/just_makeit/examples/<name>/test.py` with `run(root: Path)`.
    The parametrized runner in `test_examples.py` picks it up automatically.
-3. `test_all_examples_have_test_py` will fail until `test.py` exists — this
+1. `test_all_examples_have_test_py` will fail until `test.py` exists — this
    is intentional.
 
 ### Changing a template
 
 1. Run the full suite (`uv run pytest tests/ -v`).
-2. The `test_no_unreplaced_placeholders` test catches stray `<<…>>`.
-3. Add or update content assertions for any new/changed output strings.
+1. The `test_no_unreplaced_placeholders` test catches stray `<<…>>`.
+1. Add or update content assertions for any new/changed output strings.
 
 ### Changing the `make test` target
 

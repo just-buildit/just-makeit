@@ -21,6 +21,7 @@ _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def standalone_void(tmp_path):
     """Standalone object with float[] arg and void return (default)."""
@@ -50,6 +51,7 @@ def in_module_void(tmp_path):
 
 # ── Core header ───────────────────────────────────────────────────────────────
 
+
 class TestCoreHeader:
     def test_step_takes_pointer_and_len(self, standalone_void):
         h = (standalone_void / "native/inc/proc/proc_core.h").read_text()
@@ -73,6 +75,7 @@ class TestCoreHeader:
 
 
 # ── Ext.c (Python bindings) ───────────────────────────────────────────────────
+
 
 class TestExtC:
     def _ext(self, root, comp):
@@ -109,6 +112,7 @@ class TestExtC:
 
 # ── Python test file ──────────────────────────────────────────────────────────
 
+
 class TestPytestFile:
     def test_uses_np_array_as_test_val(self, standalone_void):
         t = (standalone_void / "src/dsp/tests/test_proc.py").read_text()
@@ -120,6 +124,7 @@ class TestPytestFile:
 
 
 # ── Stubs (.pyi) ─────────────────────────────────────────────────────────────
+
 
 class TestPyi:
     def test_step_arg_is_ndarray(self, standalone_void):
@@ -136,6 +141,7 @@ class TestPyi:
 
 
 # ── No stray placeholders ────────────────────────────────────────────────────
+
 
 class TestNoPlaceholders:
     def _check(self, root):
@@ -156,13 +162,16 @@ class TestNoPlaceholders:
 
 # ── Config round-trip ────────────────────────────────────────────────────────
 
+
 class TestConfig:
     def test_arg_type_recorded(self, standalone_void):
         from just_makeit._config import load, arg_type as cfg_arg_type
+
         cfg = load(standalone_void)
         assert cfg_arg_type(cfg, "proc") == "float[]"
 
     def test_return_type_recorded(self, standalone_scalar_return):
         from just_makeit._config import load, return_type as cfg_return_type
+
         cfg = load(standalone_scalar_return)
         assert cfg_return_type(cfg, "peak") == "float"

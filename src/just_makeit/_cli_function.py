@@ -44,8 +44,7 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --param '{val}' must be name:type",
-                      file=sys.stderr)
+                print(f"error: --param '{val}' must be name:type", file=sys.stderr)
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
             if T.is_array_param_type(ptype):
@@ -64,7 +63,7 @@ def run(args: list[str]) -> None:
                     f"error: --param type '{ptype}' is not a supported type.\n"
                     f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
                     f"Array syntax: name:type[]"
-                    f"  e.g. ctrl:\"float _Complex[]\"",
+                    f'  e.g. ctrl:"float _Complex[]"',
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -98,6 +97,7 @@ def run(args: list[str]) -> None:
                 print("error: --replace requires old::new", file=sys.stderr)
                 sys.exit(1)
             from . import _impl as _I
+
             replacements_f.append(_I.parse_replace(remaining[i]))
             i += 1
         else:
@@ -106,8 +106,7 @@ def run(args: list[str]) -> None:
 
     if module is None:
         print(
-            "error: 'function' requires --module"
-            " (functions must belong to a module).",
+            "error: 'function' requires --module (functions must belong to a module).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -115,7 +114,14 @@ def run(args: list[str]) -> None:
     impl_body_f: str | None = None
     if impl_spec_f is not None:
         from . import _impl as _I
+
         impl_body_f = _I.load_impl(impl_spec_f, replacements_f)
-    _function.run(Path.cwd(), fn_name, module, doc,
-                  params=fn_params, return_type=fn_return_type,
-                  impl_body=impl_body_f)
+    _function.run(
+        Path.cwd(),
+        fn_name,
+        module,
+        doc,
+        params=fn_params,
+        return_type=fn_return_type,
+        impl_body=impl_body_f,
+    )

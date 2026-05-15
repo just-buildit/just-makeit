@@ -22,7 +22,7 @@ just-makeit example stream_chunker
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -46,12 +46,12 @@ just-makeit method chunker push \
 
 `--variable-output` generates two C stubs in `chunker_core.c`:
 
-| Stub | Called by ext | Your job |
-|------|---------------|----------|
-| `chunker_push_max_out(state)` | Once at `__init__` | Return max output samples possible |
-| `chunker_push(state, in, n_in, out)` | Every Python call | Fill `out[]`, return actual count |
+| Stub                                 | Called by ext      | Your job                           |
+| ------------------------------------ | ------------------ | ---------------------------------- |
+| `chunker_push_max_out(state)`        | Once at `__init__` | Return max output samples possible |
+| `chunker_push(state, in, n_in, out)` | Every Python call  | Fill `out[]`, return actual count  |
 
----
+______________________________________________________________________
 
 ## 2. Implement
 
@@ -116,7 +116,7 @@ The patch script automates this replacement:
 python3 .steps/02_patch.py
 ```
 
----
+______________________________________________________________________
 
 ## 3. Build and test
 
@@ -126,7 +126,7 @@ cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
 ```
 
----
+______________________________________________________________________
 
 ## 4. Use from Python
 
@@ -226,7 +226,7 @@ max_safe_push = 4 * chunk_size - current_n_buf
 
 For larger inputs, split into ≤192-sample slices before calling `push()`.
 
----
+______________________________________________________________________
 
 ## 5. reset()
 

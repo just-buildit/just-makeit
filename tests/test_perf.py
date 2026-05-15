@@ -29,6 +29,7 @@ def plain_project(tmp_path):
 
 # ── File presence ─────────────────────────────────────────────────────────────
 
+
 class TestPerfFilePresence:
     def test_jm_perf_h_generated(self, perf_project):
         assert (perf_project / "native" / "inc" / "jm_perf.h").exists()
@@ -38,6 +39,7 @@ class TestPerfFilePresence:
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
+
 
 class TestPerfConfig:
     def test_perf_recorded_in_toml(self, perf_project):
@@ -49,42 +51,62 @@ class TestPerfConfig:
 
 # ── Generated C content ───────────────────────────────────────────────────────
 
+
 class TestPerfCoreHeader:
     def test_includes_jm_perf_h(self, perf_project):
-        h = (perf_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (perf_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert '#include "jm_perf.h"' in h
 
     def test_step_uses_jm_qualifiers(self, perf_project):
-        h = (perf_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (perf_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_FORCEINLINE JM_HOT" in h
 
     def test_plain_uses_static_inline(self, plain_project):
-        h = (plain_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (plain_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "static inline" in h
         assert "JM_FORCEINLINE" not in h
 
     def test_plain_does_not_include_jm_perf_h(self, plain_project):
-        h = (plain_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (plain_project / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "jm_perf.h" not in h
 
 
 class TestPerfCoreC:
     def test_omp_simd_hint_present(self, perf_project):
-        c = (perf_project / "native" / "src" / "mycomp" / "mycomp_core.c").read_text(encoding="utf-8")
+        c = (perf_project / "native" / "src" / "mycomp" / "mycomp_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "/* #pragma omp simd */" in c
 
     def test_omp_simd_hint_absent_without_flag(self, plain_project):
-        c = (plain_project / "native" / "src" / "mycomp" / "mycomp_core.c").read_text(encoding="utf-8")
+        c = (plain_project / "native" / "src" / "mycomp" / "mycomp_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "/* #pragma omp simd */" not in c
 
 
 # ── jm_perf.h content ─────────────────────────────────────────────────────────
 
+
 class TestJmPerfHContent:
     def test_has_all_public_macros(self, perf_project):
         h = (perf_project / "native" / "inc" / "jm_perf.h").read_text(encoding="utf-8")
-        for macro in ("JM_LIKELY", "JM_UNLIKELY", "JM_RESTRICT", "JM_FORCEINLINE",
-                      "JM_ALIGNED", "JM_HOT"):
+        for macro in (
+            "JM_LIKELY",
+            "JM_UNLIKELY",
+            "JM_RESTRICT",
+            "JM_FORCEINLINE",
+            "JM_ALIGNED",
+            "JM_HOT",
+        ):
             assert macro in h, f"{macro} missing from jm_perf.h"
 
     def test_has_three_compiler_paths(self, perf_project):
@@ -104,6 +126,7 @@ class TestJmPerfHContent:
 
 # ── CMake SIMD option (always present) ───────────────────────────────────────
 
+
 class TestSimdCmakeOption:
     def test_simd_option_in_plain_cmake(self, plain_project):
         cmake = (plain_project / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -120,15 +143,20 @@ class TestSimdCmakeOption:
 
 # ── Inheritance: init on a perf project picks up perf automatically ───────────
 
+
 class TestPerfInheritedByInit:
     def test_second_component_gets_jm_qualifiers(self, perf_project):
         init_run(perf_project, "engine", [("rate", "double", "1.0")])
-        h = (perf_project / "native" / "inc" / "engine" / "engine_core.h").read_text(encoding="utf-8")
+        h = (perf_project / "native" / "inc" / "engine" / "engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_FORCEINLINE JM_HOT" in h
 
     def test_second_component_includes_jm_perf_h(self, perf_project):
         init_run(perf_project, "engine", [("rate", "double", "1.0")])
-        h = (perf_project / "native" / "inc" / "engine" / "engine_core.h").read_text(encoding="utf-8")
+        h = (perf_project / "native" / "inc" / "engine" / "engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert '#include "jm_perf.h"' in h
 
     def test_jm_perf_h_not_duplicated(self, perf_project):
@@ -138,6 +166,7 @@ class TestPerfInheritedByInit:
 
 
 # ── Enabling perf via init on a plain project ─────────────────────────────────
+
 
 class TestPerfEnabledViaInit:
     def test_init_perf_writes_jm_perf_h(self, plain_project):
@@ -150,11 +179,14 @@ class TestPerfEnabledViaInit:
 
     def test_init_perf_component_gets_qualifiers(self, plain_project):
         init_run(plain_project, "engine", perf=True)
-        h = (plain_project / "native" / "inc" / "engine" / "engine_core.h").read_text(encoding="utf-8")
+        h = (plain_project / "native" / "inc" / "engine" / "engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_FORCEINLINE JM_HOT" in h
 
 
 # ── `just-makeit perf` upgrade command ───────────────────────────────────────
+
 
 class TestPerfUpgrade:
     @pytest.fixture()
@@ -171,11 +203,15 @@ class TestPerfUpgrade:
         assert is_perf(load(upgraded))
 
     def test_header_includes_jm_perf_h(self, upgraded):
-        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert '#include "jm_perf.h"' in h
 
     def test_step_qualifier_upgraded(self, upgraded):
-        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_FORCEINLINE JM_HOT" in h
         assert "static inline" not in h
 
@@ -183,8 +219,10 @@ class TestPerfUpgrade:
         """User implementation survives the upgrade."""
         core = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
         text = core.read_text(encoding="utf-8")
-        text = text.replace("(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
-                            "return x * 2.0f;")
+        text = text.replace(
+            "(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
+            "return x * 2.0f;",
+        )
         core.write_text(text, encoding="utf-8")
         # Re-run perf (idempotent) — body must survive
         perf_run(upgraded)
@@ -192,9 +230,13 @@ class TestPerfUpgrade:
 
     def test_idempotent(self, upgraded):
         """Running perf_run twice produces the same result."""
-        h_before = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h_before = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         perf_run(upgraded)
-        h_after = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(encoding="utf-8")
+        h_after = (upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert h_before == h_after
 
     def test_multi_component(self, tmp_path):
@@ -203,7 +245,9 @@ class TestPerfUpgrade:
         init_run(dest, "beta")
         perf_run(dest)
         for comp in ("alpha", "beta"):
-            h = (dest / "native" / "inc" / comp / f"{comp}_core.h").read_text(encoding="utf-8")
+            h = (dest / "native" / "inc" / comp / f"{comp}_core.h").read_text(
+                encoding="utf-8"
+            )
             assert "JM_FORCEINLINE JM_HOT" in h
 
     def test_already_perf_is_noop(self, tmp_path, capsys):
@@ -215,6 +259,7 @@ class TestPerfUpgrade:
 
 
 # ── jm_simd.h presence ───────────────────────────────────────────────────────
+
 
 class TestJmSimdHPresence:
     def test_generated_with_perf_flag(self, perf_project):
@@ -238,10 +283,13 @@ class TestJmSimdHPresence:
 
 # ── jm_simd.h content ────────────────────────────────────────────────────────
 
+
 class TestJmSimdHContent:
     @pytest.fixture()
     def simd_h(self, perf_project):
-        return (perf_project / "native" / "inc" / "jm_simd.h").read_text(encoding="utf-8")
+        return (perf_project / "native" / "inc" / "jm_simd.h").read_text(
+            encoding="utf-8"
+        )
 
     def test_has_simd_width_constants(self, simd_h):
         assert "JM_SIMD_WIDTH_F32" in simd_h
@@ -253,21 +301,31 @@ class TestJmSimdHContent:
         assert "JM_VEC_F64" in simd_h
 
     def test_has_zero_splat_load_store(self, simd_h):
-        for macro in ("JM_ZERO_F32", "JM_ZERO_F64",
-                      "JM_SPLAT_F32", "JM_SPLAT_F64",
-                      "JM_LOAD_F32", "JM_LOAD_F64",
-                      "JM_STORE_F32", "JM_STORE_F64"):
+        for macro in (
+            "JM_ZERO_F32",
+            "JM_ZERO_F64",
+            "JM_SPLAT_F32",
+            "JM_SPLAT_F64",
+            "JM_LOAD_F32",
+            "JM_LOAD_F64",
+            "JM_STORE_F32",
+            "JM_STORE_F64",
+        ):
             assert macro in simd_h, f"{macro} missing"
 
     def test_has_arithmetic_macros(self, simd_h):
-        for macro in ("JM_ADD_F32", "JM_ADD_F64",
-                      "JM_MUL_F32", "JM_MUL_F64",
-                      "JM_FMA_F32", "JM_FMA_F64"):
+        for macro in (
+            "JM_ADD_F32",
+            "JM_ADD_F64",
+            "JM_MUL_F32",
+            "JM_MUL_F64",
+            "JM_FMA_F32",
+            "JM_FMA_F64",
+        ):
             assert macro in simd_h, f"{macro} missing"
 
     def test_has_mac_and_hsum(self, simd_h):
-        for macro in ("JM_MAC_F32", "JM_MAC_F64",
-                      "JM_HSUM_F32", "JM_HSUM_F64"):
+        for macro in ("JM_MAC_F32", "JM_MAC_F64", "JM_HSUM_F32", "JM_HSUM_F64"):
             assert macro in simd_h, f"{macro} missing"
 
     def test_has_dot_product_helpers(self, simd_h):
@@ -285,10 +343,13 @@ class TestJmSimdHContent:
 
 # ── jm_perf.h includes jm_simd.h and new hint macros ─────────────────────────
 
+
 class TestJmPerfHUpdated:
     @pytest.fixture()
     def perf_h(self, perf_project):
-        return (perf_project / "native" / "inc" / "jm_perf.h").read_text(encoding="utf-8")
+        return (perf_project / "native" / "inc" / "jm_perf.h").read_text(
+            encoding="utf-8"
+        )
 
     def test_includes_jm_simd_h(self, perf_h):
         assert '#include "jm_simd.h"' in perf_h

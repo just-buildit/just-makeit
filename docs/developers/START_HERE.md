@@ -19,6 +19,7 @@ and a CMake OBJECT library that compiles once and links into both the Python
 `.so` and the combined C shared library.
 
 The only thing that varies is the Python packaging layer:
+
 - **Standalone** (`object <name>`) — its own `.so`, imported as `from pkg import Name`
 - **In-module** (`object <name> --module mod`) — shares a `.so` subpackage, imported as `from pkg.mod import Name`
 
@@ -112,6 +113,7 @@ The constants are well-named (`COMPONENT_CORE_H`, `CMAKE_LISTS_COMPONENT`,
 ### Config (`_config.py` + `just-makeit.toml`)
 
 `just-makeit.toml` is the source of truth for scaffolded state.  It records:
+
 - `[project]` — name, version, build system, perf flag
 - `[<comp>]` — state vars, arg/return types, for each standalone object
 - `[module.<name>]` — objects list for each module
@@ -145,21 +147,21 @@ ______________________________________________________________________
 ## Adding a new template / feature
 
 1. Add or edit the template constant in `_templates.py`.
-2. Update the context builder if new placeholder keys are needed.
-3. Wire the new file into the relevant `run()` function (`_new.py`, `_object.py`, `_init.py`).
-4. Add tests in `tests/test_new.py` or `tests/test_init.py`.
-5. Update `docs/commands.md` and any relevant workflow docs.
+1. Update the context builder if new placeholder keys are needed.
+1. Wire the new file into the relevant `run()` function (`_new.py`, `_object.py`, `_init.py`).
+1. Add tests in `tests/test_new.py` or `tests/test_init.py`.
+1. Update `docs/commands.md` and any relevant workflow docs.
 
 ______________________________________________________________________
 
 ## CI overview
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `ci.yml` | push to `main`, PRs | `pytest` on Ubuntu + macOS × Python 3.11–3.14 |
-| `release.yml` | push of `v*` tag | Same tests → build wheel → publish to PyPI |
+| Workflow       | Trigger                | What it does                                                                                                              |
+| -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14                                                                             |
+| `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                |
 | `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification |
-| `docs.yml` | push to `main` | Builds MkDocs site and deploys to GitHub Pages |
+| `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                            |
 
 **CI must be green on `main` before tagging a release.**
 

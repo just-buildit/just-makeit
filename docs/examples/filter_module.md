@@ -5,20 +5,20 @@ share a single Python extension module — one `.so`, one subpackage import.
 
 **Source:** `examples/filter_module/`
 
----
+______________________________________________________________________
 
 ## What it demonstrates
 
-| Feature | Where |
-|---------|-------|
-| `just-makeit module` | Step 2 — scaffold an empty module slot |
-| `just-makeit object` | Step 3 — add `Fir` and `Biquad` to the module |
-| Module regeneration | Each `object` call fully rewrites `filter_ext.c`, CMakeLists, and `__init__.py` |
-| Single-import subpackage | `from my_filters.filter import Fir, Biquad` |
-| `CHECK` macro C tests | Both objects get failure-counting C tests (no silent assert) |
-| `-lm` on test/bench | Auto-linked; math functions work without manual CMake edits |
+| Feature                  | Where                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `just-makeit module`     | Step 2 — scaffold an empty module slot                                          |
+| `just-makeit object`     | Step 3 — add `Fir` and `Biquad` to the module                                   |
+| Module regeneration      | Each `object` call fully rewrites `filter_ext.c`, CMakeLists, and `__init__.py` |
+| Single-import subpackage | `from my_filters.filter import Fir, Biquad`                                     |
+| `CHECK` macro C tests    | Both objects get failure-counting C tests (no silent assert)                    |
+| `-lm` on test/bench      | Auto-linked; math functions work without manual CMake edits                     |
 
----
+______________________________________________________________________
 
 ## Key workflow
 
@@ -63,7 +63,7 @@ just-makeit object iir --module filter --state "sos:float[20]" --state "zi:float
 `filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are regenerated from
 scratch.  `Fir` and `Biquad` are untouched.
 
----
+______________________________________________________________________
 
 ## See also
 

@@ -28,9 +28,13 @@ def standalone(tmp_path):
 def in_module(tmp_path):
     root = tmp_path / "dsp"
     new_run("dsp", root, modules=["filter"])
-    object_run(root, "hbdecim", "filter",
-               state_vars=[("factor", "int", "2")],
-               array_args=[("h", "float32")])
+    object_run(
+        root,
+        "hbdecim",
+        "filter",
+        state_vars=[("factor", "int", "2")],
+        array_args=[("h", "float32")],
+    )
     return root
 
 
@@ -84,7 +88,9 @@ class TestArrayArgCoreH:
         assert "const float *h, size_t h_len" in h
 
     def test_create_params_array_before_scalar(self, in_module):
-        h = (in_module / "native/inc/hbdecim/hbdecim_core.h").read_text(encoding="utf-8")
+        h = (in_module / "native/inc/hbdecim/hbdecim_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float *h, size_t h_len, int factor" in h
 
     def test_create_param_docs(self, standalone):
@@ -106,13 +112,14 @@ class TestArrayArgConfig:
     def test_legacy_dtype_key_still_loads(self, tmp_path):
         """TOML written with the old 'dtype' key must still load correctly."""
         from just_makeit._config import FILENAME
+
         root = tmp_path / "dsp"
         root.mkdir()
         (root / FILENAME).write_text(
             '[project]\nname = "dsp"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\n'
             'pytest = "false"\npytest_benchmark = "false"\n\n'
-            "[fir]\narg_type = \"float _Complex\"\nreturn_type = \"float _Complex\"\n"
+            '[fir]\narg_type = "float _Complex"\nreturn_type = "float _Complex"\n'
             'mutable = "false"\nno_state = "false"\nno_step = "false"\n\n'
             '[[fir.array_args]]\nname = "h"\ndtype = "float32"\n',
             encoding="utf-8",
@@ -133,9 +140,12 @@ class TestMultipleArrayArgs:
     def dual(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root)
-        init_run(root, "resamp",
-                 state_vars=[("rate", "double", "1.0")],
-                 array_args=[("h", "float32"), ("g", "float64")])
+        init_run(
+            root,
+            "resamp",
+            state_vars=[("rate", "double", "1.0")],
+            array_args=[("h", "float32"), ("g", "float64")],
+        )
         return root
 
     def test_both_obj_locals(self, dual):
@@ -163,9 +173,7 @@ class TestMultipleArrayArgs:
     def test_create_params_order(self, dual):
         h = (dual / "native/inc/resamp/resamp_core.h").read_text(encoding="utf-8")
         assert (
-            "const float *h, size_t h_len,"
-            " const double *g, size_t g_len,"
-            " double rate"
+            "const float *h, size_t h_len, const double *g, size_t g_len, double rate"
         ) in h
 
     def test_config_both_recorded(self, dual):
@@ -177,18 +185,14 @@ class TestMultipleArrayArgs:
 class TestArrayArgNoPlaceholders:
     def test_no_stray_placeholders_standalone(self, standalone):
         for path in standalone.rglob("*"):
-            if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt"
-            ):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
 
     def test_no_stray_placeholders_in_module(self, in_module):
         for path in in_module.rglob("*"):
-            if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt"
-            ):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"

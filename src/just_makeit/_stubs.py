@@ -19,6 +19,7 @@ All class docstrings use numpy-style format with ``Parameters`` and
 ``Examples`` sections.  The ``Examples`` section contains runnable
 doctests:  ``python -m doctest -v src/<pkg>/<module>/<module>.pyi``
 """
+
 import re as _re
 
 from . import _config as C
@@ -26,37 +27,37 @@ from . import _config as C
 # ── annotation maps ──────────────────────────────────────────────────────────
 
 _CTYPE_TO_PY: dict[str, str] = {
-    "float":          "float",
-    "double":         "float",
+    "float": "float",
+    "double": "float",
     "float _Complex": "complex",
-    "double _Complex":"complex",
-    "int":            "int",
-    "int8_t":         "int",
-    "int16_t":        "int",
-    "int32_t":        "int",
-    "int64_t":        "int",
-    "uint8_t":        "int",
-    "uint16_t":       "int",
-    "uint32_t":       "int",
-    "uint64_t":       "int",
-    "size_t":         "int",
+    "double _Complex": "complex",
+    "int": "int",
+    "int8_t": "int",
+    "int16_t": "int",
+    "int32_t": "int",
+    "int64_t": "int",
+    "uint8_t": "int",
+    "uint16_t": "int",
+    "uint32_t": "int",
+    "uint64_t": "int",
+    "size_t": "int",
 }
 
 _CTYPE_TO_NP: dict[str, str] = {
-    "float":          "np.float32",
-    "double":         "np.float64",
+    "float": "np.float32",
+    "double": "np.float64",
     "float _Complex": "np.complex64",
-    "double _Complex":"np.complex128",
-    "int":            "np.int32",
-    "int8_t":         "np.int8",
-    "int16_t":        "np.int16",
-    "int32_t":        "np.int32",
-    "int64_t":        "np.int64",
-    "uint8_t":        "np.uint8",
-    "uint16_t":       "np.uint16",
-    "uint32_t":       "np.uint32",
-    "uint64_t":       "np.uint64",
-    "size_t":         "np.uintp",
+    "double _Complex": "np.complex128",
+    "int": "np.int32",
+    "int8_t": "np.int8",
+    "int16_t": "np.int16",
+    "int32_t": "np.int32",
+    "int64_t": "np.int64",
+    "uint8_t": "np.uint8",
+    "uint16_t": "np.uint16",
+    "uint32_t": "np.uint32",
+    "uint64_t": "np.uint64",
+    "size_t": "np.uintp",
 }
 
 
@@ -78,11 +79,12 @@ def _np(ctype: str) -> str:
 
 # ── per-object class stub ─────────────────────────────────────────────────────
 
+
 def _title(name: str) -> str:
     return "".join(w.title() for w in name.split("_"))
 
 
-_ARRAY_RE = _re.compile(r'^([\w\s_]+)\[(\d+)\]$')
+_ARRAY_RE = _re.compile(r"^([\w\s_]+)\[(\d+)\]$")
 
 
 def _py_default_stub(ctype: str, default: str) -> str:
@@ -90,8 +92,10 @@ def _py_default_stub(ctype: str, default: str) -> str:
     if ctype not in _CTYPE_TO_PY:
         return "..."
     kind_map = {
-        "float": "float", "double": "float",
-        "float _Complex": "complex", "double _Complex": "complex",
+        "float": "float",
+        "double": "float",
+        "float _Complex": "complex",
+        "double _Complex": "complex",
     }
     kind = kind_map.get(ctype, "int")
     if kind == "float":
@@ -108,12 +112,14 @@ def _doctest_out(ctype: str, default: str) -> str | None:
     """Expected repr from a getter call, or None if not safe for doctests."""
     m = _ARRAY_RE.match(ctype.strip())
     if m:
-        return None       # array fields: no scalar getter
+        return None  # array fields: no scalar getter
     if ctype not in _CTYPE_TO_PY:
         return None
     kind_map = {
-        "float": "float", "double": "float",
-        "float _Complex": "complex", "double _Complex": "complex",
+        "float": "float",
+        "double": "float",
+        "float _Complex": "complex",
+        "double _Complex": "complex",
     }
     kind = kind_map.get(ctype, "int")
     if kind == "int":
@@ -202,14 +208,20 @@ def _build_class_docstring(
         first_name, first_out = scalar_getters[0]
         first_ct = next(ct for n, ct, _ in state_vars if n == first_name)
         kind_map = {
-            "float": "float", "double": "float",
-            "float _Complex": "complex", "double _Complex": "complex",
+            "float": "float",
+            "double": "float",
+            "float _Complex": "complex",
+            "double _Complex": "complex",
         }
         kind = kind_map.get(first_ct, "int")
         set_val = (
-            "0" if (kind == "int" and first_out != "0") else
-            "42" if kind == "int" else
-            "0.0" if first_out != "0.0" else "1.0"
+            "0"
+            if (kind == "int" and first_out != "0")
+            else "42"
+            if kind == "int"
+            else "0.0"
+            if first_out != "0.0"
+            else "1.0"
         )
         ex += [
             "",
@@ -228,45 +240,49 @@ def _build_class_docstring(
 
 
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
-    Component    = _title(obj)
-    state_vars   = C.state_vars(cfg, obj)
-    arg_type     = C.arg_type(cfg, obj)
-    return_type  = C.return_type(cfg, obj)
-    obj_methods  = C.methods(cfg, obj)
-    obj_props    = C.properties(cfg, obj)
-    state_names  = {n for n, _, _ in state_vars}
-    ip           = C.init_params(cfg, obj)
-    no_step      = C.is_no_step(cfg, obj)
-    no_state     = C.is_no_state(cfg, obj)
+    Component = _title(obj)
+    state_vars = C.state_vars(cfg, obj)
+    arg_type = C.arg_type(cfg, obj)
+    return_type = C.return_type(cfg, obj)
+    obj_methods = C.methods(cfg, obj)
+    obj_props = C.properties(cfg, obj)
+    state_names = {n for n, _, _ in state_vars}
+    ip = C.init_params(cfg, obj)
+    no_step = C.is_no_step(cfg, obj)
+    no_state = C.is_no_state(cfg, obj)
 
     # Constructor arg string for doctest
     scalar_vars = [
-        (n, ct, dflt) for n, ct, dflt in state_vars
-        if not _ARRAY_RE.match(ct.strip())
+        (n, ct, dflt) for n, ct, dflt in state_vars if not _ARRAY_RE.match(ct.strip())
     ]
-    py_create_args = ", ".join(
-        _py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars
-    ) if (scalar_vars and not no_state) else (
-        ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in ip) if ip else ""
+    py_create_args = (
+        ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars)
+        if (scalar_vars and not no_state)
+        else (", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in ip) if ip else "")
     )
 
     import_line = (
-        f"from {pkg}.{module} import {Component}" if pkg and module else
-        f"from {pkg} import {Component}" if pkg else
-        f"from ... import {Component}"
+        f"from {pkg}.{module} import {Component}"
+        if pkg and module
+        else f"from {pkg} import {Component}"
+        if pkg
+        else f"from ... import {Component}"
     )
 
     # Class docstring
     doc_lines = _build_class_docstring(
-        Component, state_vars, no_state, list(ip), import_line, py_create_args,
+        Component,
+        state_vars,
+        no_state,
+        list(ip),
+        import_line,
+        py_create_args,
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
 
     # __init__
     if state_vars and not no_state:
-        init_params_str = ", ".join(
-            f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars
-        )
+        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif ip:
         init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in ip)
@@ -330,12 +346,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # extra methods
     for m in obj_methods:
-        m_name   = m["name"]
-        m_ret    = m.get("return_type", "void")
+        m_name = m["name"]
+        m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
-        m_arg    = m.get("arg_type", "void")
-        m_var    = m.get("variable_output", False)
-        m_multi  = m.get("multi_output", [])
+        m_arg = m.get("arg_type", "void")
+        m_var = m.get("variable_output", False)
+        m_multi = m.get("multi_output", [])
 
         param_parts: list[str] = []
         if m_arg != "void":
@@ -344,10 +360,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             param_parts.append(f"{p['name']}: {_py(p['type'])}")
 
         if m_var:
-            all_rts  = [m_ret] + list(m_multi)
+            all_rts = [m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
-            ret_ann  = (f"tuple[{', '.join(ndarrays)}]"
-                        if len(ndarrays) > 1 else ndarrays[0])
+            ret_ann = (
+                f"tuple[{', '.join(ndarrays)}]" if len(ndarrays) > 1 else ndarrays[0]
+            )
         else:
             ret_ann = _py(m_ret)
 
@@ -367,10 +384,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # properties
     for prop in obj_props:
-        p_name    = prop["name"]
-        p_ctype   = prop.get("type") or prop.get("ctype", "size_t")
-        p_write   = prop.get("writable", False) or (p_name in state_names)
-        py_t      = _py(p_ctype)
+        p_name = prop["name"]
+        p_ctype = prop.get("type") or prop.get("ctype", "size_t")
+        p_write = prop.get("writable", False) or (p_name in state_names)
+        py_t = _py(p_ctype)
         lines += [
             "",
             "    @property",
@@ -396,18 +413,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
 # ── module-level function stub ────────────────────────────────────────────────
 
+
 def _fn_stub(fn: dict) -> str:
-    name   = fn["name"]
-    ret    = _py(fn.get("return_type", "void"))
+    name = fn["name"]
+    ret = _py(fn.get("return_type", "void"))
     params = fn.get("params", [])
-    doc    = fn.get("doc", "")
-    parts  = [f"{p['name']}: {_py(p['type'])}" for p in params]
-    sig    = f"def {name}({', '.join(parts)}) -> {ret}:"
+    doc = fn.get("doc", "")
+    parts = [f"{p['name']}: {_py(p['type'])}" for p in params]
+    sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     one_liner = doc.split("\n")[0] if doc else name.replace("_", " ").capitalize() + "."
-    return f"{sig}\n    \"\"\"{one_liner}\"\"\""
+    return f'{sig}\n    """{one_liner}"""'
 
 
 # ── numpy import decision ─────────────────────────────────────────────────────
+
 
 def _uses_numpy(cfg: dict, module: str) -> bool:
     """Return True if any object in this module uses numpy (steps or arrays)."""
@@ -431,6 +450,7 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
 
 
 # ── public entry point ────────────────────────────────────────────────────────
+
 
 def make_module_pyi(cfg: dict, module: str) -> str:
     """Return the full __init__.pyi content for *module*.
@@ -461,8 +481,8 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
 
-    pkg       = C.project_name(cfg)
-    objects   = C.module_objects(cfg, module)
+    pkg = C.project_name(cfg)
+    objects = C.module_objects(cfg, module)
     functions = C.module_functions(cfg, module)
 
     if objects:

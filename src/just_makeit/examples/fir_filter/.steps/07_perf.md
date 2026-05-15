@@ -42,11 +42,11 @@ that stamps out the outer dispatch loop so you never write it by hand.
 
 Three named constants make each concern explicit:
 
-| constant    | concern      | meaning                                           |
-|-------------|--------------|---------------------------------------------------|
-| `FIR_TAPS`  | algorithm    | filter length (set at codegen time)               |
-| `FIR_BATCH` | parallelism  | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
-| `FIR_CHUNK` | tuning       | samples per scratch-buffer fill                   |
+| constant    | concern     | meaning                                            |
+| ----------- | ----------- | -------------------------------------------------- |
+| `FIR_TAPS`  | algorithm   | filter length (set at codegen time)                |
+| `FIR_BATCH` | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
+| `FIR_CHUNK` | tuning      | samples per scratch-buffer fill                    |
 
 `FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2),
 so the same source compiles to 8 or 4 complex samples per batch without any

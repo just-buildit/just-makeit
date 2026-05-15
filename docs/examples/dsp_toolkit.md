@@ -33,7 +33,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -55,7 +55,7 @@ Scaffolds a single `gain` component with a real-valued `step()`:
 `make` configures CMake and builds the extension. The C test already passes
 before you write a single line of logic.
 
----
+______________________________________________________________________
 
 ## 2. Implement gain
 
@@ -82,7 +82,7 @@ gain_step(const gain_state_t *state, float x)
 
 `gain_steps()` in `gain_core.c` loops over this automatically — no changes needed there.
 
----
+______________________________________________________________________
 
 ## 3. Add a second component
 
@@ -103,12 +103,12 @@ just-makeit object ema \
 
 State:
 
-| Name    | Type     | Default | Role                         |
-| ------- | -------- | ------- | ---------------------------- |
-| `alpha` | `float`  | `0.1f`  | Smoothing factor (0 < α < 1) |
-| `prev`  | `float`  | `0.0`   | Previous output sample       |
+| Name    | Type    | Default | Role                           |
+| ------- | ------- | ------- | ------------------------------ |
+| `alpha` | `float` | `0.1f`  | Smoothing factor (0 \< α \< 1) |
+| `prev`  | `float` | `0.0`   | Previous output sample         |
 
----
+______________________________________________________________________
 
 ## 4. Implement ema
 
@@ -174,7 +174,7 @@ header.write_text(patched)
 print(f"patched {header}")
 ```
 
----
+______________________________________________________________________
 
 ## 5. Both components are exported automatically
 
@@ -192,7 +192,7 @@ __all__ = ["Gain", "Ema"]
 
 Existing imports and any user additions are preserved.
 
----
+______________________________________________________________________
 
 ## 6. Build and test
 
@@ -203,7 +203,7 @@ make && make test
 CTest runs `test_gain_core` and `test_ema_core`.
 pytest runs the 14 generated tests across both components.
 
----
+______________________________________________________________________
 
 ## 7. Use from Python
 
@@ -238,4 +238,3 @@ for i, x in enumerate(signal):
 ```python
 y = Gain(gain=2.0).steps(signal)   # returns float32 ndarray
 ```
-

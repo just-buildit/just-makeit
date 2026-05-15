@@ -3,9 +3,7 @@
 import sys
 
 
-def parse_state_flag(
-    remaining: list[str], i: int
-) -> tuple[tuple[str, str, str], int]:
+def parse_state_flag(remaining: list[str], i: int) -> tuple[tuple[str, str, str], int]:
     """Parse one --state/--param/--init-param flag at index i.
 
     Returns ((name, ctype, default), new_i).

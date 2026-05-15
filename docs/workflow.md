@@ -267,6 +267,7 @@ just-makeit object biquad \
 ```
 
 Each `just-makeit object` call:
+
 - Creates the C library (`_core.h`, `_core.c`, C test, C benchmark)
 - Fully regenerates the module's `filter_ext.c`, `CMakeLists.txt`, and `__init__.py`
 
@@ -338,12 +339,12 @@ The wheel is rebuilt with `iir` included.
 
 ### Standalone object vs module object — when to use which
 
-| `just-makeit object` (no `--module`) | `just-makeit module` + `just-makeit object --module` |
-|---|---|
-| Each type gets its own `.so` | All types share one `.so` subpackage |
-| `from my_pkg import Gain, Ema` | `from my_pkg.filter import Fir, Biquad` |
-| Good for unrelated algorithms | Good for a cohesive type family |
-| Simpler; each type is independent at the `.so` level | One import namespace for the group |
+| `just-makeit object` (no `--module`)                 | `just-makeit module` + `just-makeit object --module` |
+| ---------------------------------------------------- | ---------------------------------------------------- |
+| Each type gets its own `.so`                         | All types share one `.so` subpackage                 |
+| `from my_pkg import Gain, Ema`                       | `from my_pkg.filter import Fir, Biquad`              |
+| Good for unrelated algorithms                        | Good for a cohesive type family                      |
+| Simpler; each type is independent at the `.so` level | One import namespace for the group                   |
 
 Both workflows produce a `lib<project>.so` C library that supports
 `cmake --install`, pkg-config, and CMake `find_package`.
@@ -527,9 +528,9 @@ is generated and passes automatically.  Non-round-trip defaults (e.g.
 
 ### What gets a stub
 
-| Scenario | Stub location |
-|---|---|
-| Standalone object (`just-makeit object`) | `src/<pkg>/<obj>.pyi` |
+| Scenario                                      | Stub location                     |
+| --------------------------------------------- | --------------------------------- |
+| Standalone object (`just-makeit object`)      | `src/<pkg>/<obj>.pyi`             |
 | Module object (`just-makeit object --module`) | `src/<pkg>/<module>/<module>.pyi` |
 
 The stub is regenerated on every `just-makeit object`, `method`, `property`,

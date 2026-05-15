@@ -95,7 +95,9 @@ class TestNewComponentFiles:
     def test_compile_commands_json(self, project):
         import json
 
-        data = json.loads((project / "compile_commands.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (project / "compile_commands.json").read_text(encoding="utf-8")
+        )
         assert isinstance(data, list)
         assert len(data) == 4
         files = {e["file"] for e in data}
@@ -110,7 +112,9 @@ class TestNewScaffoldOnly:
         assert (scaffold / "CMakeLists.txt").exists()
 
     def test_minimal_init_py(self, scaffold):
-        init = (scaffold / "src" / "my_proj" / "__init__.py").read_text(encoding="utf-8")
+        init = (scaffold / "src" / "my_proj" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
         assert "my_proj" in init
 
     def test_no_component_files(self, scaffold):
@@ -148,7 +152,10 @@ class TestNewConfig:
     def test_config_records_custom_state(self, tmp_path):
         dest = tmp_path / "comp"
         run(
-            "comp", dest, ["comp"], [("cutoff", "double", "440.0"), ("order", "int", "4")]
+            "comp",
+            dest,
+            ["comp"],
+            [("cutoff", "double", "440.0"), ("order", "int", "4")],
         )
         import tomllib
 
@@ -186,25 +193,31 @@ class TestNewContent:
         assert "add_subdirectory(native/src/my_filter)" in cmake
 
     def test_component_cmake_has_python3_add_library(self, project):
-        cmake = (
-            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
-        ).read_text(encoding="utf-8")
+        cmake = (project / "native" / "src" / "my_filter" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "Python3_add_library(my_filter" in cmake
 
     def test_header_has_correct_typedef(self, project):
-        h = (project / "native" / "inc" / "my_filter" / "my_filter_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "my_filter" / "my_filter_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "my_filter_state_t" in h
         assert "my_filter_create" in h
         assert "my_filter_destroy" in h
         assert "my_filter_step" in h
 
     def test_ext_c_has_correct_class(self, project):
-        ext = (project / "native" / "src" / "my_filter" / "my_filter_ext.c").read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "my_filter" / "my_filter_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "MyFilterObject" in ext
         assert "PyInit_my_filter" in ext
 
     def test_python_init_imports_class(self, project):
-        init = (project / "src" / "my_filter" / "__init__.py").read_text(encoding="utf-8")
+        init = (project / "src" / "my_filter" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
         assert "from .my_filter import MyFilter" in init
 
     def test_pyproject_uses_just_buildit(self, project):
@@ -222,9 +235,9 @@ class TestNewContent:
         assert "add_library(my_filter_lib_static STATIC" in cmake
 
     def test_cmake_component_is_object_lib(self, project):
-        cmake = (
-            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
-        ).read_text(encoding="utf-8")
+        cmake = (project / "native" / "src" / "my_filter" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_library(my_filter_core OBJECT" in cmake
 
     def test_umbrella_header_content(self, project):
@@ -233,6 +246,7 @@ class TestNewContent:
 
     def test_umbrella_header_updated_by_init(self, tmp_path):
         from just_makeit._init import run as init_run
+
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest)
         init_run(dest, "gain")
@@ -243,11 +257,14 @@ class TestNewContent:
         pc = (project / "cmake" / "my-filter.pc.in").read_text(encoding="utf-8")
         assert "Name: my-filter" in pc
         assert "-lmy_filter" in pc
-        assert "CMAKE_INSTALL_FULL_" not in pc, \
+        assert "CMAKE_INSTALL_FULL_" not in pc, (
             "pc.in must use relative ${prefix}/... paths, not absolute @CMAKE_INSTALL_FULL_*@ vars"
+        )
 
     def test_config_cmake_in_content(self, project):
-        cfg = (project / "cmake" / "my_filter-config.cmake.in").read_text(encoding="utf-8")
+        cfg = (project / "cmake" / "my_filter-config.cmake.in").read_text(
+            encoding="utf-8"
+        )
         assert "@PACKAGE_INIT@" in cfg
         assert "my_filter-targets.cmake" in cfg
         assert "check_required_components(my_filter)" in cfg
@@ -318,33 +335,43 @@ class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "float gain;" in core_h
         assert "comp_get_gain" in core_h
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("cutoff", "double", "0.0")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double cutoff;" in core_h
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("gain", "double", "1.0"), ("order", "int", "4")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double gain;" in core_h
         assert "int order;" in core_h
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("alpha", "float", "0.0f")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "float alpha;" in core_h
 
     def test_reset_uses_default_not_zero(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("gain", "double", "1.5")])
-        c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text(encoding="utf-8")
+        c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "state->gain = 1.5;" in c
 
 
@@ -363,6 +390,7 @@ class TestNewWithModules:
 
     def test_modules_recorded_in_toml(self, tmp_path):
         from just_makeit._config import load, modules as cfg_modules
+
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest, modules=["osc", "env"])
         cfg = load(dest)
@@ -401,7 +429,7 @@ class TestNewValidation:
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="Generated C99 complex types are not supported by MSVC; "
-           "use MinGW or Clang on Windows to build generated projects.",
+    "use MinGW or Clang on Windows to build generated projects.",
 )
 class TestNewBuild:
     """Integration test: new → cmake configure + build → CTest + pytest.
@@ -459,6 +487,7 @@ class TestNewBuild:
 
     def test_combined_lib_produced(self, built_project):
         import platform
+
         suffix = ".dylib" if platform.system() == "Darwin" else ".so"
         libs = list((built_project / "build").rglob(f"libgain{suffix}"))
         assert libs, f"Combined shared library libgain{suffix} not found in build/"
@@ -493,18 +522,26 @@ class TestVoidReturn:
     @pytest.fixture()
     def sink(self, tmp_path):
         dest = tmp_path / "audio"
-        run("audio", dest, ["sink"],
+        run(
+            "audio",
+            dest,
+            ["sink"],
             state_vars=[("volume", "double", "1.0")],
-            return_type="void")
+            return_type="void",
+        )
         return dest
 
     @pytest.fixture()
     def void_gen(self, tmp_path):
         dest = tmp_path / "audio"
-        run("audio", dest, ["ticker"],
+        run(
+            "audio",
+            dest,
+            ["ticker"],
             state_vars=[("phase", "double", "0.0")],
             arg_type="void",
-            return_type="void")
+            return_type="void",
+        )
         return dest
 
     def test_step_returns_void_in_core_h(self, sink):
@@ -552,27 +589,21 @@ class TestVoidReturn:
         assert "volatile void" not in bench
 
     def test_void_gen_steps_takes_only_n(self, void_gen):
-        c = (void_gen / "native/src/ticker/ticker_core.c").read_text(
-            encoding="utf-8"
-        )
+        c = (void_gen / "native/src/ticker/ticker_core.c").read_text(encoding="utf-8")
         assert "ticker_steps(state, n)" in c or (
             "ticker_steps(\n    ticker_state_t *state,\n    size_t" in c
         )
 
     def test_no_stray_placeholders_sink(self, sink):
         for path in sink.rglob("*"):
-            if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt"
-            ):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
 
     def test_no_stray_placeholders_void_gen(self, void_gen):
         for path in void_gen.rglob("*"):
-            if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt"
-            ):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
@@ -580,31 +611,30 @@ class TestVoidReturn:
 
 # ── Array arg type (--arg-type "float _Complex[]") ────────────────────────────
 
+
 class TestArrayArgType:
     @pytest.fixture()
     def arr_obj(self, tmp_path):
         dest = tmp_path / "proc"
-        run("proc", dest, ["filt"],
+        run(
+            "proc",
+            dest,
+            ["filt"],
             arg_type="float _Complex[]",
-            return_type="float _Complex")
+            return_type="float _Complex",
+        )
         return dest
 
     def test_core_h_step_has_ptr_len_params(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
-            encoding="utf-8"
-        )
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
         assert "const float complex *x, size_t x_len" in h
 
     def test_core_h_step_returns_correct_type(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
-            encoding="utf-8"
-        )
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
         assert "static inline float complex" in h
 
     def test_core_h_no_steps(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
-            encoding="utf-8"
-        )
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
         assert "filt_steps" not in h
 
     def test_bench_no_inner_sample_loop(self, arr_obj):
@@ -625,17 +655,13 @@ class TestArrayArgType:
         assert "filt_steps" not in bench
 
     def test_ext_c_step_uses_pyarray(self, arr_obj):
-        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
-            encoding="utf-8"
-        )
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "PyArray_DATA" in ext
         assert "x_len" in ext
 
     def test_ext_c_no_steps_method(self, arr_obj):
-        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
-            encoding="utf-8"
-        )
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
         assert "Filt_steps" not in ext
 
     def test_pyi_step_annotation(self, arr_obj):
@@ -649,7 +675,12 @@ class TestArrayArgType:
     def test_no_stray_placeholders(self, arr_obj):
         for path in arr_obj.rglob("*"):
             if path.is_file() and path.suffix in (
-                ".py", ".c", ".h", ".toml", ".txt", ".pyi"
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+                ".pyi",
             ):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)

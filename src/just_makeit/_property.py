@@ -107,21 +107,35 @@ def run(
             perf = C.is_perf(cfg)
             Component = _to_title(object_name)
             ctx = _make_object_ctx(
-                object_name, module, pkg,
+                object_name,
+                module,
+                pkg,
                 C.project_version(cfg),
-                state_vars_list, arg_type_, return_type_,
+                state_vars_list,
+                arg_type_,
+                return_type_,
                 perf=perf,
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
                 no_step=C.is_no_step(cfg, object_name),
             )
-            ctx.update(T.make_methods_ctx(object_name, Component,
-                                          C.methods(cfg, object_name),
-                                          pkg=pkg,
-                                          py_create_args=ctx.get("py_create_args", "")))
-            ctx.update(T.make_properties_ctx(object_name, Component,
-                                             C.properties(cfg, object_name),
-                                             frozenset(n for n, _, _ in state_vars_list)))
+            ctx.update(
+                T.make_methods_ctx(
+                    object_name,
+                    Component,
+                    C.methods(cfg, object_name),
+                    pkg=pkg,
+                    py_create_args=ctx.get("py_create_args", ""),
+                )
+            )
+            ctx.update(
+                T.make_properties_ctx(
+                    object_name,
+                    Component,
+                    C.properties(cfg, object_name),
+                    frozenset(n for n, _, _ in state_vars_list),
+                )
+            )
             core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
             if core_h.exists():
                 core_h.write_text(T.render(T.COMPONENT_CORE_H, ctx), encoding="utf-8")
@@ -134,25 +148,48 @@ def run(
         version = C.project_version(cfg)
 
         ctx = _make_component_ctx(object_name)
-        ctx.update({
-            "package": pkg,
-            "PACKAGE": pkg.upper(),
-            "project": pkg.replace("_", "-"),
-            "project_underscore": pkg,
-            "version": version,
-        })
+        ctx.update(
+            {
+                "package": pkg,
+                "PACKAGE": pkg.upper(),
+                "project": pkg.replace("_", "-"),
+                "project_underscore": pkg,
+                "version": version,
+            }
+        )
         ctx.update(T.make_sample_ctx(arg_type_, return_type_))
-        ctx.update(T.make_state_ctx(object_name, Component, state_vars_list,
-                                    array_args=C.array_args(cfg, object_name),
-                                    no_state=C.is_no_state(cfg, object_name)))
+        ctx.update(
+            T.make_state_ctx(
+                object_name,
+                Component,
+                state_vars_list,
+                array_args=C.array_args(cfg, object_name),
+                no_state=C.is_no_state(cfg, object_name),
+            )
+        )
         ctx.update(T.make_perf_ctx(perf))
-        ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,
-                                   no_step=C.is_no_step(cfg, object_name)))
-        ctx.update(T.make_methods_ctx(object_name, Component, C.methods(cfg, object_name),
-                                      pkg=pkg,
-                                      py_create_args=ctx.get("py_create_args", "")))
-        ctx.update(T.make_properties_ctx(object_name, Component, C.properties(cfg, object_name),
-                                         frozenset(n for n, _, _ in state_vars_list)))
+        ctx.update(
+            T.make_step_ctx(
+                ctx, arg_type_, return_type_, no_step=C.is_no_step(cfg, object_name)
+            )
+        )
+        ctx.update(
+            T.make_methods_ctx(
+                object_name,
+                Component,
+                C.methods(cfg, object_name),
+                pkg=pkg,
+                py_create_args=ctx.get("py_create_args", ""),
+            )
+        )
+        ctx.update(
+            T.make_properties_ctx(
+                object_name,
+                Component,
+                C.properties(cfg, object_name),
+                frozenset(n for n, _, _ in state_vars_list),
+            )
+        )
 
         def r(tmpl):
             return T.render(tmpl, ctx)

@@ -77,7 +77,11 @@ def _install_smoke(proj: Path) -> None:
     )
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             f"-DCMAKE_PREFIX_PATH={install_prefix}",
         ],
@@ -88,27 +92,25 @@ def _install_smoke(proj: Path) -> None:
     # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
     if sys.platform == "win32" or not shutil.which("pkg-config"):
         return
-    pc_dir = next(
-        (p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None
-    )
+    pc_dir = next((p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None)
     if pc_dir is None:
         return
     env = os.environ.copy()
     env["PKG_CONFIG_PATH"] = str(pc_dir)
     r = subprocess.run(
         ["pkg-config", "--exists", "my-fir"],
-        env=env, capture_output=True, text=True,
+        env=env,
+        capture_output=True,
+        text=True,
     )
-    assert r.returncode == 0, (
-        f"pkg-config --exists my-fir failed:\n{r.stderr}"
-    )
+    assert r.returncode == 0, f"pkg-config --exists my-fir failed:\n{r.stderr}"
     r = subprocess.run(
         ["pkg-config", "--cflags", "--libs", "my-fir"],
-        env=env, capture_output=True, text=True,
+        env=env,
+        capture_output=True,
+        text=True,
     )
-    assert r.returncode == 0, (
-        f"pkg-config --cflags --libs my-fir failed:\n{r.stderr}"
-    )
+    assert r.returncode == 0, f"pkg-config --cflags --libs my-fir failed:\n{r.stderr}"
     assert "-lmy_fir" in r.stdout, (
         f"Expected -lmy_fir in pkg-config output; got: {r.stdout!r}"
     )
@@ -138,7 +140,11 @@ def run(root: Path) -> None:
     # 3. CMake configure + build + CTest
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",

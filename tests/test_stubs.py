@@ -7,25 +7,23 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._config import load
 from just_makeit._function import run as function_run
 from just_makeit._method import run as method_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
-from just_makeit._stubs import make_module_pyi
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _pyi(root: Path, module: str, pkg: str) -> str:
-    return (root / "src" / pkg / module / f"{module}.pyi").read_text(
-        encoding="utf-8"
-    )
+    return (root / "src" / pkg / module / f"{module}.pyi").read_text(encoding="utf-8")
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def basic_project(tmp_path):
@@ -33,16 +31,20 @@ def basic_project(tmp_path):
     one writable property, one read-only property, one module function."""
     root = tmp_path / "myproj"
     new_run("myproj", root, modules=["dsp"])
-    object_run(root, "filt", "dsp",
-               state_vars=[("coeff", "float", "0.5")],
-               arg_type="float", return_type="float")
+    object_run(
+        root,
+        "filt",
+        "dsp",
+        state_vars=[("coeff", "float", "0.5")],
+        arg_type="float",
+        return_type="float",
+    )
     # method_run: root, object, method, module, arg_type, return_type,
     #             variable_output, multi_output, params
     method_run(root, "filt", "reset", "dsp", "void", "void", False, [])
     property_run(root, "filt", "gain", "dsp", "float", True)
     property_run(root, "filt", "order", "dsp", "int", False)
-    function_run(root, "apply", "dsp",
-                 params=[("x", "float")], return_type="float")
+    function_run(root, "apply", "dsp", params=[("x", "float")], return_type="float")
     return root
 
 
@@ -78,16 +80,30 @@ def array_param_project(tmp_path):
     """Object with an array-param method."""
     root = tmp_path / "myproj"
     new_run("myproj", root, modules=["dsp"])
-    object_run(root, "resamp", "dsp",
-               state_vars=[("rate", "double", "1.0")],
-               arg_type="void", return_type="int")
-    method_run(root, "resamp", "execute_ctrl", "dsp",
-               "void", "int", False, [],
-               params=[("ctrl", "float _Complex[]")])
+    object_run(
+        root,
+        "resamp",
+        "dsp",
+        state_vars=[("rate", "double", "1.0")],
+        arg_type="void",
+        return_type="int",
+    )
+    method_run(
+        root,
+        "resamp",
+        "execute_ctrl",
+        "dsp",
+        "void",
+        "int",
+        False,
+        [],
+        params=[("ctrl", "float _Complex[]")],
+    )
     return root
 
 
 # ── file presence ─────────────────────────────────────────────────────────────
+
 
 class TestStubFileCreated:
     def test_pyi_created_with_module(self, tmp_path):
@@ -114,6 +130,7 @@ class TestStubFileCreated:
 
 # ── class and constructor ─────────────────────────────────────────────────────
 
+
 class TestClassStub:
     def test_class_name_title_cased(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -131,6 +148,7 @@ class TestClassStub:
 
 
 # ── step / steps ──────────────────────────────────────────────────────────────
+
 
 class TestStepStubs:
     def test_step_scalar_arg_return(self, basic_project):
@@ -165,6 +183,7 @@ class TestStepStubs:
 
 # ── methods ───────────────────────────────────────────────────────────────────
 
+
 class TestMethodStubs:
     def test_void_method(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -176,6 +195,7 @@ class TestMethodStubs:
 
 
 # ── properties ────────────────────────────────────────────────────────────────
+
 
 class TestPropertyStubs:
     def test_writable_property_has_setter(self, basic_project):
@@ -194,6 +214,7 @@ class TestPropertyStubs:
 
 # ── module-level functions ────────────────────────────────────────────────────
 
+
 class TestFunctionStubs:
     def test_function_signature(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -209,6 +230,7 @@ class TestFunctionStubs:
 
 # ── numpy imports ─────────────────────────────────────────────────────────────
 
+
 class TestNumpyImports:
     def test_numpy_imported_when_needed(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -223,20 +245,21 @@ class TestNumpyImports:
 
 # ── type annotations ──────────────────────────────────────────────────────────
 
+
 class TestTypeAnnotations:
     def test_complex_maps_to_complex(self, tmp_path):
         root = tmp_path / "p"
         new_run("p", root, modules=["dsp"])
-        object_run(root, "osc", "dsp",
-                   arg_type="float _Complex", return_type="float _Complex")
+        object_run(
+            root, "osc", "dsp", arg_type="float _Complex", return_type="float _Complex"
+        )
         pyi = _pyi(root, "dsp", "p")
         assert "def step(self, x: complex) -> complex:" in pyi
 
     def test_double_maps_to_float(self, tmp_path):
         root = tmp_path / "p"
         new_run("p", root, modules=["dsp"])
-        object_run(root, "filt", "dsp",
-                   arg_type="double", return_type="double")
+        object_run(root, "filt", "dsp", arg_type="double", return_type="double")
         pyi = _pyi(root, "dsp", "p")
         assert "def step(self, x: float) -> float:" in pyi
 
@@ -251,12 +274,11 @@ class TestTypeAnnotations:
 
 # ── header comment ────────────────────────────────────────────────────────────
 
+
 class TestStubHeader:
     def test_header_comment(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
-        assert pyi.startswith(
-            "# dsp/dsp.pyi — type stubs for the dsp C extension."
-        )
+        assert pyi.startswith("# dsp/dsp.pyi — type stubs for the dsp C extension.")
 
 
 class TestArrayArgTypeStubs:
@@ -264,8 +286,9 @@ class TestArrayArgTypeStubs:
     def arr_arg_project(self, tmp_path):
         root = tmp_path / "myproj"
         new_run("myproj", root, modules=["dsp"])
-        object_run(root, "resamp", "dsp",
-                   arg_type="float _Complex[]", return_type="int")
+        object_run(
+            root, "resamp", "dsp", arg_type="float _Complex[]", return_type="int"
+        )
         return root
 
     def test_step_annotation(self, arr_arg_project):

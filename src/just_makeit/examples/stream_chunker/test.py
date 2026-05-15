@@ -17,6 +17,8 @@ import tempfile
 
 def _cmake_gen():
     return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
+
+
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -52,9 +54,9 @@ def run(root: Path) -> None:
         "chunker",
         module=None,
         state_vars=[
-            ("chunk_size", "int32_t",           "64"),
-            ("buf",        "float _Complex[256]", ""),
-            ("n_buf",      "int32_t",            "0"),
+            ("chunk_size", "int32_t", "64"),
+            ("buf", "float _Complex[256]", ""),
+            ("n_buf", "int32_t", "0"),
         ],
         no_step=True,
     )
@@ -85,7 +87,11 @@ def run(root: Path) -> None:
     # 5. CMake configure + build + CTest
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
@@ -100,12 +106,12 @@ def run(root: Path) -> None:
 
     # 7. Verify: push is in the Python extension; step is absent (--no-step)
     ext = (proj / "native/src/chunker/chunker_ext.c").read_text()
-    assert "Chunker_push" in ext    # push binding was registered
+    assert "Chunker_push" in ext  # push binding was registered
     assert "Chunker_step" not in ext  # --no-step: no scalar step
 
     pyi = (proj / "src/my_chunker/chunker.pyi").read_text()
     assert "class Chunker:" in pyi
-    assert "def step" not in pyi    # --no-step: no step stub
+    assert "def step" not in pyi  # --no-step: no step stub
 
 
 if __name__ == "__main__":

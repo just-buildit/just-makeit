@@ -6,8 +6,10 @@ from pathlib import Path
 
 def run(args: list[str]) -> None:
     if len(args) < 2:
-        print("error: 'method' requires an object name and a method name.",
-              file=sys.stderr)
+        print(
+            "error: 'method' requires an object name and a method name.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     from . import _method
     from . import _templates as T
@@ -50,8 +52,10 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if val not in T._CTYPE_META:
-                print(f"error: --multi-output '{val}' is not a supported type.",
-                      file=sys.stderr)
+                print(
+                    f"error: --multi-output '{val}' is not a supported type.",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             multi_output.append(val)
             i += 1
@@ -62,8 +66,7 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --param '{val}' must be name:type",
-                      file=sys.stderr)
+                print(f"error: --param '{val}' must be name:type", file=sys.stderr)
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
             if T.is_array_param_type(ptype):
@@ -81,7 +84,7 @@ def run(args: list[str]) -> None:
                 print(
                     f"error: --param type '{ptype}' is not a supported type.\n"
                     f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
-                    f"Array syntax: name:type[]  e.g. ctrl:\"float _Complex[]\"",
+                    f'Array syntax: name:type[]  e.g. ctrl:"float _Complex[]"',
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -90,16 +93,16 @@ def run(args: list[str]) -> None:
         elif tok == "--out-divisor":
             i += 1
             if i >= len(remaining):
-                print("error: --out-divisor requires an integer",
-                      file=sys.stderr)
+                print("error: --out-divisor requires an integer", file=sys.stderr)
                 sys.exit(1)
             try:
                 out_divisor = int(remaining[i])
                 if out_divisor < 1:
                     raise ValueError
             except ValueError:
-                print("error: --out-divisor must be a positive integer",
-                      file=sys.stderr)
+                print(
+                    "error: --out-divisor must be a positive integer", file=sys.stderr
+                )
                 sys.exit(1)
             i += 1
         elif tok == "--out-type":
@@ -125,8 +128,11 @@ def run(args: list[str]) -> None:
             val = remaining[i]
             if val.endswith("[]"):
                 if tok == "--return-type":
-                    print("error: --return-type cannot be an array type.\n"
-                          "Use a scalar type or void.", file=sys.stderr)
+                    print(
+                        "error: --return-type cannot be an array type.\n"
+                        "Use a scalar type or void.",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
                 elem = val[:-2]
                 if elem not in T._CTYPE_META:
@@ -135,12 +141,15 @@ def run(args: list[str]) -> None:
                         "is not supported.\n"
                         f"Supported element types: "
                         f"{', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr)
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
             elif val != "void" and val not in T._CTYPE_META:
-                print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                      f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                      file=sys.stderr)
+                print(
+                    f"error: {tok} '{val}' is not a supported scalar type.\n"
+                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             if tok == "--arg-type":
                 arg_type = val
@@ -160,6 +169,7 @@ def run(args: list[str]) -> None:
                 print("error: --replace requires old::new", file=sys.stderr)
                 sys.exit(1)
             from . import _impl as _I
+
             replacements_m.append(_I.parse_replace(remaining[i]))
             i += 1
         else:
@@ -170,16 +180,27 @@ def run(args: list[str]) -> None:
         print(
             f"error: --return-type '{return_type}' must be void or a scalar.\n"
             f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-            file=sys.stderr)
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     impl_body_m: str | None = None
     if impl_spec_m is not None:
         from . import _impl as _I
+
         impl_body_m = _I.load_impl(impl_spec_m, replacements_m)
     _method.run(
-        Path.cwd(), object_name, method_name, module,
-        arg_type, return_type, variable_output, multi_output,
-        params=method_params, out_type=out_type, out_divisor=out_divisor,
-        impl_body=impl_body_m, batch=batch_method,
+        Path.cwd(),
+        object_name,
+        method_name,
+        module,
+        arg_type,
+        return_type,
+        variable_output,
+        multi_output,
+        params=method_params,
+        out_type=out_type,
+        out_divisor=out_divisor,
+        impl_body=impl_body_m,
+        batch=batch_method,
     )

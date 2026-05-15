@@ -20,14 +20,16 @@ def _make_project_ctx(
     pytest_: bool = False,
 ) -> dict[str, str]:
     if pytest_:
-        ensure_win  = '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
+        ensure_win = (
+            '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
+        )
         ensure_unix = '\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest\n'
-        cmd_win  = '$(PYTHON) -c "import subprocess,sys; r=subprocess.run([sys.executable,\'-m\',\'pytest\',\'src/\',\'-v\']); sys.exit(0 if r.returncode in(0,5) else r.returncode)"'
-        cmd_unix = '$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret'
+        cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
+        cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
     else:
-        ensure_win  = ""
+        ensure_win = ""
         ensure_unix = ""
-        cmd_win  = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
+        cmd_win = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
         cmd_unix = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
     return {
         "package": project,
@@ -35,11 +37,11 @@ def _make_project_ctx(
         "project": project.replace("_", "-"),
         "project_underscore": project,
         "version": version,
-        "ensure_pytest_win":  ensure_win,
+        "ensure_pytest_win": ensure_win,
         "ensure_pytest_unix": ensure_unix,
-        "py_test_cmd_win":    cmd_win,
-        "py_test_cmd_unix":   cmd_unix,
-        "py_test_label":      "pytest" if pytest_ else "unittest",
+        "py_test_cmd_win": cmd_win,
+        "py_test_cmd_unix": cmd_unix,
+        "py_test_label": "pytest" if pytest_ else "unittest",
     }
 
 
@@ -109,8 +111,13 @@ def run(
         _write(root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN))
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
-    cfg = C.from_new(project, build_system=build_system, perf=perf,
-                     pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)
+    cfg = C.from_new(
+        project,
+        build_system=build_system,
+        perf=perf,
+        pytest_=pytest_,
+        pytest_benchmark_=pytest_benchmark_,
+    )
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
     print()
@@ -119,11 +126,21 @@ def run(
         from . import _object
 
         for obj in object_names:
-            _object.run(root, obj, None, state_vars, perf=perf,
-                        mutable=mutable,
-                        arg_type=arg_type, return_type=return_type, _hint=False)
+            _object.run(
+                root,
+                obj,
+                None,
+                state_vars,
+                perf=perf,
+                mutable=mutable,
+                arg_type=arg_type,
+                return_type=return_type,
+                _hint=False,
+            )
             print()
-        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && make && make test')}")
+        print(
+            f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && make && make test')}"
+        )
     elif modules:
         from . import _module
 
@@ -135,11 +152,15 @@ def run(
         for mod in modules:
             _module.run(root, mod)
         print()
-        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name> --module <module>')}")
+        print(
+            f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name> --module <module>')}"
+        )
     else:
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
         )
         _write(root / ".benchmarks" / ".gitkeep", "")
         print()
-        print(f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name>')}")
+        print(
+            f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name>')}"
+        )

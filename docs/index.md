@@ -1,6 +1,6 @@
----
-title: just-makeit
----
+______________________________________________________________________
+
+## title: just-makeit
 
 <h1 id="__skip" align="center">
   <img src="https://raw.githubusercontent.com/just-buildit/just-makeit/main/docs/assets/logo-wordmark.png" alt="just-makeit" width="540">
@@ -21,62 +21,78 @@ ______________________________________________________________________
 
 === "curl"
 
-    No tools required — one command bootstraps cmake, a C compiler, numpy,
-    and just-makeit into a ready-to-use venv:
+````
+No tools required — one command bootstraps cmake, a C compiler, numpy,
+and just-makeit into a ready-to-use venv:
 
-    ```sh
-    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-    just-makeit new my_project --object engine --state gain:double:1.0
-    cd my_project && make && make test
-    ```
+```sh
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
+```
 
-    Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
-    Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
+Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
+Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
 
-    ```sh
-    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
-    ```
+```sh
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
+```
+````
 
 === "pip"
 
-    ```sh
-    pip install just-makeit
-    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-    just-makeit new my_project --object engine --state gain:double:1.0
-    cd my_project && make && make test
-    ```
+````
+```sh
+pip install just-makeit
+just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
+```
 
-    `install-deps` detects your platform and installs system dependencies via
-    the available package manager:
+`install-deps` detects your platform and installs system dependencies via
+the available package manager:
 
-    | Platform | Detection order |
-    |----------|----------------|
-    | **Linux** | apt · dnf · pacman · zypper · apk |
-    | **macOS** | Homebrew |
-    | **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
+| Platform | Detection order |
+|----------|----------------|
+| **Linux** | apt · dnf · pacman · zypper · apk |
+| **macOS** | Homebrew |
+| **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
+````
 
 === "uv"
 
-    ```sh
-    uv tool install just-makeit
-    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-    just-makeit new my_project --object engine --state gain:double:1.0
-    cd my_project && make && make test
-    ```
+````
+```sh
+uv tool install just-makeit
+just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
+```
+````
 
-=== "docker"
+=== "docker-linux"
 
-    ```sh
-    docker run --rm -it python:3.12 bash
-    ```
+````
+```sh
+docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+```
 
-    Then inside the container:
+The container prints a welcome message with everything you need: pre-built
+example projects in `~/examples/`, commands to browse or re-run them, and
+a quickstart for your own project.
+````
 
-    ```sh
-    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-    just-makeit new my_project --object engine --state gain:double:1.0
-    cd my_project && make && make test
-    ```
+=== "docker-windows"
+
+````
+```sh
+docker run --rm -it ghcr.io/just-buildit/jm-examples-windows:latest
+```
+
+The container prints a welcome message with everything you need: pre-built
+example projects in `~/examples/`, commands to browse or re-run them, and
+a quickstart for your own project.
+````
 
 ______________________________________________________________________
 
@@ -170,62 +186,62 @@ ______________________________________________________________________
 just-makeit COMMAND
 ```
 
-| Command           | Option                          | Description                                                                     |
-| ----------------- | ------------------------------- | ------------------------------------------------------------------------------- |
-| `new <project>`   | `--module name`                 | Scaffold project + empty module subpackage; repeatable                          |
-|                   | `--object name`                 | Scaffold project + standalone object; repeatable                                |
-|                   | `--state name:type[:default]`   | Declare a state variable (struct field, constructor arg, getter/setter, reset)  |
-|                   | `--arg-type T`                  | C type for `step()` input; default `float _Complex`; `void` for generators; append `[]` for buffer-primary objects |
-|                   | `--return-type T`               | C type for `step()` return; default same as `--arg-type`; `void` for sinks     |
-|                   | `--perf`                        | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`             |
-|                   | `--build-system <cmake\|make>`  | Build system; default `cmake`; use `make` for a plain `Makefile`               |
-|                   | `--mutable`                     | Remove `const` from the state pointer in `step()`; use for mutating generators  |
-|                   | `--pytest`                      | Generate pure pytest tests (no unittest shim)                                   |
-|                   | `--pytest-benchmark`            | Generate pytest-benchmark bench files                                           |
-| `module <name>`   |                                 | Scaffold an empty extension module (subpackage `.so`); add types with `object` |
-| `object <name>`   | `--module name`                 | Target module subpackage; omit for a standalone object with its own `.so`       |
-|                   | `--state name:type[:default]`   | Same as `new`                                                                   |
-|                   | `--arg-type T`                  | Same as `new`                                                                   |
-|                   | `--return-type T`               | Same as `new`                                                                   |
-|                   | `--perf`                        | Same as `new`                                                                   |
-|                   | `--mutable`                     | Remove `const` from the state pointer in `step()`; use for mutating generators |
-|                   | `--no-state`                    | Suppress auto-generated state, constructor args, and getter/setter scaffolding  |
-|                   | `--no-step`                     | Suppress `step()` and `steps()`; use for method-only objects                   |
-|                   | `--init-param name:type[:default]` | Constructor param for `--no-state` objects; repeatable                       |
-|                   | `--impl file::funcname`         | Lift `step()` body from `funcname` in `file`                                   |
-|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
-| `add`             | `--state name:type[:default]`   | Add a state variable to an existing object; repeatable                          |
-|                   | `--param name:type[:default]`   | Add a constructor parameter to an existing object; repeatable                   |
-|                   | `--object name`                 | Target object when the project has more than one                                |
-| `method <name>`   | `--param name:type`             | Named scalar parameter; repeatable                                              |
-|                   | `--param name:type[]`           | Named numpy array parameter; C receives `(const elem_t *name, size_t name_len)`|
-|                   | `--arg-type T`                  | Single array-style input (mutually exclusive with `--param`)                    |
-|                   | `--return-type T`               | C return type; `void` for no return                                             |
-|                   | `--variable-output`             | Pre-allocate output buffer at init; return zero-copy numpy view each call       |
-|                   | `--multi-output T`              | Add a parallel output array of type T; repeatable                               |
-|                   | `--out-type TYPE`               | Allocate output array per call; C stub receives `*out`; length = `in_len / out_divisor` |
-|                   | `--out-divisor N`               | Divide input length by N for output array length (default 1); use `2` for CI8/CI16 inputs |
-|                   | `--batch`                       | Generate 1:1-rate array transform; C stub receives `*in, n, *out`; Python allocates output per call |
-|                   | `--impl file::funcname`         | Lift method body from `funcname` in `file`                                     |
-|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
-| `property <name>` | `--type T`                      | C type of the property value                                                    |
-|                   | `--writable`                    | Also generate a setter; omit for read-only                                      |
-|                   | `--field`                       | Add `T name;` to the state struct and auto-implement the getter                 |
-| `function <name>` | `--module mod`                  | Target module (required)                                                        |
-|                   | `--param name:type`             | Named scalar parameter; repeatable                                              |
-|                   | `--param name:type[]`           | Named numpy array parameter                                                     |
-|                   | `--return-type T`               | C return type; default `void`                                                   |
-|                   | `--doc "text"`                  | Python docstring for the function                                               |
-|                   | `--impl file::funcname`         | Lift function body from `funcname` in `file`                                   |
-|                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
-| `script`          |                                 | Print a shell script that fully reconstructs the project from `just-makeit.toml` |
-| `perf`            |                                 | Upgrade existing project with `jm_perf.h` performance annotations              |
-| `config`          | `[key value]`                   | Print config; or set `key` to `value` in `just-makeit.toml`                    |
-| `build`           | `[dir]`                         | Configure + build C extensions and package a wheel into `dir` (default `dist/`) |
-| `test`            |                                 | Build (if needed), then run CTest + pytest                                      |
-| `dry-run`         |                                 | Show what would be compiled without running any build steps                     |
-| `install-deps`    | `[path]`                        | Install cmake + C compiler via system package manager; create venv at `path`    |
-| `example`         | `[name]`                        | Run a bundled end-to-end example; omit `name` to list available examples        |
+| Command           | Option                             | Description                                                                                                        |
+| ----------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `new <project>`   | `--module name`                    | Scaffold project + empty module subpackage; repeatable                                                             |
+|                   | `--object name`                    | Scaffold project + standalone object; repeatable                                                                   |
+|                   | `--state name:type[:default]`      | Declare a state variable (struct field, constructor arg, getter/setter, reset)                                     |
+|                   | `--arg-type T`                     | C type for `step()` input; default `float _Complex`; `void` for generators; append `[]` for buffer-primary objects |
+|                   | `--return-type T`                  | C type for `step()` return; default same as `--arg-type`; `void` for sinks                                         |
+|                   | `--perf`                           | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`                                                 |
+|                   | `--build-system <cmake\|make>`     | Build system; default `cmake`; use `make` for a plain `Makefile`                                                   |
+|                   | `--mutable`                        | Remove `const` from the state pointer in `step()`; use for mutating generators                                     |
+|                   | `--pytest`                         | Generate pure pytest tests (no unittest shim)                                                                      |
+|                   | `--pytest-benchmark`               | Generate pytest-benchmark bench files                                                                              |
+| `module <name>`   |                                    | Scaffold an empty extension module (subpackage `.so`); add types with `object`                                     |
+| `object <name>`   | `--module name`                    | Target module subpackage; omit for a standalone object with its own `.so`                                          |
+|                   | `--state name:type[:default]`      | Same as `new`                                                                                                      |
+|                   | `--arg-type T`                     | Same as `new`                                                                                                      |
+|                   | `--return-type T`                  | Same as `new`                                                                                                      |
+|                   | `--perf`                           | Same as `new`                                                                                                      |
+|                   | `--mutable`                        | Remove `const` from the state pointer in `step()`; use for mutating generators                                     |
+|                   | `--no-state`                       | Suppress auto-generated state, constructor args, and getter/setter scaffolding                                     |
+|                   | `--no-step`                        | Suppress `step()` and `steps()`; use for method-only objects                                                       |
+|                   | `--init-param name:type[:default]` | Constructor param for `--no-state` objects; repeatable                                                             |
+|                   | `--impl file::funcname`            | Lift `step()` body from `funcname` in `file`                                                                       |
+|                   | `--replace old::new`               | String substitution on `--impl` body; repeatable                                                                   |
+| `add`             | `--state name:type[:default]`      | Add a state variable to an existing object; repeatable                                                             |
+|                   | `--param name:type[:default]`      | Add a constructor parameter to an existing object; repeatable                                                      |
+|                   | `--object name`                    | Target object when the project has more than one                                                                   |
+| `method <name>`   | `--param name:type`                | Named scalar parameter; repeatable                                                                                 |
+|                   | `--param name:type[]`              | Named numpy array parameter; C receives `(const elem_t *name, size_t name_len)`                                    |
+|                   | `--arg-type T`                     | Single array-style input (mutually exclusive with `--param`)                                                       |
+|                   | `--return-type T`                  | C return type; `void` for no return                                                                                |
+|                   | `--variable-output`                | Pre-allocate output buffer at init; return zero-copy numpy view each call                                          |
+|                   | `--multi-output T`                 | Add a parallel output array of type T; repeatable                                                                  |
+|                   | `--out-type TYPE`                  | Allocate output array per call; C stub receives `*out`; length = `in_len / out_divisor`                            |
+|                   | `--out-divisor N`                  | Divide input length by N for output array length (default 1); use `2` for CI8/CI16 inputs                          |
+|                   | `--batch`                          | Generate 1:1-rate array transform; C stub receives `*in, n, *out`; Python allocates output per call                |
+|                   | `--impl file::funcname`            | Lift method body from `funcname` in `file`                                                                         |
+|                   | `--replace old::new`               | String substitution on `--impl` body; repeatable                                                                   |
+| `property <name>` | `--type T`                         | C type of the property value                                                                                       |
+|                   | `--writable`                       | Also generate a setter; omit for read-only                                                                         |
+|                   | `--field`                          | Add `T name;` to the state struct and auto-implement the getter                                                    |
+| `function <name>` | `--module mod`                     | Target module (required)                                                                                           |
+|                   | `--param name:type`                | Named scalar parameter; repeatable                                                                                 |
+|                   | `--param name:type[]`              | Named numpy array parameter                                                                                        |
+|                   | `--return-type T`                  | C return type; default `void`                                                                                      |
+|                   | `--doc "text"`                     | Python docstring for the function                                                                                  |
+|                   | `--impl file::funcname`            | Lift function body from `funcname` in `file`                                                                       |
+|                   | `--replace old::new`               | String substitution on `--impl` body; repeatable                                                                   |
+| `script`          |                                    | Print a shell script that fully reconstructs the project from `just-makeit.toml`                                   |
+| `perf`            |                                    | Upgrade existing project with `jm_perf.h` performance annotations                                                  |
+| `config`          | `[key value]`                      | Print config; or set `key` to `value` in `just-makeit.toml`                                                        |
+| `build`           | `[dir]`                            | Configure + build C extensions and package a wheel into `dir` (default `dist/`)                                    |
+| `test`            |                                    | Build (if needed), then run CTest + pytest                                                                         |
+| `dry-run`         |                                    | Show what would be compiled without running any build steps                                                        |
+| `install-deps`    | `[path]`                           | Install cmake + C compiler via system package manager; create venv at `path`                                       |
+| `example`         | `[name]`                           | Run a bundled end-to-end example; omit `name` to list available examples                                           |
 
 See [State Variable Types](https://just-buildit.github.io/just-makeit/types/) for supported types, defaults, and C/Python mappings.
 

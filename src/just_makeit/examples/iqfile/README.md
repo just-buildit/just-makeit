@@ -12,15 +12,15 @@ q15:  [i16_i, i16_q, i16_i, i16_q, ...]   4 bytes per complex sample
 This example builds a complete, installable Python package that demonstrates
 every major just-makeit feature in one project:
 
-| Feature | Where |
-|---------|-------|
-| Module subpackage (single `.so`) | `conv` module |
-| Two objects sharing one extension | `Cf32ToQ15`, `Q15ToCf32` |
+| Feature                              | Where                                    |
+| ------------------------------------ | ---------------------------------------- |
+| Module subpackage (single `.so`)     | `conv` module                            |
+| Two objects sharing one extension    | `Cf32ToQ15`, `Q15ToCf32`                 |
 | Generator object (`--arg-type void`) | `Q15ToCf32` reads from a file descriptor |
-| Field-backed property (`--field`) | `samples_read`, `samples_written` |
-| Computed read-only property | `eof` on `Q15ToCf32` |
-| `pip install -e .` dev workflow | step 6 |
-| Wheel build (`just-makeit build`) | step 8 |
+| Field-backed property (`--field`)    | `samples_read`, `samples_written`        |
+| Computed read-only property          | `eof` on `Q15ToCf32`                     |
+| `pip install -e .` dev workflow      | step 6                                   |
+| Wheel build (`just-makeit build`)    | step 8                                   |
 
 ## TL;DR — see it work first
 
@@ -49,7 +49,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -62,7 +62,7 @@ This creates the project shell and an empty `conv` module subpackage.
 No objects yet — just the plumbing: `CMakeLists.txt`, `Makefile`,
 `pyproject.toml`, `just-makeit.toml`, and `src/iqfile/conv/__init__.py`.
 
----
+______________________________________________________________________
 
 ## 2. Add the converter types
 
@@ -128,7 +128,7 @@ block  = reader.steps(1024)   # returns complex64 ndarray
 os.close(fd)
 ```
 
----
+______________________________________________________________________
 
 ## 3. Add properties
 
@@ -145,11 +145,11 @@ just-makeit property q15_to_cf32 eof \
 
 Three properties across the two types:
 
-| Object | Property | Kind | Type | Notes |
-|--------|----------|------|------|-------|
-| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `step()` |
-| `Q15ToCf32` | `samples_read` | `--field` | `uint32_t` | incremented by `step()` |
-| `Q15ToCf32` | `eof` | computed | `int32_t` | implement via `read()` return value |
+| Object      | Property          | Kind      | Type       | Notes                               |
+| ----------- | ----------------- | --------- | ---------- | ----------------------------------- |
+| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `step()`             |
+| `Q15ToCf32` | `samples_read`    | `--field` | `uint32_t` | incremented by `step()`             |
+| `Q15ToCf32` | `eof`             | computed  | `int32_t`  | implement via `read()` return value |
 
 **Field-backed** (`--field`): adds `uint32_t samples_written;` to the state
 struct and auto-implements the getter as `return state->samples_written` — no
@@ -158,7 +158,7 @@ struct and auto-implements the getter as `return state->samples_written` — no
 **Computed** (`eof`, no `--field`): getter stub calls `q15_to_cf32_get_eof()`
 which you implement — returning 1 when the last `read()` returned 0 bytes.
 
----
+______________________________________________________________________
 
 ## 4. Implement the C kernels
 
@@ -382,7 +382,7 @@ lseek(state->fd, cur, SEEK_SET);
 return cur == end ? 1 : 0;
 ```
 
----
+______________________________________________________________________
 
 ## 5. Build and test
 
@@ -395,7 +395,7 @@ make test
 `make test` runs CTest (C lifecycle tests) and pytest (Python API tests)
 for both `Cf32ToQ15` and `Q15ToCf32`.
 
----
+______________________________________________________________________
 
 ## 6. Development install
 
@@ -410,7 +410,7 @@ edit Python files.
 
 After this, `from iqfile.conv import Cf32ToQ15, Q15ToCf32` works from anywhere.
 
----
+______________________________________________________________________
 
 ## 7. Round-trip demo
 
@@ -480,7 +480,7 @@ PASSED
 Note the file size: 4096 samples × 4 bytes (two `int16_t`) = 16 384 bytes —
 half the 32 768 bytes a cf32 file would use for the same signal.
 
----
+______________________________________________________________________
 
 ## 8. Build a wheel
 

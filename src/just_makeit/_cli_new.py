@@ -50,19 +50,26 @@ def run(args: list[str]) -> None:
         elif tok == "--build-system":
             i += 1
             if i >= len(remaining):
-                print("error: --build-system requires a value (cmake, make)",
-                      file=sys.stderr)
+                print(
+                    "error: --build-system requires a value (cmake, make)",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             val = remaining[i]
             if val not in ("cmake", "make"):
-                print(f"error: --build-system '{val}' is not valid. "
-                      "Choose cmake or make.", file=sys.stderr)
+                print(
+                    f"error: --build-system '{val}' is not valid. "
+                    "Choose cmake or make.",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             build_system = val
             i += 1
         elif tok == "--basic":
-            print("warning: --basic is deprecated; use --build-system make",
-                  file=sys.stderr)
+            print(
+                "warning: --basic is deprecated; use --build-system make",
+                file=sys.stderr,
+            )
             build_system = "make"
             i += 1
         elif tok == "--perf":
@@ -85,8 +92,11 @@ def run(args: list[str]) -> None:
             val = remaining[i]
             if val.endswith("[]"):
                 if tok == "--return-type":
-                    print("error: --return-type cannot be an array type.\n"
-                          "Use a scalar type or void.", file=sys.stderr)
+                    print(
+                        "error: --return-type cannot be an array type.\n"
+                        "Use a scalar type or void.",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
                 elem = val[:-2]
                 if elem not in T._CTYPE_META:
@@ -95,12 +105,15 @@ def run(args: list[str]) -> None:
                         "is not supported.\n"
                         f"Supported element types: "
                         f"{', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr)
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
             elif val != "void" and val not in T._CTYPE_META:
-                print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                      f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                      file=sys.stderr)
+                print(
+                    f"error: {tok} '{val}' is not a supported scalar type.\n"
+                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             if tok == "--arg-type":
                 arg_type = val
@@ -114,7 +127,17 @@ def run(args: list[str]) -> None:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
 
-    _new.run(project, dest, object_names or None, state_vars or None,
-             modules=modules, build_system=build_system, perf=perf,
-             mutable=mutable, arg_type=arg_type, return_type=return_type,
-             pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)
+    _new.run(
+        project,
+        dest,
+        object_names or None,
+        state_vars or None,
+        modules=modules,
+        build_system=build_system,
+        perf=perf,
+        mutable=mutable,
+        arg_type=arg_type,
+        return_type=return_type,
+        pytest_=pytest_,
+        pytest_benchmark_=pytest_benchmark_,
+    )

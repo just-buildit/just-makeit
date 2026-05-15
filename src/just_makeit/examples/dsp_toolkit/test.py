@@ -2,6 +2,7 @@
 
 Called by tests/test_examples.py as: run(root: Path) -> None
 """
+
 from __future__ import annotations
 
 import os
@@ -71,12 +72,24 @@ def run(root: Path) -> None:
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=dest)
 
     # Python tests
-    _cmd([sys.executable, "-m", "pytest", "src/", "-v",
-          "--ignore=src/dsp_toolkit/benchmarks"], cwd=dest)
+    _cmd(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "src/",
+            "-v",
+            "--ignore=src/dsp_toolkit/benchmarks",
+        ],
+        cwd=dest,
+    )
 
     # Smoke test: both classes work end-to-end
     _cmd(
-        [sys.executable, "-c", """
+        [
+            sys.executable,
+            "-c",
+            """
 import sys
 sys.path.insert(0, 'src')
 from dsp_toolkit import Gain, Ema
@@ -91,7 +104,8 @@ y = e.step(1.0)
 assert abs(y - 0.75) < 1e-6, f"expected 0.75, got {y}"
 
 print("ok")
-"""],
+""",
+        ],
         cwd=dest,
     )
 
@@ -109,6 +123,7 @@ print("ok")
 
 if __name__ == "__main__":
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         run(Path(tmp))
     print("dsp_toolkit: PASSED")

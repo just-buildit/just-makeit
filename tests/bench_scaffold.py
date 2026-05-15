@@ -6,8 +6,6 @@ Save: make bench-save
 Cmp:  make bench-compare
 """
 
-from pathlib import Path
-
 import pytest
 
 from just_makeit import _init, _new

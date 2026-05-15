@@ -1,4 +1,5 @@
 """Console script entry points for bundled shell utilities."""
+
 import importlib.resources
 import os
 import shutil
@@ -18,12 +19,18 @@ def _run_ps1(name: str) -> None:
     # Translate GNU-style --check to PS switch -Check.
     ps_args = ["-Check" if a == "--check" else a for a in sys.argv[1:]]
     with importlib.resources.as_file(pkg / name) as path:
-        os.execvp(exe, [
-            exe, "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", str(path),
-            *ps_args,
-        ])
+        os.execvp(
+            exe,
+            [
+                exe,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(path),
+                *ps_args,
+            ],
+        )
 
 
 def install_deps() -> None:
@@ -39,12 +46,21 @@ def docker_e2e() -> None:
 
 def run_tests() -> None:
     import subprocess
-    result = subprocess.run([
-        "uv", "run", "--no-project",
-        "--with", "pytest",
-        "--with", "numpy",
-        "--with", "just-buildit",
-        "pytest", "-v",
-        *sys.argv[1:],
-    ])
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--with",
+            "pytest",
+            "--with",
+            "numpy",
+            "--with",
+            "just-buildit",
+            "pytest",
+            "-v",
+            *sys.argv[1:],
+        ]
+    )
     sys.exit(result.returncode)

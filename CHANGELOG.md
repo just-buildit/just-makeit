@@ -47,8 +47,7 @@ ______________________________________________________________________
   `${exec_prefix}/@CMAKE_INSTALL_LIBDIR@` and
   `${prefix}/@CMAKE_INSTALL_INCLUDEDIR@`.
 
-- **CMake config install lacked `@PACKAGE_INIT@`**: `install(EXPORT ... FILE
-  ...-config.cmake)` made the targets file serve as the config file, omitting
+- **CMake config install lacked `@PACKAGE_INIT@`**: `install(EXPORT ... FILE ...-config.cmake)` made the targets file serve as the config file, omitting
   the `PACKAGE_PREFIX_DIR` setup that `CMakePackageConfigHelpers` provides.
   Consumers using `find_package` after a DESTDIR-staged or prefix-changed
   install would get the build-tree prefix. The install section now uses
@@ -121,8 +120,7 @@ ______________________________________________________________________
 
 ### Fixed
 
-- **Docker / rootless containers**: `jm-install-deps` and `just-makeit
-  install-deps` no longer call `sudo` when running as root (e.g. inside a
+- **Docker / rootless containers**: `jm-install-deps` and `just-makeit install-deps` no longer call `sudo` when running as root (e.g. inside a
   Docker `RUN` step). Previously, `install-deps.sh` hardcoded `sudo` in every
   package-manager invocation; it now omits `sudo` when `id -u` returns 0.
 - **Windows — `.pyd` import after `pip install -e .`**: test fixtures for
@@ -171,8 +169,7 @@ ______________________________________________________________________
   instead of MSVC (which rejects C99 `float complex`). Test fixtures no longer
   skip on Windows; `./demo` → `demo.exe`, DLL directory prepended to `PATH` at
   runtime, `-Wl,-rpath` omitted on Windows, and `pytest-benchmark` moved from
-  required to optional deps in the generated `pyproject.toml` so `uv pip
-  install -e .` no longer tries to overwrite the locked `pytest.exe` in the
+  required to optional deps in the generated `pyproject.toml` so `uv pip install -e .` no longer tries to overwrite the locked `pytest.exe` in the
   test runner venv.
 
 ______________________________________________________________________
@@ -202,8 +199,7 @@ ______________________________________________________________________
   only when module-level functions are present (they are the only consumers
   of that header).
 - **Gap #6 — CMakeLists external lib block propagation**: when a new object is
-  added to a module, `if(VAR) target_link_libraries/target_include_directories …
-  endif()` blocks found in sibling CMakeLists files are copied and adapted for
+  added to a module, `if(VAR) target_link_libraries/target_include_directories … endif()` blocks found in sibling CMakeLists files are copied and adapted for
   the new component automatically.
 
 ### Added
@@ -292,8 +288,8 @@ ______________________________________________________________________
   `jm method` and `jm function` now accept numpy array inputs. The C stub
   receives `(const elem_t *name, size_t name_len)`; the Python wrapper
   generates `PyArray_FROM_OTF` + `Py_DECREF` automatically. Supported element
-  types: all fixed-width integer types, float, double, float _Complex,
-  double _Complex. Mixed scalar + array params are supported in a single call.
+  types: all fixed-width integer types, float, double, float \_Complex,
+  double \_Complex. Mixed scalar + array params are supported in a single call.
 - **CLI help overhauled**: `just-makeit help` now documents void return types,
   array `--param` syntax with elem-type list, and real-world examples
   (`execute_ctrl`, `apply_window`, sink/generator objects).
@@ -308,16 +304,14 @@ ______________________________________________________________________
 ### Added
 
 - **`just-makeit example <name>`**: run any bundled example end-to-end in a
-  temporary directory — no `git clone` required (`uvx just-makeit install-deps
-  && just-makeit example fir_filter`). All 8 examples are now shipped inside
+  temporary directory — no `git clone` required (`uvx just-makeit install-deps && just-makeit example fir_filter`). All 8 examples are now shipped inside
   the wheel under `just_makeit/examples/`.
 - **Bench template DCE fix**: `(void)step(obj)` in warmup and step-timing loops
   is now `volatile <<return_ctype>> _sink = step(obj)` so the compiler cannot
   dead-code-eliminate the measured loop at any optimisation level. Applies to
   both the stateful-object bench and the pure-function bench.
 - **Example TL;DR blocks updated**: all 8 example READMEs now show the
-  `just-makeit example <name>` one-liner instead of the `git clone + python3
-  test.py` form.
+  `just-makeit example <name>` one-liner instead of the `git clone + python3 test.py` form.
 
 ______________________________________________________________________
 
@@ -357,7 +351,6 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-
 ## \[0.9.9\] — 2026-05-10
 
 ### Added
@@ -383,7 +376,6 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-
 ## \[0.9.7\] — 2026-05-10
 
 ### Added
@@ -404,8 +396,7 @@ ______________________________________________________________________
 ### Fixed
 
 - `clib_common.h` now installed to the include prefix alongside component
-  headers; previously excluded by CMake install rules, causing `fatal error:
-  'clib_common.h' file not found` when compiling external C consumers.
+  headers; previously excluded by CMake install rules, causing `fatal error: 'clib_common.h' file not found` when compiling external C consumers.
 - `just-makeit add` now preserves field-backed property struct fields and
   method declarations when regenerating `_core.h` and `ext.c`.
 
@@ -576,8 +567,7 @@ ______________________________________________________________________
 - `just-makeit new` now generates `native/src/<project>_lib.c` (a version stub),
   and `CMakeLists.txt` references it instead of `""`.  The empty-string source was
   rejected by CMake on macOS with AppleClang 17 (`No SOURCES given to target`).
-- `just-makeit object` now patches `target_sources(<pkg>_lib PRIVATE
-  $<TARGET_OBJECTS:<comp>_core>)` into the root `CMakeLists.txt` alongside the
+- `just-makeit object` now patches `target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:<comp>_core>)` into the root `CMakeLists.txt` alongside the
   existing `add_subdirectory` patch.  Previously, module-only projects built an
   empty `lib<pkg>.so`; now all object cores are wired in, enabling `cmake --install`,
   pkg-config, and CMake `find_package` for module-based projects.
@@ -636,7 +626,7 @@ ______________________________________________________________________
   pkg-config with per-platform install commands.
 - `docs/c-library.md` — dedicated end-user guide for installing and
   consuming the generated C library: prerequisites, build + install,
-  pkg-config and CMake find\_package usage, rpath options, and
+  pkg-config and CMake find_package usage, rpath options, and
   verification steps.
 
 ### Fixed

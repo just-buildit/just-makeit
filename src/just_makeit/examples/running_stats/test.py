@@ -51,7 +51,11 @@ def run(root: Path) -> None:
     # 3. CMake configure + build + CTest
     _cmd(
         [
-            "cmake", "-B", "build", "-S", ".",
+            "cmake",
+            "-B",
+            "build",
+            "-S",
+            ".",
             *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
@@ -62,10 +66,14 @@ def run(root: Path) -> None:
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
     # 4. Add min/max state variables, rebuild, retest
-    jm_add(proj, "running_stats", [
-        ("min_val", "double", "0.0"),
-        ("max_val", "double", "0.0"),
-    ])
+    jm_add(
+        proj,
+        "running_stats",
+        [
+            ("min_val", "double", "0.0"),
+            ("max_val", "double", "0.0"),
+        ],
+    )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 

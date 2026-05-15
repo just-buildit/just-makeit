@@ -12,7 +12,7 @@
 
 State:
 
-| Name    | Type     | Default | Role                         |
-| ------- | -------- | ------- | ---------------------------- |
-| `alpha` | `double` | `0.1`   | Smoothing factor (0 < α < 1) |
-| `prev`  | `float`  | `0.0`   | Previous output sample       |
+| Name    | Type     | Default | Role                           |
+| ------- | -------- | ------- | ------------------------------ |
+| `alpha` | `double` | `0.1`   | Smoothing factor (0 \< α \< 1) |
+| `prev`  | `float`  | `0.0`   | Previous output sample         |

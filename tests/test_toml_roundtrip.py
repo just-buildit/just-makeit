@@ -20,7 +20,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 SRC = Path(__file__).parent.parent / "src"
 
@@ -35,9 +34,7 @@ def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     )
 
 
-def _run_script_and_replay(
-    source_dir: Path, replay_base: Path
-) -> tuple[str, str]:
+def _run_script_and_replay(source_dir: Path, replay_base: Path) -> tuple[str, str]:
     """
     Run `jm script` in source_dir, replay every command into replay_base,
     and return (original_toml_text, replayed_toml_text).
@@ -63,7 +60,7 @@ def _run_script_and_replay(
         if not line or line.startswith("#") or line.startswith("cd "):
             continue
         if line.startswith("just-makeit "):
-            parts = shlex.split(line[len("just-makeit "):])
+            parts = shlex.split(line[len("just-makeit ") :])
             commands.append(parts)
 
     # Replay in a subdirectory named after the project so `cd` would land here
@@ -88,29 +85,36 @@ def _run_script_and_replay(
 
 # ── Object flag round-trips ───────────────────────────────────────────────────
 
-class TestObjectFlagsRoundTrip:
 
+class TestObjectFlagsRoundTrip:
     def test_arg_type_void_return_type_complex(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--arg-type", "void",
-             "--return-type", "float _Complex", cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            cwd=dest,
+        )
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_return_type_void_sink(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "sink", "--arg-type", "float", "--return-type", "void",
-             cwd=dest)
+        _cli("object", "sink", "--arg-type", "float", "--return-type", "void", cwd=dest)
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_arg_and_return_same_non_default(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gain", "--arg-type", "float", "--return-type", "float",
-             cwd=dest)
+        _cli(
+            "object", "gain", "--arg-type", "float", "--return-type", "float", cwd=dest
+        )
         r = _cli("script", cwd=dest)
         # same as arg-type so --return-type should be omitted
         assert "--return-type float" not in r.stdout
@@ -148,8 +152,16 @@ class TestObjectFlagsRoundTrip:
     def test_mutable_round_trip(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "nco", "--arg-type", "void",
-             "--return-type", "float _Complex", "--mutable", cwd=dest)
+        _cli(
+            "object",
+            "nco",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            "--mutable",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--mutable" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -167,9 +179,16 @@ class TestObjectFlagsRoundTrip:
     def test_init_param_multiple(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state",
-             "--init-param", "rate:float:1.0",
-             "--init-param", "order:int:4", cwd=dest)
+        _cli(
+            "object",
+            "gen",
+            "--no-state",
+            "--init-param",
+            "rate:float:1.0",
+            "--init-param",
+            "order:int:4",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--init-param rate:float:1.0" in r.stdout
         assert "--init-param order:int:4" in r.stdout
@@ -179,9 +198,15 @@ class TestObjectFlagsRoundTrip:
     def test_state_var_with_default(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "bpf",
-             "--state", "cutoff:double:440.0",
-             "--state", "order:int:4", cwd=dest)
+        _cli(
+            "object",
+            "bpf",
+            "--state",
+            "cutoff:double:440.0",
+            "--state",
+            "order:int:4",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--state cutoff:double:440.0" in r.stdout
         assert "--state order:int:4" in r.stdout
@@ -191,10 +216,17 @@ class TestObjectFlagsRoundTrip:
     def test_array_arg_round_trip(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "fir",
-             "--arg-type", "float _Complex[]",
-             "--array-arg", "coeffs:float32",
-             "--state", "gain:float:1.0f", cwd=dest)
+        _cli(
+            "object",
+            "fir",
+            "--arg-type",
+            "float _Complex[]",
+            "--array-arg",
+            "coeffs:float32",
+            "--state",
+            "gain:float:1.0f",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--array-arg coeffs:float32" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -204,10 +236,17 @@ class TestObjectFlagsRoundTrip:
         """C type input (e.g. float) is accepted and stored as dtype name (float32)."""
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "fir",
-             "--arg-type", "float _Complex[]",
-             "--array-arg", "coeffs:float",
-             "--state", "gain:float:1.0f", cwd=dest)
+        _cli(
+            "object",
+            "fir",
+            "--arg-type",
+            "float _Complex[]",
+            "--array-arg",
+            "coeffs:float",
+            "--state",
+            "gain:float:1.0f",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--array-arg coeffs:float32" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -216,8 +255,8 @@ class TestObjectFlagsRoundTrip:
 
 # ── Project flag round-trips ──────────────────────────────────────────────────
 
-class TestProjectFlagsRoundTrip:
 
+class TestProjectFlagsRoundTrip:
     def test_perf_persisted_and_replayed(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--perf")
@@ -246,8 +285,8 @@ class TestProjectFlagsRoundTrip:
 
 # ── Method flag round-trips ───────────────────────────────────────────────────
 
-class TestMethodFlagsRoundTrip:
 
+class TestMethodFlagsRoundTrip:
     @staticmethod
     def _setup(tmp_path):
         dest = tmp_path / "proj"
@@ -257,17 +296,39 @@ class TestMethodFlagsRoundTrip:
 
     def test_variable_output(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "execute", "--module", "dsp",
-             "--arg-type", "void", "--return-type", "float _Complex",
-             "--variable-output", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "execute",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "float _Complex",
+            "--variable-output",
+            cwd=dest,
+        )
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_multi_output(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "execute_ovf", "--module", "dsp",
-             "--arg-type", "void", "--return-type", "uint32_t",
-             "--variable-output", "--multi-output", "uint8_t", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "execute_ovf",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "uint32_t",
+            "--variable-output",
+            "--multi-output",
+            "uint8_t",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--multi-output uint8_t" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -275,10 +336,20 @@ class TestMethodFlagsRoundTrip:
 
     def test_scalar_params(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "configure", "--module", "dsp",
-             "--param", "freq:float",
-             "--param", "mode:int32_t",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "configure",
+            "--module",
+            "dsp",
+            "--param",
+            "freq:float",
+            "--param",
+            "mode:int32_t",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--param freq:float" in r.stdout
         assert "--param mode:int32_t" in r.stdout
@@ -287,10 +358,20 @@ class TestMethodFlagsRoundTrip:
 
     def test_out_type(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "demod", "--module", "dsp",
-             "--arg-type", "float _Complex",
-             "--out-type", "float",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "demod",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "float _Complex",
+            "--out-type",
+            "float",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--out-type float" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -298,11 +379,22 @@ class TestMethodFlagsRoundTrip:
 
     def test_out_divisor(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "demod2", "--module", "dsp",
-             "--arg-type", "int16_t",
-             "--out-type", "float _Complex",
-             "--out-divisor", "2",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "demod2",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "int16_t",
+            "--out-type",
+            "float _Complex",
+            "--out-divisor",
+            "2",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--out-divisor 2" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -310,11 +402,22 @@ class TestMethodFlagsRoundTrip:
 
     def test_out_divisor_1_not_emitted(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "proc", "--module", "dsp",
-             "--arg-type", "float _Complex",
-             "--out-type", "float",
-             "--out-divisor", "1",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "proc",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "float _Complex",
+            "--out-type",
+            "float",
+            "--out-divisor",
+            "1",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--out-divisor" not in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -322,10 +425,19 @@ class TestMethodFlagsRoundTrip:
 
     def test_batch_round_trip(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("method", "nco", "process", "--module", "dsp",
-             "--arg-type", "float _Complex",
-             "--return-type", "float _Complex",
-             "--batch", cwd=dest)
+        _cli(
+            "method",
+            "nco",
+            "process",
+            "--module",
+            "dsp",
+            "--arg-type",
+            "float _Complex",
+            "--return-type",
+            "float _Complex",
+            "--batch",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--batch" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -334,8 +446,8 @@ class TestMethodFlagsRoundTrip:
 
 # ── Property flag round-trips ─────────────────────────────────────────────────
 
-class TestPropertyFlagsRoundTrip:
 
+class TestPropertyFlagsRoundTrip:
     @staticmethod
     def _setup(tmp_path):
         dest = tmp_path / "proj"
@@ -345,8 +457,7 @@ class TestPropertyFlagsRoundTrip:
 
     def test_type_and_writable(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "nco", "phase", "--type", "uint32_t",
-             "--writable", cwd=dest)
+        _cli("property", "nco", "phase", "--type", "uint32_t", "--writable", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--type uint32_t" in r.stdout
         assert "--writable" in r.stdout
@@ -363,8 +474,7 @@ class TestPropertyFlagsRoundTrip:
 
     def test_field(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "nco", "counter", "--type", "uint32_t",
-             "--field", cwd=dest)
+        _cli("property", "nco", "counter", "--type", "uint32_t", "--field", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -372,8 +482,16 @@ class TestPropertyFlagsRoundTrip:
 
     def test_field_and_writable(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "nco", "val", "--type", "float",
-             "--field", "--writable", cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "val",
+            "--type",
+            "float",
+            "--field",
+            "--writable",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
         assert "--writable" in r.stdout
@@ -383,8 +501,8 @@ class TestPropertyFlagsRoundTrip:
 
 # ── Function flag round-trips ─────────────────────────────────────────────────
 
-class TestFunctionFlagsRoundTrip:
 
+class TestFunctionFlagsRoundTrip:
     @staticmethod
     def _setup(tmp_path):
         dest = tmp_path / "proj"
@@ -393,8 +511,15 @@ class TestFunctionFlagsRoundTrip:
 
     def test_doc_persisted(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("function", "dsp_init", "--module", "dsp",
-             "--doc", "Initialize DSP tables.", cwd=dest)
+        _cli(
+            "function",
+            "dsp_init",
+            "--module",
+            "dsp",
+            "--doc",
+            "Initialize DSP tables.",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--doc" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -402,8 +527,15 @@ class TestFunctionFlagsRoundTrip:
 
     def test_non_void_return_type(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("function", "get_count", "--module", "dsp",
-             "--return-type", "int32_t", cwd=dest)
+        _cli(
+            "function",
+            "get_count",
+            "--module",
+            "dsp",
+            "--return-type",
+            "int32_t",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--return-type int32_t" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -419,9 +551,19 @@ class TestFunctionFlagsRoundTrip:
 
     def test_params(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("function", "apply_window", "--module", "dsp",
-             "--param", "n:size_t", "--param", "beta:float",
-             "--return-type", "void", cwd=dest)
+        _cli(
+            "function",
+            "apply_window",
+            "--module",
+            "dsp",
+            "--param",
+            "n:size_t",
+            "--param",
+            "beta:float",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--param n:size_t" in r.stdout
         assert "--param beta:float" in r.stdout

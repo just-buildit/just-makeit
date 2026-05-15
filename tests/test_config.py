@@ -246,8 +246,13 @@ class TestAddComponentFlags:
 
     def test_init_params_stored_and_read_back(self):
         cfg = from_new("p")
-        add_component(cfg, "gen", [], no_state_=True,
-                      init_params_=[("n", "int", "16"), ("order", "int", "4")])
+        add_component(
+            cfg,
+            "gen",
+            [],
+            no_state_=True,
+            init_params_=[("n", "int", "16"), ("order", "int", "4")],
+        )
         result = init_params(cfg, "gen")
         assert result == [("n", "int", "16"), ("order", "int", "4")]
 
@@ -270,8 +275,7 @@ class TestDumpFlagFields:
 
     def test_dump_init_params_section(self):
         cfg = from_new("p")
-        add_component(cfg, "gen", [], no_state_=True,
-                      init_params_=[("n", "int", "16")])
+        add_component(cfg, "gen", [], no_state_=True, init_params_=[("n", "int", "16")])
         text = _dump(cfg)
         assert "[[gen.init_params]]" in text
         assert 'name = "n"' in text
@@ -317,7 +321,9 @@ class TestDumpFlagFields:
     def test_dump_property_writable(self):
         cfg = from_new("p")
         add_component(cfg, "nco", [])
-        add_property(cfg, "nco", {"name": "phase", "type": "uint32_t", "writable": True})
+        add_property(
+            cfg, "nco", {"name": "phase", "type": "uint32_t", "writable": True}
+        )
         assert "writable = true" in _dump(cfg)
 
     def test_dump_array_arg_type(self):
@@ -358,6 +364,7 @@ class TestBackwardCompat:
         )
         cfg = load(tmp_path)
         from just_makeit._config import array_args
+
         assert array_args(cfg, "fir") == [("h", "float32")]
         text = _dump(cfg)
         assert 'type = "float32"' in text

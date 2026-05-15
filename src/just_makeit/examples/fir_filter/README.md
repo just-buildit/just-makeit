@@ -30,7 +30,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -52,7 +52,7 @@ Three state variables:
 
 `coeffs` and `delay` are inline in the C struct — no heap allocation per field.
 
----
+______________________________________________________________________
 
 ## 2. Implement
 
@@ -86,7 +86,7 @@ static inline float complex fir_filter_step(fir_filter_state_t *state, float com
 `fir_filter_steps()` in `fir_filter_core.c` loops over this automatically —
 no changes needed there.
 
----
+______________________________________________________________________
 
 ## 3. Build and test
 
@@ -99,7 +99,7 @@ The generated tests cover getter/setter round-trips, reset behaviour, the
 context manager, and destroy. After implementing the filter you can add
 signal-level tests (see step 5).
 
----
+______________________________________________________________________
 
 ## 4. Try it from Python
 
@@ -139,7 +139,7 @@ with FirFilter(gain=2.0) as g:
 print("gain=2 response:", y2[:3].real)  # [0.5 1.  0.5]
 ```
 
----
+______________________________________________________________________
 
 ## 5. Try it from C
 
@@ -190,7 +190,7 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
     -lm -o demo && ./demo
 ```
 
----
+______________________________________________________________________
 
 ## 6. Add more state
 
@@ -205,7 +205,7 @@ Or swap in a longer delay line without touching your implementation:
 just-makeit add --state "coeffs64:double _Complex[64]"
 ```
 
----
+______________________________________________________________________
 
 ## 7. Bonus: `--perf` + SIMD benchmark
 
@@ -299,11 +299,11 @@ fir_filter_step_batch(
 
 Three named constants make each concern explicit:
 
-| constant    | concern      | meaning                                           |
-|-------------|--------------|---------------------------------------------------|
-| `FIR_TAPS`  | algorithm    | filter length (set at codegen time)               |
-| `FIR_BATCH` | parallelism  | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
-| `FIR_CHUNK` | tuning       | samples per scratch-buffer fill                   |
+| constant    | concern     | meaning                                            |
+| ----------- | ----------- | -------------------------------------------------- |
+| `FIR_TAPS`  | algorithm   | filter length (set at codegen time)                |
+| `FIR_BATCH` | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
+| `FIR_CHUNK` | tuning      | samples per scratch-buffer fill                    |
 
 `FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2),
 so the same source compiles to 8 or 4 complex samples per batch without any

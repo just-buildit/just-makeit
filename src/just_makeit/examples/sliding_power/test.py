@@ -2,9 +2,9 @@
 
 Called by tests/test_examples.py as: run(root: Path) -> None
 """
+
 from __future__ import annotations
 
-import math
 import os
 import subprocess
 import sys
@@ -42,6 +42,7 @@ def run(root: Path) -> None:
     # Patch step(): replace stub (const + placeholder body) with real implementation.
     # The stub is: JM_FORCEINLINE JM_HOT float\npower_est_step(const ...) { ... }
     import re as _re
+
     header = dest / "native" / "inc" / "power_est" / "power_est_core.h"
     text = header.read_text()
     stub_re = _re.compile(
@@ -71,12 +72,17 @@ def run(root: Path) -> None:
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     # C tests
-    r = subprocess.run(["make", "test"], cwd=dest, env=env, capture_output=True, text=True)
+    r = subprocess.run(
+        ["make", "test"], cwd=dest, env=env, capture_output=True, text=True
+    )
     assert r.returncode == 0, f"make test failed:\n{r.stdout}\n{r.stderr}"
 
     # Python smoke test — step() now returns float, not complex
     r = subprocess.run(
-        [sys.executable, "-c", """
+        [
+            sys.executable,
+            "-c",
+            """
 import math, sys
 sys.path.insert(0, 'src')
 from my_power import PowerEst
@@ -88,7 +94,8 @@ for _ in range(64):
     y = est.step(0j)
 assert y < 0.01, f"silence power should be ~0: {y}"
 print("ok")
-"""],
+""",
+        ],
         cwd=dest,
         capture_output=True,
         text=True,

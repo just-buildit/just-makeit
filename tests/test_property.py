@@ -28,55 +28,55 @@ def project(tmp_path):
 class TestPropertyUpdatesExtC:
     def test_ext_c_has_getset_def(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyGetSetDef Buf_getset[]" in ext
 
     def test_ext_c_has_tp_getset(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert ".tp_getset" in ext
         assert "Buf_getset" in ext
 
     def test_ext_c_getter_calls_correct_fn(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "buf_get_dropped(self->handle)" in ext
 
     def test_ext_c_getter_stub_signature(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Buf_getprop_dropped" in ext
 
     def test_ext_c_getset_entry_with_null_setter(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"dropped"' in ext
         # read-only: setter should be NULL
         assert "NULL, NULL" in ext
 
     def test_ext_c_getset_null_terminator(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "{ NULL }" in ext
 
     def test_ext_c_multiple_properties(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
         property_run(project, "buf", "available", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Buf_getprop_dropped" in ext
         assert "Buf_getprop_available" in ext
         # Only one getset array
@@ -84,40 +84,40 @@ class TestPropertyUpdatesExtC:
 
     def test_ext_c_writable_has_setter(self, project):
         property_run(project, "buf", "threshold", None, "size_t", True)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Buf_setprop_threshold" in ext
         assert "buf_set_threshold(self->handle" in ext
 
     def test_ext_c_readonly_no_setter_fn(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        ext = (
-            project / "native" / "src" / "buf" / "buf_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Buf_setprop_dropped" not in ext
 
 
 class TestPropertyUpdatesCoreH:
     def test_core_h_has_getter_decl(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        h = (
-            project / "native" / "inc" / "buf" / "buf_core.h"
-        ).read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "buf_get_dropped" in h
 
     def test_core_h_has_setter_decl_when_writable(self, project):
         property_run(project, "buf", "threshold", None, "size_t", True)
-        h = (
-            project / "native" / "inc" / "buf" / "buf_core.h"
-        ).read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "buf_set_threshold" in h
 
     def test_core_h_no_setter_decl_when_readonly(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        h = (
-            project / "native" / "inc" / "buf" / "buf_core.h"
-        ).read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "buf_set_dropped" not in h
 
 
@@ -162,15 +162,11 @@ class TestPropertyValidation:
 
     def test_unknown_object_exits(self, project):
         with pytest.raises(SystemExit):
-            property_run(
-                project, "nonexistent", "dropped", None, "size_t", False
-            )
+            property_run(project, "nonexistent", "dropped", None, "size_t", False)
 
     def test_unsupported_type_exits(self, project):
         with pytest.raises(SystemExit):
-            property_run(
-                project, "buf", "dropped", None, "notavalidtype", False
-            )
+            property_run(project, "buf", "dropped", None, "notavalidtype", False)
 
     def test_duplicate_property_name_exits(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
@@ -180,9 +176,7 @@ class TestPropertyValidation:
 
 def _check_no_placeholders(project: Path) -> None:
     for path in project.rglob("*"):
-        if path.is_file() and path.suffix in (
-            ".py", ".c", ".h", ".toml", ".txt"
-        ):
+        if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
             text = path.read_text(encoding="utf-8")
             m = _STRAY_PLACEHOLDER.search(text)
             assert m is None, f"Unreplaced placeholder in {path}"
@@ -212,35 +206,47 @@ class TestPropertyField:
 
     def test_struct_field_in_core_h(self, project):
         property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "uint32_t phase;" in h
 
     def test_struct_field_not_in_create_params(self, project):
         """Field-backed property must NOT appear as a constructor parameter."""
         property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "buf_create(size_t capacity)" in h
 
     def test_getter_uses_handle_field(self, project):
         property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
-        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "self->handle->phase" in ext
 
     def test_getter_no_implement_comment(self, project):
         property_run(project, "buf", "phase", None, "uint32_t", False, field=True)
-        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         # Should not have <<IMPLEMENT>> in the getter for this property
         assert "IMPLEMENT" not in ext
 
     def test_writable_setter_assigns_field(self, project):
         property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
-        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "self->handle->phase = v;" in ext
 
     def test_no_extern_decl_in_core_h(self, project):
         """Field-backed property must not add buf_get_phase / buf_set_phase decls."""
         property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "buf_get_phase" not in h
         assert "buf_set_phase" not in h
 
@@ -253,7 +259,9 @@ class TestPropertyField:
     def test_multiple_field_props(self, project):
         property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
         property_run(project, "buf", "phase_inc", None, "uint32_t", False, field=True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "uint32_t phase;" in h
         assert "uint32_t phase_inc;" in h
 
@@ -261,19 +269,26 @@ class TestPropertyField:
         """Field-backed and computed properties coexist correctly."""
         property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
         property_run(project, "buf", "status", None, "uint32_t", False)
-        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(encoding="utf-8")
+        ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "self->handle->phase" in ext
         assert "buf_get_status(self->handle)" in ext
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "uint32_t phase;" in h
         assert "buf_get_status" in h
 
     def test_field_survives_add(self, project):
         """Struct field must still be present after just-makeit add."""
         from just_makeit._add import run as add_run
+
         property_run(project, "buf", "phase", None, "uint32_t", True, field=True)
         add_run(project, "buf", [("gain", "float", "1.0f")])
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "uint32_t phase;" in h
         assert "float gain;" in h
 
@@ -290,21 +305,29 @@ class TestPropertyFieldModule:
 
     def test_struct_field_written_to_core_h(self, mod_project):
         property_run(mod_project, "nco", "phase", "sig", "uint32_t", False, field=True)
-        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
+        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "uint32_t phase;" in h
 
     def test_ext_c_uses_handle_field(self, mod_project):
         property_run(mod_project, "nco", "phase", "sig", "uint32_t", False, field=True)
-        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(encoding="utf-8")
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "self->handle->phase" in ext
 
     def test_writable_setter_in_ext_c(self, mod_project):
         property_run(mod_project, "nco", "phase", "sig", "uint32_t", True, field=True)
-        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(encoding="utf-8")
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "self->handle->phase = v;" in ext
 
     def test_no_extern_decl_in_core_h(self, mod_project):
         property_run(mod_project, "nco", "phase", "sig", "uint32_t", True, field=True)
-        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
+        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "nco_get_phase" not in h
         assert "nco_set_phase" not in h

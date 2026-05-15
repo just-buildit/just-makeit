@@ -134,38 +134,38 @@ for (int k = 0; k < N_TAPS; k++)
 
 **SIMD tiers selected at compile time:**
 
-| Tier | `JM_SIMD_WIDTH_F32` | `JM_VEC_F32` |
-|---|---|---|
-| AVX-512F | 16 | `__m512` |
-| AVX2 + FMA | 8 | `__m256` |
-| Scalar | 1 | `float` |
+| Tier       | `JM_SIMD_WIDTH_F32` | `JM_VEC_F32` |
+| ---------- | ------------------- | ------------ |
+| AVX-512F   | 16                  | `__m512`     |
+| AVX2 + FMA | 8                   | `__m256`     |
+| Scalar     | 1                   | `float`      |
 
 **Full macro set:**
 
-| Macro | Operation |
-|---|---|
-| `JM_VEC_F32` / `JM_VEC_F64` | Width-aware vector type |
-| `JM_ZERO_F32()` | Zero accumulator |
-| `JM_SPLAT_F32(x)` | Broadcast scalar to all lanes |
-| `JM_LOAD_F32(ptr)` | Unaligned load |
-| `JM_STORE_F32(ptr, v)` | Store |
-| `JM_ADD_F32(a, b)` | Element-wise add |
-| `JM_MUL_F32(a, b)` | Element-wise multiply |
-| `JM_FMA_F32(acc, a, b)` | `acc += a * b` |
-| `JM_MAC_F32(acc, ptr, s)` | Load + FMA in one call |
-| `JM_HSUM_F32(v)` | Horizontal reduce to scalar |
-| `jm_dot_f32(a, b, n)` | Full dot product loop |
+| Macro                       | Operation                     |
+| --------------------------- | ----------------------------- |
+| `JM_VEC_F32` / `JM_VEC_F64` | Width-aware vector type       |
+| `JM_ZERO_F32()`             | Zero accumulator              |
+| `JM_SPLAT_F32(x)`           | Broadcast scalar to all lanes |
+| `JM_LOAD_F32(ptr)`          | Unaligned load                |
+| `JM_STORE_F32(ptr, v)`      | Store                         |
+| `JM_ADD_F32(a, b)`          | Element-wise add              |
+| `JM_MUL_F32(a, b)`          | Element-wise multiply         |
+| `JM_FMA_F32(acc, a, b)`     | `acc += a * b`                |
+| `JM_MAC_F32(acc, ptr, s)`   | Load + FMA in one call        |
+| `JM_HSUM_F32(v)`            | Horizontal reduce to scalar   |
+| `jm_dot_f32(a, b, n)`       | Full dot product loop         |
 
 `_F64` variants exist for all macros. `jm_perf.h` includes `jm_simd.h`
 automatically; it can also be included standalone.
 
 **Also added to `jm_perf.h`:**
 
-| Macro | Effect |
-|---|---|
-| `JM_UNROLL(n)` | Loop unroll hint (`#pragma GCC unroll n`) |
+| Macro                       | Effect                                             |
+| --------------------------- | -------------------------------------------------- |
+| `JM_UNROLL(n)`              | Loop unroll hint (`#pragma GCC unroll n`)          |
 | `JM_ASSUME_ALIGNED(ptr, n)` | Pointer alignment assertion for auto-vectorisation |
-| `JM_PREFETCH(ptr, rw, loc)` | Software prefetch (`__builtin_prefetch`) |
+| `JM_PREFETCH(ptr, rw, loc)` | Software prefetch (`__builtin_prefetch`)           |
 
 **Note on zero-dependency wheels:** the v0.4 OBJECT library design already
 solves this — Python DSOs embed the C code directly and have no runtime

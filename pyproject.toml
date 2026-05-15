@@ -43,6 +43,9 @@ jm-install-deps = "just_makeit._scripts:install_deps"
 jm-run-tests = "just_makeit._scripts:run_tests"
 jm-docker-e2e = "just_makeit._scripts:docker_e2e"
 
+[tool.ruff.lint]
+per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

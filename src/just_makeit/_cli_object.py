@@ -58,8 +58,11 @@ def run(args: list[str]) -> None:
             val = remaining[i]
             if val.endswith("[]"):
                 if tok == "--return-type":
-                    print("error: --return-type cannot be an array type.\n"
-                          "Use a scalar type or void.", file=sys.stderr)
+                    print(
+                        "error: --return-type cannot be an array type.\n"
+                        "Use a scalar type or void.",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
                 elem = val[:-2]
                 if elem not in T._CTYPE_META:
@@ -68,12 +71,15 @@ def run(args: list[str]) -> None:
                         "is not supported.\n"
                         f"Supported element types: "
                         f"{', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr)
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
             elif val != "void" and val not in T._CTYPE_META:
-                print(f"error: {tok} '{val}' is not a supported scalar type.\n"
-                      f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                      file=sys.stderr)
+                print(
+                    f"error: {tok} '{val}' is not a supported scalar type.\n"
+                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             if tok == "--arg-type":
                 arg_type = val
@@ -87,8 +93,7 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --array-arg '{val}' must be name:dtype",
-                      file=sys.stderr)
+                print(f"error: --array-arg '{val}' must be name:dtype", file=sys.stderr)
                 sys.exit(1)
             aa_name, aa_dtype = val.split(":", 1)
             canonical = T.normalize_array_dtype(aa_dtype)
@@ -121,9 +126,11 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             mo_val = remaining[i]
             if mo_val not in T._CTYPE_META:
-                print(f"error: --multi-output type '{mo_val}' not supported.\n"
-                      f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                      file=sys.stderr)
+                print(
+                    f"error: --multi-output type '{mo_val}' not supported.\n"
+                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             multi_output_obj.append(mo_val)
             i += 1
@@ -147,6 +154,7 @@ def run(args: list[str]) -> None:
                 print("error: --replace requires old::new", file=sys.stderr)
                 sys.exit(1)
             from . import _impl as _I
+
             replacements.append(_I.parse_replace(remaining[i]))
             i += 1
         else:
@@ -157,8 +165,7 @@ def run(args: list[str]) -> None:
         no_step = True
 
     if no_state and state_vars:
-        print("error: --no-state and --state are mutually exclusive.",
-              file=sys.stderr)
+        print("error: --no-state and --state are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
     if init_params_obj and not no_state:
         print("error: --init-param requires --no-state.", file=sys.stderr)
@@ -167,13 +174,23 @@ def run(args: list[str]) -> None:
     impl_body_obj: str | None = None
     if impl_spec is not None:
         from . import _impl as _I
+
         impl_body_obj = _I.load_impl(impl_spec, replacements)
-    _object.run(Path.cwd(), object_name, module,
-                None if (no_state or not state_vars) else state_vars,
-                perf=perf, arg_type=arg_type, return_type=return_type,
-                array_args=array_args_obj, no_state=no_state,
-                no_step=no_step, mutable=mutable, impl_body=impl_body_obj,
-                init_params=init_params_obj,
-                variable_output=variable_output_obj,
-                multi_output=multi_output_obj,
-                method_name=method_name_obj)
+    _object.run(
+        Path.cwd(),
+        object_name,
+        module,
+        None if (no_state or not state_vars) else state_vars,
+        perf=perf,
+        arg_type=arg_type,
+        return_type=return_type,
+        array_args=array_args_obj,
+        no_state=no_state,
+        no_step=no_step,
+        mutable=mutable,
+        impl_body=impl_body_obj,
+        init_params=init_params_obj,
+        variable_output=variable_output_obj,
+        multi_output=multi_output_obj,
+        method_name=method_name_obj,
+    )

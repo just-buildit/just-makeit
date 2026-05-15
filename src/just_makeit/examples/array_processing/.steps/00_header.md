@@ -10,13 +10,13 @@ allocated**, and **what the Python caller can safely do with the returned array*
 
 Five patterns, five sections:
 
-| # | Pattern | Output allocation | Who owns it |
-|---|---------|-------------------|-------------|
-| 1 | Auto-generated `steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
-| 2 | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy) |
-| 3 | `method --variable-output` | Allocated at `__init__`, re-used | Object (zero-copy view) |
-| 4 | `method --variable-output --multi-output` | Same — one buffer per stream | Object (tuple of views) |
-| 5 | `--arg-type type[]` (buffer primary arg) | Caller supplies input buffer | Caller (input) |
+| #   | Pattern                                        | Output allocation                     | Who owns it             |
+| --- | ---------------------------------------------- | ------------------------------------- | ----------------------- |
+| 1   | Auto-generated `steps()`                       | Per call (or zero if `out=` supplied) | Caller (numpy)          |
+| 2   | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy)          |
+| 3   | `method --variable-output`                     | Allocated at `__init__`, re-used      | Object (zero-copy view) |
+| 4   | `method --variable-output --multi-output`      | Same — one buffer per stream          | Object (tuple of views) |
+| 5   | `--arg-type type[]` (buffer primary arg)       | Caller supplies input buffer          | Caller (input)          |
 
 All five patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.

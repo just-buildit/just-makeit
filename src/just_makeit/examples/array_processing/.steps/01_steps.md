@@ -5,9 +5,9 @@
 
 Every `just-makeit object` generates both `step()` and `steps()`:
 
-| C function | Signature |
-|---|---|
-| `ema_step` | `float ema_step(ema_state_t *s, float x)` |
+| C function  | Signature                                                               |
+| ----------- | ----------------------------------------------------------------------- |
+| `ema_step`  | `float ema_step(ema_state_t *s, float x)`                               |
 | `ema_steps` | `void ema_steps(ema_state_t *s, const float *in, float *out, size_t n)` |
 
 `steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`

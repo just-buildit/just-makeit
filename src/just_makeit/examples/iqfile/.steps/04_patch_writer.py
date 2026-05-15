@@ -1,4 +1,5 @@
 """Implement cf32_to_q15_step() and add the samples_written counter."""
+
 from pathlib import Path
 import sys
 
@@ -8,7 +9,7 @@ root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 core_h = root / "native/inc/cf32_to_q15/cf32_to_q15_core.h"
 text = core_h.read_text(encoding="utf-8")
 
-if '<math.h>' not in text:
+if "<math.h>" not in text:
     text = text.replace(
         '#include "clib_common.h"',
         '#include "clib_common.h"\n#include <math.h>',

@@ -10,7 +10,6 @@ v0.10.3 to fix module-scaffold gaps:
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -25,22 +24,23 @@ from just_makeit._object import (
 # _merge_module_init
 # ---------------------------------------------------------------------------
 
+
 class TestMergeModuleInit:
     def test_adds_new_export(self):
-        src = "from .dsp import Nco\n__all__ = [\"Nco\"]\n"
+        src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Mixer"])
         assert "from .dsp import Nco, Mixer" in out
         assert '"Nco"' in out and '"Mixer"' in out
 
     def test_idempotent_no_duplicates(self):
-        src = "from .dsp import Nco\n__all__ = [\"Nco\"]\n"
+        src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", ["Nco"])
         assert out.count("Nco") == 2  # once in import, once in __all__
 
     def test_preserves_user_content_below_exports(self):
         src = (
             "from .dsp import Nco\n"
-            "__all__ = [\"Nco\"]\n"
+            '__all__ = ["Nco"]\n'
             "\n"
             "class NcoHelper:\n"
             "    '''User wrapper.'''\n"
@@ -70,18 +70,18 @@ class TestMergeModuleInit:
         assert "__all__" in out
 
     def test_all_present_is_updated(self):
-        src = "from .dsp import Nco\n__all__ = [\"Nco\"]\n"
+        src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Mixer"])
         assert '__all__ = ["Nco", "Mixer"]' in out
 
     def test_order_preserved_existing_first(self):
-        src = "from .dsp import Nco, Lo\n__all__ = [\"Nco\", \"Lo\"]\n"
+        src = 'from .dsp import Nco, Lo\n__all__ = ["Nco", "Lo"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Lo", "Mixer"])
-        import_line = [l for l in out.splitlines() if l.startswith("from .dsp")][0]
+        import_line = [ln for ln in out.splitlines() if ln.startswith("from .dsp")][0]
         assert import_line == "from .dsp import Nco, Lo, Mixer"
 
     def test_empty_exports_list_returns_unchanged(self):
-        src = "from .dsp import Nco\n__all__ = [\"Nco\"]\n"
+        src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", [])
         # No new names — nothing should change (or at minimum the import stays).
         assert "Nco" in out
@@ -222,8 +222,8 @@ Foo_nop(FooObject *self, PyObject *Py_UNUSED(ignored))
         source = STUB + "\n" + stub2
         preserved = {"Foo_nop": impl_nop}  # only restore Foo_nop
         out = _restore_c_function_bodies(source, preserved)
-        assert "Py_RETURN_NONE" in out          # Foo_nop restored
-        assert "NotImplementedError" in out     # Foo_bar stub untouched
+        assert "Py_RETURN_NONE" in out  # Foo_nop restored
+        assert "NotImplementedError" in out  # Foo_bar stub untouched
 
     def test_result_has_balanced_braces(self):
         out = _restore_c_function_bodies(STUB, {"Foo_bar": IMPLEMENTED})

@@ -43,7 +43,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -55,7 +55,7 @@ just-makeit new my_corr \
 cd my_corr
 ```
 
----
+______________________________________________________________________
 
 ## 2. Implement `sliding_correlator_step`
 
@@ -121,7 +121,7 @@ header.write_text(patched)
 print(f"patched {header}")
 ```
 
----
+______________________________________________________________________
 
 ## 3. Build and verify
 
@@ -133,7 +133,7 @@ cmake --build build --target test ARGS="--output-on-failure"
 pip install -e .
 ```
 
-Quick sanity check — identity correlator (ref = [1, 0, …, 0]) passes the
+Quick sanity check — identity correlator (ref = \[1, 0, …, 0\]) passes the
 input through unchanged:
 
 ```python
@@ -151,7 +151,7 @@ print(c.steps(impulse)[:4].tolist())
 # [(1+0j), 0j, 0j, 0j]
 ```
 
----
+______________________________________________________________________
 
 ## 4. `JM_DEFINE_STEPS`
 
@@ -214,8 +214,8 @@ JM_DEFINE_STEPS(sliding_correlator, sliding_correlator_state_t, float complex,
 chunked fill, SIMD dispatch (AVX-512 or AVX2), scalar tail.  The three
 constants keep each concern separate:
 
-| constant      | concern      | meaning                                             |
-|---------------|--------------|-----------------------------------------------------|
-| `CORR_LENGTH` | algorithm    | history depth (`delay[]` entries)                   |
-| `CORR_BATCH`  | parallelism  | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`)  |
-| `CORR_CHUNK`  | tuning       | samples per scratch-buffer fill                     |
+| constant      | concern     | meaning                                            |
+| ------------- | ----------- | -------------------------------------------------- |
+| `CORR_LENGTH` | algorithm   | history depth (`delay[]` entries)                  |
+| `CORR_BATCH`  | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
+| `CORR_CHUNK`  | tuning      | samples per scratch-buffer fill                    |

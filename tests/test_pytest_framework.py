@@ -40,8 +40,7 @@ SRC = Path(__file__).parent.parent / "src"
 
 def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c",
-         "from just_makeit._cli import main; main()", *args],
+        [sys.executable, "-c", "from just_makeit._cli import main; main()", *args],
         cwd=cwd or Path.cwd(),
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
@@ -50,6 +49,7 @@ def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
 
 
 # ── _config helpers ───────────────────────────────────────────────────────────
+
 
 class TestConfigFlags:
     def test_is_pytest_false_by_default(self):
@@ -98,6 +98,7 @@ class TestConfigFlags:
 
 
 # ── standalone object: --pytest ───────────────────────────────────────────────
+
 
 @pytest.fixture()
 def pytest_project(tmp_path):
@@ -159,6 +160,7 @@ class TestPytestTestFile:
 
 # ── standalone object: --pytest-benchmark ────────────────────────────────────
 
+
 @pytest.fixture()
 def bench_project(tmp_path):
     dest = tmp_path / "myproj"
@@ -208,6 +210,7 @@ class TestPytestBenchFile:
 
 # ── default (no flags) is unchanged ──────────────────────────────────────────
 
+
 @pytest.fixture()
 def default_project(tmp_path):
     dest = tmp_path / "myproj"
@@ -234,14 +237,15 @@ class TestDefaultUnchanged:
 
 # ── different arg-types with --pytest ────────────────────────────────────────
 
+
 class TestPytestArgTypes:
     def test_void_arg_generator(self, tmp_path):
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_=True)
-        init_run(dest, "nco", [], arg_type="void",
-                 return_type="float _Complex")
-        test = (dest / "src" / "proj" / "tests" / "test_nco.py"
-                ).read_text(encoding="utf-8")
+        init_run(dest, "nco", [], arg_type="void", return_type="float _Complex")
+        test = (dest / "src" / "proj" / "tests" / "test_nco.py").read_text(
+            encoding="utf-8"
+        )
         assert "import unittest" not in test
         assert "def test_step_runs():" in test
         assert "obj.step()" in test
@@ -249,10 +253,12 @@ class TestPytestArgTypes:
     def test_array_arg_no_steps_bench(self, tmp_path):
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_benchmark_=True)
-        init_run(dest, "fir", [], arg_type="float _Complex[]",
-                 return_type="float _Complex")
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_fir.py"
-                 ).read_text(encoding="utf-8")
+        init_run(
+            dest, "fir", [], arg_type="float _Complex[]", return_type="float _Complex"
+        )
+        bench = (dest / "src" / "proj" / "benchmarks" / "bench_fir.py").read_text(
+            encoding="utf-8"
+        )
         assert "@pytest.fixture" in bench
         # array arg: step_1k/64k instead of steps_1k/64k
         assert "def test_bench_step_1k(benchmark, obj):" in bench
@@ -262,10 +268,16 @@ class TestPytestArgTypes:
     def test_scalar_float_bench(self, tmp_path):
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_benchmark_=True)
-        init_run(dest, "gain", [("level", "float", "1.0f")],
-                 arg_type="float", return_type="float")
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_gain.py"
-                 ).read_text(encoding="utf-8")
+        init_run(
+            dest,
+            "gain",
+            [("level", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        bench = (dest / "src" / "proj" / "benchmarks" / "bench_gain.py").read_text(
+            encoding="utf-8"
+        )
         assert "def test_bench_step(benchmark, obj):" in bench
         assert "def test_bench_steps_1k(benchmark, obj):" in bench
         assert "def test_bench_steps_64k(benchmark, obj):" in bench
@@ -273,12 +285,14 @@ class TestPytestArgTypes:
 
 # ── module objects inherit project flags ─────────────────────────────────────
 
+
 @pytest.fixture()
 def module_pytest_project(tmp_path):
     dest = tmp_path / "myproj"
     new_run("myproj", dest, pytest_=True, pytest_benchmark_=True)
     from just_makeit._module import run as module_run
     from just_makeit._object import run as object_run
+
     module_run(dest, "dsp")
     object_run(dest, "fir", "dsp")
     return dest
@@ -287,8 +301,7 @@ def module_pytest_project(tmp_path):
 class TestModuleInheritance:
     def test_module_test_pure_pytest(self, module_pytest_project):
         test = (
-            module_pytest_project / "src" / "myproj" / "dsp" / "tests"
-            / "test_fir.py"
+            module_pytest_project / "src" / "myproj" / "dsp" / "tests" / "test_fir.py"
         ).read_text(encoding="utf-8")
         assert "import unittest" not in test
         assert "import pytest" in test
@@ -297,7 +310,11 @@ class TestModuleInheritance:
 
     def test_module_bench_pytest_benchmark(self, module_pytest_project):
         bench = (
-            module_pytest_project / "src" / "myproj" / "dsp" / "benchmarks"
+            module_pytest_project
+            / "src"
+            / "myproj"
+            / "dsp"
+            / "benchmarks"
             / "bench_fir.py"
         ).read_text(encoding="utf-8")
         assert "perf_counter" not in bench
@@ -306,7 +323,11 @@ class TestModuleInheritance:
 
     def test_module_bench_imports_from_subpackage(self, module_pytest_project):
         bench = (
-            module_pytest_project / "src" / "myproj" / "dsp" / "benchmarks"
+            module_pytest_project
+            / "src"
+            / "myproj"
+            / "dsp"
+            / "benchmarks"
             / "bench_fir.py"
         ).read_text(encoding="utf-8")
         assert "from myproj.dsp import Fir" in bench
@@ -314,14 +335,16 @@ class TestModuleInheritance:
 
 # ── add regeneration preserves chosen framework ───────────────────────────────
 
+
 class TestAddPreservesFramework:
     def test_add_keeps_pure_pytest(self, tmp_path):
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_=True)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
         add_run(dest, "filt", [("order", "int", "4")])
-        test = (dest / "src" / "proj" / "tests" / "test_filt.py"
-                ).read_text(encoding="utf-8")
+        test = (dest / "src" / "proj" / "tests" / "test_filt.py").read_text(
+            encoding="utf-8"
+        )
         assert "import unittest" not in test
         assert "import pytest" in test
         assert "get_order" in test
@@ -331,8 +354,9 @@ class TestAddPreservesFramework:
         new_run("proj", dest, pytest_benchmark_=True)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
         add_run(dest, "filt", [("order", "int", "4")])
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_filt.py"
-                 ).read_text(encoding="utf-8")
+        bench = (dest / "src" / "proj" / "benchmarks" / "bench_filt.py").read_text(
+            encoding="utf-8"
+        )
         assert "perf_counter" not in bench
         assert "@pytest.fixture" in bench
 
@@ -341,12 +365,14 @@ class TestAddPreservesFramework:
         new_run("proj", dest)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
         add_run(dest, "filt", [("order", "int", "4")])
-        test = (dest / "src" / "proj" / "tests" / "test_filt.py"
-                ).read_text(encoding="utf-8")
+        test = (dest / "src" / "proj" / "tests" / "test_filt.py").read_text(
+            encoding="utf-8"
+        )
         assert "import unittest" in test
 
 
 # ── TOML round-trip via jm script ─────────────────────────────────────────────
+
 
 def _run_script_and_replay(source_dir, replay_base):
     r = _cli("script", cwd=source_dir)
@@ -362,7 +388,7 @@ def _run_script_and_replay(source_dir, replay_base):
         if not line or line.startswith("#") or line.startswith("cd "):
             continue
         if line.startswith("just-makeit "):
-            commands.append(shlex.split(line[len("just-makeit "):]))
+            commands.append(shlex.split(line[len("just-makeit ") :]))
     replay_root = replay_base / project_name
     replay_root.mkdir(parents=True, exist_ok=True)
     assert commands[0][0] == "new"
@@ -420,6 +446,7 @@ class TestScriptRoundTrip:
 
 
 # ── CLI flag parsing ───────────────────────────────────────────────────────────
+
 
 class TestCLIParsing:
     def test_new_accepts_pytest(self, tmp_path):

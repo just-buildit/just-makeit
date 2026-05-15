@@ -26,6 +26,7 @@ from pathlib import Path
 
 # ── parsing ───────────────────────────────────────────────────────────────────
 
+
 def parse_impl(spec: str) -> tuple[Path, str]:
     """Parse 'file::funcname' into (Path(file), funcname)."""
     if "::" not in spec:
@@ -66,6 +67,7 @@ def parse_replace(spec: str) -> tuple[str, str]:
 
 # ── extraction ────────────────────────────────────────────────────────────────
 
+
 def extract_body(filepath: Path, func_name: str) -> str:
     """Extract the body of func_name from a C source file.
 
@@ -102,7 +104,7 @@ def extract_body(filepath: Path, func_name: str) -> str:
     for m in func_re.finditer(text):
         pos = m.start()
         # Scan forward up to ~2 KB for { or ;
-        window = text[pos: pos + 2048]
+        window = text[pos : pos + 2048]
         open_idx = window.find("{")
         semi_idx = window.find(";")
         if open_idx == -1:
@@ -126,18 +128,16 @@ def extract_body(filepath: Path, func_name: str) -> str:
 
         if abs_close == -1:
             print(
-                f"error: unmatched braces extracting "
-                f"'{func_name}' from {filepath}",
+                f"error: unmatched braces extracting '{func_name}' from {filepath}",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-        inner = text[abs_open + 1: abs_close]
+        inner = text[abs_open + 1 : abs_close]
         return _normalise_indent(inner)
 
     print(
-        f"error: function '{func_name}' not found as a definition in "
-        f"{filepath}",
+        f"error: function '{func_name}' not found as a definition in {filepath}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -154,17 +154,15 @@ def _normalise_indent(inner: str) -> str:
     if not lines:
         return ""
     # Minimum indent of non-empty lines
-    non_empty = [l for l in lines if l.strip()]
+    non_empty = [ln for ln in lines if ln.strip()]
     if not non_empty:
         return ""
-    min_indent = min(len(l) - len(l.lstrip()) for l in non_empty)
-    return "\n".join(
-        l[min_indent:] if len(l) >= min_indent else l
-        for l in lines
-    )
+    min_indent = min(len(ln) - len(ln.lstrip()) for ln in non_empty)
+    return "\n".join(ln[min_indent:] if len(ln) >= min_indent else ln for ln in lines)
 
 
 # ── transformation ────────────────────────────────────────────────────────────
+
 
 def apply_replacements(
     text: str,
@@ -201,6 +199,7 @@ def load_impl(
 
 # ── injection ─────────────────────────────────────────────────────────────────
 
+
 def inject_body_into_stub(stub: str, impl_body: str) -> str:
     """Replace the LAST function body in stub with impl_body.
 
@@ -232,14 +231,8 @@ def inject_body_into_stub(stub: str, impl_body: str) -> str:
 
     if last_marker is not None:
         # Keep: everything before comment + signature + new body
-        sig = stub[last_marker.end(): open_pos]
-        return (
-            stub[: last_marker.start()]
-            + sig
-            + "\n{\n"
-            + indented
-            + "\n}\n"
-        )
+        sig = stub[last_marker.end() : open_pos]
+        return stub[: last_marker.start()] + sig + "\n{\n" + indented + "\n}\n"
 
     # No comment found — just replace the body.
     return stub[: open_pos + 3] + indented + "\n}\n"
@@ -259,7 +252,7 @@ def patch_function_body(
 
     for m in func_re.finditer(text):
         pos = m.start()
-        window = text[pos: pos + 2048]
+        window = text[pos : pos + 2048]
         open_idx = window.find("{")
         semi_idx = window.find(";")
         if open_idx == -1:
@@ -283,13 +276,7 @@ def patch_function_body(
             return text
 
         indented = _indent4(impl_body)
-        return (
-            text[: abs_open + 1]
-            + "\n"
-            + indented
-            + "\n"
-            + text[abs_close:]
-        )
+        return text[: abs_open + 1] + "\n" + indented + "\n" + text[abs_close:]
 
     return text
 
@@ -297,6 +284,5 @@ def patch_function_body(
 def _indent4(body: str) -> str:
     """Indent each line of body by 4 spaces; blank lines become empty."""
     return "\n".join(
-        "    " + line if line.strip() else ""
-        for line in body.splitlines()
+        "    " + line if line.strip() else "" for line in body.splitlines()
     )

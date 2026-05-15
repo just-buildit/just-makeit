@@ -12,7 +12,6 @@ Skip conditions (checked once, applied to all examples):
 
 import importlib.util
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -49,6 +48,7 @@ def _load_run(example_dir: Path):
 
 # ── skip guard ────────────────────────────────────────────────────────────────
 
+
 def _skip_reason():
     if not shutil.which("cmake"):
         return "cmake not found"
@@ -65,6 +65,7 @@ _SKIP = _skip_reason()
 
 
 # ── parametrized test ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize(
     "example_dir",

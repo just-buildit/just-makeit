@@ -40,7 +40,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
----
+______________________________________________________________________
 
 ## 1. Scaffold
 
@@ -58,7 +58,7 @@ just-makeit new my_power \
     --perf
 ```
 
----
+______________________________________________________________________
 
 ## 2. Implement step()
 
@@ -88,7 +88,7 @@ Apply the patch:
 python3 .steps/02_patch.py
 ```
 
----
+______________________________________________________________________
 
 ## 3. Build and test
 
@@ -98,7 +98,7 @@ make && make test
 
 The generated C test exercises `create`, `reset`, `step`, and `steps`.
 
----
+______________________________________________________________________
 
 ## 4. Python demo
 
@@ -151,7 +151,7 @@ silence power (expect 0.000): 0.0000
 steps() final power (expect ~0.500): 0.5000
 ```
 
----
+______________________________________________________________________
 
 ## 5. SIMD recompute with `jm_simd.h`
 
@@ -187,13 +187,13 @@ power_est_recompute(power_est_state_t *state)
 
 **What each macro does on each ISA:**
 
-| Macro | AVX-512 | AVX2 | Scalar |
-|---|---|---|---|
-| `JM_VEC_F32` | `__m512` (16 lanes) | `__m256` (8 lanes) | `float` (1 lane) |
-| `JM_LOAD_F32(p)` | `_mm512_loadu_ps(p)` | `_mm256_loadu_ps(p)` | `*(p)` |
-| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)` | `_mm256_add_ps(a,b)` | `(a)+(b)` |
-| `JM_HSUM_F32(v)` | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)` | `(v)` |
-| `JM_UNROLL(4)` | `#pragma GCC unroll 4` | same | same |
+| Macro             | AVX-512                   | AVX2                 | Scalar           |
+| ----------------- | ------------------------- | -------------------- | ---------------- |
+| `JM_VEC_F32`      | `__m512` (16 lanes)       | `__m256` (8 lanes)   | `float` (1 lane) |
+| `JM_LOAD_F32(p)`  | `_mm512_loadu_ps(p)`      | `_mm256_loadu_ps(p)` | `*(p)`           |
+| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)`      | `_mm256_add_ps(a,b)` | `(a)+(b)`        |
+| `JM_HSUM_F32(v)`  | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)`   | `(v)`            |
+| `JM_UNROLL(4)`    | `#pragma GCC unroll 4`    | same                 | same             |
 
 The loop body is identical across all three tiers.  `JM_SIMD_WIDTH_F32`
 (16, 8, or 1) controls the stride; the 64-element delay line is always
@@ -206,19 +206,19 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON
 cmake --build build --parallel
 ```
 
----
+______________________________________________________________________
 
 ## Numerical notes
 
 **The three approaches compute the same quantity** — they differ only in
 how they maintain the running sum.
 
-| Approach | Cost per sample | Drift |
-|---|---|---|
-| Standard MA (full recompute) | O(N) adds | none — always exact |
-| Recursive O(1), float32 acc | O(1) | grows as √n |
-| Recursive O(1), double acc | O(1) | negligible |
-| Recursive + periodic recompute | O(1) amortised | bounded |
+| Approach                       | Cost per sample | Drift               |
+| ------------------------------ | --------------- | ------------------- |
+| Standard MA (full recompute)   | O(N) adds       | none — always exact |
+| Recursive O(1), float32 acc    | O(1)            | grows as √n         |
+| Recursive O(1), double acc     | O(1)            | negligible          |
+| Recursive + periodic recompute | O(1) amortised  | bounded             |
 
 **Why drift happens in the recursive form:**
 Each `step()` does `sum_sq += new² − old²`.  On paper this is exact, but in

@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def _examples_root() -> Path | None:
     """Return the examples/ directory, searching installed then editable paths."""
     import just_makeit
@@ -29,8 +30,7 @@ def _discover() -> list[str]:
     if root is None:
         return []
     return sorted(
-        d.name for d in root.iterdir()
-        if d.is_dir() and (d / "test.py").exists()
+        d.name for d in root.iterdir() if d.is_dir() and (d / "test.py").exists()
     )
 
 
@@ -44,7 +44,9 @@ def _find(name: str) -> Path | None:
     if root is None:
         return None
     candidate = root / name
-    return candidate if candidate.is_dir() and (candidate / "test.py").exists() else None
+    return (
+        candidate if candidate.is_dir() and (candidate / "test.py").exists() else None
+    )
 
 
 def run(name: str | None) -> None:
