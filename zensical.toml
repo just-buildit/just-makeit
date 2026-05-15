@@ -14,6 +14,7 @@ nav = [
   { "Home"               = "index.md"        },
   { "Workflow"           = "workflow.md"     },
   { "Commands"           = "commands.md"     },
+  { "Configuration"      = "configuration.md"},
   { "Stateful vs Pure"   = "pure.md"         },
   { "Performance"        = "perf.md"         },
   { "State Types"        = "types.md"        },
