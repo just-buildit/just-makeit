@@ -469,6 +469,61 @@ def _bench_py_blocks(
     return step_py, steps_py
 
 
+def _pytest_bm_blocks(
+    arg_type: str,
+    in_py_test_val: str,
+    in_np_dtype: str,
+) -> tuple[str, str]:
+    """Return (bm_step_py, bm_steps_py) top-level function defs for pytest-bm.
+
+    bm_step_py  — benchmark function(s) for a single step() call
+    bm_steps_py — benchmark function(s) for steps() or larger buffers
+    """
+    if arg_type == "void":
+        bm_step = (
+            "\n"
+            "def test_bench_step(benchmark, obj):\n"
+            "    benchmark(obj.step)\n"
+        )
+        bm_steps = (
+            "\n"
+            "def test_bench_steps_1k(benchmark, obj):\n"
+            "    benchmark(obj.steps, BLOCK_1K)\n"
+            "\n"
+            "def test_bench_steps_64k(benchmark, obj):\n"
+            "    benchmark(obj.steps, BLOCK_64K)\n"
+        )
+    elif arg_type.endswith("[]"):
+        bm_step = (
+            "\n"
+            "def test_bench_step_1k(benchmark, obj):\n"
+            f"    x = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+            "    benchmark(obj.step, x)\n"
+            "\n"
+            "def test_bench_step_64k(benchmark, obj):\n"
+            f"    x = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
+            "    benchmark(obj.step, x)\n"
+        )
+        bm_steps = ""
+    else:
+        bm_step = (
+            "\n"
+            "def test_bench_step(benchmark, obj):\n"
+            f"    benchmark(obj.step, {in_py_test_val})\n"
+        )
+        bm_steps = (
+            "\n"
+            "def test_bench_steps_1k(benchmark, obj):\n"
+            f"    x = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+            "    benchmark(obj.steps, x)\n"
+            "\n"
+            "def test_bench_steps_64k(benchmark, obj):\n"
+            f"    x = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
+            "    benchmark(obj.steps, x)\n"
+        )
+    return bm_step, bm_steps
+
+
 def make_sample_ctx(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
@@ -606,6 +661,10 @@ def make_sample_ctx(
                 ("bench_step_py", "bench_steps_py"),
                 _bench_py_blocks("void", "1", out_np_dtype, is_void_return),
             )),
+            **dict(zip(
+                ("bm_step_py", "bm_steps_py"),
+                _pytest_bm_blocks("void", "1", out_np_dtype),
+            )),
         }
 
     if arg_type.endswith("[]"):
@@ -681,6 +740,11 @@ def make_sample_ctx(
                 ("bench_step_py", "bench_steps_py"),
                 _bench_py_blocks(arg_type, f"np.zeros(4, dtype={in_np_dtype})",
                                  in_np_dtype, is_void_return),
+            )),
+            **dict(zip(
+                ("bm_step_py", "bm_steps_py"),
+                _pytest_bm_blocks(arg_type, f"np.zeros(4, dtype={in_np_dtype})",
+                                  in_np_dtype),
             )),
         }
 
@@ -771,6 +835,11 @@ def make_sample_ctx(
             ("bench_step_py", "bench_steps_py"),
             _bench_py_blocks(arg_type, _KIND_PY_TEST_VAL[samp["kind"]],
                              in_np_dtype, is_void_return),
+        )),
+        **dict(zip(
+            ("bm_step_py", "bm_steps_py"),
+            _pytest_bm_blocks(arg_type, _KIND_PY_TEST_VAL[samp["kind"]],
+                              in_np_dtype),
         )),
     }
 
@@ -1176,6 +1245,8 @@ def make_state_ctx(
             "py_create_args":         "",
             "getter_setter_test_py":  "        pass  # no auto-state; add assertions for your fields",
             "reset_test_py":          "        pass  # no auto-state; add assertions for your reset",
+            "getter_setter_test_py_pure": "    pass  # no auto-state; add assertions for your fields",
+            "reset_test_py_pure":     "    pass  # no auto-state; add assertions for your reset",
             "c_create_args":          "",
             "getter_setter_test_c":   "",
             "reset_test_c":           f"    /* reset */\n    {component}_reset(obj);",
@@ -1794,6 +1865,16 @@ def make_state_ctx(
         "py_create_args": py_create_args,
         "getter_setter_test_py": getter_setter_test_py,
         "reset_test_py": reset_test_py,
+        "getter_setter_test_py_pure": (
+            getter_setter_test_py
+            .replace("        ", "    ")
+            .replace("_approx(", "pytest.approx(")
+        ),
+        "reset_test_py_pure": (
+            reset_test_py
+            .replace("        ", "    ")
+            .replace("_approx(", "pytest.approx(")
+        ),
         "c_create_args": c_create_args,
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
@@ -3437,6 +3518,68 @@ def make_step_ctx(
         f"            {_step_call_test}\n"
     )
 
+    # Pure-pytest variants: top-level functions, no self, plain assertions.
+    if steps_ext_fn:
+        if _is_void_arg:
+            step_pytest_methods_pure = (
+                f"\n"
+                f"def test_step_runs():\n"
+                f"    obj = {Component}({py_create_args})\n"
+                f"    y = obj.step()\n"
+                f"    assert isinstance(y, {out_py_isinstance})\n"
+                f"\n"
+                f"def test_steps_shape_dtype():\n"
+                f"    obj = {Component}({py_create_args})\n"
+                f"    y = obj.steps(64)\n"
+                f"    assert y.shape == (64,)\n"
+                f"    assert y.dtype == {out_np_dtype}\n"
+            )
+        else:
+            step_pytest_methods_pure = (
+                f"\n"
+                f"def test_step_runs():\n"
+                f"    obj = {Component}({py_create_args})\n"
+                f"    y = obj.step({in_py_test_val})\n"
+                f"    assert isinstance(y, {out_py_isinstance})\n"
+                f"\n"
+                f"def test_steps_shape_dtype():\n"
+                f"    obj = {Component}({py_create_args})\n"
+                f"    x = np.ones(64, dtype={in_np_dtype})\n"
+                f"    y = obj.steps(x)\n"
+                f"    assert y.shape == (64,)\n"
+                f"    assert y.dtype == {out_np_dtype}\n"
+                f"\n"
+                f"def test_steps_out_param():\n"
+                f"    x   = np.ones(64, dtype={in_np_dtype})\n"
+                f"    buf = np.zeros(64, dtype={out_np_dtype})\n"
+                f"    obj1 = {Component}({py_create_args})\n"
+                f"    ret = obj1.steps(x, buf)\n"
+                f"    assert ret is buf\n"
+                f"    obj2 = {Component}({py_create_args})\n"
+                f"    np.testing.assert_array_equal(ret, obj2.steps(x))\n"
+            )
+    else:
+        step_pytest_methods_pure = (
+            f"\n"
+            f"def test_step_runs():\n"
+            f"    obj = {Component}({py_create_args})\n"
+            f"    y = {_step_call_test}\n"
+            f"    assert isinstance(y, {out_py_isinstance})\n"
+        )
+    lifecycle_pytest_methods_pure = (
+        f"\n"
+        f"def test_context_manager():\n"
+        f"    with {Component}({py_create_args}) as obj:\n"
+        f"        y = {_step_call_test}\n"
+        f"    assert isinstance(y, {out_py_isinstance})\n"
+        f"\n"
+        f"def test_destroy():\n"
+        f"    obj = {Component}({py_create_args})\n"
+        f"    obj.destroy()\n"
+        f"    with pytest.raises(RuntimeError, match=\"destroyed\"):\n"
+        f"        {_step_call_test}\n"
+    )
+
     return {
         "step_header_decl":         step_header_decl,
         "step_impl_def":            step_impl_def,
@@ -3450,8 +3593,10 @@ def make_step_ctx(
         "step_pymethoddef_entry":   step_pymethoddef_entry,
         "step_c_smoke_test":        step_c_smoke_test,
         "pyi_step_methods":         pyi_step_methods,
-        "step_pytest_methods":      step_pytest_methods,
-        "lifecycle_pytest_methods": lifecycle_pytest_methods,
+        "step_pytest_methods":           step_pytest_methods,
+        "lifecycle_pytest_methods":      lifecycle_pytest_methods,
+        "step_pytest_methods_pure":      step_pytest_methods_pure,
+        "lifecycle_pytest_methods_pure": lifecycle_pytest_methods_pure,
     }
 
 
@@ -5297,6 +5442,89 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 """
+
+# ── pure-pytest test (no unittest shim) ──────────────────────────────────────
+
+PYTEST_TEST_PURE = """\
+import pytest
+import numpy as np
+from <<package>> import <<Component>>
+
+
+def test_create():
+    obj = <<Component>>(<<py_create_args>>)
+    assert obj is not None
+<<step_pytest_methods_pure>>
+def test_getter_setter():
+<<getter_setter_test_py_pure>>
+
+def test_reset():
+<<reset_test_py_pure>>
+<<lifecycle_pytest_methods_pure>>"""
+
+# ── pure-pytest test (module object) ─────────────────────────────────────────
+
+MODULE_PYTEST_TEST_PURE = """\
+import pytest
+import numpy as np
+from <<package>>.<<module>> import <<Component>>
+
+
+def test_create():
+    obj = <<Component>>(<<py_create_args>>)
+    assert obj is not None
+<<step_pytest_methods_pure>>
+def test_getter_setter():
+<<getter_setter_test_py_pure>>
+
+def test_reset():
+<<reset_test_py_pure>>
+<<lifecycle_pytest_methods_pure>>"""
+
+# ── pytest-benchmark bench (standalone component) ────────────────────────────
+
+COMPONENT_BENCH_PYTEST_BM = """\
+\"\"\"Benchmark for <<Component>>.
+
+Run: pytest src/<<package>>/benchmarks/bench_<<component>>.py --benchmark-only
+\"\"\"
+import pytest
+import numpy as np
+
+from <<package>> import <<Component>>
+
+BLOCK_1K  = 1_024
+BLOCK_64K = 65_536
+
+
+@pytest.fixture
+def obj():
+    return <<Component>>(<<py_create_args>>)
+<<bm_step_py>>
+<<bm_steps_py>>"""
+
+# ── pytest-benchmark bench (module object) ────────────────────────────────────
+
+MODULE_BENCH_PYTEST_BM = """\
+\"\"\"Benchmark for <<Component>>.
+
+Run: pytest src/<<package>>/<<module>>/benchmarks/bench_<<component>>.py \
+--benchmark-only
+\"\"\"
+import pytest
+import numpy as np
+
+from <<package>>.<<module>> import <<Component>>
+
+BLOCK_1K  = 1_024
+BLOCK_64K = 65_536
+
+
+@pytest.fixture
+def obj():
+    return <<Component>>(<<py_create_args>>)
+<<bm_step_py>>
+<<bm_steps_py>>"""
 
 # ── .gitignore ───────────────────────────────────────────────────────────────
 

@@ -166,14 +166,31 @@ def is_perf(cfg: dict) -> bool:
     return cfg.get("project", {}).get("perf") == "true"
 
 
+def is_pytest(cfg: dict) -> bool:
+    return cfg.get("project", {}).get("pytest") == "true"
+
+
+def is_pytest_benchmark(cfg: dict) -> bool:
+    return cfg.get("project", {}).get("pytest_benchmark") == "true"
+
+
 def from_new(
-    name: str, version: str = "0.1.0", basic: bool = False, perf: bool = False
+    name: str,
+    version: str = "0.1.0",
+    basic: bool = False,
+    perf: bool = False,
+    pytest_: bool = False,
+    pytest_benchmark_: bool = False,
 ) -> dict:
     proj: dict = {"name": name, "version": version}
     if basic:
         proj["build"] = "make"
     if perf:
         proj["perf"] = "true"
+    if pytest_:
+        proj["pytest"] = "true"
+    if pytest_benchmark_:
+        proj["pytest_benchmark"] = "true"
     return {"project": proj}
 
 

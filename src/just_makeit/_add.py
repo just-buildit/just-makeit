@@ -22,16 +22,23 @@ from . import _config as C
 from . import _init
 from . import _templates as T
 
-_STATEFUL_TEMPLATES = [
-    ("native/inc/{c}/{c}_core.h", T.COMPONENT_CORE_H),
-    ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
-    ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
-    ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
-    ("native/benchmarks/bench_{c}_core.c", T.COMPONENT_BENCH_C),
-    ("src/{p}/{c}.pyi", T.COMPONENT_PYI),
-    ("src/{p}/tests/test_{c}.py", T.PYTEST_TEST),
-    ("src/{p}/benchmarks/bench_{c}.py", T.COMPONENT_BENCH_PY),
-]
+def _stateful_templates(cfg: dict) -> list:
+    test_tmpl = T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
+    bench_tmpl = (
+        T.COMPONENT_BENCH_PYTEST_BM
+        if C.is_pytest_benchmark(cfg)
+        else T.COMPONENT_BENCH_PY
+    )
+    return [
+        ("native/inc/{c}/{c}_core.h",          T.COMPONENT_CORE_H),
+        ("native/src/{c}/{c}_core.c",          T.COMPONENT_CORE_C),
+        ("native/src/{c}/{c}_ext.c",           T.COMPONENT_EXT_C),
+        ("native/tests/test_{c}_core.c",       T.COMPONENT_TEST_C),
+        ("native/benchmarks/bench_{c}_core.c", T.COMPONENT_BENCH_C),
+        ("src/{p}/{c}.pyi",                    T.COMPONENT_PYI),
+        ("src/{p}/tests/test_{c}.py",          test_tmpl),
+        ("src/{p}/benchmarks/bench_{c}.py",    bench_tmpl),
+    ]
 
 
 def _expand(pattern: str, comp: str, pkg: str) -> str:
@@ -128,7 +135,7 @@ def run(
     ctx.update(T.make_sample_ctx(arg_type_, return_type_))
     ctx.update(T.make_state_ctx(ctx["component"], ctx["Component"], all_vars,
                                 array_args=C.array_args(cfg, component)))
-    templates = _STATEFUL_TEMPLATES
+    templates = _stateful_templates(cfg)
 
     ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
     ctx.update(T.make_step_ctx(ctx, arg_type_, return_type_,

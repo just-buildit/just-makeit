@@ -40,6 +40,8 @@ def run(
     mutable: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
+    pytest_: bool = False,
+    pytest_benchmark_: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -86,7 +88,8 @@ def run(
         _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
-    cfg = C.from_new(project, basic=basic, perf=perf)
+    cfg = C.from_new(project, basic=basic, perf=perf,
+                     pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
     print()

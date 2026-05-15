@@ -243,8 +243,14 @@ def run(
     test_c_tmpl = T.COMPONENT_TEST_C
     bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
     pyi_tmpl = T.COMPONENT_PYI
-    pytest_tmpl = T.PYTEST_TEST
-    bench_py_tmpl = T.COMPONENT_BENCH_PY
+    pytest_tmpl = (
+        T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
+    )
+    bench_py_tmpl = (
+        T.COMPONENT_BENCH_PYTEST_BM
+        if C.is_pytest_benchmark(cfg)
+        else T.COMPONENT_BENCH_PY
+    )
     init_py_tmpl = T.PACKAGE_INIT_PY
 
     # C headers

@@ -525,11 +525,19 @@ def run(
     tests_init = pkg_mod_dir / "tests" / "__init__.py"
     if not tests_init.exists():
         _write(tests_init, T.TESTS_INIT_PY)
-    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(T.MODULE_PYTEST_TEST))
+    test_py_tmpl = (
+        T.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg)
+        else T.MODULE_PYTEST_TEST
+    )
+    bench_py_tmpl = (
+        T.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg)
+        else T.MODULE_BENCH_PY
+    )
+    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(test_py_tmpl))
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
-    _write(pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r(T.MODULE_BENCH_PY))
+    _write(pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r(bench_py_tmpl))
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)

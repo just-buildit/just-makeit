@@ -19,6 +19,8 @@ def run(args: list[str]) -> None:
     modules: list[str] = []
     basic = False
     perf = False
+    pytest_ = False
+    pytest_benchmark_ = False
     mutable = False
     arg_type = "float _Complex"
     return_type = None
@@ -50,6 +52,12 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--perf":
             perf = True
+            i += 1
+        elif tok == "--pytest":
+            pytest_ = True
+            i += 1
+        elif tok == "--pytest-benchmark":
+            pytest_benchmark_ = True
             i += 1
         elif tok == "--mutable":
             mutable = True
@@ -93,4 +101,5 @@ def run(args: list[str]) -> None:
 
     _new.run(project, dest, object_names or None, state_vars or None,
              modules=modules, basic=basic, perf=perf, mutable=mutable,
-             arg_type=arg_type, return_type=return_type)
+             arg_type=arg_type, return_type=return_type,
+             pytest_=pytest_, pytest_benchmark_=pytest_benchmark_)

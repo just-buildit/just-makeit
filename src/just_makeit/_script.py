@@ -179,6 +179,10 @@ def run(root: Path) -> None:
         new_flags.append(_bool_flag("--basic"))
     if perf:
         new_flags.append(_bool_flag("--perf"))
+    if C.is_pytest(cfg):
+        new_flags.append(_bool_flag("--pytest"))
+    if C.is_pytest_benchmark(cfg):
+        new_flags.append(_bool_flag("--pytest-benchmark"))
     lines.append(_render_cmd(["just-makeit", "new", project], new_flags))
     lines.append(f"cd {project}\n\n")
 
