@@ -62,6 +62,19 @@ def _make_object_ctx(
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
     ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
+    # Re-generate pyi_examples now that package and Component are in ctx.
+    # make_state_ctx emits placeholder text; we replace it with the real values.
+    scalar_state = [
+        (n, ct, dflt)
+        for n, ct, dflt in (state_vars or [])
+        if not T.parse_array_type(ct)
+    ] if not no_state else []
+    has_aa = bool(array_args)
+    import_line = f"from {pkg} import {ctx['Component']}"
+    ctx["pyi_examples"] = T._pyi_examples_block(
+        scalar_state, has_aa, import_line,
+        ctx.get("py_create_args", ""), ctx["Component"],
+    ) if (scalar_state or has_aa) else ""
     return ctx
 
 
@@ -506,6 +519,17 @@ def run(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
         r(T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C),
     )
+
+    # Python tests and benchmarks for this module object
+    pkg_mod_dir = root / "src" / pkg / module
+    tests_init = pkg_mod_dir / "tests" / "__init__.py"
+    if not tests_init.exists():
+        _write(tests_init, T.TESTS_INIT_PY)
+    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(T.MODULE_PYTEST_TEST))
+    benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
+    if not benchmarks_init.exists():
+        _write(benchmarks_init, "")
+    _write(pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r(T.MODULE_BENCH_PY))
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)

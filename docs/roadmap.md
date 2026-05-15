@@ -254,3 +254,7 @@ These are not yet scheduled but are worth tracking:
   GitHub Actions workflow with a Windows runner
 - **Interactive wizard** — `just-makeit new` without arguments drops into a
   short prompt-driven setup for users who prefer guided over CLI flags
+- **`--use-properties` flag** — opt-in on `new`/`object` to expose scalar
+  state-variable accessors as Python properties (`obj.gain`, `obj.gain = x`)
+  instead of explicit methods (`obj.get_gain()`, `obj.set_gain(x)`).  Requires
+  switching from `PyMethodDef` to `PyGetSetDef` in the generated extension.

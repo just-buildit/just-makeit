@@ -45,15 +45,16 @@ make        # cmake configure + build (Release)
 make test   # CTest (C lifecycle) + pytest (Python API)
 ```
 
-The `.so` lands in `src/my_dsp/` so `import my_dsp` works immediately from
-the project root — no install step needed during development.
+### 4. Install
 
-### 4. Use from Python
+```sh
+pip install .          # build wheel + install
+pip install -e .       # editable install (Python-only edits take effect immediately)
+```
+
+### 5. Use from Python
 
 ```python
-import sys
-sys.path.insert(0, "src")   # not needed after pip install
-
 import numpy as np
 from my_dsp import Gain
 
@@ -76,13 +77,6 @@ g.reset()
 # context manager
 with Gain(gain=2.0) as g:
     y = g.steps(x)
-```
-
-### 5. Install
-
-```sh
-pip install .          # build wheel + install
-pip install -e .       # editable install (Python-only edits take effect immediately)
 ```
 
 ### 6. Optional: performance annotations
@@ -180,12 +174,18 @@ make && make test
 CTest runs `test_gain_core` and `test_ema_core`.  pytest runs the full
 generated suite for both objects.
 
-### 5. Use from Python
+### 5. Install
+
+```sh
+pip install .
+```
+
+The wheel bundles all compiled DSOs (`gain.cpython-*.so`, `ema.cpython-*.so`,
+…) alongside the Python package.
+
+### 6. Use from Python
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
 import numpy as np
 from dsp_toolkit import Gain, Ema
 
@@ -198,7 +198,7 @@ for x in signal:
     y = ema.step(gain.step(x))
 ```
 
-### 6. Add more objects
+### 7. Add more objects
 
 ```sh
 just-makeit object dc_block --state r:double:0.995
@@ -207,14 +207,13 @@ just-makeit object dc_block --state r:double:0.995
 Each `object` repeats the same pattern: new C files, updated CMake, updated
 `__init__.py`.  `make` picks up the new object automatically.
 
-### 7. Install
+### 8. Install
 
 ```sh
 pip install .
 ```
 
-The wheel bundles all compiled DSOs (`gain.cpython-*.so`, `ema.cpython-*.so`,
-…) alongside the Python package.
+The wheel bundles the new DSO alongside all existing ones.
 
 ______________________________________________________________________
 
@@ -298,12 +297,18 @@ CMake builds one `.so` (`filter.cpython-*.so`) inside
 `src/my_filters/filter/`, linking both `fir_core` and `biquad_core` OBJECT
 libraries.  CTest runs `test_fir_core` and `test_biquad_core`.
 
-### 6. Use from Python
+### 6. Install
+
+```sh
+pip install .
+```
+
+The wheel contains one `.so` for the `filter` subpackage rather than one `.so`
+per type.
+
+### 7. Use from Python
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
 import numpy as np
 from my_filters.filter import Fir, Biquad
 
@@ -314,7 +319,7 @@ bq  = Biquad(b0=1.0)
 Both types are fully independent — separate `create`/`destroy` lifecycles,
 each with its own `step`, `steps`, `reset`, and context manager support.
 
-### 7. Add a third type later
+### 8. Add a third type later
 
 ```sh
 just-makeit object iir --module filter --state "gain:float:1.0"
@@ -323,14 +328,13 @@ just-makeit object iir --module filter --state "gain:float:1.0"
 `filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are all regenerated from
 the complete object list.  `Fir` and `Biquad` are unaffected.
 
-### 8. Install
+### 9. Install
 
 ```sh
 pip install .
 ```
 
-The wheel contains one `.so` for the `filter` subpackage rather than one `.so`
-per type.
+The wheel is rebuilt with `iir` included.
 
 ### Standalone object vs module object — when to use which
 
@@ -382,7 +386,7 @@ my_dsp/
         ├── gain.pyi                    # type stub
         ├── benchmarks/
         │   ├── __init__.py
-        │   └── bench_gain.py           # pytest-benchmark suite
+        │   └── bench_gain.py           # perf_counter benchmark script
         └── tests/
             ├── __init__.py
             └── test_gain.py            # pytest
@@ -406,13 +410,253 @@ ______________________________________________________________________
 ## Benchmarking
 
 ```sh
-make bench              # C benchmark (timing loop) + Python pytest-benchmark
-make bench-save         # save baseline tagged with current git describe
-make bench-compare      # compare against last saved baseline
+make bench    # C timing loop + Python perf_counter suite
 ```
 
 The C benchmark in `native/benchmarks/bench_gain_core.c` runs a raw timing
-loop with no pytest overhead — useful for measuring SIMD uplift.
+loop — useful for measuring SIMD uplift without Python overhead.  The Python
+benchmark script runs as a plain script (`python bench_gain.py`) and reports
+ns/call for `step()` and µs + MSa/s for `steps()`.
+
+______________________________________________________________________
+
+## Type stubs and doctests
+
+Every object gets a `.pyi` type stub alongside its Python module.  The stub
+gives IDEs full type information and ships runnable doctests that pass
+out-of-the-box — no setup required.
+
+For a standalone object scaffolded with
+
+```sh
+just-makeit new my_dsp --object gain --arg-type float --return-type float \
+    --state gain:float:1.0
+```
+
+the generated `src/my_dsp/gain.pyi` looks like:
+
+```python
+import numpy as np
+from numpy.typing import NDArray
+
+class Gain:
+    """Gain component.
+
+    Parameters
+    ----------
+    gain : float, default 1.0
+        gain state variable.
+
+    Examples
+    --------
+    Create with defaults:
+
+    >>> from my_dsp import Gain
+    >>> obj = Gain(1.0)
+    >>> obj.get_gain()
+    1.0
+
+    Reset restores defaults:
+
+    >>> obj.set_gain(0.0)
+    >>> obj.reset()
+    >>> obj.get_gain()
+    1.0
+
+    """
+
+    def __init__(self, gain: float = ...) -> None: ...
+
+    def reset(self) -> None:
+        """Reset state to post-create defaults."""
+
+    def step(self, x: float) -> float:
+        """Process one input sample."""
+
+    def steps(self, x: NDArray[np.float32],
+              out: NDArray[np.float32] | None = None) -> NDArray[np.float32]:
+        """Process a samples array. Returns ndarray, or fills out= if supplied."""
+
+    def get_gain(self) -> float:
+        """Return current gain."""
+
+    def set_gain(self, value: float) -> None:
+        """Set gain."""
+
+    def destroy(self) -> None:
+        """Release C resources immediately."""
+
+    def __enter__(self) -> "Gain": ...
+
+    def __exit__(self, *args: object) -> None: ...
+```
+
+### Running the doctests
+
+The `Examples` block is a valid Python doctest.  Run it after `pip install .`:
+
+```sh
+python -m doctest src/my_dsp/gain.pyi -v
+```
+
+```
+Trying:
+    from my_dsp import Gain
+Expecting nothing
+ok
+Trying:
+    obj = Gain(1.0)
+Expecting nothing
+ok
+Trying:
+    obj.get_gain()
+Expecting:
+    1.0
+ok
+...
+3 items passed all tests:
+   2 tests in gain.Gain
+...
+```
+
+The doctest exercises the real C extension — construction, a getter read-back,
+a setter-then-reset round-trip.  For any state variable whose default value
+round-trips exactly (integers and whole-number floats), the Examples section
+is generated and passes automatically.  Non-round-trip defaults (e.g.
+`0.1f`) are omitted from doctests to avoid floating-point noise.
+
+### What gets a stub
+
+| Scenario | Stub location |
+|---|---|
+| Standalone object (`just-makeit object`) | `src/<pkg>/<obj>.pyi` |
+| Module object (`just-makeit object --module`) | `src/<pkg>/<module>/<module>.pyi` |
+
+The stub is regenerated on every `just-makeit object`, `method`, `property`,
+and `function` call.  Manual edits to the generated file are overwritten —
+put any extra annotations in a separate `py.typed` marker or alongside file.
+
+______________________________________________________________________
+
+## Generated tests and benchmarks
+
+Every object also gets a Python test file and a benchmark file, placed in
+`tests/` and `benchmarks/` directories next to the package.  Both are ready
+to run immediately after `pip install .`.
+
+For the same `Gain` example, `src/my_dsp/tests/test_gain.py` contains:
+
+```python
+import unittest
+import numpy as np
+from my_dsp import Gain
+
+# pytest compatibility shim (runs under pytest or plain unittest discover)
+...
+
+class TestGain(unittest.TestCase):
+    def test_create(self):
+        obj = Gain(1.0)
+        self.assertIsNotNone(obj)
+
+    def test_step_runs(self):
+        obj = Gain(1.0)
+        y = obj.step(1.0)
+        assert isinstance(y, float)
+
+    def test_steps_shape_dtype(self):
+        obj = Gain(1.0)
+        x = np.ones(64, dtype=np.float32)
+        y = obj.steps(x)
+        self.assertEqual(y.shape, (64,))
+        self.assertEqual(y.dtype, np.float32)
+
+    def test_steps_out_param(self):
+        x   = np.ones(64, dtype=np.float32)
+        buf = np.zeros(64, dtype=np.float32)
+        obj1 = Gain(1.0)
+        ret = obj1.steps(x, buf)
+        self.assertIs(ret, buf)
+
+    def test_getter_setter(self):
+        obj = Gain(1.0)
+        assert obj.get_gain() == _approx(1.0)
+        obj.set_gain(2.0)
+        assert obj.get_gain() == _approx(2.0)
+
+    def test_reset(self):
+        obj = Gain(1.0)
+        obj.set_gain(2.0)
+        obj.reset()
+        assert obj.get_gain() == _approx(1.0)
+
+    def test_context_manager(self):
+        with Gain(1.0) as obj:
+            y = obj.step(1.0)
+        assert isinstance(y, float)
+
+    def test_destroy(self):
+        obj = Gain(1.0)
+        obj.destroy()
+        with _raises(RuntimeError, match="destroyed"):
+            obj.step(1.0)
+```
+
+And `src/my_dsp/benchmarks/bench_gain.py`:
+
+```python
+"""Benchmark for Gain.
+
+Run standalone:  python src/my_dsp/benchmarks/bench_gain.py
+Or via make:     make bench
+"""
+import time
+import numpy as np
+from my_dsp import Gain
+
+REPS      = 1_000
+BLOCK_1K  = 1_024
+BLOCK_64K = 65_536
+
+
+def _bench(label: str, fn, *args, reps: int = REPS) -> float:
+    for _ in range(max(1, reps // 10)):  # warmup
+        fn(*args)
+    t0 = time.perf_counter()
+    for _ in range(reps):
+        fn(*args)
+    return (time.perf_counter() - t0) / reps
+
+
+def main() -> None:
+    obj = Gain(1.0)
+    print("gain")
+    dt = _bench("step", obj.step, 1.0)
+    print(f"  {'step':<22} {dt * 1e9:9.1f} ns/call")
+
+    x1k = np.ones(BLOCK_1K, dtype=np.float32)
+    dt = _bench("steps 1k", obj.steps, x1k, reps=max(1, REPS // 10))
+    print(f"  {'steps 1k':<22} {dt * 1e6:9.3f} µs  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)")
+    x64k = np.ones(BLOCK_64K, dtype=np.float32)
+    dt = _bench("steps 64k", obj.steps, x64k, reps=max(1, REPS // 100))
+    print(f"  {'steps 64k':<22} {dt * 1e3:9.3f} ms  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+These files are the starting point — add domain-specific assertions for your
+algorithm's actual behaviour.  The scaffold tests verify the API contract
+(construction, type safety, getter/setter round-trips, reset, lifecycle);
+correctness tests are yours to write.
+
+Run them with:
+
+```sh
+make test        # CTest + pytest (all tests)
+make bench       # C timing loop + Python perf_counter suite
+```
 
 ______________________________________________________________________
 

@@ -398,6 +398,77 @@ def _test_arr_4_init(sample_type: str, samp: dict) -> str:
     return "{1, 2, 3, 4}"
 
 
+def _bench_py_blocks(
+    arg_type: str,
+    in_py_test_val: str,
+    in_np_dtype: str,
+    is_void_return: bool,
+) -> tuple[str, str]:
+    """Return (bench_step_py, bench_steps_py) indented blocks for BENCH_PY.
+
+    bench_step_py   — lines that time a single step() call
+    bench_steps_py  — lines that time steps() at 1k and 64k (may be empty)
+    Both blocks are already indented with 4 spaces.
+    """
+    # step() timing block
+    if arg_type == "void":
+        step_py = (
+            "    dt = _bench(\"step\", obj.step)\n"
+            "    print(f\"  {'step':<22} {dt * 1e9:9.1f} ns/call\")\n"
+        )
+    elif arg_type.endswith("[]"):
+        step_py = (
+            f"    x_step = np.zeros(4, dtype={in_np_dtype})\n"
+            "    dt = _bench(\"step\", obj.step, x_step)\n"
+            "    print(f\"  {'step':<22} {dt * 1e9:9.1f} ns/call\")\n"
+        )
+    else:
+        step_py = (
+            f"    dt = _bench(\"step\", obj.step, {in_py_test_val})\n"
+            "    print(f\"  {'step':<22} {dt * 1e9:9.1f} ns/call\")\n"
+        )
+
+    # steps() timing block
+    if arg_type == "void":
+        steps_py = (
+            "    dt = _bench(\"steps 1k\", obj.steps, BLOCK_1K,"
+            " reps=max(1, REPS // 10))\n"
+            "    print(f\"  {'steps 1k':<22} {dt * 1e6:9.3f} µs/call\")\n"
+            "    dt = _bench(\"steps 64k\", obj.steps, BLOCK_64K,"
+            " reps=max(1, REPS // 100))\n"
+            "    print(f\"  {'steps 64k':<22} {dt * 1e3:9.3f} ms/call\")\n"
+        )
+    elif arg_type.endswith("[]"):
+        # No steps(); bench buffer-arg step() with larger arrays instead
+        _msa1  = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
+        _msa64 = "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        steps_py = (
+            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+            "    dt = _bench(\"step 1k buf\", obj.step, x1k,"
+            " reps=max(1, REPS // 10))\n"
+            f"    print(f\"  {{'step 1k buf':<22}} {{dt * 1e6:9.3f}} µs{_msa1}\")\n"
+            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
+            "    dt = _bench(\"step 64k buf\", obj.step, x64k,"
+            " reps=max(1, REPS // 100))\n"
+            f"    print(f\"  {{'step 64k buf':<22}} {{dt * 1e3:9.3f}} ms{_msa64}\")\n"
+        )
+    else:
+        _msa1  = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
+        _msa64 = "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        steps_py = (
+            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+            "    dt = _bench(\"steps 1k\", obj.steps, x1k,"
+            " reps=max(1, REPS // 10))\n"
+            f"    print(f\"  {{'steps 1k':<22}} {{dt * 1e6:9.3f}} µs{_msa1}\")\n"
+            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
+            "    dt = _bench(\"steps 64k\", obj.steps, x64k,"
+            " reps=max(1, REPS // 100))\n"
+            f"    print(f\"  {{'steps 64k':<22}} {{dt * 1e3:9.3f}} ms{_msa64}\")\n"
+        )
+
+    return step_py, steps_py
+
+
 def make_sample_ctx(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
@@ -477,12 +548,12 @@ def make_sample_ctx(
         # step/steps C and Python bodies are pre-rendered by make_step_ctx().
         if is_void_return:
             _pyi_steps = (
-                "    def steps(self, n: int = 1) -> None:\n"
+                "\n    def steps(self, n: int = 1) -> None:\n"
                 "        \"\"\"Run n iterations.\"\"\"\n"
             )
         else:
             _pyi_steps = (
-                f"    def steps(self, n: int = 1) -> NDArray[{out_np_dtype}]:\n"
+                f"\n    def steps(self, n: int = 1) -> NDArray[{out_np_dtype}]:\n"
                 "        \"\"\"Generate n output samples.\"\"\"\n"
             )
         return {
@@ -531,6 +602,10 @@ def make_sample_ctx(
             "pure_x_parse_arg":     "",
             "pure_x_to_c":          "",
             "pyi_steps_stub":       _pyi_steps,
+            **dict(zip(
+                ("bench_step_py", "bench_steps_py"),
+                _bench_py_blocks("void", "1", out_np_dtype, is_void_return),
+            )),
         }
 
     if arg_type.endswith("[]"):
@@ -602,6 +677,11 @@ def make_sample_ctx(
             "pure_x_parse_arg":     "",
             "pure_x_to_c":          "",
             "pyi_steps_stub":       "",  # no steps() for array arg
+            **dict(zip(
+                ("bench_step_py", "bench_steps_py"),
+                _bench_py_blocks(arg_type, f"np.zeros(4, dtype={in_np_dtype})",
+                                 in_np_dtype, is_void_return),
+            )),
         }
 
     if arg_type not in _CTYPE_META:
@@ -678,15 +758,20 @@ def make_sample_ctx(
         "pure_x_parse_arg":     pure_x_parse_arg,
         "pure_x_to_c":          pure_x_to_c,
         "pyi_steps_stub":       (
-            f"    def steps(self, x: NDArray[{in_np_dtype}], "
+            f"\n    def steps(self, x: NDArray[{in_np_dtype}], "
             f"out: NDArray[{out_np_dtype}] | None = None) "
             f"-> NDArray[{out_np_dtype}]:\n"
             "        \"\"\"Process a samples array. Returns ndarray, "
             "or fills out= if supplied.\"\"\"\n"
         ) if not is_void_return else (
-            f"    def steps(self, x: NDArray[{in_np_dtype}]) -> None:\n"
+            f"\n    def steps(self, x: NDArray[{in_np_dtype}]) -> None:\n"
             "        \"\"\"Process a block of input samples.\"\"\"\n"
         ),
+        **dict(zip(
+            ("bench_step_py", "bench_steps_py"),
+            _bench_py_blocks(arg_type, _KIND_PY_TEST_VAL[samp["kind"]],
+                             in_np_dtype, is_void_return),
+        )),
     }
 
 
@@ -955,6 +1040,90 @@ def _build_no_state_init_ctx(
     }
 
 
+def _doctest_safe_output(ctype: str, default: str) -> str | None:
+    """Return the expected Python repr for a getter's default, or None if unsafe.
+
+    Only returns a value when the default round-trips exactly through the C type
+    so the doctest output is predictable without knowing float rounding details.
+    """
+    kind = _CTYPE_META[ctype]["kind"]
+    if kind == "int":
+        val = _py_default(ctype, default)
+        try:
+            int(val)    # reject "0L", "0U", etc.
+            return val
+        except ValueError:
+            return None
+    if kind == "float":
+        s = default.rstrip("fF")
+        try:
+            v = float(s)
+            if v == int(v):          # 0.0, 1.0, 2.0, … are exactly representable
+                return repr(v)       # "0.0", "1.0", …
+        except ValueError:
+            pass
+        return None
+    if kind == "complex":
+        return "0j"
+    return None
+
+
+def _pyi_examples_block(
+    scalar_vars: list[tuple[str, str, str]],
+    has_array_args: bool,
+    import_line: str,
+    py_create_args: str,
+    Component: str,
+) -> str:
+    """Build an indented ``Examples`` section for a .pyi class docstring.
+
+    Returns an empty string when no doctest-safe getter examples exist.
+    The returned string ends with a trailing newline and is ready to embed
+    directly before the closing ``\"\"\"`` in the class docstring.
+    """
+    getter_pairs: list[tuple[str, str]] = []
+    for name, ct, dflt in scalar_vars:
+        out = _doctest_safe_output(ct, dflt)
+        if out is not None:
+            getter_pairs.append((name, out))
+
+    lines: list[str] = [
+        "    Examples",
+        "    --------",
+        "    Create with defaults:",
+        "",
+    ]
+    if has_array_args:
+        lines.append("    >>> import numpy as np")
+    lines.append(f"    >>> {import_line}")
+    lines.append(f"    >>> obj = {Component}({py_create_args})")
+
+    for name, out in getter_pairs[:3]:
+        lines.append(f"    >>> obj.get_{name}()")
+        lines.append(f"    {out}")
+
+    if getter_pairs:
+        first_name, first_out = getter_pairs[0]
+        first_ct = next(ct for n, ct, _ in scalar_vars if n == first_name)
+        kind = _CTYPE_META[first_ct]["kind"]
+        set_val = "0" if (kind == "int" and first_out != "0") else (
+            "42" if kind == "int" else
+            "0.0" if first_out != "0.0" else "1.0"
+        )
+        lines += [
+            "",
+            "    Reset restores defaults:",
+            "",
+            f"    >>> obj.set_{first_name}({set_val})",
+            "    >>> obj.reset()",
+            f"    >>> obj.get_{first_name}()",
+            f"    {first_out}",
+        ]
+
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -1002,6 +1171,7 @@ def make_state_ctx(
             "getter_setter_pymethoddef":   "",
             "init_params_pyi":        "",
             "pyi_param_docs":         "    (none)",
+            "pyi_examples":           "",
             "getter_setter_stubs_pyi":     "",
             "py_create_args":         "",
             "getter_setter_test_py":  "        pass  # no auto-state; add assertions for your fields",
@@ -1446,30 +1616,35 @@ def make_state_ctx(
         for name, ct, dflt in scalar_vars
     )
 
-    stub_lines: list[str] = []
+    stub_groups: list[str] = []
     for name, ct, _ in scalar_vars:
         py_type = _CTYPE_META[ct]["py_type"]
-        stub_lines += [
+        stub_groups.append("\n".join([
             f"    def get_{name}(self) -> {py_type}:",
             f'        """Return current {name}."""',
+            "",
             f"    def set_{name}(self, value: {py_type}) -> None:",
             f'        """Set {name}."""',
-        ]
+        ]))
     for name, elem_ct, size in array_info:
         py_type = _CTYPE_META[elem_ct]["py_type"]
-        stub_lines += [
+        stub_groups.append("\n".join([
             f"    def get_{name}(self) -> NDArray[{py_type}]:",
             f'        """Return a copy of {name} (length {size}, dtype {py_type})."""',
+            "",
             f"    def get_{name}_view(self) -> NDArray[{py_type}]:",
             f'        """Return a read-only view of {name}.',
             "",
             "        Backed by the component's internal state buffer.",
             "        **Do not use after destroy().**",
             '        """',
+            "",
             f"    def set_{name}(self, value: NDArray[{py_type}]) -> None:",
             f'        """Set {name} from a {py_type} array of length {size}."""',
-        ]
-    getter_setter_stubs_pyi = "\n".join(stub_lines)
+        ]))
+    getter_setter_stubs_pyi = (
+        "\n" + "\n\n".join(stub_groups) + "\n" if stub_groups else ""
+    )
 
     # ── Shared: create args ───────────────────────────────────────────────────
 
@@ -1478,6 +1653,13 @@ def make_state_ctx(
         py_arr_args + [_py_default(ct, dflt) for _, ct, dflt in scalar_vars]
     )
     # c_create_args already computed above (NULL, 0 per array arg + scalar defaults)
+
+    # ── PYI Examples ─────────────────────────────────────────────────────────
+    pyi_examples = _pyi_examples_block(
+        scalar_vars, bool(py_arr_args),
+        "from <<package>> import <<Component>>",
+        py_create_args, Component,
+    ) if scalar_vars else ""
 
     # ── PYTEST: getter_setter_test_py ─────────────────────────────────────────
 
@@ -1607,6 +1789,7 @@ def make_state_ctx(
         "getter_setter_pymethoddef": getter_setter_pymethoddef,
         "init_params_pyi": init_params_pyi,
         "pyi_param_docs": pyi_param_docs,
+        "pyi_examples": pyi_examples,
         "getter_setter_stubs_pyi": getter_setter_stubs_pyi,
         "py_create_args": py_create_args,
         "getter_setter_test_py": getter_setter_test_py,
@@ -2354,7 +2537,7 @@ def make_methods_ctx(
         "extra_buf_alloc": "".join(buf_alloc),
         "extra_methods_c": "\n\n".join(method_c_parts),
         "extra_methods_pymethoddef": "".join(pmd_lines),
-        "pyi_extra_methods": "\n".join(pyi_lines) + "\n" if pyi_lines else "",
+        "pyi_extra_methods": "\n" + "\n\n".join(pyi_lines) + "\n" if pyi_lines else "",
     }
 
 
@@ -3178,7 +3361,7 @@ def make_step_ctx(
         )
         _pyi_step_self = f"self, x: {in_py_hint}"
     pyi_step_methods = (
-        f"    def step({_pyi_step_self}) -> {out_py_hint}:\n"
+        f"\n    def step({_pyi_step_self}) -> {out_py_hint}:\n"
         f"{_pyi_step_doc}"
         + pyi_steps
     )
@@ -4487,32 +4670,38 @@ main(void)
 # ── Python benchmark ──────────────────────────────────────────────────────────
 
 COMPONENT_BENCH_PY = """\
+\"\"\"Benchmark for <<Component>>.
+
+Run standalone:  python src/<<package>>/benchmarks/bench_<<component>>.py
+Or via make:     make bench
+\"\"\"
+import time
 import numpy as np
-import pytest
 
 from <<package>> import <<Component>>
 
-
-@pytest.fixture
-def obj():
-    return <<Component>>(<<py_create_args>>)
-
-
-@pytest.mark.benchmark(group="<<component>>")
-def test_bench_step(benchmark, obj):
-    benchmark(obj.step, <<in_py_test_val>>)
+REPS      = 1_000
+BLOCK_1K  = 1_024
+BLOCK_64K = 65_536
 
 
-@pytest.mark.benchmark(group="<<component>>")
-def test_bench_steps_1k(benchmark, obj):
-    x = np.ones(1024, dtype=<<in_np_dtype>>)
-    benchmark(obj.steps, x)
+def _bench(label: str, fn, *args, reps: int = REPS) -> float:
+    for _ in range(max(1, reps // 10)):  # warmup
+        fn(*args)
+    t0 = time.perf_counter()
+    for _ in range(reps):
+        fn(*args)
+    return (time.perf_counter() - t0) / reps
 
 
-@pytest.mark.benchmark(group="<<component>>")
-def test_bench_steps_64k(benchmark, obj):
-    x = np.ones(65536, dtype=<<in_np_dtype>>)
-    benchmark(obj.steps, x)
+def main() -> None:
+    obj = <<Component>>(<<py_create_args>>)
+    print("<<component>>")
+<<bench_step_py>>
+<<bench_steps_py>>
+
+if __name__ == "__main__":
+    main()
 """
 
 # ── CMakeLists.txt ───────────────────────────────────────────────────────────
@@ -4767,8 +4956,6 @@ MAKEFILE = """\
 #   make              Configure + build (Release)
 #   make test         CTest + pytest
 #   make bench        C + Python benchmarks (output only)
-#   make bench-save   Save benchmark baseline (tagged with git describe)
-#   make bench-compare  Compare against last saved baseline
 #   make just-build   PEP 517 hook for just-buildit
 #   make clean        Remove build artifacts
 #   make help         Show this message
@@ -4777,12 +4964,10 @@ ifeq ($(OS), Windows_NT)
 SHELL      = cmd.exe
 NPROC      ?= 4
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())"))
-BENCH_TAG  ?= $(shell git describe --tags --dirty 2>nul)
 else
 SHELL      = /bin/sh
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
-BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 endif
 BUILD_DIR  ?= build
 BUILD_TYPE ?= Release
@@ -4797,7 +4982,7 @@ else
 CMAKE_GEN_FLAG  :=
 endif
 
-.PHONY: all build test bench bench-save bench-compare just-build docs clean help
+.PHONY: all build test bench just-build docs clean help
 
 all: build
 
@@ -4832,16 +5017,9 @@ endif
 
 bench: build
 \t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
-\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ -v --benchmark-disable-gc \\
-\t\t2>/dev/null || echo "(hint: pip install pytest-benchmark)"
-
-bench-save: build
-\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ \\
-\t\t--benchmark-save=$(BENCH_TAG) --benchmark-disable-gc
-
-bench-compare: build
-\t$(PYTHON) -m pytest src/<<package>>/benchmarks/ \\
-\t\t--benchmark-compare --benchmark-disable-gc
+\t@for f in src/<<package>>/benchmarks/bench_*.py; do \\
+\t\t[ -f "$$f" ] && echo "--- $$f ---" && $(PYTHON) "$$f" && echo; \\
+\tdone
 
 just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
@@ -4864,8 +5042,6 @@ help:
 \t@echo "  make               Configure + build"
 \t@echo "  make test          Run CTest + pytest"
 \t@echo "  make bench         Run C + Python benchmarks"
-\t@echo "  make bench-save    Save baseline (git describe tag)"
-\t@echo "  make bench-compare Compare against last saved baseline"
 \t@echo "  make docs          Generate Doxygen API docs"
 \t@echo "  make clean         Remove build artifacts"
 \t@echo ""
@@ -4911,17 +5087,11 @@ dependencies = [
     "numpy",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest-benchmark"]
-
 [tool.just-buildit]
 command = "make just-build"
 
 [tool.pytest.ini_options]
 testpaths = ["src"]
-markers = [
-    "benchmark: mark test as a benchmark (requires pytest-benchmark)",
-]
 """
 
 # ── Python package ───────────────────────────────────────────────────────────
@@ -4951,15 +5121,19 @@ class <<Component>>:
     Parameters
     ----------
 <<pyi_param_docs>>
-    \"\"\"
+
+<<pyi_examples>>    \"\"\"
 
     def __init__(self, <<init_params_pyi>>) -> None: ...
+
     def reset(self) -> None:
         \"\"\"Reset state to post-create defaults.\"\"\"
 <<pyi_step_methods>><<pyi_extra_methods>><<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         \"\"\"Release C resources immediately.\"\"\"
+
     def __enter__(self) -> "<<Component>>": ...
+
     def __exit__(self, *args: object) -> None: ...
 """
 
@@ -5026,6 +5200,103 @@ class Test<<Component>>(unittest.TestCase):
     def test_reset(self):
 <<reset_test_py>>
 <<lifecycle_pytest_methods>>"""
+
+# ── module pytest test (object inside a .so module) ──────────────────────────
+
+MODULE_PYTEST_TEST = """\
+import unittest
+import numpy as np
+from <<package>>.<<module>> import <<Component>>
+
+# ---------------------------------------------------------------------------
+# pytest compatibility shim — tests run under both pytest and unittest discover
+# ---------------------------------------------------------------------------
+try:
+    import pytest as _pytest
+
+    _approx = _pytest.approx
+    _raises = _pytest.raises
+except ImportError:
+    import contextlib, math
+
+    class _Approx:
+        def __init__(self, expected, rel=1e-6):
+            self._exp = expected
+            self._tol = rel * (abs(expected) if expected else 1e-12)
+
+        def __eq__(self, other):
+            import cmath
+            return cmath.isclose(complex(other), complex(self._exp),
+                                 rel_tol=1e-6, abs_tol=1e-12)
+
+        def __repr__(self):
+            return f"approx({self._exp!r})"
+
+    @contextlib.contextmanager
+    def _raises(exc_type, match=None):
+        import re
+        try:
+            yield
+        except exc_type as e:
+            if match and not re.search(match, str(e)):
+                raise AssertionError(
+                    f"Exception message {str(e)!r} did not match {match!r}"
+                ) from e
+        else:
+            raise AssertionError(f"{exc_type.__name__} was not raised")
+
+    _approx = _Approx
+# ---------------------------------------------------------------------------
+
+
+class Test<<Component>>(unittest.TestCase):
+    def test_create(self):
+        obj = <<Component>>(<<py_create_args>>)
+        self.assertIsNotNone(obj)
+<<step_pytest_methods>>
+    def test_getter_setter(self):
+<<getter_setter_test_py>>
+
+    def test_reset(self):
+<<reset_test_py>>
+<<lifecycle_pytest_methods>>"""
+
+# ── module benchmark (object inside a .so module) ────────────────────────────
+
+MODULE_BENCH_PY = """\
+\"\"\"Benchmark for <<Component>>.
+
+Run standalone:  python src/<<package>>/<<module>>/benchmarks/bench_<<component>>.py
+Or via make:     make bench
+\"\"\"
+import time
+import numpy as np
+
+from <<package>>.<<module>> import <<Component>>
+
+REPS      = 1_000
+BLOCK_1K  = 1_024
+BLOCK_64K = 65_536
+
+
+def _bench(label: str, fn, *args, reps: int = REPS) -> float:
+    for _ in range(max(1, reps // 10)):  # warmup
+        fn(*args)
+    t0 = time.perf_counter()
+    for _ in range(reps):
+        fn(*args)
+    return (time.perf_counter() - t0) / reps
+
+
+def main() -> None:
+    obj = <<Component>>(<<py_create_args>>)
+    print("<<component>>")
+<<bench_step_py>>
+<<bench_steps_py>>
+
+if __name__ == "__main__":
+    main()
+"""
 
 # ── .gitignore ───────────────────────────────────────────────────────────────
 

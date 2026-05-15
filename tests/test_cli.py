@@ -633,6 +633,35 @@ class TestModuleCommandCLI:
         _cli("module", "dsp", cwd=dest)
         assert (dest / "native" / "inc" / "dsp" / "dsp_core.h").exists()
 
+    def test_module_object_creates_python_test(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("module", "dsp", cwd=dest)
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        test_py = dest / "src" / "proj" / "dsp" / "tests" / "test_nco.py"
+        assert test_py.exists()
+        text = test_py.read_text()
+        assert "from proj.dsp import Nco" in text
+
+    def test_module_object_creates_python_bench(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("module", "dsp", cwd=dest)
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        bench_py = dest / "src" / "proj" / "dsp" / "benchmarks" / "bench_nco.py"
+        assert bench_py.exists()
+        text = bench_py.read_text()
+        assert "from proj.dsp import Nco" in text
+
+    def test_module_object_second_object_gets_own_test(self, tmp_path):
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        _cli("module", "dsp", cwd=dest)
+        _cli("object", "nco", "--module", "dsp", cwd=dest)
+        _cli("object", "mixer", "--module", "dsp", cwd=dest)
+        assert (dest / "src" / "proj" / "dsp" / "tests" / "test_nco.py").exists()
+        assert (dest / "src" / "proj" / "dsp" / "tests" / "test_mixer.py").exists()
+
 
 class TestObjectNoStateCLI:
     """object --no-state omits state struct."""

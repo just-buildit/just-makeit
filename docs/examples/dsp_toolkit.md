@@ -62,6 +62,17 @@ before you write a single line of logic.
 Open `native/inc/gain/gain_core.h` and replace the `gain_step` stub — it's a one-liner:
 
 ```c
+// before
+static inline float
+gain_step(const gain_state_t *state, float x)
+{
+    (void)state; /* TODO: implement using state variables */
+    return (float)x;
+}
+```
+
+```c
+// after
 static inline float
 gain_step(const gain_state_t *state, float x)
 {
@@ -104,6 +115,17 @@ State:
 `ema_step` must write back to `state->prev`, so the signature drops `const`:
 
 ```c
+// before
+static inline float
+ema_step(const ema_state_t *state, float x)
+{
+    (void)state; /* TODO: implement using state variables */
+    return (float)x;
+}
+```
+
+```c
+// after
 static inline float
 ema_step(ema_state_t *state, float x)
 {
@@ -185,11 +207,12 @@ pytest runs the 14 generated tests across both components.
 
 ## 7. Use from Python
 
+```sh
+pip install .
+```
+
 ```python
 """Demo: use Gain and Ema together from Python."""
-
-import sys
-sys.path.insert(0, "src")
 
 import numpy as np
 from dsp_toolkit import Gain, Ema
@@ -216,37 +239,3 @@ for i, x in enumerate(signal):
 y = Gain(gain=2.0).steps(signal)   # returns float32 ndarray
 ```
 
----
-
-## 8. Use from Python
-
-```python
-"""Demo: use Gain and Ema together from Python."""
-
-import sys
-sys.path.insert(0, "src")
-
-import numpy as np
-from dsp_toolkit import Gain, Ema
-
-# A short burst followed by silence
-signal = np.ones(20, dtype=np.float32)
-signal[10:] = 0.0
-
-gain = Gain(gain=2.0)
-ema  = Ema(alpha=0.3)
-
-print(f"{'n':>3}  {'input':>7}  {'gained':>7}  {'smoothed':>10}")
-print("-" * 36)
-for i, x in enumerate(signal):
-    y_gain = gain.step(x)
-    y_ema  = ema.step(float(y_gain))
-    print(f"{i:>3}  {x:>7.3f}  {y_gain:>7.3f}  {y_ema:>10.4f}")
-```
-
-`Gain` and `Ema` are independent stateful objects — chain them however you need.
-`steps()` is also available for block processing:
-
-```python
-y = Gain(gain=2.0).steps(signal)   # returns float32 ndarray
-```

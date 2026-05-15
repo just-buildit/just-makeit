@@ -414,15 +414,15 @@ After this, `from iqfile.conv import Cf32ToQ15, Q15ToCf32` works from anywhere.
 
 ## 7. Round-trip demo
 
+```sh
+pip install .
+```
+
 ```python
 """Round-trip demo: cf32 -> q15 file -> cf32, verify fidelity."""
 import os
-import sys
 import tempfile
 import numpy as np
-
-# cwd is the project root when called from test.py; cmake builds the .so into src/.
-sys.path.insert(0, "src")
 
 from iqfile.conv import Cf32ToQ15, Q15ToCf32
 

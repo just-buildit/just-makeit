@@ -109,6 +109,14 @@ just-makeit object biquad --module filter --state "b0:double:1.0" --state "a1:do
 | `native/src/<module>/<module>_ext.c` | New type block added; `PyMODINIT_FUNC` updated |
 | `native/src/<module>/CMakeLists.txt` | New `<obj>_core` added to link list |
 | `src/<pkg>/<module>/__init__.py` | New type added to import and `__all__` |
+| `src/<pkg>/<module>/<module>.pyi` | Type stub regenerated with new type |
+
+**Per-object files created for module objects:**
+
+| File | Purpose |
+|------|---------|
+| `src/<pkg>/<module>/tests/test_<obj>.py` | pytest suite (API, getters/setters, reset, lifecycle) |
+| `src/<pkg>/<module>/benchmarks/bench_<obj>.py` | pytest-benchmark throughput suite |
 
 The module `_ext.c` is always fully regenerated from the complete object list
 — never patched — so adding a third type never disturbs the first two.

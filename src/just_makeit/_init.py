@@ -206,6 +206,17 @@ def run(
     ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
     ctx.update(T.make_methods_ctx(ctx["component"], ctx["Component"], [],
                                    pkg=pkg, py_create_args=ctx.get("py_create_args", "")))
+    # Re-generate pyi_examples with the actual package name (not placeholder).
+    scalar_state = [
+        (n, ct, dflt)
+        for n, ct, dflt in (vars_ or [])
+        if not T.parse_array_type(ct)
+    ] if not no_state else []
+    import_line = f"from {pkg} import {ctx['Component']}"
+    ctx["pyi_examples"] = T._pyi_examples_block(
+        scalar_state, bool(array_args), import_line,
+        ctx.get("py_create_args", ""), ctx["Component"],
+    ) if scalar_state else ""
 
     def r(tmpl):
         return T.render(tmpl, ctx)

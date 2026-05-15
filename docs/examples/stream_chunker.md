@@ -130,11 +130,12 @@ ctest --test-dir build --output-on-failure
 
 ## 4. Use from Python
 
+```sh
+pip install .
+```
+
 ```python
 """Integration test: feed irregular bursts into Chunker, verify chunk output.
-
-Run from the project root after building:
-    python3 .steps/04_demo.py
 
 Constraint: with chunk_size=64 and an internal buf[256], the output buffer
 pre-allocated by --variable-output holds 256 samples (4 complete chunks).
@@ -142,16 +143,6 @@ Callers must not push more samples in one call than the output buffer can hold:
   max safe push = floor(256 / chunk_size) * chunk_size - current_n_buf
 For chunk_size=64 and worst-case n_buf=63: max push ≈ 192 samples.
 """
-
-import sys
-import pathlib
-
-# Add the built extension to sys.path
-build_dir = pathlib.Path("build")
-for p in build_dir.rglob("my_chunker*.so"):
-    sys.path.insert(0, str(p.parent))
-    break
-sys.path.insert(0, str(pathlib.Path("src")))
 
 import numpy as np
 from my_chunker import Chunker
