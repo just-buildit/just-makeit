@@ -29,12 +29,20 @@ from just_makeit._example import _EXAMPLES, _find
 def _run_pytest(proj: Path) -> bool:
     """Run pytest against the generated Python test suite in proj/src/.
 
-    The compiled extension .so files land in src/<pkg>/ after the cmake build,
-    so PYTHONPATH=src makes them importable without a pip install step.
-    Returns True if pytest passed (or if no tests were found).
+    The compiled extension .so/.pyd files land in src/<pkg>/ after the cmake
+    build, so PYTHONPATH=src makes them importable without a pip install step.
+    Returns True if pytest passed or if no compiled extension is present
+    (unbuilt scaffold-only projects are skipped).
     """
     src_dir = proj / "src"
     if not src_dir.is_dir():
+        return True
+    # Only run if the C extension was actually compiled; scaffold-only
+    # examples (e.g. pytest_style) have no .so/.pyd and can't be imported.
+    extensions = list(proj.rglob("*.so")) + list(proj.rglob("*.pyd"))
+    if not extensions:
+        print(f"    (no compiled extension in {proj.name}, skipping pytest)",
+              flush=True)
         return True
     env = os.environ.copy()
     env["PYTHONPATH"] = str(src_dir)
