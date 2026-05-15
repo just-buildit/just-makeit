@@ -152,6 +152,9 @@ just-makeit COMMAND
 |                   | `--return-type T`               | C type for `step()` return; default same as `--arg-type`; `void` for sinks     |
 |                   | `--perf`                        | Generate `jm_perf.h` and apply `JM_FORCEINLINE JM_HOT` to `step()`             |
 |                   | `--basic`                       | Plain `Makefile` instead of CMake                                               |
+|                   | `--mutable`                     | Remove `const` from the state pointer in `step()`; use for mutating generators  |
+|                   | `--pytest`                      | Generate pure pytest tests (no unittest shim)                                   |
+|                   | `--pytest-benchmark`            | Generate pytest-benchmark bench files                                           |
 | `module <name>`   |                                 | Scaffold an empty extension module (subpackage `.so`); add types with `object` |
 | `object <name>`   | `--module name`                 | Target module subpackage; omit for a standalone object with its own `.so`       |
 |                   | `--state name:type[:default]`   | Same as `new`                                                                   |
@@ -175,6 +178,7 @@ just-makeit COMMAND
 |                   | `--multi-output T`              | Add a parallel output array of type T; repeatable                               |
 |                   | `--out-type TYPE`               | Allocate output array per call; C stub receives `*out`; length = `in_len / out_divisor` |
 |                   | `--out-divisor N`               | Divide input length by N for output array length (default 1); use `2` for CI8/CI16 inputs |
+|                   | `--batch`                       | Generate 1:1-rate array transform; C stub receives `*in, n, *out`; Python allocates output per call |
 |                   | `--impl file::funcname`         | Lift method body from `funcname` in `file`                                     |
 |                   | `--replace old::new`            | String substitution on `--impl` body; repeatable                               |
 | `property <name>` | `--type T`                      | C type of the property value                                                    |

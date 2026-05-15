@@ -29,6 +29,9 @@ any objects — the source of truth for all subsequent commands.
 | `--return-type TYPE`          | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output. |
 | `--basic`                     | Generate a plain `Makefile` instead of a CMake project. Useful for quick prototypes that don't need a full build system. |
 | `--perf`                      | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](perf.md). |
+| `--mutable`                   | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO). |
+| `--pytest`                    | Generate pure pytest tests instead of the default `unittest`-compatible shim. |
+| `--pytest-benchmark`          | Generate `pytest-benchmark` bench files alongside the pytest tests. |
 
 ______________________________________________________________________
 
@@ -187,6 +190,7 @@ Each method appends a C stub to `<obj>_core.c` and regenerates the module
 | `--multi-output TYPE` | Add a second (or further) output array. Repeatable; produces a tuple return. |
 | `--out-type TYPE` | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`. |
 | `--out-divisor N` | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes). |
+| `--batch` | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
 | `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
 | `--replace old::new` | String substitution applied to the body lifted by `--impl`. Repeatable. |
 
@@ -275,62 +279,48 @@ ______________________________________________________________________
 #### Default — per-sample scalar or 1:1-rate array
 
 Without `--variable-output`, the generated C stub processes **one sample**
-per call.  For **array (batch) processing at a 1:1 rate** (output length =
-input length, unknown at init time), the same generated stub is the correct
-starting point: implement the C function to accept a pointer and length,
-then write the Python glue manually following the `steps()` pattern — call
-`PyArray_SimpleNew` per call, pass the data pointer to C.
+per call.
+
+**`--batch` — automated 1:1-rate array transform**
+
+Add `--batch` for **array (batch) processing at a 1:1 rate** (output length
+= input length, unknown at init time). The generated C stub receives
+`(state, const in_t *in, size_t n, out_t *out)` and the Python wrapper
+allocates and returns an output array of length `n` per call — no manual
+glue required.
 
 ```sh
 just-makeit method nco steps_u32 --module source \
-    --arg-type void --return-type uint32_t
+    --arg-type void --return-type uint32_t --batch
 
 just-makeit method nco steps_ctrl --module source \
-    --arg-type float --return-type float
+    --arg-type float --return-type float --batch
 ```
 
-Generated C stub appended to `nco_core.c` — start here, then expand to a
-batch signature in place:
+Generated C stub appended to `nco_core.c`:
 
 ```c
-uint32_t nco_steps_u32(nco_state_t *state);
-float    nco_steps_ctrl(nco_state_t *state, float x);
-```
-
-Expand to the batch signature in `nco_core.c`:
-
-```c
-void nco_steps_u32(nco_state_t *state, size_t n, uint32_t *output);
-void nco_steps_ctrl(nco_state_t *state, const float *ctrl,
-                    size_t n, uint32_t *output);
-```
-
-Python glue in `<module>_ext.c` (following the generated `Nco_steps` pattern):
-
-```c
-static PyObject *
-Nco_steps_u32(NcoObject *self, PyObject *args)
-{
-    Py_ssize_t n = 1;
-    if (!PyArg_ParseTuple(args, "n", &n)) return NULL;
-    npy_intp dims[] = {n};
-    PyObject *out = PyArray_SimpleNew(1, dims, NPY_UINT32);
-    if (!out) return NULL;
-    nco_steps_u32(self->handle, (size_t)n,
-                  (uint32_t *)PyArray_DATA((PyArrayObject *)out));
-    return out;
-}
+void nco_steps_u32(nco_state_t *state, size_t n, uint32_t *out);
+void nco_steps_ctrl(nco_state_t *state, const float *in, size_t n, float *out);
 ```
 
 Python call:
 
 ```python
-ph  = nco.steps_u32(1024)    # returns uint32 ndarray
-out = nco.steps_ctrl(ctrl)   # ctrl is float32 ndarray; returns uint32 ndarray
+ph  = nco.steps_u32(1024)    # returns uint32 ndarray of length 1024
+out = nco.steps_ctrl(ctrl)   # ctrl is float32 ndarray; returns float32 ndarray
 ```
 
-Use the per-sample scalar form when you only need one value at a time.
-Use the batch form (handwritten Python glue) for all 1:1-rate array methods.
+**Manual 1:1-rate (without `--batch`)**
+
+Without `--batch`, the generated scalar stub is the starting point for a
+hand-expanded batch signature. Implement the C function to accept a pointer
+and length, then write the Python glue manually following the `steps()`
+pattern — call `PyArray_SimpleNew` per call, pass the data pointer to C.
+
+Use `--batch` for straightforward 1:1-rate transforms. Write the glue
+manually only when the generated wrapper needs custom logic (e.g. stride
+adjustments, split I/Q outputs).
 
 ______________________________________________________________________
 

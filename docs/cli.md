@@ -13,6 +13,8 @@ Commands:
     --perf                      Annotate step() with JM_HOT/JM_FORCEINLINE.
     --mutable                   Remove const from state pointer in step().
     --basic                     Emit a plain Makefile instead of CMake.
+    --pytest                    Generate pure pytest tests (no unittest shim).
+    --pytest-benchmark          Generate pytest-benchmark bench files.
 
   module <name>                 Add an extension module subpackage to a project.
 
@@ -38,6 +40,7 @@ Commands:
     --multi-output TYPE         Emit a second output array of this type.
     --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
     --out-divisor N             Divide input length by N for output array length (default: 1).
+    --batch                     Generate 1:1-rate array transform (allocates output per call).
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 

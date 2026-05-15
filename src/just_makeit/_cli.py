@@ -42,6 +42,9 @@ Commands:
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
     --multi-output TYPE         Emit a second output array of this type.
+    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
+    --out-divisor N             Divide input length by N for output array (default: 1).
+    --batch                     Generate 1:1-rate array transform (allocates output per call).
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 

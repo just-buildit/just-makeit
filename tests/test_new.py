@@ -57,6 +57,9 @@ class TestNewProjectFiles:
     def test_pc_in_exists(self, project):
         assert (project / "cmake" / "my-filter.pc.in").exists()
 
+    def test_config_cmake_in_exists(self, project):
+        assert (project / "cmake" / "my_filter-config.cmake.in").exists()
+
 
 class TestNewComponentFiles:
     def test_component_header(self, project):
@@ -240,6 +243,14 @@ class TestNewContent:
         pc = (project / "cmake" / "my-filter.pc.in").read_text(encoding="utf-8")
         assert "Name: my-filter" in pc
         assert "-lmy_filter" in pc
+        assert "CMAKE_INSTALL_FULL_" not in pc, \
+            "pc.in must use relative ${prefix}/... paths, not absolute @CMAKE_INSTALL_FULL_*@ vars"
+
+    def test_config_cmake_in_content(self, project):
+        cfg = (project / "cmake" / "my_filter-config.cmake.in").read_text(encoding="utf-8")
+        assert "@PACKAGE_INIT@" in cfg
+        assert "my_filter-targets.cmake" in cfg
+        assert "check_required_components(my_filter)" in cfg
 
 
 class TestNewStateVars:

@@ -4904,15 +4904,22 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/native/inc/
     PATTERN "pyex_common.h" EXCLUDE)
 
 install(EXPORT <<project_underscore>>-targets
-    FILE <<project_underscore>>-config.cmake
+    FILE <<project_underscore>>-targets.cmake
     NAMESPACE <<project_underscore>>::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
+
+configure_package_config_file(
+    cmake/<<project_underscore>>-config.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion)
+
 install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
@@ -4981,14 +4988,22 @@ target_include_directories(bench_<<component>>_core
 CMAKE_PC_IN = """\
 prefix=@CMAKE_INSTALL_PREFIX@
 exec_prefix=${prefix}
-libdir=@CMAKE_INSTALL_FULL_LIBDIR@
-includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 
 Name: <<project>>
 Description: <<project>> C library
 Version: @PROJECT_VERSION@
 Libs: -L${libdir} -l<<project_underscore>>
 Cflags: -I${includedir}
+"""
+
+CMAKE_CONFIG_IN = """\
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/<<project_underscore>>-targets.cmake")
+
+check_required_components(<<project_underscore>>)
 """
 
 UMBRELLA_H = """\
