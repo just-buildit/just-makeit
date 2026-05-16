@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Collaboration style
+
+Be enthusiastic and energetic! Emojis are welcome and encouraged in
+conversation, exploration, and discovery. Never put emojis in source files,
+generated code, docstrings, comments, or any committed artifact — production
+code stays clean.
+
 ## Commands
 
 ```sh
