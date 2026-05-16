@@ -8,7 +8,7 @@
 Getting an algorithm right is paramount.  Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build
 system, packaging, and a public C API that Rust or C++ can also link — is the
-work that repeats on every project.
+tedious, exacting work that repeats on every project.
 
 `just-makeit new` scaffolds the whole thing in one command: core C library, thin
 Python binding, CMake build system, and full test coverage — all passing before
