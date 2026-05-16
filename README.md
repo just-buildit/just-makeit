@@ -4,7 +4,6 @@
 
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/just-buildit/just-makeit)
 
 Getting an algorithm right is paramount. Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build
@@ -19,11 +18,13 @@ ______________________________________________________________________
 
 ## Try it now!
 
-Click the badge above to launch a pre-built sandbox in your browser — no
-install, no compiler, no Docker required. You'll land in a GitHub Codespaces
-environment with `just-makeit` installed, all nine bundled examples already
-scaffolded and compiled, and a terminal ready to go. Run an example end-to-end,
-browse the generated C and Python source, or start a fresh project with
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/just-buildit/just-makeit)
+
+Click the badge to launch a pre-built sandbox in your browser — no install, no
+compiler, no Docker required. You'll land in a GitHub Codespaces environment
+with `just-makeit` installed, all nine bundled examples already scaffolded and
+compiled, and a terminal ready to go. Run an example end-to-end, browse the
+generated C and Python source, or start a fresh project with
 `just-makeit new`.
 
 ______________________________________________________________________
