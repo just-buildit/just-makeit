@@ -16,23 +16,23 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SRC  = ROOT / "src" / "just_makeit" / "examples"
+SRC = ROOT / "src" / "just_makeit" / "examples"
 DEST = ROOT / "docs" / "examples"
 DEST.mkdir(exist_ok=True)
 
 # Single source of truth for published examples (order matches the nav).
 # Tuple: (folder, out_name, display_name)
 examples = [
-    ("running_stats",      "running_stats.md",      "Running stats"),
-    ("fir_filter",         "fir_filter.md",          "FIR filter"),
-    ("sliding_power",      "sliding_power.md",       "Sliding power"),
-    ("sliding_correlator", "sliding_correlator.md",  "Sliding correlator"),
-    ("array_processing",   "array_processing.md",    "Array processing"),
-    ("stream_chunker",     "stream_chunker.md",       "Stream chunker"),
-    ("dsp_toolkit",        "dsp_toolkit.md",          "DSP toolkit"),
-    ("filter_module",      "filter_module.md",        "Filter module"),
-    ("iqfile",             "iqfile.md",               "IQ file"),
-    ("pytest_style",       "pytest_style.md",         "pytest style"),
+    ("running_stats", "running_stats.md", "Running stats"),
+    ("fir_filter", "fir_filter.md", "FIR filter"),
+    ("sliding_power", "sliding_power.md", "Sliding power"),
+    ("sliding_correlator", "sliding_correlator.md", "Sliding correlator"),
+    ("array_processing", "array_processing.md", "Array processing"),
+    ("stream_chunker", "stream_chunker.md", "Stream chunker"),
+    ("dsp_toolkit", "dsp_toolkit.md", "DSP toolkit"),
+    ("filter_module", "filter_module.md", "Filter module"),
+    ("iqfile", "iqfile.md", "IQ file"),
+    ("pytest_style", "pytest_style.md", "pytest style"),
 ]
 
 
@@ -92,7 +92,7 @@ header = (
     "algorithm from scaffold to optimised implementation.\n\n"
 )
 
-sep  = f"| {'-' * col1} | {'-' * col2} |\n"
+sep = f"| {'-' * col1} | {'-' * col2} |\n"
 head = f"| {'Example':<{col1}} | {'What it demonstrates':<{col2}} |\n"
 table = head + sep
 for out_name, display_name, description in rows:

@@ -1,7 +1,7 @@
 # Extend commands
 
 These commands add behaviour to objects and modules that already exist in
-`just-makeit.toml`.  Run them from the project root after scaffolding.
+`just-makeit.toml`. Run them from the project root after scaffolding.
 
 ______________________________________________________________________
 
@@ -36,7 +36,7 @@ ______________________________________________________________________
 ### Named parameters (`--param`)
 
 Use `--param name:type` when the method takes multiple distinct typed scalar
-inputs.  This generates named parameters in both the C stub and the Python
+inputs. This generates named parameters in both the C stub and the Python
 wrapper.
 
 ```sh
@@ -104,8 +104,7 @@ ______________________________________________________________________
 #### `--batch` — 1:1-rate array transform
 
 Use `--batch` when output length equals input length and is unknown at init
-time.  The generated C stub receives `(state, const in_t *in, size_t n,
-out_t *out)` and the Python wrapper allocates and returns an output array of
+time. The generated C stub receives `(state, const in_t *in, size_t n, out_t *out)` and the Python wrapper allocates and returns an output array of
 length `n` per call.
 
 ```sh
@@ -136,7 +135,7 @@ ______________________________________________________________________
 
 Use `--variable-output` when the **maximum output count is bounded by the
 object's state and knowable at init time** (decimators, FIFOs with fixed
-capacity).  The generated code calls `<method>_max_out(state)` at init time,
+capacity). The generated code calls `<method>_max_out(state)` at init time,
 pre-allocates a fixed output buffer, and returns a **zero-copy numpy view**
 into that buffer on every call — no per-call `malloc`.
 
@@ -172,7 +171,7 @@ out = decim.execute(block)   # zero-copy view; valid until next call
 | NCO extended outputs, 1:1 rate             | unknown at init    | No — use `--batch`       |
 
 **Warning:** if `_max_out` returns 0 (the placeholder default), `malloc(0)`
-behaviour is implementation-defined.  Always implement `_max_out` before
+behaviour is implementation-defined. Always implement `_max_out` before
 calling the method from Python.
 
 ______________________________________________________________________
@@ -180,7 +179,7 @@ ______________________________________________________________________
 #### `--multi-output`
 
 Each `--multi-output TYPE` adds a parallel output array, producing a tuple
-return.  Combine with `--variable-output`:
+return. Combine with `--variable-output`:
 
 ```sh
 just-makeit method nco steps_u32_ovf --module resample \
@@ -225,7 +224,7 @@ no persistent state.
 
 Appends a C stub to `native/src/<module>/<module>_core.c` (never regenerated
 — your implementation is safe) and injects the declaration into
-`native/inc/<module>/<module>_core.h`.  Then regenerates `<module>_ext.c` to
+`native/inc/<module>/<module>_core.h`. Then regenerates `<module>_ext.c` to
 add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 
 **Arguments**

@@ -102,8 +102,8 @@ just-makeit <cmd>
 ### Templates (`_templates.py`)
 
 All generated file content lives in `_templates.py` as string constants with
-`<<placeholder>>` tokens.  `T.render(tmpl, ctx)` does a simple string
-replacement.  The context dict is built by `_make_component_ctx()`,
+`<<placeholder>>` tokens. `T.render(tmpl, ctx)` does a simple string
+replacement. The context dict is built by `_make_component_ctx()`,
 `make_state_ctx()`, `make_sample_ctx()`, etc.
 
 **To change what generated files look like:** edit `_templates.py`.
@@ -112,7 +112,7 @@ The constants are well-named (`COMPONENT_CORE_H`, `CMAKE_LISTS_COMPONENT`,
 
 ### Config (`_config.py` + `just-makeit.toml`)
 
-`just-makeit.toml` is the source of truth for scaffolded state.  It records:
+`just-makeit.toml` is the source of truth for scaffolded state. It records:
 
 - `[project]` — name, version, build system, perf flag
 - `[<comp>]` — state vars, arg/return types, for each standalone object

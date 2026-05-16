@@ -1,22 +1,22 @@
 # Performance annotations
 
-Most projects don't need this page.  The generated `step()` / `steps()` loop
-is already cache-friendly and autovectorisable.  Come here when you have a
+Most projects don't need this page. The generated `step()` / `steps()` loop
+is already cache-friendly and autovectorisable. Come here when you have a
 tight inner loop that needs to go faster: you've profiled it, it's the
 bottleneck, and the compiler's default output isn't good enough.
 
 The performance layer is three tools:
 
 1. **`jm_perf.h`** — function-level compiler hints (`JM_HOT`, `JM_FORCEINLINE`,
-   `JM_RESTRICT`).  Low-effort; minimal code change.
-2. **`JM_DEFINE_STEPS`** — generates the outer dispatch loop so you write only
-   `step()` and optionally a SIMD `step_batch()`.  Medium effort; large payoff
-   for algorithms with a fixed history depth.
-3. **`jm_simd.h`** — width-portable SIMD operation macros that compile to
-   AVX-512, AVX2, or scalar without `#ifdef` in your code.  High effort; for
-   when you need the last few percent.
+    `JM_RESTRICT`). Low-effort; minimal code change.
+1. **`JM_DEFINE_STEPS`** — generates the outer dispatch loop so you write only
+    `step()` and optionally a SIMD `step_batch()`. Medium effort; large payoff
+    for algorithms with a fixed history depth.
+1. **`jm_simd.h`** — width-portable SIMD operation macros that compile to
+    AVX-512, AVX2, or scalar without `#ifdef` in your code. High effort; for
+    when you need the last few percent.
 
-All three are opt-in.  A project with none of them still builds and runs.
+All three are opt-in. A project with none of them still builds and runs.
 
 ______________________________________________________________________
 
@@ -41,9 +41,9 @@ ______________________________________________________________________
 
 ## `jm_perf.h` — compiler-hint macros
 
-The cheapest performance win.  Adding `JM_HOT` and `JM_FORCEINLINE` to
+The cheapest performance win. Adding `JM_HOT` and `JM_FORCEINLINE` to
 `step()` is a one-line change that signals hot-path intent to the compiler and
-eliminates call overhead for the inner loop.  On unknown compilers all macros
+eliminates call overhead for the inner loop. On unknown compilers all macros
 expand to safe no-ops.
 
 | Macro            | Effect                                                      |
@@ -55,7 +55,7 @@ expand to safe no-ops.
 | `JM_RESTRICT`    | Asserts no pointer aliasing; enables freer vectorisation.   |
 | `JM_ALIGNED(n)`  | Aligns a variable or struct field to `n` bytes.             |
 
-All macros expand to safe no-ops on unknown compilers.  On x86, `jm_perf.h`
+All macros expand to safe no-ops on unknown compilers. On x86, `jm_perf.h`
 also includes `<immintrin.h>` so SIMD intrinsics are available without an
 extra include.
 
@@ -64,10 +64,10 @@ ______________________________________________________________________
 ## `JM_DEFINE_STEPS` — the dispatch macro
 
 Reach for this when your algorithm has a fixed history depth (delay line,
-coefficient buffer) and you want SIMD to kick in for block processing.  The
+coefficient buffer) and you want SIMD to kick in for block processing. The
 macro owns the dispatch loop: scratch buffer management, SIMD stride, and
-scalar tail.  You write `step()` for correctness and optionally `step_batch()`
-for throughput.  The three tuning constants (`LENGTH`, `BATCH`, `CHUNK`) are
+scalar tail. You write `step()` for correctness and optionally `step_batch()`
+for throughput. The three tuning constants (`LENGTH`, `BATCH`, `CHUNK`) are
 the only coupling between layers.
 
 `JM_DEFINE_STEPS` stamps out `<fn>_steps()` — the outer dispatch loop —
@@ -93,12 +93,12 @@ JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)
 **What gets generated:**
 
 - On AVX-512: fills a stack-resident scratch buffer (L1-resident, `LENGTH + CHUNK`
-  samples), calls `fn##_step_batch()` in strides of `BATCH`, then falls
-  through to the scalar tail via `fn##_step()`.
+    samples), calls `fn##_step_batch()` in strides of `BATCH`, then falls
+    through to the scalar tail via `fn##_step()`.
 - Everywhere else: loops directly over `fn##_step()`.
 
-The three constants are the only coupling between layers.  You write `step()`.
-You optionally write `step_batch()` for SIMD.  `JM_DEFINE_STEPS` owns the rest.
+The three constants are the only coupling between layers. You write `step()`.
+You optionally write `step_batch()` for SIMD. `JM_DEFINE_STEPS` owns the rest.
 
 Convention: `state->delay[0..LENGTH-1]` is the delay line, `delay[0]` = newest.
 
@@ -131,7 +131,7 @@ fir_filter_step_batch(
 #endif
 ```
 
-`FIR_LENGTH` is what the macro sees — the history depth.  `FIR_TAPS` is the
+`FIR_LENGTH` is what the macro sees — the history depth. `FIR_TAPS` is the
 FIR-specific concept; `step_batch()` loops over it, and the window index
 `FIR_LENGTH - k` reaches back exactly `TAPS` samples (index 0 = oldest
 history, index `FIR_LENGTH` = current sample).
@@ -153,10 +153,10 @@ ______________________________________________________________________
 ## `jm_simd.h` — width-portable operation macros
 
 The highest-effort option — worth it when the inner loop matters more than the
-dispatch.  Raw AVX intrinsics lock `step_batch()` to one ISA and require
-`#ifdef` guards for every other target.  `jm_simd.h` provides macros that
+dispatch. Raw AVX intrinsics lock `step_batch()` to one ISA and require
+`#ifdef` guards for every other target. `jm_simd.h` provides macros that
 select the widest available instruction set at compile time — AVX-512, AVX2+FMA,
-or scalar — so the same source compiles everywhere.  The tier is chosen once at
+or scalar — so the same source compiles everywhere. The tier is chosen once at
 the top of `jm_simd.h`; user code sees no `#ifdef`.
 
 Included automatically by `jm_perf.h`; can also be included standalone.
@@ -224,7 +224,7 @@ ______________________________________________________________________
 
 ## SIMD build flag
 
-SIMD intrinsics require `-march=native -ffast-math`.  Pass `-DENABLE_SIMD=ON`
+SIMD intrinsics require `-march=native -ffast-math`. Pass `-DENABLE_SIMD=ON`
 to CMake:
 
 ```sh

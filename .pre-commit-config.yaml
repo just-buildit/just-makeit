@@ -18,11 +18,13 @@ repos:
         types_or: [c, c++]
         exclude: ^\.venv/
 
-  - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.17  # Use latest version
+  - repo: https://github.com/hukkin/mdformat
+    rev: 1.0.0 # Use latest version
     hooks:
     - id: mdformat
       exclude: ^(examples/|src/just_makeit/examples/|docs/index\.md$)
       # Add optional plugins (e.g., for GFM or code block formatting)
       additional_dependencies:
       - mdformat-gfm
+      - mdformat-gfm-alerts
+      - mdformat-mkdocs

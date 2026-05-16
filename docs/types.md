@@ -55,7 +55,7 @@ Python boundary.
 ### Fixed-length arrays
 
 Append `[N]` to any scalar type to embed a fixed-length C array directly inside
-the state struct.  `N` must be a positive integer literal.
+the state struct. `N` must be a positive integer literal.
 
 ```sh
 --state "coeffs:float[16]"            # float coeffs[16];
@@ -64,12 +64,12 @@ the state struct.  `N` must be a positive integer literal.
 ```
 
 The array lives **inside** the struct — one `malloc` for the whole object, no
-pointer chasing, no separate free.  This is the right choice for fixed-size
+pointer chasing, no separate free. This is the right choice for fixed-size
 delay lines, coefficient tables, and circular buffers whose length is known at
 code-generation time.
 
 Array fields do not support explicit defaults — they are always
-zero-initialized at construction.  There are no auto-generated getter/setter
+zero-initialized at construction. There are no auto-generated getter/setter
 methods for array fields; access them directly in your C implementation via
 `state->coeffs[i]`.
 
@@ -125,15 +125,15 @@ def set_channel(self, value: np.uint8) -> None: ...
 ## Notes
 
 - All state variables appear as optional keyword arguments to `__init__` —
-  `Component()` with no arguments is always valid.
+    `Component()` with no arguments is always valid.
 - `reset()` restores every field to its declared default, not the zero literal.
 - The C struct is opaque — always access fields through the generated
-  getter/setter API.
+    getter/setter API.
 
 ______________________________________________________________________
 
 ## See also
 
 - [doppler — Type System](https://doppler-dsp.github.io/doppler/types/) —
-  how doppler uses these C types in its DSP APIs (CF32, CF64, integer IQ
-  pairs, `dp_sample_type_t`).
+    how doppler uses these C types in its DSP APIs (CF32, CF64, integer IQ
+    pairs, `dp_sample_type_t`).

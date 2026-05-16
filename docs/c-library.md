@@ -1,6 +1,6 @@
 # Installing your C library for end users
 
-Your generated project is already a distributable C library.  After
+Your generated project is already a distributable C library. After
 `cmake --install`, end users who don't touch Python at all can link against
 it with a single `pkg-config` or `find_package` call:
 
@@ -14,7 +14,7 @@ find_package(my_project REQUIRED)
 target_link_libraries(my_app PRIVATE my_project::my_project_lib m)
 ```
 
-No just-makeit required on the consumer's machine.  The sections below walk
+No just-makeit required on the consumer's machine. The sections below walk
 through prerequisites, build, install, and runtime loading.
 
 ______________________________________________________________________
@@ -53,9 +53,9 @@ ______________________________________________________________________
 ## Overview
 
 Every just-makeit project ships a `lib<project>.so` in addition to its Python
-extensions.  The same C code drives both: each component compiles once as a
+extensions. The same C code drives both: each component compiles once as a
 CMake OBJECT library and links into both the Python `.so` and the combined
-shared library.  End users who don't use Python at all can consume it via the
+shared library. End users who don't use Python at all can consume it via the
 standard mechanisms below.
 
 This applies to all project layouts — standalone objects (`just-makeit object`),
@@ -103,7 +103,7 @@ cmake --install build
 ```
 
 > **Note:** `make && make test` calls `cmake -B build` internally with the
-> default prefix.  If you ran `make` first, re-run the `cmake -S .` line above
+> default prefix. If you ran `make` first, re-run the `cmake -S .` line above
 > before installing to regenerate the `.pc` file with the correct prefix.
 
 ______________________________________________________________________
@@ -124,9 +124,9 @@ gcc $(pkg-config --cflags my-project) \
 ```
 
 > **Linux / `--as-needed` note:** Split `--cflags` and `--libs` with the
-> source file between them.  GNU ld on Debian/Ubuntu uses `--as-needed` by
+> source file between them. GNU ld on Debian/Ubuntu uses `--as-needed` by
 > default, which silently drops any shared library that appears *before* the
-> object files referencing it.  If you merge them with the source last
+> object files referencing it. If you merge them with the source last
 > (`$(pkg-config --cflags --libs my-project) consumer.c`) you will get
 > undefined-reference errors at link time even though the library is present.
 

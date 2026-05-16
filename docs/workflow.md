@@ -1,16 +1,15 @@
 # Workflow
 
-Three common starting points are covered below.  Reference sections follow.
+Three common starting points are covered below. Reference sections follow.
 
 ______________________________________________________________________
 
 ## Scenario 1 — Simple standalone extension
 
 *You're here if:* you have one algorithm to wrap — a filter, a running
-statistic, an oscillator — and you want it available as `from my_dsp import
-Engine` with full C and Python tests.
+statistic, an oscillator — and you want it available as `from my_dsp import Engine` with full C and Python tests.
 
-A single C object exposed as a Python extension.  Good starting point for
+A single C object exposed as a Python extension. Good starting point for
 wrapping an algorithm, DSP primitive, or performance-critical inner loop.
 
 ### 1. Scaffold
@@ -25,7 +24,7 @@ cd my_dsp
 ```
 
 `--arg-type` and `--return-type` set the C types for `step()`'s input and
-output.  Omit both and they default to `float _Complex`.
+output. Omit both and they default to `float _Complex`.
 
 ### 2. Implement
 
@@ -40,7 +39,7 @@ gain_step(const gain_state_t *state, float x)
 ```
 
 `gain_steps()` — the block processor — is already in `gain_core.c` and loops
-over this automatically.  You do not edit the Python binding (`gain_ext.c`).
+over this automatically. You do not edit the Python binding (`gain_ext.c`).
 
 ### 3. Build and test
 
@@ -94,7 +93,7 @@ make
 
 Patches `step()` with `JM_FORCEINLINE JM_HOT`, writes `jm_perf.h` and
 `jm_simd.h`, and records the setting so future `object` and `add` calls
-inherit it.  See [Performance annotations](perf.md) for the full reference.
+inherit it. See [Performance annotations](perf.md) for the full reference.
 
 ______________________________________________________________________
 
@@ -133,7 +132,7 @@ just-makeit object ema \
 - root `CMakeLists.txt` — `add_subdirectory` + `target_sources($<TARGET_OBJECTS:…>)`
 - umbrella header `native/inc/dsp_toolkit.h` — `#include "ema/ema_core.h"`
 - `src/dsp_toolkit/__init__.py` — splices in `from .ema import Ema` and
-  adds `"Ema"` to `__all__`, preserving any existing user edits
+    adds `"Ema"` to `__all__`, preserving any existing user edits
 
 After adding `ema`, `__init__.py` looks like:
 
@@ -179,7 +178,7 @@ ema_step(ema_state_t *state, float x)
 make && make test
 ```
 
-CTest runs `test_gain_core` and `test_ema_core`.  pytest runs the full
+CTest runs `test_gain_core` and `test_ema_core`. pytest runs the full
 generated suite for both objects.
 
 ### 5. Install
@@ -213,7 +212,7 @@ just-makeit object dc_block --state r:double:0.995
 ```
 
 Each `object` repeats the same pattern: new C files, updated CMake, updated
-`__init__.py`.  `make` picks up the new object automatically.
+`__init__.py`. `make` picks up the new object automatically.
 
 ### 8. Install
 
@@ -228,11 +227,10 @@ ______________________________________________________________________
 ## Scenario 3 — Grouped types in a single subpackage module
 
 *You're here if:* you're building a collection of related filter types —
-`Fir`, `Biquad`, `Equalizer` — and you want `from my_filters.filter import
-Fir, Biquad` rather than a separate top-level import for each.
+`Fir`, `Biquad`, `Equalizer` — and you want `from my_filters.filter import Fir, Biquad` rather than a separate top-level import for each.
 
 Use this when multiple related Python types should share one `.so` and import
-from a common subpackage path.  Each type still has its own independent C
+from a common subpackage path. Each type still has its own independent C
 library; the module is the Python grouping unit only.
 
 ### 1. Scaffold the project and module together
@@ -243,7 +241,7 @@ cd my_filters
 ```
 
 `--module` is repeatable — `--module osc --module env` scaffolds two modules
-in one command.  Each module is an empty slot; types are added with
+in one command. Each module is an empty slot; types are added with
 `just-makeit object`.
 
 Alternatively, scaffold the project first and add the module separately:
@@ -290,7 +288,7 @@ from .filter import Fir, Biquad
 __all__ = ["Fir", "Biquad"]
 ```
 
-Types within a module may have different `--arg-type`/`--return-type`.  Here
+Types within a module may have different `--arg-type`/`--return-type`. Here
 `Fir` processes `float complex` and `Biquad` processes `float`.
 
 ### 4. Implement
@@ -306,7 +304,7 @@ make && make test
 
 CMake builds one `.so` (`filter.cpython-*.so`) inside
 `src/my_filters/filter/`, linking both `fir_core` and `biquad_core` OBJECT
-libraries.  CTest runs `test_fir_core` and `test_biquad_core`.
+libraries. CTest runs `test_fir_core` and `test_biquad_core`.
 
 ### 6. Install
 
@@ -337,7 +335,7 @@ just-makeit object iir --module filter --state "gain:float:1.0"
 ```
 
 `filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are all regenerated from
-the complete object list.  `Fir` and `Biquad` are unaffected.
+the complete object list. `Fir` and `Biquad` are unaffected.
 
 ### 9. Install
 
@@ -412,8 +410,8 @@ just-makeit add --object gain --state drive:double:1.0
 ```
 
 Regenerates the six state-sensitive files for `gain` from the updated state
-list.  `just-makeit.toml` is updated only after the files are written
-successfully.  When the project has a single standalone object, `--object` may be
+list. `just-makeit.toml` is updated only after the files are written
+successfully. When the project has a single standalone object, `--object` may be
 omitted.
 
 ______________________________________________________________________
@@ -425,7 +423,7 @@ make bench    # C timing loop + Python perf_counter suite
 ```
 
 The C benchmark in `native/benchmarks/bench_gain_core.c` runs a raw timing
-loop — useful for measuring SIMD uplift without Python overhead.  The Python
+loop — useful for measuring SIMD uplift without Python overhead. The Python
 benchmark script runs as a plain script (`python bench_gain.py`) and reports
 ns/call for `step()` and µs + MSa/s for `steps()`.
 
@@ -433,7 +431,7 @@ ______________________________________________________________________
 
 ## Type stubs and doctests
 
-Every object gets a `.pyi` type stub alongside its Python module.  The stub
+Every object gets a `.pyi` type stub alongside its Python module. The stub
 gives IDEs full type information and ships runnable doctests that pass
 out-of-the-box — no setup required.
 
@@ -504,7 +502,7 @@ class Gain:
 
 ### Running the doctests
 
-The `Examples` block is a valid Python doctest.  Run it after `pip install .`:
+The `Examples` block is a valid Python doctest. Run it after `pip install .`:
 
 ```sh
 python -m doctest src/my_dsp/gain.pyi -v
@@ -531,9 +529,9 @@ ok
 ```
 
 The doctest exercises the real C extension — construction, a getter read-back,
-a setter-then-reset round-trip.  For any state variable whose default value
+a setter-then-reset round-trip. For any state variable whose default value
 round-trips exactly (integers and whole-number floats), the Examples section
-is generated and passes automatically.  Non-round-trip defaults (e.g.
+is generated and passes automatically. Non-round-trip defaults (e.g.
 `0.1f`) are omitted from doctests to avoid floating-point noise.
 
 ### What gets a stub
@@ -544,7 +542,7 @@ is generated and passes automatically.  Non-round-trip defaults (e.g.
 | Module object (`just-makeit object --module`) | `src/<pkg>/<module>/<module>.pyi` |
 
 The stub is regenerated on every `just-makeit object`, `method`, `property`,
-and `function` call.  Manual edits to the generated file are overwritten —
+and `function` call. Manual edits to the generated file are overwritten —
 put any extra annotations in a separate `py.typed` marker or alongside file.
 
 ______________________________________________________________________
@@ -552,7 +550,7 @@ ______________________________________________________________________
 ## Generated tests and benchmarks
 
 Every object also gets a Python test file and a benchmark file, placed in
-`tests/` and `benchmarks/` directories next to the package.  Both are ready
+`tests/` and `benchmarks/` directories next to the package. Both are ready
 to run immediately after `pip install .`.
 
 For the same `Gain` example, `src/my_dsp/tests/test_gain.py` contains:
@@ -658,7 +656,7 @@ if __name__ == "__main__":
 ```
 
 These files are the starting point — add domain-specific assertions for your
-algorithm's actual behaviour.  The scaffold tests verify the API contract
+algorithm's actual behaviour. The scaffold tests verify the API contract
 (construction, type safety, getter/setter round-trips, reset, lifecycle);
 correctness tests are yours to write.
 
@@ -696,9 +694,9 @@ gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
 ```
 
 > **Linux linker note:** `--cflags` and `--libs` must be split with the
-> source file between them.  GNU ld uses `--as-needed` by default on
+> source file between them. GNU ld uses `--as-needed` by default on
 > Debian/Ubuntu, which silently drops any shared library that appears
-> before the object files that reference it.  Putting `-lmy_dsp` after
+> before the object files that reference it. Putting `-lmy_dsp` after
 > `main.c` ensures the linker sees the undefined symbols first.
 
 ```cmake

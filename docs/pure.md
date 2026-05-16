@@ -1,14 +1,14 @@
 # Stateful vs Pure Objects
 
-| Shape | Flags | `step()` signature |
-|---|---|---|
-| Stateful (default) | _(none)_ | `step(const state_t *s, T x) → T` |
-| Mutating | `--mutable` | `step(state_t *s, T x) → T` |
-| Generator | `--arg-type void` | `step(state_t *s) → T` |
-| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T` |
-| Sink | `--return-type void` | `step(const state_t *s, T x) → void` |
-| Pure function | `--no-state` | `step(const state_t *s, T x) → T` |
-| Method-only | `--no-step` | _(no step generated)_ |
+| Shape              | Flags                       | `step()` signature                   |
+| ------------------ | --------------------------- | ------------------------------------ |
+| Stateful (default) | _(none)_                    | `step(const state_t *s, T x) → T`    |
+| Mutating           | `--mutable`                 | `step(state_t *s, T x) → T`          |
+| Generator          | `--arg-type void`           | `step(state_t *s) → T`               |
+| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T`               |
+| Sink               | `--return-type void`        | `step(const state_t *s, T x) → void` |
+| Pure function      | `--no-state`                | `step(const state_t *s, T x) → T`    |
+| Method-only        | `--no-step`                 | _(no step generated)_                |
 
 The sections below explain each shape and when to reach for it.
 
@@ -35,7 +35,7 @@ engine_step(const engine_state_t *state, float complex x)
 ```
 
 `const` on the state pointer is intentional — it signals that `step()` reads
-state but does not change it.  The compiler can exploit this for optimisation,
+state but does not change it. The compiler can exploit this for optimisation,
 and it prevents accidental mutation in the hot path.
 
 Use this shape for anything whose algorithm is a pure function of the current
@@ -73,7 +73,7 @@ ______________________________________________________________________
 just-makeit object tone_gen --arg-type void --return-type "float _Complex" --mutable
 ```
 
-A generator produces samples without consuming input.  Pass `--arg-type void`
+A generator produces samples without consuming input. Pass `--arg-type void`
 to suppress the input parameter from `step()` and `steps()`.
 
 ```c
@@ -101,7 +101,7 @@ just-makeit object iq_writer --return-type void \
     --state filename:const_char_p
 ```
 
-A sink consumes input but produces no output.  Pass `--return-type void` to
+A sink consumes input but produces no output. Pass `--return-type void` to
 drop the return value from `step()` and `steps()`.
 
 ```c
@@ -127,7 +127,7 @@ just-makeit object clipper --no-state \
 ```
 
 Some operations require no persistent state — they are pure functions of their
-inputs.  `--no-state` suppresses the state struct entirely; `--init-param`
+inputs. `--no-state` suppresses the state struct entirely; `--init-param`
 declares constructor parameters that are passed in at creation time but not
 stored as struct fields (you implement storage yourself in the `<<IMPLEMENT>>`
 stubs).
@@ -143,8 +143,7 @@ clipper_step(const clipper_state_t *state, float complex x) { … }
 ```
 
 Use `--no-state` when the constructor signature cannot be expressed as a flat
-list of typed fields — for example, a filter initialised from a `const float
-*taps, size_t num_taps` pair.
+list of typed fields — for example, a filter initialised from a `const float *taps, size_t num_taps` pair.
 
 ______________________________________________________________________
 
@@ -158,7 +157,7 @@ just-makeit method framer flush --return-type "float _Complex[]" --variable-outp
 ```
 
 When the object's interface consists entirely of named methods, suppress
-`step()` and `steps()` with `--no-step`.  The lifecycle functions (`create`,
+`step()` and `steps()` with `--no-step`. The lifecycle functions (`create`,
 `destroy`, `reset`) are still generated; only the generic execute pair is
 omitted.
 

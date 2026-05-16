@@ -1,13 +1,13 @@
 # Scaffold commands
 
-These commands build the project structure.  Run them once at the start of a
+These commands build the project structure. Run them once at the start of a
 project, then use [Extend commands](extend.md) to add behaviour.
 
 ______________________________________________________________________
 
 ## `just-makeit new <proj> [--object name ...] [--state name:type[:default] ...]`
 
-Start a new project.  One command gives you a complete, building, tested C
+Start a new project. One command gives you a complete, building, tested C
 extension project — optionally with a first object already scaffolded.
 
 ```sh
@@ -35,7 +35,7 @@ any objects — the source of truth for all subsequent commands.
 | `--return-type TYPE`           | C type for `step()` return value. Defaults to `--arg-type` for scalar inputs, or `void` for array inputs (`T[]`). Use `void` explicitly for sink objects that consume input but produce no scalar output.                  |
 | `--build-system <cmake\|make>` | Build system to use. Default: `cmake`. Use `make` for a plain `Makefile` without CMake — useful for quick prototypes.                                                                                                      |
 | `--basic`                      | Deprecated alias for `--build-system make`.                                                                                                                                                                                |
-| `--perf`                       | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](../perf.md).                                                                       |
+| `--perf`                       | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](../perf.md).                                                                        |
 | `--mutable`                    | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO).                                                                                                |
 | `--pytest`                     | Generate pure pytest tests instead of the default `unittest`-compatible shim.                                                                                                                                              |
 | `--pytest-benchmark`           | Generate `pytest-benchmark` bench files alongside the pytest tests.                                                                                                                                                        |
@@ -44,8 +44,8 @@ ______________________________________________________________________
 
 ## `just-makeit module <name>`
 
-Group multiple types into one `.so` subpackage.  Creates the extension module
-shell; types are added with `just-makeit object --module`.  Must be run from
+Group multiple types into one `.so` subpackage. Creates the extension module
+shell; types are added with `just-makeit object --module`. Must be run from
 the project root.
 
 ```sh
@@ -66,16 +66,16 @@ Creates:
 Appends `add_subdirectory(native/src/<name>)` to the root `CMakeLists.txt`
 and records `[module.<name>]` with an empty `objects` list in `just-makeit.toml`.
 
-Types are added with `just-makeit object`.  Module-level functions are added
+Types are added with `just-makeit object`. Module-level functions are added
 with `just-makeit function`.
 
 ______________________________________________________________________
 
 ## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--arg-type TYPE] [--return-type TYPE]`
 
-Add a Python type to the project — standalone or inside a module.  Use this
+Add a Python type to the project — standalone or inside a module. Use this
 when the algorithm needs persistent state (history, coefficients, a cursor, a
-running accumulator).  For stateless operations see [Stateful vs Pure](../pure.md).
+running accumulator). For stateless operations see [Stateful vs Pure](../pure.md).
 Must be run from the project root.
 
 **Without `--module` — standalone object (own `.so`):**
@@ -199,7 +199,7 @@ regenerates the six state-sensitive files from the merged state list:
 - `src/<project>/<obj>.pyi`
 - `src/<project>/tests/test_<obj>.py`
 
-All six files are backed up before regeneration.  If any write fails, they
+All six files are backed up before regeneration. If any write fails, they
 are restored and `just-makeit.toml` is left unchanged.
 
 **Constraints**

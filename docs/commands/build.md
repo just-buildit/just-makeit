@@ -27,7 +27,7 @@ just-makeit test
 
 - CTest runs the C tests in each object's `tests/` directory.
 - pytest (or `unittest`, depending on how the project was scaffolded) runs
-  the Python tests in `src/`.
+    the Python tests in `src/`.
 
 ______________________________________________________________________
 
@@ -47,7 +47,7 @@ ______________________________________________________________________
 ## `just-makeit perf`
 
 Upgrade an existing project to use performance annotations without
-overwriting any user code.  Must be run from the project root.
+overwriting any user code. Must be run from the project root.
 
 ```sh
 just-makeit perf
@@ -56,7 +56,7 @@ just-makeit perf
 Writes `native/inc/jm_perf.h`, adds `#include "jm_perf.h"` to each object
 header, and replaces `static inline` with `JM_FORCEINLINE JM_HOT` on `step()`.
 Records `perf = true` in `just-makeit.toml` so future `object` and `add`
-commands inherit it.  Safe to run on a project with a filled-in `step()`.
+commands inherit it. Safe to run on a project with a filled-in `step()`.
 Idempotent.
 
 See [Performance annotations](../perf.md) for the full macro reference and
@@ -100,7 +100,7 @@ ______________________________________________________________________
 ## `just-makeit script`
 
 Print a shell script to stdout that fully reconstructs the current project
-from scratch via CLI commands.  Must be run from the project root.
+from scratch via CLI commands. Must be run from the project root.
 
 ```sh
 just-makeit script              # print to stdout
@@ -109,12 +109,12 @@ just-makeit script > rebuild.sh # save to file
 
 Reads `just-makeit.toml` and emits one command per scaffold step in the
 correct order: `new` → `module` → `object` → `method` → `property` →
-`function`.  The output is a valid shell script that, when run from the
+`function`. The output is a valid shell script that, when run from the
 parent directory, produces an identical `just-makeit.toml`.
 
 **Note:** `--impl` / `--replace` are not stored in `just-makeit.toml` (the
 lifted body is patched directly into the generated files), so they are not
-reproduced.  Implemented function and step bodies are preserved in your C
+reproduced. Implemented function and step bodies are preserved in your C
 source files and are unaffected.
 
 **Example**

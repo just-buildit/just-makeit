@@ -6,8 +6,7 @@ ______________________________________________________________________
 
 ## CMake not found or wrong version
 
-**Symptom:** `cmake: command not found` or `CMake 3.X, but required is at
-least 3.16`
+**Symptom:** `cmake: command not found` or `CMake 3.X, but required is at least 3.16`
 
 **Cause:** CMake is missing or too old.
 
@@ -36,7 +35,7 @@ ______________________________________________________________________
 **Symptom:** `fatal error: 'numpy/arrayobject.h' file not found` during
 `cmake --build`.
 
-**Cause:** NumPy is installed but CMake can't find its headers.  Typically
+**Cause:** NumPy is installed but CMake can't find its headers. Typically
 happens when the venv's site-packages isn't on `CMAKE_PREFIX_PATH`.
 
 **Fix:** Make sure you're building inside the activated venv:
@@ -66,7 +65,7 @@ ______________________________________________________________________
 **Symptom:** `make test` passes but `import my_project` raises
 `ImportError: undefined symbol` or `cannot open shared object file`.
 
-**Cause:** GNU ld on Debian/Ubuntu uses `--as-needed` by default.  If the
+**Cause:** GNU ld on Debian/Ubuntu uses `--as-needed` by default. If the
 library appears on the command line *before* the object files that reference
 it, the linker silently drops it.
 

@@ -112,7 +112,7 @@ ______________________________________________________________________
 1. Wire it into `_config.py` (`from_new` / `add_component` / save/load).
 1. Wire it into `_script.py` so it re-emits.
 1. Add a content assertion in the relevant `test_*.py` (what does the
-   generated file actually contain?).
+    generated file actually contain?).
 1. Add a round-trip test in `test_toml_roundtrip.py`.
 1. Add a CLI test in `test_cli.py` (flag accepted, stored, error on bad value).
 
@@ -120,9 +120,9 @@ ______________________________________________________________________
 
 1. Create `src/just_makeit/examples/<name>/assemble.py` and `README.md`.
 1. Create `src/just_makeit/examples/<name>/test.py` with `run(root: Path)`.
-   The parametrized runner in `test_examples.py` picks it up automatically.
+    The parametrized runner in `test_examples.py` picks it up automatically.
 1. `test_all_examples_have_test_py` will fail until `test.py` exists — this
-   is intentional.
+    is intentional.
 
 ### Changing a template
 
@@ -135,10 +135,10 @@ ______________________________________________________________________
 `TestMakeTestRunner` in `test_new.py` asserts:
 
 - Default (no `--pytest`): `unittest discover` present, `pytest src/` absent,
-  no orphan tab-only recipe line.
+    no orphan tab-only recipe line.
 - With `--pytest`: `pytest src/` present, `unittest discover` absent.
 
-Both the CMake `Makefile` and the `--build-system make` `Makefile` are covered.  Update
+Both the CMake `Makefile` and the `--build-system make` `Makefile` are covered. Update
 these assertions if you intentionally change the runner logic.
 
 ______________________________________________________________________

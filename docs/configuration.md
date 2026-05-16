@@ -1,7 +1,7 @@
 # Configuration — just-makeit.toml
 
 Every project scaffolded by `just-makeit new` contains a `just-makeit.toml`
-file at the project root.  It is the single source of truth for the project's
+file at the project root. It is the single source of truth for the project's
 structure: what objects exist, what state they carry, what types and flags were
 used, and how the build system is configured.
 
@@ -168,7 +168,7 @@ ______________________________________________________________________
 
 ### `[<object>]`
 
-One section per standalone object or module-member object.  The section name
+One section per standalone object or module-member object. The section name
 is whatever you passed to `just-makeit object <name>`.
 
 | Key           | Type                  | Default            | Set by          |
@@ -201,7 +201,7 @@ Fixed-size array constructor arguments added with `--array-arg`.
 ### `[[<object>.init_params]]`
 
 Constructor-only parameters added with `--init-param` (no getter/setter, no
-reset).  Same `name` / `type` / `default` keys as `state`.
+reset). Same `name` / `type` / `default` keys as `state`.
 
 ### `[[<object>.methods]]`
 
@@ -307,7 +307,7 @@ just-makeit object detector \
 ### When is this useful?
 
 **Moving a project.** Copy `just-makeit.toml` to a new machine, run
-`just-makeit script | sh`, and the full scaffold is regenerated.  Your own
+`just-makeit script | sh`, and the full scaffold is regenerated. Your own
 code (business logic in `*_core.c`, tests, customisations) travels with the
 project directory as normal; the script just recreates the generated
 boilerplate if it was ever lost or corrupted.
@@ -317,26 +317,27 @@ generated file layouts, `just-makeit script | sh` in an empty directory
 produces a clean scaffold at the current version.
 
 **Documentation / reproducibility.** Commit `just-makeit.toml` to record
-exactly how the project was built.  Anyone can reproduce the generated
+exactly how the project was built. Anyone can reproduce the generated
 structure without needing to remember the original command sequence.
 
 !!! note
-`--impl` / `--replace` lifted code is not stored in TOML.  If you used
-these flags, the patched C bodies are in your source files — keep them in
-version control.
+
+    The `--impl` / `--replace` lifted code is not stored in TOML. If you used
+    these flags, the patched C bodies are in your source files — keep them in
+    version control.
 
 ______________________________________________________________________
 
 ## Editing TOML by hand
 
-The file is plain TOML — you can edit it directly.  `just-makeit` will read
-your changes on the next command.  The rules:
+The file is plain TOML — you can edit it directly. `just-makeit` will read
+your changes on the next command. The rules:
 
 - **Order matters for state variables**: `[[<object>.state]]` entries are
-  emitted in the order they appear, which controls constructor argument order
-  in both C and Python.
+    emitted in the order they appear, which controls constructor argument order
+    in both C and Python.
 - **Removing a state variable** from TOML does not touch the generated source
-  files.  Re-run `just-makeit script | sh` in a clean directory if you want a
-  fully regenerated scaffold that matches TOML.
+    files. Re-run `just-makeit script | sh` in a clean directory if you want a
+    fully regenerated scaffold that matches TOML.
 - **Don't rename the file** — `just-makeit` always looks for `just-makeit.toml`
-  at the project root.
+    at the project root.

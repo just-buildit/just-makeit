@@ -57,17 +57,17 @@ Cflags: -I${includedir}
 ### Anatomy
 
 - **`prefix`** — set from `@CMAKE_INSTALL_PREFIX@` at configure time.
-  The `${prefix}` variable lets consumers use
-  `pkg-config --define-variable=prefix=...` to relocate the package
-  without regenerating it.
+    The `${prefix}` variable lets consumers use
+    `pkg-config --define-variable=prefix=...` to relocate the package
+    without regenerating it.
 - **`libdir` / `includedir`** — built from `prefix` + the relative path
-  from `GNUInstallDirs`. Never hardcode these.
+    from `GNUInstallDirs`. Never hardcode these.
 - **`Requires`** — public dependencies: consumers need them at link time.
 - **`Requires.private`** — private dependencies: only needed when linking
-  statically against your library. Omit from `Requires` to keep consumer
-  link lines clean.
+    statically against your library. Omit from `Requires` to keep consumer
+    link lines clean.
 - **`Libs.private`** — same idea for `-l` flags. `-lm` and `-lpthread`
-  almost always belong here, not in `Libs`.
+    almost always belong here, not in `Libs`.
 
 ### Common Pitfalls
 
@@ -384,12 +384,12 @@ PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib/$(gcc -dumpmachine)/pkgco
 ### MSYS2 / Windows (UCRT64)
 
 - Always use the UCRT64 shell; MSYS shell uses a POSIX-emulation GCC
-  with an incompatible ABI
+    with an incompatible ABI
 - Prefix: `/ucrt64`; pkg-config path: `/ucrt64/lib/pkgconfig`
 - Stage runtime DLLs next to executables or add the prefix `bin/` to
-  `PATH` — Windows has no `rpath` equivalent
+    `PATH` — Windows has no `rpath` equivalent
 - Add MSYS2 prefixes to `CMAKE_PREFIX_PATH` via filesystem probe, not
-  `$ENV{MSYSTEM}` (cmake may not inherit shell environment variables):
+    `$ENV{MSYSTEM}` (cmake may not inherit shell environment variables):
 
 ```cmake
 foreach(_pfx /ucrt64 /mingw64 /clang64 /mingw32)
@@ -400,8 +400,8 @@ endforeach()
 ```
 
 - If `find_library` returns `NOTFOUND` after fixing cmake files, delete
-  the stale `CMakeCache.txt` and reconfigure — cached `NOTFOUND` values
-  are not automatically re-evaluated.
+    the stale `CMakeCache.txt` and reconfigure — cached `NOTFOUND` values
+    are not automatically re-evaluated.
 
 ______________________________________________________________________
 
@@ -417,4 +417,4 @@ ______________________________________________________________________
 - [ ] Private deps in `Requires.private` / `Libs.private`, not `Requires`
 - [ ] Post-install smoke test that covers both pkg-config and CMake consumers
 - [ ] Document the `PKG_CONFIG_PATH` and `CMAKE_PREFIX_PATH` overrides for
-  non-system installs
+    non-system installs

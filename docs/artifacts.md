@@ -1,6 +1,6 @@
 # Generated artifacts
 
-Five scaffold patterns in order of increasing complexity.  Each section shows
+Five scaffold patterns in order of increasing complexity. Each section shows
 the exact commands that produce the layout, then the complete file tree with
 one-line annotations.
 
@@ -11,7 +11,7 @@ ______________________________________________________________________
 
 ## 1. Module function
 
-A module-level C function with no type object.  Smallest possible extension:
+A module-level C function with no type object. Smallest possible extension:
 one `.so`, one callable, no lifecycle.
 
 ```sh
@@ -56,7 +56,7 @@ ______________________________________________________________________
 
 ## 2. Standalone object
 
-A single type with its own `.so`.  Full lifecycle: create/destroy/reset,
+A single type with its own `.so`. Full lifecycle: create/destroy/reset,
 step/steps, getters/setters, C test, Python test, benchmark.
 
 ```sh
@@ -102,14 +102,14 @@ mylib/
 ```
 
 Two C sources per object, always: `engine_core.c` (algorithm) and
-`engine_ext.c` (Python glue).  Adding methods with `just-makeit method`
+`engine_ext.c` (Python glue). Adding methods with `just-makeit method`
 appends stubs to `engine_core.c` — no third file is ever created.
 
 ______________________________________________________________________
 
 ## 3. Module with one object
 
-One object inside a shared module `.so`.  The module's `_ext.c` is generated
+One object inside a shared module `.so`. The module's `_ext.c` is generated
 and owned by the build system; only `_core.c` is yours to edit.
 
 ```sh
@@ -156,14 +156,14 @@ mylib/
 ```
 
 The object directory (`filt/`) holds only `_core.c` — there is no
-`filt_ext.c`.  The module-level `dsp_ext.c` is the shared Python binding for
+`filt_ext.c`. The module-level `dsp_ext.c` is the shared Python binding for
 every object in `dsp`.
 
 ______________________________________________________________________
 
 ## 4. Module with two objects
 
-Two types in one `.so`.  Each object gets its own `_core.c`/`_core.h` subtree;
+Two types in one `.so`. Each object gets its own `_core.c`/`_core.h` subtree;
 `dsp_ext.c` and `dsp.pyi` cover both.
 
 ```sh
@@ -219,14 +219,14 @@ mylib/
 ```
 
 One `.so`, one `.pyi`, one `__init__.py` — regardless of how many objects the
-module contains.  `dsp_ext.c` is regenerated in full each time an object,
+module contains. `dsp_ext.c` is regenerated in full each time an object,
 method, or property is added.
 
 ______________________________________________________________________
 
 ## 5. Multiple modules
 
-Two independent `.so` files in one project.  Each module has its own `_ext.c`,
+Two independent `.so` files in one project. Each module has its own `_ext.c`,
 `.pyi`, and `__init__.py`; they share the project's C library and CMake
 scaffolding.
 
@@ -288,7 +288,7 @@ mylib/
 ```
 
 Each module is independent: separate `.so`, separate stub, separate
-`__init__.py`.  The C object libraries (`fir_core`, `reader_core`) are linked
+`__init__.py`. The C object libraries (`fir_core`, `reader_core`) are linked
 into their respective module `.so` files.
 
 ______________________________________________________________________
@@ -304,7 +304,7 @@ ______________________________________________________________________
 | M modules, N objects each | same                               | M            | M                 | M (`<mod>_core.c`) + N objects    |
 
 **Invariant**: every unit (object or module) has exactly one `_core.c` (user
-code) and one `_ext.c` (auto-generated Python binding).  For standalone
-objects, the ext is per-object `<obj>_ext.c`.  For module objects and
+code) and one `_ext.c` (auto-generated Python binding). For standalone
+objects, the ext is per-object `<obj>_ext.c`. For module objects and
 module-level functions, they share `<mod>_core.c` (user code) and
 `<mod>_ext.c` (auto-generated).

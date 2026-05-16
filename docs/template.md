@@ -158,7 +158,7 @@ extension. The `.so` is written directly into `src/<package>/` so the
 package is importable from the source tree after a single `make`.
 
 `pyproject.toml` declares `just-buildit` as the PEP 517 backend with
-`command = "make just-build"`.  The `just-build` Makefile target copies
+`command = "make just-build"`. The `just-build` Makefile target copies
 `src/<package>/` (Python files + `.so`) to `$JUST_BUILDIT_OUTPUT_DIR` for
 packaging.
 

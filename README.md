@@ -5,7 +5,7 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 
-Getting an algorithm right is paramount.  Yet it's rarely the bottleneck.
+Getting an algorithm right is paramount. Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build
 system, packaging, and a public C API that Rust or C++ can also link — is the
 tedious, exacting work that repeats on every project.
@@ -14,7 +14,7 @@ tedious, exacting work that repeats on every project.
 Python binding, CMake build system, and full test coverage — all passing before
 you write a single line of your algorithm.
 
----
+______________________________________________________________________
 
 ## Quickstart
 
@@ -42,7 +42,7 @@ uv tool install just-makeit && just-makeit install-deps [-- path]
 docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
 ```
 
----
+______________________________________________________________________
 
 ## Quick examples
 
@@ -70,7 +70,7 @@ make && make test
 from my_filters.filter import Fir, Biquad   # one .so, one import
 ```
 
----
+______________________________________________________________________
 
 ## What you get
 
@@ -91,7 +91,7 @@ my_project/
 └── just-makeit.toml
 ```
 
----
+______________________________________________________________________
 
 ## C API
 
@@ -131,7 +131,7 @@ with Engine() as e:
     y = e.steps(x)
 ```
 
----
+______________________________________________________________________
 
 ## Requirements
 
@@ -140,7 +140,7 @@ with Engine() as e:
 - A C99 compiler (GCC, Clang, MSVC/MinGW)
 - NumPy (runtime, for generated projects)
 
----
+______________________________________________________________________
 
 **[Full documentation →](https://just-buildit.github.io/just-makeit/)**
 
