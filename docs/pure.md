@@ -1,8 +1,16 @@
 # Stateful vs Pure Objects
 
-just-makeit generates different object shapes depending on how your algorithm
-relates to state and data flow. This page explains each shape, when to use it,
-and the flags that select it.
+| Shape | Flags | `step()` signature |
+|---|---|---|
+| Stateful (default) | _(none)_ | `step(const state_t *s, T x) → T` |
+| Mutating | `--mutable` | `step(state_t *s, T x) → T` |
+| Generator | `--arg-type void` | `step(state_t *s) → T` |
+| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T` |
+| Sink | `--return-type void` | `step(const state_t *s, T x) → void` |
+| Pure function | `--no-state` | `step(const state_t *s, T x) → T` |
+| Method-only | `--no-step` | _(no step generated)_ |
+
+The sections below explain each shape and when to reach for it.
 
 ______________________________________________________________________
 
@@ -156,20 +164,6 @@ omitted.
 
 Use this shape for stateful objects with non-uniform interfaces: re-framers,
 packetisers, protocol encoders.
-
-______________________________________________________________________
-
-## Quick reference
-
-| Shape | Flags | `step()` signature |
-|---|---|---|
-| Stateful (default) | _(none)_ | `step(const state_t *s, T x) → T` |
-| Mutating | `--mutable` | `step(state_t *s, T x) → T` |
-| Generator | `--arg-type void` | `step(state_t *s) → T` |
-| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T` |
-| Sink | `--return-type void` | `step(const state_t *s, T x) → void` |
-| Pure function | `--no-state` | `step(const state_t *s, T x) → T` |
-| Method-only | `--no-step` | _(no step generated)_ |
 
 See [Scaffold commands](commands/scaffold.md) for the full flag reference, and
 [Examples](examples/index.md) for complete walkthroughs of each shape.
