@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.11.3\] — 2026-05-16
+
+### Fixed
+
+- `dsp_toolkit` example `test.py` was calling `python -m pytest` directly;
+  replaced with `python -m unittest discover` to match the default
+  `make test` behaviour for projects scaffolded without `--pytest`.
+
+______________________________________________________________________
+
 ## \[0.11.2\] — 2026-05-16
 
 ### Docs

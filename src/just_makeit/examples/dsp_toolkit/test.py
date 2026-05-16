@@ -71,15 +71,17 @@ def run(root: Path) -> None:
     # C tests
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=dest)
 
-    # Python tests
+    # Python tests (unittest — project scaffolded without --pytest)
     _cmd(
         [
             sys.executable,
             "-m",
-            "pytest",
-            "src/",
-            "-v",
-            "--ignore=src/dsp_toolkit/benchmarks",
+            "unittest",
+            "discover",
+            "-s",
+            "src",
+            "-p",
+            "test_*.py",
         ],
         cwd=dest,
     )
