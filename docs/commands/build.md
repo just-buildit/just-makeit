@@ -116,3 +116,58 @@ parent directory, produces an identical `just-makeit.toml`.
 lifted body is patched directly into the generated files), so they are not
 reproduced.  Implemented function and step bodies are preserved in your C
 source files and are unaffected.
+
+**Example**
+
+Given a project with two objects, `just-makeit.toml` looks like:
+
+```toml
+[project]
+name = "dsp_toolkit"
+version = "0.1.0"
+build = "cmake"
+
+[gain]
+arg_type = "float"
+return_type = "float"
+
+[[gain.state]]
+name = "gain"
+type = "float"
+default = "1.0"
+
+[ema]
+arg_type = "float"
+return_type = "float"
+
+[[ema.state]]
+name = "alpha"
+type = "double"
+default = "0.1"
+
+[[ema.state]]
+name = "prev"
+type = "float"
+default = "0.0"
+```
+
+`just-makeit script` produces:
+
+```sh
+#!/usr/bin/env sh
+# Reconstructed from just-makeit.toml
+
+just-makeit new dsp_toolkit
+cd dsp_toolkit
+
+just-makeit object gain \
+    --state gain:float:1.0 \
+    --arg-type float
+just-makeit object ema \
+    --state alpha:double:0.1 \
+    --state prev:float:0.0 \
+    --arg-type float
+```
+
+Running that script from the parent directory recreates the project structure
+and an identical `just-makeit.toml`.
