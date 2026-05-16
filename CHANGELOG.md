@@ -1,5 +1,27 @@
 # Changelog
 
+## \[0.11.2\] — 2026-05-16
+
+### Docs
+
+- Deleted stale `PLAN.md` and `scaffold_feedback.md`.
+- `roadmap.md`: added v0.7–v0.11 shipped milestones; replaced speculative
+  "Ideas" section with a problems-first "What we're thinking about next".
+- `perf.md`: added narrative openings for each tool explaining when to reach
+  for it.
+- `customization.md`: added regeneration ownership table and typical
+  post-scaffold workflow.
+- New pages: `troubleshooting.md`, `faq.md`, `glossary.md`.
+- Tone pass: `index.md` (pain-first opener, reframed design principles),
+  `workflow.md` (scenario preambles), `c-library.md` (payoff-first opening).
+- Split 700-line `commands.md` into three focused pages:
+  `commands/scaffold.md`, `commands/extend.md`, `commands/build.md`.
+- `pure.md`: moved quick-reference table to the top of the page.
+- `commands/build.md`: added concrete `just-makeit.toml` → `script` output
+  example.
+
+______________________________________________________________________
+
 ## \[0.11.1\] — 2026-05-15
 
 ### Fixed
