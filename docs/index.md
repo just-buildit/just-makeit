@@ -5,9 +5,9 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 
-Writing a DSP algorithm in C is the easy part.  Getting it into Python — with a
-clean C API, a tested Python binding, a build system, and packaging — takes days
-of boilerplate you've written before and will write again.
+Getting an algorithm right is the small part.  Turning it into shippable code —
+a tested C library, a Python binding, a build system, packaging, and a public C
+API that Rust or C++ can also link — is the work that repeats on every project.
 
 `just-makeit new` scaffolds the whole thing in one command: core C library, thin
 Python binding, CMake build system, and full test coverage — all passing before
