@@ -67,28 +67,28 @@ bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
 ```
 ````
 
-=== "docker-linux"
+=== "docker"
 
 ````
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
-```
+=== "Linux"
 
-The container prints a welcome message with everything you need: pre-built
-example projects in `~/examples/`, commands to browse or re-run them, and
-a quickstart for your own project.
-````
+    ```sh
+    docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+    ```
 
-=== "docker-windows"
+    The container prints a welcome message with everything you need: pre-built
+    example projects in `~/examples/`, commands to browse or re-run them, and
+    a quickstart for your own project.
 
-````
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-windows:latest
-```
+=== "Windows"
 
-The container prints a welcome message with everything you need: pre-built
-example projects in `~/examples/`, commands to browse or re-run them, and
-a quickstart for your own project.
+    ```sh
+    docker run --rm -it ghcr.io/just-buildit/jm-examples-windows:latest
+    ```
+
+    The container prints a welcome message with everything you need: pre-built
+    example projects in `~/examples/`, commands to browse or re-run them, and
+    a quickstart for your own project.
 ````
 
 ______________________________________________________________________
