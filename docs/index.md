@@ -26,7 +26,8 @@ ______________________________________________________________________
 
     ```sh
     . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
     ```
 
     Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
@@ -41,7 +42,8 @@ ______________________________________________________________________
     ```sh
     pip install just-makeit
     just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
     ```
 
     `install-deps` detects your platform and installs system dependencies via
@@ -58,7 +60,8 @@ ______________________________________________________________________
     ```sh
     uv tool install just-makeit
     just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    just-makeit new my_project --object engine --state gain:double:1.0
+    cd my_project && make && make test
     ```
 
 === "docker"
@@ -91,7 +94,8 @@ ______________________________________________________________________
 
 ```sh
 pip install just-makeit && just-makeit install-deps
-bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+just-makeit new my_project --object engine --state gain:double:1.0
+cd my_project && make && make test
 ```
 
 **What you get:**
