@@ -6,6 +6,10 @@ ______________________________________________________________________
 
 ## Scenario 1 — Simple standalone extension
 
+*You're here if:* you have one algorithm to wrap — a filter, a running
+statistic, an oscillator — and you want it available as `from my_dsp import
+Engine` with full C and Python tests.
+
 A single C object exposed as a Python extension.  Good starting point for
 wrapping an algorithm, DSP primitive, or performance-critical inner loop.
 
@@ -95,6 +99,10 @@ inherit it.  See [Performance annotations](perf.md) for the full reference.
 ______________________________________________________________________
 
 ## Scenario 2 — Python package with multiple extensions
+
+*You're here if:* you have several related but independent algorithms —
+`Gain`, `EMA`, `Biquad` — and you want them all in one package with separate
+`.so` files and full test coverage for each.
 
 Multiple C objects in one project, all accessible from a single Python
 package.
@@ -219,11 +227,13 @@ ______________________________________________________________________
 
 ## Scenario 3 — Grouped types in a single subpackage module
 
-Use this when you want multiple related Python types to share one `.so` and
-import from a common subpackage path (`from my_filters.filter import Fir, Biquad`).
+*You're here if:* you're building a collection of related filter types —
+`Fir`, `Biquad`, `Equalizer` — and you want `from my_filters.filter import
+Fir, Biquad` rather than a separate top-level import for each.
 
-Each type still has its own independent C library; the module is the Python
-grouping unit only.
+Use this when multiple related Python types should share one `.so` and import
+from a common subpackage path.  Each type still has its own independent C
+library; the module is the Python grouping unit only.
 
 ### 1. Scaffold the project and module together
 

@@ -1,7 +1,44 @@
 # Customizing your project
 
-The generated project is a starting point. Most extensions are one command
+The generated project is a starting point.  Most extensions are one command
 away — reach for the editor only when implementing your actual DSP logic.
+
+______________________________________________________________________
+
+## What regenerates vs what's yours
+
+Run `just-makeit add` at any time to add state variables, methods, or
+properties.  Some files are fully regenerated; others are never touched once
+created.
+
+| File | Owner | Notes |
+| --- | --- | --- |
+| `native/inc/<obj>/<obj>_core.h` | **regenerated** | struct, getters/setters, inline `step()` stub |
+| `native/src/<obj>/<obj>_core.c` | **yours** | implement `step()` and lifecycle here |
+| `native/src/<obj>/<obj>_ext.c` | **regenerated** | Python binding — don't edit |
+| `native/src/<module>/<module>_ext.c` | **regenerated** | module binding — fully rewritten on each `object --module` |
+| `native/src/<obj>/CMakeLists.txt` | **regenerated** | OBJECT library + test + bench targets |
+| `native/tests/test_<obj>_core.c` | **yours** | add assertions here; not overwritten |
+| `src/<pkg>/<obj>.pyi` | **regenerated** | type stub — matches generated binding |
+| `src/<pkg>/tests/test_<obj>.py` | **yours** | add pytest cases here; not overwritten |
+
+**Rule of thumb:** files in `native/src/` ending in `_ext.c` and all
+`CMakeLists.txt` files are owned by the generator.  Files in `native/src/`
+ending in `_core.c` and all test files are yours.
+
+When you run `just-makeit add`, all files are backed up before regeneration
+and restored if anything fails.  `just-makeit.toml` is updated only after the
+files are written successfully.
+
+______________________________________________________________________
+
+## Typical workflow after scaffolding
+
+1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
+2. Open `native/src/fir/fir_core.c` — implement `fir_step()`.
+3. Build and test: `make && make test`.
+4. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → regenerates header and binding; your `fir_core.c` is untouched.
+5. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to `native/inc/fir/fir_core.h` — the generator won't overwrite your manual additions to the header… with one exception: the struct body itself is regenerated.  Add extra fields after the generated block.
 
 ______________________________________________________________________
 

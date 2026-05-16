@@ -1,6 +1,21 @@
 # Installing your C library for end users
 
-Every just-makeit project is also a distributable C library.
+Your generated project is already a distributable C library.  After
+`cmake --install`, end users who don't touch Python at all can link against
+it with a single `pkg-config` or `find_package` call:
+
+```sh
+gcc $(pkg-config --cflags my-project) consumer.c \
+    $(pkg-config --libs my-project) -lm -o consumer
+```
+
+```cmake
+find_package(my_project REQUIRED)
+target_link_libraries(my_app PRIVATE my_project::my_project_lib m)
+```
+
+No just-makeit required on the consumer's machine.  The sections below walk
+through prerequisites, build, install, and runtime loading.
 
 ______________________________________________________________________
 

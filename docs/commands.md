@@ -2,7 +2,8 @@
 
 ## `just-makeit new <proj> [--object name ...] [--state name:type[:default] ...]`
 
-Create a new project. Optionally scaffold a first object in the same step.
+Start a new project.  One command gives you a complete, building, tested C
+extension project — optionally with a first object already scaffolded.
 
 ```sh
 just-makeit new my_project
@@ -38,8 +39,9 @@ ______________________________________________________________________
 
 ## `just-makeit module <name>`
 
-Scaffold a new Python extension module — a subpackage `.so` that groups
-multiple types added via `just-makeit object`.  Must be run from the project root.
+Group multiple types into one `.so` subpackage.  Creates the extension module
+shell; types are added with `just-makeit object --module`.  Must be run from
+the project root.
 
 ```sh
 just-makeit module filter
@@ -66,9 +68,9 @@ ______________________________________________________________________
 
 ## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--arg-type TYPE] [--return-type TYPE]`
 
-Add a stateful Python type to the project.  Use this when the algorithm needs
-persistent state (history, coefficients, a cursor, a running accumulator).
-For stateless operations see [Stateful vs Pure](pure.md).
+Add a Python type to the project — standalone or inside a module.  Use this
+when the algorithm needs persistent state (history, coefficients, a cursor, a
+running accumulator).  For stateless operations see [Stateful vs Pure](pure.md).
 Must be run from the project root.
 
 **Without `--module` — standalone object (own `.so`):**

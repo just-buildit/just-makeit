@@ -5,11 +5,13 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 
-Python C extensions the easy way.
+Writing a DSP algorithm in C is the easy part.  Getting it into Python — with a
+clean C API, a tested Python binding, a build system, and packaging — takes days
+of boilerplate you've written before and will write again.
 
-`just-makeit new` generates a complete, working C99 extension project in one
-command: core C library, thin Python binding, CMake build system, and full test
-coverage — all passing before you write a single line of code.
+`just-makeit new` scaffolds the whole thing in one command: core C library, thin
+Python binding, CMake build system, and full test coverage — all passing before
+you write a single line of your algorithm.
 
 ______________________________________________________________________
 
@@ -309,17 +311,21 @@ ______________________________________________________________________
 
 ## Design principles
 
-**Separation of concerns.** Core C logic goes in `*_core.c` / `*_core.h`.
-The Python extension in `*_ext.c` is a thin adapter — argument parsing, array
-wrapping, and nothing more.  This keeps the C library independently testable
-and usable from Rust, C++, or any other language.
+**Your C code runs everywhere.** Core logic lives in `*_core.c` / `*_core.h`,
+compiled once as a CMake OBJECT library and linked into both the Python
+extension and a distributable `lib<project>.so`.  C, C++, and Rust consumers
+link the same binary.  The Python binding in `*_ext.c` is a thin adapter —
+argument parsing, array wrapping, and nothing more.
 
-**Full test coverage by default.** Every generated project has C tests (CTest)
-and Python tests (pytest) from day one.
+**Tests from day one.** Every generated project ships C tests (CTest) and
+Python tests (pytest/unittest) that pass before you've written a line of your
+algorithm.  Adding state variables, methods, and properties keeps the tests in
+sync automatically.
 
-**just-buildit for packaging.** The generated `pyproject.toml` uses
+**Standard packaging.** The generated `pyproject.toml` uses
 [just-buildit](https://github.com/just-buildit/just-buildit) as the PEP 517
-build backend, so `pip install .` just works.
+build backend.  `pip install .` builds and installs.  `just-makeit build`
+produces a wheel.
 
 ______________________________________________________________________
 

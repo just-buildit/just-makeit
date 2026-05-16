@@ -1,8 +1,24 @@
 # Performance annotations
 
-`just-makeit` ships a set of compiler-hint macros and a dispatch pattern that
-can significantly accelerate hot DSP loops.  Performance is opt-in: plain
-projects build and run correctly without any of it.
+Most projects don't need this page.  The generated `step()` / `steps()` loop
+is already cache-friendly and autovectorisable.  Come here when you have a
+tight inner loop that needs to go faster: you've profiled it, it's the
+bottleneck, and the compiler's default output isn't good enough.
+
+The performance layer is three tools:
+
+1. **`jm_perf.h`** — function-level compiler hints (`JM_HOT`, `JM_FORCEINLINE`,
+   `JM_RESTRICT`).  Low-effort; minimal code change.
+2. **`JM_DEFINE_STEPS`** — generates the outer dispatch loop so you write only
+   `step()` and optionally a SIMD `step_batch()`.  Medium effort; large payoff
+   for algorithms with a fixed history depth.
+3. **`jm_simd.h`** — width-portable SIMD operation macros that compile to
+   AVX-512, AVX2, or scalar without `#ifdef` in your code.  High effort; for
+   when you need the last few percent.
+
+All three are opt-in.  A project with none of them still builds and runs.
+
+______________________________________________________________________
 
 ## Enabling perf
 
@@ -25,6 +41,11 @@ ______________________________________________________________________
 
 ## `jm_perf.h` — compiler-hint macros
 
+The cheapest performance win.  Adding `JM_HOT` and `JM_FORCEINLINE` to
+`step()` is a one-line change that signals hot-path intent to the compiler and
+eliminates call overhead for the inner loop.  On unknown compilers all macros
+expand to safe no-ops.
+
 | Macro            | Effect                                                      |
 | ---------------- | ----------------------------------------------------------- |
 | `JM_FORCEINLINE` | Forces inlining; eliminates call overhead on hot functions. |
@@ -41,6 +62,13 @@ extra include.
 ______________________________________________________________________
 
 ## `JM_DEFINE_STEPS` — the dispatch macro
+
+Reach for this when your algorithm has a fixed history depth (delay line,
+coefficient buffer) and you want SIMD to kick in for block processing.  The
+macro owns the dispatch loop: scratch buffer management, SIMD stride, and
+scalar tail.  You write `step()` for correctness and optionally `step_batch()`
+for throughput.  The three tuning constants (`LENGTH`, `BATCH`, `CHUNK`) are
+the only coupling between layers.
 
 `JM_DEFINE_STEPS` stamps out `<fn>_steps()` — the outer dispatch loop —
 so you never write it by hand.
@@ -124,9 +152,12 @@ ______________________________________________________________________
 
 ## `jm_simd.h` — width-portable operation macros
 
-Raw AVX intrinsics lock your `step_batch()` to one ISA.  `jm_simd.h` provides
-macros that select the widest available instruction set at compile time —
-AVX-512, AVX2+FMA, or scalar — so the same source compiles everywhere.
+The highest-effort option — worth it when the inner loop matters more than the
+dispatch.  Raw AVX intrinsics lock `step_batch()` to one ISA and require
+`#ifdef` guards for every other target.  `jm_simd.h` provides macros that
+select the widest available instruction set at compile time — AVX-512, AVX2+FMA,
+or scalar — so the same source compiles everywhere.  The tier is chosen once at
+the top of `jm_simd.h`; user code sees no `#ifdef`.
 
 Included automatically by `jm_perf.h`; can also be included standalone.
 
