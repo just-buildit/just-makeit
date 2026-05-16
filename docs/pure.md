@@ -171,5 +171,5 @@ ______________________________________________________________________
 | Pure function | `--no-state` | `step(const state_t *s, T x) → T` |
 | Method-only | `--no-step` | _(no step generated)_ |
 
-See [Commands](commands.md) for the full flag reference, and
+See [Scaffold commands](commands/scaffold.md) for the full flag reference, and
 [Examples](examples/index.md) for complete walkthroughs of each shape.

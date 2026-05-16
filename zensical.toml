@@ -13,7 +13,11 @@ copyright        = "Copyright &copy; 2026 just-buildit contributors — MIT Lice
 nav = [
   { "Home"               = "index.md"        },
   { "Workflow"           = "workflow.md"     },
-  { "Commands"           = "commands.md"     },
+  { "Commands" = [
+    { "Scaffold"    = "commands/scaffold.md" },
+    { "Extend"      = "commands/extend.md"   },
+    { "Build & Run" = "commands/build.md"    },
+  ]},
   { "Artifacts"          = "artifacts.md"    },
   { "Configuration"      = "configuration.md"},
   { "Stateful vs Pure"   = "pure.md"         },

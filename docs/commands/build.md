@@ -1,0 +1,118 @@
+# Build & tooling commands
+
+______________________________________________________________________
+
+## `just-makeit build [dir]`
+
+Build the C extensions and package a wheel.
+
+```sh
+just-makeit build           # wheel → dist/
+just-makeit build wheels/   # wheel → wheels/
+```
+
+Configures CMake (if not already done), builds the C extensions, then runs
+`pip wheel` via [just-buildit](https://github.com/just-buildit/just-buildit).
+Must be run from a project directory containing `pyproject.toml`.
+
+______________________________________________________________________
+
+## `just-makeit test`
+
+Build (if needed), then run all tests.
+
+```sh
+just-makeit test
+```
+
+- CTest runs the C tests in each object's `tests/` directory.
+- pytest (or `unittest`, depending on how the project was scaffolded) runs
+  the Python tests in `src/`.
+
+______________________________________________________________________
+
+## `just-makeit dry-run`
+
+Show what would be compiled and packaged without running any build steps.
+
+```sh
+just-makeit dry-run
+```
+
+Output includes the list of C source files and the full `cmake` configure
+command that `just-makeit build` would invoke.
+
+______________________________________________________________________
+
+## `just-makeit perf`
+
+Upgrade an existing project to use performance annotations without
+overwriting any user code.  Must be run from the project root.
+
+```sh
+just-makeit perf
+```
+
+Writes `native/inc/jm_perf.h`, adds `#include "jm_perf.h"` to each object
+header, and replaces `static inline` with `JM_FORCEINLINE JM_HOT` on `step()`.
+Records `perf = true` in `just-makeit.toml` so future `object` and `add`
+commands inherit it.  Safe to run on a project with a filled-in `step()`.
+Idempotent.
+
+See [Performance annotations](../perf.md) for the full macro reference and
+`JM_DEFINE_STEPS` documentation.
+
+______________________________________________________________________
+
+## `just-makeit config [key value]`
+
+Show or edit the project configuration stored in `just-makeit.toml`.
+Must be run from the project root.
+
+```sh
+just-makeit config                 # print current config
+just-makeit config version 0.2.0  # update version
+```
+
+**Example output**
+
+```
+project:  my_project
+version:  0.1.0
+
+engine:
+  rate:  double = 1.0
+  order: int    = 4
+
+parser:
+  depth:  int = 8
+  strict: int = 1
+```
+
+**Supported keys**
+
+| Key       | Description                                          |
+| --------- | ---------------------------------------------------- |
+| `version` | Project version string stored in `just-makeit.toml`. |
+
+______________________________________________________________________
+
+## `just-makeit script`
+
+Print a shell script to stdout that fully reconstructs the current project
+from scratch via CLI commands.  Must be run from the project root.
+
+```sh
+just-makeit script              # print to stdout
+just-makeit script > rebuild.sh # save to file
+```
+
+Reads `just-makeit.toml` and emits one command per scaffold step in the
+correct order: `new` → `module` → `object` → `method` → `property` →
+`function`.  The output is a valid shell script that, when run from the
+parent directory, produces an identical `just-makeit.toml`.
+
+**Note:** `--impl` / `--replace` are not stored in `just-makeit.toml` (the
+lifted body is patched directly into the generated files), so they are not
+reproduced.  Implemented function and step bodies are preserved in your C
+source files and are unaffected.

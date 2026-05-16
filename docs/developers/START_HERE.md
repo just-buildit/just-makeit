@@ -150,7 +150,7 @@ ______________________________________________________________________
 1. Update the context builder if new placeholder keys are needed.
 1. Wire the new file into the relevant `run()` function (`_new.py`, `_object.py`, `_init.py`).
 1. Add tests in `tests/test_new.py` or `tests/test_init.py`.
-1. Update `docs/commands.md` and any relevant workflow docs.
+1. Update the relevant page in `docs/commands/` and any relevant workflow docs.
 
 ______________________________________________________________________
 
