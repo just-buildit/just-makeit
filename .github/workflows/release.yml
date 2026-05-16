@@ -86,3 +86,11 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --latest \
             --notes "${{ steps.notes.outputs.notes }}"
+
+  docker:
+    needs: github-release
+    uses: ./.github/workflows/docker.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit

@@ -1,0 +1,22 @@
+{
+  "name": "just-makeit playground",
+  "image": "ghcr.io/just-buildit/jm-examples-linux:latest",
+  "remoteUser": "root",
+  "workspaceFolder": "/home/just-makeit",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools-extension-pack"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash (login)",
+        "terminal.integrated.profiles.linux": {
+          "bash (login)": {
+            "path": "bash",
+            "args": ["-l"]
+          }
+        }
+      }
+    }
+  }
+}
