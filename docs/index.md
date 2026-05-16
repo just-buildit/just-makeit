@@ -27,8 +27,7 @@ and just-makeit into a ready-to-use venv:
 
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-just-makeit new my_project --object engine --state gain:double:1.0
-cd my_project && make && make test
+bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
 ```
 
 Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
@@ -45,8 +44,7 @@ Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
 ```sh
 pip install just-makeit
 just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-just-makeit new my_project --object engine --state gain:double:1.0
-cd my_project && make && make test
+bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
 ```
 
 `install-deps` detects your platform and installs system dependencies via
@@ -65,8 +63,7 @@ the available package manager:
 ```sh
 uv tool install just-makeit
 just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-just-makeit new my_project --object engine --state gain:double:1.0
-cd my_project && make && make test
+bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
 ```
 ````
 
@@ -102,8 +99,7 @@ ______________________________________________________________________
 
 ```sh
 pip install just-makeit && just-makeit install-deps
-just-makeit new my_project --object engine --state gain:double:1.0
-cd my_project && make && make test
+bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
 ```
 
 **What you get:**
