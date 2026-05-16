@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.11.5\] — 2026-05-16
+
+### Fixed
+
+- `artifact.yml`: add `pip install pytest` before the two
+  `pytest --doctest-modules` steps — pytest is not present in the artifact
+  CI environment and must be installed explicitly.
+
+______________________________________________________________________
+
 ## \[0.11.4\] — 2026-05-16
 
 ### Fixed

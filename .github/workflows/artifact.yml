@@ -501,6 +501,7 @@ jobs:
       - name: pytest --doctest-modules passes on placeholder implementation
         working-directory: osc_doctest
         run: |
+          pip install pytest
           python3 -c "
           import sys; sys.path.insert(0, 'src')
           from osc_doctest import Osc
@@ -536,6 +537,7 @@ jobs:
       - name: pytest --doctest-modules passes for extra-method doctests
         working-directory: meth_doctest
         run: |
+          pip install pytest
           python3 -c "
           import sys; sys.path.insert(0, 'src')
           from meth_doctest import Mixer
