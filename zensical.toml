@@ -48,11 +48,6 @@ nav = [
 logo     = "assets/logo.svg"
 favicon  = "assets/logo.svg"
 language = "en"
-
-[project.theme.font]
-text = "Inter"
-code = "JetBrains Mono"
-
 features = [
   "announce.dismiss",
   "content.code.annotate",
@@ -71,6 +66,10 @@ features = [
   "navigation.tracking",
   "search.highlight",
 ]
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
 
 # Dark mode first
 [[project.theme.palette]]
