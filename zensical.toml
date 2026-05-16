@@ -31,6 +31,8 @@ nav = [
     { "DSP toolkit"        = "examples/dsp_toolkit.md"        },
     { "Filter module"      = "examples/filter_module.md"      },
     { "IQ file"            = "examples/iqfile.md"             },
+    { "Stream chunker"     = "examples/stream_chunker.md"    },
+    { "pytest style"       = "examples/pytest_style.md"      },
   ]},
   { "C library"          = "c-library.md"         },
   { "For Developers" = [

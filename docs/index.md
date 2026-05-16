@@ -91,9 +91,11 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 
-### Use it
+### Use it - Quick Examples
 
-**Simple standalone extension:**
+Many more examples can be found [here](https://github.com/just-buildit/just-makeit/tree/main/examples)
+
+#### Simple standalone extension
 
 Create a complete working project with a single command, build and test:
 
@@ -147,7 +149,7 @@ my_project/
 └── just-makeit.toml
 ```
 
-**Module subpackage** — multiple types share one `.so`:
+#### Module subpackage — multiple types share one `.so`:
 
 ```sh
 just-makeit new my_filters --module filter
@@ -176,8 +178,6 @@ src/
 ```
 
 One `.pyi` per `.so`, named to match the compiled extension.
-
-______________________________________________________________________
 
 ______________________________________________________________________
 
@@ -322,6 +322,7 @@ The [`examples/`](https://github.com/just-buildit/just-makeit/tree/main/examples
 - [`filter_module/`](https://github.com/just-buildit/just-makeit/tree/main/examples/filter_module) — `Fir` + `Biquad` in a single `filter` subpackage `.so` using `module` + `object`
 - [`iqfile/`](https://github.com/just-buildit/just-makeit/tree/main/examples/iqfile) — cf32 ↔ q15 IQ file converter; `--field` properties, generator object, `pip install -e .`, wheel build
 - [`stream_chunker/`](https://github.com/just-buildit/just-makeit/tree/main/examples/stream_chunker) — stream re-framer with `--no-step` and `--variable-output`; variable-size input → fixed-size output chunks
+- [`pytest_style/`](https://github.com/just-buildit/just-makeit/tree/main/examples/pytest_style) — pure pytest tests and pytest-benchmark; demonstrates `--pytest` and `--pytest-benchmark` flags
 
 ______________________________________________________________________
 
