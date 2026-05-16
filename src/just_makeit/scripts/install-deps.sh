@@ -1,17 +1,34 @@
 #!/usr/bin/env bash
-# Set up build dependencies for just-makeit projects.
-#
-# Usage:
-#   jm-install-deps                  # install deps + venv at /tmp/jm-venv
-#   jm-install-deps /my/venv        # custom venv path
-#   jm-install-deps --check          # report status only, no changes
-#   source $(which jm-install-deps)  # install + activate venv in current shell
-#
-# What it does:
-#   1. Reports / installs cmake and a C compiler via the system package manager
-#   2. Creates a venv at VENV_DIR (default: /tmp/jm-venv)
-#   3. Installs numpy and just-makeit into the venv
 set -euo pipefail
+
+_HELP=$(cat <<'EOF'
+Usage: just-makeit install-deps [OPTIONS] [VENV_DIR]
+       jm-install-deps [OPTIONS] [VENV_DIR]
+
+Install cmake, a C compiler, and numpy into a Python venv.
+
+Arguments:
+  VENV_DIR   Path for the Python virtual environment.
+             Default: /tmp/jm-venv  (Linux/macOS)
+
+Options:
+  --check    Report what is installed/missing; exit 1 if anything is
+             missing, 0 if everything is present. No changes are made.
+  -h, --help Show this message and exit.
+
+What it installs:
+  System:  cmake + C compiler
+             Linux:   apt · dnf · pacman · zypper · apk (auto-detected)
+             macOS:   Homebrew
+  Python:  numpy + just-makeit  (inside the venv)
+
+Examples:
+  just-makeit install-deps                  # default venv at /tmp/jm-venv
+  just-makeit install-deps ~/my-venv        # custom venv path
+  just-makeit install-deps --check          # dry-run status report
+  source $(which jm-install-deps)           # install + activate in current shell
+EOF
+)
 
 CHECK=0
 VENV_DIR="/tmp/jm-venv"
@@ -19,8 +36,9 @@ SYSTEM_PYTHON="${SYSTEM_PYTHON:-python3}"
 
 for arg in "$@"; do
     case "$arg" in
-        --check) CHECK=1 ;;
-        *)       VENV_DIR="$arg" ;;
+        -h|--help)  printf '%s\n' "$_HELP"; exit 0 ;;
+        --check)    CHECK=1 ;;
+        *)          VENV_DIR="$arg" ;;
     esac
 done
 

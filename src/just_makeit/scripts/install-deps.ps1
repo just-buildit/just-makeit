@@ -1,10 +1,13 @@
 <#
 .SYNOPSIS
-    Set up build dependencies for just-makeit projects on Windows.
+    Install cmake, a C compiler, and numpy for just-makeit projects.
 
 .DESCRIPTION
-    Installs cmake and a C compiler, then creates a Python venv with
-    numpy and just-makeit.
+    Usage: just-makeit install-deps [OPTIONS] [VENV_DIR]
+           jm-install-deps [OPTIONS] [VENV_DIR]
+
+    Installs cmake and a C compiler via the system package manager, then
+    creates a Python venv with numpy and just-makeit.
 
     Package manager detection order:
         1. MSYS2   (MSYSTEM env var set, or pacman.exe in PATH)
@@ -18,21 +21,28 @@
     Default: $env:LOCALAPPDATA\jm-venv
 
 .PARAMETER Check
-    Report what is installed and what will be installed without making
-    any changes.  Exits 1 if anything is missing, 0 if all present.
+    Report what is installed/missing without making any changes.
+    Exits 1 if anything is missing, 0 if everything is present.
+
+.PARAMETER Help
+    Show this help message and exit.
 
 .EXAMPLE
-    .\install-deps.ps1
-    .\install-deps.ps1 C:\my-venv
-    .\install-deps.ps1 --Check
+    just-makeit install-deps
+    just-makeit install-deps C:\my-venv
+    just-makeit install-deps --Check
+    jm-install-deps --Check
 #>
 param(
     [string]$VenvDir = (Join-Path $env:LOCALAPPDATA "jm-venv"),
-    [switch]$Check
+    [switch]$Check,
+    [Alias("h")][switch]$Help
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($Help) { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

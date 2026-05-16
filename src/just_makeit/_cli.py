@@ -73,7 +73,9 @@ Commands:
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
-  install-deps [path]           Install cmake, C compiler, numpy, and create a venv.
+  install-deps [OPTIONS] [path] Install cmake, C compiler, numpy, and create a venv.
+    --check                     Report status only; exit 1 if anything is missing.
+    -h, --help                  Show detailed help for this command.
   example [name]                Run a bundled end-to-end example (omit name to list).
   version                       Show just-makeit's version.
   help                          Show this message.
