@@ -49,7 +49,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Auto-generated `steps()` — free with every object
 
@@ -181,7 +181,7 @@ a separate allocation, a separate free, and careful ownership accounting.
 just-makeit avoids this entirely by embedding arrays inline whenever the length
 is fixed at code-generation time.
 
-______________________________________________________________________
+---
 
 ## 2. `method` — scalar stub + hand-written `_steps()`
 
@@ -212,12 +212,7 @@ For **1:1-rate batch work** (output count equals input count), write the
  * the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
  */
-void
-ema_quantize_steps(ema_state_t   *state,
-                   const float   *in,
-                   uint32_t      *out,
-                   size_t         n)
-{
+void ema_quantize_steps(ema_state_t *state, const float *in, uint32_t *out, size_t n) {
     for (size_t i = 0; i < n; i++)
         out[i] = ema_quantize(state, in[i]);
 }
@@ -259,7 +254,7 @@ If the maximum output count depends on object state and is knowable at init
 time (e.g. a decimator), `--variable-output` is more ergonomic — it removes
 the per-call allocation from the caller's responsibility. See §3.
 
-______________________________________________________________________
+---
 
 ## 3. `method --variable-output` — pre-allocated, zero-copy batch
 
@@ -304,9 +299,7 @@ Implement both:
  * Must be positive.  Returning 0 causes malloc(0), which is implementation-
  * defined and will likely produce a silent bug.
  */
-size_t
-hbdecim_execute_max_out(hbdecim_state_t *state)
-{
+size_t hbdecim_execute_max_out(hbdecim_state_t *state) {
     /* state->block_size is a constructor parameter (add with just-makeit add) */
     return (state->block_size + 1) / 2;
 }
@@ -314,12 +307,8 @@ hbdecim_execute_max_out(hbdecim_state_t *state)
 /* Process n_in samples; write actual output count to *out; return n_out.
  * The caller (Python ext) supplies the pre-allocated output buffer.
  */
-size_t
-hbdecim_execute(hbdecim_state_t    *state,
-                const float complex *in,
-                size_t              n_in,
-                float complex       *out)
-{
+size_t hbdecim_execute(hbdecim_state_t *state, const float complex *in, size_t n_in,
+                       float complex *out) {
     size_t n_out = 0;
     for (size_t i = 0; i + 1 < n_in; i += 2) {
         /* TODO: polyphase half-band implementation */
@@ -381,7 +370,7 @@ you need to retain more than one block.
 | Integrator / accumulator         | 1 per sample       | No — use scalar `step()`                          |
 | Overflow detector, 1:1 rate      | unknown at init    | No — use scalar method + hand-written `_steps()`  |
 
-______________________________________________________________________
+---
 
 ## 4. `method --variable-output --multi-output` — parallel output streams
 
@@ -420,24 +409,17 @@ the object.  Your implementation fills both and returns the count:
  * Both are pre-allocated by the ext to execute_ovf_max_out() elements.
  * Return the actual count written to both arrays.
  */
-size_t
-hbdecim_execute_ovf_max_out(hbdecim_state_t *state)
-{
-    return (state->block_size + 1) / 2;
-}
+size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state) { return (state->block_size + 1) / 2; }
 
-size_t
-hbdecim_execute_ovf(hbdecim_state_t    *state,
-                    const float complex *in,
-                    size_t              n_in,
-                    float complex       *out,    /* primary */
-                    uint8_t             *ovf)    /* secondary */
+size_t hbdecim_execute_ovf(hbdecim_state_t *state, const float complex *in, size_t n_in,
+                           float complex *out, /* primary */
+                           uint8_t       *ovf)       /* secondary */
 {
     size_t n_out = 0;
     for (size_t i = 0; i + 1 < n_in; i += 2) {
         float complex y = (in[i] + in[i + 1]) * 0.5f;
-        out[n_out] = y;
-        ovf[n_out] = (cabsf(y) > 1.0f) ? 1 : 0;
+        out[n_out]      = y;
+        ovf[n_out]      = (cabsf(y) > 1.0f) ? 1 : 0;
         n_out++;
     }
     return n_out;
@@ -484,7 +466,7 @@ The same "stale after next call" rule applies to every buffer produced by
 `--variable-output`.  The zero-copy design makes the steady-state path
 allocation-free; the copy obligation is the trade-off.
 
-______________________________________________________________________
+---
 
 ## 5. `--arg-type type[]` — array-buffer primary arg
 

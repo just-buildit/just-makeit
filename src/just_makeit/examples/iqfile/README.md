@@ -49,7 +49,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -62,7 +62,7 @@ This creates the project shell and an empty `conv` module subpackage.
 No objects yet — just the plumbing: `CMakeLists.txt`, `Makefile`,
 `pyproject.toml`, `just-makeit.toml`, and `src/iqfile/conv/__init__.py`.
 
-______________________________________________________________________
+---
 
 ## 2. Add the converter types
 
@@ -128,7 +128,7 @@ block  = reader.steps(1024)   # returns complex64 ndarray
 os.close(fd)
 ```
 
-______________________________________________________________________
+---
 
 ## 3. Add properties
 
@@ -158,12 +158,13 @@ struct and auto-implements the getter as `return state->samples_written` — no
 **Computed** (`eof`, no `--field`): getter stub calls `q15_to_cf32_get_eof()`
 which you implement — returning 1 when the last `read()` returned 0 bytes.
 
-______________________________________________________________________
+---
 
 ## 4. Implement the C kernels
 
 ```python
 """Implement cf32_to_q15_step() and add the samples_written counter."""
+
 from pathlib import Path
 import sys
 
@@ -173,7 +174,7 @@ root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 core_h = root / "native/inc/cf32_to_q15/cf32_to_q15_core.h"
 text = core_h.read_text(encoding="utf-8")
 
-if '<math.h>' not in text:
+if "<math.h>" not in text:
     text = text.replace(
         '#include "clib_common.h"',
         '#include "clib_common.h"\n#include <math.h>',
@@ -218,6 +219,7 @@ print(f"patched  {core_c.relative_to(root)}")
 
 ```python
 """Implement q15_to_cf32_step(), samples_read counter, and eof getter."""
+
 from pathlib import Path
 import sys
 
@@ -227,7 +229,7 @@ root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 core_h = root / "native/inc/q15_to_cf32/q15_to_cf32_core.h"
 text = core_h.read_text(encoding="utf-8")
 
-if '<unistd.h>' not in text:
+if "<unistd.h>" not in text:
     text = text.replace(
         '#include "clib_common.h"',
         '#include "clib_common.h"\n#include <unistd.h>',
@@ -264,7 +266,7 @@ core_c = root / "native/src/q15_to_cf32/q15_to_cf32_core.c"
 text = core_c.read_text(encoding="utf-8")
 
 # Add <unistd.h> if needed (steps() calls read/lseek)
-if '<unistd.h>' not in text:
+if "<unistd.h>" not in text:
     text = text.replace(
         '#include "q15_to_cf32/q15_to_cf32_core.h"',
         '#include "q15_to_cf32/q15_to_cf32_core.h"\n#include <unistd.h>',
@@ -312,12 +314,10 @@ the two `int16_t` values, the step packs both into one `int32_t`
 (I in the low 16 bits, Q in the high 16 bits):
 
 ```c
-static inline int32_t
-cf32_to_q15_step(const cf32_to_q15_state_t *state, float complex x)
-{
-    float scale = state->scale;
-    int16_t i = (int16_t)(crealf(x) * scale);
-    int16_t q = (int16_t)(cimagf(x) * scale);
+static inline int32_t cf32_to_q15_step(const cf32_to_q15_state_t *state, float complex x) {
+    float   scale   = state->scale;
+    int16_t i       = (int16_t)(crealf(x) * scale);
+    int16_t q       = (int16_t)(cimagf(x) * scale);
     int16_t pair[2] = {i, q};
     return (int32_t)sizeof(pair);
 }
@@ -339,14 +339,11 @@ input never wraps around silently.
 Reads four bytes (two `int16_t`) from `state->fd` on every call:
 
 ```c
-static inline float complex
-q15_to_cf32_step(const q15_to_cf32_state_t *state)
-{
+static inline float complex q15_to_cf32_step(const q15_to_cf32_state_t *state) {
     int16_t pair[2] = {0, 0};
-    ssize_t n = read((int)state->fd, pair, sizeof(pair));
+    ssize_t n       = read((int)state->fd, pair, sizeof(pair));
     (void)n;
-    return (crealf(0.0f) + cimagf(0.0f) * I)
-        + ((float)pair[0] + (float)pair[1] * I) / state->scale;
+    return (crealf(0.0f) + cimagf(0.0f) * I) + ((float)pair[0] + (float)pair[1] * I) / state->scale;
 }
 ```
 
@@ -382,7 +379,7 @@ lseek(state->fd, cur, SEEK_SET);
 return cur == end ? 1 : 0;
 ```
 
-______________________________________________________________________
+---
 
 ## 5. Build and test
 
@@ -395,7 +392,7 @@ make test
 `make test` runs CTest (C lifecycle tests) and pytest (Python API tests)
 for both `Cf32ToQ15` and `Q15ToCf32`.
 
-______________________________________________________________________
+---
 
 ## 6. Development install
 
@@ -410,12 +407,13 @@ edit Python files.
 
 After this, `from iqfile.conv import Cf32ToQ15, Q15ToCf32` works from anywhere.
 
-______________________________________________________________________
+---
 
 ## 7. Round-trip demo
 
 ```python
 """Round-trip demo: cf32 -> q15 file -> cf32, verify fidelity."""
+
 import os
 import sys
 import tempfile
@@ -435,14 +433,16 @@ signal *= 0.9 / np.max(np.abs(signal))
 
 # ── Write cf32 -> q15 ─────────────────────────────────────────────────────
 writer = Cf32ToQ15()
-packed = writer.steps(signal)                   # int32 array, shape (N,)
-q15    = packed.view(np.int16)                  # int16 view, shape (2N,)
+packed = writer.steps(signal)  # int32 array, shape (N,)
+q15 = packed.view(np.int16)  # int16 view, shape (2N,)
 
 with tempfile.NamedTemporaryFile(suffix=".q15", delete=False) as f:
     q15_path = f.name
     q15.tofile(f)
 
-print(f"wrote    {N} complex samples -> {q15_path}  ({os.path.getsize(q15_path)} bytes)")
+print(
+    f"wrote    {N} complex samples -> {q15_path}  ({os.path.getsize(q15_path)} bytes)"
+)
 print(f"written: {writer.samples_written} samples")
 
 # ── Read q15 -> cf32 ──────────────────────────────────────────────────────
@@ -455,7 +455,7 @@ os.close(fd)
 
 # ── Verify round-trip fidelity ────────────────────────────────────────────
 scale = 32767.0
-quantisation_noise_floor = 1.0 / scale          # ≈ -90 dB
+quantisation_noise_floor = 1.0 / scale  # ≈ -90 dB
 err = np.max(np.abs(signal - recovered))
 
 print(f"max err: {err:.6f}  (floor ~{quantisation_noise_floor:.6f})")
@@ -480,7 +480,7 @@ PASSED
 Note the file size: 4096 samples × 4 bytes (two `int16_t`) = 16 384 bytes —
 half the 32 768 bytes a cf32 file would use for the same signal.
 
-______________________________________________________________________
+---
 
 ## 8. Build a wheel
 

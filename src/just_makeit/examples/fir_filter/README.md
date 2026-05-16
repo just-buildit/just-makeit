@@ -30,7 +30,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -52,7 +52,7 @@ Three state variables:
 
 `coeffs` and `delay` are inline in the C struct — no heap allocation per field.
 
-______________________________________________________________________
+---
 
 ## 2. Implement
 
@@ -86,7 +86,7 @@ static inline float complex fir_filter_step(fir_filter_state_t *state, float com
 `fir_filter_steps()` in `fir_filter_core.c` loops over this automatically —
 no changes needed there.
 
-______________________________________________________________________
+---
 
 ## 3. Build and test
 
@@ -99,7 +99,7 @@ The generated tests cover getter/setter round-trips, reset behaviour, the
 context manager, and destroy. After implementing the filter you can add
 signal-level tests (see step 5).
 
-______________________________________________________________________
+---
 
 ## 4. Try it from Python
 
@@ -139,7 +139,7 @@ with FirFilter(gain=2.0) as g:
 print("gain=2 response:", y2[:3].real)  # [0.5 1.  0.5]
 ```
 
-______________________________________________________________________
+---
 
 ## 5. Try it from C
 
@@ -190,7 +190,7 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
     -lm -o demo && ./demo
 ```
 
-______________________________________________________________________
+---
 
 ## 6. Add more state
 
@@ -205,7 +205,7 @@ Or swap in a longer delay line without touching your implementation:
 just-makeit add --state "coeffs64:double _Complex[64]"
 ```
 
-______________________________________________________________________
+---
 
 ## 7. Bonus: `--perf` + SIMD benchmark
 
@@ -224,7 +224,7 @@ import numpy as np
 from my_fir import FirFilter
 
 BLOCK = 100_000
-RUNS  = 500
+RUNS = 500
 
 f = FirFilter(gain=1.0)
 h = np.array([0.25, 0.5, 0.25] + [0.0] * 13, dtype=np.float32)
@@ -276,19 +276,15 @@ that stamps out the outer dispatch loop so you never write it by hand.
 `native/inc/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
 
 ```c
-#define FIR_TAPS   16              /* algorithm:   number of coefficients       */
-#define FIR_LENGTH (FIR_TAPS - 1)  /* history:     samples held in delay[]      */
+#define FIR_TAPS 16               /* algorithm:   number of coefficients       */
+#define FIR_LENGTH (FIR_TAPS - 1) /* history:     samples held in delay[]      */
 /* JM_SIMD_WIDTH_F32 floats = JM_SIMD_WIDTH_F32/2 complex samples per batch.
  * On scalar targets (width=1) this is 0; _JM_STEPS_SIMD_ is a no-op there. */
-#define FIR_BATCH  (JM_SIMD_WIDTH_F32 / 2)
+#define FIR_BATCH (JM_SIMD_WIDTH_F32 / 2)
 
 #if JM_SIMD_WIDTH_F32 > 1
-JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch(
-    fir_filter_state_t     *state,
-    const float complex    *window,
-    float complex          *out)
-{
+JM_FORCEINLINE JM_HOT void fir_filter_step_batch(fir_filter_state_t  *state,
+                                                 const float complex *window, float complex *out) {
     JM_VEC_F32 acc = JM_ZERO_F32();
     for (int k = 0; k < FIR_TAPS; k++)
         JM_MAC_F32(acc, (const float *)(window + FIR_LENGTH - k), state->coeffs[k]);
@@ -316,10 +312,9 @@ but you never write `steps()`.
 **2.** Replace `fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
 
 ```c
-#define FIR_CHUNK 256  /* tuning: samples per scratch-buffer fill */
+#define FIR_CHUNK 256 /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
-                FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
+JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex, FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 
 `JM_DEFINE_STEPS` generates `fir_filter_steps()` from the macro in `jm_perf.h`:

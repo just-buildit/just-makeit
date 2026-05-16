@@ -43,7 +43,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -55,7 +55,7 @@ just-makeit new my_corr \
 cd my_corr
 ```
 
-______________________________________________________________________
+---
 
 ## 2. Implement `sliding_correlator_step`
 
@@ -66,7 +66,8 @@ The stub:
 
 ```c
 // before
-static inline float complex sliding_correlator_step(const sliding_correlator_state_t *state, float complex x) {
+static inline float complex sliding_correlator_step(const sliding_correlator_state_t *state,
+                                                    float complex                     x) {
     (void)state; /* TODO: implement DSP using state variables */
     return x;
 }
@@ -76,7 +77,8 @@ The implementation:
 
 ```c
 // after
-static inline float complex sliding_correlator_step(sliding_correlator_state_t *state, float complex x) {
+static inline float complex sliding_correlator_step(sliding_correlator_state_t *state,
+                                                    float complex               x) {
     memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));
     state->delay[0] = x;
 
@@ -121,7 +123,7 @@ header.write_text(patched)
 print(f"patched {header}")
 ```
 
-______________________________________________________________________
+---
 
 ## 3. Build and verify
 
@@ -151,7 +153,7 @@ print(c.steps(impulse)[:4].tolist())
 # [(1+0j), 0j, 0j, 0j]
 ```
 
-______________________________________________________________________
+---
 
 ## 4. `JM_DEFINE_STEPS`
 
@@ -167,21 +169,18 @@ to `native/inc/sliding_correlator/sliding_correlator_core.h` just after
 `sliding_correlator_step()`:
 
 ```c
-#define CORR_TAPS   16
+#define CORR_TAPS 16
 #define CORR_LENGTH (CORR_TAPS - 1)
 /* Complex samples per step_batch() call.  Same derivation as FIR_BATCH:
  * JM_SIMD_WIDTH_F32/2 ≥ 1 on AVX2/AVX-512; _JM_STEPS_SIMD_ is a no-op
  * on scalar targets so the value there doesn't matter. */
-#define CORR_BATCH  (JM_SIMD_WIDTH_F32 / 2)
+#define CORR_BATCH (JM_SIMD_WIDTH_F32 / 2)
 
 /* No ISA guard needed — _JM_STEPS_SIMD_ only calls this when width > 1.
  * The inner loop is auto-vectorisable; the compiler picks the best ISA. */
-JM_FORCEINLINE JM_HOT void
-sliding_correlator_step_batch(
-    sliding_correlator_state_t *state,
-    const float complex        *window,
-    float complex              *out)
-{
+JM_FORCEINLINE JM_HOT void sliding_correlator_step_batch(sliding_correlator_state_t *state,
+                                                         const float complex        *window,
+                                                         float complex              *out) {
     for (int b = 0; b < CORR_BATCH; b++) {
         float complex acc = 0.0f + 0.0f * I;
         for (int k = 0; k < CORR_TAPS; k++)
@@ -206,8 +205,8 @@ Replace `sliding_correlator_steps` in `native/src/sliding_correlator/sliding_cor
 ```c
 #define CORR_CHUNK 256
 
-JM_DEFINE_STEPS(sliding_correlator, sliding_correlator_state_t, float complex,
-                CORR_LENGTH, CORR_BATCH, CORR_CHUNK)
+JM_DEFINE_STEPS(sliding_correlator, sliding_correlator_state_t, float complex, CORR_LENGTH,
+                CORR_BATCH, CORR_CHUNK)
 ```
 
 `JM_DEFINE_STEPS` generates `sliding_correlator_steps()` — scratch buffer,

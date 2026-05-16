@@ -50,7 +50,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold the project
 
@@ -63,7 +63,7 @@ cd my_filters
 `CMakeLists.txt`, `pyproject.toml`, `just-makeit.toml`, and the `native/`
 directory tree — but no component yet.  Types come next.
 
-______________________________________________________________________
+---
 
 ## 2. Create the module
 
@@ -88,7 +88,7 @@ objects = []
 
 The module is a named slot.  Types are added with `just-makeit object`.
 
-______________________________________________________________________
+---
 
 ## 3. Add the types
 
@@ -173,7 +173,7 @@ arithmetic.  A module can host types with different I/O types; `Fir` is complex,
 | `w1` | `double` | `0.0`   | Delay state (double for numerical headroom) |
 | `w2` | `double` | `0.0`   | Delay state                                 |
 
-______________________________________________________________________
+---
 
 ## 4. Implement
 
@@ -219,7 +219,7 @@ delay states; the output is narrowed back to `float` on return.
 > **Note:** both `fir_steps()` and `biquad_steps()` in their respective
 > `_core.c` files loop over `_step()` automatically — no changes needed there.
 
-______________________________________________________________________
+---
 
 ## 5. Build and test
 
@@ -256,7 +256,7 @@ src/my_filters/
     filter.cpython-312-x86_64-linux-gnu.so  ← both types in one .so
 ```
 
-______________________________________________________________________
+---
 
 ## 6. Use from Python
 
@@ -294,22 +294,22 @@ print("FIR impulse response (first 4):", ir[:4].real.round(4))
 
 # ── Biquad: real low-pass at cutoff = 0.1 * fs, Q = 0.707 ───────────────────
 fc, Q = 0.1, 0.707
-w0    = 2 * math.pi * fc
+w0 = 2 * math.pi * fc
 alpha = math.sin(w0) / (2 * Q)
-c     = math.cos(w0)
-a0    = 1 + alpha
+c = math.cos(w0)
+a0 = 1 + alpha
 
 bq = Biquad(
     b0=(1 - c) / 2 / a0,
-    b1=(1 - c)     / a0,
+    b1=(1 - c) / a0,
     b2=(1 - c) / 2 / a0,
-    a1=-2 * c      / a0,
+    a1=-2 * c / a0,
     a2=(1 - alpha) / a0,
 )
 
-t   = np.arange(512, dtype=np.float32) / 512
-lo  = np.cos(2 * math.pi * 0.05 * t)   # 0.05*fs — passband
-hi  = np.cos(2 * math.pi * 0.40 * t)   # 0.40*fs — stopband
+t = np.arange(512, dtype=np.float32) / 512
+lo = np.cos(2 * math.pi * 0.05 * t)  # 0.05*fs — passband
+hi = np.cos(2 * math.pi * 0.40 * t)  # 0.40*fs — stopband
 
 out_lo = bq.steps(lo)
 bq.reset()

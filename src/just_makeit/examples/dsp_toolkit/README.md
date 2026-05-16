@@ -33,7 +33,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -55,23 +55,19 @@ Scaffolds a single `gain` component with a real-valued `step()`:
 `make` configures CMake and builds the extension. The C test already passes
 before you write a single line of logic.
 
-______________________________________________________________________
+---
 
 ## 2. Implement gain
 
 Open `native/inc/gain/gain_core.h` and replace the `gain_step` stub — it's a one-liner:
 
 ```c
-static inline float
-gain_step(const gain_state_t *state, float x)
-{
-    return state->gain * x;
-}
+static inline float gain_step(const gain_state_t *state, float x) { return state->gain * x; }
 ```
 
 `gain_steps()` in `gain_core.c` loops over this automatically — no changes needed there.
 
-______________________________________________________________________
+---
 
 ## 3. Add a second component
 
@@ -97,18 +93,15 @@ State:
 | `alpha` | `double` | `0.1`   | Smoothing factor (0 \< α \< 1) |
 | `prev`  | `float`  | `0.0`   | Previous output sample         |
 
-______________________________________________________________________
+---
 
 ## 4. Implement ema
 
 `ema_step` must write back to `state->prev`, so the signature drops `const`:
 
 ```c
-static inline float
-ema_step(ema_state_t *state, float x)
-{
-    float y = (float)state->alpha * x
-            + (float)(1.0 - state->alpha) * state->prev;
+static inline float ema_step(ema_state_t *state, float x) {
+    float y     = (float)state->alpha * x + (float)(1.0 - state->alpha) * state->prev;
     state->prev = y;
     return y;
 }
@@ -152,7 +145,7 @@ header.write_text(patched)
 print(f"patched {header}")
 ```
 
-______________________________________________________________________
+---
 
 ## 5. Both components are exported automatically
 
@@ -170,7 +163,7 @@ __all__ = ["Gain", "Ema"]
 
 Existing imports and any user additions are preserved.
 
-______________________________________________________________________
+---
 
 ## 6. Build and test
 
@@ -181,7 +174,7 @@ make && make test
 CTest runs `test_gain_core` and `test_ema_core`.
 pytest runs the 14 generated tests across both components.
 
-______________________________________________________________________
+---
 
 ## 7. Use from Python
 
@@ -189,6 +182,7 @@ ______________________________________________________________________
 """Demo: use Gain and Ema together from Python."""
 
 import sys
+
 sys.path.insert(0, "src")
 
 import numpy as np
@@ -199,13 +193,13 @@ signal = np.ones(20, dtype=np.float32)
 signal[10:] = 0.0
 
 gain = Gain(gain=2.0)
-ema  = Ema(alpha=0.3)
+ema = Ema(alpha=0.3)
 
 print(f"{'n':>3}  {'input':>7}  {'gained':>7}  {'smoothed':>10}")
 print("-" * 36)
 for i, x in enumerate(signal):
     y_gain = gain.step(x)
-    y_ema  = ema.step(float(y_gain))
+    y_ema = ema.step(float(y_gain))
     print(f"{i:>3}  {x:>7.3f}  {y_gain:>7.3f}  {y_ema:>10.4f}")
 ```
 
@@ -216,7 +210,7 @@ for i, x in enumerate(signal):
 y = Gain(gain=2.0).steps(signal)   # returns float32 ndarray
 ```
 
-______________________________________________________________________
+---
 
 ## 8. Use from Python
 
@@ -224,6 +218,7 @@ ______________________________________________________________________
 """Demo: use Gain and Ema together from Python."""
 
 import sys
+
 sys.path.insert(0, "src")
 
 import numpy as np
@@ -234,13 +229,13 @@ signal = np.ones(20, dtype=np.float32)
 signal[10:] = 0.0
 
 gain = Gain(gain=2.0)
-ema  = Ema(alpha=0.3)
+ema = Ema(alpha=0.3)
 
 print(f"{'n':>3}  {'input':>7}  {'gained':>7}  {'smoothed':>10}")
 print("-" * 36)
 for i, x in enumerate(signal):
     y_gain = gain.step(x)
-    y_ema  = ema.step(float(y_gain))
+    y_ema = ema.step(float(y_gain))
     print(f"{i:>3}  {x:>7.3f}  {y_gain:>7.3f}  {y_ema:>10.4f}")
 ```
 

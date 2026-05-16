@@ -40,7 +40,7 @@ pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -58,7 +58,7 @@ just-makeit new my_power \
     --perf
 ```
 
-______________________________________________________________________
+---
 
 ## 2. Implement step()
 
@@ -67,16 +67,14 @@ the recursive O(1) update.  The delay line stores `|x|²` for each past sample;
 `sum_sq` is the running total.
 
 ```c
-JM_FORCEINLINE JM_HOT float
-power_est_step(power_est_state_t *state, float complex x)
-{
+JM_FORCEINLINE JM_HOT float power_est_step(power_est_state_t *state, float complex x) {
     float re = crealf(x), im = cimagf(x);
     float mag_sq = re * re + im * im;
 
     /* O(1) recursive update: subtract the oldest sample, add the new one */
     state->sum_sq += (double)(mag_sq - state->delay[state->pos]);
     state->delay[state->pos] = mag_sq;
-    state->pos = (state->pos + 1) & 63;  /* window = 64 = 2^6 */
+    state->pos               = (state->pos + 1) & 63; /* window = 64 = 2^6 */
 
     return (float)(state->sum_sq * (1.0 / 64.0));
 }
@@ -88,7 +86,7 @@ Apply the patch:
 python3 .steps/02_patch.py
 ```
 
-______________________________________________________________________
+---
 
 ## 3. Build and test
 
@@ -98,7 +96,7 @@ make && make test
 
 The generated C test exercises `create`, `reset`, `step`, and `steps`.
 
-______________________________________________________________________
+---
 
 ## 4. Python demo
 
@@ -110,7 +108,7 @@ After `pip install -e .`:
 Run from the project root after `pip install -e .`:
     python3 .steps/04_demo.py
 """
-import cmath
+
 import math
 import numpy as np
 from my_power import PowerEst
@@ -136,8 +134,9 @@ print(f"silence power (expect 0.000): {y.real:.4f}")
 
 # --- steps() on a block ---------------------------------------------------
 est.reset()
-block = np.array([math.sin(2 * math.pi * n / 16) for n in range(128)],
-                 dtype=np.complex64)
+block = np.array(
+    [math.sin(2 * math.pi * n / 16) for n in range(128)], dtype=np.complex64
+)
 out = est.steps(block)
 print(f"steps() final power (expect ~0.500): {out[-1].real:.4f}")
 ```
@@ -151,7 +150,7 @@ silence power (expect 0.000): 0.0000
 steps() final power (expect ~0.500): 0.5000
 ```
 
-______________________________________________________________________
+---
 
 ## 5. SIMD recompute with `jm_simd.h`
 
@@ -170,9 +169,7 @@ Add this function to `native/src/power_est/power_est_core.c` (it needs
  *
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */
-static inline float
-power_est_recompute(power_est_state_t *state)
-{
+static inline float power_est_recompute(power_est_state_t *state) {
     JM_VEC_F32 acc = JM_ZERO_F32();
     JM_UNROLL(4)
     for (int k = 0; k < 64; k += JM_SIMD_WIDTH_F32)
@@ -206,7 +203,7 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON
 cmake --build build --parallel
 ```
 
-______________________________________________________________________
+---
 
 ## Numerical notes
 

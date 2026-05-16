@@ -22,7 +22,7 @@ just-makeit example stream_chunker
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-______________________________________________________________________
+---
 
 ## 1. Scaffold
 
@@ -51,7 +51,7 @@ just-makeit method chunker push \
 | `chunker_push_max_out(state)`        | Once at `__init__` | Return max output samples possible |
 | `chunker_push(state, in, n_in, out)` | Every Python call  | Fill `out[]`, return actual count  |
 
-______________________________________________________________________
+---
 
 ## 2. Implement
 
@@ -61,19 +61,17 @@ Generated stubs:
 
 ```c
 /* <<IMPLEMENT>> return max samples chunker_push can ever produce */
-size_t
-chunker_push_max_out(chunker_state_t *state)
-{
+size_t chunker_push_max_out(chunker_state_t *state) {
     (void)state;
     return 0; /* TODO */
 }
 
 /* <<IMPLEMENT>> process input and write results to out[]; return count written */
-size_t
-chunker_push(chunker_state_t *state, const float complex *in, size_t n_in,
-             float complex *out)
-{
-    (void)state; (void)in; (void)out;
+size_t chunker_push(chunker_state_t *state, const float complex *in, size_t n_in,
+                    float complex *out) {
+    (void)state;
+    (void)in;
+    (void)out;
     return 0; /* TODO */
 }
 ```
@@ -81,25 +79,20 @@ chunker_push(chunker_state_t *state, const float complex *in, size_t n_in,
 Implementation:
 
 ```c
-size_t
-chunker_push_max_out(chunker_state_t *state)
-{
+size_t chunker_push_max_out(chunker_state_t *state) {
     /* buf[] holds 256 samples — the absolute output ceiling.
      * Push at most (256 - n_buf) samples per call to stay safe. */
     (void)state;
     return 256;
 }
 
-size_t
-chunker_push(chunker_state_t *state, const float complex *in, size_t n_in,
-             float complex *out)
-{
+size_t chunker_push(chunker_state_t *state, const float complex *in, size_t n_in,
+                    float complex *out) {
     size_t n_out = 0;
     for (size_t i = 0; i < n_in; i++) {
         state->buf[state->n_buf++] = in[i];
         if (state->n_buf >= state->chunk_size) {
-            memcpy(out + n_out, state->buf,
-                   (size_t)state->chunk_size * sizeof(float complex));
+            memcpy(out + n_out, state->buf, (size_t)state->chunk_size * sizeof(float complex));
             n_out += (size_t)state->chunk_size;
             state->n_buf = 0;
         }
@@ -116,7 +109,7 @@ The patch script automates this replacement:
 python3 .steps/02_patch.py
 ```
 
-______________________________________________________________________
+---
 
 ## 3. Build and test
 
@@ -126,7 +119,7 @@ cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
 ```
 
-______________________________________________________________________
+---
 
 ## 4. Use from Python
 
@@ -162,10 +155,10 @@ c = Chunker(chunk_size=CHUNK)
 
 # Irregular bursts that collectively push 281 samples.
 # Max single burst = 180; worst-case output = 3 chunks = 192 samples < 256.
-bursts = [7, 50, 1, 40, 180, 3]      # sum = 281
+bursts = [7, 50, 1, 40, 180, 3]  # sum = 281
 # Expected: floor(281 / 64) = 4 complete chunks (256 samples), 25 buffered.
 
-collected = []   # copies of complete-chunk views
+collected = []  # copies of complete-chunk views
 total_in = 0
 
 for size in bursts:
@@ -174,14 +167,14 @@ for size in bursts:
     # view is a zero-copy slice of the object's internal output buffer.
     # It becomes stale on the next push() call — copy immediately.
     if len(view):
-        assert len(view) % CHUNK == 0, \
+        assert len(view) % CHUNK == 0, (
             f"output length {len(view)} is not a multiple of chunk_size {CHUNK}"
+        )
         collected.append(view.copy())
     total_in += size
 
 total_out = sum(len(v) for v in collected)
-assert total_out == 4 * CHUNK, \
-    f"expected {4 * CHUNK} output samples, got {total_out}"
+assert total_out == 4 * CHUNK, f"expected {4 * CHUNK} output samples, got {total_out}"
 
 # Verify that the first burst (7 samples) produced no output
 assert len(collected[0]) >= CHUNK, "first non-empty view should be ≥ one chunk"
@@ -193,8 +186,10 @@ assert len(view) == CHUNK, "after reset: one full chunk in → one chunk out"
 
 print("stream_chunker demo: PASSED")
 print(f"  fed {total_in} samples in {len(bursts)} irregular bursts")
-print(f"  received {total_out} output samples ({total_out // CHUNK} complete "
-      f"{CHUNK}-sample chunks)")
+print(
+    f"  received {total_out} output samples ({total_out // CHUNK} complete "
+    f"{CHUNK}-sample chunks)"
+)
 print(f"  {total_in - total_out} samples remain buffered (flushed on reset)")
 print(f"  {len(collected)} non-empty push() calls (some bursts produced 0 output)")
 ```
@@ -235,7 +230,7 @@ max_safe_push = 4 * chunk_size - current_n_buf
 
 For larger inputs, split into ≤192-sample slices before calling `push()`.
 
-______________________________________________________________________
+---
 
 ## 5. reset()
 
