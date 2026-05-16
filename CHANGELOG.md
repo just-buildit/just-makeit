@@ -1,5 +1,15 @@
 # Changelog
 
+## \[0.11.4\] — 2026-05-16
+
+### Fixed
+
+- `artifact.yml`: replaced bare `pytest` with `python3 -m pytest` in two
+  doctest-modules steps — `pytest` binary is not on PATH in the artifact CI
+  environment.
+
+______________________________________________________________________
+
 ## \[0.11.3\] — 2026-05-16
 
 ### Fixed

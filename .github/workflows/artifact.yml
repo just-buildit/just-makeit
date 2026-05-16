@@ -521,7 +521,7 @@ jobs:
 
           print('docstring structure: ok')
           "
-          pytest --doctest-modules src/ -v
+          python3 -m pytest --doctest-modules src/ -v
 
       - name: Scaffold object with extra method and verify method docstrings
         run: |
@@ -554,4 +554,4 @@ jobs:
 
           print('method docstring structure: ok')
           "
-          pytest --doctest-modules src/ -v
+          python3 -m pytest --doctest-modules src/ -v
