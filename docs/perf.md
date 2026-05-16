@@ -117,7 +117,7 @@ JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
                 FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 
-See the [FIR filter example](../examples/fir_filter/README.md) for a complete
+See the [FIR filter example](examples/fir_filter.md) for a complete
 walkthrough including benchmarks.
 
 ______________________________________________________________________

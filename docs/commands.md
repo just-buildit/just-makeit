@@ -68,7 +68,7 @@ ______________________________________________________________________
 
 Add a stateful Python type to the project.  Use this when the algorithm needs
 persistent state (history, coefficients, a cursor, a running accumulator).
-For stateless operations, use [`just-makeit function`](#just-makeit-function-name---module-mod---param-nametype----return-type-type---doc-text) instead.
+For stateless operations see [Stateful vs Pure](pure.md).
 Must be run from the project root.
 
 **Without `--module` — standalone object (own `.so`):**
