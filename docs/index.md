@@ -21,51 +21,45 @@ ______________________________________________________________________
 
 === "curl"
 
-````
-No tools required — one command bootstraps cmake, a C compiler, numpy,
-and just-makeit into a ready-to-use venv:
+    No tools required — one command bootstraps cmake, a C compiler, numpy,
+    and just-makeit into a ready-to-use venv:
 
-```sh
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
-```
+    ```sh
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    ```
 
-Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
-Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
+    Pass a path to use a custom venv location (default: `/tmp/jm-venv` on
+    Linux/macOS, `%LOCALAPPDATA%\jm-venv` on Windows):
 
-```sh
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
-```
-````
+    ```sh
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
+    ```
 
 === "pip"
 
-````
-```sh
-pip install just-makeit
-just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
-```
+    ```sh
+    pip install just-makeit
+    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    ```
 
-`install-deps` detects your platform and installs system dependencies via
-the available package manager:
+    `install-deps` detects your platform and installs system dependencies via
+    the available package manager:
 
-| Platform | Detection order |
-|----------|----------------|
-| **Linux** | apt · dnf · pacman · zypper · apk |
-| **macOS** | Homebrew |
-| **Windows** | MSYS2 · winget · choco · scoop · direct download fallback |
-````
+    | Platform     | Detection order                                             |
+    |--------------|-------------------------------------------------------------|
+    | **Linux**    | apt · dnf · pacman · zypper · apk                          |
+    | **macOS**    | Homebrew                                                    |
+    | **Windows**  | MSYS2 · winget · choco · scoop · direct download fallback  |
 
 === "uv"
 
-````
-```sh
-uv tool install just-makeit
-just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
-bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
-```
-````
+    ```sh
+    uv tool install just-makeit
+    just-makeit install-deps        # cmake + C compiler + numpy, cross-platform
+    bash <(curl -fsSL https://just-buildit.github.io/just-makeit/quickstart.sh)
+    ```
 
 === "docker"
 
