@@ -2460,12 +2460,33 @@ def make_methods_ctx(
         else:
             # Fixed-output wrapper
             _p_cleanup = ""
-            if has_params:
+            if has_params and has_arg:
+                # Primary array/scalar arg + extra params — unify via
+                # _build_params_parse so array args get PyArray_FROM_OTF.
+                _x_param = {"name": "x", "type": arg_type}
+                _combined = [_x_param] + list(params)
+                parse_block, _p_call, _p_cleanup = _build_params_parse(
+                    _combined
+                )
+                call_args_c = f"self->handle, {_p_call}"
+                fn_sig = f"{Component}Object *self, PyObject *args"
+                meth_flags = "METH_VARARGS"
+            elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(params)
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
+            elif has_arg and arg_type.endswith("[]"):
+                # Array primary arg, no extra params.
+                _x_param = {"name": "x", "type": arg_type}
+                parse_block, _p_call, _p_cleanup = _build_params_parse(
+                    [_x_param]
+                )
+                call_args_c = f"self->handle, {_p_call}"
+                fn_sig = f"{Component}Object *self, PyObject *args"
+                meth_flags = "METH_VARARGS"
             elif has_arg:
+                # Scalar primary arg, no extra params.
                 parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
                 call_args_c = "self->handle, x"
                 fn_sig = f"{Component}Object *self, PyObject *args"
@@ -2473,7 +2494,9 @@ def make_methods_ctx(
             else:
                 parse_block = ""
                 call_args_c = "self->handle"
-                fn_sig = f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
+                fn_sig = (
+                    f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
+                )
                 meth_flags = "METH_NOARGS"
 
             if multi_output:

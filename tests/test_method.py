@@ -1023,3 +1023,86 @@ class TestMethodWithArrayParam:
 
     def test_no_placeholders(self, arr_method):
         _check_no_placeholders(arr_method)
+
+
+class TestMethodArrayArgNoParams:
+    """Bug fix: array arg_type (not --param) must emit PyArray_FROM_OTF, not
+    'float[] x;' invalid C syntax."""
+
+    @pytest.fixture()
+    def add_method(self, project):
+        method_run(
+            project,
+            "nco",
+            "add",
+            None,
+            "float[]",
+            "void",
+            False,
+            [],
+        )
+        return project
+
+    def test_ext_c_has_pyarray_from_otf(self, add_method):
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "PyArray_FROM_OTF" in ext
+
+    def test_ext_c_no_invalid_array_decl(self, add_method):
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "float[] x" not in ext
+
+    def test_ext_c_passes_ptr_and_len(self, add_method):
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "x_len" in ext
+
+    def test_ext_c_has_decref(self, add_method):
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "Py_DECREF(x_arr)" in ext
+
+    def test_no_placeholders(self, add_method):
+        _check_no_placeholders(add_method)
+
+
+class TestMethodArrayArgWithParams:
+    """Bug fix: when arg_type is an array AND --param is present, primary arg x
+    must not disappear from the parse block or C call."""
+
+    @pytest.fixture()
+    def madd_method(self, project):
+        method_run(
+            project,
+            "nco",
+            "madd",
+            None,
+            "float[]",
+            "void",
+            False,
+            [],
+            params=[("h", "float[]")],
+        )
+        return project
+
+    def test_ext_c_parses_both_args(self, madd_method):
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "x_arr" in ext
+        assert "h_arr" in ext
+
+    def test_ext_c_passes_x_to_c(self, madd_method):
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "x," in ext or "x_len" in ext
+
+    def test_ext_c_passes_h_to_c(self, madd_method):
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "h_len" in ext
+
+    def test_ext_c_format_has_two_O(self, madd_method):
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert '"OO"' in ext
+
+    def test_ext_c_decrefs_both(self, madd_method):
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        assert "Py_DECREF(x_arr)" in ext
+        assert "Py_DECREF(h_arr)" in ext
+
+    def test_no_placeholders(self, madd_method):
+        _check_no_placeholders(madd_method)
