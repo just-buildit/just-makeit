@@ -5319,18 +5319,46 @@ bench: build
 \t\t[ -f "$$f" ] && echo "--- $$f ---" && $(PYTHON) "$$f" && echo; \\
 \tdone
 
+coverage:
+\tcmake -B $(BUILD_DIR)/cov -S . $(CMAKE_GEN_FLAG) \\
+\t\t-DCMAKE_BUILD_TYPE=Debug \\
+\t\t-DCMAKE_C_FLAGS="--coverage -O0" \\
+\t\t-DPython3_EXECUTABLE=$(PYTHON)
+\tcmake --build $(BUILD_DIR)/cov --parallel $(NPROC)
+\tctest --test-dir $(BUILD_DIR)/cov --output-on-failure
+\tlcov --capture --directory $(BUILD_DIR)/cov \\
+\t\t--output-file $(BUILD_DIR)/cov/coverage.info \\
+\t\t--ignore-errors inconsistent 2>/dev/null || \\
+\t  lcov --capture --directory $(BUILD_DIR)/cov \\
+\t\t--output-file $(BUILD_DIR)/cov/coverage.info
+\tlcov --remove $(BUILD_DIR)/cov/coverage.info '/usr/*' '*/tests/*' \\
+\t\t--output-file $(BUILD_DIR)/cov/coverage_filtered.info
+\tmkdir -p docs/coverage/c
+\tgenhtml $(BUILD_DIR)/cov/coverage_filtered.info \\
+\t\t--output-directory docs/coverage/c
+\t@echo "C coverage: docs/coverage/c/index.html"
+\t$(PYTHON) -m pytest src/ \\
+\t\t--cov=<<package>> \\
+\t\t--cov-report=html:docs/coverage/python \\
+\t\t--cov-report=term-missing
+\t@echo "Python coverage: docs/coverage/python/index.html"
+
 just-build: build
 \tmkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 \tcp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
 
-docs:
-\t@command -v doxygen >/dev/null 2>&1 || \
+docs: build
+\t@command -v doxygen >/dev/null 2>&1 || \\
 \t  { echo "doxygen not found — install it first"; exit 1; }
 \tdoxygen Doxyfile
-\t@echo "Docs written to docs/doxygen/html/index.html"
+\t@echo "C API docs: docs/doxygen/html/index.html"
+\t@command -v zensical >/dev/null 2>&1 || \\
+\t  { echo "zensical not found — pip install zensical mkdocstrings-python"; exit 1; }
+\tzensical build
+\t@echo "Python API docs: site/index.html"
 
 clean:
-\trm -rf $(BUILD_DIR)
+\trm -rf $(BUILD_DIR) site docs/coverage docs/doxygen
 \tfind src -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
 
 help:
@@ -5340,7 +5368,8 @@ help:
 \t@echo "  make               Configure + build"
 \t@echo "  make test          Run CTest + <<py_test_label>>"
 \t@echo "  make bench         Run C + Python benchmarks"
-\t@echo "  make docs          Generate Doxygen API docs"
+\t@echo "  make coverage      C (lcov) + Python (pytest-cov) coverage reports"
+\t@echo "  make docs          Doxygen (C) + Zensical (Python) API docs"
 \t@echo "  make clean         Remove build artifacts"
 \t@echo ""
 """
@@ -5366,6 +5395,76 @@ EXCLUDE_PATTERNS       = */pyex_common.h */clib_common.h
 FULL_PATH_NAMES        = NO
 JAVADOC_AUTOBRIEF      = YES
 OPTIMIZE_OUTPUT_FOR_C  = YES
+"""
+
+# ── zensical.toml ────────────────────────────────────────────────────────────
+
+ZENSICAL_TOML = """\
+# <<project>> — Zensical documentation configuration
+# Build docs:  make docs
+# Serve live:  zensical serve
+
+[project]
+site_name        = "<<project>>"
+site_description = "TODO: describe your project."
+docs_dir         = "docs"
+site_dir         = "site"
+
+nav = [
+  { "Home" = "index.md" },
+  { "API"  = "api.md"   },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "navigation.instant",
+  "navigation.top",
+  "search.highlight",
+]
+
+[project.plugins.mkdocstrings]
+[project.plugins.mkdocstrings.handlers.python]
+paths           = ["src"]
+docstring_style = "numpy"
+show_source     = true
+"""
+
+# ── docs/index.md ────────────────────────────────────────────────────────────
+
+DOCS_INDEX_MD = """\
+# <<project>>
+
+TODO: describe your project.
+
+## Quick start
+
+```python
+from <<package>> import ...
+```
+
+## C API
+
+After running `make docs`, the C API reference is at
+`docs/doxygen/html/index.html`.
+
+## Python API
+
+See the [API](api.md) page.
+"""
+
+# ── docs/api.md ──────────────────────────────────────────────────────────────
+
+DOCS_API_MD = """\
+# API Reference
+
+::: <<package>>
+    options:
+      show_source: true
+      members: true
+      inherited_members: false
 """
 
 # ── pyproject.toml ───────────────────────────────────────────────────────────
@@ -5691,6 +5790,10 @@ __pycache__/
 *.pyd
 .venv/
 compile_commands.json
+site/
+docs/doxygen/
+docs/coverage/
+.coverage
 """
 
 # ── README.md ────────────────────────────────────────────────────────────────
