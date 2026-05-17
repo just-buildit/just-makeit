@@ -23,6 +23,9 @@ from pathlib import Path
 
 FILENAME = "just-makeit.toml"
 
+# Increment this whenever a new migration is added to _upgrade.py.
+CURRENT_SCHEMA = 2
+
 
 def load(root: Path) -> dict:
     path = root / FILENAME
@@ -149,6 +152,17 @@ def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     ]
 
 
+def schema_version(cfg: dict) -> int:
+    """Return the project's schema version (1 for pre-schema projects)."""
+    return int(cfg.get("project", {}).get("schema", 1))
+
+
+def set_schema_version(cfg: dict, version: int) -> dict:
+    """Set the schema version in-place and return cfg."""
+    cfg.setdefault("project", {})["schema"] = str(version)
+    return cfg
+
+
 def project_name(cfg: dict) -> str:
     return cfg.get("project", {}).get("name", "")
 
@@ -190,6 +204,7 @@ def from_new(
             "perf": "true" if perf else "false",
             "pytest": "true" if pytest_ else "false",
             "pytest_benchmark": "true" if pytest_benchmark_ else "false",
+            "schema": str(CURRENT_SCHEMA),
         }
     }
 

@@ -18,6 +18,7 @@ def _make_project_ctx(
     project: str,
     version: str = "0.1.0",
     pytest_: bool = False,
+    pytest_benchmark_: bool = False,
 ) -> dict[str, str]:
     if pytest_:
         ensure_win = (
@@ -31,6 +32,18 @@ def _make_project_ctx(
         ensure_unix = ""
         cmd_win = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
         cmd_unix = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
+
+    if pytest_benchmark_:
+        bench_py_cmd = (
+            "$(PYTHON) -m pytest src/<<package>>/benchmarks/ --benchmark-only -v"
+        )
+    else:
+        bench_py_cmd = (
+            "@for f in src/<<package>>/benchmarks/bench_*.py; do \\\n"
+            "\t\t[ -f \"$$f\" ] && echo \"--- $$f ---\" && $(PYTHON) \"$$f\" && echo; \\\n"
+            "\tdone"
+        )
+
     return {
         "package": project,
         "PACKAGE": project.upper(),
@@ -42,6 +55,7 @@ def _make_project_ctx(
         "py_test_cmd_win": cmd_win,
         "py_test_cmd_unix": cmd_unix,
         "py_test_label": "pytest" if pytest_ else "unittest",
+        "bench_py_cmd": bench_py_cmd,
     }
 
 
@@ -82,7 +96,9 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx = _make_project_ctx(
+        project, pytest_=pytest_, pytest_benchmark_=pytest_benchmark_
+    )
 
     def r(tmpl):
         return T.render(tmpl, ctx)

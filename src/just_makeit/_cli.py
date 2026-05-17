@@ -281,6 +281,22 @@ def _colorize(text: str) -> str:
     return "".join(out)
 
 
+def _warn_schema() -> None:
+    """Print a warning if the project's schema is behind CURRENT_SCHEMA."""
+    from . import _config as C
+
+    cfg = C.load(Path.cwd())
+    if not cfg:
+        return
+    v = C.schema_version(cfg)
+    if v < C.CURRENT_SCHEMA:
+        print(
+            f"warning: project schema is v{v}, current is v{C.CURRENT_SCHEMA}. "
+            "Run 'just-makeit upgrade' to get new features.",
+            file=sys.stderr,
+        )
+
+
 def main() -> None:
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
@@ -295,6 +311,7 @@ def main() -> None:
         _cmd_new(args[1:])
 
     elif cmd == "module":
+        _warn_schema()
         if len(args) < 2:
             print("error: 'module' requires a module name.", file=sys.stderr)
             sys.exit(1)
@@ -303,16 +320,19 @@ def main() -> None:
         _module.run(Path.cwd(), args[1])
 
     elif cmd == "object":
+        _warn_schema()
         from ._cli_object import run as _cmd_object
 
         _cmd_object(args[1:])
 
     elif cmd == "method":
+        _warn_schema()
         from ._cli_method import run as _cmd_method
 
         _cmd_method(args[1:])
 
     elif cmd == "property":
+        _warn_schema()
         if len(args) < 3:
             print(
                 "error: 'property' requires an object name and a property name.",
@@ -370,11 +390,13 @@ def main() -> None:
         )
 
     elif cmd == "function":
+        _warn_schema()
         from ._cli_function import run as _cmd_function
 
         _cmd_function(args[1:])
 
     elif cmd == "add":
+        _warn_schema()
         from . import _add
         from ._cli_parse import parse_state_flag
 
@@ -478,6 +500,11 @@ def main() -> None:
         from . import _example
 
         _example.run(args[1] if len(args) > 1 else None)
+
+    elif cmd == "upgrade":
+        from . import _upgrade
+
+        _upgrade.run(Path.cwd())
 
     elif cmd == "version":
         from . import __version__

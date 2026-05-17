@@ -20,6 +20,7 @@ nav = [
   ]},
   { "Artifacts"          = "artifacts.md"    },
   { "Configuration"      = "configuration.md"},
+  { "Upgrading"          = "upgrading.md"    },
   { "Stateful vs Pure"   = "pure.md"         },
   { "Performance"        = "perf.md"         },
   { "State Types"        = "types.md"        },
