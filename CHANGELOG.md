@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.0] — 2026-05-17
+
+### Added
+
+- **`just-makeit upgrade`**: schema-versioned migration system for existing
+  projects. Running `just-makeit upgrade` from a project root applies all
+  pending migrations idempotently — existing user-edited files are never
+  overwritten, and `just-makeit.toml` keys are only added, never removed.
+  Mutating commands (`object`, `module`, `method`, `property`, `function`,
+  `add`) now warn on stderr when the project schema is behind `CURRENT_SCHEMA`.
+
+- **Schema 1 → 2 migration**: adds documentation scaffolding (`zensical.toml`,
+  `docs/index.md`, `docs/api.md`) to projects created before v0.12.0. New
+  projects scaffold these files automatically.
+
+______________________________________________________________________
+
 ## [0.11.5] — 2026-05-16
 
 ### Fixed
