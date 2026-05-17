@@ -160,7 +160,10 @@ def _try_docs(proj: Path) -> None:
     assert (proj / "docs" / "doxygen" / "html" / "index.html").exists()
 
     if not shutil.which("zensical"):
-        print("  [full_workflow] skipping Python docs — zensical not found")
+        print(
+            "  [full_workflow] skipping Python docs — "
+            "uv add --dev zensical mkdocstrings-python"
+        )
         return
     r = subprocess.run(
         [sys.executable, "-c", "import mkdocstrings"],
@@ -168,7 +171,8 @@ def _try_docs(proj: Path) -> None:
     )
     if r.returncode != 0:
         print(
-            "  [full_workflow] skipping Python docs — mkdocstrings-python not installed"
+            "  [full_workflow] skipping Python docs — "
+            "uv add --dev mkdocstrings-python"
         )
         return
     _cmd(["zensical", "build"], cwd=proj)

@@ -5353,7 +5353,7 @@ docs: build
 \tdoxygen Doxyfile
 \t@echo "C API docs: docs/doxygen/html/index.html"
 \t@command -v zensical >/dev/null 2>&1 || \\
-\t  { echo "zensical not found — pip install zensical mkdocstrings-python"; exit 1; }
+\t  { echo "zensical not found — uv add --dev zensical mkdocstrings-python"; exit 1; }
 \tzensical build
 \t@echo "Python API docs: site/index.html"
 
