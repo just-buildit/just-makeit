@@ -90,49 +90,67 @@ Types (--arg-type / --return-type / --param / --state):
   Append [N] for fixed-length state: float[64]  double _Complex[32]
 
 Examples:
-  # Scaffold a project
-  jm new my_filter                                        # project scaffold only
-  jm new my_filter --object my_filter                     # project + first object
+  # project scaffold only
+  jm new my_filter
+
+  # project + first object
+  jm new my_filter --object my_filter
+
+  # object with state variables
   jm new my_bpf --object bpf --state center:double --state bw:double
-  jm new my_filters --module filter                       # project + one module
-  jm new my_dsp --module osc --module env                 # project + two modules
 
-  # Add objects
-  jm object sink --arg-type "float _Complex" --return-type void  # sink
-  jm object gen  --arg-type void --return-type "float _Complex"  # generator
-  jm object nco  --arg-type void --return-type "float _Complex" --mutable
-  jm object engine --state rate:double:1.0                # standalone stateful object
-  jm object norm --state scale:double:1.0                 # object with one state var
-  jm object fir --module filter                           # object in a module
+  # project + one module / two modules
+  jm new my_filters --module filter
+  jm new my_dsp --module osc --module env
 
-  # Add methods
+  # sink object (no return value)
+  jm object sink --arg-type "float _Complex" --return-type void
+
+  # generator object (no input)
+  jm object gen --arg-type void --return-type "float _Complex"
+
+  # mutable generator (NCO, counter)
+  jm object nco --arg-type void --return-type "float _Complex" --mutable
+
+  # standalone stateful object / object with state var / object in a module
+  jm object engine --state rate:double:1.0
+  jm object norm --state scale:double:1.0
+  jm object fir --module filter
+
+  # named execute method with params
   just-makeit method nco configure --module dsp \\
       --param freq:float --param phase:float --return-type void
+
+  # method returning runtime-length array
   just-makeit method resamp execute_ctrl --module dsp \\
       --param ctrl:"float _Complex[]" --return-type size_t
+
+  # variable-output generator method
   just-makeit method nco execute_cf32 --module dsp \\
       --arg-type void --return-type "float _Complex" --variable-output
+
+  # dual-output method
   just-makeit method nco execute_u32_ovf --module dsp \\
       --arg-type void --return-type uint32_t --variable-output --multi-output uint8_t
 
-  # Add a module-level function
+  # module-level function
   just-makeit function apply_window --module fft \\
       --param data:"float _Complex[]" --return-type void
 
-  # Add properties
+  # properties (read-only and writable)
   jm property nco phase --module dsp --type uint32_t
   jm property buffer dropped --type size_t
 
-  # Add state / constructor params
-  jm add --state order:int:4                              # add state var
-  jm add --param n_taps:int:16                            # add constructor parameter
+  # add state var / constructor param
+  jm add --state order:int:4
+  jm add --param n_taps:int:16
 
-  # Config and build
-  jm config                                               # show project config
-  jm config version 0.2.0                                 # set version
-  just-makeit build                                       # build wheel into dist/
-  just-makeit test                                        # run all tests
-  just-makeit dry-run                                     # preview build plan
+  # config, build, test
+  jm config
+  jm config version 0.2.0
+  jm build
+  jm test
+  jm dry-run
 """
 
 
@@ -165,10 +183,19 @@ def _colorize(text: str) -> str:
         return re.sub(r"(--[\w-]+)", lambda m: c(CYAN, m.group(1)), s)
 
     def italicize_desc(s: str) -> str:
-        # Description follows 2+ spaces after the signature; starts with [A-Z]
-        m = re.match(r"^(.*?\S)(\s{2,})([A-Z].*)$", s)
+        # Case A: no signature — leading spaces then description (perf, script,
+        # dry-run, etc.). Without this, the non-greedy .*?\S latches onto a
+        # capital mid-description (e.g. JM_HOT, CLI) and starts italic there.
+        m = re.match(r"^(\s{2,})([A-Z].*)$", s)
         if m:
-            return m.group(1) + m.group(2) + c(ITALIC, m.group(3))
+            desc = m.group(2).replace(RST, RST + ITALIC)
+            return m.group(1) + ITALIC + desc + RST
+        # Case B: signature + whitespace + description. \s+ (not \s{2,}) so
+        # that 1-space gaps like --state name:type[:default] Initial... match.
+        m = re.match(r"^(.*?\S)(\s+)([A-Z].*)$", s)
+        if m:
+            desc = m.group(3).replace(RST, RST + ITALIC)
+            return m.group(1) + m.group(2) + ITALIC + desc + RST
         return s
 
     lines = text.splitlines(keepends=True)
@@ -233,8 +260,13 @@ def _colorize(text: str) -> str:
                 r"(\s+#.*)$", lambda m: c(DIM, m.group(1)), raw
             )
             raw = re.sub(
-                r"^(  )(just-makeit|jm)(\s)",
-                lambda m: m.group(1) + c(BOLD_GREEN, m.group(2)) + m.group(3),
+                r"^(  )(just-makeit|jm)(\s+)([a-z][\w-]*)",
+                lambda m: (
+                    m.group(1)
+                    + c(BOLD_GREEN, m.group(2))
+                    + m.group(3)
+                    + c(BOLD_GREEN, m.group(4))
+                ),
                 raw,
             )
             raw = re.sub(

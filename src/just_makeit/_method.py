@@ -123,9 +123,17 @@ def _methods_c_stub_fixed(
         suppress_names = " ".join(suppress_parts)
         suppress = f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
     elif has_arg:
-        arg_disp = T._ctype_display(arg_type)
-        c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
-        suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
+        if T.is_array_param_type(arg_type):
+            elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+            c_params = (
+                f"{component}_state_t *state, "
+                f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
+            )
+            suppress = f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
+        else:
+            arg_disp = T._ctype_display(arg_type)
+            c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
@@ -207,10 +215,17 @@ def _build_method_prototype(
             f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
         )
     elif has_arg:
-        c_params = (
-            f"{component}_state_t *state, "
-            f"{T._ctype_display(arg_type)} x{extra_params}{out_param}"
-        )
+        if T.is_array_param_type(arg_type):
+            elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+            c_params = (
+                f"{component}_state_t *state, "
+                f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
+            )
+        else:
+            c_params = (
+                f"{component}_state_t *state, "
+                f"{T._ctype_display(arg_type)} x{extra_params}{out_param}"
+            )
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
 

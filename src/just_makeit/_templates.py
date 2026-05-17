@@ -2305,11 +2305,20 @@ def make_methods_ctx(
                     f" {c_param_str}{extra_params}{out_type_param});"
                 )
             elif has_arg:
-                decl_lines.append(
-                    f"{ret_disp} {component}_{name}"
-                    f"({component}_state_t *state,"
-                    f" {arg_disp} x{extra_params}{out_type_param});"
-                )
+                if is_array_param_type(arg_type):
+                    _e_disp = _ctype_display(array_elem_ctype(arg_type))
+                    decl_lines.append(
+                        f"{ret_disp} {component}_{name}"
+                        f"({component}_state_t *state,"
+                        f" const {_e_disp} *x, size_t x_len"
+                        f"{extra_params}{out_type_param});"
+                    )
+                else:
+                    decl_lines.append(
+                        f"{ret_disp} {component}_{name}"
+                        f"({component}_state_t *state,"
+                        f" {arg_disp} x{extra_params}{out_type_param});"
+                    )
             else:
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
