@@ -31,16 +31,34 @@ def _methods_c_stub_variable(
     arg_type: str,
     return_type: str,
     multi_output: list[str],
+    params: list[tuple[str, str]] | None = None,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
+    params = params or []
 
     if has_arg:
         arg_disp = T._ctype_display(arg_type)
         step_param = f", const {arg_disp} *in, size_t n_in"
+        suppress_in = "    (void)in; (void)n_in;"
+    elif params:
+        p_parts: list[str] = []
+        suppress_parts: list[str] = []
+        for pn, pt in params:
+            if T.is_array_param_type(pt):
+                elem_disp = T._ctype_display(T.array_elem_ctype(pt))
+                p_parts.append(f"const {elem_disp} *{pn}")
+                p_parts.append(f"size_t {pn}_len")
+                suppress_parts += [f"(void){pn};", f"(void){pn}_len;"]
+            else:
+                p_parts.append(f"{T._ctype_display(pt)} {pn}")
+                suppress_parts.append(f"(void){pn};")
+        step_param = ", " + ", ".join(p_parts)
+        suppress_in = "    " + " ".join(suppress_parts)
     else:
         step_param = ", size_t n"
+        suppress_in = "    (void)n;"
 
     all_extra = list(multi_output)
     extra_out_params = "".join(
@@ -64,12 +82,11 @@ def _methods_c_stub_variable(
         f"{step_param}, {ret_disp} *out{extra_out_params})",
         "{",
         "    (void)state;",
+        suppress_in,
+        "    (void)out;",
+        "    return 0; /* placeholder */",
+        "}",
     ]
-    if has_arg:
-        lines.append("    (void)in; (void)n_in;")
-    else:
-        lines.append("    (void)n;")
-    lines += ["    (void)out;", "    return 0; /* placeholder */", "}"]
     return "\n".join(lines) + "\n"
 
 
@@ -182,11 +199,20 @@ def _build_method_prototype(
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
 
     if variable_output:
-        step_param = (
-            f", const {T._ctype_display(arg_type)} *in, size_t n_in"
-            if has_arg
-            else ", size_t n"
-        )
+        if has_arg:
+            step_param = f", const {T._ctype_display(arg_type)} *in, size_t n_in"
+        elif params:
+            p_parts: list[str] = []
+            for pn, pt in params:
+                if T.is_array_param_type(pt):
+                    elem_disp = T._ctype_display(T.array_elem_ctype(pt))
+                    p_parts.append(f"const {elem_disp} *{pn}")
+                    p_parts.append(f"size_t {pn}_len")
+                else:
+                    p_parts.append(f"{T._ctype_display(pt)} {pn}")
+            step_param = ", " + ", ".join(p_parts)
+        else:
+            step_param = ", size_t n"
         return "\n".join(
             [
                 f"size_t {component}_{name}_max_out({component}_state_t *state);",
@@ -298,7 +324,8 @@ def run(
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
     if variable_output:
         stub = _methods_c_stub_variable(
-            object_name, method_name, arg_type, return_type, multi_output
+            object_name, method_name, arg_type, return_type, multi_output,
+            params=[(p[0], p[1]) for p in params],
         )
     else:
         stub = _methods_c_stub_fixed(

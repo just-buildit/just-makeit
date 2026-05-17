@@ -2269,6 +2269,23 @@ def make_methods_ctx(
                     f" const {arg_disp} *in, size_t n_in,"
                     f" {ret_disp} *out{extra_params});"
                 )
+            elif has_params:
+                _vp_parts: list[str] = []
+                for _p in params:
+                    if is_array_param_type(_p["type"]):
+                        _e = _ctype_display(array_elem_ctype(_p["type"]))
+                        _vp_parts.append(f"const {_e} *{_p['name']}")
+                        _vp_parts.append(f"size_t {_p['name']}_len")
+                    else:
+                        _vp_parts.append(
+                            f"{_ctype_display(_p['type'])} {_p['name']}"
+                        )
+                decl_lines.append(
+                    f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
+                    f"size_t {component}_{name}({component}_state_t *state,"
+                    f" {', '.join(_vp_parts)},"
+                    f" {ret_disp} *out{extra_params});"
+                )
             else:
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
@@ -2367,6 +2384,69 @@ def make_methods_ctx(
                     f" (size_t)n, self->_{name}_buf"
                 )
                 decref_in = "    Py_DECREF(in_arr);\n"
+            elif has_params:
+                # params drive the output length; parse each array param as
+                # a numpy array and use the first array's length as n.
+                _pb_lines: list[str] = []
+                _cd_parts: list[str] = ["self->handle"]
+                _dr_lines: list[str] = []
+                _fmt = ""
+                _fmt_args: list[str] = []
+                _first_arr: str | None = None
+                for _p in params:
+                    _pn = _p["name"]
+                    _pt = _p["type"]
+                    if is_array_param_type(_pt):
+                        _pe = array_elem_ctype(_pt)
+                        _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
+                        _pe_disp = _ctype_display(_pe)
+                        _pb_lines += [
+                            f"    PyObject *{_pn}_obj = NULL;",
+                        ]
+                        _fmt += "O"
+                        _fmt_args.append(f"&{_pn}_obj")
+                        _pb_lines += [
+                            f"    PyArrayObject *{_pn}_arr = NULL;",
+                        ]
+                        _cd_parts.append(
+                            f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)"
+                        )
+                        _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
+                        _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
+                        if _first_arr is None:
+                            _first_arr = _pn
+                    else:
+                        _pt_meta = _CTYPE_META.get(_pt, {})
+                        _fmt_char = _pt_meta.get("fmt", "d")
+                        _parse_t = _pt_meta.get("parse_type", _ctype_display(_pt))
+                        _pb_lines.append(f"    {_parse_t} {_pn} = 0;")
+                        _fmt += _fmt_char
+                        _fmt_args.append(f"&{_pn}")
+                        _cd_parts.append(_pn)
+                _cd_parts.append(f"self->_{name}_buf")
+                _fmt_str = '", "'.join([f'"{_fmt}', ", ".join(_fmt_args) + ")"])
+                parse_block = (
+                    "\n".join(_pb_lines) + "\n"
+                    f'    if (!PyArg_ParseTuple(args, "{_fmt}", '
+                    + ", ".join(_fmt_args) + "))\n"
+                    "        return NULL;\n"
+                )
+                # Convert obj pointers to arrays after parse
+                _conv_lines: list[str] = []
+                for _p in params:
+                    _pn = _p["name"]
+                    _pt = _p["type"]
+                    if is_array_param_type(_pt):
+                        _pe = array_elem_ctype(_pt)
+                        _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
+                        _conv_lines += [
+                            f"    {_pn}_arr = (PyArrayObject *)PyArray_FROM_OTF(",
+                            f"        {_pn}_obj, {_pe_np}, NPY_ARRAY_C_CONTIGUOUS);",
+                            f"    if (!{_pn}_arr) return NULL;",
+                        ]
+                parse_block += "\n".join(_conv_lines) + "\n" if _conv_lines else ""
+                call_data = ", ".join(_cd_parts)
+                decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
             else:
                 parse_block = (
                     "    Py_ssize_t n = 1;\n"
@@ -2452,8 +2532,20 @@ def make_methods_ctx(
                 if len(_all_rts_vo) > 1
                 else "ndarray"
             )
+            if has_arg:
+                _vo_sig_arg = "x"
+                _vo_call_example = f"obj.{name}({_in_example})"
+            elif has_params:
+                _first_ap = next(
+                    (p for p in params if is_array_param_type(p["type"])), None
+                )
+                _vo_sig_arg = _first_ap["name"] if _first_ap else "n=1"
+                _vo_call_example = f"obj.{name}(np.zeros(4))"
+            else:
+                _vo_sig_arg = "n=1"
+                _vo_call_example = f"obj.{name}(4)"
             _vo_doc_lines = [
-                f"{name}({'x' if has_arg else 'n=1'}) -> {_ret_hint_vo}",
+                f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
                 "Zero-copy view into pre-allocated output buffer.",
                 "",
@@ -2461,10 +2553,7 @@ def make_methods_ctx(
                 *_from_line,
                 _obj_line,
             ]
-            if has_arg:
-                _vo_doc_lines.append(f"    >>> y = obj.{name}({_in_example})")
-            else:
-                _vo_doc_lines.append(f"    >>> y = obj.{name}(4)")
+            _vo_doc_lines.append(f"    >>> y = {_vo_call_example}")
             _vo_doc_lines += [
                 f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}.dtype",
                 f"    dtype('{_dtype_strs_vo[0]}')",
