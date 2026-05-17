@@ -33,6 +33,7 @@ examples = [
     ("filter_module", "filter_module.md", "Filter module"),
     ("iqfile", "iqfile.md", "IQ file"),
     ("pytest_style", "pytest_style.md", "pytest style"),
+    ("full_workflow", "full_workflow.md", "Full workflow"),
 ]
 
 
