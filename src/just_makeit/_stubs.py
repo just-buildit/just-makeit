@@ -243,7 +243,7 @@ def _build_class_docstring(
 
 
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
-    Component = _title(obj)
+    Component = C.class_name(cfg, obj) or _title(obj)
     state_vars = C.state_vars(cfg, obj)
     arg_type = C.arg_type(cfg, obj)
     return_type = C.return_type(cfg, obj)

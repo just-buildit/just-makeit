@@ -29,6 +29,7 @@ def run(args: list[str]) -> None:
     method_name_obj = "run"
     impl_spec: str | None = None
     replacements: list[tuple[str, str]] = []
+    class_name_obj: str | None = None
 
     remaining = args[1:]
     i = 0
@@ -157,6 +158,13 @@ def run(args: list[str]) -> None:
 
             replacements.append(_I.parse_replace(remaining[i]))
             i += 1
+        elif tok == "--class-name":
+            i += 1
+            if i >= len(remaining):
+                print("error: --class-name requires a name", file=sys.stderr)
+                sys.exit(1)
+            class_name_obj = remaining[i]
+            i += 1
         else:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
@@ -193,4 +201,5 @@ def run(args: list[str]) -> None:
         variable_output=variable_output_obj,
         multi_output=multi_output_obj,
         method_name=method_name_obj,
+        class_name=class_name_obj,
     )

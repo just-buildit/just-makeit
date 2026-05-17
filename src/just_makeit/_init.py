@@ -155,6 +155,7 @@ def run(
     init_params: list[tuple[str, str, str]] = (),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
+    class_name: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -195,6 +196,8 @@ def run(
         )
 
     ctx = _make_component_ctx(component)
+    if class_name is not None:
+        ctx["Component"] = class_name
     ctx.update(
         {
             "package": pkg,
@@ -397,6 +400,7 @@ def run(
         no_step_=no_step,
         mutable_=mutable,
         init_params_=init_params,
+        class_name_=class_name,
     )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

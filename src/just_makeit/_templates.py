@@ -2927,6 +2927,16 @@ def make_step_ctx(
             f"        obj = {Component}({py_create_args})\n"
             f"        obj.destroy()\n"
         )
+        _lifecycle_pure = (
+            f"\n"
+            f"def test_context_manager():\n"
+            f"    with {Component}({py_create_args}) as obj:\n"
+            f"        pass\n"
+            f"\n"
+            f"def test_destroy():\n"
+            f"    obj = {Component}({py_create_args})\n"
+            f"    obj.destroy()\n"
+        )
         return {
             "step_header_decl": "",
             "step_impl_def": "",
@@ -2942,6 +2952,8 @@ def make_step_ctx(
             "pyi_step_methods": "",
             "step_pytest_methods": "",
             "lifecycle_pytest_methods": _lifecycle,
+            "step_pytest_methods_pure": "",
+            "lifecycle_pytest_methods_pure": _lifecycle_pure,
         }
 
     if arg_type == "void":

@@ -202,6 +202,11 @@ def return_type(cfg: dict, component: str) -> str:
     return cfg.get(component, {}).get("return_type", "float _Complex")
 
 
+def class_name(cfg: dict, component: str) -> str | None:
+    """Return the overridden Python class name, or None to use title-cased component."""
+    return cfg.get(component, {}).get("class_name") or None
+
+
 def add_component(
     cfg: dict,
     component: str,
@@ -213,6 +218,7 @@ def add_component(
     no_step_: bool = False,
     mutable_: bool = False,
     init_params_: list[tuple[str, str, str]] = (),
+    class_name_: str | None = None,
 ) -> dict:
     rt = (
         return_type_
@@ -235,6 +241,8 @@ def add_component(
         entry["init_params"] = [
             {"name": n, "type": t, "default": d} for n, t, d in init_params_
         ]
+    if class_name_:
+        entry["class_name"] = class_name_
     cfg[component] = entry
     return cfg
 
@@ -272,7 +280,10 @@ def _dump(cfg: dict) -> str:
 
     for comp in components(cfg):
         comp_data = cfg[comp]
-        scalar_keys = ("arg_type", "return_type", "mutable", "no_state", "no_step")
+        scalar_keys = (
+            "arg_type", "return_type", "mutable", "no_state", "no_step",
+            "class_name",
+        )
         lines.append(f"[{comp}]")
         for k in scalar_keys:
             if k in comp_data:

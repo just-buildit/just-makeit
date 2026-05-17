@@ -42,9 +42,12 @@ def _make_object_ctx(
     no_step: bool = False,
     mutable: bool = False,
     init_params: list[tuple[str, str, str]] = (),
+    class_name: str | None = None,
 ) -> dict:
     """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
+    if class_name is not None:
+        ctx["Component"] = class_name
     ctx.update(
         {
             "module": module,
@@ -316,6 +319,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             no_step=C.is_no_step(cfg, obj),
             mutable=C.is_mutable(cfg, obj),
             init_params=C.init_params(cfg, obj),
+            class_name=C.class_name(cfg, obj),
         )
         ctx.update(
             T.make_methods_ctx(
@@ -443,6 +447,7 @@ def run(
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
+    class_name: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -481,6 +486,7 @@ def run(
             mutable=mutable,
             impl_body=impl_body,
             init_params=init_params,
+            class_name=class_name,
             _hint=_hint and not variable_output,
         )
         if variable_output:
@@ -542,6 +548,7 @@ def run(
         no_step=no_step,
         mutable=mutable,
         init_params=init_params,
+        class_name=class_name,
     )
 
     def r(tmpl):
@@ -605,6 +612,7 @@ def run(
         no_step_=no_step,
         mutable_=mutable,
         init_params_=init_params,
+        class_name_=class_name,
     )
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__

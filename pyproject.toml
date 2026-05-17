@@ -54,9 +54,11 @@ testpaths = ["tests"]
 [dependency-groups]
 dev = [
     "just-buildit",
+    "mkdocstrings-python>=2.0.3",
     "numpy",
     "pre-commit",
     "pytest",
     "pytest-benchmark",
+    "pytest-cov>=7.1.0",
     "zensical>=0.0.29",
 ]
