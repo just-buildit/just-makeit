@@ -327,6 +327,70 @@ def run(
     # 3. Regenerate ext.c (with updated method wrappers)
     if module:
         _regenerate_module(root, cfg, module, pkg)
+        # Also regenerate the per-object _core.h so that the new method
+        # declaration is present for the module ext.c's #include.
+        state_vars_list = C.state_vars(cfg, object_name)
+        arg_type_ = C.arg_type(cfg, object_name)
+        return_type_ = C.return_type(cfg, object_name)
+        perf_ = C.is_perf(cfg)
+        version_ = C.project_version(cfg)
+        ctx_ = _make_component_ctx(object_name)
+        ctx_.update(
+            {
+                "module": module,
+                "Module": _to_title(module),
+                "package": pkg,
+                "PACKAGE": pkg.upper(),
+                "project": pkg.replace("_", "-"),
+                "project_underscore": pkg,
+                "version": version_,
+            }
+        )
+        ctx_.update(T.make_sample_ctx(arg_type_, return_type_))
+        ctx_.update(
+            T.make_state_ctx(
+                object_name,
+                _to_title(object_name),
+                state_vars_list,
+                array_args=C.array_args(cfg, object_name),
+                no_state=C.is_no_state(cfg, object_name),
+            )
+        )
+        ctx_.update(T.make_perf_ctx(perf_))
+        ctx_.update(
+            T.make_step_ctx(
+                ctx_,
+                arg_type_,
+                return_type_,
+                no_step=C.is_no_step(cfg, object_name),
+                mutable=C.is_mutable(cfg, object_name),
+            )
+        )
+        ctx_.update(
+            T.make_methods_ctx(
+                object_name,
+                _to_title(object_name),
+                C.methods(cfg, object_name),
+                pkg=pkg,
+                py_create_args=ctx_.get("py_create_args", ""),
+            )
+        )
+        ctx_.update(
+            T.make_properties_ctx(
+                object_name,
+                _to_title(object_name),
+                C.properties(cfg, object_name),
+                frozenset(n for n, _, _ in state_vars_list),
+            )
+        )
+        core_h_ = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
+        if core_h_.exists():
+            core_h_.write_text(
+                T.render(T.COMPONENT_CORE_H, ctx_), encoding="utf-8"
+            )
+            print(f"  update  {core_h_}")
     else:
         # Standalone: regenerate _core.h (adds method_decls) + _ext.c
 

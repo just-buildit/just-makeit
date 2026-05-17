@@ -39,6 +39,7 @@ Repository = "https://github.com/just-buildit/just-makeit"
 
 [project.scripts]
 just-makeit = "just_makeit._cli:main"
+jm = "just_makeit._cli:main"
 jm-install-deps = "just_makeit._scripts:install_deps"
 jm-run-tests = "just_makeit._scripts:run_tests"
 jm-docker-e2e = "just_makeit._scripts:docker_e2e"

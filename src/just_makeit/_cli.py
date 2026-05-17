@@ -1,11 +1,14 @@
 """_cli.py — just-makeit command-line interface."""
 
+import os
+import re
 import sys
 from pathlib import Path
 
 
 _USAGE = """\
-Usage: just-makeit <command> [options]
+
+Usage: just-makeit  (alias: jm)  <command> [options]
 
 Commands:
   new <proj> [dir] [OPTIONS]    Create a new project scaffold.
@@ -83,21 +86,26 @@ Commands:
 Types (--arg-type / --return-type / --param / --state):
   void  float  double  float _Complex  double _Complex
   int  int8_t…int64_t  uint8_t…uint64_t  size_t  ptrdiff_t
-  Append [] for array params: float _Complex[]  int16_t[]  …
-  Append [N] for fixed-length state fields: float[64]  double _Complex[32]
+  Append [] for array params:    float _Complex[]  int16_t[]  …
+  Append [N] for fixed-length state: float[64]  double _Complex[32]
 
 Examples:
-  just-makeit new my_filter                                # project scaffold only
-  just-makeit new my_filter --object my_filter            # project + first object
-  just-makeit new my_bpf --object bpf --state center:double --state bw:double
-  just-makeit new my_filters --module filter              # project + one module
-  just-makeit new my_dsp --module osc --module env        # project + two modules
-  just-makeit object sink --arg-type "float _Complex" --return-type void  # sink object
-  just-makeit object gen  --arg-type void --return-type "float _Complex"  # read-only generator
-  just-makeit object nco  --arg-type void --return-type "float _Complex" --mutable  # mutating generator (NCO, counter)
-  just-makeit object engine --state rate:double:1.0       # standalone stateful object
-  just-makeit object norm --state scale:double:1.0        # object with one state var
-  just-makeit object fir --module filter                  # object in a module
+  # Scaffold a project
+  jm new my_filter                                        # project scaffold only
+  jm new my_filter --object my_filter                     # project + first object
+  jm new my_bpf --object bpf --state center:double --state bw:double
+  jm new my_filters --module filter                       # project + one module
+  jm new my_dsp --module osc --module env                 # project + two modules
+
+  # Add objects
+  jm object sink --arg-type "float _Complex" --return-type void  # sink
+  jm object gen  --arg-type void --return-type "float _Complex"  # generator
+  jm object nco  --arg-type void --return-type "float _Complex" --mutable
+  jm object engine --state rate:double:1.0                # standalone stateful object
+  jm object norm --state scale:double:1.0                 # object with one state var
+  jm object fir --module filter                           # object in a module
+
+  # Add methods
   just-makeit method nco configure --module dsp \\
       --param freq:float --param phase:float --return-type void
   just-makeit method resamp execute_ctrl --module dsp \\
@@ -106,24 +114,144 @@ Examples:
       --arg-type void --return-type "float _Complex" --variable-output
   just-makeit method nco execute_u32_ovf --module dsp \\
       --arg-type void --return-type uint32_t --variable-output --multi-output uint8_t
+
+  # Add a module-level function
   just-makeit function apply_window --module fft \\
       --param data:"float _Complex[]" --return-type void
-  just-makeit property nco phase --module dsp --type uint32_t
-  just-makeit property buffer dropped --type size_t
-  just-makeit add --state order:int:4                     # add state var
-  just-makeit add --param n_taps:int:16                   # add constructor parameter
-  just-makeit config                                      # show project config
-  just-makeit config version 0.2.0                        # set version
+
+  # Add properties
+  jm property nco phase --module dsp --type uint32_t
+  jm property buffer dropped --type size_t
+
+  # Add state / constructor params
+  jm add --state order:int:4                              # add state var
+  jm add --param n_taps:int:16                            # add constructor parameter
+
+  # Config and build
+  jm config                                               # show project config
+  jm config version 0.2.0                                 # set version
   just-makeit build                                       # build wheel into dist/
   just-makeit test                                        # run all tests
   just-makeit dry-run                                     # preview build plan
 """
 
 
+def _color_supported() -> bool:
+    return (
+        hasattr(sys.stdout, "isatty")
+        and sys.stdout.isatty()
+        and "NO_COLOR" not in os.environ
+        and os.environ.get("TERM") != "dumb"
+    )
+
+
+def _colorize(text: str) -> str:
+    if not _color_supported():
+        return text
+
+    RST = "\x1b[0m"
+    BOLD = "\x1b[1m"
+    DIM = "\x1b[2m"
+    ITALIC = "\x1b[3m"
+    CYAN = "\x1b[36m"
+    BOLD_CYAN = "\x1b[1;36m"
+    BOLD_GREEN = "\x1b[1;32m"
+    BOLD_YELLOW = "\x1b[1;33m"
+
+    def c(code: str, s: str) -> str:
+        return code + s + RST
+
+    def colorize_flags(s: str) -> str:
+        return re.sub(r"(--[\w-]+)", lambda m: c(CYAN, m.group(1)), s)
+
+    def italicize_desc(s: str) -> str:
+        # Description follows 2+ spaces after the signature; starts with [A-Z]
+        m = re.match(r"^(.*?\S)(\s{2,})([A-Z].*)$", s)
+        if m:
+            return m.group(1) + m.group(2) + c(ITALIC, m.group(3))
+        return s
+
+    lines = text.splitlines(keepends=True)
+    out = []
+    section = ""
+
+    for line in lines:
+        raw = line.rstrip("\n")
+        nl = "\n" if line.endswith("\n") else ""
+
+        if raw.startswith("Usage:"):
+            colored = (
+                c(BOLD_CYAN, "Usage:")
+                + " "
+                + c(BOLD_GREEN, "just-makeit")
+                + c(DIM, "  (alias: jm)  ")
+                + c(BOLD_GREEN, "<command>")
+                + " "
+                + c(CYAN, "[options]")
+            )
+            out.append(colored + nl)
+            continue
+
+        if raw.startswith("Commands:"):
+            section = "commands"
+            out.append(c(BOLD_CYAN, raw) + nl)
+            continue
+
+        if raw.startswith("Types ("):
+            section = "types"
+            out.append(c(BOLD_CYAN, colorize_flags(raw)) + nl)
+            continue
+
+        if raw.startswith("Examples:"):
+            section = "examples"
+            out.append(c(BOLD_CYAN, raw) + nl)
+            continue
+
+        if section == "commands":
+            m = re.match(r"^(  )([a-z][\w-]*)(.*)$", raw)
+            if m:
+                indent, cmd, rest = m.groups()
+                rest = italicize_desc(colorize_flags(rest))
+                out.append(indent + c(BOLD_GREEN, cmd) + rest + nl)
+            else:
+                out.append(italicize_desc(colorize_flags(raw)) + nl)
+
+        elif section == "types":
+            # Bold the type-list lines; colorize flags on the Append lines
+            if re.match(r"^  \w", raw) and "Append" not in raw:
+                out.append(c(BOLD_YELLOW, raw) + nl)
+            else:
+                out.append(colorize_flags(raw) + nl)
+
+        elif section == "examples":
+            # Group header comments (leading "  # ...")
+            if re.match(r"^  # ", raw):
+                out.append(c(DIM, raw) + nl)
+                continue
+            # Dim trailing comments, bold command name, cyan flags
+            raw = re.sub(
+                r"(\s+#.*)$", lambda m: c(DIM, m.group(1)), raw
+            )
+            raw = re.sub(
+                r"^(  )(just-makeit|jm)(\s)",
+                lambda m: m.group(1) + c(BOLD_GREEN, m.group(2)) + m.group(3),
+                raw,
+            )
+            raw = re.sub(
+                r"(--[\w-]+)", lambda m: c(CYAN, m.group(1)), raw
+            )
+            out.append(raw + nl)
+
+        else:
+            out.append(line)
+
+    return "".join(out)
+
+
 def main() -> None:
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
-        print(_USAGE, end="")
+        print(_colorize(_USAGE), end="")
         return
 
     cmd = args[0]
