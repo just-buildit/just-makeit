@@ -354,3 +354,38 @@ class TestBoolPropertyStub:
     def test_bool_not_int(self, bool_prop_project):
         pyi = _pyi(bool_prop_project, "dsp", "myproj")
         assert "def is_real(self) -> int:" not in pyi
+
+
+class TestMultiOutputArrayStub:
+    @pytest.fixture()
+    def multi_out_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "nco",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="void",
+            return_type="void",
+        )
+        method_run(
+            root,
+            "nco",
+            "steps_u32_ovf",
+            "dsp",
+            "uint32_t[]",
+            "uint32_t[]",
+            True,
+            ["uint8_t[]"],
+        )
+        return root
+
+    def test_multi_output_tuple_annotation(self, multi_out_project):
+        pyi = _pyi(multi_out_project, "dsp", "myproj")
+        assert "tuple[NDArray[np.uint32], NDArray[np.uint8]]" in pyi
+
+    def test_no_any_in_multi_output(self, multi_out_project):
+        pyi = _pyi(multi_out_project, "dsp", "myproj")
+        assert "NDArray[Any]" not in pyi

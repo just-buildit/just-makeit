@@ -75,8 +75,9 @@ def _py(ctype: str) -> str:
 
 
 def _np(ctype: str) -> str:
-    """Return the numpy dtype string for a scalar C type (for NDArray hints)."""
-    return _CTYPE_TO_NP.get(ctype, "Any")
+    """Return the numpy dtype string for a C type (scalar or array) for NDArray hints."""
+    elem = ctype[:-2] if ctype.endswith("[]") else ctype
+    return _CTYPE_TO_NP.get(elem, "Any")
 
 
 # ── per-object class stub ─────────────────────────────────────────────────────

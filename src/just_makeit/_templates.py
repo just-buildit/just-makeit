@@ -2085,7 +2085,8 @@ def make_methods_ctx(
         return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
 
     def _pyi_ndarray(ctype: str) -> str:
-        meta = _CTYPE_META.get(ctype)
+        elem = ctype[:-2] if ctype.endswith("[]") else ctype
+        meta = _CTYPE_META.get(elem)
         return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
 
     _EMPTY: dict[str, str] = {
@@ -2125,7 +2126,8 @@ def make_methods_ctx(
         params: list[dict] = m.get("params", [])  # [{name, type}, ...]
 
         ret_disp = _ctype_display(return_type)
-        ret_meta = _CTYPE_META.get(return_type)
+        _ret_elem = return_type[:-2] if return_type.endswith("[]") else return_type
+        ret_meta = _CTYPE_META.get(_ret_elem)
         ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
 
         out_type: str | None = m.get("out_type")
@@ -2364,7 +2366,10 @@ def make_methods_ctx(
                 call_extra = "".join(
                     f", self->_{name}_buf_{i}" for i in range(1, len(all_rts))
                 )
-                np_enums = [_NP_ENUM[_CTYPE_META[rt]["py_type"]] for rt in all_rts]
+                np_enums = [
+                    _NP_ENUM[_CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"]]
+                    for rt in all_rts
+                ]
                 arr_decls = "\n".join(
                     f"    PyObject *arr{i} = PyArray_SimpleNewFromData(\n"
                     f"        1, &dim, {np_enums[i]}, self->_{name}_buf"
@@ -2423,7 +2428,8 @@ def make_methods_ctx(
                 )
             _all_rts_vo = [return_type] + list(multi_output)
             _dtype_strs_vo = [
-                _CTYPE_META[rt]["py_type"].replace("np.", "") for rt in _all_rts_vo
+                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"].replace("np.", "")
+                for rt in _all_rts_vo
             ]
             _ret_hint_vo = (
                 f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
