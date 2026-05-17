@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.1] — 2026-05-17
+
+### Fixed
+
+- `full_workflow` example: guard the step-7 pytest invocation with an
+  availability check and skip gracefully when pytest is not installed,
+  matching the same pattern used by the pytest-benchmark and coverage steps.
+
+______________________________________________________________________
+
 ## [0.12.0] — 2026-05-17
 
 ### Added

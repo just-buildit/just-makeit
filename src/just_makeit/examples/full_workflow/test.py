@@ -288,15 +288,25 @@ p.write_text(src)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
     # 7. pytest (ema tests) — exit code 5 means no tests collected, also OK
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", "src/", "-q"],
-        cwd=proj,
+    _has_pytest = subprocess.run(
+        [sys.executable, "-c", "import pytest"],
         capture_output=True,
-        text=True,
-    )
-    if r.returncode not in (0, 5):
-        raise AssertionError(
-            f"pytest failed:\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    ).returncode == 0
+    if _has_pytest:
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", "src/", "-q"],
+            cwd=proj,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode not in (0, 5):
+            raise AssertionError(
+                f"pytest failed:\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+            )
+    else:
+        print(
+            "  [full_workflow] skipping pytest run — "
+            "install with: pip install pytest"
         )
 
     # 8. unittest (gain tests)
