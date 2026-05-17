@@ -1,8 +1,8 @@
 # full_workflow example
 
-A complete development lifecycle walkthrough — scaffold, implement, test,
-benchmark, measure coverage, and publish API docs — all from a single
-just-makeit project.
+A complete development lifecycle walkthrough — scaffold two components with
+**both** test and benchmark styles, implement, test, benchmark, measure
+coverage, and publish API docs — all from a single just-makeit project.
 
 ## TL;DR — see it work first
 
@@ -18,9 +18,9 @@ just-makeit example full_workflow
 | ------------ | -------------------------- | --------------------------------------- |
 | Build        | CMake + GCC                | `build/`                                |
 | C tests      | CTest                      | pass/fail per test                      |
-| Python tests | pytest                     | pass/fail per test                      |
+| Python tests | unittest **and** pytest    | both styles, side by side               |
 | C benchmarks | `bench_*_core` executables | throughput in MSa/s                     |
-| Python bench | `bench_*.py` scripts       | throughput in MSa/s                     |
+| Python bench | timeit **and** pytest-bm   | both styles, side by side               |
 | C coverage   | gcov + lcov → genhtml      | `docs/coverage/c/index.html`            |
 | Python cov   | pytest-cov                 | `docs/coverage/python/index.html`       |
 | C API docs   | Doxygen                    | `docs/doxygen/html/index.html`          |
@@ -48,19 +48,32 @@ uv add --dev pytest-cov mkdocstrings-python zensical
 
 ## 1. Scaffold
 
+This example creates a project with **two components** to show both test and
+benchmark styles in the same project:
+
 ```sh
-just-makeit new my_gain \
+# Component 1: gain — unittest tests, timeit/perf_counter benchmarks (default)
+just-makeit new my_dsp \
     --object gain \
     --arg-type float \
     --return-type float \
     --state gain:float:1.0
-cd my_gain
+cd my_dsp
+
+# Component 2: ema — pytest tests, pytest-benchmark benchmarks
+just-makeit object ema \
+    --arg-type float \
+    --return-type float \
+    --state alpha:float:0.1 \
+    --state prev:float:0.0 \
+    --pytest \
+    --pytest-benchmark
 ```
 
 Along with the usual C and Python files, every project now gets:
 
 ```
-my_gain/
+my_dsp/
 ├── zensical.toml          # Zensical + mkdocstrings config
 ├── docs/
 │   ├── index.md           # project home page stub
@@ -69,16 +82,32 @@ my_gain/
 └── Makefile               # all targets below pre-wired
 ```
 
+The two components demonstrate the two styles you can mix:
+
+| Component | Test style | Benchmark style |
+| --------- | ---------- | --------------- |
+| `gain`    | `unittest` | `timeit` / `perf_counter` standalone script |
+| `ema`     | `pytest`   | `pytest-benchmark` fixture |
+
 ---
 
 ## 2. Implement
 
 ```c
-/* native/inc/gain/gain_core.h */
+/* native/src/gain/gain_core.c */
 static inline float
 gain_step(const gain_state_t *state, float x)
 {
-    return state->gain * x;
+    return x * state->gain;
+}
+
+/* native/src/ema/ema_core.c */
+static inline float
+ema_step(ema_state_t *state, float x)
+{
+    float y = state->alpha * x + (1.0f - state->alpha) * state->prev;
+    state->prev = y;
+    return y;
 }
 ```
 
@@ -88,46 +117,84 @@ gain_step(const gain_state_t *state, float x)
 
 ```sh
 make        # cmake configure + build (Release)
-make test   # CTest (C lifecycle) + pytest (Python API)
+make test   # CTest (C) + unittest (gain) + pytest (ema)
 ```
 
+`make test` runs all three test layers:
+
 ```
-Test project .../my_gain/build
+Test project .../my_dsp/build
     Start 1: test_gain_core
-1/1 Test #1: test_gain_core ........... Passed  0.00s
+    Start 2: test_ema_core
+1/2 Test #1: test_gain_core ............. Passed  0.00s
+2/2 Test #2: test_ema_core .............. Passed  0.00s
 
-1/1 tests passed
+2/2 tests passed
 
-src/my_gain/tests/test_gain.py ........ 8 passed
+# unittest (gain)
+test_reset (my_dsp.tests.test_gain.TestGain) ... ok
+test_step  (my_dsp.tests.test_gain.TestGain) ... ok
+
+# pytest (ema)
+src/my_dsp/tests/test_ema.py ........ 8 passed
 ```
 
 ---
 
-## 4. Benchmarks
+## 4. Benchmarks — two styles
 
 ```sh
 make bench
 ```
 
-Runs all `build/bench_*_core` executables (C) and all `src/*/benchmarks/bench_*.py`
-scripts (Python) in one shot:
+The `bench` Makefile target automatically dispatches to the right runner for
+each component.
+
+### timeit / perf_counter style (gain)
+
+`bench_gain.py` is a **standalone script** — runnable with plain `python`:
+
+```sh
+python src/my_dsp/benchmarks/bench_gain.py
+```
 
 ```
---- build/bench_gain_core ---
-step   1k:       1.2 µs  (833.3 MSa/s)
-steps  1k:       1.1 µs  (909.1 MSa/s)
-step  64k:      52.4 µs  (1220.7 MSa/s)
-steps 64k:      49.8 µs  (1285.1 MSa/s)
-
---- src/my_gain/benchmarks/bench_gain.py ---
 step    1k:       2.3 µs  (434.8 MSa/s)
 steps   1k:       1.8 µs  (555.6 MSa/s)
 step   64k:     118.0 µs  (542.4 MSa/s)
 steps  64k:     110.5 µs  (579.2 MSa/s)
 ```
 
-The C path is always faster; the Python path includes CPython overhead but
-shares the same compiled kernel.
+This style has **no dependencies** beyond numpy — ideal for quick checks in
+any environment. The file ends with `if __name__ == "__main__":` so it's
+directly executable.
+
+### pytest-benchmark style (ema)
+
+`bench_ema.py` uses the `benchmark` fixture and integrates with the full
+pytest reporting infrastructure:
+
+```sh
+pytest src/my_dsp/benchmarks/bench_ema.py --benchmark-only -v
+```
+
+```
+benchmark: 3 tests, min 5 rounds (of min 200.00us), 5.00s max time
+Name                     Min       Max      Mean  StdDev   Median
+---------------------------------------------------------------------
+test_bench_step        1.2µs     1.8µs     1.3µs   0.1µs    1.3µs
+test_bench_steps_1k    1.1µs     1.5µs     1.2µs   0.1µs    1.2µs
+test_bench_steps_64k  49.8µs    52.0µs    50.5µs   0.6µs   50.3µs
+```
+
+This style integrates with CI — results are stored in `.benchmarks/` for
+regression tracking with `--benchmark-compare`.
+
+### Choosing a style
+
+Use `--pytest-benchmark` when you want CI regression tracking and rich
+reporting. Use the default (timeit/perf_counter) when you want zero extra
+dependencies and simple printout benchmarks.
 
 ---
 
@@ -142,21 +209,18 @@ collects C coverage via **lcov/genhtml** and Python coverage via
 **pytest-cov**:
 
 ```
-C coverage: docs/coverage/c/index.html
+C coverage:      docs/coverage/c/index.html
 Python coverage: docs/coverage/python/index.html
 
 ---------- coverage: platform linux ----------
-Name                                Stmts   Miss  Cover
---------------------------------------------------------
-src/my_gain/__init__.py                 2      0   100%
-src/my_gain/gain.pyi                    9      9     0%
-src/my_gain/tests/test_gain.py         18      0   100%
---------------------------------------------------------
-TOTAL                                  29      9    69%
+Name                                  Stmts   Miss  Cover
+----------------------------------------------------------
+src/my_dsp/__init__.py                    2      0   100%
+src/my_dsp/tests/test_gain.py            18      0   100%
+src/my_dsp/tests/test_ema.py             22      0   100%
+----------------------------------------------------------
+TOTAL                                    42      0   100%
 ```
-
-Open `docs/coverage/c/index.html` to see line-by-line C coverage,
-or `docs/coverage/python/index.html` for the Python report.
 
 ### How coverage is wired
 
@@ -168,7 +232,7 @@ The Makefile `coverage` target:
 3. Runs `lcov --capture` to collect `.gcda` files, then `lcov --remove` to
    strip system headers and test files.
 4. Calls `genhtml` to render `docs/coverage/c/index.html`.
-5. Runs `pytest --cov=<package> --cov-report=html:docs/coverage/python`.
+5. Runs `pytest --cov=my_dsp --cov-report=html:docs/coverage/python`.
 
 Both reports are written under `docs/` and excluded from version control via
 `.gitignore`.
@@ -216,7 +280,7 @@ the entire package:
 ```markdown
 # API Reference
 
-::: my_gain
+::: my_dsp
     options:
       show_source: true
       members: true
@@ -230,9 +294,9 @@ mkdocstrings options:
 
 ```toml
 [project]
-site_name    = "my_gain"
-site_url     = "https://example.com/my_gain/"
-repo_url     = "https://github.com/you/my_gain"
+site_name    = "my_dsp"
+site_url     = "https://example.com/my_dsp/"
+repo_url     = "https://github.com/you/my_dsp"
 docs_dir     = "docs"
 site_dir     = "site"
 
@@ -255,8 +319,8 @@ zensical serve
 
 ```sh
 make              # configure + build (Release)
-make test         # CTest + pytest
-make bench        # C + Python benchmarks
+make test         # CTest + unittest (gain) + pytest (ema)
+make bench        # C benchmarks + timeit (gain) + pytest-bm (ema)
 make coverage     # C (lcov) + Python (pytest-cov) HTML reports
 make docs         # Doxygen (C API) + Zensical (Python API)
 make clean        # remove build/, site/, docs/coverage/, docs/doxygen/

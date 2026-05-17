@@ -153,6 +153,8 @@ def run(
     mutable: bool = False,
     impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
+    pytest_: bool | None = None,
+    pytest_benchmark_: bool | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -185,6 +187,12 @@ def run(
     version = C.project_version(cfg)
     if perf is None:
         perf = C.is_perf(cfg)
+    if pytest_ is not None:
+        cfg.setdefault("project", {})["pytest"] = "true" if pytest_ else "false"
+    if pytest_benchmark_ is not None:
+        cfg.setdefault("project", {})["pytest_benchmark"] = (
+            "true" if pytest_benchmark_ else "false"
+        )
 
     ctx = _make_component_ctx(component)
     ctx.update(

@@ -291,7 +291,9 @@ class TestMakeTestRunner:
 
     def test_cmake_default_no_pytest_invocation(self, tmp_path):
         mk = self._makefile(tmp_path)
-        assert "pytest src/" not in mk
+        # coverage always uses pytest-cov regardless of test style;
+        # check only that the *test runner* doesn't invoke pytest
+        assert "pytest src/ -v" not in mk
 
     def test_cmake_pytest_flag_uses_pytest(self, tmp_path):
         mk = self._makefile(tmp_path, pytest_=True)
