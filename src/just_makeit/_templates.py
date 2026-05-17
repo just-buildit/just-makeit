@@ -4826,11 +4826,14 @@ MODULE_CORE_C = """\
 
 MODULE_INIT_PY = """\
 # <<module>>/__init__.py — re-export all types from the C extension.
-import os as _os, sys as _sys
+import os as _os
+import sys as _sys
+
 if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
     _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
 del _os, _sys
-from .<<module>> import <<object_imports>>
+
+from .<<module>> import <<object_imports>>  # noqa: E402
 
 __all__ = [<<object_all>>]
 """
@@ -5315,9 +5318,7 @@ endif
 
 bench: build
 \t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
-\t@for f in src/<<package>>/benchmarks/bench_*.py; do \\
-\t\t[ -f "$$f" ] && echo "--- $$f ---" && $(PYTHON) "$$f" && echo; \\
-\tdone
+\t<<bench_py_cmd>>
 
 coverage:
 \tcmake -B $(BUILD_DIR)/cov -S . $(CMAKE_GEN_FLAG) \\
@@ -5501,11 +5502,14 @@ PACKAGE_INIT_PY_MINIMAL = """\
 
 PACKAGE_INIT_PY = """\
 \"\"\"<<package>> — <<Component>> component.\"\"\"
-import os as _os, sys as _sys
+import os as _os
+import sys as _sys
+
 if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
     _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
 del _os, _sys
-from .<<component>> import <<Component>>
+
+from .<<component>> import <<Component>>  # noqa: E402
 
 __all__ = ["<<Component>>"]
 """

@@ -161,7 +161,10 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
     """
     # Match the import line whether it has names or is empty (e.g. after
     # `just-makeit module foo` before any objects are added).
-    import_pat = re.compile(rf"^from \.{re.escape(module)} import(.*)$", re.MULTILINE)
+    import_pat = re.compile(
+        rf"^from \.{re.escape(module)} import([^#\n]*)(?:#[^\n]*)?$",
+        re.MULTILINE,
+    )
     all_pat = re.compile(r"^__all__\s*=\s*\[([^\]]*)\]", re.MULTILINE)
 
     existing_names: list[str] = []
@@ -185,7 +188,7 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
 
     imports_str = ", ".join(merged)
     all_str = ", ".join(f'"{n}"' for n in merged)
-    new_import = f"from .{module} import {imports_str}"
+    new_import = f"from .{module} import {imports_str}  # noqa: E402"
     new_all = f"__all__ = [{all_str}]"
 
     result = import_pat.sub(new_import, existing) if m else existing

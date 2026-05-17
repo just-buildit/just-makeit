@@ -311,9 +311,14 @@ def run(
             out_type,
         )
     if impl_body is not None:
+        import re as _re
+
         from . import _impl as I
 
-        stub = I.inject_body_into_stub(stub, impl_body)
+        body = impl_body
+        if variable_output and not _re.search(r"\breturn\b", body):
+            body = body.rstrip("\n") + "\nreturn n;"
+        stub = I.inject_body_into_stub(stub, body)
     _append_to_core_c(core_c, stub)
 
     # 2. Update config  (was step 3)
