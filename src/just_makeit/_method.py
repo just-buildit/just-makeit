@@ -98,6 +98,16 @@ def _methods_c_stub_fixed(
     if params:
         param_parts: list[str] = []
         suppress_parts: list[str] = []
+        if has_arg:
+            if T.is_array_param_type(arg_type):
+                elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+                param_parts.append(f"const {elem_disp} *x")
+                param_parts.append(f"size_t x_len")
+                suppress_parts.append(f"(void)x;")
+                suppress_parts.append(f"(void)x_len;")
+            else:
+                param_parts.append(f"{T._ctype_display(arg_type)} x")
+                suppress_parts.append(f"(void)x;")
         for n, t in params:
             if T.is_array_param_type(t):
                 elem_disp = T._ctype_display(T.array_elem_ctype(t))
@@ -179,6 +189,13 @@ def _build_method_prototype(
 
     if params:
         parts: list[str] = []
+        if has_arg:
+            if T.is_array_param_type(arg_type):
+                elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+                parts.append(f"const {elem_disp} *x")
+                parts.append(f"size_t x_len")
+            else:
+                parts.append(f"{T._ctype_display(arg_type)} x")
         for n, t in params:
             if T.is_array_param_type(t):
                 elem_disp = T._ctype_display(T.array_elem_ctype(t))

@@ -1106,3 +1106,20 @@ class TestMethodArrayArgWithParams:
 
     def test_no_placeholders(self, madd_method):
         _check_no_placeholders(madd_method)
+
+    def test_core_c_stub_has_x_ptr(self, madd_method):
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        assert "const float *x" in core
+
+    def test_core_c_stub_has_x_len(self, madd_method):
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        assert "size_t x_len" in core
+
+    def test_core_c_stub_has_h_ptr(self, madd_method):
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        assert "const float *h" in core
+
+    def test_core_h_prototype_has_x_and_h(self, madd_method):
+        hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        assert "const float *x" in hdr
+        assert "const float *h" in hdr

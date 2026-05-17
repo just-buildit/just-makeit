@@ -2282,8 +2282,15 @@ def make_methods_ctx(
             )
             out_type_param = f", {_ctype_display(out_type)} *out" if out_type else ""
             if has_params:
-                # Expand array params to (const elem_t *name, size_t name_len).
+                # Expand primary arg + extra params to C declarations.
                 p_parts: list[str] = []
+                if has_arg:
+                    if is_array_param_type(arg_type):
+                        _e_disp = _ctype_display(array_elem_ctype(arg_type))
+                        p_parts.append(f"const {_e_disp} *x")
+                        p_parts.append(f"size_t x_len")
+                    else:
+                        p_parts.append(f"{arg_disp} x")
                 for p in params:
                     if is_array_param_type(p["type"]):
                         e_disp = _ctype_display(array_elem_ctype(p["type"]))
