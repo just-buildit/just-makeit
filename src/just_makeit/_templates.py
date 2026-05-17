@@ -3546,22 +3546,56 @@ def make_step_ctx(
     out_np_dtype = ctx.get("out_np_dtype", "np.float32")
     # step() call for tests: void-input generators take no argument.
     _step_call_test = "obj.step()" if _is_void_arg else f"obj.step({in_py_test_val})"
+    # isinstance(y, None) is invalid; use `y is None` for void return types.
+    _assert_y = (
+        "assert y is None"
+        if is_void_return
+        else f"assert isinstance(y, {out_py_isinstance})"
+    )
     if steps_ext_fn:
         if _is_void_arg:
             # Generator: steps(n) takes an integer count, no input array,
             # no out-buffer variant.
+            if is_void_return:
+                step_pytest_methods = (
+                    f"\n"
+                    f"    def test_step_runs(self):\n"
+                    f"        obj = {Component}({py_create_args})\n"
+                    f"        y = obj.step()\n"
+                    f"        {_assert_y}\n"
+                    f"\n"
+                    f"    def test_steps_runs(self):\n"
+                    f"        obj = {Component}({py_create_args})\n"
+                    f"        assert obj.steps(64) is None\n"
+                )
+            else:
+                step_pytest_methods = (
+                    f"\n"
+                    f"    def test_step_runs(self):\n"
+                    f"        obj = {Component}({py_create_args})\n"
+                    f"        y = obj.step()\n"
+                    f"        {_assert_y}\n"
+                    f"\n"
+                    f"    def test_steps_shape_dtype(self):\n"
+                    f"        obj = {Component}({py_create_args})\n"
+                    f"        y = obj.steps(64)\n"
+                    f"        self.assertEqual(y.shape, (64,))\n"
+                    f"        self.assertEqual(y.dtype, {out_np_dtype})\n"
+                )
+        elif is_void_return:
+            # Scalar input, void return (mutable sink): steps(x) returns None,
+            # no output buffer argument.
             step_pytest_methods = (
                 f"\n"
                 f"    def test_step_runs(self):\n"
                 f"        obj = {Component}({py_create_args})\n"
-                f"        y = obj.step()\n"
-                f"        assert isinstance(y, {out_py_isinstance})\n"
+                f"        y = obj.step({in_py_test_val})\n"
+                f"        {_assert_y}\n"
                 f"\n"
-                f"    def test_steps_shape_dtype(self):\n"
+                f"    def test_steps_runs(self):\n"
                 f"        obj = {Component}({py_create_args})\n"
-                f"        y = obj.steps(64)\n"
-                f"        self.assertEqual(y.shape, (64,))\n"
-                f"        self.assertEqual(y.dtype, {out_np_dtype})\n"
+                f"        x = np.ones(64, dtype={in_np_dtype})\n"
+                f"        assert obj.steps(x) is None\n"
             )
         else:
             step_pytest_methods = (
@@ -3569,7 +3603,7 @@ def make_step_ctx(
                 f"    def test_step_runs(self):\n"
                 f"        obj = {Component}({py_create_args})\n"
                 f"        y = obj.step({in_py_test_val})\n"
-                f"        assert isinstance(y, {out_py_isinstance})\n"
+                f"        {_assert_y}\n"
                 f"\n"
                 f"    def test_steps_shape_dtype(self):\n"
                 f"        obj = {Component}({py_create_args})\n"
@@ -3593,14 +3627,14 @@ def make_step_ctx(
             f"    def test_step_runs(self):\n"
             f"        obj = {Component}({py_create_args})\n"
             f"        y = {_step_call_test}\n"
-            f"        assert isinstance(y, {out_py_isinstance})\n"
+            f"        {_assert_y}\n"
         )
     lifecycle_pytest_methods = (
         f"\n"
         f"    def test_context_manager(self):\n"
         f"        with {Component}({py_create_args}) as obj:\n"
         f"            y = {_step_call_test}\n"
-        f"        assert isinstance(y, {out_py_isinstance})\n"
+        f"        {_assert_y}\n"
         f"\n"
         f"    def test_destroy(self):\n"
         f"        obj = {Component}({py_create_args})\n"
@@ -3612,18 +3646,44 @@ def make_step_ctx(
     # Pure-pytest variants: top-level functions, no self, plain assertions.
     if steps_ext_fn:
         if _is_void_arg:
+            if is_void_return:
+                step_pytest_methods_pure = (
+                    f"\n"
+                    f"def test_step_runs():\n"
+                    f"    obj = {Component}({py_create_args})\n"
+                    f"    y = obj.step()\n"
+                    f"    {_assert_y}\n"
+                    f"\n"
+                    f"def test_steps_runs():\n"
+                    f"    obj = {Component}({py_create_args})\n"
+                    f"    assert obj.steps(64) is None\n"
+                )
+            else:
+                step_pytest_methods_pure = (
+                    f"\n"
+                    f"def test_step_runs():\n"
+                    f"    obj = {Component}({py_create_args})\n"
+                    f"    y = obj.step()\n"
+                    f"    {_assert_y}\n"
+                    f"\n"
+                    f"def test_steps_shape_dtype():\n"
+                    f"    obj = {Component}({py_create_args})\n"
+                    f"    y = obj.steps(64)\n"
+                    f"    assert y.shape == (64,)\n"
+                    f"    assert y.dtype == {out_np_dtype}\n"
+                )
+        elif is_void_return:
             step_pytest_methods_pure = (
                 f"\n"
                 f"def test_step_runs():\n"
                 f"    obj = {Component}({py_create_args})\n"
-                f"    y = obj.step()\n"
-                f"    assert isinstance(y, {out_py_isinstance})\n"
+                f"    y = obj.step({in_py_test_val})\n"
+                f"    {_assert_y}\n"
                 f"\n"
-                f"def test_steps_shape_dtype():\n"
+                f"def test_steps_runs():\n"
                 f"    obj = {Component}({py_create_args})\n"
-                f"    y = obj.steps(64)\n"
-                f"    assert y.shape == (64,)\n"
-                f"    assert y.dtype == {out_np_dtype}\n"
+                f"    x = np.ones(64, dtype={in_np_dtype})\n"
+                f"    assert obj.steps(x) is None\n"
             )
         else:
             step_pytest_methods_pure = (
@@ -3631,7 +3691,7 @@ def make_step_ctx(
                 f"def test_step_runs():\n"
                 f"    obj = {Component}({py_create_args})\n"
                 f"    y = obj.step({in_py_test_val})\n"
-                f"    assert isinstance(y, {out_py_isinstance})\n"
+                f"    {_assert_y}\n"
                 f"\n"
                 f"def test_steps_shape_dtype():\n"
                 f"    obj = {Component}({py_create_args})\n"
@@ -3655,14 +3715,14 @@ def make_step_ctx(
             f"def test_step_runs():\n"
             f"    obj = {Component}({py_create_args})\n"
             f"    y = {_step_call_test}\n"
-            f"    assert isinstance(y, {out_py_isinstance})\n"
+            f"    {_assert_y}\n"
         )
     lifecycle_pytest_methods_pure = (
         f"\n"
         f"def test_context_manager():\n"
         f"    with {Component}({py_create_args}) as obj:\n"
         f"        y = {_step_call_test}\n"
-        f"    assert isinstance(y, {out_py_isinstance})\n"
+        f"    {_assert_y}\n"
         f"\n"
         f"def test_destroy():\n"
         f"    obj = {Component}({py_create_args})\n"

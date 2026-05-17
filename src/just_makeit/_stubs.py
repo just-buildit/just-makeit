@@ -407,7 +407,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         "",
         "    def destroy(self) -> None:",
         '        """Release C resources immediately."""',
+        "",
         '    def __enter__(self) -> "' + Component + '": ...',
+        "",
         "    def __exit__(self, *args: object) -> None: ...",
     ]
 
