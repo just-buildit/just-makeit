@@ -272,6 +272,7 @@ def run(
     out_divisor: int = 1,
     impl_body: str | None = None,
     batch: bool = False,
+    no_bench: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -366,6 +367,8 @@ def run(
         method_entry["out_type"] = out_type
     if out_divisor != 1:
         method_entry["out_divisor"] = out_divisor
+    if no_bench:
+        method_entry["bench"] = False
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)
@@ -497,12 +500,21 @@ def run(
         # Re-render _core.h (to update method_decls) and _ext.c
         core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
+        no_step = C.is_no_step(cfg, object_name)
+        bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
         if core_h.exists():
             core_h.write_text(r(T.COMPONENT_CORE_H), encoding="utf-8")
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
+        bench_c = (
+            root / "native" / "benchmarks"
+            / f"bench_{object_name}_core.c"
+        )
+        if bench_c.exists():
+            bench_c.write_text(r(bench_c_tmpl), encoding="utf-8")
+            print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
         if pyi_path.exists():
             pyi_path.write_text(r(T.COMPONENT_PYI), encoding="utf-8")

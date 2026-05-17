@@ -550,6 +550,15 @@ def run(
         init_params=init_params,
         class_name=class_name,
     )
+    ctx.update(
+        T.make_methods_ctx(
+            ctx["component"],
+            ctx["Component"],
+            [],
+            pkg=pkg,
+            py_create_args=ctx.get("py_create_args", ""),
+        )
+    )
 
     def r(tmpl):
         return T.render(tmpl, ctx)

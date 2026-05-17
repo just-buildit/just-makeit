@@ -50,6 +50,7 @@ Commands:
     --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --batch                     Generate 1:1-rate array transform (allocates output per call).
+    --no-bench                  Exclude this method from the C benchmark.
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 

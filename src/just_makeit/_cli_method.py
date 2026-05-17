@@ -25,6 +25,7 @@ def run(args: list[str]) -> None:
     method_params: list[tuple[str, str]] = []
     out_type: str | None = None
     out_divisor: int = 1
+    no_bench = False
     impl_spec_m: str | None = None
     replacements_m: list[tuple[str, str]] = []
 
@@ -38,6 +39,9 @@ def run(args: list[str]) -> None:
                 print("error: --module requires a name", file=sys.stderr)
                 sys.exit(1)
             module = remaining[i]
+            i += 1
+        elif tok == "--no-bench":
+            no_bench = True
             i += 1
         elif tok == "--variable-output":
             variable_output = True
@@ -203,4 +207,5 @@ def run(args: list[str]) -> None:
         out_divisor=out_divisor,
         impl_body=impl_body_m,
         batch=batch_method,
+        no_bench=no_bench,
     )

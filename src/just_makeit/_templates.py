@@ -2050,6 +2050,161 @@ def make_perf_ctx(perf: bool) -> dict[str, str]:
     }
 
 
+def _bench_method_block(component: str, m: dict) -> str:
+    """Return a self-contained C bench timing block for method *m*.
+
+    Returns an empty string when the method should not be benchmarked
+    (``bench == False`` in the method dict, or ``variable_output`` methods
+    whose output size is indeterminate at bench time).
+
+    The generated block is wrapped in ``{}`` for scope isolation so that
+    per-method locals (buffers, sink variables) do not conflict with each
+    other or with the surrounding ``step()``/``steps()`` bench variables.
+
+    Parameters
+    ----------
+    component : str
+        Snake-case component name (e.g. ``"fir"``).
+    m : dict
+        Method dict with keys: name, arg_type, return_type, variable_output,
+        batch, params.  Same shape as the dicts in ``[[comp.methods]]``.
+
+    Returns
+    -------
+    str
+        C source fragment (indented 4 spaces, blank line before/after) ready
+        to paste into ``main()`` of the bench executable, or ``""`` to skip.
+    """
+    if m.get("bench") is False or m.get("variable_output"):
+        return ""
+
+    name: str = m["name"]
+    arg_type: str = m.get("arg_type", "void")
+    return_type: str = m.get("return_type", "float _Complex")
+    batch: bool = m.get("batch", False)
+    params: list[dict] = m.get("params", [])
+
+    has_arg = arg_type != "void"
+    has_ret = return_type != "void"
+    is_array_arg = arg_type.endswith("[]")
+
+    if has_arg:
+        arg_elem = arg_type[:-2] if is_array_arg else arg_type
+        arg_meta = _CTYPE_META[arg_elem]
+        arg_disp = _ctype_display(arg_type)
+        arg_elem_disp = _ctype_display(arg_elem)
+        arg_zero = arg_meta["zero"]
+
+    if has_ret:
+        ret_meta = _CTYPE_META.get(return_type)
+        ret_disp = _ctype_display(return_type) if ret_meta else return_type
+
+    # Build zero-value extra-param args for scalar methods.
+    param_args = ""
+    for p in params:
+        pt = p["type"]
+        if is_array_param_type(pt):
+            param_args += ", NULL, 0"
+        else:
+            pm = _CTYPE_META.get(pt, {})
+            param_args += f", {pm.get('zero', '0')}"
+
+    lines: list[str] = [f"    /* bench: {name}() */", "    {"]
+
+    if batch:
+        # Buffer bench: one call per outer iteration, measures throughput.
+        # Signature: void comp_name(state, [const arg_t *in,] size_t n, ret_t *out)
+        if has_arg:
+            lines += [
+                f"        {arg_disp} *{name}_in ="
+                f" ({arg_disp} *)calloc(BENCH_N,"
+                f" sizeof({arg_disp}));",
+            ]
+        ret_disp_b = _ctype_display(return_type)
+        lines += [
+            f"        {ret_disp_b} *{name}_out ="
+            f" ({ret_disp_b} *)malloc("
+            f"BENCH_N * sizeof({ret_disp_b}));",
+        ]
+        chk_vars = f"{name}_in && {name}_out" if has_arg else f"{name}_out"
+        lines += [
+            f"        if (!({chk_vars}))"
+            f" {{ fprintf(stderr, \"OOM\\n\"); return 1; }}",
+        ]
+        in_arg = f" {name}_in," if has_arg else ""
+        call = (
+            f"{component}_{name}(obj,{in_arg} BENCH_N, {name}_out)"
+        )
+        lines += [
+            f"        for (int i = 0; i < 4; i++)",
+            f"            {call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "        for (int r = 0; r < ITERATIONS; r++)",
+            f"            {call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "        sec = elapsed_sec(&t0, &t1);",
+            f'        printf("  {name}() %8.1f MSa/s\\n",',
+            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+        ]
+        if has_arg:
+            lines.append(f"        free({name}_in);")
+        lines.append(f"        free({name}_out);")
+
+    elif is_array_arg:
+        # Non-batch array-arg method: alloc input buffer, single call/iter.
+        # Signature: ret_t comp_name(state, const elem_t *x, size_t x_len, ...)
+        lines += [
+            f"        {arg_elem_disp} *{name}_in ="
+            f" ({arg_elem_disp} *)calloc("
+            f"BENCH_N, sizeof({arg_elem_disp}));",
+            f"        if (!{name}_in)"
+            f" {{ fprintf(stderr, \"OOM\\n\"); return 1; }}",
+        ]
+        if has_ret:
+            lines.append(
+                f"        volatile {ret_disp} {name}_sink;"
+            )
+        sink = f"{name}_sink = " if has_ret else ""
+        call = (
+            f"{component}_{name}(obj, {name}_in, BENCH_N{param_args})"
+        )
+        lines += [
+            f"        for (int i = 0; i < 4; i++)",
+            f"            {sink}{call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "        for (int r = 0; r < ITERATIONS; r++)",
+            f"            {sink}{call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "        sec = elapsed_sec(&t0, &t1);",
+            f'        printf("  {name}() %8.1f MSa/s\\n",',
+            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+            f"        free({name}_in);",
+        ]
+
+    else:
+        # Scalar method: inner loop × BENCH_N per outer iteration.
+        # Signature: ret_t comp_name(state, [arg_t x,] [param_t p, ...])
+        if has_ret:
+            lines.append(f"        volatile {ret_disp} {name}_sink;")
+        sink = f"{name}_sink = " if has_ret else ""
+        in_arg = f", {arg_zero}" if has_arg else ""
+        call = f"{component}_{name}(obj{in_arg}{param_args})"
+        lines += [
+            f"        for (int i = 0; i < 16; i++) {sink}{call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "        for (int r = 0; r < ITERATIONS; r++)",
+            "            for (int i = 0; i < BENCH_N; i++)",
+            f"                {sink}{call};",
+            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "        sec = elapsed_sec(&t0, &t1);",
+            f'        printf("  {name}() %8.1f MSa/s\\n",',
+            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+        ]
+
+    lines.append("    }")
+    return "\n".join(lines)
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -2097,6 +2252,7 @@ def make_methods_ctx(
         "extra_methods_c": "",
         "extra_methods_pymethoddef": "",
         "pyi_extra_methods": "",
+        "bench_methods_timing_block": "",
     }
     if not methods:
         return _EMPTY
@@ -2792,6 +2948,13 @@ def make_methods_ctx(
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
+    _method_bench_blocks = [
+        _bench_method_block(component, m) for m in methods
+    ]
+    _filled = [b for b in _method_bench_blocks if b]
+    bench_methods_timing_block = (
+        "\n" + "\n\n".join(_filled) if _filled else ""
+    )
     return {
         "method_decls": method_decls,
         "extra_buf_fields": "".join(buf_fields),
@@ -2800,6 +2963,7 @@ def make_methods_ctx(
         "extra_methods_c": "\n\n".join(method_c_parts),
         "extra_methods_pymethoddef": "".join(pmd_lines),
         "pyi_extra_methods": "\n" + "\n\n".join(pyi_lines) + "\n" if pyi_lines else "",
+        "bench_methods_timing_block": bench_methods_timing_block,
     }
 
 
@@ -5034,7 +5198,7 @@ main(void)
            (double)ITERATIONS * BENCH_N / sec / 1e6);
 
 <<bench_steps_timing_block>>
-
+<<bench_methods_timing_block>>
     <<component>>_destroy(obj);
 <<bench_free_in>>
 <<bench_free_out>>
