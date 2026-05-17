@@ -217,6 +217,78 @@ class TestUpgradeRun:
             assert "<<" not in content, f"unresolved placeholder in {path.name}"
 
 
+# ── RegenBench step ──────────────────────────────────────────────────────────
+
+class TestRegenBenchStep:
+    def _toml_with_method(self, name: str = "myproj") -> str:
+        return (
+            "[project]\n"
+            f'name = "{name}"\n'
+            'version = "0.1.0"\n'
+            'build = "cmake"\n'
+            'perf = "false"\n'
+            'pytest = "false"\n'
+            'pytest_benchmark = "false"\n'
+            f'schema = "{C.CURRENT_SCHEMA}"\n'
+            "\n"
+            "[engine]\n"
+            'arg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\n'
+            'mutable = "false"\n'
+            'no_state = "false"\n'
+            'no_step = "false"\n'
+            "\n"
+            "[[engine.state]]\n"
+            'name = "gain"\n'
+            'type = "double"\n'
+            'default = "1.0"\n'
+            "\n"
+            "[[engine.methods]]\n"
+            'name = "configure"\n'
+            'arg_type = "double"\n'
+            'return_type = "void"\n'
+        )
+
+    def test_regenerates_bench_file_with_method_block(self, tmp_path):
+        _write_toml(tmp_path / C.FILENAME, self._toml_with_method())
+        bench = tmp_path / "native" / "benchmarks" / "bench_engine_core.c"
+        bench.parent.mkdir(parents=True)
+        bench.write_text("/* old bench, no method blocks */\n", encoding="utf-8")
+
+        cfg = C.load(tmp_path)
+        ctx = U._build_ctx(cfg)
+        U._apply_step(tmp_path, U.RegenBench(), ctx)
+
+        content = bench.read_text(encoding="utf-8")
+        assert "configure" in content
+        assert "bench: configure()" in content
+        assert "<<" not in content
+
+    def test_skips_missing_bench_file(self, tmp_path):
+        _write_toml(tmp_path / C.FILENAME, self._toml_with_method())
+        # No bench file created — step should be a silent no-op.
+        cfg = C.load(tmp_path)
+        ctx = U._build_ctx(cfg)
+        U._apply_step(tmp_path, U.RegenBench(), ctx)  # must not raise
+
+    def test_no_bench_method_excluded(self, tmp_path):
+        toml = self._toml_with_method().replace(
+            '[[engine.methods]]\nname = "configure"\narg_type = "double"\nreturn_type = "void"\n',
+            '[[engine.methods]]\nname = "configure"\narg_type = "double"\nreturn_type = "void"\nbench = false\n',
+        )
+        _write_toml(tmp_path / C.FILENAME, toml)
+        bench = tmp_path / "native" / "benchmarks" / "bench_engine_core.c"
+        bench.parent.mkdir(parents=True)
+        bench.write_text("/* old */\n", encoding="utf-8")
+
+        cfg = C.load(tmp_path)
+        ctx = U._build_ctx(cfg)
+        U._apply_step(tmp_path, U.RegenBench(), ctx)
+
+        content = bench.read_text(encoding="utf-8")
+        assert "bench: configure()" not in content
+
+
 # ── _build_ctx ────────────────────────────────────────────────────────────────
 
 class TestBuildCtx:

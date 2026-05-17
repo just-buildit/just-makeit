@@ -45,6 +45,16 @@ class AddTomlKey:
     default: str
 
 
+@dataclass
+class RegenBench:
+    """Re-render bench_<comp>_core.c for every standalone component.
+
+    Unlike AddFile, this overwrites existing files so that new template
+    features (e.g. method timing blocks) land in projects that were
+    scaffolded before the feature was added.
+    """
+
+
 # Migration table: schema N → N+1.
 # Keep migrations append-only; never modify an existing entry.
 MIGRATIONS: dict[int, list] = {
@@ -53,6 +63,11 @@ MIGRATIONS: dict[int, list] = {
         AddFile("zensical.toml", "ZENSICAL_TOML"),
         AddFile("docs/index.md", "DOCS_INDEX_MD"),
         AddFile("docs/api.md", "DOCS_API_MD"),
+    ],
+    2: [
+        # Schema 3 regenerates bench files so method timing blocks appear
+        # in projects that were scaffolded before this feature was added.
+        RegenBench(),
     ],
 }
 
@@ -85,6 +100,62 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             section[step.key] = step.default
             C.save(root, target)
             print(f"  update  just-makeit.toml  [{step.section}] {step.key}")
+
+    elif isinstance(step, RegenBench):
+        cfg = C.load(root)
+        pkg = C.project_name(cfg)
+        version = C.project_version(cfg)
+        perf = C.is_perf(cfg)
+        for comp in C.components(cfg):
+            bench_c = (
+                root / "native" / "benchmarks" / f"bench_{comp}_core.c"
+            )
+            if not bench_c.exists():
+                continue
+            no_step = C.is_no_step(cfg, comp)
+            tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
+            comp_ctx: dict = {"component": comp, "Component": comp.title()}
+            comp_ctx.update({
+                "package": pkg,
+                "PACKAGE": pkg.upper(),
+                "project": pkg.replace("_", "-"),
+                "project_underscore": pkg,
+                "version": version,
+            })
+            arg_type = C.arg_type(cfg, comp)
+            return_type = C.return_type(cfg, comp)
+            comp_ctx.update(T.make_sample_ctx(arg_type, return_type))
+            comp_ctx.update(
+                T.make_state_ctx(
+                    comp,
+                    comp_ctx["Component"],
+                    C.state_vars(cfg, comp),
+                    array_args=C.array_args(cfg, comp),
+                    no_state=C.is_no_state(cfg, comp),
+                    init_params=C.init_params(cfg, comp),
+                )
+            )
+            comp_ctx.update(T.make_perf_ctx(perf))
+            comp_ctx.update(
+                T.make_step_ctx(
+                    comp_ctx,
+                    arg_type,
+                    return_type,
+                    no_step=no_step,
+                    mutable=C.is_mutable(cfg, comp),
+                )
+            )
+            comp_ctx.update(
+                T.make_methods_ctx(
+                    comp,
+                    comp_ctx["Component"],
+                    C.methods(cfg, comp),
+                    pkg=pkg,
+                    py_create_args=comp_ctx.get("py_create_args", ""),
+                )
+            )
+            bench_c.write_text(T.render(tmpl, comp_ctx), encoding="utf-8")
+            print(f"  update  {bench_c.relative_to(root)}")
 
 
 def run(root: Path) -> None:
