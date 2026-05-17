@@ -31,6 +31,7 @@ _CTYPE_TO_PY: dict[str, str] = {
     "double": "float",
     "float _Complex": "complex",
     "double _Complex": "complex",
+    "bool": "bool",
     "int": "int",
     "int8_t": "int",
     "int16_t": "int",
@@ -44,6 +45,7 @@ _CTYPE_TO_PY: dict[str, str] = {
 }
 
 _CTYPE_TO_NP: dict[str, str] = {
+    "bool": "np.bool_",
     "float": "np.float32",
     "double": "np.float64",
     "float _Complex": "np.complex64",
@@ -288,7 +290,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in ip)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
-        lines.append("    def __init__(self) -> None: ...")
+        lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")
 
     lines += [
         "",

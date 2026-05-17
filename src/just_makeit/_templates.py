@@ -80,6 +80,17 @@ _CTYPE_META: dict[str, dict] = {
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
     },
+    "bool": {
+        "kind": "int",
+        "fmt": "p",
+        "zero": "0",
+        "py_zero": "False",
+        "py_type": "np.bool_",
+        "parse_type": "int",
+        "parse_zero": "0",
+        "to_c": lambda n: f"(int){n}_raw",
+        "to_py": lambda v: f"PyBool_FromLong((long)({v}))",
+    },
     # Fixed-width signed
     "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
     "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
@@ -2123,7 +2134,8 @@ def make_methods_ctx(
         has_arg = arg_type != "void"
         if has_arg:
             arg_disp = _ctype_display(arg_type)
-            arg_meta = _CTYPE_META[arg_type]
+            _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
+            arg_meta = _CTYPE_META[_arg_elem]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
         # Doxygen for this method's _core.h declaration(s).

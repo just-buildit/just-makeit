@@ -303,3 +303,54 @@ class TestArrayArgTypeStubs:
         pyi = _pyi(arr_arg_project, "dsp", "myproj")
         assert "import numpy as np" in pyi
         assert "from numpy.typing import NDArray" in pyi
+
+
+class TestNoStateStub:
+    @pytest.fixture()
+    def no_state_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "fir",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+        return root
+
+    def test_init_accepts_args(self, no_state_project):
+        pyi = _pyi(no_state_project, "dsp", "myproj")
+        assert "def __init__(self, /, *args, **kwargs) -> None: ..." in pyi
+
+    def test_init_not_no_arg(self, no_state_project):
+        pyi = _pyi(no_state_project, "dsp", "myproj")
+        assert "def __init__(self) -> None: ..." not in pyi
+
+
+class TestBoolPropertyStub:
+    @pytest.fixture()
+    def bool_prop_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "fir",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+        property_run(root, "fir", "is_real", "dsp", "bool", False)
+        return root
+
+    def test_bool_property_annotation(self, bool_prop_project):
+        pyi = _pyi(bool_prop_project, "dsp", "myproj")
+        assert "def is_real(self) -> bool:" in pyi
+
+    def test_bool_not_int(self, bool_prop_project):
+        pyi = _pyi(bool_prop_project, "dsp", "myproj")
+        assert "def is_real(self) -> int:" not in pyi
