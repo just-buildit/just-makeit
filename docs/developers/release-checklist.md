@@ -3,8 +3,9 @@
 ## Before you start
 
 - [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally (882 passed as of v0.11.0)
+- [ ] `uv run pytest` passes locally (947 passed as of v0.12.0)
 - [ ] CI badge on `main` is green
+- [ ] Run `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"` and visually confirm all examples pass locally — catches environment-sensitive failures (missing `pytest`, `cmake`, etc.) that CI may not surface
 
 ______________________________________________________________________
 
@@ -102,6 +103,7 @@ ______________________________________________________________________
 | Tagged before CI green                     | Delete the tag locally and on remote, fix CI, re-tag                                                                        |
 | PyPI CDN lag causes `artifact.yml` to fail | Wait — retry loop runs for 10 min; if it still fails, check the logs                                                        |
 | `artifact.yml` uses old CLI flags          | Keep `artifact.yml` in sync with any CLI renames                                                                            |
+| Example `test.py` calls a tool not in the release environment | Guard optional tool invocations with an availability check (`import X`) and skip gracefully — see `full_workflow` step 7 as the pattern |
 | GitHub repo still shows old version        | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest` |
 
 To delete a tag and re-tag:
