@@ -116,6 +116,8 @@ def _try_coverage(proj: Path) -> None:
             "*/tests/*",
             "--output-file",
             "build/cov/coverage_filtered.info",
+            "--ignore-errors",
+            "unused",
         ],
         cwd=proj,
     )
@@ -206,7 +208,7 @@ def run(root: Path) -> None:
     zensical_toml = (proj / "zensical.toml").read_text()
     assert "my" in zensical_toml  # site_name contains project slug
     assert "mkdocstrings" in zensical_toml
-    assert 'paths           = ["src"]' in zensical_toml
+    assert 'paths = ["src"]' in zensical_toml
 
     makefile = (proj / "Makefile").read_text()
     assert "coverage" in makefile

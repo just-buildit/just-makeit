@@ -5332,7 +5332,8 @@ coverage:
 \t  lcov --capture --directory $(BUILD_DIR)/cov \\
 \t\t--output-file $(BUILD_DIR)/cov/coverage.info
 \tlcov --remove $(BUILD_DIR)/cov/coverage.info '/usr/*' '*/tests/*' \\
-\t\t--output-file $(BUILD_DIR)/cov/coverage_filtered.info
+\t\t--output-file $(BUILD_DIR)/cov/coverage_filtered.info \\
+\t\t--ignore-errors unused
 \tmkdir -p docs/coverage/c
 \tgenhtml $(BUILD_DIR)/cov/coverage_filtered.info \\
 \t\t--output-directory docs/coverage/c
@@ -5427,9 +5428,10 @@ features = [
 
 [project.plugins.mkdocstrings]
 [project.plugins.mkdocstrings.handlers.python]
-paths           = ["src"]
-docstring_style = "numpy"
-show_source     = true
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+show_source = true
 """
 
 # ── docs/index.md ────────────────────────────────────────────────────────────
