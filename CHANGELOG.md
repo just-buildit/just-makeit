@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1] — 2026-05-18
+
+### Fixed
+
+- **`full_workflow` example**: `unittest discover` picked up `test_ema.py`
+  (pytest-style) on systems without pytest installed, causing the artifact
+  smoke test to fail.  Step 8 now targets `test_gain.py` directly.
+
 ## [0.13.0] — 2026-05-18
 
 ### Added
