@@ -309,7 +309,7 @@ p.write_text(src)
             "install with: pip install pytest"
         )
 
-    # 8. unittest (gain tests)
+    # 8. unittest (gain tests only — ema uses pytest which may not be installed)
     _cmd(
         [
             sys.executable,
@@ -319,7 +319,7 @@ p.write_text(src)
             "-s",
             "src",
             "-p",
-            "test_*.py",
+            "test_gain.py",
             "-v",
         ],
         cwd=proj,
