@@ -75,6 +75,7 @@ Commands:
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
+  bench [comp …]                Build and run C benchmarks; print a stats table.
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
@@ -475,6 +476,11 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    elif cmd == "bench":
+        from . import _bench
+
+        _bench.run(Path.cwd(), components=args[1:] or None)
 
     elif cmd == "build":
         from . import _build
