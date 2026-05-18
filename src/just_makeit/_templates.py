@@ -5508,8 +5508,7 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 int
 main(void)
 {
-    <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
-
+<<bench_create_stmt>>
     struct timespec t0, t1;
     jm_bench_t _bench = {0};
 
@@ -5519,7 +5518,7 @@ main(void)
 
 <<bench_methods_timing_block>>
     jm_bench_write_json(&_bench, "<<component>>");
-    <<component>>_destroy(obj);
+<<bench_destroy_stmt>>
     return 0;
 }
 """

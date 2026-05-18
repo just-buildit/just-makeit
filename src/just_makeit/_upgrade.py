@@ -160,6 +160,26 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     py_create_args=comp_ctx.get("py_create_args", ""),
                 )
             )
+            # NO_STEP components with no init_params have an empty
+            # c_create_args — the _create() signature is user-managed.
+            # In that case suppress method blocks (obj is unavailable)
+            # and emit a TODO comment instead of a broken _create() call.
+            if no_step:
+                c_args = comp_ctx.get("c_create_args", "")
+                if c_args:
+                    comp_ctx["bench_create_stmt"] = (
+                        f"    {comp}_state_t *obj = {comp}_create({c_args});"
+                    )
+                    comp_ctx["bench_destroy_stmt"] = (
+                        f"    {comp}_destroy(obj);"
+                    )
+                else:
+                    comp_ctx["bench_create_stmt"] = (
+                        f"    /* TODO: {comp}_state_t *obj"
+                        f" = {comp}_create(...); */"
+                    )
+                    comp_ctx["bench_destroy_stmt"] = ""
+                    comp_ctx["bench_methods_timing_block"] = ""
             bench_c.write_text(T.render(tmpl, comp_ctx), encoding="utf-8")
             print(f"  update  {bench_c.relative_to(root)}")
 
