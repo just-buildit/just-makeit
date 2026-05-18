@@ -104,6 +104,32 @@ def run(root: Path) -> None:
         "scalar method should use inner loop"
     )
 
+    # 9. Verify jm_bench.h was created by the schema 3→4 step.
+    jm_bench_h = proj / "native" / "benchmarks" / "jm_bench.h"
+    assert jm_bench_h.exists(), "schema 3→4 upgrade must create jm_bench.h"
+    bench_h_content = jm_bench_h.read_text(encoding="utf-8")
+    assert "jm_bench_add" in bench_h_content, "jm_bench.h missing jm_bench_add"
+    assert "jm_bench_write_json" in bench_h_content, (
+        "jm_bench.h missing jm_bench_write_json"
+    )
+
+    # 10. Verify the regenerated bench includes jm_bench.h.
+    assert "#include \"jm_bench.h\"" in upgraded, (
+        "schema 3→4 regen must add jm_bench.h include to bench file"
+    )
+
+    # 11. Verify jm_bench.h is preserved if already present (idempotent).
+    sentinel_h = "/* user-customised jm_bench.h */\n"
+    jm_bench_h.write_text(sentinel_h, encoding="utf-8")
+    cfg_back = C.load(proj)
+    C.set_schema_version(cfg_back, 3)
+    C.save(proj, cfg_back)
+    assert C.schema_version(C.load(proj)) == 3
+    jm_upgrade(proj)
+    assert jm_bench_h.read_text(encoding="utf-8") == sentinel_h, (
+        "upgrade must not overwrite existing jm_bench.h"
+    )
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
