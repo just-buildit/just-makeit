@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.13.0] — 2026-05-18
+
+### Added
+
+- **`just-makeit bench`**: build and run C benchmarks, then display a
+  pytest-benchmark-style ASCII table with per-benchmark min/max/mean/stddev/
+  median/IQR and MSa/s throughput. On subsequent runs a **Δ vs prev** column
+  appears automatically, showing throughput change vs the previous run.
+  Results are saved to `.benchmarks/c/<comp>.json`.
+
+- **`jm_bench.h`**: header-only C library dropped into `native/benchmarks/`
+  on every new project. Each timing section records per-round elapsed times;
+  `jm_bench_write_json()` at the end of `main()` writes
+  `bench_<comp>_core.json` in **pytest-benchmark-compatible JSON** format
+  (min/max/mean/stddev/median/q1/q3/iqr/ops/total/rounds/iterations) so C
+  and Python bench results can be compared directly.
+
+- **Schema 4 migration**: `just-makeit upgrade` now drops `jm_bench.h` and
+  regenerates bench C files to use per-round timing for all existing projects.
+
+- **Per-method bench timing**: each named extra method added with
+  `just-makeit method` gets its own per-round timing block in the C bench
+  file. Methods can be excluded with `--no-bench`.
+
+### Fixed
+
+- `NO_STEP_BENCH_C` template: unresolved `<<bench_create_stmt>>` placeholder
+  when scaffolding `--no-step` objects that have no `--init-param` arguments
+  (e.g. the `stream_chunker` example). `make_state_ctx` now always provides
+  `bench_create_stmt` and `bench_destroy_stmt`, emitting a `/* TODO */`
+  comment when `c_create_args` is empty so the bench file compiles cleanly.
+
+______________________________________________________________________
+
 ## [0.12.1] — 2026-05-17
 
 ### Fixed

@@ -1136,6 +1136,16 @@ def _build_no_state_init_ctx(
         "pyi_param_docs": pyi_param_docs,
         "py_create_args": py_create_args,
         "c_create_args": c_create_args,
+        "bench_create_stmt": (
+            f"    {component}_state_t *obj"
+            f" = {component}_create({c_create_args});"
+            if c_create_args
+            else (
+                f"    /* TODO: {component}_state_t *obj"
+                f" = {component}_create(...); */"
+            )
+        ),
+        "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
             test_obj + "\n        pass  # no auto-state; add assertions for your fields"
         ),
@@ -1285,6 +1295,11 @@ def make_state_ctx(
             "getter_setter_test_py_pure": "    pass  # no auto-state; add assertions for your fields",
             "reset_test_py_pure": "    pass  # no auto-state; add assertions for your reset",
             "c_create_args": "",
+            "bench_create_stmt": (
+                f"    /* TODO: {component}_state_t *obj"
+                f" = {component}_create(...); */"
+            ),
+            "bench_destroy_stmt": "",
             "getter_setter_test_c": "",
             "reset_test_c": f"    /* reset */\n    {component}_reset(obj);",
             "array_args_parse_block": "",
@@ -1932,6 +1947,16 @@ def make_state_ctx(
             )
         ),
         "c_create_args": c_create_args,
+        "bench_create_stmt": (
+            f"    {component}_state_t *obj"
+            f" = {component}_create({c_create_args});"
+            if c_create_args
+            else (
+                f"    /* TODO: {component}_state_t *obj"
+                f" = {component}_create(...); */"
+            )
+        ),
+        "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
         # Array-arg placeholders (empty when no --array-arg used).
