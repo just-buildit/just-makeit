@@ -590,6 +590,9 @@ def run(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
         r(T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C),
     )
+    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    if not jm_bench_h.exists():
+        _write(jm_bench_h, T.JM_BENCH_H)
 
     # Python tests and benchmarks for this module object
     pkg_mod_dir = root / "src" / pkg / module

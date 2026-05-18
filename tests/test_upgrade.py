@@ -168,6 +168,20 @@ class TestUpgradeRun:
         assert (tmp_path / "docs" / "index.md").exists()
         assert (tmp_path / "docs" / "api.md").exists()
 
+    def test_creates_jm_bench_h_on_upgrade(self, tmp_path):
+        _write_toml(tmp_path / C.FILENAME, _minimal_toml("mypkg", schema=3))
+        U.run(tmp_path)
+        assert (tmp_path / "native" / "benchmarks" / "jm_bench.h").exists()
+
+    def test_jm_bench_h_skipped_if_exists(self, tmp_path):
+        sentinel = "/* user-edited */\n"
+        jm_h = tmp_path / "native" / "benchmarks" / "jm_bench.h"
+        jm_h.parent.mkdir(parents=True)
+        jm_h.write_text(sentinel, encoding="utf-8")
+        _write_toml(tmp_path / C.FILENAME, _minimal_toml("mypkg", schema=3))
+        U.run(tmp_path)
+        assert jm_h.read_text(encoding="utf-8") == sentinel
+
     def test_already_current_is_noop(self, tmp_path, capsys):
         _write_toml(
             tmp_path / C.FILENAME,

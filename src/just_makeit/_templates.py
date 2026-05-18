@@ -2110,6 +2110,8 @@ def _bench_method_block(component: str, m: dict) -> str:
             param_args += f", {pm.get('zero', '0')}"
 
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
+    # Per-round times array (ITERATIONS is a compile-time macro constant).
+    lines.append(f"        double _times_{name}[ITERATIONS];")
 
     if batch:
         # Buffer bench: one call per outer iteration, measures throughput.
@@ -2135,16 +2137,16 @@ def _bench_method_block(component: str, m: dict) -> str:
         call = (
             f"{component}_{name}(obj,{in_arg} BENCH_N, {name}_out)"
         )
+        # Warmup then per-round timing.
         lines += [
             f"        for (int i = 0; i < 4; i++)",
             f"            {call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
-            "        for (int r = 0; r < ITERATIONS; r++)",
+            f"        for (int r = 0; r < ITERATIONS; r++) {{",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
             f"            {call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
-            "        sec = elapsed_sec(&t0, &t1);",
-            f'        printf("  {name}() %8.1f MSa/s\\n",',
-            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            f"        }}",
         ]
         if has_arg:
             lines.append(f"        free({name}_in);")
@@ -2171,13 +2173,12 @@ def _bench_method_block(component: str, m: dict) -> str:
         lines += [
             f"        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
-            "        for (int r = 0; r < ITERATIONS; r++)",
+            f"        for (int r = 0; r < ITERATIONS; r++) {{",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
             f"            {sink}{call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
-            "        sec = elapsed_sec(&t0, &t1);",
-            f'        printf("  {name}() %8.1f MSa/s\\n",',
-            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            f"        }}",
             f"        free({name}_in);",
         ]
 
@@ -2191,15 +2192,30 @@ def _bench_method_block(component: str, m: dict) -> str:
         call = f"{component}_{name}(obj{in_arg}{param_args})"
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t0);",
-            "        for (int r = 0; r < ITERATIONS; r++)",
-            "            for (int i = 0; i < BENCH_N; i++)",
+            f"        for (int r = 0; r < ITERATIONS; r++) {{",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            f"            for (int i = 0; i < BENCH_N; i++)",
             f"                {sink}{call};",
-            "        clock_gettime(CLOCK_MONOTONIC, &t1);",
-            "        sec = elapsed_sec(&t0, &t1);",
-            f'        printf("  {name}() %8.1f MSa/s\\n",',
-            "               (double)ITERATIONS * BENCH_N / sec / 1e6);",
+            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            f"        }}",
         ]
+
+    # Register with bench harness and print mean throughput.
+    add_line = (
+        f"        jm_bench_add(&_bench, \"{name}\","
+        f" _times_{name}, ITERATIONS, BENCH_N);"
+    )
+    lines += [
+        add_line,
+        f"        {{",
+        f"            double _s = 0.0;",
+        f"            for (int r = 0; r < ITERATIONS; r++)"
+        f" _s += _times_{name}[r];",
+        f'            printf("  {name}()  %8.1f MSa/s\\n",',
+        f"                   (double)BENCH_N / (_s / ITERATIONS) / 1e6);",
+        f"        }}",
+    ]
 
     lines.append("    }")
     return "\n".join(lines)
@@ -3198,6 +3214,7 @@ def make_step_ctx(
             "step_ext_fn": "",
             "steps_ext_fn": "",
             "step_py_flags": "METH_VARARGS",
+            "bench_step_timing_block": "",
             "bench_steps_timing_block": "",
             "steps_def_entry": "",
             "step_pymethoddef_entry": "",
@@ -3653,19 +3670,68 @@ def make_step_ctx(
             )
             step_py_flags = "METH_VARARGS"
 
+    # bench_step_timing_block: per-round step() timing for bench_core.c.
+    # Each round is measured individually so jm_bench_write_json() can compute
+    # full statistics compatible with the pytest-benchmark JSON format.
+    _bsink = ctx.get("bench_sink_assign", "")
+    _bsep  = ctx.get("bench_step_input_sep", "")
+    _barg  = ctx.get("bench_step_input_arg", "")
+    _is_arr = arg_type.endswith("[]")
+    if _is_arr:
+        # One call per round processes BENCH_N samples.
+        _inner = (
+            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        {_bsink}{component}_step(obj{_bsep}{_barg});\n"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+        )
+    else:
+        # Inner loop of BENCH_N scalar calls per round.
+        _inner = (
+            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        for (int i = 0; i < BENCH_N; i++)\n"
+            f"            {_bsink}{component}_step(obj{_bsep}{_barg});\n"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+        )
+    bench_step_timing_block = (
+        f"    double _times_step[ITERATIONS];\n"
+        f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
+        f"{_inner}"
+        f"        _times_step[r] = elapsed_sec(&t0, &t1);\n"
+        f"    }}\n"
+        f"    jm_bench_add(&_bench, \"step\","
+        f" _times_step, ITERATIONS, BENCH_N);\n"
+        f"    {{\n"
+        f"        double _s = 0.0;\n"
+        f"        for (int r = 0; r < ITERATIONS; r++) _s += _times_step[r];\n"
+        f'        printf("  step()   %8.1f MSa/s\\n",\n'
+        f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
+        f"    }}"
+    )
+
     # bench_steps_timing_block: the complete steps() timing section in bench_core.c,
     # or "" when steps() is not generated (array arg objects).
+    # Each round is timed individually so jm_bench_write_json() can compute
+    # min/max/stddev/quartiles compatible with pytest-benchmark JSON.
     si_arg = ctx.get("bench_steps_in_arg", "")
     so_arg = ctx.get("bench_steps_out_arg", " BENCH_N")
     if steps_ext_fn:
         bench_steps_timing_block = (
-            f"    clock_gettime(CLOCK_MONOTONIC, &t0);\n"
-            f"    for (int r = 0; r < ITERATIONS; r++)\n"
+            f"    double _times_steps[ITERATIONS];\n"
+            f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
             f"        {component}_steps(obj,{si_arg}{so_arg});\n"
-            f"    clock_gettime(CLOCK_MONOTONIC, &t1);\n"
-            f"    sec = elapsed_sec(&t0, &t1);\n"
-            f'    printf("  steps()  %8.1f MSa/s\\n",\n'
-            f"           (double)ITERATIONS * BENCH_N / sec / 1e6);"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+            f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
+            f"    }}\n"
+            f"    jm_bench_add(&_bench, \"steps\","
+            f" _times_steps, ITERATIONS, BENCH_N);\n"
+            f"    {{\n"
+            f"        double _s = 0.0;\n"
+            f"        for (int r = 0; r < ITERATIONS; r++)"
+            f" _s += _times_steps[r];\n"
+            f'        printf("  steps()  %8.1f MSa/s\\n",\n'
+            f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
+            f"    }}"
         )
     else:
         bench_steps_timing_block = ""
@@ -4004,6 +4070,7 @@ def make_step_ctx(
         "step_ext_fn": step_ext_fn,
         "steps_ext_fn": steps_ext_fn,
         "step_py_flags": step_py_flags,
+        "bench_step_timing_block": bench_step_timing_block,
         "bench_steps_timing_block": bench_steps_timing_block,
         "steps_def_entry": steps_def_entry,
         "step_pymethoddef_entry": step_pymethoddef_entry,
@@ -5024,7 +5091,8 @@ add_executable(bench_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
 target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core m)
 target_include_directories(bench_<<component>>_core
-    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc
+            ${CMAKE_SOURCE_DIR}/native/benchmarks)
 """
 
 CMAKE_LISTS_MODULE = """\
@@ -5150,10 +5218,227 @@ int main(void)
 }
 """
 
+# ── jm_bench.h — header-only stats + pytest-benchmark JSON ──────────────────
+
+JM_BENCH_H = """\
+/* jm_bench.h — header-only benchmark stats and JSON output.
+ *
+ * Include in bench_*_core.c.  After timing each section, call
+ * jm_bench_add().  At the end of main() call jm_bench_write_json(),
+ * which writes bench_<component>_core.json in the current directory.
+ * The JSON format is compatible with pytest-benchmark so C and Python
+ * results can be compared directly.  All times are in seconds;
+ * ops = iterations / mean (samples per second).
+ */
+#ifndef JM_BENCH_H
+#define JM_BENCH_H
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <sys/utsname.h>
+#endif
+
+#define JM_BENCH_MAX_ENTRIES 32
+#define JM_BENCH_NAME_LEN    64
+
+typedef struct {
+    char    name[JM_BENCH_NAME_LEN];
+    double *times;  /* heap copy of per-round elapsed seconds */
+    int     rounds; /* outer iteration count (ITERATIONS) */
+    int     iters;  /* inner calls per round (BENCH_N) */
+} jm_bench_entry_t;
+
+typedef struct {
+    jm_bench_entry_t entries[JM_BENCH_MAX_ENTRIES];
+    int count;
+} jm_bench_t;
+
+/* Copy times[0..rounds-1] into the bench.  iters = BENCH_N. */
+static void
+jm_bench_add(jm_bench_t *b, const char *name,
+             const double *times, int rounds, int iters)
+{
+    if (b->count >= JM_BENCH_MAX_ENTRIES)
+        return;
+    jm_bench_entry_t *e = &b->entries[b->count++];
+    strncpy(e->name, name, JM_BENCH_NAME_LEN - 1);
+    e->name[JM_BENCH_NAME_LEN - 1] = '\\0';
+    e->times = (double *)malloc((size_t)rounds * sizeof(double));
+    if (!e->times) { b->count--; return; }
+    memcpy(e->times, times, (size_t)rounds * sizeof(double));
+    e->rounds = rounds;
+    e->iters  = iters;
+}
+
+/* qsort comparator for double */
+static int
+_jm_dcmp(const void *a, const void *b)
+{
+    double da = *(const double *)a, db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+/* Linear-interpolation quantile on sorted array s[0..n-1]. */
+static double
+_jm_quantile(const double *s, int n, double p)
+{
+    double pos = p * (double)(n - 1);
+    int    lo  = (int)pos;
+    double f   = pos - (double)lo;
+    if (lo + 1 >= n) return s[n - 1];
+    return s[lo] * (1.0 - f) + s[lo + 1] * f;
+}
+
+/* Write pytest-benchmark-compatible JSON to bench_<component>_core.json. */
+static void
+jm_bench_write_json(const jm_bench_t *b, const char *component)
+{
+    char fname[256];
+    snprintf(fname, sizeof(fname), "bench_%s_core.json", component);
+    FILE *fp = fopen(fname, "w");
+    if (!fp) {
+        fprintf(stderr, "jm_bench: cannot open %s\\n", fname);
+        return;
+    }
+
+    /* Collect machine info. */
+    char sys_name[64]  = "unknown";
+    char node_name[64] = "unknown";
+    char release[64]   = "unknown";
+    char machine[64]   = "unknown";
+
+#if defined(_WIN32)
+    strncpy(sys_name, "Windows", 63);
+    {
+        DWORD n = (DWORD)sizeof(node_name);
+        GetComputerNameA(node_name, &n);
+    }
+    strncpy(machine, "x86_64", 63);
+    strncpy(release, "unknown", 63);
+#else
+    {
+        struct utsname u;
+        if (uname(&u) == 0) {
+            strncpy(sys_name,  u.sysname,  63);
+            strncpy(node_name, u.nodename, 63);
+            strncpy(release,   u.release,  63);
+            strncpy(machine,   u.machine,  63);
+        }
+    }
+#endif
+
+    /* Timestamp. */
+    time_t now = time(NULL);
+    char ts[32] = "1970-01-01T00:00:00.000000";
+    {
+        struct tm *tm_info = localtime(&now);
+        if (tm_info)
+            strftime(ts, sizeof(ts),
+                     "%Y-%m-%dT%H:%M:%S.000000", tm_info);
+    }
+
+    fprintf(fp, "{\\n");
+    fprintf(fp, "  \\"machine_info\\": {\\n");
+    fprintf(fp, "    \\"node\\": \\"%s\\",\\n", node_name);
+    fprintf(fp, "    \\"processor\\": \\"%s\\",\\n", machine);
+    fprintf(fp, "    \\"machine\\": \\"%s\\",\\n", machine);
+    fprintf(fp, "    \\"python_implementation\\": null,\\n");
+    fprintf(fp, "    \\"python_version\\": null,\\n");
+    fprintf(fp, "    \\"python_build\\": null,\\n");
+    fprintf(fp, "    \\"release\\": \\"%s\\",\\n", release);
+    fprintf(fp, "    \\"system\\": \\"%s\\"\\n", sys_name);
+    fprintf(fp, "  },\\n");
+    fprintf(fp, "  \\"commit_info\\": null,\\n");
+    fprintf(fp, "  \\"benchmarks\\": [\\n");
+
+    for (int i = 0; i < b->count; i++) {
+        const jm_bench_entry_t *e = &b->entries[i];
+        int n = e->rounds;
+
+        /* Sort a copy for order statistics. */
+        double *s = (double *)malloc((size_t)n * sizeof(double));
+        if (!s) continue;
+        memcpy(s, e->times, (size_t)n * sizeof(double));
+        qsort(s, (size_t)n, sizeof(double), _jm_dcmp);
+
+        double mn  = s[0], mx = s[n - 1];
+        double sum = 0.0;
+        for (int j = 0; j < n; j++) sum += s[j];
+        double mean = sum / (double)n;
+        double var  = 0.0;
+        for (int j = 0; j < n; j++) {
+            double d = s[j] - mean;
+            var += d * d;
+        }
+        double stddev = (n > 1) ? sqrt(var / (double)(n - 1)) : 0.0;
+        double median = _jm_quantile(s, n, 0.5);
+        double q1     = _jm_quantile(s, n, 0.25);
+        double q3     = _jm_quantile(s, n, 0.75);
+        double iqr    = q3 - q1;
+        double ops    = (double)e->iters / mean;
+
+        fprintf(fp, "    {\\n");
+        fprintf(fp, "      \\"group\\": null,\\n");
+        fprintf(fp, "      \\"name\\": \\"%s\\",\\n", e->name);
+        fprintf(fp, "      \\"fullname\\": \\"bench_%s_core::%s\\",\\n",
+                component, e->name);
+        fprintf(fp, "      \\"params\\": null,\\n");
+        fprintf(fp, "      \\"param\\": null,\\n");
+        fprintf(fp, "      \\"extra_info\\": {},\\n");
+        fprintf(fp, "      \\"options\\": {\\n");
+        fprintf(fp, "        \\"disable_gc\\": false,\\n");
+        fprintf(fp, "        \\"timer\\": \\"clock_gettime\\",\\n");
+        fprintf(fp, "        \\"min_rounds\\": %d,\\n", n);
+        fprintf(fp, "        \\"max_time\\": null,\\n");
+        fprintf(fp, "        \\"min_time\\": null,\\n");
+        fprintf(fp, "        \\"warmup\\": true\\n");
+        fprintf(fp, "      },\\n");
+        fprintf(fp, "      \\"stats\\": {\\n");
+        fprintf(fp, "        \\"min\\": %.17g,\\n", mn);
+        fprintf(fp, "        \\"max\\": %.17g,\\n", mx);
+        fprintf(fp, "        \\"mean\\": %.17g,\\n", mean);
+        fprintf(fp, "        \\"stddev\\": %.17g,\\n", stddev);
+        fprintf(fp, "        \\"rounds\\": %d,\\n", n);
+        fprintf(fp, "        \\"median\\": %.17g,\\n", median);
+        fprintf(fp, "        \\"iqr\\": %.17g,\\n", iqr);
+        fprintf(fp, "        \\"q1\\": %.17g,\\n", q1);
+        fprintf(fp, "        \\"q3\\": %.17g,\\n", q3);
+        fprintf(fp, "        \\"iqr_outliers\\": 0,\\n");
+        fprintf(fp, "        \\"stddev_outliers\\": 0,\\n");
+        fprintf(fp, "        \\"outliers\\": \\"0;0\\",\\n");
+        fprintf(fp, "        \\"ld15iqr\\": %.17g,\\n", mn);
+        fprintf(fp, "        \\"hd15iqr\\": %.17g,\\n", mx);
+        fprintf(fp, "        \\"ops\\": %.17g,\\n", ops);
+        fprintf(fp, "        \\"total\\": %.17g,\\n", sum);
+        fprintf(fp, "        \\"iterations\\": %d\\n", e->iters);
+        fprintf(fp, "      }\\n");
+        fprintf(fp, "    }%s\\n", i < b->count - 1 ? "," : "");
+        free(s);
+    }
+
+    fprintf(fp, "  ],\\n");
+    fprintf(fp, "  \\"datetime\\": \\"%s\\",\\n", ts);
+    fprintf(fp, "  \\"version\\": \\"4.0.0\\"\\n");
+    fprintf(fp, "}\\n");
+    fclose(fp);
+    printf("  json    bench_%s_core.json\\n", component);
+}
+
+#endif /* JM_BENCH_H */
+"""
+
 # ── C benchmark ──────────────────────────────────────────────────────────────
 
 COMPONENT_BENCH_C = """\
 #include "<<component>>/<<component>>_core.h"
+#include "jm_bench.h"
 #include <complex.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5184,21 +5469,15 @@ main(void)
     for (int i = 0; i < 16; i++) <<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
 
     struct timespec t0, t1;
-    double sec;
+    jm_bench_t _bench = {0};
 
     printf("=== <<component>> benchmark ===\\n");
     printf("block = %d samples,  %d iterations\\n\\n", BENCH_N, ITERATIONS);
 
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (int r = 0; r < ITERATIONS; r++)
-<<bench_step_inner_loop>><<bench_sink_assign>><<component>>_step(obj<<bench_step_input_sep>><<bench_step_input_arg>>);
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    sec = elapsed_sec(&t0, &t1);
-    printf("  step()   %8.1f MSa/s\\n",
-           (double)ITERATIONS * BENCH_N / sec / 1e6);
-
+<<bench_step_timing_block>>
 <<bench_steps_timing_block>>
 <<bench_methods_timing_block>>
+    jm_bench_write_json(&_bench, "<<component>>");
     <<component>>_destroy(obj);
 <<bench_free_in>>
 <<bench_free_out>>
@@ -5211,13 +5490,36 @@ main(void)
 NO_STEP_BENCH_C = """\
 /* bench_<<component>>_core.c — no step() to benchmark */
 #include "<<component>>/<<component>>_core.h"
+#include "jm_bench.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define BENCH_N    65536
+#define ITERATIONS 200
+
+static double
+elapsed_sec(struct timespec *t0, struct timespec *t1)
+{
+    return (double)(t1->tv_sec - t0->tv_sec)
+           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
+}
 
 int
 main(void)
 {
+    <<component>>_state_t *obj = <<component>>_create(<<c_create_args>>);
+
+    struct timespec t0, t1;
+    jm_bench_t _bench = {0};
+
     printf("=== <<component>> benchmark ===\\n");
-    printf("  (no step() generated; implement step() to enable)\\n");
+    printf("  (no step(); methods below)\\n");
+    printf("block = %d samples,  %d iterations\\n\\n", BENCH_N, ITERATIONS);
+
+<<bench_methods_timing_block>>
+    jm_bench_write_json(&_bench, "<<component>>");
+    <<component>>_destroy(obj);
     return 0;
 }
 """
@@ -5392,7 +5694,8 @@ add_executable(bench_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
 target_link_libraries(bench_<<component>>_core PRIVATE <<component>>_core m)
 target_include_directories(bench_<<component>>_core
-    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+    PRIVATE ${CMAKE_SOURCE_DIR}/native/inc
+            ${CMAKE_SOURCE_DIR}/native/benchmarks)
 """
 
 CMAKE_PC_IN = """\

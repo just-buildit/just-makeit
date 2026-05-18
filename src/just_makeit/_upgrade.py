@@ -69,6 +69,12 @@ MIGRATIONS: dict[int, list] = {
         # in projects that were scaffolded before this feature was added.
         RegenBench(),
     ],
+    3: [
+        # Schema 4 adds jm_bench.h (per-round stats + pytest-benchmark JSON)
+        # and regenerates bench C files to use the new timing structure.
+        AddFile("native/benchmarks/jm_bench.h", "JM_BENCH_H"),
+        RegenBench(),
+    ],
 }
 
 

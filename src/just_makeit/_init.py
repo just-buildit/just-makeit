@@ -312,6 +312,9 @@ def run(
 
     # C benchmark
     _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(bench_c_tmpl))
+    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    if not jm_bench_h.exists():
+        _write(jm_bench_h, T.JM_BENCH_H)
 
     # Python package — create __init__.py on first component; splice on subsequent ones
     init_py = root / "src" / pkg / "__init__.py"

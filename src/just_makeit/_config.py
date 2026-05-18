@@ -24,7 +24,7 @@ from pathlib import Path
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 3
+CURRENT_SCHEMA = 4
 
 
 def load(root: Path) -> dict:
