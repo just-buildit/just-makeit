@@ -18,6 +18,11 @@
 
 ### Added
 
+- **`declarative_scaffold` example** — bundled end-to-end demo of the
+  schema-6 workflow: one TOML fragment with inline `impl` and
+  `{placeholder}` interpolation → `jm apply` → cmake + ctest green;
+  plus a `jm split-objects` round-trip on a legacy single-file project.
+  Run with `just-makeit example declarative_scaffold`.
 - **`just-makeit split-objects`** — migrate a single-file project to the
   split layout: every top-level `[obj]` section moves out of the
   manifest into `objects/<obj>.toml`, and the manifest gains
