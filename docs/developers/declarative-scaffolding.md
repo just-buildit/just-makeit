@@ -1,0 +1,252 @@
+# Declarative scaffolding — design
+
+Status: **draft / proposed**. Captures the design for three related
+features: split per-object TOMLs, `jm apply`, and `jm remove`.
+
+---
+
+## Motivation
+
+Today every just-makeit command is *additive and imperative*:
+
+- `object`, `module`, `method`, `property`, `function`, `add` each mutate
+  `just-makeit.toml` and generate files as a side effect.
+- There is **no way to remove** anything — you hand-edit the TOML and
+  delete files yourself.
+- There is **no way to batch-scaffold** a complex object — you run one
+  CLI call per state var, method, and property.
+- `just-makeit.toml` is a **single monolithic file**; a project with
+  many objects has one large, merge-conflict-prone manifest.
+
+`just-makeit.toml` is *already* a complete declarative description of the
+project — the CLI just writes it as a side effect. The gap is the
+reverse direction: author the spec, then materialize the project from
+it. These three features close that gap as one coherent model.
+
+---
+
+## The model
+
+A project's TOML is the **desired state**. Objects can live in their own
+files; a command materializes (`apply`) or tears down (`remove`) the
+generated code to match.
+
+### TOML layout
+
+```toml
+# just-makeit.toml — thin manifest
+[project]
+name = "doppler"
+schema = "6"
+
+[module.spectral]
+objects = ["fft", "fft2d"]
+
+# Pull object specs in from their own files.
+include = ["objects/*.toml"]
+```
+
+```toml
+# objects/agc.toml — one object, its whole spec
+[agc]
+arg_type = "float _Complex"
+return_type = "float _Complex"
+class_name = "AGC"
+
+[[agc.init_params]]
+name = "ref_db"
+type = "double"
+default = "0.0"
+
+[[agc.properties]]
+name = "clip_db"
+type = "double"
+writable = true
+field = true
+```
+
+- `include` accepts globs and/or explicit paths, relative to the
+  manifest.
+- An included file holds one or more top-level object sections (and may
+  hold `[[module.X.functions]]` entries for module-level functions).
+- **Backward compatible**: no `include` key → today's single-file
+  behaviour, unchanged. The split layout is opt-in.
+
+### `_config.py` — the load/save split
+
+`_config.py` is the only reader/writer of project TOML. It changes in
+two ways:
+
+**Read (easy).** `load()` reads the manifest, resolves `include`, and
+merges every file into the single dict that all consumers already
+expect. Nothing downstream changes — `components()`, `init_params()`,
+the templates, etc. all see one merged config.
+
+**Write (the real work).** Mutating commands currently call `save()`,
+which rewrites the whole `just-makeit.toml`. With split files, each
+mutation must route back to the file that **owns** that object. So
+`load()` must record **provenance** — for every top-level section, which
+file it came from — and `save()` must write each section back to its
+origin file, preserving formatting.
+
+- A mutation to `[agc]` (e.g. `jm method ... --object agc`) rewrites
+  `objects/agc.toml`, not the manifest.
+- A new object (`jm object foo`) is written to a new file
+  (`objects/foo.toml`) when the project uses the split layout, or
+  appended to the manifest when it does not.
+- `[project]` and `[module.X]` declarations always live in the
+  manifest.
+
+Provenance is in-memory only — never serialized.
+
+---
+
+## Implementation bodies
+
+Today `--impl path/to/file.c::funcname` lifts a C function body from an
+external file into the generated `/* <<IMPLEMENT>> */` placeholder. That
+covers the *file location* case, but a declarative spec should be able
+to carry the implementation **itself** — so one TOML produces a
+complete, buildable component with nothing to wire up by hand.
+
+Two forms, either of which fills the `/* <<IMPLEMENT>> */` placeholder
+for its target:
+
+```toml
+[agc]
+arg_type = "float _Complex"
+return_type = "float _Complex"
+
+# Inline body — a TOML literal multi-line string ('''…'''). Literal,
+# not basic: no escape processing, so C backslashes and quotes pass
+# through verbatim. This is the heredoc form — paste the body in.
+impl = '''
+double p = state->power;
+p += (cabsf(x) * cabsf(x) - p) * state->alpha;
+state->power = p;
+return x * (float)agc_gain_(state, p);
+'''
+
+[[agc.methods]]
+name = "execute_ctrl"
+arg_type = "float _Complex"
+return_type = "size_t"
+# File-reference form — the existing --impl "path::funcname" semantics.
+impl_file = "src/agc/agc_ref.c::agc_execute_ctrl"
+# Optional pre-injection substitutions — the existing --replace.
+replace = { "agc_execute_ctrl" = "execute_ctrl", "TODO" = "done" }
+```
+
+- `impl` — the C body inline (TOML literal string). The heredoc form.
+- `impl_file` — `"path::funcname"`, the existing file-lift behaviour.
+- `replace` — a table of `old = new` substitutions applied before
+  injection (the existing `--replace`); valid with either form.
+- `impl` and `impl_file` are **mutually exclusive** on one target —
+  `apply` errors if both are set.
+- Both are valid on the object section (the `step()` body) and on each
+  `[[X.methods]]` entry (that method's body).
+
+**TOML ownership vs. the body-preservation pass.** When a target carries
+`impl`/`impl_file`, the TOML *owns* that body: `apply` writes it and a
+re-`apply` re-asserts it. When neither is set, behaviour is unchanged —
+a hand-written body in `core.c` is preserved across regeneration. A body
+is declared in the TOML *or* edited in the C file, never both; `apply`
+warns before overwriting a hand-edited body that diverges from the spec.
+
+`jm script` round-trips `impl_file` as the reference it is, and emits an
+`impl` body as the literal `'''…'''` block.
+
+---
+
+## `jm apply`
+
+Materialize everything *declared* in the TOML.
+
+```sh
+jm apply                  # materialize the project's own TOML
+jm apply objects/dsp.toml # merge a fragment in, then materialize
+```
+
+- No argument → read the project manifest + its includes, generate
+  every file each object/module/function implies.
+- A path argument → a **compose fragment**: an object TOML that is
+  copied into `objects/` (so the project stays self-contained), added
+  to the `include` set, then materialized.
+- `apply` is **add + update only — never deletes.** It is safe to run
+  repeatedly; it reconciles generated files *up to* the spec.
+- Hand-written `core.c` / `core.h` bodies are preserved via the existing
+  body-preservation pass — except where a target declares `impl` /
+  `impl_file` (see [Implementation bodies](#implementation-bodies)), in
+  which case the TOML owns the body.
+
+This is the batch-scaffold path: author a complex object in one TOML,
+`jm apply` it. It also makes a project reproducible from its TOML alone
+— a stronger guarantee than `jm script` (which only replays CLI
+history).
+
+---
+
+## `jm remove`
+
+The explicit, destructive counterpart. Kept separate from `apply` so
+deletion is always deliberate, never an inferred side effect of a
+reconcile.
+
+```sh
+jm remove object <name>
+jm remove module <name>
+jm remove method <name>   --object <obj>
+jm remove property <name> --object <obj>
+jm remove function <name> --module <mod>
+```
+
+- Syntax mirrors the additive commands.
+- **object / module** — delete the generated `native/inc/<x>/`,
+  `native/src/<x>/`, `src/<pkg>/<x>/`; strip `add_subdirectory` /
+  `target_sources` from the top `CMakeLists.txt`; drop the TOML section
+  (and the object's file, if split).
+- **method / property / function / state** — drop the TOML entry and
+  re-run the existing regeneration for the affected `ext.c` / `core.h` /
+  `.pyi`.
+- **Safety**: prompt for confirmation; `--force` skips the prompt.
+  Warn explicitly when removal will delete a `core.c` / `core.h` that
+  holds hand-written (preserved) bodies.
+
+---
+
+## Migration
+
+- New schema version (6) gates the `include` key.
+- A project stays single-file until it opts in. A future
+  `jm split-objects` helper (or `jm apply --split`) could move inline
+  `[object]` sections out into `objects/<name>.toml` and add the
+  `include` glob.
+- `jm upgrade` needs no destructive step here — the feature is additive
+  to the schema.
+
+---
+
+## Decisions
+
+Resolved 2026-05-19:
+
+1. **Compose fragment placement** — `jm apply <fragment>` **copies** the
+   fragment into `objects/` and adds it to `include`. The project stays
+   self-contained; the external file is no longer needed afterwards.
+2. **Reconcile-with-delete** — `jm apply` **never deletes**. Deletion is
+   strictly `jm remove`'s job. The two commands stay split so deletion
+   is always an explicit, deliberate act.
+3. **Conflict on apply** — if a fragment defines an object that already
+   exists, `apply` **errors** — and the error names a specific remedy,
+   e.g. *"object `foo` already exists; run `jm remove object foo` first,
+   or rename the object in the fragment."* Never silently overwrite.
+4. **Formatting preservation** — `save()` must write each file back with
+   a **format-preserving TOML writer**, not a plain dump, so a mutation
+   to one object's file produces a minimal diff and never churns the
+   manifest or sibling object files.
+5. **Inline implementations** — an object/method spec may carry its C
+   body inline via `impl` (a TOML literal `'''…'''` heredoc) or by
+   reference via `impl_file` (`"path::funcname"`, the existing `--impl`).
+   The two are mutually exclusive. When either is set, the TOML owns the
+   body and `apply` re-asserts it; otherwise the body-preservation pass
+   keeps hand-written C as today.
