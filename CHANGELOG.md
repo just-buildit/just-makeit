@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`just-makeit remove`** — the explicit, destructive counterpart to the
+  additive commands. `remove object` / `remove module` delete the
+  generated files, strip the `CMakeLists.txt` / umbrella-header /
+  package `__init__.py` wiring, and drop the `just-makeit.toml` section;
+  `remove method` / `remove property` / `remove function` drop the TOML
+  entry and regenerate the affected `ext.c` / `core.h` / `.pyi`. Prompts
+  for confirmation unless `--force` is given.
+
 ## [0.13.3] — 2026-05-19
 
 ### Fixed

@@ -72,6 +72,12 @@ Commands:
     --state name:type[:default] Add a state variable.
     --param name:type[:default] Add a constructor parameter.
 
+  remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
+    kind is object|module|method|property|function.
+    --object name               Object the method/property lives on (required for those).
+    --module name               Module the function lives in (required for function).
+    --force, -f                 Skip the confirmation prompt.
+
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
@@ -335,6 +341,12 @@ def main() -> None:
         from ._cli_method import run as _cmd_method
 
         _cmd_method(args[1:])
+
+    elif cmd == "remove":
+        _warn_schema()
+        from ._cli_remove import run as _cmd_remove
+
+        _cmd_remove(args[1:])
 
     elif cmd == "property":
         _warn_schema()
