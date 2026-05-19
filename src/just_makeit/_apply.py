@@ -259,6 +259,159 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
     return created
 
 
+_SUBDIR_BLOCK = re.compile(
+    r"^add_subdirectory\(native/src/(\w+)\)\s*\n"
+    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\1_core>\)\s*\n)*",
+    re.MULTILINE,
+)
+
+
+def _splice_cmake_components(
+    real_path: Path, temp_path: Path, cfg: dict
+) -> bool:
+    """Reconcile the top CMakeLists's component / module wiring.
+
+    Extracts every `add_subdirectory(native/src/X)` block (with adjacent
+    `target_sources(... TARGET_OBJECTS:X_core)` lines) from *temp_path*
+    wherever they appear, removes any existing blocks from *real_path*,
+    and inserts them into the `# ── Components` / `# ── Modules` sentinel
+    sections — components in one, modules in the other, so the layout
+    matches a freshly-scaffolded project. Content outside those two
+    sentinels (e.g. doppler's vendored-libzmq block) is preserved."""
+    real = real_path.read_text(encoding="utf-8")
+    temp = temp_path.read_text(encoding="utf-8")
+
+    module_names = set(C.modules(cfg))
+    component_blocks: list[str] = []
+    module_blocks: list[str] = []
+    for m in _SUBDIR_BLOCK.finditer(temp):
+        (
+            module_blocks if m.group(1) in module_names else component_blocks
+        ).append(m.group(0))
+
+    new_real = _SUBDIR_BLOCK.sub("", real)
+
+    def _insert(text: str, sentinel: str, content: str) -> str:
+        if not content or sentinel not in text:
+            return text
+        idx = text.index(sentinel)
+        idx = text.index("\n", idx) + 1
+        return text[:idx] + content + text[idx:]
+
+    new_real = _insert(new_real, "# ── Components", "".join(component_blocks))
+    new_real = _insert(new_real, "# ── Modules", "".join(module_blocks))
+
+    if new_real != real:
+        real_path.write_text(new_real, encoding="utf-8")
+        return True
+    return False
+
+
+def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
+    """Splice every missing `from .X import Y` import from *temp_path* into
+    *real_path*, preserving user content. Returns True if modified."""
+    from ._init import _splice_init_py
+
+    temp_text = temp_path.read_text(encoding="utf-8")
+    imports = re.findall(
+        r"^from \.(\w+) import (\w+)", temp_text, re.MULTILINE
+    )
+    changed = False
+    for comp, Component in imports:
+        cur = real_path.read_text(encoding="utf-8")
+        if f"from .{comp} import {Component}" in cur:
+            continue
+        _splice_init_py(real_path, comp, Component)
+        changed = True
+    return changed
+
+
+def _merge_module_init_file(
+    real_path: Path, module: str, temp_path: Path
+) -> bool:
+    """Run _merge_module_init against *real_path*, using the export list
+    parsed out of *temp_path*'s import line. Preserves any user wrapper
+    classes already in the real file."""
+    from ._object import _merge_module_init
+
+    temp_text = temp_path.read_text(encoding="utf-8")
+    m = re.search(
+        rf"^from \.{re.escape(module)} import[ \t]*"
+        r"(\([^)]*\)|[^\n]*)[^\n]*$",
+        temp_text,
+        re.MULTILINE,
+    )
+    if not m:
+        return False
+    raw = re.sub(r"#[^\n]*", "", m.group(1)).strip().strip("()")
+    exports = [n.strip() for n in raw.split(",") if n.strip()]
+    if not exports:
+        return False
+
+    existing = real_path.read_text(encoding="utf-8")
+    merged = _merge_module_init(existing, module, exports)
+    if merged != existing:
+        real_path.write_text(merged, encoding="utf-8")
+        return True
+    return False
+
+
+def _overwrite_if_changed(real: Path, temp: Path) -> bool:
+    """Overwrite *real* with *temp*'s bytes if they differ."""
+    if not real.exists() or not temp.exists():
+        return False
+    if real.read_bytes() == temp.read_bytes():
+        return False
+    real.write_bytes(temp.read_bytes())
+    return True
+
+
+def _sync_aggregates(temp_root: Path, root: Path, cfg: dict) -> list[Path]:
+    """Reconcile wiring files that already exist on disk and so are
+    skipped by _sync_missing but need to absorb newly-materialized
+    components: top CMakeLists, umbrella header, package __init__.py,
+    and each module's __init__.py / ext.c / CMakeLists / .pyi."""
+    pkg = C.project_name(cfg)
+    updated: list[Path] = []
+
+    real_cmake = root / "CMakeLists.txt"
+    temp_cmake = temp_root / "CMakeLists.txt"
+    if real_cmake.exists() and temp_cmake.exists():
+        if _splice_cmake_components(real_cmake, temp_cmake, cfg):
+            updated.append(real_cmake)
+
+    umbrella = root / "native" / "inc" / f"{pkg}.h"
+    if _overwrite_if_changed(
+        umbrella, temp_root / "native" / "inc" / f"{pkg}.h"
+    ):
+        updated.append(umbrella)
+
+    pkg_init = root / "src" / pkg / "__init__.py"
+    temp_pkg_init = temp_root / "src" / pkg / "__init__.py"
+    if pkg_init.exists() and temp_pkg_init.exists():
+        if _merge_pkg_init(pkg_init, temp_pkg_init):
+            updated.append(pkg_init)
+
+    for mod in C.modules(cfg):
+        # Module subpackage __init__.py — merged so user wrapper classes
+        # below the re-exports survive (the gh#1 contract).
+        mod_init = root / "src" / pkg / mod / "__init__.py"
+        temp_mod_init = temp_root / "src" / pkg / mod / "__init__.py"
+        if mod_init.exists() and temp_mod_init.exists():
+            if _merge_module_init_file(mod_init, mod, temp_mod_init):
+                updated.append(mod_init)
+        # The rest of the module wiring is pure-generated.
+        for rel in (
+            f"native/src/{mod}/{mod}_ext.c",
+            f"native/src/{mod}/CMakeLists.txt",
+            f"src/{pkg}/{mod}/{mod}.pyi",
+        ):
+            if _overwrite_if_changed(root / rel, temp_root / rel):
+                updated.append(root / rel)
+
+    return updated
+
+
 _INCLUDE_LINE = 'include = ["objects/*.toml"]\n'
 
 
@@ -367,12 +520,19 @@ def run(root: Path, fragment: Path | None = None) -> None:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
         created = _sync_missing(temp_root, root)
+        updated = _sync_aggregates(temp_root, root, cfg)
 
     for rel in created:
         print(f"  create  {root / rel}")
+    for path in updated:
+        print(f"  update  {path}")
 
     print()
-    if created:
-        print(f"Done!  Materialized {len(created)} file(s) from {C.FILENAME}.")
+    total = len(created) + len(updated)
+    if total:
+        print(
+            f"Done!  Materialized {len(created)} new file(s) and "
+            f"reconciled {len(updated)} wiring file(s) from {C.FILENAME}."
+        )
     else:
         print(f"Done!  Project already matches {C.FILENAME} — nothing to do.")

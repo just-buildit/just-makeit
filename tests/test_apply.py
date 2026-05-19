@@ -95,6 +95,131 @@ class TestApplyMaterialize:
         assert _tree(proj) == before
 
 
+class TestApplyReconcilesAggregates:
+    """A project authored as manifest + per-object fragments must have its
+    aggregate wiring (top CMakeLists, umbrella, package __init__.py)
+    reconciled by apply so the project actually builds."""
+
+    def test_top_cmakelists_gets_component_wiring(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        # Hand-author a fragment (the "compose" or "fresh-checkout" case).
+        (proj / "objects").mkdir()
+        (proj / "objects" / "agc.toml").write_text(
+            '[agc]\narg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\nmutable = "false"\n'
+            'no_state = "false"\nno_step = "false"\n\n'
+            '[[agc.state]]\nname = "gain"\ntype = "float"\n'
+            'default = "1.0f"\n'
+        )
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+
+        apply_run(proj)
+
+        cmake_text = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
+        # add_subdirectory must be inside the Components sentinel section.
+        comp_block = cmake_text.split("# ── Components", 1)[1].split(
+            "# ── Modules", 1
+        )[0]
+        assert "add_subdirectory(native/src/agc)" in comp_block
+        assert (
+            "target_sources(proj_lib PRIVATE $<TARGET_OBJECTS:agc_core>)"
+            in comp_block
+        )
+
+    def test_umbrella_header_gets_include(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        (proj / "objects").mkdir()
+        (proj / "objects" / "agc.toml").write_text(
+            '[agc]\narg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\nmutable = "false"\n'
+            'no_state = "false"\nno_step = "false"\n'
+        )
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+
+        apply_run(proj)
+
+        umbrella = (proj / "native" / "inc" / "proj.h").read_text(
+            encoding="utf-8"
+        )
+        assert '#include "agc/agc_core.h"' in umbrella
+
+    def test_package_init_py_gets_import(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        (proj / "objects").mkdir()
+        (proj / "objects" / "agc.toml").write_text(
+            '[agc]\narg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\nmutable = "false"\n'
+            'no_state = "false"\nno_step = "false"\n'
+        )
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+
+        apply_run(proj)
+
+        init = (proj / "src" / "proj" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+        assert "from .agc import Agc" in init
+        assert '"Agc"' in init  # __all__
+
+    def test_user_cmake_content_outside_sentinels_preserved(self, tmp_path):
+        """The doppler case: hand-written CMake blocks outside the
+        Components / Modules sentinels survive a reconcile."""
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        # Inject a user-written vendored-libfoo block ABOVE the Install
+        # section (i.e., between Modules sentinel and # ── Install).
+        cmake = proj / "CMakeLists.txt"
+        text = cmake.read_text(encoding="utf-8")
+        marker = "# ── Vendored libfoo (user content) ───\nadd_library(foo INTERFACE)\n\n"
+        text = text.replace("# ── Install", marker + "# ── Install")
+        cmake.write_text(text, encoding="utf-8")
+
+        (proj / "objects").mkdir()
+        (proj / "objects" / "agc.toml").write_text(
+            '[agc]\narg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\nmutable = "false"\n'
+            'no_state = "false"\nno_step = "false"\n'
+        )
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+
+        apply_run(proj)
+
+        after = cmake.read_text(encoding="utf-8")
+        assert "add_library(foo INTERFACE)" in after
+        assert "Vendored libfoo (user content)" in after
+
+
 class TestApplyAddOnly:
     def test_existing_files_not_overwritten(self, tmp_path):
         """apply never clobbers a file that already exists."""

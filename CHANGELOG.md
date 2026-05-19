@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.13.5] — 2026-05-19
+
+### Fixed
+
+- `jm apply` now reconciles the wiring files that tie components into a
+  project — without this, an apply-materialized project's top
+  `CMakeLists.txt` never gained `add_subdirectory(native/src/<obj>)`, the
+  umbrella header never gained the component include, and the package
+  `__init__.py` never gained `from .<obj> import <Obj>`. The project
+  scaffolded but did not actually build the component. Reconciled files:
+  top `CMakeLists.txt` (sentinel-section replacement, user content
+  outside the Components / Modules regions preserved), umbrella header,
+  package `__init__.py` (uses the existing `_splice_init_py` so user
+  content survives), module subpackage `__init__.py` (uses
+  `_merge_module_init` so user wrapper classes survive), and per-module
+  `<mod>_ext.c` / `<mod>/CMakeLists.txt` / `<mod>.pyi`.
+- `_init.run` (the path `jm new --object X` takes) now inserts
+  `add_subdirectory(native/src/X)` into the `# ── Components` sentinel
+  section instead of appending at the end of the manifest — matches
+  what `_object.run` already does, and makes `jm apply` idempotent
+  against projects scaffolded via either path.
+- Windows docker smoke-test PowerShell quoting — `(scaffold-only)` was
+  being parsed as a function call instead of part of the literal
+  message; switched to `-f` format with single-quoted templates.
+
+### Added
+
+- `declarative_scaffold/test.py` now asserts the agc extension actually
+  built (`agc*.so` / `.pyd` present in `src/demo/`). Without this, a
+  cmake build that skipped the agc target silently passed ctest with
+  zero registered tests.
+- Four `TestApplyReconcilesAggregates` regression tests covering the
+  top-CMakeLists sentinel splice, umbrella include, package
+  `__init__.py` import, and preservation of user CMake content outside
+  the sentinel regions.
+
 ## [0.13.4] — 2026-05-19
 
 ### Fixed

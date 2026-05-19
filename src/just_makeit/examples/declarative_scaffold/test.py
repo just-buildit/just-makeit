@@ -125,6 +125,19 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
+    # The C extension itself must have been compiled — if `apply` hadn't
+    # wired `add_subdirectory(native/src/agc)` into the top CMakeLists,
+    # `cmake --build` would silently succeed without building it and
+    # `ctest` would happily pass with zero registered tests. Assert.
+    so_files = list((proj / "src" / "demo").glob("agc*"))
+    so_files = [p for p in so_files if p.suffix in (".so", ".pyd")]
+    assert so_files, (
+        f"agc extension was not compiled into src/demo/ — "
+        f"apply did not reconcile the top CMakeLists. "
+        f"build dir contents: "
+        f"{list((proj / 'build').glob('**/*agc*'))}"
+    )
+
     # ── 5. split-objects round-trip on a separate legacy project. ────────
     # An existing single-file project converts to the split layout in
     # one command; the merged cfg every consumer sees is unchanged.
@@ -138,9 +151,7 @@ def run(root: Path) -> None:
     before = C.load(legacy)
     jm_split_objects(legacy)
     after = C.load(legacy)
-    assert before == after, (
-        "split-objects must not change the merged cfg"
-    )
+    assert before == after, "split-objects must not change the merged cfg"
     assert (legacy / "objects" / "widget.toml").exists()
     legacy_manifest = (legacy / C.FILENAME).read_text(encoding="utf-8")
     assert "[widget]" not in legacy_manifest

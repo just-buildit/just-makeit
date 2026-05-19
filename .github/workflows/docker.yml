@@ -156,12 +156,12 @@ jobs:
                 $hasBuild = Test-Path (Join-Path $proj.FullName 'build')
                 $pyds = Get-ChildItem $proj.FullName -Recurse -Filter '*.pyd' -ErrorAction SilentlyContinue
                 if ($pyds) {
-                    Write-Host "  ok   $($proj.Name)  ($($pyds[0].Name))"
+                    Write-Host ('  ok   {0}  ({1})' -f $proj.Name, $pyds[0].Name)
                 } elseif ($hasBuild) {
-                    Write-Host "  MISS $($proj.Name)"
+                    Write-Host ('  MISS {0}' -f $proj.Name)
                     $missing += $proj.Name
                 } else {
-                    Write-Host "  skip $($proj.Name)  (scaffold-only)"
+                    Write-Host ('  skip {0}  (scaffold-only)' -f $proj.Name)
                 }
             }
             if ($missing) { exit 1 }

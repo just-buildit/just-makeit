@@ -136,7 +136,9 @@ def _restore_core_c_funcs(new_source: str, preserved: dict[str, str]) -> str:
     return "".join(out)
 
 
-_STRUCT_RE = re.compile(r"(typedef struct \{\n)(.*?)(\n\} \w+_state_t;)", re.DOTALL)
+_STRUCT_RE = re.compile(
+    r"(typedef struct \{\n)(.*?)(\n\} \w+_state_t;)", re.DOTALL
+)
 _FIELD_RE = re.compile(r"^\s+.*?(\w+)\s*(?:\[[^\]]*\])?\s*;", re.MULTILINE)
 
 
@@ -209,7 +211,9 @@ def _preserve_core_bodies(
     if old_struct and new_struct:
         merged = _merge_struct_fields(new_struct.group(2), old_struct.group(2))
         new_text = (
-            new_text[: new_struct.start(2)] + merged + new_text[new_struct.end(2) :]
+            new_text[: new_struct.start(2)]
+            + merged
+            + new_text[new_struct.end(2) :]
         )
     old_step = _step_func_span(old, comp)
     new_step = _step_func_span(new_text, comp)
@@ -314,7 +318,9 @@ def _write_compile_commands(
         # (they share <module>_ext.c, added below in the modules loop).
         ext_c = r / "native" / "src" / comp / f"{comp}_ext.c"
         if ext_c.exists():
-            entries.append(_entry(f"native/src/{comp}/{comp}_ext.c", comp_flags))
+            entries.append(
+                _entry(f"native/src/{comp}/{comp}_ext.c", comp_flags)
+            )
         entries += [
             _entry(f"native/tests/test_{comp}_core.c", test_flags),
             _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
@@ -379,7 +385,9 @@ def run(
     if perf is None:
         perf = C.is_perf(cfg)
     if pytest_ is not None:
-        cfg.setdefault("project", {})["pytest"] = "true" if pytest_ else "false"
+        cfg.setdefault("project", {})["pytest"] = (
+            "true" if pytest_ else "false"
+        )
     if pytest_benchmark_ is not None:
         cfg.setdefault("project", {})["pytest_benchmark"] = (
             "true" if pytest_benchmark_ else "false"
@@ -413,7 +421,9 @@ def run(
     )
     ctx.update(T.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
+    ctx.update(
+        T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
+    )
     ctx.update(
         T.make_methods_ctx(
             ctx["component"],
@@ -425,7 +435,11 @@ def run(
     )
     # Re-generate pyi_examples with the actual package name (not placeholder).
     scalar_state = (
-        [(n, ct, dflt) for n, ct, dflt in (vars_ or []) if not T.parse_array_type(ct)]
+        [
+            (n, ct, dflt)
+            for n, ct, dflt in (vars_ or [])
+            if not T.parse_array_type(ct)
+        ]
         if not no_state
         else []
     )
@@ -511,7 +525,10 @@ def run(
     _write(root / "native" / "tests" / f"test_{comp}_core.c", r(test_c_tmpl))
 
     # C benchmark
-    _write(root / "native" / "benchmarks" / f"bench_{comp}_core.c", r(bench_c_tmpl))
+    _write(
+        root / "native" / "benchmarks" / f"bench_{comp}_core.c",
+        r(bench_c_tmpl),
+    )
     jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
     if not jm_bench_h.exists():
         _write(jm_bench_h, T.JM_BENCH_H)
@@ -531,7 +548,10 @@ def run(
     benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
-    _write(root / "src" / pkg / "benchmarks" / f"bench_{comp}.py", r(bench_py_tmpl))
+    _write(
+        root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
+        r(bench_py_tmpl),
+    )
 
     # Benchmark history dir — dated snapshots committed to git
     gitkeep = root / "benchmarks" / "history" / ".gitkeep"
@@ -559,20 +579,33 @@ def run(
             umbrella.write_text(umbrella_text, encoding="utf-8")
             print(f"  update  {umbrella}")
 
-        # Append add_subdirectory + wire component into combined lib
+        # Insert add_subdirectory + target_sources into the `# ── Components`
+        # sentinel section — matches `_object.run`'s placement so a project
+        # built via `jm new --object` and one built via `jm new` + `jm object`
+        # have identical CMakeLists, and so `jm apply`'s aggregate reconcile
+        # is a no-op on either.
         cmake_path = root / "CMakeLists.txt"
         if cmake_path.exists():
             cmake_text = cmake_path.read_text(encoding="utf-8")
-            cmake_text += f"add_subdirectory(native/src/{comp})\n"
-            # Use target_sources + $<TARGET_OBJECTS:...> — reliable across all
-            # CMake versions; target_link_libraries(SHARED PRIVATE OBJECT) is
-            # not guaranteed to include the objects in the output binary.
-            if f"{pkg}_lib" in cmake_text:
-                cmake_text += (
-                    f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
-                )
-            cmake_path.write_text(cmake_text, encoding="utf-8")
-            print(f"  update  {cmake_path}")
+            sub = f"add_subdirectory(native/src/{comp})\n"
+            if sub not in cmake_text:
+                obj_lines = ""
+                if f"{pkg}_lib" in cmake_text:
+                    obj_lines = (
+                        f"target_sources({pkg}_lib PRIVATE "
+                        f"$<TARGET_OBJECTS:{comp}_core>)\n"
+                    )
+                sentinel = "# ── Components"
+                if sentinel in cmake_text:
+                    idx = cmake_text.index(sentinel)
+                    idx = cmake_text.index("\n", idx) + 1
+                    cmake_text = (
+                        cmake_text[:idx] + sub + obj_lines + cmake_text[idx:]
+                    )
+                else:
+                    cmake_text += sub + obj_lines
+                cmake_path.write_text(cmake_text, encoding="utf-8")
+                print(f"  update  {cmake_path}")
 
         # compile_commands.json
         all_comps = C.components(cfg) + [comp]
