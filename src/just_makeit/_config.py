@@ -114,8 +114,98 @@ def load(root: Path) -> dict:
     return cfg
 
 
+def _toml_string_array(items: list[str]) -> str:
+    """Render a list of strings as a TOML inline array (double quotes)."""
+    import json
+
+    return "[" + ", ".join(json.dumps(s) for s in items) + "]"
+
+
+def _provenance(root: Path) -> tuple[dict[str, Path], list[str]]:
+    """Re-derive which file each top-level object section currently lives in.
+
+    Returns (owners, include_list) where owners[key] is the Path of the
+    file that owns *key* on disk, and include_list is the manifest's
+    `include` list (empty for single-file projects)."""
+    owners: dict[str, Path] = {}
+    manifest_path = root / FILENAME
+    if not manifest_path.exists():
+        return owners, []
+    with manifest_path.open("rb") as f:
+        manifest = tomllib.load(f)
+    for k in manifest:
+        if k not in ("project", "module", "include"):
+            owners[k] = manifest_path
+    include_list = list(manifest.get("include", []))
+    for fragment_path in _resolve_includes(root, include_list):
+        with fragment_path.open("rb") as f:
+            fragment = tomllib.load(f)
+        for k in fragment:
+            if k not in ("project", "module", "include"):
+                owners[k] = fragment_path
+    return owners, include_list
+
+
 def save(root: Path, cfg: dict) -> None:
-    (root / FILENAME).write_text(_dump(cfg), encoding="utf-8")
+    """Write cfg back to disk, routing each top-level object section to
+    the file that owns it on disk. `[project]` / `[module.X]` always
+    live in the manifest. New objects go to `objects/<name>.toml` when
+    the project uses the split layout, or to the manifest otherwise.
+    A fragment file that ends up with no sections is deleted."""
+    manifest_path = root / FILENAME
+    owners, include_list = _provenance(root)
+    split_layout = bool(include_list)
+
+    # Group every top-level object section in cfg by destination file.
+    by_file: dict[Path, dict] = {}
+    objects_in_cfg: set[str] = set()
+    for key, value in cfg.items():
+        if key in ("project", "module", "include"):
+            continue
+        objects_in_cfg.add(key)
+        if key in owners:
+            dst = owners[key]
+        elif split_layout:
+            dst = root / "objects" / f"{key}.toml"
+        else:
+            dst = manifest_path
+        by_file.setdefault(dst, {})[key] = value
+
+    # Manifest always carries [project] / [module.X] / include + any
+    # object sections that route to it.
+    manifest_content: dict = {}
+    if "project" in cfg:
+        manifest_content["project"] = cfg["project"]
+    if "module" in cfg:
+        manifest_content["module"] = cfg["module"]
+    manifest_content.update(by_file.get(manifest_path, {}))
+
+    manifest_text = _dump(manifest_content)
+    if include_list:
+        manifest_text = (
+            f"include = {_toml_string_array(include_list)}\n\n" + manifest_text
+        )
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+
+    # Each fragment file gets only its remaining sections; an empty
+    # fragment is removed.
+    seen_fragments = {fp for fp in owners.values() if fp != manifest_path}
+    for fragment_path in seen_fragments:
+        sections = by_file.get(fragment_path, {})
+        if sections:
+            fragment_path.parent.mkdir(parents=True, exist_ok=True)
+            fragment_path.write_text(_dump(sections), encoding="utf-8")
+        else:
+            fragment_path.unlink(missing_ok=True)
+
+    # Brand-new fragment files (new object in a split project).
+    for fragment_path, sections in by_file.items():
+        if fragment_path == manifest_path:
+            continue
+        if fragment_path in seen_fragments:
+            continue
+        fragment_path.parent.mkdir(parents=True, exist_ok=True)
+        fragment_path.write_text(_dump(sections), encoding="utf-8")
 
 
 def components(cfg: dict) -> list[str]:

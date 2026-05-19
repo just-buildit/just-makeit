@@ -18,6 +18,17 @@
 
 ### Added
 
+- **Split-TOML save routing** — `_config.save()` now re-derives
+  provenance from disk and routes each section back to the file that
+  owns it. A mutation on a split-layout project (`jm method`,
+  `jm property`, `jm remove`, …) updates only that section's fragment
+  file; the manifest and sibling fragments are byte-for-byte
+  unchanged. `[project]` / `[module.X]` always live in the manifest.
+  A new object on a split-layout project is written to a new
+  `objects/<name>.toml`; an emptied fragment is deleted. Single-file
+  projects are unaffected. User comments inside fragments are not yet
+  preserved across save (we still use the deterministic `_dump`
+  writer); tomlkit-based comment preservation can layer on later.
 - **Inline `impl` / `impl_file` in object and method TOML sections** —
   consumed by `jm apply`. `impl = '''…'''` is a TOML literal heredoc
   carrying a C body; `impl_file = "path::funcname"` lifts the body from
