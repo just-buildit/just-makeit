@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.2] — 2026-05-19
+
+### Added
+
+- **`just-makeit bench`** now builds and runs C *and* Python benchmarks,
+  trims the raw per-iteration arrays (`stats.data` / `runtimes`) that
+  bloat pytest-benchmark JSON by 1000x+, and writes dated snapshots to
+  `benchmarks/history/`. New flags: `--tag`, `--c-only`, `--python-only`.
+- **`BUILD_PYTHON`** CMake option in generated projects — guards the
+  Python extension targets so the C library can build without Python.
+
+### Changed
+
+- `jm object` / `property` / `method` / `add` now preserve hand-written
+  `core.c` / `core.h` function bodies across regeneration, matching the
+  existing `ext.c` behaviour.
+- The generated `Makefile` `bench` target delegates to `just-makeit
+  bench`. Schema 4 → 5: `jm upgrade` rewrites the bench target in
+  existing projects' Makefiles.
+
 ## [0.13.1] — 2026-05-18
 
 ### Fixed
