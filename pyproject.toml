@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["just-buildit>=0.3.6"]
+build-backend = "just_buildit"
 
 [project]
 name = "just-makeit"
@@ -43,6 +43,12 @@ jm = "just_makeit._cli:main"
 jm-install-deps = "just_makeit._scripts:install_deps"
 jm-run-tests = "just_makeit._scripts:run_tests"
 jm-docker-e2e = "just_makeit._scripts:docker_e2e"
+
+[tool.just-buildit]
+# just-makeit is pure Python — but src/just_makeit/examples/ ships .c source
+# fragments as package data. 'pure' tells just-buildit to copy the tree
+# verbatim (keeping those .c/.h files) and compile nothing.
+pure = true
 
 [tool.ruff.lint]
 per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }
