@@ -1,29 +1,45 @@
-"""_bench.py — build and run C benchmarks, display results as a table.
+"""_bench.py — build and run C + Python benchmarks; save dated snapshots.
 
 Workflow
 --------
-1. Configure + build just the bench target(s) via cmake.
-2. Run each bench binary from the project root; it writes
-   bench_<comp>_core.json to CWD (see jm_bench.h).
-3. Pretty-print a pytest-benchmark-style ASCII table.
-4. Save result to .benchmarks/c/<comp>.json; the previous run is kept
-   as .benchmarks/c/<comp>.prev.json so successive calls automatically
-   show a Δ column.
+1. Build the project (cmake) so the C bench binaries and the Python
+   extension are both current.
+2. C side: run every ``bench_<comp>_core`` binary, collect its benchmark
+   entries, and merge them into one pytest-benchmark-schema report.
+3. Python side: run pytest-benchmark over ``src/`` and load its report.
+4. Trim raw per-iteration arrays (``stats.data`` / ``stats.runtimes``)
+   from both reports.  pytest-benchmark records every individual timing
+   sample; left in, a single run bloats the JSON by orders of magnitude
+   (100+ MB).  Only the summary statistics are kept.
+5. Write dated snapshots to ``benchmarks/history/``::
+
+       <tag>.json     Python benchmarks
+       <tag>-c.json   C benchmarks
+
+   where ``<tag>`` is a UTC timestamp (overridable with ``--tag``).
+   Snapshots are immutable and meant to be committed, so perf history
+   lives in git.
+6. Pretty-print a stats table per side, with a Δ column versus the most
+   recent earlier snapshot.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import _config as C
 
 
 # ── build helpers ─────────────────────────────────────────────────────────────
+
 
 def _require(exe: str) -> str:
     path = shutil.which(exe)
@@ -33,36 +49,62 @@ def _require(exe: str) -> str:
     return path
 
 
-def _cmake_configure(root: Path, build_dir: Path) -> None:
+def _project_python(root: Path) -> str:
+    """Return the interpreter for the project's own virtualenv.
+
+    Python benchmarks import the project's built extension and need its
+    dependencies (numpy, pytest-benchmark), which live in the project's
+    ``.venv`` — not in just-makeit's isolated tool environment, which is
+    what ``sys.executable`` points at when jm is run as an installed
+    tool.  Falls back to ``sys.executable`` when no project venv exists.
+    """
+    for rel in ("bin/python", "bin/python3", "Scripts/python.exe"):
+        cand = root / ".venv" / rel
+        if cand.is_file():
+            return str(cand)
+    return sys.executable
+
+
+def _ensure_built(root: Path, build_dir: Path, python: str) -> None:
+    """Configure (if needed) and build the project with cmake.
+
+    Configures against *python* so the compiled extension is ABI-matched
+    to the interpreter the Python benchmarks will run under.
+    """
     cmake = _require("cmake")
-    cmd = [
-        cmake,
-        "-B", str(build_dir),
-        "-S", str(root),
-        "-DCMAKE_BUILD_TYPE=Release",
-        f"-DPython3_EXECUTABLE={sys.executable}",
-        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    ]
-    r = subprocess.run(cmd, cwd=str(root))
-    if r.returncode != 0:
-        sys.exit(r.returncode)
+    if not (build_dir / "CMakeCache.txt").exists():
+        cfg = [
+            cmake,
+            "-B",
+            str(build_dir),
+            "-S",
+            str(root),
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DPython3_EXECUTABLE={python}",
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        ]
+        if subprocess.run(cfg, cwd=str(root)).returncode != 0:
+            sys.exit(1)
+    nproc = os.cpu_count() or 4
+    build = [cmake, "--build", str(build_dir), "--parallel", str(nproc)]
+    if subprocess.run(build, cwd=str(root)).returncode != 0:
+        sys.exit(1)
 
 
 def _build_bench_target(root: Path, build_dir: Path, comp: str) -> None:
-    """Configure (if needed) then build the bench target for one component."""
+    """Build the ``bench_<comp>_core`` target (project already configured)."""
     cmake = _require("cmake")
-    if not (build_dir / "CMakeCache.txt").exists():
-        print(f"  configure  {build_dir.name}/", flush=True)
-        _cmake_configure(root, build_dir)
-
     target = f"bench_{comp}_core"
     nproc = os.cpu_count() or 4
     cmd = [
-        cmake, "--build", str(build_dir),
-        "--target", target,
-        "--parallel", str(nproc),
+        cmake,
+        "--build",
+        str(build_dir),
+        "--target",
+        target,
+        "--parallel",
+        str(nproc),
     ]
-    print(f"  build      {target}", flush=True)
     r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True)
     if r.returncode != 0:
         # Surface the error verbosely so the user knows what went wrong.
@@ -71,11 +113,11 @@ def _build_bench_target(root: Path, build_dir: Path, comp: str) -> None:
 
 
 def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
-    """Return the bench binary path, searching common cmake output locations.
+    """Return the bench binary path, searching common cmake output spots.
 
-    cmake places the binary in different spots depending on the generator
-    and whether cmake was invoked from a sub-CMakeLists.txt.  Check the
-    canonical locations first, then fall back to a recursive search.
+    cmake places the binary in different locations depending on the
+    generator and whether it was invoked from a sub-CMakeLists.txt;
+    check the canonical spots first, then fall back to a recursive scan.
     """
     stem = f"bench_{comp}_core"
     candidates = [
@@ -83,69 +125,222 @@ def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
         build_dir / f"{stem}.exe",
         build_dir / "Release" / stem,
         build_dir / "Release" / f"{stem}.exe",
-        # Sub-CMakeLists.txt puts the binary under native/src/<comp>/
         build_dir / "native" / "src" / comp / stem,
         build_dir / "native" / "src" / comp / f"{stem}.exe",
     ]
     for p in candidates:
         if p.is_file():
             return p
-    # Recursive fallback for unusual generator layouts.
     for p in build_dir.rglob(stem):
         if p.is_file():
             return p
     return None
 
 
-# ── run + JSON ────────────────────────────────────────────────────────────────
+# ── environment metadata ──────────────────────────────────────────────────────
 
-def _run_bench_binary(root: Path, binary: Path, comp: str) -> dict:
-    """Run the bench binary (from root) and return parsed JSON."""
-    json_path = root / f"bench_{comp}_core.json"
-    if json_path.exists():
-        json_path.unlink()
 
-    r = subprocess.run([str(binary)], cwd=str(root))
-    if r.returncode != 0:
-        sys.exit(r.returncode)
+def _machine_info() -> dict:
+    """Host description, mirroring the pytest-benchmark ``machine_info`` key."""
+    info: dict = {
+        "node": platform.node(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "cpu": {"count": os.cpu_count()},
+    }
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    info["cpu"]["brand_raw"] = line.split(":", 1)[1].strip()
+                    break
+    except OSError:
+        pass
+    return info
 
-    if not json_path.exists():
-        print(
-            f"error: bench binary did not write {json_path.name}",
-            file=sys.stderr,
+
+def _commit_info() -> dict:
+    """Current git commit / branch / dirty flag, or {} outside a repo."""
+
+    def _git(*args: str) -> str:
+        return (
+            subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
         )
-        sys.exit(1)
 
-    data = json.loads(json_path.read_text(encoding="utf-8"))
-    json_path.unlink()  # remove from project root; we'll store it properly below
-    return data
+    try:
+        return {
+            "id": _git("rev-parse", "HEAD"),
+            "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(_git("status", "--porcelain")),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {}
 
 
-# ── history (save / load prev) ────────────────────────────────────────────────
+# ── trim ──────────────────────────────────────────────────────────────────────
+
+
+def _trim(report: dict) -> dict:
+    """Drop raw per-iteration arrays from a pytest-benchmark-schema report.
+
+    ``stats.data`` (and the older ``stats.runtimes``) hold every timing
+    sample; they dominate the file size and carry no information the
+    summary statistics do not.  Mutates and returns *report*.
+    """
+    for b in report.get("benchmarks", []):
+        stats = b.get("stats")
+        if isinstance(stats, dict):
+            stats.pop("data", None)
+            stats.pop("runtimes", None)
+    return report
+
+
+# ── run: C ─────────────────────────────────────────────────────────────────────
+
+
+def _collect_c(root: Path, build_dir: Path, comps: list[str]) -> dict | None:
+    """Build + run each component's bench binary; return one merged report.
+
+    Each binary writes ``bench_<comp>_core.json`` to its working
+    directory (see jm_bench.h).  Entry names are prefixed with the
+    component so a merged history table is unambiguous.  Returns None
+    when no component produced any benchmark.
+    """
+    benchmarks: list[dict] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpd = Path(tmp)
+        for comp in comps:
+            _build_bench_target(root, build_dir, comp)
+            binary = _find_bench_binary(build_dir, comp)
+            if binary is None:
+                continue
+            print(f"  run        bench_{comp}_core", flush=True)
+            subprocess.run([str(binary.resolve())], cwd=tmp)
+            jf = tmpd / f"bench_{comp}_core.json"
+            if not jf.exists():
+                continue
+            try:
+                data = json.loads(jf.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                jf.unlink()
+                continue
+            for entry in data.get("benchmarks", []):
+                entry["name"] = f"{comp}::{entry.get('name', '')}"
+                benchmarks.append(entry)
+            jf.unlink()
+
+    if not benchmarks:
+        return None
+    return {
+        "datetime": datetime.now(timezone.utc).isoformat(),
+        "machine_info": _machine_info(),
+        "commit_info": _commit_info(),
+        "benchmarks": benchmarks,
+    }
+
+
+# ── run: Python ────────────────────────────────────────────────────────────────
+
+
+def _has_pytest_benchmark(python: str) -> bool:
+    return (
+        subprocess.run(
+            [python, "-c", "import pytest_benchmark"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _run_python(root: Path, python: str) -> dict | None:
+    """Run pytest-benchmark over ``src/``; return its (untrimmed) report.
+
+    Returns None when the pytest-benchmark plugin or any benchmark is
+    absent — a project may legitimately ship only C benchmarks.
+    """
+    if not _has_pytest_benchmark(python):
+        print(
+            "  Python benchmarks: pytest-benchmark not installed "
+            "in the project venv."
+        )
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        report = Path(tmp) / "py.json"
+        cmd = [
+            python,
+            "-m",
+            "pytest",
+            "src/",
+            "--benchmark-only",
+            f"--benchmark-json={report}",
+            "-q",
+        ]
+        print("  run        pytest --benchmark-only", flush=True)
+        subprocess.run(cmd, cwd=str(root))
+        # No JSON => no pytest-benchmark plugin, or no benchmarks collected.
+        if not report.exists():
+            return None
+        try:
+            return json.loads(report.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+
+
+# ── history (dated snapshots) ──────────────────────────────────────────────────
+
 
 def _history_dir(root: Path) -> Path:
-    return root / ".benchmarks" / "c"
+    return root / "benchmarks" / "history"
 
 
-def _load_prev(root: Path, comp: str) -> dict | None:
-    """Return the most-recent saved result for comp, or None if not yet saved."""
-    cur = _history_dir(root) / f"{comp}.json"
-    if cur.exists():
-        return json.loads(cur.read_text(encoding="utf-8"))
-    return None
+def _tag() -> str:
+    """Default snapshot tag: a sortable UTC timestamp."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _save_result(root: Path, comp: str, data: dict) -> None:
-    hdir = _history_dir(root)
+def _snapshot_path(hdir: Path, tag: str, is_c: bool) -> Path:
+    return hdir / (f"{tag}-c.json" if is_c else f"{tag}.json")
+
+
+def _prev_snapshot(hdir: Path, tag: str, is_c: bool) -> dict | None:
+    """Load the most recent snapshot older than *tag*, or None.
+
+    Tags are timestamps, so lexicographic order is chronological; with a
+    custom non-timestamp ``--tag`` the comparison degrades gracefully to
+    "any earlier-sorting snapshot".
+    """
+    if not hdir.is_dir():
+        return None
+    suffix = "-c.json" if is_c else ".json"
+    cands: list[Path] = []
+    for f in hdir.glob(f"*{suffix}"):
+        if not is_c and f.name.endswith("-c.json"):
+            continue  # Python glob also matches the C snapshots.
+        if f.name[: -len(suffix)] < tag:
+            cands.append(f)
+    if not cands:
+        return None
+    latest = max(cands, key=lambda p: p.name)
+    try:
+        return json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _save_snapshot(
+    root: Path, hdir: Path, tag: str, report: dict, is_c: bool
+) -> None:
     hdir.mkdir(parents=True, exist_ok=True)
-    cur = hdir / f"{comp}.json"
-    prev = hdir / f"{comp}.prev.json"
-    if cur.exists():
-        cur.replace(prev)
-    cur.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = _snapshot_path(hdir, tag, is_c)
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"  saved      {path.relative_to(root)}")
 
 
 # ── formatting helpers ────────────────────────────────────────────────────────
+
 
 def _pick_unit(values: list[float]) -> str:
     mn = min(values) if values else 1e-6
@@ -178,43 +373,42 @@ def _fmt_ops(ops: float) -> str:
 
 # ── table display ─────────────────────────────────────────────────────────────
 
-def _display_table(comp: str, data: dict, prev: dict | None) -> None:
+
+def _display_table(label: str, data: dict, prev: dict | None) -> None:
     benches = data.get("benchmarks", [])
     if not benches:
-        print(f"\n  {comp}: no benchmarks recorded.")
+        print(f"\n  {label}: no benchmarks recorded.")
         return
 
-    # Choose a consistent time unit for the table based on the fastest min.
+    # Choose a consistent time unit from the fastest min.
     unit = _pick_unit([b["stats"]["min"] for b in benches])
 
-    # Build a lookup of previous ops values keyed by benchmark name.
+    # Previous ops keyed by benchmark name, for the Δ column.
     prev_ops: dict[str, float] = {}
     if prev:
         for b in prev.get("benchmarks", []):
             prev_ops[b["name"]] = b["stats"]["ops"]
 
-    # Assemble rows.
     rows: list[dict[str, str]] = []
     for b in benches:
         s = b["stats"]
         row: dict[str, str] = {
-            "name":   f"{b['name']}()",
-            "min":    _fmt_time(s["min"],    unit),
-            "max":    _fmt_time(s["max"],    unit),
-            "mean":   _fmt_time(s["mean"],   unit),
+            "name": b["name"],
+            "min": _fmt_time(s["min"], unit),
+            "max": _fmt_time(s["max"], unit),
+            "mean": _fmt_time(s["mean"], unit),
             "stddev": _fmt_time(s["stddev"], unit),
             "median": _fmt_time(s["median"], unit),
-            "iqr":    _fmt_time(s["iqr"],    unit),
-            "ops":    _fmt_ops(s["ops"]),
+            "ops": _fmt_ops(s["ops"]),
         }
-        if b["name"] in prev_ops:
-            delta = (s["ops"] - prev_ops[b["name"]]) / prev_ops[b["name"]] * 100.0
-            row["delta"] = f"{delta:+.1f}%"
+        if b["name"] in prev_ops and prev_ops[b["name"]]:
+            delta = (s["ops"] - prev_ops[b["name"]]) / prev_ops[b["name"]]
+            row["delta"] = f"{delta * 100.0:+.1f}%"
         rows.append(row)
 
     has_delta = any("delta" in r for r in rows)
-    headers = ["Name", "Min", "Max", "Mean", "StdDev", "Median", "IQR", "Throughput"]
-    keys    = ["name", "min", "max", "mean", "stddev", "median", "iqr", "ops"]
+    headers = ["Name", "Min", "Max", "Mean", "StdDev", "Median", "Throughput"]
+    keys = ["name", "min", "max", "mean", "stddev", "median", "ops"]
     if has_delta:
         headers.append("Δ vs prev")
         keys.append("delta")
@@ -224,47 +418,52 @@ def _display_table(comp: str, data: dict, prev: dict | None) -> None:
         for i, k in enumerate(keys):
             widths[i] = max(widths[i], len(r.get(k, "")))
 
-    sep    = "  "
-    hline  = sep.join(h.ljust(widths[i]) for i, h in enumerate(headers))
-    rule   = "─" * len(hline)
+    sep = "  "
+    hline = sep.join(h.ljust(widths[i]) for i, h in enumerate(headers))
+    rule = "─" * len(hline)
 
-    s0     = benches[0]["stats"]
-    iters  = s0.get("iterations", 0)
-    rounds = s0.get("rounds", 0)
-    mi     = data.get("machine_info", {})
-    sys_str = mi.get("system", "")
-    node_str = mi.get("node", "")
-    info   = f"  ({sys_str} / {node_str})" if sys_str and node_str else ""
+    mi = data.get("machine_info", {})
+    sys_str, node_str = mi.get("system", ""), mi.get("node", "")
+    info = f"  ({sys_str} / {node_str})" if sys_str and node_str else ""
 
-    print(f"\n=== {comp} benchmark{info} ===")
-    print(f"block = {iters:,} samples  ·  {rounds} rounds\n")
+    print(f"\n=== {label}{info} ===")
     print(f"  {hline}")
     print(f"  {rule}")
     for r in rows:
         print(
             "  "
-            + sep.join(r.get(k, "").ljust(widths[i]) for i, k in enumerate(keys))
+            + sep.join(
+                r.get(k, "").ljust(widths[i]) for i, k in enumerate(keys)
+            )
         )
     print()
 
 
 # ── public entry point ────────────────────────────────────────────────────────
 
+
 def run(
     root: Path,
     components: list[str] | None = None,
     build_dir: Path | None = None,
+    tag: str | None = None,
+    do_c: bool = True,
+    do_python: bool = True,
 ) -> None:
-    """Build and run C benchmarks for the project at *root*.
+    """Build, benchmark, and snapshot the project at *root*.
 
     Parameters
     ----------
     root : Path
         Project root (must contain just-makeit.toml).
     components : list[str] or None
-        Components to bench.  None → all standalone components.
+        C components to bench.  None → all standalone components.
     build_dir : Path or None
-        cmake build directory.  None → root / "build".
+        cmake build directory.  None → ``root / "build"``.
+    tag : str or None
+        Snapshot tag.  None → a UTC timestamp.
+    do_c, do_python : bool
+        Select which benchmark sides to run.
     """
     cfg = C.load(root)
     if not cfg:
@@ -284,24 +483,31 @@ def run(
     else:
         target_comps = list(all_comps)
 
-    if not target_comps:
-        print("error: no standalone components found in just-makeit.toml.",
-              file=sys.stderr)
-        sys.exit(1)
-
     bdir = build_dir or (root / "build")
+    tag = tag or _tag()
+    hdir = _history_dir(root)
+    python = _project_python(root)
 
-    for comp in target_comps:
-        _build_bench_target(root, bdir, comp)
-        binary = _find_bench_binary(bdir, comp)
-        if binary is None:
-            print(
-                f"error: could not find bench_{comp}_core binary in {bdir}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    # One build covers the C bench binaries and the Python extension.
+    print("  build      project", flush=True)
+    _ensure_built(root, bdir, python)
 
-        prev = _load_prev(root, comp)
-        data = _run_bench_binary(root, binary, comp)
-        _save_result(root, comp, data)
-        _display_table(comp, data, prev)
+    if do_c:
+        creport = _collect_c(root, bdir, target_comps)
+        if creport:
+            _trim(creport)
+            prev = _prev_snapshot(hdir, tag, is_c=True)
+            _save_snapshot(root, hdir, tag, creport, is_c=True)
+            _display_table("C benchmarks", creport, prev)
+        else:
+            print("  C benchmarks: none found.")
+
+    if do_python:
+        preport = _run_python(root, python)
+        if preport and preport.get("benchmarks"):
+            _trim(preport)
+            prev = _prev_snapshot(hdir, tag, is_c=False)
+            _save_snapshot(root, hdir, tag, preport, is_c=False)
+            _display_table("Python benchmarks", preport, prev)
+        else:
+            print("  Python benchmarks: none found.")

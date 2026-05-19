@@ -183,7 +183,19 @@ def run(
     with _backup(paths):
         for pat, tmpl in templates:
             path = root / _expand(pat, component, pkg)
-            path.write_text(r(tmpl), encoding="utf-8")
+            text = r(tmpl)
+            # Splice hand-written algorithm code back into the regenerated
+            # core files; the struct merge keeps the freshly added state var.
+            # create/reset are excluded so the new variable is wired into the
+            # constructor and reset paths rather than left uninitialised.
+            if tmpl in (T.COMPONENT_CORE_H, T.COMPONENT_CORE_C):
+                text = _init._preserve_core_bodies(
+                    path,
+                    text,
+                    component,
+                    exclude=(f"{component}_create", f"{component}_reset"),
+                )
+            path.write_text(text, encoding="utf-8")
             os.utime(path, times=(_future, _future))
             print(f"  update  {path}")
 

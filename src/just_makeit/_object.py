@@ -22,6 +22,7 @@ from . import _stubs as S
 from . import _templates as T
 from ._init import (
     _make_component_ctx,
+    _preserve_core_bodies,
     _to_title,
     _write,
     _write_compile_commands,
@@ -122,9 +123,12 @@ def _copy_external_cmake_blocks(
 
     # Match a standalone if(VAR) … endif() block at the top level of cmake
     block_pat = re.compile(
-        r"(if\s*\(\s*\w+\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))",
+        r"(if\s*\(\s*(\w+)\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))",
         re.MULTILINE,
     )
+
+    # Guards emitted by just-makeit's own templates — never external wiring.
+    known_guards = {"BUILD_PYTHON"}
 
     for cmake_file in sorted(src_dir.glob("*/CMakeLists.txt")):
         if cmake_file.parent.name == new_comp:
@@ -132,6 +136,8 @@ def _copy_external_cmake_blocks(
         text = cmake_file.read_text(encoding="utf-8")
         for m in block_pat.finditer(text):
             block = m.group(1)
+            if m.group(2) in known_guards:
+                continue
             if (
                 "target_include_directories" in block
                 or "target_link_libraries" in block
@@ -569,16 +575,28 @@ def run(
     )
     print()
 
-    # C library files (OBJECT lib only — no standalone Python module)
-    _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(T.COMPONENT_CORE_H))
+    # C library files (OBJECT lib only — no standalone Python module).
+    # Hand-written bodies in an existing core.h/core.c are spliced into the
+    # freshly rendered templates so re-running `just-makeit object` does not
+    # wipe the user's algorithm code.
+    core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+    _write(
+        core_h_path,
+        _preserve_core_bodies(core_h_path, r(T.COMPONENT_CORE_H), comp),
+        "update" if core_h_path.exists() else "create",
+    )
     if impl_body is not None and not no_step:
         from . import _impl as I
 
-        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
-        h_text = h_path.read_text(encoding="utf-8")
+        h_text = core_h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
-        h_path.write_text(h_text, encoding="utf-8")
-    _write(root / "native" / "src" / comp / f"{comp}_core.c", r(T.COMPONENT_CORE_C))
+        core_h_path.write_text(h_text, encoding="utf-8")
+    core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+    _write(
+        core_c_path,
+        _preserve_core_bodies(core_c_path, r(T.COMPONENT_CORE_C), comp),
+        "update" if core_c_path.exists() else "create",
+    )
     obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
     _write(obj_cmake_path, r(T.CMAKE_LISTS_OBJECT_CORE))
     # Propagate any external-library cmake blocks from sibling objects so the

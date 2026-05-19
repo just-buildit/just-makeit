@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _templates as T
-from ._init import _make_component_ctx, _to_title
+from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
 from ._object import _make_object_ctx, _regenerate_module
 
 
@@ -138,7 +138,12 @@ def run(
             )
             core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
             if core_h.exists():
-                core_h.write_text(T.render(T.COMPONENT_CORE_H, ctx), encoding="utf-8")
+                core_h.write_text(
+                    _preserve_core_bodies(
+                        core_h, T.render(T.COMPONENT_CORE_H, ctx), object_name
+                    ),
+                    encoding="utf-8",
+                )
                 print(f"  update  {core_h}")
     else:
         state_vars_list = C.state_vars(cfg, object_name)
@@ -197,7 +202,10 @@ def run(
         core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         if core_h.exists():
-            core_h.write_text(r(T.COMPONENT_CORE_H), encoding="utf-8")
+            core_h.write_text(
+                _preserve_core_bodies(core_h, r(T.COMPONENT_CORE_H), object_name),
+                encoding="utf-8",
+            )
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")

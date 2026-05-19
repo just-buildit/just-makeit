@@ -18,7 +18,6 @@ def _make_project_ctx(
     project: str,
     version: str = "0.1.0",
     pytest_: bool = False,
-    pytest_benchmark_: bool = False,
 ) -> dict[str, str]:
     if pytest_:
         ensure_win = (
@@ -33,17 +32,6 @@ def _make_project_ctx(
         cmd_win = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
         cmd_unix = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
 
-    if pytest_benchmark_:
-        bench_py_cmd = (
-            "$(PYTHON) -m pytest src/<<package>>/benchmarks/ --benchmark-only -v"
-        )
-    else:
-        bench_py_cmd = (
-            "@for f in src/<<package>>/benchmarks/bench_*.py; do \\\n"
-            "\t\t[ -f \"$$f\" ] && echo \"--- $$f ---\" && $(PYTHON) \"$$f\" && echo; \\\n"
-            "\tdone"
-        )
-
     return {
         "package": project,
         "PACKAGE": project.upper(),
@@ -55,7 +43,6 @@ def _make_project_ctx(
         "py_test_cmd_win": cmd_win,
         "py_test_cmd_unix": cmd_unix,
         "py_test_label": "pytest" if pytest_ else "unittest",
-        "bench_py_cmd": bench_py_cmd,
     }
 
 
@@ -96,9 +83,7 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _make_project_ctx(
-        project, pytest_=pytest_, pytest_benchmark_=pytest_benchmark_
-    )
+    ctx = _make_project_ctx(project, pytest_=pytest_)
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -166,7 +151,7 @@ def run(
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
         )
-        _write(root / ".benchmarks" / ".gitkeep", "")
+        _write(root / "benchmarks" / "history" / ".gitkeep", "")
         print()
         for mod in modules:
             _module.run(root, mod)
@@ -178,7 +163,7 @@ def run(
         _write(
             root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
         )
-        _write(root / ".benchmarks" / ".gitkeep", "")
+        _write(root / "benchmarks" / "history" / ".gitkeep", "")
         print()
         print(
             f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name>')}"

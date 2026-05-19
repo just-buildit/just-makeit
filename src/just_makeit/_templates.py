@@ -5121,7 +5121,8 @@ target_include_directories(bench_<<component>>_core
 """
 
 CMAKE_LISTS_MODULE = """\
-<<module_core_lib_block>># <<module>> Python module — aggregates: <<object_list>>
+<<module_core_lib_block>>if(BUILD_PYTHON)
+# <<module>> Python module — aggregates: <<object_list>>
 Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c)
 target_link_libraries(<<module>> PRIVATE
     <<object_core_libs>>
@@ -5148,6 +5149,7 @@ add_custom_command(TARGET <<module>> POST_BUILD
         "$<TARGET_FILE:<<module>>>"
         "${PYTHON_PACKAGE_DIR}/<<module>>/$<TARGET_FILE_NAME:<<module>>>"
     VERBATIM)
+endif()
 """
 
 MODULE_CORE_H = """\
@@ -5603,7 +5605,10 @@ if(ENABLE_SIMD)
     endif()
 endif()
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module NumPy)
+option(BUILD_PYTHON "Build Python C extensions" ON)
+if(BUILD_PYTHON)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module NumPy)
+endif()
 
 set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
@@ -5680,6 +5685,7 @@ target_include_directories(<<component>>_core PUBLIC
     ${CMAKE_SOURCE_DIR}/native/inc
     ${CMAKE_SOURCE_DIR}/native/inc/<<component>>)
 
+if(BUILD_PYTHON)
 Python3_add_library(<<component>> MODULE WITH_SOABI <<component>>_ext.c)
 target_link_libraries(<<component>> PRIVATE
     <<component>>_core
@@ -5706,6 +5712,7 @@ add_custom_command(TARGET <<component>> POST_BUILD
         "$<TARGET_FILE:<<component>>>"
         "${PYTHON_PACKAGE_DIR}/$<TARGET_FILE_NAME:<<component>>>"
     VERBATIM)
+endif()
 
 add_executable(test_<<component>>_core
     ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
@@ -5849,7 +5856,7 @@ MAKEFILE = """\
 # Targets:
 #   make              Configure + build (Release)
 #   make test         CTest + <<py_test_label>>
-#   make bench        C + Python benchmarks (output only)
+#   make bench        C + Python benchmarks; dated snapshot in benchmarks/history/
 #   make just-build   PEP 517 hook for just-buildit
 #   make clean        Remove build artifacts
 #   make help         Show this message
@@ -5908,9 +5915,8 @@ else
 \t<<py_test_cmd_unix>>
 endif
 
-bench: build
-\t@for b in $(BUILD_DIR)/bench_*_core; do [ -x "$$b" ] && echo "--- $$b ---" && "$$b" && echo; done
-\t<<bench_py_cmd>>
+bench:
+\tjust-makeit bench
 
 coverage:
 \tcmake -B $(BUILD_DIR)/cov -S . $(CMAKE_GEN_FLAG) \\

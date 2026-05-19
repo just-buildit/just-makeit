@@ -75,7 +75,10 @@ Commands:
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
-  bench [comp …]                Build and run C benchmarks; print a stats table.
+  bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
+                                snapshot to benchmarks/history/.
+    --tag TAG                   Snapshot tag (default: UTC timestamp).
+    --c-only / --python-only    Restrict to one benchmark side.
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
@@ -480,7 +483,33 @@ def main() -> None:
     elif cmd == "bench":
         from . import _bench
 
-        _bench.run(Path.cwd(), components=args[1:] or None)
+        rest = args[1:]
+        tag: str | None = None
+        do_c = True
+        do_python = True
+        comps: list[str] = []
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--tag" and i + 1 < len(rest):
+                tag = rest[i + 1]
+                i += 2
+            elif a == "--c-only":
+                do_python = False
+                i += 1
+            elif a == "--python-only":
+                do_c = False
+                i += 1
+            else:
+                comps.append(a)
+                i += 1
+        _bench.run(
+            Path.cwd(),
+            components=comps or None,
+            tag=tag,
+            do_c=do_c,
+            do_python=do_python,
+        )
 
     elif cmd == "build":
         from . import _build

@@ -32,6 +32,196 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
     print(f"  {verb}  {path}")
 
 
+# ── Core-file body preservation ──────────────────────────────────────────────
+# Regenerating commands re-render <comp>_core.h / <comp>_core.c from templates,
+# which would otherwise wipe any hand-written algorithm code.  The helpers
+# below splice the bodies of an existing core file into freshly rendered
+# template text — the same idea as the `static PyObject *` body preservation
+# already done for <module>_ext.c, generalised to plain C functions.
+
+
+def _matching_brace(source: str, open_idx: int) -> int:
+    """Return the index just past the '}' that matches the '{' at open_idx."""
+    depth = 0
+    for i in range(open_idx, len(source)):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return len(source)
+
+
+def _func_span_before_brace(
+    source: str, brace_idx: int
+) -> tuple[str, int] | None:
+    """``(function_name, name_start)`` for the function whose body opens at
+    brace_idx.
+
+    Scans back over whitespace, the balanced ``(...)`` parameter list and more
+    whitespace, then reads the identifier.  Returns None when the '{' opens
+    something that is not a function definition (e.g. an array initialiser,
+    whose '{' is preceded by '=').
+    """
+    i = brace_idx - 1
+    while i >= 0 and source[i] in " \t\r\n":
+        i -= 1
+    if i < 0 or source[i] != ")":
+        return None
+    depth = 0
+    while i >= 0:
+        if source[i] == ")":
+            depth += 1
+        elif source[i] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        i -= 1
+    if i < 0:
+        return None
+    i -= 1
+    while i >= 0 and source[i] in " \t\r\n":
+        i -= 1
+    end = i + 1
+    while i >= 0 and (source[i].isalnum() or source[i] == "_"):
+        i -= 1
+    name = source[i + 1 : end]
+    return (name, i + 1) if name else None
+
+
+def _extract_core_c_funcs(source: str) -> dict[str, str]:
+    """Map ``{function_name: definition}`` for a generated <comp>_core.c.
+
+    The captured text runs from the function name through the closing brace
+    (parameter list + body) so a hand-edited signature — e.g. a dropped
+    ``const`` on a mutating step — is preserved too.  The leading return-type
+    line is left to the template.  File-scope initialisers are skipped.
+    """
+    funcs: dict[str, str] = {}
+    i = 0
+    while True:
+        brace = source.find("{", i)
+        if brace == -1:
+            break
+        end = _matching_brace(source, brace)
+        span = _func_span_before_brace(source, brace)
+        if span:
+            funcs[span[0]] = source[span[1] : end]
+        i = end
+    return funcs
+
+
+def _restore_core_c_funcs(new_source: str, preserved: dict[str, str]) -> str:
+    """Swap each function in *new_source* for its preserved definition.
+
+    Functions that exist only in *new_source* (freshly scaffolded stubs) keep
+    their generated body; functions only in *preserved* are dropped.
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        brace = new_source.find("{", i)
+        if brace == -1:
+            out.append(new_source[i:])
+            break
+        end = _matching_brace(new_source, brace)
+        span = _func_span_before_brace(new_source, brace)
+        if span and span[0] in preserved:
+            out.append(new_source[i : span[1]])
+            out.append(preserved[span[0]])
+        else:
+            out.append(new_source[i:end])
+        i = end
+    return "".join(out)
+
+
+_STRUCT_RE = re.compile(r"(typedef struct \{\n)(.*?)(\n\} \w+_state_t;)", re.DOTALL)
+_FIELD_RE = re.compile(r"^\s+.*?(\w+)\s*(?:\[[^\]]*\])?\s*;", re.MULTILINE)
+
+
+def _merge_struct_fields(new_fields: str, old_fields: str) -> str:
+    """Keep *new_fields*, appending any field line from *old_fields* whose name
+    is absent — so hand-added struct members survive regeneration without
+    dropping fields the template now emits.
+    """
+    new_names = set(_FIELD_RE.findall(new_fields))
+    extra = [
+        line
+        for line in old_fields.split("\n")
+        if (m := _FIELD_RE.match(line)) and m.group(1) not in new_names
+    ]
+    if not extra:
+        return new_fields
+    return new_fields.rstrip("\n") + "\n" + "\n".join(extra)
+
+
+def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
+    """(start, end) spanning the inline ``<comp>_step`` name, parameter list
+    and body, or None when there is no inline step definition.
+
+    The leading ``JM_FORCEINLINE``/return-type line is excluded so it stays
+    in sync with the template; the name onward (including a hand-edited
+    non-const ``state`` parameter) is preserved.
+    """
+    pat = re.compile(r"\b" + re.escape(comp) + r"_step\s*\(")
+    for m in pat.finditer(source):
+        i = m.end()
+        depth = 1
+        while i < len(source) and depth:
+            if source[i] == "(":
+                depth += 1
+            elif source[i] == ")":
+                depth -= 1
+            i += 1
+        while i < len(source) and source[i] in " \t\r\n":
+            i += 1
+        if i < len(source) and source[i] == "{":
+            return m.start(), _matching_brace(source, i)
+    return None
+
+
+def _preserve_core_bodies(
+    path: Path, new_text: str, comp: str, exclude: tuple[str, ...] = ()
+) -> str:
+    """Splice hand-written bodies from an existing core file into *new_text*.
+
+    For ``<comp>_core.c`` every function body is preserved; for
+    ``<comp>_core.h`` the state-struct fields and the inline ``<comp>_step``
+    body are preserved.  Returns *new_text* unchanged when *path* does not yet
+    exist (first scaffold) or no preservable region is found.
+
+    *exclude* names functions whose freshly rendered body must win over the
+    old one — used by ``just-makeit add``, which has to rewrite ``create`` /
+    ``reset`` so the newly added state variable is actually initialised.
+    """
+    if not path.exists():
+        return new_text
+    old = path.read_text(encoding="utf-8")
+    if path.suffix == ".c":
+        funcs = _extract_core_c_funcs(old)
+        for name in exclude:
+            funcs.pop(name, None)
+        return _restore_core_c_funcs(new_text, funcs)
+    # header: merge struct fields, then restore the inline step() definition
+    old_struct = _STRUCT_RE.search(old)
+    new_struct = _STRUCT_RE.search(new_text)
+    if old_struct and new_struct:
+        merged = _merge_struct_fields(new_struct.group(2), old_struct.group(2))
+        new_text = (
+            new_text[: new_struct.start(2)] + merged + new_text[new_struct.end(2) :]
+        )
+    old_step = _step_func_span(old, comp)
+    new_step = _step_func_span(new_text, comp)
+    if old_step and new_step:
+        new_text = (
+            new_text[: new_step[0]]
+            + old[old_step[0] : old_step[1]]
+            + new_text[new_step[1] :]
+        )
+    return new_text
+
+
 def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     """Add `from .component import Component` and update __all__ in-place.
 
@@ -286,7 +476,12 @@ def run(
     init_py_tmpl = T.PACKAGE_INIT_PY
 
     # C headers
-    _write(root / "native" / "inc" / comp / f"{comp}_core.h", r(core_h_tmpl))
+    core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+    _write(
+        core_h_path,
+        _preserve_core_bodies(core_h_path, r(core_h_tmpl), comp),
+        "update" if core_h_path.exists() else "create",
+    )
     if impl_body is not None and not no_step:
         from . import _impl as I
 
@@ -296,7 +491,12 @@ def run(
         h_path.write_text(h_text, encoding="utf-8")
 
     # C sources
-    _write(root / "native" / "src" / comp / f"{comp}_core.c", r(core_c_tmpl))
+    core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+    _write(
+        core_c_path,
+        _preserve_core_bodies(core_c_path, r(core_c_tmpl), comp),
+        "update" if core_c_path.exists() else "create",
+    )
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
 
     build = C.build_system(cfg)
@@ -333,8 +533,8 @@ def run(
         _write(benchmarks_init, "")
     _write(root / "src" / pkg / "benchmarks" / f"bench_{comp}.py", r(bench_py_tmpl))
 
-    # Benchmark history dir (committed to git)
-    gitkeep = root / ".benchmarks" / ".gitkeep"
+    # Benchmark history dir — dated snapshots committed to git
+    gitkeep = root / "benchmarks" / "history" / ".gitkeep"
     if not gitkeep.exists():
         _write(gitkeep, "")
 

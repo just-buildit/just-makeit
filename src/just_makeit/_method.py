@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _templates as T
-from ._init import _make_component_ctx, _to_title
+from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
 from ._object import _regenerate_module
 
 
@@ -438,7 +438,10 @@ def run(
         )
         if core_h_.exists():
             core_h_.write_text(
-                T.render(T.COMPONENT_CORE_H, ctx_), encoding="utf-8"
+                _preserve_core_bodies(
+                    core_h_, T.render(T.COMPONENT_CORE_H, ctx_), object_name
+                ),
+                encoding="utf-8",
             )
             print(f"  update  {core_h_}")
     else:
@@ -503,7 +506,10 @@ def run(
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
         if core_h.exists():
-            core_h.write_text(r(T.COMPONENT_CORE_H), encoding="utf-8")
+            core_h.write_text(
+                _preserve_core_bodies(core_h, r(T.COMPONENT_CORE_H), object_name),
+                encoding="utf-8",
+            )
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")

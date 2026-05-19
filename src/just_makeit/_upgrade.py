@@ -22,6 +22,7 @@ Usage
     just-makeit upgrade          # advance to CURRENT_SCHEMA
 """
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,65 @@ class RegenBench:
     """
 
 
+@dataclass
+class MigrateBenchHistory:
+    """Schema 5: dated, trimmed benchmark snapshots.
+
+    Ensures ``benchmarks/history/.gitkeep`` exists and rewrites the
+    Makefile so ``make bench`` delegates to ``just-makeit bench`` — which
+    drops raw per-iteration arrays before writing a snapshot, so a single
+    run no longer bloats the JSON to 100+ MB.  Any older ``bench-python``
+    / ``bench-c`` targets and ``BENCH_*`` variables are removed.
+    """
+
+
+# `make bench` after migration: a one-line delegation to the jm CLI,
+# which owns building, running, trimming, and snapshotting.
+_BENCH_TARGET = "bench:\n\tjust-makeit bench\n"
+
+
+def _rewrite_makefile_bench(text: str) -> str:
+    """Return *text* with the bench target(s) collapsed to _BENCH_TARGET.
+
+    Drops the ``bench`` / ``bench-python`` / ``bench-c`` target blocks and
+    every ``BENCH_*`` variable line, then re-emits a single ``bench``
+    target where the old ``bench`` target stood.  Idempotent: a Makefile
+    already in the target form is returned unchanged.
+    """
+    lines = text.splitlines(keepends=True)
+    drop_targets = {"bench", "bench-python", "bench-c"}
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        body = lines[i].rstrip("\n")
+        # Orphan BENCH_* variable assignment → drop it and any
+        # backslash-continued lines that belong to it.
+        if re.match(r"BENCH_[A-Z_]+\s*[:?]?=", body):
+            while True:
+                cont = body.endswith("\\")
+                i += 1
+                if not cont or i >= n:
+                    break
+                body = lines[i].rstrip("\n")
+            continue
+        m = re.match(r"([A-Za-z0-9_.-]+)\s*:(?!=)", body)
+        if m and m.group(1) in drop_targets:
+            is_bench = m.group(1) == "bench"
+            i += 1
+            # A recipe is the run of tab-indented lines that follows.
+            while i < n and lines[i].startswith("\t"):
+                i += 1
+            # Absorb one blank line that trailed the dropped block.
+            if i < n and lines[i].strip() == "":
+                i += 1
+            if is_bench:
+                out.append(_BENCH_TARGET + "\n")
+            continue
+        out.append(lines[i])
+        i += 1
+    return "".join(out)
+
+
 # Migration table: schema N → N+1.
 # Keep migrations append-only; never modify an existing entry.
 MIGRATIONS: dict[int, list] = {
@@ -74,6 +134,12 @@ MIGRATIONS: dict[int, list] = {
         # and regenerates bench C files to use the new timing structure.
         AddFile("native/benchmarks/jm_bench.h", "JM_BENCH_H"),
         RegenBench(),
+    ],
+    4: [
+        # Schema 5 moves benchmarking under `just-makeit bench`, which
+        # trims raw per-iteration arrays and writes dated snapshots to
+        # benchmarks/history/.
+        MigrateBenchHistory(),
     ],
 }
 
@@ -106,6 +172,20 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             section[step.key] = step.default
             C.save(root, target)
             print(f"  update  just-makeit.toml  [{step.section}] {step.key}")
+
+    elif isinstance(step, MigrateBenchHistory):
+        gitkeep = root / "benchmarks" / "history" / ".gitkeep"
+        if not gitkeep.exists():
+            gitkeep.parent.mkdir(parents=True, exist_ok=True)
+            gitkeep.write_text("", encoding="utf-8")
+            print(f"  create  {gitkeep.relative_to(root)}")
+        makefile = root / "Makefile"
+        if makefile.exists():
+            old = makefile.read_text(encoding="utf-8")
+            new = _rewrite_makefile_bench(old)
+            if new != old:
+                makefile.write_text(new, encoding="utf-8")
+                print("  update  Makefile  (bench → just-makeit bench)")
 
     elif isinstance(step, RegenBench):
         cfg = C.load(root)
