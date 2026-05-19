@@ -151,6 +151,21 @@ class TestExtCFooter:
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "_bind_fft_global_setup(PyObject *self" in ext
 
+    def test_noarg_bind_does_not_reference_unused_args(self, fft_module):
+        """A no-param function binding must not emit `(void)args;`.
+
+        The parameter is `Py_UNUSED(args)`, so there is no `args`
+        identifier — `(void)args;` would be an undeclared-identifier
+        compile error.
+        """
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
+        body = ext.split("_bind_fft_global_setup(PyObject *self", 1)[1]
+        body = body.split("}", 1)[0]
+        assert "Py_UNUSED(args)" in body
+        assert "(void)args;" not in body
+
 
 class TestTwoFunctions:
     def test_both_stubs_in_core_c(self, two_functions):

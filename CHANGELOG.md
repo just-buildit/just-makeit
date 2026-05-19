@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A module-level function with no parameters generated a binding with
+  `(void)args;` while its parameter was `Py_UNUSED(args)` — an
+  undeclared-identifier compile error. Any project with a zero-arg
+  module function failed to build.
+
 ### Added
 
 - **`just-makeit apply`** — materialize a project from its

@@ -4981,7 +4981,9 @@ def _py_wrapper_for_function(
         )
         py_args = "PyObject *args"
     else:
-        parse_block = "    (void)args;\n"
+        # The parameter is Py_UNUSED(args) — there is no `args` identifier
+        # to cast to void; Py_UNUSED already suppresses the unused warning.
+        parse_block = ""
         call_args = ""
         cleanup = ""
         py_args = "PyObject *Py_UNUSED(args)"
