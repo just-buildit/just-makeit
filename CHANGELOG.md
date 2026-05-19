@@ -18,6 +18,12 @@
 
 ### Added
 
+- **`just-makeit split-objects`** — migrate a single-file project to the
+  split layout: every top-level `[obj]` section moves out of the
+  manifest into `objects/<obj>.toml`, and the manifest gains
+  `include = ["objects/*.toml"]`. `[project]` and `[module.X]` stay in
+  the manifest. Idempotent — running on an already-split project is a
+  no-op. The loaded merged cfg is byte-identical before and after.
 - **Split-TOML save routing** — `_config.save()` now re-derives
   provenance from disk and routes each section back to the file that
   owns it. A mutation on a split-layout project (`jm method`,

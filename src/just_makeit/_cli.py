@@ -82,6 +82,8 @@ Commands:
   apply [fragment]              Materialize every file just-makeit.toml implies (add only).
                                 With a fragment path, copy it into objects/, add to include,
                                 then materialize.
+  split-objects                 Move each [obj] section out of the manifest into
+                                objects/<name>.toml and add the include glob.
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
@@ -556,6 +558,12 @@ def main() -> None:
         from . import _upgrade
 
         _upgrade.run(Path.cwd())
+
+    elif cmd == "split-objects":
+        _warn_schema()
+        from . import _split_objects
+
+        _split_objects.run(Path.cwd())
 
     elif cmd == "apply":
         _warn_schema()
