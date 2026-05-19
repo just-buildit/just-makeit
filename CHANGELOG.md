@@ -18,6 +18,19 @@
 
 ### Added
 
+- **Inline `impl` / `impl_file` in object and method TOML sections** —
+  consumed by `jm apply`. `impl = '''…'''` is a TOML literal heredoc
+  carrying a C body; `impl_file = "path::funcname"` lifts the body from
+  an existing C file (the existing `--impl` semantics, but declared in
+  the TOML). Both forms accept Python-f-string-style `{placeholder}`
+  interpolation against the object context — `{component}`,
+  `{Component}`, `{module}`, `{Module}`, `{arg_type}`, `{return_type}`
+  (plus `{method}` on methods, `{function}` on functions). Unknown
+  placeholders and literal C braces (`{0}`, `{ … }`) pass through
+  untouched, so no escape friction. An optional `replace = {...}` table
+  applies string substitutions on top, layering with the existing
+  `--replace` mechanism. `impl` and `impl_file` are mutually exclusive
+  and validated before any side effects.
 - **Split per-object TOMLs** (schema 6) — the manifest's new
   `include = ["objects/*.toml"]` key pulls in fragments containing
   one or more `[obj]` sections (and optionally `[[module.X.functions]]`

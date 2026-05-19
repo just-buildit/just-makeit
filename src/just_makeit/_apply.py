@@ -17,6 +17,7 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 
 import contextlib
 import io
+import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,61 @@ import tomllib
 from pathlib import Path
 
 from . import _config as C
+from ._init import _to_title
+
+
+# `{identifier}` placeholders only — anything else passes through untouched.
+# In particular, bare C braces (`{ … }`, `{0}`) are NOT consumed.
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _interpolate(body: str, ctx: dict) -> str:
+    """Replace `{name}` placeholders with ctx[name]; unknown names are
+    left in place so literal `{0}` / `{ static int x; }` C code survives."""
+    return _PLACEHOLDER_RE.sub(
+        lambda m: str(ctx.get(m.group(1), m.group(0))), body
+    )
+
+
+def _resolve_impl(
+    section: dict, ctx: dict, root: Path, label: str
+) -> str | None:
+    """Honour `impl` / `impl_file` / `replace` on a TOML section. Returns
+    the resolved body (interpolated + substituted) or None when neither
+    key is set. Raises ValueError on mutual-exclusion violations."""
+    inline = section.get("impl")
+    file_ref = section.get("impl_file")
+    if inline and file_ref:
+        raise ValueError(
+            f"{label}: `impl` and `impl_file` are mutually exclusive — "
+            f"set one or the other."
+        )
+    if not inline and not file_ref:
+        return None
+
+    if file_ref:
+        from . import _impl as I
+
+        path_part, _, func = file_ref.partition("::")
+        if not func:
+            raise ValueError(
+                f"{label}: impl_file must be 'path::funcname', "
+                f"got {file_ref!r}."
+            )
+        body = I.extract_body(root / path_part, func)
+    else:
+        body = inline
+
+    body = _interpolate(body, ctx)
+
+    replace = section.get("replace") or {}
+    if replace:
+        from . import _impl as I
+
+        body = I.apply_replacements(body, list(replace.items()))
+
+    return body
+
 
 # Directory names and filenames never copied from the replay.
 _SKIP_DIRS = {"build", ".venv", ".git", "dist", "__pycache__"}
@@ -47,8 +103,23 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
     }
 
 
-def _replay(cfg: dict, temp_root: Path) -> None:
-    """Re-run the full scaffold for *cfg* into the pristine *temp_root*."""
+def _object_ctx(cfg: dict, comp: str, module: str | None) -> dict:
+    """Interpolation context for an object's impl body."""
+    return {
+        "component": comp,
+        "Component": _to_title(comp),
+        "module": module or "",
+        "Module": _to_title(module) if module else "",
+        "arg_type": C.arg_type(cfg, comp),
+        "return_type": C.return_type(cfg, comp),
+    }
+
+
+def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
+    """Re-run the full scaffold for *cfg* into the pristine *temp_root*.
+
+    *project_root* is the source project (not the temp) — `impl_file`
+    paths in the TOML are resolved relative to it."""
     from . import _function, _method, _module, _new, _object, _property
 
     project = C.project_name(cfg)
@@ -83,10 +154,30 @@ def _replay(cfg: dict, temp_root: Path) -> None:
         _module.run(temp_root, mod)
 
     for comp in standalone:
-        _object.run(temp_root, comp, None, **_object_kwargs(cfg, comp))
+        octx = _object_ctx(cfg, comp, None)
+        impl = _resolve_impl(
+            cfg.get(comp, {}), octx, project_root, f"object {comp}"
+        )
+        _object.run(
+            temp_root,
+            comp,
+            None,
+            impl_body=impl,
+            **_object_kwargs(cfg, comp),
+        )
     for mod in mods:
         for comp in C.module_objects(cfg, mod):
-            _object.run(temp_root, comp, mod, **_object_kwargs(cfg, comp))
+            octx = _object_ctx(cfg, comp, mod)
+            impl = _resolve_impl(
+                cfg.get(comp, {}), octx, project_root, f"object {comp}"
+            )
+            _object.run(
+                temp_root,
+                comp,
+                mod,
+                impl_body=impl,
+                **_object_kwargs(cfg, comp),
+            )
 
     all_comps = standalone + [
         o for m in mods for o in C.module_objects(cfg, m)
@@ -94,6 +185,10 @@ def _replay(cfg: dict, temp_root: Path) -> None:
     for comp in all_comps:
         mod = C.component_module(cfg, comp)
         for m in C.methods(cfg, comp):
+            mctx = _object_ctx(cfg, comp, mod) | {"method": m["name"]}
+            m_impl = _resolve_impl(
+                m, mctx, project_root, f"{comp}.{m['name']}"
+            )
             _method.run(
                 temp_root,
                 comp,
@@ -107,6 +202,7 @@ def _replay(cfg: dict, temp_root: Path) -> None:
                 out_type=m.get("out_type"),
                 out_divisor=int(m.get("out_divisor", 1)),
                 batch=bool(m.get("batch")),
+                impl_body=m_impl,
             )
         for p in C.properties(cfg, comp):
             _property.run(
@@ -121,6 +217,15 @@ def _replay(cfg: dict, temp_root: Path) -> None:
 
     for mod in mods:
         for fn in C.module_functions(cfg, mod):
+            fctx = {
+                "function": fn["name"],
+                "module": mod,
+                "Module": _to_title(mod),
+                "return_type": fn.get("return_type", "void"),
+            }
+            f_impl = _resolve_impl(
+                fn, fctx, project_root, f"function {fn['name']}"
+            )
             _function.run(
                 temp_root,
                 fn["name"],
@@ -128,6 +233,7 @@ def _replay(cfg: dict, temp_root: Path) -> None:
                 doc=fn.get("doc", ""),
                 params=[(p["name"], p["type"]) for p in fn.get("params", [])],
                 return_type=fn.get("return_type", "void"),
+                impl_body=f_impl,
             )
 
 
@@ -156,6 +262,27 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
 _INCLUDE_LINE = 'include = ["objects/*.toml"]\n'
 
 
+def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
+    """Check `impl` / `impl_file` mutual-exclusion on every section in
+    *fragment* before any side-effects happen."""
+    for key, value in fragment.items():
+        if key in ("project", "module", "include"):
+            continue
+        if not isinstance(value, dict):
+            continue
+        if value.get("impl") and value.get("impl_file"):
+            raise ValueError(
+                f"{label}: object {key}: `impl` and `impl_file` are "
+                f"mutually exclusive — set one or the other."
+            )
+        for m in value.get("methods", []):
+            if m.get("impl") and m.get("impl_file"):
+                raise ValueError(
+                    f"{label}: {key}.{m.get('name', '?')}: `impl` and "
+                    f"`impl_file` are mutually exclusive."
+                )
+
+
 def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     """Validate *fragment_path*, copy it into `objects/`, and ensure the
     manifest's `include` glob covers it. Returns the destination path.
@@ -171,6 +298,7 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     # before we touch any files. _merge_fragment raises ValueError naming
     # the conflicting object and the recommended remedy.
     C._merge_fragment(C.load(root), fragment, fragment_path)
+    _validate_fragment_impl_keys(fragment, str(fragment_path))
 
     objects_dir = root / "objects"
     objects_dir.mkdir(exist_ok=True)
@@ -232,8 +360,12 @@ def run(root: Path, fragment: Path | None = None) -> None:
         temp_root = Path(tmp) / C.project_name(cfg)
         # The generators print progress for the throwaway temp tree; that
         # output names temp paths and would only confuse the user.
-        with contextlib.redirect_stdout(io.StringIO()):
-            _replay(cfg, temp_root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                _replay(cfg, temp_root, root)
+        except (ValueError, FileNotFoundError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
         created = _sync_missing(temp_root, root)
 
     for rel in created:
