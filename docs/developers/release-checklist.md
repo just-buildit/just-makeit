@@ -3,7 +3,7 @@
 ## Before you start
 
 - [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally (947 passed as of v0.12.0)
+- [ ] `uv run pytest` passes locally (988 passed as of v0.13.2)
 - [ ] CI badge on `main` is green
 - [ ] Run `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"` and visually confirm all examples pass locally — catches environment-sensitive failures (missing `pytest`, `cmake`, etc.) that CI may not surface
 
@@ -14,10 +14,12 @@ ______________________________________________________________________
 | Change type                                  | Bump            |
 | -------------------------------------------- | --------------- |
 | Breaking CLI change (rename, remove command) | minor (`0.X.0`) |
-| New command or flag                          | minor (`0.X.0`) |
+| New command or flag                          | patch (`0.X.Y`) |
 | Bug fix, docs, internal refactor             | patch (`0.X.Y`) |
 
-We are pre-1.0 so breaking changes bump minor, not major.
+We are pre-1.0, so the digits shift down one place: the minor digit
+stands in for major (breaking changes only), and the patch digit
+absorbs both new features and fixes.
 
 ______________________________________________________________________
 
