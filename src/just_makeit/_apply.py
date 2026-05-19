@@ -17,8 +17,10 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 
 import contextlib
 import io
+import shutil
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 from . import _config as C
@@ -151,7 +153,51 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
     return created
 
 
-def run(root: Path) -> None:
+_INCLUDE_LINE = 'include = ["objects/*.toml"]\n'
+
+
+def _compose_fragment(root: Path, fragment_path: Path) -> Path:
+    """Validate *fragment_path*, copy it into `objects/`, and ensure the
+    manifest's `include` glob covers it. Returns the destination path.
+
+    Errors with the design-specified remedy if the fragment declares an
+    object that the project already has."""
+    if not fragment_path.exists():
+        raise FileNotFoundError(f"fragment not found: {fragment_path}")
+
+    with fragment_path.open("rb") as f:
+        fragment = tomllib.load(f)
+    # Test-merge against the current resolved cfg to surface conflicts
+    # before we touch any files. _merge_fragment raises ValueError naming
+    # the conflicting object and the recommended remedy.
+    C._merge_fragment(C.load(root), fragment, fragment_path)
+
+    objects_dir = root / "objects"
+    objects_dir.mkdir(exist_ok=True)
+    dest = objects_dir / fragment_path.name
+    src_resolved = fragment_path.resolve()
+    if dest.resolve() != src_resolved:
+        if dest.exists():
+            raise FileExistsError(
+                f"{dest} already exists. Move or rename the incoming "
+                f"fragment, or `jm remove` the object first."
+            )
+        shutil.copy2(fragment_path, dest)
+        print(f"  copy    {fragment_path} -> {dest}")
+
+    # Ensure `include = ["objects/*.toml"]` is present at the top of the
+    # manifest. Phase 1 does a minimal targeted text edit; the
+    # format-preserving multi-file writer arrives with the provenance
+    # work in Phase 2.
+    manifest = root / C.FILENAME
+    text = manifest.read_text(encoding="utf-8")
+    if "include" not in C.load_manifest(root):
+        manifest.write_text(_INCLUDE_LINE + "\n" + text, encoding="utf-8")
+        print(f'  update  {manifest}  (include = ["objects/*.toml"])')
+    return dest
+
+
+def run(root: Path, fragment: Path | None = None) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -160,6 +206,15 @@ def run(root: Path) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    if fragment is not None:
+        print(f"just-makeit: composing fragment {fragment}")
+        try:
+            _compose_fragment(root, fragment)
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print()
 
     cfg = C.load(root)
     if not C.components(cfg) and not C.modules(cfg):

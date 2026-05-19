@@ -141,6 +141,11 @@ MIGRATIONS: dict[int, list] = {
         # benchmarks/history/.
         MigrateBenchHistory(),
     ],
+    5: [
+        # Schema 6 gates the `include = [...]` key for split per-object
+        # TOMLs. Projects stay single-file unless they opt in by adding
+        # `include`; the bump alone is the migration.
+    ],
 }
 
 

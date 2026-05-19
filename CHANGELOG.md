@@ -18,6 +18,19 @@
 
 ### Added
 
+- **Split per-object TOMLs** (schema 6) — the manifest's new
+  `include = ["objects/*.toml"]` key pulls in fragments containing
+  one or more `[obj]` sections (and optionally `[[module.X.functions]]`
+  extensions). `_config.load()` resolves the includes and merges them
+  into the single dict every consumer already expects — backward
+  compatible: a manifest without `include` behaves exactly as today.
+  Duplicate-object across fragments errors with a specific remedy
+  (`jm remove object X` first, or rename in the fragment).
+- **`just-makeit apply <fragment>`** — compose-fragment path: copies the
+  fragment into `objects/`, adds it to the manifest's `include` set,
+  then materializes. Phase 2 (provenance + multi-file save) will let
+  mutating commands write back to fragment files; for now mutations
+  still target the manifest.
 - **`just-makeit apply`** — materialize a project from its
   `just-makeit.toml`: generate every file each object / module / function
   in the manifest implies. Add-only — it creates missing files and never

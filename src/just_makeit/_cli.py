@@ -79,7 +79,9 @@ Commands:
     --force, -f                 Skip the confirmation prompt.
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
-  apply                         Materialize every file just-makeit.toml implies (add only).
+  apply [fragment]              Materialize every file just-makeit.toml implies (add only).
+                                With a fragment path, copy it into objects/, add to include,
+                                then materialize.
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
@@ -557,16 +559,16 @@ def main() -> None:
 
     elif cmd == "apply":
         _warn_schema()
-        if len(args) > 1:
+        from . import _apply
+
+        if len(args) > 2:
             print(
-                "error: 'apply <fragment>' is not yet supported; "
-                "run 'just-makeit apply' with no arguments.",
+                "error: 'apply' takes at most one fragment path.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        from . import _apply
-
-        _apply.run(Path.cwd())
+        fragment = Path(args[1]) if len(args) == 2 else None
+        _apply.run(Path.cwd(), fragment=fragment)
 
     elif cmd == "version":
         from . import __version__

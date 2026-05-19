@@ -24,15 +24,94 @@ from pathlib import Path
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 5
+CURRENT_SCHEMA = 6
 
 
-def load(root: Path) -> dict:
+def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
+    """Expand `include` entries (globs and explicit paths, relative to root)
+    into a de-duplicated, sorted list of fragment files."""
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for entry in includes:
+        if any(c in entry for c in "*?["):
+            matches = sorted(root.glob(entry))
+        else:
+            matches = [root / entry]
+            if not matches[0].exists():
+                raise FileNotFoundError(
+                    f"include not found: {entry} (relative to {root})"
+                )
+        for p in matches:
+            if p not in seen:
+                seen.add(p)
+                out.append(p)
+    return out
+
+
+def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
+    """Merge an included fragment into *cfg*. Top-level object sections
+    are added; only `[[module.X.functions]]` extensions are permitted under
+    `[module]` — the `[module.X]` declaration itself belongs in the
+    manifest."""
+    for key, value in fragment.items():
+        if key == "project":
+            raise ValueError(
+                f"{source}: [project] must live in the manifest, "
+                f"not in an included fragment."
+            )
+        if key == "module":
+            for mod, mod_data in (value or {}).items():
+                if not isinstance(mod_data, dict):
+                    continue
+                fns = mod_data.get("functions")
+                if fns:
+                    (
+                        cfg.setdefault("module", {})
+                        .setdefault(mod, {})
+                        .setdefault("functions", [])
+                        .extend(fns)
+                    )
+                other = set(mod_data) - {"functions"}
+                if other:
+                    raise ValueError(
+                        f"{source}: only [[module.{mod}.functions]] may be "
+                        f"declared in a fragment; [module.{mod}] belongs in "
+                        f"the manifest."
+                    )
+            continue
+        if key in cfg:
+            raise ValueError(
+                f"{source}: '{key}' already exists. "
+                f"Run `jm remove object {key}` first, "
+                f"or rename the object in the fragment."
+            )
+        cfg[key] = value
+
+
+def load_manifest(root: Path) -> dict:
+    """Read the manifest without resolving `include`. Use this when you
+    need to inspect or modify the manifest itself; consumers wanting the
+    merged project should call `load`."""
     path = root / FILENAME
     if not path.exists():
         return {}
     with path.open("rb") as f:
         return tomllib.load(f)
+
+
+def load(root: Path) -> dict:
+    """Read the manifest and merge every included fragment into one dict
+    (schema 6+). For a single-file project (no `include` key) the result
+    is identical to `tomllib.load` of the manifest — full backward
+    compatibility."""
+    cfg = load_manifest(root)
+    includes = cfg.pop("include", None)
+    if includes:
+        for fragment_path in _resolve_includes(root, includes):
+            with fragment_path.open("rb") as f:
+                fragment = tomllib.load(f)
+            _merge_fragment(cfg, fragment, fragment_path)
+    return cfg
 
 
 def save(root: Path, cfg: dict) -> None:
@@ -251,7 +330,9 @@ def add_component(
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_],
     }
     if array_args_:
-        entry["array_args"] = [{"name": n, "type": dt} for n, dt in array_args_]
+        entry["array_args"] = [
+            {"name": n, "type": dt} for n, dt in array_args_
+        ]
     if init_params_:
         entry["init_params"] = [
             {"name": n, "type": t, "default": d} for n, t, d in init_params_
@@ -296,7 +377,11 @@ def _dump(cfg: dict) -> str:
     for comp in components(cfg):
         comp_data = cfg[comp]
         scalar_keys = (
-            "arg_type", "return_type", "mutable", "no_state", "no_step",
+            "arg_type",
+            "return_type",
+            "mutable",
+            "no_state",
+            "no_step",
             "class_name",
         )
         lines.append(f"[{comp}]")
@@ -351,7 +436,9 @@ def _dump(cfg: dict) -> str:
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
             lines.append(f'name = "{p["name"]}"')
-            lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
+            lines.append(
+                f'type = "{p.get("type") or p.get("ctype", "size_t")}"'
+            )
             if p.get("writable"):
                 lines.append("writable = true")
             if p.get("field"):
