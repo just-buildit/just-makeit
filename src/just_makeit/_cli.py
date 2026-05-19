@@ -79,6 +79,7 @@ Commands:
     --force, -f                 Skip the confirmation prompt.
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
+  apply                         Materialize every file just-makeit.toml implies (add only).
   script                        Print a shell script that fully reconstructs this project via CLI.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
@@ -553,6 +554,19 @@ def main() -> None:
         from . import _upgrade
 
         _upgrade.run(Path.cwd())
+
+    elif cmd == "apply":
+        _warn_schema()
+        if len(args) > 1:
+            print(
+                "error: 'apply <fragment>' is not yet supported; "
+                "run 'just-makeit apply' with no arguments.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from . import _apply
+
+        _apply.run(Path.cwd())
 
     elif cmd == "version":
         from . import __version__

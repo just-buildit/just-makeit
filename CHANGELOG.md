@@ -4,6 +4,12 @@
 
 ### Added
 
+- **`just-makeit apply`** — materialize a project from its
+  `just-makeit.toml`: generate every file each object / module / function
+  in the manifest implies. Add-only — it creates missing files and never
+  overwrites or deletes, so it is safe to run repeatedly. Makes a project
+  reproducible from its manifest (plus any hand-written `*_core.c` /
+  `*_core.h`) alone.
 - **`just-makeit remove`** — the explicit, destructive counterpart to the
   additive commands. `remove object` / `remove module` delete the
   generated files, strip the `CMakeLists.txt` / umbrella-header /
