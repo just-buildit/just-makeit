@@ -118,6 +118,7 @@ def run(
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
                 no_step=C.is_no_step(cfg, object_name),
+                init_params=C.init_params(cfg, object_name),
             )
             ctx.update(
                 T.make_methods_ctx(
@@ -136,7 +137,9 @@ def run(
                     frozenset(n for n, _, _ in state_vars_list),
                 )
             )
-            core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+            core_h = (
+                root / "native" / "inc" / object_name / f"{object_name}_core.h"
+            )
             if core_h.exists():
                 core_h.write_text(
                     _preserve_core_bodies(
@@ -170,12 +173,16 @@ def run(
                 state_vars_list,
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
+                init_params=C.init_params(cfg, object_name),
             )
         )
         ctx.update(T.make_perf_ctx(perf))
         ctx.update(
             T.make_step_ctx(
-                ctx, arg_type_, return_type_, no_step=C.is_no_step(cfg, object_name)
+                ctx,
+                arg_type_,
+                return_type_,
+                no_step=C.is_no_step(cfg, object_name),
             )
         )
         ctx.update(
@@ -199,11 +206,15 @@ def run(
         def r(tmpl):
             return T.render(tmpl, ctx)
 
-        core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        core_h = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         if core_h.exists():
             core_h.write_text(
-                _preserve_core_bodies(core_h, r(T.COMPONENT_CORE_H), object_name),
+                _preserve_core_bodies(
+                    core_h, r(T.COMPONENT_CORE_H), object_name
+                ),
                 encoding="utf-8",
             )
             print(f"  update  {core_h}")
