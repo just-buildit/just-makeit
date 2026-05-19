@@ -91,15 +91,13 @@ def run(root: Path, module: str) -> None:
         T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
     )
 
-    # Python subpackage __init__.py (empty exports)
-    init_ctx = {
-        "module": module,
-        "Module": Module,
-        "object_imports": "",
-        "object_all": "",
-    }
+    # Python subpackage __init__.py — no objects yet, so no import line
+    # (an empty `from .<module> import` would be a SyntaxError).
     pkg_module_dir = root / "src" / pkg / module
-    _write(pkg_module_dir / "__init__.py", T.render(T.MODULE_INIT_PY, init_ctx))
+    _write(
+        pkg_module_dir / "__init__.py",
+        T.render(T.MODULE_INIT_PY_EMPTY, {"module": module}),
+    )
     _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module))
 
     # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.

@@ -80,6 +80,22 @@ class TestInitPyPreservation:
         compile(content, str(init_path), "exec")
         assert "Fir" in content
 
+    def test_fresh_module_init_py_is_valid_python(self, tmp_path):
+        """A freshly-created module's __init__.py must be valid Python.
+
+        It must not emit `from .<module> import` with an empty name list —
+        that is a SyntaxError. The import line is added only once the first
+        object/function is scaffolded.
+        """
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+
+        init_path = root / "src" / "pkg" / "dsp" / "__init__.py"
+        content = init_path.read_text(encoding="utf-8")
+        compile(content, str(init_path), "exec")
+        assert "from .dsp import  " not in content
+        assert "__all__ = []" in content
+
 
 # ---------------------------------------------------------------------------
 # Gap #2 — batch flag persistence

@@ -161,11 +161,22 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
     include any newly added type/function names, leaving wrapper classes,
     docstrings, and all other user content intact.
 
-    >>> src = '# dsp/__init__.py\\nfrom .dsp import Nco\\n__all__ = ["Nco"]\\n'
+    >>> src = ('# dsp/__init__.py\\n'
+    ...        'from .dsp import Nco  # noqa: E402\\n'
+    ...        '__all__ = ["Nco"]\\n')
     >>> print(_merge_module_init(src, 'dsp', ['Nco', 'Mixer']))
     # dsp/__init__.py
-    from .dsp import Nco, Mixer
+    from .dsp import Nco, Mixer  # noqa: E402
     __all__ = ["Nco", "Mixer"]
+    <BLANKLINE>
+
+    A fresh module has only ``__all__`` and no import line yet; the import
+    line is inserted ahead of it:
+
+    >>> print(_merge_module_init('__all__ = []\\n', 'dsp', ['Nco']))
+    from .dsp import Nco  # noqa: E402
+    <BLANKLINE>
+    __all__ = ["Nco"]
     <BLANKLINE>
     """
     # Match the import line whether it has names or is empty (e.g. after
@@ -200,9 +211,17 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
     new_import = f"from .{module} import {imports_str}  # noqa: E402"
     new_all = f"__all__ = [{all_str}]"
 
-    result = import_pat.sub(new_import, existing) if m else existing
+    if m:
+        result = import_pat.sub(new_import, existing)
+    elif all_pat.search(existing):
+        # Fresh module — no import line yet; insert one before __all__.
+        result = all_pat.sub(
+            lambda am: f"{new_import}\n\n{am.group(0)}", existing, count=1
+        )
+    else:
+        result = existing.rstrip("\n") + f"\n\n{new_import}\n"
     if all_pat.search(result):
-        result = all_pat.sub(new_all, result)
+        result = all_pat.sub(new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
     return result

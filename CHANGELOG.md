@@ -8,6 +8,11 @@
   reverts the generated `create()` prototype to `(void)`. The header was
   regenerated without the params while the implementation kept them,
   producing a conflicting-types compile error (gh#4).
+- `jm module <name>` no longer writes a syntactically invalid
+  `__init__.py`. A freshly-created module emitted
+  `from .<module> import` with an empty name list — a `SyntaxError` —
+  leaving the module unimportable until the first object was added. The
+  import line is now added only once an object or function exists.
 
 ### Changed
 

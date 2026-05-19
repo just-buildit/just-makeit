@@ -5198,6 +5198,22 @@ from .<<module>> import <<object_imports>>  # noqa: E402
 __all__ = [<<object_all>>]
 """
 
+# A freshly-created module has no objects yet, so it has nothing to import
+# from its C extension. Emitting `from .<<module>> import` with an empty name
+# list would be a SyntaxError; the import line is added by _merge_module_init()
+# once the first object or function is scaffolded.
+MODULE_INIT_PY_EMPTY = """\
+# <<module>>/__init__.py — re-export all types from the C extension.
+import os as _os
+import sys as _sys
+
+if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+    _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
+del _os, _sys
+
+__all__ = []
+"""
+
 # ── C test ───────────────────────────────────────────────────────────────────
 
 COMPONENT_TEST_C = """\
