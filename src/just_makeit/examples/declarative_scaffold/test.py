@@ -85,7 +85,10 @@ def run(root: Path) -> None:
 
     # ── 2. Author the entire component spec in one fragment. ─────────────
     fragment = root / "agc.toml"
-    fragment.write_text(_AGC_FRAGMENT)
+    # Explicit utf-8 — _AGC_FRAGMENT has non-ASCII (em-dashes) and on
+    # Windows the default `write_text` encoding is cp1252; tomllib reads
+    # strictly as UTF-8 and would reject any other encoding.
+    fragment.write_text(_AGC_FRAGMENT, encoding="utf-8")
 
     # ── 3. `jm apply` materializes the full project from the fragment. ───
     jm_apply(proj, fragment=fragment)
