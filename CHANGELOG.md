@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.3] — 2026-05-19
+
+### Fixed
+
+- `jm property --field` on an object that has `init_params` no longer
+  reverts the generated `create()` prototype to `(void)`. The header was
+  regenerated without the params while the implementation kept them,
+  producing a conflicting-types compile error (gh#4).
+
+### Changed
+
+- just-makeit now builds with the `just-buildit` backend instead of
+  `hatchling`, dogfooding the backend its own scaffolded projects use.
+  Requires `just-buildit >= 0.3.6` (the `pure` build option).
+
 ## [0.13.2] — 2026-05-19
 
 ### Added
