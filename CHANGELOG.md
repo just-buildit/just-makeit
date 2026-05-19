@@ -8,6 +8,13 @@
   `(void)args;` while its parameter was `Py_UNUSED(args)` — an
   undeclared-identifier compile error. Any project with a zero-arg
   module function failed to build.
+- Module `__init__.py` corruption (gh#5, #6) — when a formatter
+  (ruff / black) reflowed a long single-line import into the
+  parenthesized multi-line form, a subsequent `jm property` /
+  `jm method` regeneration treated the `(` as an import name and wrote
+  `from .dsp import (, A, B  # noqa: E402` plus a leftover `)` block —
+  a `SyntaxError`. The merge regex now accepts both forms and collapses
+  back to a single canonical line.
 
 ### Added
 

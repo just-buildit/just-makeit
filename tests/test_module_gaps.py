@@ -80,6 +80,31 @@ class TestInitPyPreservation:
         compile(content, str(init_path), "exec")
         assert "Fir" in content
 
+    def test_parenthesized_import_does_not_corrupt(self, tmp_path):
+        """A formatter-reflowed parenthesized multi-line import must not
+        corrupt when a subsequent mutation regenerates the module init.
+
+        Regression for gh#5/#6: ruff/black reformat
+        ``from .dsp import A, B  # noqa: E402`` to
+        ``from .dsp import (\\n    A,\\n    B,\\n)`` for long imports;
+        the merge regex only matched the first line and treated ``(`` as
+        a name, producing ``from .dsp import (, A, B`` (SyntaxError).
+        """
+        from just_makeit._object import _merge_module_init
+
+        src = (
+            "from .dsp import (  # noqa: E402\n"
+            "    Ema,\n"
+            "    Iad,\n"
+            ")\n\n"
+            '__all__ = ["Ema", "Iad"]\n'
+        )
+        merged = _merge_module_init(src, "dsp", ["Ema", "Iad", "Nco"])
+        compile(merged, "__init__.py", "exec")
+        assert "from .dsp import Ema, Iad, Nco  # noqa: E402" in merged
+        assert "(," not in merged
+        assert '"("' not in merged
+
     def test_fresh_module_init_py_is_valid_python(self, tmp_path):
         """A freshly-created module's __init__.py must be valid Python.
 

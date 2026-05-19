@@ -178,11 +178,33 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
     <BLANKLINE>
     __all__ = ["Nco"]
     <BLANKLINE>
+
+    A formatter may reflow a long import into a parenthesized multi-line
+    block; the merge collapses it back to a clean single line:
+
+    >>> src = ('from .dsp import (  # noqa: E402\\n'
+    ...        '    Ema,\\n'
+    ...        '    Iad,\\n'
+    ...        ')\\n'
+    ...        '__all__ = ["Ema", "Iad"]\\n')
+    >>> print(_merge_module_init(src, 'dsp', ['Ema', 'Iad', 'Nco']))
+    from .dsp import Ema, Iad, Nco  # noqa: E402
+    __all__ = ["Ema", "Iad", "Nco"]
+    <BLANKLINE>
     """
-    # Match the import line whether it has names or is empty (e.g. after
-    # `just-makeit module foo` before any objects are added).
+    # Match the import line in either the canonical single-line form
+    #   from .mod import A, B  # noqa: E402
+    # or the parenthesized multi-line form a formatter (ruff, black) may
+    # produce for long imports:
+    #   from .mod import (  # noqa: E402
+    #       A,
+    #       B,
+    #   )
+    # The parenthesized alternative is tried first because its `(` would
+    # otherwise be captured as a "name" by the single-line branch (gh#5).
     import_pat = re.compile(
-        rf"^from \.{re.escape(module)} import([^#\n]*)(?:#[^\n]*)?$",
+        rf"^from \.{re.escape(module)} import[ \t]*"
+        r"(\([^)]*\)|[^\n]*)[^\n]*$",
         re.MULTILINE,
     )
     all_pat = re.compile(r"^__all__\s*=\s*\[([^\]]*)\]", re.MULTILINE)
@@ -191,7 +213,10 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
     existing_set: set[str] = set()
     m = import_pat.search(existing)
     if m:
-        for n in m.group(1).split(","):
+        # Strip any inline comments, surrounding parens, and split on
+        # commas — works for both single-line and parenthesized forms.
+        raw = re.sub(r"#[^\n]*", "", m.group(1)).strip().strip("()")
+        for n in raw.split(","):
             name = n.strip()
             if name and name not in existing_set:
                 existing_names.append(name)
