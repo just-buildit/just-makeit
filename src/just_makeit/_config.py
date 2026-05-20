@@ -467,6 +467,7 @@ def _dump(cfg: dict) -> str:
     for comp in components(cfg):
         comp_data = cfg[comp]
         scalar_keys = (
+            "module",
             "arg_type",
             "return_type",
             "mutable",

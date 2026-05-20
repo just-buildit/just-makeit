@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.13.6] — 2026-05-20
+
+### Fixed
+
+- `jm apply <fragment>` now honours `module = "X"` inside a component
+  section: the component is wired into `[module.X].objects` in the
+  manifest and materialised as a module object (sharing the module's
+  `_ext.c`, no standalone extension). Previously the directive was
+  silently ignored and the object was scaffolded as standalone.
+  The `module` annotation is also preserved through subsequent
+  `C.save()` mutations (`_dump`'s `scalar_keys` now includes `"module"`).
+
 ### Fixed
 
 - Windows / MinGW parallel-build race when a project has more than one

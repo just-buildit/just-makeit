@@ -415,6 +415,36 @@ def _sync_aggregates(temp_root: Path, root: Path, cfg: dict) -> list[Path]:
 _INCLUDE_LINE = 'include = ["objects/*.toml"]\n'
 
 
+def _wire_module_object(manifest: Path, mod_name: str, comp: str) -> bool:
+    """Append *comp* to the `objects = [...]` line of [module.mod_name] in
+    *manifest*. Returns True if the file was modified.
+
+    Uses a targeted in-place text edit so fragment files (which may contain
+    `impl` bodies not tracked by `_dump`) are never touched."""
+    text = manifest.read_text(encoding="utf-8")
+    pat = re.compile(
+        rf"(\[module\.{re.escape(mod_name)}\][^\[]*?"
+        rf"objects\s*=\s*\[)([^\]]*)\]",
+        re.DOTALL,
+    )
+    m = pat.search(text)
+    if not m:
+        return False
+    existing = [
+        s.strip().strip('"')
+        for s in m.group(2).split(",")
+        if s.strip().strip('"')
+    ]
+    if comp in existing:
+        return False
+    items = existing + [comp]
+    new_list = ", ".join(f'"{x}"' for x in items)
+    manifest.write_text(
+        text[: m.start(2)] + new_list + text[m.end(2) :], encoding="utf-8"
+    )
+    return True
+
+
 def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
     """Check `impl` / `impl_file` mutual-exclusion on every section in
     *fragment* before any side-effects happen."""
@@ -441,7 +471,11 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     manifest's `include` glob covers it. Returns the destination path.
 
     Errors with the design-specified remedy if the fragment declares an
-    object that the project already has."""
+    object that the project already has.
+
+    If a component section carries `module = "X"`, the component is wired
+    into `[module.X].objects` in the manifest so `_replay` routes it to the
+    module directory instead of generating standalone files."""
     if not fragment_path.exists():
         raise FileNotFoundError(f"fragment not found: {fragment_path}")
 
@@ -452,6 +486,27 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     # the conflicting object and the recommended remedy.
     C._merge_fragment(C.load(root), fragment, fragment_path)
     _validate_fragment_impl_keys(fragment, str(fragment_path))
+
+    # Collect module-routing directives and validate before side-effects.
+    module_directives: list[tuple[str, str]] = []
+    for key, value in fragment.items():
+        if (
+            key in ("project", "module", "include")
+            or not isinstance(value, dict)
+        ):
+            continue
+        mod_name = value.get("module")
+        if isinstance(mod_name, str) and mod_name:
+            module_directives.append((key, mod_name))
+    if module_directives:
+        known_mods = C.modules(C.load_manifest(root))
+        for comp, mod_name in module_directives:
+            if mod_name not in known_mods:
+                raise ValueError(
+                    f"object '{comp}' declares module='{mod_name}' but "
+                    f"[module.{mod_name}] is not in {C.FILENAME}. "
+                    f"Defined modules: {known_mods or ['(none)']}."
+                )
 
     objects_dir = root / "objects"
     objects_dir.mkdir(exist_ok=True)
@@ -475,6 +530,11 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     if "include" not in C.load_manifest(root):
         manifest.write_text(_INCLUDE_LINE + "\n" + text, encoding="utf-8")
         print(f'  update  {manifest}  (include = ["objects/*.toml"])')
+
+    for comp, mod_name in module_directives:
+        if _wire_module_object(manifest, mod_name, comp):
+            print(f"  update  {manifest}  ([module.{mod_name}])")
+
     return dest
 
 

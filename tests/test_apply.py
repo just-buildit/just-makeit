@@ -243,3 +243,93 @@ class TestApplyErrors:
         new_run("proj", proj)
         with pytest.raises(SystemExit):
             apply_run(proj)
+
+
+_COUNTER_FRAGMENT = """\
+[counter]
+module = "dsp"
+arg_type = "void"
+return_type = "uint64_t"
+mutable = "true"
+no_state = "false"
+no_step = "false"
+
+impl = '''
+uint64_t counter_step(counter_state_t *state) {
+    return state->count++;
+}
+'''
+
+[[counter.state]]
+name = "count"
+type = "uint64_t"
+default = "0"
+"""
+
+
+class TestApplyModuleDirective:
+    def test_module_objects_manifest_updated(self, tmp_path):
+        """Composing a fragment with module='dsp' wires it into [module.dsp]."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+        frag = tmp_path / "counter.toml"
+        frag.write_text(_COUNTER_FRAGMENT)
+
+        apply_run(proj, fragment=frag)
+
+        import just_makeit._config as C
+
+        cfg = C.load(proj)
+        assert "counter" in C.module_objects(cfg, "dsp")
+
+    def test_module_objects_no_standalone_ext(self, tmp_path):
+        """Module objects get no standalone _ext.c; the module's ext.c is updated."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+        frag = tmp_path / "counter.toml"
+        frag.write_text(_COUNTER_FRAGMENT)
+
+        apply_run(proj, fragment=frag)
+
+        # Module object: core files exist in own subdir (normal)
+        assert (proj / "native" / "src" / "counter" / "counter_core.c").exists()
+        # Module object: no standalone ext.c (would exist for standalone objects)
+        assert not (
+            proj / "native" / "src" / "counter" / "counter_ext.c"
+        ).exists()
+        # Module's ext.c was updated to include counter
+        dsp_ext = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "counter" in dsp_ext
+
+    def test_module_directive_preserved_through_mutation(self, tmp_path):
+        """The module = 'dsp' field survives a subsequent C.save() call."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+        frag = tmp_path / "counter.toml"
+        frag.write_text(_COUNTER_FRAGMENT)
+        apply_run(proj, fragment=frag)
+
+        import just_makeit._config as C
+
+        cfg = C.load(proj)
+        assert cfg.get("counter", {}).get("module") == "dsp"
+        # Simulate a mutation that calls C.save().
+        C.save(proj, cfg)
+        cfg2 = C.load(proj)
+        assert cfg2.get("counter", {}).get("module") == "dsp"
+
+    def test_module_directive_unknown_module_errors(self, tmp_path):
+        """Referencing a module that doesn't exist raises ValueError."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        # No module created — "dsp" doesn't exist in manifest.
+        frag = tmp_path / "counter.toml"
+        frag.write_text(_COUNTER_FRAGMENT)
+
+        with pytest.raises(SystemExit):
+            apply_run(proj, fragment=frag)
