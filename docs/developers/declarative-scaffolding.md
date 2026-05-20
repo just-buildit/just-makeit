@@ -1,7 +1,11 @@
 # Declarative scaffolding — design
 
-Status: **draft / proposed**. Captures the design for three related
-features: split per-object TOMLs, `jm apply`, and `jm remove`.
+Status: **implemented in v0.13.5** (schema 6). Captures the design for
+three related features: split per-object TOMLs, `jm apply`, and
+`jm remove`. For the user-facing walkthrough with diagrams, see
+[../declarative-scaffolding.md](../declarative-scaffolding.md). The
+bundled `declarative_scaffold` example is the runnable proof of the
+end-to-end story.
 
 ---
 

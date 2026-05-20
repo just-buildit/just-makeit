@@ -20,6 +20,7 @@ nav = [
   ]},
   { "Artifacts"          = "artifacts.md"    },
   { "Configuration"      = "configuration.md"},
+  { "Declarative scaffolding" = "declarative-scaffolding.md" },
   { "Upgrading"          = "upgrading.md"    },
   { "Stateful vs Pure"   = "pure.md"         },
   { "Performance"        = "perf.md"         },
@@ -49,6 +50,7 @@ nav = [
     { "Start Here"         = "developers/START_HERE.md"       },
     { "Test philosophy"    = "developers/testing.md"          },
     { "pkg-config & CMake" = "developers/pkg-config.md"       },
+    { "Declarative scaffolding design" = "developers/declarative-scaffolding.md" },
     { "Release checklist"  = "developers/release-checklist.md"},
   ]},
 ]
