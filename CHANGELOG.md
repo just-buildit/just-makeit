@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Windows / MinGW parallel-build race when a project has more than one
+  standalone object: each component's CMakeLists attached a POST_BUILD
+  step that copied `libwinpthread-1.dll` into the shared
+  `PYTHON_PACKAGE_DIR`; `mingw32-make --parallel` ran them concurrently
+  and one copy would fail with "no such file or directory" while the
+  other was writing the same file. The copy is now done once at
+  configure time in the top-level CMakeLists.txt (where the package
+  directory is already known); per-component CMakeLists keep their
+  `-static-libgcc` link option but no longer do the copy.
+
 ## [0.13.5] — 2026-05-19
 
 ### Fixed

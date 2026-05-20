@@ -5630,6 +5630,18 @@ endif()
 
 set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
+# On Windows/MinGW, libwinpthread-1.dll has to sit next to the .pyd files so
+# Python can load them. Copy it once at configure time — per-target POST_BUILD
+# copies race on parallel builds when multiple standalone objects share
+# PYTHON_PACKAGE_DIR.
+if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU" AND BUILD_PYTHON)
+    get_filename_component(_gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    if(EXISTS "${_gcc_bin}/libwinpthread-1.dll")
+        file(COPY "${_gcc_bin}/libwinpthread-1.dll"
+             DESTINATION "${PYTHON_PACKAGE_DIR}")
+    endif()
+endif()
+
 # Combined C library — shared + static, no Python dependency.
 # Component OBJECT libraries are wired in via target_sources below.
 add_library(<<project_underscore>>_lib SHARED native/src/<<project_underscore>>_lib.c)
@@ -5710,17 +5722,9 @@ target_link_libraries(<<component>> PRIVATE
     Python3::NumPy)
 target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    # Avoid pulling in libgcc_s_seh-1.dll at runtime; libwinpthread-1.dll
+    # is copied once at configure time by the top CMakeLists.
     target_link_options(<<component>> PRIVATE -static-libgcc)
-    get_filename_component(_gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
-    foreach(_dll IN ITEMS libwinpthread-1.dll)
-        if(EXISTS "${_gcc_bin}/${_dll}")
-            add_custom_command(TARGET <<component>> POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_gcc_bin}/${_dll}"
-                    "${PYTHON_PACKAGE_DIR}"
-                VERBATIM)
-        endif()
-    endforeach()
 endif()
 set_target_properties(<<component>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}"
