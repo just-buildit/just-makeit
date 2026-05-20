@@ -13,9 +13,6 @@
   silently ignored and the object was scaffolded as standalone.
   The `module` annotation is also preserved through subsequent
   `C.save()` mutations (`_dump`'s `scalar_keys` now includes `"module"`).
-
-### Fixed
-
 - Windows / MinGW parallel-build race when a project has more than one
   standalone object: each component's CMakeLists attached a POST_BUILD
   step that copied `libwinpthread-1.dll` into the shared
