@@ -1,0 +1,41 @@
+/* Click-to-zoom for mermaid diagrams.
+ *
+ * Mermaid renders each ```mermaid block as <div class="mermaid"><svg/></div>.
+ * We hint that the diagram is interactive and style the fullscreen overlay
+ * created by mermaid-zoom.js when the user clicks one. */
+
+.mermaid > svg {
+  cursor: zoom-in;
+}
+
+#jm-mermaid-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  cursor: zoom-out;
+  padding: 2rem;
+}
+
+#jm-mermaid-overlay > svg {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  background: var(--md-default-bg-color, #fff);
+  border-radius: 6px;
+  padding: 1rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+
+#jm-mermaid-overlay::after {
+  content: "click anywhere or press Esc to close";
+  position: absolute;
+  bottom: 1rem;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.875rem;
+  font-family: var(--md-text-font, sans-serif);
+}

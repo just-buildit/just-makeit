@@ -56,6 +56,13 @@ nav = [
 ]
 
 # ----------------------------------------------------------------------------
+# Extra assets — click-to-zoom for the mermaid diagrams in
+# declarative-scaffolding.md (and any future docs that use them).
+# ----------------------------------------------------------------------------
+extra_css = ["assets/mermaid-zoom.css"]
+extra_javascript = ["assets/mermaid-zoom.js"]
+
+# ----------------------------------------------------------------------------
 # Theme
 # ----------------------------------------------------------------------------
 [project.theme]

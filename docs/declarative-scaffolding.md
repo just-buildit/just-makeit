@@ -10,9 +10,14 @@ workflow end to end.
 > A runnable end-to-end demo is bundled as `just-makeit example
 > declarative_scaffold`.
 
+> **New to just-makeit?** Install it first — see the
+> [Quickstart on the home page](index.md#quickstart) for the one-liner.
+
 ---
 
 ## TL;DR
+
+> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
 
 ```sh
 just-makeit new demo                      # bare project
@@ -105,11 +110,14 @@ default = "1.0f"
 
 Known placeholders:
 
+| Placeholder | Substituted with |
+|---|---|
 | `{component}` | lowercase object name (`agc`) |
 | `{Component}` | title-cased class name (`Agc`) |
 | `{module}` / `{Module}` | module name / title-cased |
-| `{arg_type}` / `{return_type}` | step types |
-| `{method}` / `{function}` | only on method / function sections |
+| `{arg_type}` / `{return_type}` | step argument and return types |
+| `{method}` | method name (only on `[[X.methods]]` sections) |
+| `{function}` | function name (only on `[[module.X.functions]]` sections) |
 
 Two more keys are honoured on object and method sections:
 
@@ -198,6 +206,8 @@ the whole cfg back to the manifest exactly as before.
 
 ## Migrating an existing project
 
+> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
+
 ```sh
 just-makeit split-objects
 ```
@@ -211,6 +221,8 @@ running on an already-split project is a no-op.
 ---
 
 ## See it work
+
+> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
 
 ```sh
 just-makeit example declarative_scaffold
