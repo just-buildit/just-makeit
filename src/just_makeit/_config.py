@@ -284,12 +284,26 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     ]
 
 
-def init_params(cfg: dict, component: str) -> list[tuple[str, str, str]]:
-    """Return --init-param entries for component as [(name, type, default), ...]."""
+def init_params(cfg: dict, component: str) -> list[tuple]:
+    """Return --init-param entries as [(name, type, default, default_raw), ...].
+
+    ``default_raw`` is the C-literal initial value for the raw parse variable
+    (overrides the type's parse_zero when non-empty).  Most params omit it;
+    callers should unpack defensively with ``param[:3]`` for the 3-tuple form.
+    """
     return [
-        (p["name"], p["type"], p["default"])
+        (p["name"], p["type"], p.get("default", ""), p.get("default_raw", ""))
         for p in cfg.get(component, {}).get("init_params", [])
     ]
+
+
+def init_post_parse(cfg: dict, component: str) -> str:
+    """Return the inline C snippet injected after PyArg_ParseTupleAndKeywords.
+
+    Used to express dynamic defaults (e.g. ``noise_hi`` defaults to
+    ``ref_len - 1`` when the caller omits it).  Empty string when absent.
+    """
+    return cfg.get(component, {}).get("init_post_parse", "")
 
 
 def methods(cfg: dict, component: str) -> list[dict]:
@@ -424,9 +438,15 @@ def add_component(
             {"name": n, "type": dt} for n, dt in array_args_
         ]
     if init_params_:
-        entry["init_params"] = [
-            {"name": n, "type": t, "default": d} for n, t, d in init_params_
-        ]
+        entry["init_params"] = []
+        for p in init_params_:
+            n, t, d = p[:3]
+            rec = {"name": n, "type": t}
+            if d:
+                rec["default"] = d
+            if len(p) > 3 and p[3]:
+                rec["default_raw"] = p[3]
+            entry["init_params"].append(rec)
     if class_name_:
         entry["class_name"] = class_name_
     cfg[component] = entry
@@ -456,6 +476,16 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'doc = "{fn["doc"]}"')
             if fn.get("return_type"):
                 lines.append(f'return_type = "{fn["return_type"]}"')
+            if fn.get("out_type"):
+                lines.append(f'out_type = "{fn["out_type"]}"')
+            if fn.get("max_results_param"):
+                lines.append(f'max_results_param = "{fn["max_results_param"]}"')
+            if fn.get("result_fields"):
+                rf_parts = ", ".join(
+                    f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
+                    for f in fn["result_fields"]
+                )
+                lines.append(f"result_fields = [{rf_parts}]")
             if fn.get("params"):
                 parts = ", ".join(
                     f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
@@ -495,7 +525,14 @@ def _dump(cfg: dict) -> str:
             lines.append(f"[[{comp}.init_params]]")
             lines.append(f'name = "{p["name"]}"')
             lines.append(f'type = "{p["type"]}"')
-            lines.append(f'default = "{p["default"]}"')
+            if "default" in p:
+                lines.append(f'default = "{p["default"]}"')
+            if "default_raw" in p:
+                lines.append(f'default_raw = "{p["default_raw"]}"')
+            lines.append("")
+        if comp_data.get("init_post_parse"):
+            ipp = comp_data["init_post_parse"].replace('"""', '\\"\\"\\"')
+            lines.append(f'init_post_parse = """\n{ipp}\n"""')
             lines.append("")
         for m in comp_data.get("methods", []):
             lines.append(f"[[{comp}.methods]]")
@@ -506,6 +543,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'return_type = "{m["return_type"]}"')
             if m.get("variable_output"):
                 lines.append("variable_output = true")
+            if m.get("none_on_empty"):
+                lines.append("none_on_empty = true")
             if m.get("batch"):
                 lines.append("batch = true")
             if m.get("multi_output"):
@@ -523,6 +562,14 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"out_divisor = {m['out_divisor']}")
             if m.get("bench") is False:
                 lines.append("bench = false")
+            if m.get("max_results"):
+                lines.append(f"max_results = {m['max_results']}")
+            if m.get("result_fields"):
+                rf_parts = ", ".join(
+                    f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
+                    for f in m["result_fields"]
+                )
+                lines.append(f"result_fields = [{rf_parts}]")
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
@@ -534,6 +581,13 @@ def _dump(cfg: dict) -> str:
                 lines.append("writable = true")
             if p.get("field"):
                 lines.append("field = true")
+            if p.get("buf_field"):
+                lines.append(f'buf_field = "{p["buf_field"]}"')
+                lines.append(f'len_field = "{p.get("len_field", "n")}"')
+            if p.get("valid_field"):
+                lines.append(f'valid_field = "{p["valid_field"]}"')
+            if p.get("expr"):
+                lines.append(f'expr = "{p["expr"]}"')
             lines.append("")
 
     return "\n".join(lines)

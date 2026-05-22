@@ -43,7 +43,7 @@ def _object_flags(cfg: dict, comp: str, module: str | None = None) -> list[str]:
         val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--state", val))
 
-    for name, typ, default in C.init_params(cfg, comp):
+    for name, typ, default, *_ in C.init_params(cfg, comp):
         val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--init-param", val))
 

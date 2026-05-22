@@ -177,7 +177,7 @@ def _build_class_docstring(
                     f"        {name} state variable.",
                 ]
     elif init_params:
-        for name, ctype, dflt in init_params:
+        for name, ctype, dflt, *_ in init_params:
             py_t = _CTYPE_TO_PY.get(ctype, "Any")
             py_d = _py_default_stub(ctype, dflt)
             param_lines += [
@@ -261,7 +261,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     py_create_args = (
         ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars)
         if (scalar_vars and not no_state)
-        else (", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in ip) if ip else "")
+        else (", ".join(_py_default_stub(ct, dflt) for _, ct, dflt, *_ in ip) if ip else "")
     )
 
     import_line = (
@@ -288,7 +288,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif ip:
-        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in ip)
+        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, *_ in ip)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
         lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")

@@ -42,7 +42,8 @@ def _make_object_ctx(
     no_state: bool = False,
     no_step: bool = False,
     mutable: bool = False,
-    init_params: list[tuple[str, str, str]] = (),
+    init_params: list[tuple] = (),
+    init_post_parse_impl: str = "",
     class_name: str | None = None,
 ) -> dict:
     """Build the render ctx for an object."""
@@ -69,6 +70,7 @@ def _make_object_ctx(
             array_args=array_args,
             no_state=no_state,
             init_params=init_params,
+            init_post_parse_impl=init_post_parse_impl,
         )
     )
     ctx.update(T.make_perf_ctx(perf))
@@ -493,7 +495,8 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     impl_body: str | None = None,
-    init_params: list[tuple[str, str, str]] = (),
+    init_params: list[tuple] = (),
+    init_post_parse_impl: str = "",
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -598,6 +601,7 @@ def run(
         no_step=no_step,
         mutable=mutable,
         init_params=init_params,
+        init_post_parse_impl=init_post_parse_impl,
         class_name=class_name,
     )
     ctx.update(

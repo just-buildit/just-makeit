@@ -254,9 +254,30 @@ def is_array_param_type(ptype: str) -> bool:
     return ptype.endswith("[]")
 
 
+def array_param_ndim(ptype: str) -> int:
+    """Return the number of dimensions for an array param type (1 or 2)."""
+    return 2 if ptype.endswith("[][]") else 1
+
+
 def array_elem_ctype(ptype: str) -> str:
-    """Strip '[]' suffix to get the element C type, e.g. 'float _Complex[]' -> 'float _Complex'."""
-    return ptype[:-2]
+    """Strip all '[]' suffixes to get the element C type.
+
+    Examples: 'float _Complex[]' -> 'float _Complex'
+              'float _Complex[][]' -> 'float _Complex'
+    """
+    while ptype.endswith("[]"):
+        ptype = ptype[:-2]
+    return ptype
+
+
+def is_string_enum_type(ptype: str) -> bool:
+    """Return True if ptype is a string-enum spec ('string_enum:a,b,...')."""
+    return ptype.startswith("string_enum:")
+
+
+def string_enum_choices(ptype: str) -> list[str]:
+    """Return the ordered choice list from a 'string_enum:a,b,...' type."""
+    return ptype[len("string_enum:"):].split(",")
 
 
 # Maps kind -> Python isinstance target.
@@ -273,6 +294,21 @@ _KIND_PY_TEST_VAL: dict[str, str] = {
     "int": "1",
     "complex": "1.0 + 0.0j",
     "str": '"hello"',
+}
+
+# Py_BuildValue format char + C cast type (without parentheses).
+# Applied as f"({cast}){expr}" — empty string means no cast needed.
+_PYBUILD_FMT: dict[str, tuple[str, str]] = {
+    "float": ("f", ""),
+    "double": ("d", ""),
+    "int": ("i", ""),
+    "int32_t": ("i", "int"),
+    "uint32_t": ("I", "unsigned int"),
+    "int64_t": ("L", "long long"),
+    "uint64_t": ("K", "unsigned long long"),
+    "size_t": ("K", "unsigned long long"),
+    "unsigned int": ("I", "unsigned int"),
+    "unsigned long": ("k", "unsigned long"),
 }
 
 
@@ -967,57 +1003,203 @@ def is_valid_type(ctype: str) -> bool:
 def _build_no_state_init_ctx(
     component: str,
     Component: str,
-    params: list[tuple[str, str, str]],
+    params: list[tuple],
     array_args: list[tuple[str, str]] = (),
+    init_post_parse_impl: str = "",
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
-    Handles both --array-arg (required positional numpy arrays) and
-    --init-param (optional scalar keyword args).  Array args come first
-    in kwlist and in the create() signature, matching the stateful path.
+    Handles three kinds of init-params in addition to --array-arg:
 
-    The stateful path (state_struct_fields, getter/setters, reset, etc.) is
-    intentionally excluded — callers manage all object state themselves.
+    * Array-typed  (``type = "float _Complex[]"`` or ``"float _Complex[][]"``)
+      — required positional numpy arrays.  1-D params expand to
+      ``(const T *name, size_t name_len)``; 2-D params expand to
+      ``(const T *name, size_t name_dim0, size_t name_dim1)`` and add a
+      ``PyArray_NDIM`` shape check in the generated binding.
+
+    * String-enum  (``type = "string_enum:a,b,c,d"``)
+      — optional keyword string parsed and mapped to an ``int`` index before
+      being forwarded to the C constructor.  Covers any C enum the caller
+      exposes as human-readable names.
+
+    * Scalar       (any type in ``_CTYPE_META``)
+      — optional keyword with a default value; existing behaviour.
+
+    Ordering in kwlist / C signature:
+      --array-arg first, then array init-params, then string-enum, then scalars.
     """
+    # ── Classify params ───────────────────────────────────────────────────────
+
+    # (name, elem_ctype, ndim, npy_enum)
+    arr_ip: list[tuple[str, str, int, str]] = []
+    # (name, choices, default_str)
+    str_enum_ip: list[tuple[str, list[str], str]] = []
+    # (name, ctype, default, default_raw)
+    scalar_ip: list[tuple] = []
+
+    for param in params:
+        name, ct, dflt = param[:3]
+        dflt_raw = param[3] if len(param) > 3 else ""
+        if is_array_param_type(ct):
+            elem_ct = array_elem_ctype(ct)
+            ndim = array_param_ndim(ct)
+            arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
+        elif is_string_enum_type(ct):
+            str_enum_ip.append((name, string_enum_choices(ct), dflt))
+        else:
+            scalar_ip.append((name, ct, dflt, dflt_raw))
+
+    # --array-arg entries (dtype-string form)
     _aa = list(array_args)
     _aa_ctypes = [(_ARRAY_DTYPE[dt][0], _ARRAY_DTYPE[dt][1]) for _, dt in _aa]
 
-    arr_param_parts = [
-        f"const {ct} *{name}, size_t {name}_len"
-        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
-    ]
-    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in params]
-    create_params = ", ".join(arr_param_parts + scalar_param_parts) or "void"
+    # ── C create() signature, Doxygen docs, and call args — TOML order ────────
+    #
+    # PyArg grouping (kwlist / parse format) still uses required-first order;
+    # the C-facing outputs follow the TOML declaration order so that
+    # hand-written *_core.c functions are called with the right argument layout.
 
-    arr_doc_parts = [
-        f" * @param {name}  Input {dt} array (length passed as {name}_len)."
-        for name, dt in _aa
-    ]
-    scalar_doc_parts = [
-        f" * @param {name}  {name} (default: {dflt})." for name, _, dflt in params
-    ]
-    all_docs = arr_doc_parts + scalar_doc_parts
+    # Build per-param lookup dicts keyed by name.
+    _arr_meta: dict[str, tuple] = {
+        n: (act, andim) for n, act, andim, _ in arr_ip
+    }
+    _str_enum_meta: dict[str, tuple] = {
+        sn: (choices, sdflt) for sn, choices, sdflt in str_enum_ip
+    }
+    _scalar_meta: dict[str, tuple] = {
+        n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
+    }
+
+    sig_parts: list[str] = []
+    doc_parts: list[str] = []
+    call_parts: list[str] = []
+    c_create_parts_ordered: list[str] = []
+
+    # --array-arg entries always come first (they precede init_params).
+    for (name, dt), (ct, __) in zip(_aa, _aa_ctypes):
+        disp = _ctype_display(ct)
+        sig_parts.append(f"const {disp} *{name}, size_t {name}_len")
+        doc_parts.append(
+            f" * @param {name}  Input {dt} array (length passed as {name}_len)."
+        )
+        call_parts.append(
+            f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len"
+        )
+        c_create_parts_ordered.append("NULL, 0")
+
+    # Init params in TOML declaration order.
+    for param in params:
+        pname = param[0]
+        pct = param[1]
+        pdflt = param[2] if len(param) > 2 else ""
+        if pname in _arr_meta:
+            act, andim = _arr_meta[pname]
+            adisp = _ctype_display(act)
+            if andim == 2:
+                sig_parts.append(
+                    f"const {adisp} *{pname},"
+                    f" size_t {pname}_dim0, size_t {pname}_dim1"
+                )
+                doc_parts.append(
+                    f" * @param {pname}  Input {adisp} 2-D array"
+                    f" (shape: {pname}_dim0 x {pname}_dim1)."
+                )
+                call_parts.append(
+                    f"(const {adisp} *)PyArray_DATA({pname}_arr),"
+                    f" {pname}_dim0, {pname}_dim1"
+                )
+                c_create_parts_ordered.append("NULL, 0, 0")
+            else:
+                sig_parts.append(
+                    f"const {adisp} *{pname}, size_t {pname}_len"
+                )
+                doc_parts.append(
+                    f" * @param {pname}  Input {adisp} array"
+                    f" (length passed as {pname}_len)."
+                )
+                call_parts.append(
+                    f"(const {adisp} *)PyArray_DATA({pname}_arr), {pname}_len"
+                )
+                c_create_parts_ordered.append("NULL, 0")
+        elif pname in _str_enum_meta:
+            choices, _ = _str_enum_meta[pname]
+            sig_parts.append(f"int {pname}")
+            doc_parts.append(
+                f" * @param {pname}  Enum index; 0={choices[0]}"
+                + (
+                    f"…{len(choices)-1}={choices[-1]}."
+                    if len(choices) > 1
+                    else "."
+                )
+            )
+            call_parts.append(pname)
+            c_create_parts_ordered.append("0")
+        else:
+            ct_s, dflt_s = _scalar_meta[pname]
+            sig_parts.append(f"{ct_s} {pname}")
+            doc_parts.append(
+                f" * @param {pname}  {pname} (default: {dflt_s})."
+            )
+            call_parts.append(pname)
+            c_create_parts_ordered.append(dflt_s)
+
+    create_params = ", ".join(sig_parts) or "void"
     create_param_docs = (
-        "\n".join(all_docs)
+        "\n".join(doc_parts)
         or " * @param (none)  Caller is responsible for all state management."
     )
 
+    # ── kwlist / locals / parse format ────────────────────────────────────────
+
     kwlist_items = (
         [f'"{name}"' for name, _ in _aa]
-        + [f'"{name}"' for name, _, __ in params]
+        + [f'"{name}"' for name, _, __, ___ in arr_ip]
+        + [f'"{name}"' for name, _, __ in str_enum_ip]
+        + [f'"{name}"' for name, *_ in scalar_ip]
         + ["NULL"]
     )
     init_kwlist = ", ".join(kwlist_items)
 
-    local_lines: list[str] = [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
+    local_lines: list[str] = (
+        [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
+        + [f"    PyObject *{name}_obj = NULL;" for name, _, __, ___ in arr_ip]
+    )
+    parse_args: list[str] = (
+        [f"&{name}_obj" for name, _ in _aa]
+        + [f"&{name}_obj" for name, _, __, ___ in arr_ip]
+    )
     post_lines: list[str] = []
-    parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa]
 
-    for name, ct, dflt in params:
+    # String-enum: "s" format, optional (after |)
+    for sname, choices, sdflt in str_enum_ip:
+        local_lines.append(f'    const char *{sname}_str = "{sdflt}";')
+        parse_args.append(f"&{sname}_str")
+        # Post-parse: strcmp chain → int
+        enum_lines = [f"    int {sname} = 0;"]
+        for i, choice in enumerate(choices):
+            kw = "if" if i == 0 else "else if"
+            enum_lines.append(
+                f'    {kw} (strcmp({sname}_str, "{choice}") == 0)'
+                f" {sname} = {i};"
+            )
+        choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
+        enum_lines += [
+            f"    else {{",
+            f'        PyErr_Format(PyExc_ValueError, "{sname} must be one of'
+            f' {choices_str}, got \'%s\'", {sname}_str);',
+            f"        return -1;",
+            f"    }}",
+        ]
+        post_lines.extend(enum_lines)
+
+    # Scalar params: optional (after |)
+    for name, ct, dflt, *_dflt_raw in scalar_ip:
+        dflt_raw = _dflt_raw[0] if _dflt_raw else ""
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
+            raw_init = dflt_raw if dflt_raw else meta["parse_zero"]
             local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};"
+                f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")
@@ -1025,26 +1207,33 @@ def _build_no_state_init_ctx(
             local_lines.append(f"    {ct} {name} = {dflt};")
             parse_args.append(f"&{name}")
 
+    # Caller-supplied post-parse code (e.g. sentinel → computed default).
+    if init_post_parse_impl:
+        post_lines.append(init_post_parse_impl.rstrip())
+
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
-    array_fmt = "O" * len(_aa)
-    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in params)
-    if params:
-        init_parse_fmt = array_fmt + "|" + scalar_fmt_str
+    n_required = len(_aa) + len(arr_ip)
+    array_fmt = "O" * n_required
+    optional_fmt = (
+        "s" * len(str_enum_ip)
+        + "".join(_CTYPE_META[ct]["fmt"] for _, ct, *_ in scalar_ip)
+    )
+    if str_enum_ip or scalar_ip:
+        init_parse_fmt = array_fmt + "|" + optional_fmt
     else:
         init_parse_fmt = array_fmt or "|"
 
     init_parse_args = ", ".join(parse_args)
 
-    arr_call_parts = [
-        f"(const {ct} *)PyArray_DATA({name}_arr), {name}_len"
-        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
-    ]
-    scalar_call_parts = [name for name, _, __ in params]
-    create_call_args = ", ".join(arr_call_parts + scalar_call_parts)
+    # ── create_call_args (TOML order, built above) ────────────────────────────
 
-    if _aa or params:
+    create_call_args = ", ".join(call_parts)
+
+    # ── init_parse_block ──────────────────────────────────────────────────────
+
+    if _aa or arr_ip or str_enum_ip or scalar_ip:
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
             f"{init_locals}\n"
@@ -1058,65 +1247,114 @@ def _build_no_state_init_ctx(
     else:
         init_parse_block = "    (void)args;\n    (void)kwds;\n"
 
-    # array_args_parse_block: FROM_OTF conversion after kwarg parse
+    # ── array_args_parse_block (FROM_OTF) ─────────────────────────────────────
+
     aapb_lines: list[str] = []
-    already_allocated: list[str] = []
+    allocated: list[str] = []
+
     for (name, _), (ct, npy_enum) in zip(_aa, _aa_ctypes):
-        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in already_allocated)
+        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in allocated)
         aapb_lines.append(
             f"    PyArrayObject *{name}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
             f"        {name}_obj, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
             f"    if (!{name}_arr) {{{cleanup} return -1; }}\n"
             f"    size_t {name}_len = (size_t)PyArray_SIZE({name}_arr);\n"
         )
-        already_allocated.append(name)
+        allocated.append(name)
+
+    for aname, _, andim, anpy in arr_ip:
+        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in allocated)
+        if andim == 2:
+            aapb_lines.append(
+                f"    PyArrayObject *{aname}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"        {aname}_obj, {anpy}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+                f"    if (PyArray_NDIM({aname}_arr) != 2) {{\n"
+                f"        PyErr_SetString(PyExc_ValueError,\n"
+                f'                        "{aname} must be a 2-D array");\n'
+                f"        {cleanup} Py_DECREF({aname}_arr); return -1;\n"
+                f"    }}\n"
+                f"    size_t {aname}_dim0 = (size_t)PyArray_DIM({aname}_arr, 0);\n"
+                f"    size_t {aname}_dim1 = (size_t)PyArray_DIM({aname}_arr, 1);\n"
+            )
+        else:
+            aapb_lines.append(
+                f"    PyArrayObject *{aname}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"        {aname}_obj, {anpy}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+                f"    size_t {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
+            )
+        allocated.append(aname)
+
     array_args_parse_block = "".join(aapb_lines)
-    array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name, _ in _aa)
+    array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name in allocated)
 
-    # pyi and test helpers
+    # ── pyi / test helpers ────────────────────────────────────────────────────
+
     _NP_PY_TYPE: dict[str, str] = {
-        "float32": "np.float32",
-        "float64": "np.float64",
-        "complex64": "np.complex64",
-        "complex128": "np.complex128",
-        "int8": "np.int8",
-        "int16": "np.int16",
-        "int32": "np.int32",
-        "int64": "np.int64",
-        "uint8": "np.uint8",
-        "uint16": "np.uint16",
-        "uint32": "np.uint32",
-        "uint64": "np.uint64",
-        "uintp": "np.uintp",
-        "intp": "np.intp",
+        "float32": "np.float32",   "float64": "np.float64",
+        "complex64": "np.complex64", "complex128": "np.complex128",
+        "int8": "np.int8",   "int16": "np.int16",
+        "int32": "np.int32", "int64": "np.int64",
+        "uint8": "np.uint8", "uint16": "np.uint16",
+        "uint32": "np.uint32", "uint64": "np.uint64",
+        "uintp": "np.uintp", "intp": "np.intp",
     }
-    arr_pyi_parts = [f"{name}: npt.ArrayLike" for name, _ in _aa]
-    scalar_pyi_parts = [
-        f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
-        for name, ct, dflt in params
-    ]
-    init_params_pyi = ", ".join(arr_pyi_parts + scalar_pyi_parts)
 
-    arr_doc_pyi = "\n".join(
-        f"    {name} : array-like\n        {dt} coefficients." for name, dt in _aa
+    pyi_parts: list[str] = (
+        [f"{name}: npt.ArrayLike" for name, _ in _aa]
+        + [f"{aname}: npt.ArrayLike" for aname, _, __, ___ in arr_ip]
+        + [f'{sname}: str = "{sdflt}"' for sname, _, sdflt in str_enum_ip]
+        + [
+            f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
+            for name, ct, dflt, *_ in scalar_ip
+        ]
     )
-    scalar_doc_pyi = "\n".join(
-        f"    {name} : {_CTYPE_META[ct]['py_type']}, default {_py_default(ct, dflt)}\n"
-        f"        {name} constructor parameter."
-        for name, ct, dflt in params
-    )
-    pyi_param_docs = (
-        "\n".join(p for p in [arr_doc_pyi, scalar_doc_pyi] if p) or "    (none)"
-    )
+    init_params_pyi = ", ".join(pyi_parts)
 
-    py_arr_args = [
-        f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})" for _, dt in _aa
-    ]
-    py_scalar_args = [_py_default(ct, dflt) for _, ct, dflt in params]
-    py_create_args = ", ".join(py_arr_args + py_scalar_args)
+    pyi_doc_sections: list[str] = []
+    if _aa:
+        pyi_doc_sections.append("\n".join(
+            f"    {name} : array-like\n        {dt} coefficients."
+            for name, dt in _aa
+        ))
+    if arr_ip:
+        pyi_doc_sections.append("\n".join(
+            f"    {aname} : array-like"
+            f"{', shape (rows, cols)' if andim == 2 else ''}\n"
+            f"        {_ctype_display(act)} {'matrix' if andim == 2 else 'array'}."
+            for aname, act, andim, _ in arr_ip
+        ))
+    if str_enum_ip:
+        pyi_doc_sections.append("\n".join(
+            f'    {sname} : str, default "{sdflt}"\n'
+            f"        One of: {', '.join(choices)}."
+            for sname, choices, sdflt in str_enum_ip
+        ))
+    if scalar_ip:
+        pyi_doc_sections.append("\n".join(
+            f"    {name} : {_CTYPE_META[ct]['py_type']},"
+            f" default {_py_default(ct, dflt)}\n"
+            f"        {name} constructor parameter."
+            for name, ct, dflt, *_ in scalar_ip
+        ))
+    pyi_param_docs = "\n".join(pyi_doc_sections) or "    (none)"
 
-    c_arr_call_parts = ["NULL, 0" for _ in _aa]
-    c_create_args = ", ".join(c_arr_call_parts + [dflt for _, _, dflt in params])
+    py_create_parts: list[str] = []
+    for _, dt in _aa:
+        py_create_parts.append(f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})")
+    for aname, act, andim, _ in arr_ip:
+        dt = _CTYPE_TO_DTYPE.get(act, "float32")
+        npt = _NP_PY_TYPE.get(dt, "np.float32")
+        py_create_parts.append(
+            f"np.zeros((1, 1), dtype={npt})" if andim == 2
+            else f"np.zeros(1, dtype={npt})"
+        )
+    py_create_parts += [f'"{sdflt}"' for _, _, sdflt in str_enum_ip]
+    py_create_parts += [_py_default(ct, dflt) for _, ct, dflt, *_ in scalar_ip]
+    py_create_args = ", ".join(py_create_parts)
+
+    c_create_args = ", ".join(c_create_parts_ordered)
 
     test_obj = f"        obj = {Component}({py_create_args})"
 
@@ -1147,10 +1385,12 @@ def _build_no_state_init_ctx(
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
-            test_obj + "\n        pass  # no auto-state; add assertions for your fields"
+            test_obj
+            + "\n        pass  # no auto-state; add assertions for your fields"
         ),
         "reset_test_py": (
-            test_obj + "\n        pass  # no auto-state; add assertions for your reset"
+            test_obj
+            + "\n        pass  # no auto-state; add assertions for your reset"
         ),
     }
 
@@ -1247,7 +1487,8 @@ def make_state_ctx(
     array_args: list[tuple[str, str]] = (),
     roles: dict[str, str] | None = None,
     no_state: bool = False,
-    init_params: list[tuple[str, str, str]] = (),
+    init_params: list[tuple] = (),
+    init_post_parse_impl: str = "",
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1322,6 +1563,7 @@ def make_state_ctx(
                     Component,
                     list(init_params),
                     list(array_args),
+                    init_post_parse_impl=init_post_parse_impl,
                 )
             )
         return base
@@ -2321,6 +2563,9 @@ def make_methods_ctx(
         batch: bool = m.get("batch", False)
         multi_output: list[str] = m.get("multi_output", [])
         params: list[dict] = m.get("params", [])  # [{name, type}, ...]
+        result_fields: list[dict] = m.get("result_fields", [])
+        max_results: int = int(m.get("max_results", 64))
+        none_on_empty: bool = m.get("none_on_empty", False)
 
         ret_disp = _ctype_display(return_type)
         _ret_elem = return_type[:-2] if return_type.endswith("[]") else return_type
@@ -2454,7 +2699,20 @@ def make_methods_ctx(
             continue
 
         # ── declarations for _core.h ─────────────────────────────────────────
-        if variable_output:
+        if result_fields:
+            # struct-list return: size_t comp_push(state, in, n_in, T *out, n)
+            if has_arg:
+                decl_lines.append(
+                    f"size_t {component}_{name}({component}_state_t *state,"
+                    f" const {arg_disp} *in, size_t n_in,"
+                    f" {ret_disp} *result, size_t max_results);"
+                )
+            else:
+                decl_lines.append(
+                    f"size_t {component}_{name}({component}_state_t *state,"
+                    f" {ret_disp} *result, size_t max_results);"
+                )
+        elif variable_output:
             extra_params = "".join(
                 f", {_ctype_display(rt)} *out{i + 1}"
                 for i, rt in enumerate(multi_output)
@@ -2702,6 +2960,10 @@ def make_methods_ctx(
                     f"}}"
                 )
             else:
+                _none_on_empty_line = (
+                    "    if (!n_out) Py_RETURN_NONE;\n"
+                    if none_on_empty else ""
+                )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
@@ -2709,6 +2971,7 @@ def make_methods_ctx(
                     f"{guard}"
                     f"{parse_block}"
                     f"    size_t n_out = {component}_{name}({call_data});\n"
+                    f"{_none_on_empty_line}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
                     f"        1, &dim, {ret_np}, self->_{name}_buf);\n"
@@ -2758,6 +3021,85 @@ def make_methods_ctx(
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
                 f"     {_build_ml_doc(_vo_doc_lines)}}},\n"
+            )
+        elif result_fields:
+            # struct-list return: stack-alloc array, call C, build list[tuple]
+            _rf_fmt_parts: list[str] = []
+            _rf_arg_parts: list[str] = []
+            for _rf in result_fields:
+                _rft = _rf["type"]
+                _rfn = _rf["name"]
+                _fmt_c, _cast = _PYBUILD_FMT.get(_rft, ("i", ""))
+                _rf_fmt_parts.append(_fmt_c)
+                _rft_val = f"results[i].{_rfn}"
+                if _cast:
+                    _rft_val = f"({_cast}){_rft_val}"
+                _rf_arg_parts.append(_rft_val)
+            _bvfmt = '"(' + "".join(_rf_fmt_parts) + ')"'
+            _bvargs = ", ".join(_rf_arg_parts)
+            if has_arg:
+                _rf_parse = (
+                    f"    PyObject *in_obj = NULL;\n"
+                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    f"        return NULL;\n"
+                    f"    PyArrayObject *in_arr"
+                    f" = (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                    f"    if (!in_arr) return NULL;\n"
+                    f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
+                )
+                _rf_call = (
+                    f"    {ret_disp} results[{max_results}];\n"
+                    f"    size_t n_out = {component}_{name}(self->handle,\n"
+                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
+                    f" n_in,\n"
+                    f"        results, {max_results});\n"
+                    f"    Py_DECREF(in_arr);\n"
+                )
+            else:
+                _rf_parse = ""
+                _rf_call = (
+                    f"    {ret_disp} results[{max_results}];\n"
+                    f"    size_t n_out = {component}_{name}(self->handle,\n"
+                    f"        results, {max_results});\n"
+                )
+            wrapper = (
+                f"static PyObject *\n"
+                f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"{guard}"
+                f"{_rf_parse}"
+                f"{_rf_call}"
+                f"    PyObject *lst = PyList_New((Py_ssize_t)n_out);\n"
+                f"    if (!lst) return NULL;\n"
+                f"    for (size_t i = 0; i < n_out; i++) {{\n"
+                f"        PyObject *tup = Py_BuildValue({_bvfmt}, {_bvargs});\n"
+                f"        if (!tup) {{ Py_DECREF(lst); return NULL; }}\n"
+                f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
+                f"    }}\n"
+                f"    return lst;\n"
+                f"}}"
+            )
+            _rf_field_names = ", ".join(f["name"] for f in result_fields)
+            _rf_call_arg = (
+                f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
+            )
+            _rf_doc_lines = [
+                f"{name}({'x' if has_arg else ''}) -> list[tuple]",
+                "",
+                f"Returns list of ({_rf_field_names},) tuples.",
+                "",
+                "    >>> import numpy as np",
+                *_from_line,
+                _obj_line,
+                f"    >>> results = obj.{name}({_rf_call_arg})",
+                "    >>> isinstance(results, list)",
+                "    True",
+            ]
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction){Component}_{name},'
+                f" METH_VARARGS,\n"
+                f"     {_build_ml_doc(_rf_doc_lines)}}},\n"
             )
         else:
             # Fixed-output wrapper
@@ -2950,7 +3292,9 @@ def make_methods_ctx(
                 param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
             else:
                 param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}")
-        if m_var:
+        if result_fields:
+            ret_ann = "list[tuple]"
+        elif m_var:
             all_rts = [return_type] + list(m_multi)
             ndarrays = [_pyi_ndarray(rt) for rt in all_rts]
             ret_ann = (
@@ -3047,11 +3391,57 @@ def make_properties_ctx(
         ctype: str = p.get("type") or p.get("ctype", "size_t")
         writable: bool = p.get("writable", False)
         field: bool = p.get("field", False)
+        buf_field: str = p.get("buf_field", "")
+        len_field: str = p.get("len_field", "n")
+        valid_field: str = p.get("valid_field", "")
 
         meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
         disp = _ctype_display(ctype)
 
-        if field:
+        if buf_field:
+            # Buffer-view property: returns a zero-copy numpy array backed by
+            # an internal state-struct pointer, optionally gated by a validity
+            # flag.  Never generates a C getter declaration.
+            _elem_ct = ctype[:-2] if ctype.endswith("[]") else ctype
+            _elem_meta = _CTYPE_META.get(_elem_ct, _CTYPE_META["float _Complex"])
+            _np_enum = _NP_ENUM.get(_elem_meta["py_type"], "NPY_CFLOAT")
+            _valid_check = (
+                f"    if (!self->handle->{valid_field}) Py_RETURN_NONE;\n"
+                if valid_field else ""
+            )
+            getter = (
+                f"static PyObject *\n"
+                f"{Component}_getprop_{pname}({Component}Object *self,"
+                f" void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"{guard}"
+                f"{_valid_check}"
+                f"    npy_intp dim = (npy_intp)self->handle->{len_field};\n"
+                f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
+                f"        1, &dim, {_np_enum},"
+                f" self->handle->{buf_field});\n"
+                f"    if (!arr) return NULL;\n"
+                f"    PyArray_SetBaseObject("
+                f"(PyArrayObject *)arr, (PyObject *)self);\n"
+                f"    Py_INCREF(self);\n"
+                f"    return arr;\n"
+                f"}}"
+            )
+        elif p.get("expr"):
+            # Inline-expression property: getter evaluates a custom C
+            # expression — no extern declaration, no struct field.
+            _expr = p["expr"]
+            to_py = meta["to_py"](_expr)
+            getter = (
+                f"static PyObject *\n"
+                f"{Component}_getprop_{pname}({Component}Object *self,"
+                f" void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"{guard}"
+                f"    return {to_py};\n"
+                f"}}"
+            )
+        elif field:
             # Struct-backed property: direct struct field access,
             # no extern C function declaration needed.
             struct_field_lines.append(f"    {disp} {pname};")
@@ -4931,8 +5321,41 @@ def fn_c_decl(
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> str:
-    """One-line C declaration: 'return_type fn_name(c_params);'"""
+    """One-line C declaration: 'return_type fn_name(c_params);'
+
+    out_type: if set, inserts '{out_type} *out' after array params and
+    forces the return type to void (output is returned via the pointer).
+
+    result_fields: if set, forces return type to size_t (count) and
+    appends '{return_type} *result' (plus 'size_t max_results' when
+    max_results_param is empty, meaning the cap is not already a named
+    param).
+    """
+    result_fields = result_fields or []
+    if result_fields:
+        rt_disp = _ctype_display(return_type)
+        c_param_str, _ = _fn_c_params(params)
+        extra = f", {rt_disp} *result"
+        if not max_results_param:
+            extra += ", size_t max_results"
+        return f"size_t {fn_name}({c_param_str}{extra});\n"
+    if out_type:
+        arr_p = [(n, t) for n, t in params if is_array_param_type(t)]
+        scl_p = [(n, t) for n, t in params if not is_array_param_type(t)]
+        out_disp = _ctype_display(out_type)
+        c_parts: list[str] = []
+        for n, t in arr_p:
+            c_parts.append(f"const {_ctype_display(array_elem_ctype(t))} *{n}")
+            c_parts.append(f"size_t {n}_len")
+        c_parts.append(f"{out_disp} *out")
+        for n, t in scl_p:
+            c_parts.append(f"{_ctype_display(t)} {n}")
+        full_params = ", ".join(c_parts) if c_parts else "void"
+        return f"void {fn_name}({full_params});\n"
     ret_disp = _ctype_display(return_type)
     c_param_str, _ = _fn_c_params(params)
     return f"{ret_disp} {fn_name}({c_param_str});\n"
@@ -4942,8 +5365,64 @@ def fn_c_stub(
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> str:
-    """C implementation stub for <module>_core.c (public, no _impl suffix)."""
+    """C implementation stub for <module>_core.c (public, no _impl suffix).
+
+    out_type and result_fields extend the signature in the same way as
+    fn_c_decl; see that function's docstring for the semantics.
+    """
+    result_fields = result_fields or []
+    if result_fields:
+        rt_disp = _ctype_display(return_type)
+        c_param_str, suppress = _fn_c_params(params)
+        extra_params = f", {rt_disp} *result"
+        if not max_results_param:
+            extra_params += ", size_t max_results"
+        suppress_extra = " (void)result;"
+        if not max_results_param:
+            suppress_extra += " (void)max_results;"
+        suppress_line = (suppress + suppress_extra) if suppress else (
+            "    " + suppress_extra.strip()
+        )
+        return (
+            f"/* <<IMPLEMENT: {fn_name}>> */\n"
+            f"size_t\n"
+            f"{fn_name}({c_param_str}{extra_params})\n"
+            f"{{\n"
+            + suppress_line + "\n"
+            + "    return 0; /* placeholder */\n"
+            + "}\n"
+        )
+    if out_type:
+        arr_p = [(n, t) for n, t in params if is_array_param_type(t)]
+        scl_p = [(n, t) for n, t in params if not is_array_param_type(t)]
+        out_disp = _ctype_display(out_type)
+        c_parts: list[str] = []
+        suppress_parts: list[str] = []
+        for n, t in arr_p:
+            c_parts.append(f"const {_ctype_display(array_elem_ctype(t))} *{n}")
+            c_parts.append(f"size_t {n}_len")
+            suppress_parts += [f"(void){n};", f"(void){n}_len;"]
+        c_parts.append(f"{out_disp} *out")
+        suppress_parts.append("(void)out;")
+        for n, t in scl_p:
+            c_parts.append(f"{_ctype_display(t)} {n}")
+            suppress_parts.append(f"(void){n};")
+        full_params = ", ".join(c_parts) if c_parts else "void"
+        suppress = (
+            "    " + " ".join(suppress_parts) if suppress_parts else ""
+        )
+        return (
+            f"/* <<IMPLEMENT: {fn_name}>> */\n"
+            f"void\n"
+            f"{fn_name}({full_params})\n"
+            f"{{\n"
+            + (suppress + "\n" if suppress else "")
+            + "}\n"
+        )
     ret_disp = _ctype_display(return_type)
     ret_meta = _CTYPE_META.get(return_type)
     c_param_str, suppress = _fn_c_params(params)
@@ -4967,12 +5446,22 @@ def _py_wrapper_for_function(
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
     The C function is assumed to be declared in <module>_core.h and named
     exactly fn_name (public, no prefix).
+
+    out_type: if set, allocates a 1-D ndarray of this type (length = first
+    array param's length) and passes it after the array args, before scalars.
+
+    result_fields + max_results_param: if set, calls C with a stack-allocated
+    array of structs, builds and returns list[tuple] from the fields.
     """
+    result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
 
     if params:
@@ -4981,14 +5470,77 @@ def _py_wrapper_for_function(
         )
         py_args = "PyObject *args"
     else:
-        # The parameter is Py_UNUSED(args) — there is no `args` identifier
-        # to cast to void; Py_UNUSED already suppresses the unused warning.
         parse_block = ""
         call_args = ""
         cleanup = ""
         py_args = "PyObject *Py_UNUSED(args)"
 
-    if ret_meta:
+    if result_fields and max_results_param:
+        # Build list-of-tuples from struct array.
+        _rf_fmt_parts: list[str] = []
+        _rf_arg_parts: list[str] = []
+        for _rf in result_fields:
+            _rft = _rf["type"]
+            _rfn = _rf["name"]
+            _fmt_c, _cast = _PYBUILD_FMT.get(_rft, ("i", ""))
+            _rf_fmt_parts.append(_fmt_c)
+            _val = f"_results[_i].{_rfn}"
+            if _cast:
+                _val = f"({_cast}){_val}"
+            _rf_arg_parts.append(_val)
+        _bvfmt = '"(' + "".join(_rf_fmt_parts) + ')"'
+        _bvargs = ", ".join(_rf_arg_parts)
+        _rt_disp = _ctype_display(return_type)
+        _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        ret_line = (
+            f"    size_t _max = (size_t){max_results_param};\n"
+            f"    {_rt_disp} *_results ="
+            f" ({_rt_disp} *)malloc(_max * sizeof({_rt_disp}));\n"
+            f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
+            f"    size_t _n = {fn_name}({call_args}, _results);\n"
+            f"{cleanup}"
+            f"    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
+            f"    if (!_lst) {{ free(_results); return NULL; }}\n"
+            f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
+            f"        PyObject *_tup = Py_BuildValue({_bvfmt}, {_bvargs});\n"
+            f"        if (!_tup) {{ free(_results); Py_DECREF(_lst); return NULL; }}\n"
+            f"        PyList_SET_ITEM(_lst, (Py_ssize_t)_i, _tup);\n"
+            f"    }}\n"
+            f"    free(_results);\n"
+            f"    return _lst;"
+        )
+    elif out_type:
+        # Allocate output array, insert after array args, before scalars.
+        out_npy = _CTYPE_TO_NPY[out_type]
+        out_disp = _ctype_display(out_type)
+        first_arr = next((n for n, t in params if is_array_param_type(t)), None)
+        len_expr = f"{first_arr}_len" if first_arr else "1"
+        # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
+        # Insert `out` after the last (ptr, len) pair.
+        _arr_count = sum(1 for _, t in params if is_array_param_type(t))
+        _arr_args = call_args.split(", ")
+        # Each array expands to 2 args; scalars are single.
+        _insert_idx = _arr_count * 2
+        _parts_before = ", ".join(_arr_args[:_insert_idx])
+        _parts_after = ", ".join(_arr_args[_insert_idx:])
+        _sep_before = ", " if _parts_before else ""
+        _sep_after = ", " if _parts_after else ""
+        _call_with_out = (
+            f"{_parts_before}{_sep_before}"
+            f"({out_disp} *)PyArray_DATA"
+            f"((PyArrayObject *)_out){_sep_after}{_parts_after}"
+        )
+        _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        ret_line = (
+            f"    npy_intp _dim = (npy_intp){len_expr};\n"
+            f"    PyObject *_out ="
+            f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
+            f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
+            f"    {fn_name}({_call_with_out});\n"
+            f"{cleanup}"
+            f"    return _out;"
+        )
+    elif ret_meta:
         ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
         ret_line = f"{cleanup}    return {ret_expr};"
     else:
@@ -5025,7 +5577,12 @@ def make_functions_ctx(module: str, Module: str, functions: list[dict]) -> dict:
         return_type = fn.get("return_type", "void")
         doc = fn.get("doc", f"{name}.")
         flags = "METH_VARARGS" if params else "METH_NOARGS"
-        wrappers.append(_py_wrapper_for_function(name, params, return_type))
+        wrappers.append(_py_wrapper_for_function(
+            name, params, return_type,
+            out_type=fn.get("out_type", ""),
+            result_fields=fn.get("result_fields", []),
+            max_results_param=fn.get("max_results_param", ""),
+        ))
         entries.append(f'    {{"{name}", _bind_{name}, {flags}, "{doc}"}},')
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)

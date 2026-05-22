@@ -26,8 +26,16 @@ def _append_to_core_c(
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> None:
-    stub = T.fn_c_stub(fn_name, params, return_type)
+    stub = T.fn_c_stub(
+        fn_name, params, return_type,
+        out_type=out_type,
+        result_fields=result_fields,
+        max_results_param=max_results_param,
+    )
     existing = path.read_text(encoding="utf-8")
     path.write_text(existing + "\n" + stub, encoding="utf-8")
     print(f"  update  {path}")
@@ -39,8 +47,16 @@ def _inject_into_core_h(
     params: list[tuple[str, str]],
     return_type: str,
     module: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> None:
-    decl = T.fn_c_decl(fn_name, params, return_type)
+    decl = T.fn_c_decl(
+        fn_name, params, return_type,
+        out_type=out_type,
+        result_fields=result_fields,
+        max_results_param=max_results_param,
+    )
     existing = path.read_text(encoding="utf-8")
     # Inject inside the extern "C" block so the declaration has C linkage in
     # C++ translation units.  Preferred anchor: the closing #ifdef __cplusplus
@@ -63,6 +79,9 @@ def run(
     params: list[tuple[str, str]] | None = None,
     return_type: str = "void",
     impl_body: str | None = None,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -113,17 +132,32 @@ def run(
     if impl_body is not None:
         from . import _impl as I
 
-        stub = T.fn_c_stub(fn_name, params, return_type)
+        stub = T.fn_c_stub(
+            fn_name, params, return_type,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+        )
         stub = I.inject_body_into_stub(stub, impl_body)
         existing = core_c.read_text(encoding="utf-8")
         core_c.write_text(existing + "\n" + stub, encoding="utf-8")
         print(f"  update  {core_c}")
     else:
-        _append_to_core_c(core_c, fn_name, params, return_type)
+        _append_to_core_c(
+            core_c, fn_name, params, return_type,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+        )
 
     # Inject declaration into <module>_core.h
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
-    _inject_into_core_h(core_h, fn_name, params, return_type, module)
+    _inject_into_core_h(
+        core_h, fn_name, params, return_type, module,
+        out_type=out_type,
+        result_fields=result_fields,
+        max_results_param=max_results_param,
+    )
 
     # Update config
     fn_entry: dict = {"name": fn_name}
@@ -133,6 +167,12 @@ def run(
         fn_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if return_type != "void":
         fn_entry["return_type"] = return_type
+    if out_type:
+        fn_entry["out_type"] = out_type
+    if result_fields:
+        fn_entry["result_fields"] = result_fields
+    if max_results_param:
+        fn_entry["max_results_param"] = max_results_param
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

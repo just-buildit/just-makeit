@@ -90,6 +90,38 @@ def _methods_c_stub_variable(
     return "\n".join(lines) + "\n"
 
 
+def _methods_c_stub_result_fields(
+    component: str,
+    name: str,
+    arg_type: str,
+    return_type: str,
+    max_results: int = 64,
+) -> str:
+    """C stub for a method that returns a list of structs (result_fields)."""
+    ret_disp = T._ctype_display(return_type)
+    has_arg = arg_type != "void"
+    if has_arg:
+        arg_disp = T._ctype_display(arg_type)
+        step_param = f", const {arg_disp} *in, size_t n_in"
+        suppress = "    (void)in; (void)n_in;"
+    else:
+        step_param = ""
+        suppress = ""
+    lines = [
+        f"/* <<IMPLEMENT: push input, fill result[], return count >> */",
+        "size_t",
+        f"{component}_{name}({component}_state_t *state"
+        f"{step_param}, {ret_disp} *result, size_t max_results)",
+        "{",
+        "    (void)state;",
+        suppress,
+        "    (void)result; (void)max_results;",
+        "    return 0; /* placeholder */",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _methods_c_stub_fixed(
     component: str,
     name: str,
@@ -273,6 +305,9 @@ def run(
     impl_body: str | None = None,
     batch: bool = False,
     no_bench: bool = False,
+    none_on_empty: bool = False,
+    result_fields: list[dict] | None = None,
+    max_results: int = 64,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -320,10 +355,15 @@ def run(
     print()
 
     params = params or []
+    result_fields = result_fields or []
 
     # 1. Append C stub to _core.c
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
-    if variable_output:
+    if result_fields:
+        stub = _methods_c_stub_result_fields(
+            object_name, method_name, arg_type, return_type, max_results,
+        )
+    elif variable_output:
         stub = _methods_c_stub_variable(
             object_name, method_name, arg_type, return_type, multi_output,
             params=[(p[0], p[1]) for p in params],
@@ -359,6 +399,8 @@ def run(
         method_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if variable_output:
         method_entry["variable_output"] = True
+    if none_on_empty:
+        method_entry["none_on_empty"] = True
     if batch:
         method_entry["batch"] = True
     if multi_output:
@@ -369,6 +411,9 @@ def run(
         method_entry["out_divisor"] = out_divisor
     if no_bench:
         method_entry["bench"] = False
+    if result_fields:
+        method_entry["result_fields"] = result_fields
+        method_entry["max_results"] = max_results
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)
