@@ -2,10 +2,28 @@
 
 ## [Unreleased]
 
-## [0.13.6] — 2026-05-20
+## [0.13.6] — 2026-05-22
 
 ### Fixed
 
+- **`--no-state` PascalCase name collision (gh#9)** — all Python-layer C
+  wrapper functions (`dealloc`, `new`, `init`, `destroy`, `enter`, `exit`,
+  methods array, `TypeObject`) now use a `{Component}Obj_` prefix (e.g.
+  `ResamplerObj_destroy`) instead of `{Component}_`. Previously, when the
+  object name was PascalCase, the generated wrapper function names collided
+  with identically-named functions declared in the user's included C header,
+  causing a link error. The Python import API (`PyModule_AddObject`) still
+  uses the undecorated name so the user-facing class name is unchanged.
+- **`variable_output` `malloc(0)` heap corruption (gh#17)** — when
+  `{comp}_{method}_max_out()` returns 0 at construction (e.g. a FIR filter
+  whose output size is input-dependent), the output buffer is now left `NULL`
+  instead of calling `malloc(0)`. The first Python call re-queries `max_out()`
+  and falls back to the input length `n` if it still returns 0, then
+  allocates. All subsequent calls take the pre-allocated zero-copy path.
+- **`c_deps` CMake ordering (gh#16)** — `add_subdirectory` blocks for
+  `c_deps` entries were appended after component blocks, so any
+  `target_sources(… TARGET_OBJECTS:dep_core)` reference appeared before
+  the target definition. They are now prepended.
 - `jm apply <fragment>` now honours `module = "X"` inside a component
   section: the component is wired into `[module.X].objects` in the
   manifest and materialised as a module object (sharing the module's
@@ -22,6 +40,35 @@
   configure time in the top-level CMakeLists.txt (where the package
   directory is already known); per-component CMakeLists keep their
   `-static-libgcc` link option but no longer do the copy.
+- Property getter declaration now emitted into `_core.h` for module
+  objects (gh#8) — previously missing, causing a compile error when
+  the getter was called from outside the translation unit.
+
+### Added
+
+- **`c_deps`** — new `[project]` TOML key (gh#12). List C-only dependency
+  subdirectories; `jm apply` emits `add_subdirectory(native/src/<dep>)`
+  blocks prepended before all component blocks. No Python scaffolding is
+  generated for these entries.
+- **`no_generate`** — new `[module.X]` flag (gh#12). When `no_generate =
+  "true"`, `jm apply` wires the module into the root `CMakeLists.txt` but
+  skips all scaffolding — useful for hand-written modules that share the
+  CMake build tree.
+- **`depends_on`** — new per-component list (gh#13). `jm object name
+  --depends-on dep` (or `depends_on = ["dep"]` in TOML) emits transitive
+  `target_sources(… TARGET_OBJECTS:dep_core)` entries before the
+  component's own CMake entry, so the Python extension links the C objects
+  it needs without a separate shared library per dependency.
+- **`jm apply` bench retrofit (gh#14)** — `apply` now appends a missing
+  `bench_{comp}_core` CMake target to each component's
+  `native/src/<comp>/CMakeLists.txt` when one isn't already present.
+  Idempotent; existing projects gain C benchmark targets without a
+  manual edit.
+- **`jm apply --only=NAME` (gh#15)** — restrict wiring regeneration to a
+  single named component. Aggregate files (`__init__.py`, root
+  `CMakeLists.txt`, umbrella header) are still updated; only the named
+  component's per-file output is regenerated. Speeds up `apply` on large
+  projects.
 
 ## [0.13.5] — 2026-05-19
 
