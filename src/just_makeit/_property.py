@@ -31,6 +31,10 @@ def run(
     ctype: str,
     writable: bool,
     field: bool = False,
+    buf_field: str = "",
+    len_field: str = "n",
+    valid_field: str = "",
+    expr: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -40,7 +44,7 @@ def run(
         )
         sys.exit(1)
 
-    if ctype not in T._CTYPE_META:
+    if not buf_field and not expr and ctype not in T._CTYPE_META:
         supported = ", ".join(sorted(T._CTYPE_META))
         print(
             f"error: unsupported --type '{ctype}'.\nSupported: {supported}",
@@ -91,63 +95,71 @@ def run(
         prop_entry["writable"] = True
     if field:
         prop_entry["field"] = True
+    if buf_field:
+        prop_entry["buf_field"] = buf_field
+        prop_entry["len_field"] = len_field
+    if valid_field:
+        prop_entry["valid_field"] = valid_field
+    if expr:
+        prop_entry["expr"] = expr
     C.add_property(cfg, object_name, prop_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # Regenerate ext.c (and core.h for field-backed properties)
+    # Regenerate ext.c and core.h
     if module:
         _regenerate_module(root, cfg, module, pkg)
-        # _regenerate_module only writes ext.c; field-backed properties also
-        # add a struct field to _core.h, so regenerate that too.
-        if field:
-            state_vars_list = C.state_vars(cfg, object_name)
-            arg_type_ = C.arg_type(cfg, object_name)
-            return_type_ = C.return_type(cfg, object_name)
-            perf = C.is_perf(cfg)
-            Component = _to_title(object_name)
-            ctx = _make_object_ctx(
+        # _regenerate_module only writes ext.c.  Always regenerate core.h too:
+        # field-backed properties add a struct field; computed properties add a
+        # getter declaration; both must appear in the header so the C compiler
+        # can see them.
+        state_vars_list = C.state_vars(cfg, object_name)
+        arg_type_ = C.arg_type(cfg, object_name)
+        return_type_ = C.return_type(cfg, object_name)
+        perf = C.is_perf(cfg)
+        Component = _to_title(object_name)
+        ctx = _make_object_ctx(
+            object_name,
+            module,
+            pkg,
+            C.project_version(cfg),
+            state_vars_list,
+            arg_type_,
+            return_type_,
+            perf=perf,
+            array_args=C.array_args(cfg, object_name),
+            no_state=C.is_no_state(cfg, object_name),
+            no_step=C.is_no_step(cfg, object_name),
+            init_params=C.init_params(cfg, object_name),
+        )
+        ctx.update(
+            T.make_methods_ctx(
                 object_name,
-                module,
-                pkg,
-                C.project_version(cfg),
-                state_vars_list,
-                arg_type_,
-                return_type_,
-                perf=perf,
-                array_args=C.array_args(cfg, object_name),
-                no_state=C.is_no_state(cfg, object_name),
-                no_step=C.is_no_step(cfg, object_name),
-                init_params=C.init_params(cfg, object_name),
+                Component,
+                C.methods(cfg, object_name),
+                pkg=pkg,
+                py_create_args=ctx.get("py_create_args", ""),
             )
-            ctx.update(
-                T.make_methods_ctx(
-                    object_name,
-                    Component,
-                    C.methods(cfg, object_name),
-                    pkg=pkg,
-                    py_create_args=ctx.get("py_create_args", ""),
-                )
+        )
+        ctx.update(
+            T.make_properties_ctx(
+                object_name,
+                Component,
+                C.properties(cfg, object_name),
+                frozenset(n for n, _, _ in state_vars_list),
             )
-            ctx.update(
-                T.make_properties_ctx(
-                    object_name,
-                    Component,
-                    C.properties(cfg, object_name),
-                    frozenset(n for n, _, _ in state_vars_list),
-                )
+        )
+        core_h = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
+        if core_h.exists():
+            core_h.write_text(
+                _preserve_core_bodies(
+                    core_h, T.render(T.COMPONENT_CORE_H, ctx), object_name
+                ),
+                encoding="utf-8",
             )
-            core_h = (
-                root / "native" / "inc" / object_name / f"{object_name}_core.h"
-            )
-            if core_h.exists():
-                core_h.write_text(
-                    _preserve_core_bodies(
-                        core_h, T.render(T.COMPONENT_CORE_H, ctx), object_name
-                    ),
-                    encoding="utf-8",
-                )
-                print(f"  update  {core_h}")
+            print(f"  update  {core_h}")
     else:
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)

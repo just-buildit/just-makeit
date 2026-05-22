@@ -374,6 +374,40 @@ class TestPropertyFieldModule:
         assert "nco_get_phase" not in h
         assert "nco_set_phase" not in h
 
+    def test_computed_property_decl_in_core_h(self, mod_project):
+        """Computed (non-field) property on a module object must add a getter
+        declaration to _core.h.
+
+        Regression for gh#8: ``jm property`` on a module object without
+        ``--field`` never regenerated ``_core.h``, so the declaration of
+        e.g. ``nco_get_phase`` was absent and caused an undefined-symbol
+        ImportError at runtime.  This applied to all module objects, including
+        those with ``no_state = true``.
+        """
+        property_run(mod_project, "nco", "phase", "sig", "uint32_t", False)
+        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "nco_get_phase" in h
+
+    def test_no_state_computed_property_decl_in_core_h(self, tmp_path):
+        """Computed property on a no_state module object gets its getter decl.
+
+        Regression for gh#8: ``no_state=True`` caused an early return in
+        ``make_state_ctx`` that zeroed out ``property_decls``; the subsequent
+        ``make_properties_ctx`` call was never applied to ``_core.h``.
+        """
+        from just_makeit._module import run as module_run
+
+        dest = tmp_path / "proj"
+        new_run("proj", dest, modules=["dsp"])
+        object_run(dest, "mavg", "dsp", no_state=True, no_step=True)
+        property_run(dest, "mavg", "out", "dsp", "float _Complex", False)
+        h = (dest / "native" / "inc" / "mavg" / "mavg_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "mavg_get_out" in h
+
     def test_field_keeps_init_param_in_create_signature(self, tmp_path):
         """--field regen must not drop init_params from the create() signature.
 
