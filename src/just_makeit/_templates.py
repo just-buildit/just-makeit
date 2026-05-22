@@ -2860,6 +2860,7 @@ def make_methods_ctx(
         # ── pre-allocated buffer fields + alloc + free ────────────────────────
         if variable_output:
             all_return_types = [return_type] + list(multi_output)
+            _malloc_lines: list[str] = []
             for i, rt in enumerate(all_return_types):
                 suffix = f"_{i}" if i > 0 else ""
                 rt_disp = _ctype_display(rt)
@@ -2869,13 +2870,24 @@ def make_methods_ctx(
                     f"  /* pre-allocated output for {name} */\n"
                 )
                 buf_free.append(f"    free(self->{field_name});\n")
-                buf_alloc.append(
-                    f"    self->{field_name} = malloc(\n"
-                    f"        {component}_{name}_max_out(self->handle)"
-                    f" * sizeof({rt_disp}));\n"
-                    f"    if (!self->{field_name}) {{"
+                _malloc_lines.append(
+                    f"        self->{field_name} = malloc("
+                    f"_max * sizeof({rt_disp}));\n"
+                    f"        if (!self->{field_name}) {{"
                     f" PyErr_NoMemory(); return -1; }}\n"
                 )
+            # Guard against max_out() returning 0 at construction time
+            # (output size is input-dependent; lazy alloc in the wrapper
+            # handles this case transparently at first call).
+            buf_alloc.append(
+                f"    {{\n"
+                f"        size_t _max ="
+                f" {component}_{name}_max_out(self->handle);\n"
+                f"        if (_max) {{\n"
+                + "".join(_malloc_lines)
+                + f"        }}\n"
+                f"    }}\n"
+            )
 
         # ── Python wrapper in ext.c ───────────────────────────────────────────
         if variable_output:
@@ -3041,12 +3053,36 @@ def make_methods_ctx(
                     "    if (!n_out) Py_RETURN_NONE;\n"
                     if none_on_empty else ""
                 )
+                # Lazy-alloc for the case where max_out() returned 0 at
+                # construction (output size is input-dependent).  On first
+                # call, re-query max_out(); fall back to n if still 0.
+                _decref_early_vo = (
+                    " ".join(
+                        l.strip()
+                        for l in decref_in.splitlines()
+                        if l.strip()
+                    ) + " "
+                    if decref_in.strip() else ""
+                )
+                _lazy_alloc_vo = (
+                    f"    if (!self->_{name}_buf) {{\n"
+                    f"        size_t _max ="
+                    f" {component}_{name}_max_out(self->handle);\n"
+                    f"        if (!_max) _max = (size_t)n;\n"
+                    f"        self->_{name}_buf ="
+                    f" malloc(_max * sizeof({ret_disp}));\n"
+                    f"        if (!self->_{name}_buf) {{"
+                    f" {_decref_early_vo}PyErr_NoMemory();"
+                    f" return NULL; }}\n"
+                    f"    }}\n"
+                )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    f"{_lazy_alloc_vo}"
                     f"    size_t n_out = {component}_{name}({call_data});\n"
                     f"{_none_on_empty_line}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"

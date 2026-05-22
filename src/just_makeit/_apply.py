@@ -308,11 +308,15 @@ def _splice_cmake_components(
         ).append(m.group(0))
 
     # c_deps: pure add_subdirectory, no Python scaffolding.
+    # Prepended so their targets exist before any depending component emits
+    # target_sources(...TARGET_OBJECTS:dep_core...).
     seen_blocks = {b.split("\n")[0] for b in component_blocks}
+    dep_blocks: list[str] = []
     for dep in C.c_deps(cfg):
         line = f"add_subdirectory(native/src/{dep})\n"
         if line.rstrip("\n") not in seen_blocks:
-            component_blocks.append(line)
+            dep_blocks.append(line)
+    component_blocks = dep_blocks + component_blocks
 
     # no_generate modules: add_subdirectory only; all source files are hand-written.
     seen_mod_blocks = {b.split("\n")[0] for b in module_blocks}
