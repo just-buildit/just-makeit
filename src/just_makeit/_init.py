@@ -352,6 +352,7 @@ def run(
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
+    depends_on: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -592,7 +593,12 @@ def run(
             if sub not in cmake_text:
                 obj_lines = ""
                 if f"{pkg}_lib" in cmake_text:
-                    obj_lines = (
+                    for dep in depends_on:
+                        obj_lines += (
+                            f"target_sources({pkg}_lib PRIVATE "
+                            f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                        )
+                    obj_lines += (
                         f"target_sources({pkg}_lib PRIVATE "
                         f"$<TARGET_OBJECTS:{comp}_core>)\n"
                     )
@@ -638,6 +644,7 @@ def run(
         mutable_=mutable,
         init_params_=init_params,
         class_name_=class_name,
+        depends_on_=list(depends_on),
     )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

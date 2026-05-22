@@ -276,6 +276,32 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return cfg.get(component, {}).get("no_step") == "true"
 
 
+def is_no_generate_module(cfg: dict, module: str) -> bool:
+    """Return True if the module's files are entirely hand-written.
+
+    A no_generate module gets only an add_subdirectory CMake entry from
+    jm apply; no _ext.c, __init__.py, or test scaffolding is touched."""
+    v = cfg.get("module", {}).get(module, {}).get("no_generate")
+    return v is True or v == "true"
+
+
+def c_deps(cfg: dict) -> list[str]:
+    """Return C-only dependency subdirectory names declared under [project].
+
+    These are pure-C libraries (no Python extension) whose add_subdirectory
+    entries are maintained by jm apply inside the Components sentinel."""
+    return list(cfg.get("project", {}).get("c_deps", []))
+
+
+def depends_on(cfg: dict, component: str) -> list[str]:
+    """Return the transitive C OBJECT library deps for a component.
+
+    Each name in the list gets a target_sources line emitted *before* the
+    component's own target_sources in the root CMakeLists, so the combined
+    library target sees all required object files."""
+    return list(cfg.get(component, {}).get("depends_on", []))
+
+
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     """Return declared array constructor args for component as [(name, dtype), ...]."""
     return [
@@ -417,6 +443,7 @@ def add_component(
     mutable_: bool = False,
     init_params_: list[tuple[str, str, str]] = (),
     class_name_: str | None = None,
+    depends_on_: list[str] = (),
 ) -> dict:
     rt = (
         return_type_
@@ -449,6 +476,8 @@ def add_component(
             entry["init_params"].append(rec)
     if class_name_:
         entry["class_name"] = class_name_
+    if depends_on_:
+        entry["depends_on"] = list(depends_on_)
     cfg[component] = entry
     return cfg
 
@@ -460,14 +489,21 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
-            lines.append(f'{k} = "{v}"')
+            if k == "c_deps":
+                deps_str = ", ".join(f'"{d}"' for d in v)
+                lines.append(f"c_deps = [{deps_str}]")
+            else:
+                lines.append(f'{k} = "{v}"')
         lines.append("")
 
     for mod, data in cfg.get("module", {}).items():
         lines.append(f"[module.{mod}]")
-        objs = data.get("objects", [])
-        objs_str = ", ".join(f'"{o}"' for o in objs)
-        lines.append(f"objects = [{objs_str}]")
+        if data.get("no_generate") in (True, "true"):
+            lines.append('no_generate = "true"')
+        else:
+            objs = data.get("objects", [])
+            objs_str = ", ".join(f'"{o}"' for o in objs)
+            lines.append(f"objects = [{objs_str}]")
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{mod}.functions]]")
@@ -509,6 +545,9 @@ def _dump(cfg: dict) -> str:
         for k in scalar_keys:
             if k in comp_data:
                 lines.append(f'{k} = "{comp_data[k]}"')
+        if comp_data.get("depends_on"):
+            deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
+            lines.append(f"depends_on = [{deps_str}]")
         lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")

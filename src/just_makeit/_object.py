@@ -502,6 +502,7 @@ def run(
     multi_output: list[str] = (),
     method_name: str = "run",
     class_name: str | None = None,
+    depends_on: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -541,6 +542,7 @@ def run(
             impl_body=impl_body,
             init_params=init_params,
             class_name=class_name,
+            depends_on=list(depends_on),
             _hint=_hint and not variable_output,
         )
         if variable_output:
@@ -693,6 +695,7 @@ def run(
         mutable_=mutable,
         init_params_=init_params,
         class_name_=class_name,
+        depends_on_=list(depends_on),
     )
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
@@ -706,7 +709,15 @@ def run(
         sub = f"add_subdirectory(native/src/{comp})\n"
         if sub not in cmake_text:
             sentinel = "# ── Components"
-            obj_lines = (
+            obj_lines = ""
+            for dep in depends_on:
+                obj_lines += (
+                    f"target_sources({pkg}_lib PRIVATE "
+                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                    f"target_sources({pkg}_lib_static PRIVATE "
+                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                )
+            obj_lines += (
                 f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
                 f"target_sources({pkg}_lib_static PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
             )

@@ -101,6 +101,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "init_params": C.init_params(cfg, comp),
         "init_post_parse_impl": C.init_post_parse(cfg, comp),
         "class_name": C.class_name(cfg, comp),
+        "depends_on": C.depends_on(cfg, comp),
     }
 
 
@@ -152,6 +153,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         (temp_root / "src" / project / "__init__.py").unlink(missing_ok=True)
 
     for mod in mods:
+        if C.is_no_generate_module(cfg, mod):
+            continue
         _module.run(temp_root, mod)
 
     for comp in standalone:
@@ -167,6 +170,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             **_object_kwargs(cfg, comp),
         )
     for mod in mods:
+        if C.is_no_generate_module(cfg, mod):
+            continue
         for comp in C.module_objects(cfg, mod):
             octx = _object_ctx(cfg, comp, mod)
             impl = _resolve_impl(
@@ -224,6 +229,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             )
 
     for mod in mods:
+        if C.is_no_generate_module(cfg, mod):
+            continue
         for fn in C.module_functions(cfg, mod):
             fctx = {
                 "function": fn["name"],
@@ -272,7 +279,7 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
 
 _SUBDIR_BLOCK = re.compile(
     r"^add_subdirectory\(native/src/(\w+)\)\s*\n"
-    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\1_core>\)\s*\n)*",
+    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)\s*\n)*",
     re.MULTILINE,
 )
 
@@ -299,6 +306,21 @@ def _splice_cmake_components(
         (
             module_blocks if m.group(1) in module_names else component_blocks
         ).append(m.group(0))
+
+    # c_deps: pure add_subdirectory, no Python scaffolding.
+    seen_blocks = {b.split("\n")[0] for b in component_blocks}
+    for dep in C.c_deps(cfg):
+        line = f"add_subdirectory(native/src/{dep})\n"
+        if line.rstrip("\n") not in seen_blocks:
+            component_blocks.append(line)
+
+    # no_generate modules: add_subdirectory only; all source files are hand-written.
+    seen_mod_blocks = {b.split("\n")[0] for b in module_blocks}
+    for mod in C.modules(cfg):
+        if C.is_no_generate_module(cfg, mod):
+            line = f"add_subdirectory(native/src/{mod})\n"
+            if line.rstrip("\n") not in seen_mod_blocks:
+                module_blocks.append(line)
 
     new_real = _SUBDIR_BLOCK.sub("", real)
 
@@ -509,6 +531,8 @@ def _sync_aggregates(
             updated.append(pkg_init)
 
     for mod in C.modules(cfg):
+        if C.is_no_generate_module(cfg, mod):
+            continue
         if only_mod is not None and mod != only_mod:
             continue
         # Module subpackage __init__.py — merged so user wrapper classes
@@ -527,6 +551,35 @@ def _sync_aggregates(
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
 
+    return updated
+
+
+def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
+    """Append a missing bench_*_core CMake target to each component CMakeLists.
+
+    Existing projects that were scaffolded before the bench target was added
+    to the template will have the bench source file but no CMake target.  This
+    is idempotent: if the target is already present the file is not touched."""
+    updated: list[Path] = []
+    for comp in C.components(cfg):
+        cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+        if not cmake_path.exists():
+            continue
+        text = cmake_path.read_text(encoding="utf-8")
+        if f"bench_{comp}_core" in text:
+            continue
+        bench_block = (
+            f"\nadd_executable(bench_{comp}_core\n"
+            f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/"
+            f"bench_{comp}_core.c)\n"
+            f"target_link_libraries(bench_{comp}_core"
+            f" PRIVATE {comp}_core m)\n"
+            f"target_include_directories(bench_{comp}_core\n"
+            f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
+            f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
+        )
+        cmake_path.write_text(text.rstrip() + bench_block, encoding="utf-8")
+        updated.append(cmake_path)
     return updated
 
 
@@ -732,17 +785,20 @@ def run(
             only_comp=only_comp,
         )
 
+    bench_updated = _reconcile_bench_cmake(root, cfg)
+
     for rel in created:
         print(f"  create  {root / rel}")
-    for path in updated:
+    for path in updated + bench_updated:
         print(f"  update  {path}")
 
     print()
-    total = len(created) + len(updated)
+    total = len(created) + len(updated) + len(bench_updated)
     if total:
         print(
             f"Done!  Materialized {len(created)} new file(s) and "
-            f"reconciled {len(updated)} wiring file(s) from {C.FILENAME}."
+            f"reconciled {len(updated) + len(bench_updated)} wiring file(s)"
+            f" from {C.FILENAME}."
         )
     else:
         print(f"Done!  Project already matches {C.FILENAME} — nothing to do.")
