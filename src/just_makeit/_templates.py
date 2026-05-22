@@ -1517,6 +1517,7 @@ def make_state_ctx(
     if no_state:
         _ns_reset_fn = f"{Component}Obj_reset"
         base = {
+            "ComponentW": f"{Component}Obj",
             "state_struct_fields": "    /* <<IMPLEMENT: add fields >> */",
             "create_params": "void",
             "create_param_docs": " * @param (none)  Caller is responsible for all state management.",
@@ -2226,6 +2227,11 @@ def make_state_ctx(
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
+        # ComponentW is the wrapper-function prefix. Equal to Component for
+        # normal components; for no_state=True the no_state branch sets it
+        # to "{Component}Obj" to avoid clashing with user-supplied C API
+        # names (e.g. Resampler_destroy vs. Resampler_destroy(state_t *)).
+        "ComponentW": Component,
         # Array-arg placeholders (empty when no --array-arg used).
         "array_args_parse_block": array_args_parse_block,
         "array_args_decref": array_args_decref,
@@ -5075,7 +5081,7 @@ typedef struct {
 <<extra_buf_fields>>} <<Component>>Object;
 
 static void
-<<Component>>_dealloc(<<Component>>Object *self)
+<<ComponentW>>_dealloc(<<Component>>Object *self)
 {
     if (self->handle)
         <<component>>_destroy(self->handle);
@@ -5083,7 +5089,7 @@ static void
 }
 
 static PyObject *
-<<Component>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+<<ComponentW>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
     if (self)
@@ -5092,7 +5098,7 @@ static PyObject *
 }
 
 static int
-<<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
+<<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
 <<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
 <<array_args_decref>>    if (!self->handle) {
@@ -5113,7 +5119,7 @@ static int
 <<extra_methods_c>>
 <<getset_def>>
 static PyObject *
-<<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+<<ComponentW>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
     if (self->handle) {
         <<component>>_destroy(self->handle);
@@ -5123,14 +5129,14 @@ static PyObject *
 }
 
 static PyObject *
-<<Component>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+<<ComponentW>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
     Py_INCREF(self);
     return (PyObject *)self;
 }
 
 static PyObject *
-<<Component>>_exit(<<Component>>Object *self, PyObject *args)
+<<ComponentW>>_exit(<<Component>>Object *self, PyObject *args)
 {
     (void)args;
     if (self->handle) {
@@ -5140,25 +5146,25 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyMethodDef <<Component>>_methods[] = {
+static PyMethodDef <<ComponentW>>_methods[] = {
 <<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<ComponentW>>_destroy,  METH_NOARGS,
      "Release resources."},
-    {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
-    {"__exit__",  (PyCFunction)<<Component>>_exit,    METH_VARARGS, NULL},
+    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
+    {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS, NULL},
     {NULL}
 };
 
-static PyTypeObject <<Component>>Type = {
+static PyTypeObject <<ComponentW>>Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "<<component>>.<<Component>>",
     .tp_basicsize = sizeof(<<Component>>Object),
-    .tp_dealloc   = (destructor)<<Component>>_dealloc,
+    .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = "<<Component>> component. Wraps <<component>>_state_t.",
-    .tp_methods   = <<Component>>_methods,<<tp_getset_decl>>
-    .tp_new       = <<Component>>_new,
-    .tp_init      = (initproc)<<Component>>_init,
+    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>>
+    .tp_new       = <<ComponentW>>_new,
+    .tp_init      = (initproc)<<ComponentW>>_init,
 };
 
 /* ======================================================== */
@@ -5177,17 +5183,17 @@ PyMODINIT_FUNC
 PyInit_<<component>>(void)
 {
     import_array();
-    if (PyType_Ready(&<<Component>>Type) < 0)
+    if (PyType_Ready(&<<ComponentW>>Type) < 0)
         return NULL;
 
     PyObject *m = PyModule_Create(&<<component>>_module);
     if (!m)
         return NULL;
 
-    Py_INCREF(&<<Component>>Type);
+    Py_INCREF(&<<ComponentW>>Type);
     if (PyModule_AddObject(m, "<<Component>>",
-                           (PyObject *)&<<Component>>Type) < 0) {
-        Py_DECREF(&<<Component>>Type);
+                           (PyObject *)&<<ComponentW>>Type) < 0) {
+        Py_DECREF(&<<ComponentW>>Type);
         Py_DECREF(m);
         return NULL;
     }
@@ -5219,7 +5225,7 @@ typedef struct {
 <<extra_buf_fields>>} <<Component>>Object;
 
 static void
-<<Component>>_dealloc(<<Component>>Object *self)
+<<ComponentW>>_dealloc(<<Component>>Object *self)
 {
     if (self->handle)
         <<component>>_destroy(self->handle);
@@ -5227,7 +5233,7 @@ static void
 }
 
 static PyObject *
-<<Component>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+<<ComponentW>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
     if (self)
@@ -5236,7 +5242,7 @@ static PyObject *
 }
 
 static int
-<<Component>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
+<<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
 <<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
 <<array_args_decref>>    if (!self->handle) {
@@ -5257,7 +5263,7 @@ static int
 <<extra_methods_c>>
 <<getset_def>>
 static PyObject *
-<<Component>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+<<ComponentW>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
     if (self->handle) {
         <<component>>_destroy(self->handle);
@@ -5267,14 +5273,14 @@ static PyObject *
 }
 
 static PyObject *
-<<Component>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
+<<ComponentW>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
     Py_INCREF(self);
     return (PyObject *)self;
 }
 
 static PyObject *
-<<Component>>_exit(<<Component>>Object *self, PyObject *args)
+<<ComponentW>>_exit(<<Component>>Object *self, PyObject *args)
 {
     (void)args;
     if (self->handle) {
@@ -5284,25 +5290,25 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyMethodDef <<Component>>_methods[] = {
+static PyMethodDef <<ComponentW>>_methods[] = {
 <<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<ComponentW>>_destroy,  METH_NOARGS,
      "Release resources."},
-    {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
-    {"__exit__",  (PyCFunction)<<Component>>_exit,    METH_VARARGS, NULL},
+    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
+    {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS, NULL},
     {NULL}
 };
 
-static PyTypeObject <<Component>>Type = {
+static PyTypeObject <<ComponentW>>Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "<<module>>.<<Component>>",
     .tp_basicsize = sizeof(<<Component>>Object),
-    .tp_dealloc   = (destructor)<<Component>>_dealloc,
+    .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = "<<Component>> type.",
-    .tp_methods   = <<Component>>_methods,<<tp_getset_decl>>
-    .tp_new       = <<Component>>_new,
-    .tp_init      = (initproc)<<Component>>_init,
+    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>>
+    .tp_new       = <<ComponentW>>_new,
+    .tp_init      = (initproc)<<ComponentW>>_init,
 };
 """
 
@@ -5687,16 +5693,17 @@ def render_module_ext_c(
         parts.append(render(COMPONENT_TYPE_SECTION, ctx))
 
     type_ready_checks = "\n".join(
-        f"    if (PyType_Ready(&{ctx['Component']}Type) < 0) return NULL;"
+        f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
         for ctx in comp_ctxs
     )
     add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:
         C_ = ctx["Component"]
+        CW_ = ctx["ComponentW"]
         add_object_calls_lines += [
-            f"    Py_INCREF(&{C_}Type);",
-            f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{C_}Type) < 0) {{',
-            f"        Py_DECREF(&{C_}Type); Py_DECREF(m); return NULL;",
+            f"    Py_INCREF(&{CW_}Type);",
+            f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{CW_}Type) < 0) {{',
+            f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
             "    }",
         ]
     add_object_calls = "\n".join(add_object_calls_lines)
