@@ -402,6 +402,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             C.methods(cfg, obj),
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
+            no_state=C.is_no_state(cfg, obj),
         )
     )
     ctx.update(

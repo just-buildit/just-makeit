@@ -7,7 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._templates import render, make_state_ctx, SUPPORTED_TYPES
+from just_makeit._templates import (
+    render,
+    make_state_ctx,
+    make_methods_ctx,
+    SUPPORTED_TYPES,
+)
 from just_makeit._init import _make_component_ctx
 from just_makeit._new import _make_project_ctx
 
@@ -416,3 +421,93 @@ class TestMakeStateCtxArrays:
     def test_complex_array_npy_enum(self):
         ctx = self._ctx([("buf", "double _Complex[8]", None)])
         assert "NPY_COMPLEX128" in ctx["getter_setter_methods_c"]
+
+
+class TestNoStateWrapperNames:
+    """Regression tests for gh#9 and gh#10."""
+
+    def test_no_state_reset_uses_obj_prefix(self):
+        # gh#9: the Python wrapper function declaration must use the Obj prefix
+        # so it cannot match the C API name (e.g. Resampler_reset in core.h).
+        ctx = make_state_ctx("Resampler", "Resampler", [], no_state=True)
+        c = ctx["builtin_reset_c"]
+        # The wrapper function name appears in the definition line.
+        assert "ResamplerObj_reset(ResamplerObject *self" in c
+        assert "ResamplerObj_reset" in ctx["builtin_reset_pmd"]
+        # The body still calls the C API (lowercase or same-case) — that's fine.
+        # We only care the *wrapper* name has the Obj suffix.
+        assert "ResamplerObj_reset(ResamplerObject" in c
+
+    def test_normal_state_reset_uses_component_prefix(self):
+        ctx = make_state_ctx("fir", "Fir", [("gain", "double", "1.0")])
+        assert "Fir_reset" in ctx["builtin_reset_c"]
+        assert "Fir_reset" in ctx["builtin_reset_pmd"]
+        assert "FirObj_reset" not in ctx["builtin_reset_c"]
+
+    def test_no_state_extra_methods_use_obj_prefix(self):
+        # gh#9: extra method wrappers must also use the Obj prefix.
+        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
+        ctx = make_methods_ctx("Resampler", "Resampler", methods, no_state=True)
+        assert "ResamplerObj_process" in ctx["extra_methods_c"]
+        assert "ResamplerObj_process" in ctx["extra_methods_pymethoddef"]
+
+    def test_normal_extra_methods_use_component_prefix(self):
+        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
+        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        assert "Fir_process" in ctx["extra_methods_c"]
+
+    def test_user_reset_suppresses_builtin_reset(self):
+        # gh#10: if user defines reset in methods, the builtin must be cleared.
+        methods = [{"name": "reset", "arg_type": "void", "return_type": "void"}]
+        ctx = make_methods_ctx("Resampler", "Resampler", methods, no_state=True)
+        assert ctx["builtin_reset_c"] == ""
+        assert ctx["builtin_reset_pmd"] == ""
+
+    def test_user_reset_suppresses_builtin_normal_object(self):
+        # Suppression also applies to stateful objects.
+        methods = [{"name": "reset", "arg_type": "void", "return_type": "void"}]
+        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        assert ctx["builtin_reset_c"] == ""
+        assert ctx["builtin_reset_pmd"] == ""
+
+    def test_no_user_reset_does_not_suppress_builtin(self):
+        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
+        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        assert "builtin_reset_c" not in ctx or ctx.get("builtin_reset_c") != ""
+
+
+class TestVariableOutputComplexParam:
+    """Regression test for gh#11."""
+
+    def test_complex_param_uses_raw_and_to_c(self):
+        # A variable_output method with a double _Complex param must declare
+        # Py_complex x_raw, parse into it, then convert to double complex x.
+        methods = [
+            {
+                "name": "push_ptr",
+                "arg_type": "void",
+                "return_type": "double _Complex",
+                "variable_output": True,
+                "params": [{"name": "x", "type": "double _Complex"}],
+            }
+        ]
+        ctx = make_methods_ctx("delay", "Delay", methods)
+        c = ctx["extra_methods_c"]
+        assert "Py_complex x_raw = {0.0, 0.0}" in c
+        assert "double complex x = x_raw.real + x_raw.imag * I" in c
+        assert "= 0;" not in c or "x_raw = {0.0, 0.0}" in c
+
+    def test_float_complex_param_uses_raw_and_to_c(self):
+        methods = [
+            {
+                "name": "push",
+                "arg_type": "void",
+                "return_type": "float _Complex",
+                "variable_output": True,
+                "params": [{"name": "x", "type": "float _Complex"}],
+            }
+        ]
+        ctx = make_methods_ctx("filt", "Filt", methods)
+        c = ctx["extra_methods_c"]
+        assert "Py_complex x_raw = {0.0, 0.0}" in c
+        assert "float complex x = (float)x_raw.real + (float)x_raw.imag * I" in c

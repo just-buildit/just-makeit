@@ -431,6 +431,7 @@ def run(
             [],
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
+            no_state=no_state,
         )
     )
     # Re-generate pyi_examples with the actual package name (not placeholder).

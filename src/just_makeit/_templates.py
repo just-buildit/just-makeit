@@ -360,15 +360,22 @@ def _build_params_parse(
 
             # Build error path: decref all arrays acquired so far.
             prior_decrefs = "".join(f" Py_DECREF({a});" for a in arr_names)
+            is_out = bool(p.get("out"))
+            npy_flags = (
+                "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE"
+                if is_out
+                else "NPY_ARRAY_C_CONTIGUOUS"
+            )
+            const_qual = "" if is_out else "const "
             arr_acq.append(
                 f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"
-                f"        {obj_var}, {npy_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"        {obj_var}, {npy_enum}, {npy_flags});\n"
                 f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
             )
             arr_acq.append(
-                f"    const {elem_disp} *{pname} = "
-                f"(const {elem_disp} *)PyArray_DATA({arr_var});\n"
+                f"    {const_qual}{elem_disp} *{pname} = "
+                f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
                 f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var});"
             )
             arr_names.append(arr_var)
@@ -1508,6 +1515,7 @@ def make_state_ctx(
     soft-reset of runtime state (e.g. phase accumulator, filter history).
     """
     if no_state:
+        _ns_reset_fn = f"{Component}Obj_reset"
         base = {
             "state_struct_fields": "    /* <<IMPLEMENT: add fields >> */",
             "create_params": "void",
@@ -1555,6 +1563,23 @@ def make_state_ctx(
             "tp_getset_decl": "",
             "property_decls": "",
             "property_struct_fields": "",
+            "builtin_reset_c": (
+                f"static PyObject *\n"
+                f"{_ns_reset_fn}({Component}Object *self,"
+                f" PyObject *Py_UNUSED(ignored))\n"
+                f"{{\n"
+                f"    if (!self->handle) {{\n"
+                f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    {component}_reset(self->handle);\n"
+                f"    Py_RETURN_NONE;\n"
+                f"}}"
+            ),
+            "builtin_reset_pmd": (
+                f'    {{"reset",    (PyCFunction){_ns_reset_fn},    METH_NOARGS,\n'
+                f'     "Reset state to post-create defaults."}},\n'
+            ),
         }
         if init_params or array_args:
             base.update(
@@ -2216,6 +2241,23 @@ def make_state_ctx(
         "tp_getset_decl": "",
         "property_decls": "",
         "property_struct_fields": "",
+        "builtin_reset_c": (
+            f"static PyObject *\n"
+            f"{Component}_reset({Component}Object *self,"
+            f" PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    {component}_reset(self->handle);\n"
+            f"    Py_RETURN_NONE;\n"
+            f"}}"
+        ),
+        "builtin_reset_pmd": (
+            f'    {{"reset",    (PyCFunction){Component}_reset,    METH_NOARGS,\n'
+            f'     "Reset state to post-create defaults."}},\n'
+        ),
     }
 
 
@@ -2494,6 +2536,7 @@ def make_methods_ctx(
     methods: list[dict],
     pkg: str = "",
     py_create_args: str = "",
+    no_state: bool = False,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -2540,6 +2583,12 @@ def make_methods_ctx(
     if not methods:
         return _EMPTY
 
+    # For no_state objects, Python wrapper names must not collide with the
+    # C API (e.g. Resampler_reset conflicts with Resampler_reset in core.h
+    # when the component name starts with a capital letter).  Use the
+    # {Component}Obj_ prefix so there is never a match.
+    wrapper_prefix = f"{Component}Obj" if no_state else Component
+
     guard = (
         "    if (!self->handle) {\n"
         '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
@@ -2554,6 +2603,7 @@ def make_methods_ctx(
     method_c_parts: list[str] = []
     pmd_lines: list[str] = []
     pyi_lines: list[str] = []
+    user_has_reset: bool = any(m["name"] == "reset" for m in methods)
 
     for m in methods:
         name: str = m["name"]
@@ -2622,7 +2672,7 @@ def make_methods_ctx(
                 )
                 wrapper = (
                     f"static PyObject *\n"
-                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                     f"{{\n"
                     f"{guard}"
                     f"    PyObject *in_obj = NULL;\n"
@@ -2650,7 +2700,7 @@ def make_methods_ctx(
                 )
                 wrapper = (
                     f"static PyObject *\n"
-                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                     f"{{\n"
                     f"{guard}"
                     f"    Py_ssize_t n = 1;\n"
@@ -2691,7 +2741,7 @@ def make_methods_ctx(
                 f"    dtype('{_ret_np_str}')",
             ]
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
+                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name}, METH_VARARGS,\n'
                 f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
             )
             for _j in range(_ndecl, len(decl_lines)):
@@ -2873,10 +2923,24 @@ def make_methods_ctx(
                     else:
                         _pt_meta = _CTYPE_META.get(_pt, {})
                         _fmt_char = _pt_meta.get("fmt", "d")
-                        _parse_t = _pt_meta.get("parse_type", _ctype_display(_pt))
-                        _pb_lines.append(f"    {_parse_t} {_pn} = 0;")
-                        _fmt += _fmt_char
-                        _fmt_args.append(f"&{_pn}")
+                        _has_parse = "parse_type" in _pt_meta
+                        _parse_t = _pt_meta.get(
+                            "parse_type", _ctype_display(_pt)
+                        )
+                        _parse_zero = _pt_meta.get("parse_zero", "0")
+                        if _has_parse:
+                            _raw = f"{_pn}_raw"
+                            _pb_lines.append(
+                                f"    {_parse_t} {_raw} = {_parse_zero};"
+                            )
+                            _fmt += _fmt_char
+                            _fmt_args.append(f"&{_raw}")
+                        else:
+                            _pb_lines.append(
+                                f"    {_parse_t} {_pn} = {_parse_zero};"
+                            )
+                            _fmt += _fmt_char
+                            _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
                 _cd_parts.append(f"self->_{name}_buf")
                 _fmt_str = '", "'.join([f'"{_fmt}', ", ".join(_fmt_args) + ")"])
@@ -2886,7 +2950,8 @@ def make_methods_ctx(
                     + ", ".join(_fmt_args) + "))\n"
                     "        return NULL;\n"
                 )
-                # Convert obj pointers to arrays after parse
+                # Convert obj pointers to arrays and Py_complex to C complex
+                # after PyArg_ParseTuple.
                 _conv_lines: list[str] = []
                 for _p in params:
                     _pn = _p["name"]
@@ -2899,6 +2964,12 @@ def make_methods_ctx(
                             f"        {_pn}_obj, {_pe_np}, NPY_ARRAY_C_CONTIGUOUS);",
                             f"    if (!{_pn}_arr) return NULL;",
                         ]
+                    elif "parse_type" in _CTYPE_META.get(_pt, {}):
+                        _pm = _CTYPE_META[_pt]
+                        _pt_disp = _ctype_display(_pt)
+                        _conv_lines.append(
+                            f"    {_pt_disp} {_pn} = {_pm['to_c'](_pn)};"
+                        )
                 parse_block += "\n".join(_conv_lines) + "\n" if _conv_lines else ""
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
@@ -2942,7 +3013,7 @@ def make_methods_ctx(
                 )
                 wrapper = (
                     f"static PyObject *\n"
-                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
@@ -2966,7 +3037,7 @@ def make_methods_ctx(
                 )
                 wrapper = (
                     f"static PyObject *\n"
-                    f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                    f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
@@ -3019,7 +3090,7 @@ def make_methods_ctx(
                 f"    dtype('{_dtype_strs_vo[0]}')",
             ]
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){Component}_{name}, METH_VARARGS,\n'
+                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name}, METH_VARARGS,\n'
                 f"     {_build_ml_doc(_vo_doc_lines)}}},\n"
             )
         elif result_fields:
@@ -3065,7 +3136,7 @@ def make_methods_ctx(
                 )
             wrapper = (
                 f"static PyObject *\n"
-                f"{Component}_{name}({Component}Object *self, PyObject *args)\n"
+                f"{wrapper_prefix}_{name}({Component}Object *self, PyObject *args)\n"
                 f"{{\n"
                 f"{guard}"
                 f"{_rf_parse}"
@@ -3097,7 +3168,7 @@ def make_methods_ctx(
                 "    True",
             ]
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){Component}_{name},'
+                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
                 f" METH_VARARGS,\n"
                 f"     {_build_ml_doc(_rf_doc_lines)}}},\n"
             )
@@ -3214,7 +3285,7 @@ def make_methods_ctx(
                 )
             wrapper = (
                 f"static PyObject *\n"
-                f"{Component}_{name}({fn_sig})\n"
+                f"{wrapper_prefix}_{name}({fn_sig})\n"
                 f"{{\n"
                 f"{guard}"
                 f"{parse_block}"
@@ -3270,7 +3341,7 @@ def make_methods_ctx(
             else:
                 _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){Component}_{name}, {meth_flags},\n'
+                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name}, {meth_flags},\n'
                 f"     {_build_ml_doc(_fix_doc_lines)}}},\n"
             )
 
@@ -3349,6 +3420,12 @@ def make_methods_ctx(
         "extra_methods_pymethoddef": "".join(pmd_lines),
         "pyi_extra_methods": "\n" + "\n\n".join(pyi_lines) + "\n" if pyi_lines else "",
         "bench_methods_timing_block": bench_methods_timing_block,
+        # When user defines a "reset" method suppress the template's built-in
+        # one so it is not emitted twice (bug #10).
+        **({
+            "builtin_reset_c": "",
+            "builtin_reset_pmd": "",
+        } if user_has_reset else {}),
     }
 
 
@@ -5026,16 +5103,7 @@ static int
 <<extra_buf_alloc>>    return 0;
 }
 
-static PyObject *
-<<Component>>_reset(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-    <<component>>_reset(self->handle);
-    Py_RETURN_NONE;
-}
+<<builtin_reset_c>>
 
 <<step_ext_fn>>
 
@@ -5073,9 +5141,7 @@ static PyObject *
 }
 
 static PyMethodDef <<Component>>_methods[] = {
-    {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
-     "Reset state to post-create defaults."},
-<<step_pymethoddef_entry>><<steps_def_entry>>
+<<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},
@@ -5181,16 +5247,7 @@ static int
 <<extra_buf_alloc>>    return 0;
 }
 
-static PyObject *
-<<Component>>_reset(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-    <<component>>_reset(self->handle);
-    Py_RETURN_NONE;
-}
+<<builtin_reset_c>>
 
 <<step_ext_fn>>
 
@@ -5228,9 +5285,7 @@ static PyObject *
 }
 
 static PyMethodDef <<Component>>_methods[] = {
-    {"reset",    (PyCFunction)<<Component>>_reset,    METH_NOARGS,
-     "Reset state to post-create defaults."},
-<<step_pymethoddef_entry>><<steps_def_entry>>
+<<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
 <<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<Component>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<Component>>_enter,   METH_NOARGS,  NULL},

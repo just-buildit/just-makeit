@@ -468,6 +468,7 @@ def run(
                 C.methods(cfg, object_name),
                 pkg=pkg,
                 py_create_args=ctx_.get("py_create_args", ""),
+                no_state=C.is_no_state(cfg, object_name),
             )
         )
         ctx_.update(
@@ -531,6 +532,7 @@ def run(
                 C.methods(cfg, object_name),
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
+                no_state=C.is_no_state(cfg, object_name),
             )
         )
         ctx.update(

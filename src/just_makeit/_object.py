@@ -380,6 +380,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 C.methods(cfg, obj),
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
+                no_state=C.is_no_state(cfg, obj),
             )
         )
         ctx.update(
@@ -611,6 +612,7 @@ def run(
             [],
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
+            no_state=no_state,
         )
     )
 
