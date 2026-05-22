@@ -333,3 +333,78 @@ class TestApplyModuleDirective:
 
         with pytest.raises(SystemExit):
             apply_run(proj, fragment=frag)
+
+
+class TestApplySelectiveOnly:
+    def test_only_module_skips_other_module(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        module_run(proj, "util")
+        object_run(
+            proj, "helper", "util", state_vars=[("x", "float", "0.0f")]
+        )
+        apply_run(proj)
+
+        util_ext = proj / "native" / "src" / "util" / "util_ext.c"
+        sentinel = "/* SENTINEL_ONLY_TEST */"
+        util_ext.write_text(
+            util_ext.read_text(encoding="utf-8") + f"\n{sentinel}\n",
+            encoding="utf-8",
+        )
+
+        apply_run(proj, only="dsp")
+
+        assert sentinel in util_ext.read_text(encoding="utf-8")
+
+    def test_only_comp_updates_owning_module(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        apply_run(proj)
+
+        object_run(proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")])
+
+        apply_run(proj, only="fir")
+
+        fir_core = proj / "native" / "src" / "fir" / "fir_core.c"
+        assert fir_core.exists()
+        dsp_ext = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "fir" in dsp_ext
+
+    def test_only_comp_skips_unrelated_module(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        module_run(proj, "util")
+        object_run(
+            proj, "helper", "util", state_vars=[("x", "float", "0.0f")]
+        )
+        apply_run(proj)
+
+        util_ext = proj / "native" / "src" / "util" / "util_ext.c"
+        sentinel = "/* SENTINEL_ONLY_COMP */"
+        util_ext.write_text(
+            util_ext.read_text(encoding="utf-8") + f"\n{sentinel}\n",
+            encoding="utf-8",
+        )
+
+        object_run(proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")])
+        apply_run(proj, only="fir")
+
+        assert sentinel in util_ext.read_text(encoding="utf-8")
+
+    def test_only_unknown_exits(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        apply_run(proj)
+
+        with pytest.raises(SystemExit):
+            apply_run(proj, only="nonexistent")

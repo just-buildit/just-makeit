@@ -569,14 +569,27 @@ def main() -> None:
         _warn_schema()
         from . import _apply
 
-        if len(args) > 2:
+        only: str | None = None
+        positional: list[str] = []
+        for a in args[1:]:
+            if a.startswith("--only="):
+                only = a[len("--only="):]
+            elif a == "--only":
+                print(
+                    "error: --only requires a value (--only=NAME).",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            else:
+                positional.append(a)
+        if len(positional) > 1:
             print(
                 "error: 'apply' takes at most one fragment path.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        fragment = Path(args[1]) if len(args) == 2 else None
-        _apply.run(Path.cwd(), fragment=fragment)
+        fragment = Path(positional[0]) if positional else None
+        _apply.run(Path.cwd(), fragment=fragment, only=only)
 
     elif cmd == "version":
         from . import __version__

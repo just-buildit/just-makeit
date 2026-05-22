@@ -99,6 +99,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "no_step": C.is_no_step(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
         "init_params": C.init_params(cfg, comp),
+        "init_post_parse_impl": C.init_post_parse(cfg, comp),
         "class_name": C.class_name(cfg, comp),
     }
 
@@ -203,6 +204,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 out_divisor=int(m.get("out_divisor", 1)),
                 batch=bool(m.get("batch")),
                 impl_body=m_impl,
+                none_on_empty=bool(m.get("none_on_empty")),
+                result_fields=list(m.get("result_fields", [])),
+                max_results=int(m.get("max_results", 64)),
             )
         for p in C.properties(cfg, comp):
             _property.run(
@@ -213,6 +217,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 p.get("type") or p.get("ctype", "size_t"),
                 bool(p.get("writable")),
                 field=bool(p.get("field")),
+                buf_field=p.get("buf_field", ""),
+                len_field=p.get("len_field", "n"),
+                valid_field=p.get("valid_field", ""),
+                expr=p.get("expr", ""),
             )
 
     for mod in mods:
@@ -234,6 +242,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 params=[(p["name"], p["type"]) for p in fn.get("params", [])],
                 return_type=fn.get("return_type", "void"),
                 impl_body=f_impl,
+                out_type=fn.get("out_type", ""),
+                result_fields=fn.get("result_fields", []),
+                max_results_param=fn.get("max_results_param", ""),
             )
 
 
@@ -366,25 +377,130 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
-def _sync_aggregates(temp_root: Path, root: Path, cfg: dict) -> list[Path]:
+def _add_cmake_block_for(
+    real_path: Path, temp_path: Path, comp: str, cfg: dict
+) -> bool:
+    """Insert the `add_subdirectory` block for *comp* into *real_path*.
+
+    Reads the generated cmake from *temp_path*, locates the block that
+    matches *comp* via _SUBDIR_BLOCK, and inserts it immediately after the
+    sentinel line `# ── Modules` (when *comp* is a module) or
+    `# ── Components` (otherwise).  If the block is already present in
+    *real_path*, or cannot be found in *temp_path*, returns False.
+
+    This is the narrow-scope variant used by --only: it adds exactly one
+    component's wiring instead of re-splicing all components.
+    """
+    real = real_path.read_text(encoding="utf-8")
+    # Guard: block already wired in.
+    if f"add_subdirectory(native/src/{comp})" in real:
+        return False
+
+    temp = temp_path.read_text(encoding="utf-8")
+    block: str | None = None
+    for m in _SUBDIR_BLOCK.finditer(temp):
+        if m.group(1) == comp:
+            block = m.group(0)
+            break
+    if block is None:
+        return False
+
+    module_names = set(C.modules(cfg))
+    sentinel = (
+        "# ── Modules" if comp in module_names else "# ── Components"
+    )
+    if sentinel not in real:
+        return False
+
+    idx = real.index(sentinel)
+    idx = real.index("\n", idx) + 1
+    new_real = real[:idx] + block + real[idx:]
+    real_path.write_text(new_real, encoding="utf-8")
+    return True
+
+
+def _add_umbrella_include(
+    real_path: Path, temp_path: Path, comp: str
+) -> bool:
+    """Insert `#include "comp/comp_core.h"` into the umbrella header.
+
+    Reads *temp_path* to confirm the include line is present in the
+    generated output (module objects are NOT in the umbrella, so we skip
+    them gracefully).  If the line already exists in *real_path*, or is
+    absent from *temp_path*, returns False without touching anything.
+
+    The line is inserted immediately before the final `#endif` so the
+    header remains valid C.
+    """
+    include_line = f'#include "{comp}/{comp}_core.h"'
+    real = real_path.read_text(encoding="utf-8")
+    if include_line in real:
+        return False
+    temp = temp_path.read_text(encoding="utf-8")
+    if include_line not in temp:
+        return False
+
+    # Insert before the last #endif
+    last_endif = real.rfind("#endif")
+    if last_endif == -1:
+        return False
+    new_real = real[:last_endif] + include_line + "\n" + real[last_endif:]
+    real_path.write_text(new_real, encoding="utf-8")
+    return True
+
+
+def _sync_aggregates(
+    temp_root: Path,
+    root: Path,
+    cfg: dict,
+    *,
+    only_mod: str | None = None,
+    only_comp: str | None = None,
+) -> list[Path]:
     """Reconcile wiring files that already exist on disk and so are
     skipped by _sync_missing but need to absorb newly-materialized
     components: top CMakeLists, umbrella header, package __init__.py,
-    and each module's __init__.py / ext.c / CMakeLists / .pyi."""
+    and each module's __init__.py / ext.c / CMakeLists / .pyi.
+
+    When *only_comp* is set (e.g. ``--only fir`` where fir lives in the
+    dsp module):
+
+    - Root CMakeLists: only *comp*'s single block is inserted (additive);
+      other components are left untouched.
+    - Umbrella header: only *comp*'s include line is inserted (additive).
+    - Module loop: only the module that owns *comp* is processed.
+
+    When *only_mod* is set but *only_comp* is None (e.g. ``--only dsp``):
+
+    - Root CMakeLists: full splice for all spectral-owned components.
+    - Umbrella header: full overwrite.
+    - Module loop: only the named module is processed.
+
+    Package __init__.py is always merged (it is already additive and safe
+    to run unconditionally).
+    """
     pkg = C.project_name(cfg)
     updated: list[Path] = []
 
     real_cmake = root / "CMakeLists.txt"
     temp_cmake = temp_root / "CMakeLists.txt"
     if real_cmake.exists() and temp_cmake.exists():
-        if _splice_cmake_components(real_cmake, temp_cmake, cfg):
-            updated.append(real_cmake)
+        if only_comp is not None:
+            if _add_cmake_block_for(real_cmake, temp_cmake, only_comp, cfg):
+                updated.append(real_cmake)
+        else:
+            if _splice_cmake_components(real_cmake, temp_cmake, cfg):
+                updated.append(real_cmake)
 
     umbrella = root / "native" / "inc" / f"{pkg}.h"
-    if _overwrite_if_changed(
-        umbrella, temp_root / "native" / "inc" / f"{pkg}.h"
-    ):
-        updated.append(umbrella)
+    temp_umbrella = temp_root / "native" / "inc" / f"{pkg}.h"
+    if only_comp is not None:
+        if umbrella.exists() and temp_umbrella.exists():
+            if _add_umbrella_include(umbrella, temp_umbrella, only_comp):
+                updated.append(umbrella)
+    else:
+        if _overwrite_if_changed(umbrella, temp_umbrella):
+            updated.append(umbrella)
 
     pkg_init = root / "src" / pkg / "__init__.py"
     temp_pkg_init = temp_root / "src" / pkg / "__init__.py"
@@ -393,6 +509,8 @@ def _sync_aggregates(temp_root: Path, root: Path, cfg: dict) -> list[Path]:
             updated.append(pkg_init)
 
     for mod in C.modules(cfg):
+        if only_mod is not None and mod != only_mod:
+            continue
         # Module subpackage __init__.py — merged so user wrapper classes
         # below the re-exports survive (the gh#1 contract).
         mod_init = root / "src" / pkg / mod / "__init__.py"
@@ -538,7 +656,11 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     return dest
 
 
-def run(root: Path, fragment: Path | None = None) -> None:
+def run(
+    root: Path,
+    fragment: Path | None = None,
+    only: str | None = None,
+) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -566,6 +688,28 @@ def run(root: Path, fragment: Path | None = None) -> None:
         )
         sys.exit(1)
 
+    # Resolve --only to (only_mod, only_comp).  A module name produces
+    # only_mod with only_comp=None (full splice for that module).  A
+    # component name produces only_comp plus the owning module (or None for
+    # standalone components).
+    only_mod: str | None = None
+    only_comp: str | None = None
+    if only is not None:
+        mods = C.modules(cfg)
+        comps = C.components(cfg)
+        if only in mods:
+            only_mod = only
+        elif only in comps:
+            only_comp = only
+            only_mod = C.component_module(cfg, only)
+        else:
+            print(
+                f"error: --only: '{only}' is not a known module or "
+                f"component in {C.FILENAME}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     print(f"just-makeit: applying {C.FILENAME}")
     print()
 
@@ -580,7 +724,13 @@ def run(root: Path, fragment: Path | None = None) -> None:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
         created = _sync_missing(temp_root, root)
-        updated = _sync_aggregates(temp_root, root, cfg)
+        updated = _sync_aggregates(
+            temp_root,
+            root,
+            cfg,
+            only_mod=only_mod,
+            only_comp=only_comp,
+        )
 
     for rel in created:
         print(f"  create  {root / rel}")
