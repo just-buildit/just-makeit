@@ -127,7 +127,7 @@ just-makeit example fir_filter
 ```
 
 This runs the `fir_filter` example end-to-end in a temporary directory — no
-`git clone` required. All 10 bundled examples are shipped inside the wheel.
+`git clone` required. All 15 bundled examples are shipped inside the wheel.
 For a list: `just-makeit example --list`.
 
 ______________________________________________________________________

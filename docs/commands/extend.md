@@ -163,16 +163,20 @@ Python call:
 out = decim.execute(block)   # zero-copy view; valid until next call
 ```
 
-| Use case                                   | `_max_out` returns | Use `--variable-output`? |
+| Use case                                   | `_max_out` at init | Use `--variable-output`? |
 | ------------------------------------------ | ------------------ | ------------------------ |
 | Decimator, fixed ratio `R`, block size `B` | `ceil(B / R)`      | Yes                      |
 | Buffer / FIFO with fixed capacity `C`      | `C`                | Yes                      |
-| FIR filter, 1:1 rate                       | unknown at init    | No — use `--batch`       |
-| NCO extended outputs, 1:1 rate             | unknown at init    | No — use `--batch`       |
+| FIR filter, output ≤ input length          | 0 (unknown)        | Yes — lazy-alloc kicks in |
+| NCO extended outputs, 1:1 rate             | 0 (unknown)        | Yes — lazy-alloc kicks in |
 
-**Warning:** if `_max_out` returns 0 (the placeholder default), `malloc(0)`
-behaviour is implementation-defined. Always implement `_max_out` before
-calling the method from Python.
+**Lazy-alloc when `_max_out` returns 0:** if `{comp}_{method}_max_out()` returns 0
+at construction (e.g. a FIR whose tap count isn't known until `_create` runs), the
+output buffer is left `NULL` — no `malloc(0)` hazard. On the **first Python call**
+the wrapper re-queries `max_out()`; if it still returns 0 it falls back to the input
+length `n`, then allocates. Every subsequent call takes the pre-allocated zero-copy
+path. The only practical implication: make sure `_max_out` returns a valid bound by
+the time the first call happens.
 
 ______________________________________________________________________
 

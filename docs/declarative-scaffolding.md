@@ -131,6 +131,80 @@ side effects if both are set.
 
 ---
 
+## Integrating hand-written C libraries (`c_deps`, `no_generate`, `depends_on`)
+
+These three keys are for projects that mix just-makeit-managed objects with
+existing C code that you wrote by hand or pulled in as a submodule.
+
+### `c_deps` — pure-C dependency subdirectories
+
+```toml
+[project]
+c_deps = ["resamp", "fft"]
+```
+
+`jm apply` emits an `add_subdirectory(native/src/<dep>)` block for each
+entry, **prepended before all component and module blocks** so that CMake
+sees the target definitions before any `target_sources(…
+TARGET_OBJECTS:<dep>_core)` that references them.
+
+No Python scaffolding is generated for `c_deps` entries — they are C-only
+libraries. Create their `CMakeLists.txt` by hand; `jm apply` only wires
+them into the root CMake file.
+
+### `no_generate` — hand-written modules
+
+```toml
+[module.hand_rolled]
+no_generate = "true"
+```
+
+`jm apply` emits `add_subdirectory(native/src/hand_rolled)` in the root
+`CMakeLists.txt` but skips every scaffolding step — no `_ext.c`, no Python
+test, no type stub, no `__init__.py` entry. Use this when the module's
+Python binding is hand-written and must not be touched by the generator.
+
+### `depends_on` — transitive OBJECT library dependencies
+
+```toml
+[fir]
+depends_on = ["resamp", "fft"]
+```
+
+When `jm object fir --depends-on resamp --depends-on fft` (or `jm apply`)
+creates the CMake entry for `fir`, it prepends:
+
+```cmake
+target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:resamp_core>)
+target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:fft_core>)
+target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:fir_core>)
+```
+
+This ensures that `fir`'s Python extension links the transitive C objects
+it needs, without requiring a separate shared library per dependency.
+
+### Full example
+
+```toml
+[project]
+name = "my_dsp"
+c_deps = ["resamp"]          # hand-written C; add_subdirectory only
+
+[module.legacy]
+no_generate = "true"          # existing Python binding; don't touch
+
+[fir]
+arg_type   = "float _Complex"
+depends_on = ["resamp"]       # fir.so also links resamp_core objects
+```
+
+```sh
+jm apply    # wires all three into CMakeLists.txt; skips legacy scaffolding
+make && make test
+```
+
+---
+
 ## What `jm apply` does
 
 ```mermaid
@@ -163,6 +237,21 @@ Key properties:
   `# ── Components` and `# ── Modules` sentinel regions; module
   `__init__.py` keeps any wrapper classes you added below the
   re-exports.
+- **Bench retrofit.** `apply` also checks every component's
+  `native/src/<comp>/CMakeLists.txt` and appends a missing
+  `bench_<comp>_core` CMake target if one isn't already present — so
+  existing projects gain C benchmark targets without a manual edit.
+
+### `--only=NAME` — single-component reconciliation
+
+```sh
+jm apply --only=fir
+```
+
+Restricts wiring regeneration to the named component: only `fir`'s
+`_ext.c`, `CMakeLists.txt`, `.pyi`, and test file are touched. All
+aggregate files (`__init__.py`, root `CMakeLists.txt`, umbrella header)
+are still updated. Useful on large projects where a full re-apply is slow.
 
 ---
 
