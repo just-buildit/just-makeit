@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.13.7] — 2026-05-23
+
+### Fixed
+
+- `sliding_power` bundled example missing `__main__` block — `jm example
+  sliding_power` exited immediately with no output instead of building and
+  testing the project.
+
 ## [0.13.6] — 2026-05-22
 
 ### Fixed
