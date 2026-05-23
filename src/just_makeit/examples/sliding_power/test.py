@@ -108,3 +108,11 @@ print("ok")
     assert "class PowerEst:" in pyi
     assert "def step(self, x: complex) -> float:" in pyi
     assert "def steps(self, x: NDArray[np.complex64]" in pyi
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        run(Path(tmp))
+    print("sliding_power: PASSED")
