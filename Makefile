@@ -20,8 +20,9 @@
 SHELL      = /bin/sh
 PYTHON     ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
 UV         = uv
-PYTEST     = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
-PYTEST_B   = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
+PYTEST          = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
+PYTEST_B        = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
+PYTEST_EXAMPLES = $(UV) run --with pytest --with numpy pytest
 ZENSICAL   = $(UV) run --group dev zensical
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
@@ -38,7 +39,7 @@ test-fast:
 	$(PYTEST) -x -q
 
 test-examples:
-	$(PYTEST) tests/test_examples.py -v
+	$(PYTEST_EXAMPLES) tests/test_examples.py -v
 
 # ── Bench ─────────────────────────────────────────────────────────────────────
 
