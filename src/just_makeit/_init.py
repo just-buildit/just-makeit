@@ -15,7 +15,7 @@ from . import _templates as T
 
 
 def _to_title(snake: str) -> str:
-    return "".join(w.title() for w in snake.split("_"))
+    return "".join(w[0].upper() + w[1:] for w in snake.split("_") if w)
 
 
 def _make_component_ctx(component: str) -> dict[str, str]:
