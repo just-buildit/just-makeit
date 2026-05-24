@@ -2907,6 +2907,7 @@ def make_methods_ctx(
                     f" (size_t)n, self->_{name}_buf"
                 )
                 decref_in = "    Py_DECREF(in_arr);\n"
+                _lazy_fallback = "(size_t)n"
             elif has_params:
                 # params drive the output length; parse each array param as
                 # a numpy array and use the first array's length as n.
@@ -2991,6 +2992,13 @@ def make_methods_ctx(
                 parse_block += "\n".join(_conv_lines) + "\n" if _conv_lines else ""
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
+                # Lazy-alloc fallback: use the first array param's size if
+                # available; otherwise the output count is always 1 (scalar
+                # params only, e.g. a single complex "D" argument).
+                _lazy_fallback = (
+                    f"(size_t)PyArray_SIZE({_first_arr}_arr)"
+                    if _first_arr is not None else "1"
+                )
             else:
                 parse_block = (
                     "    Py_ssize_t n = 1;\n"
@@ -2999,6 +3007,7 @@ def make_methods_ctx(
                 )
                 call_data = f"self->handle, (size_t)n, self->_{name}_buf"
                 decref_in = ""
+                _lazy_fallback = "(size_t)n"
 
             if multi_output:
                 # Multi-output: call C function, return tuple of views
@@ -3068,7 +3077,7 @@ def make_methods_ctx(
                     f"    if (!self->_{name}_buf) {{\n"
                     f"        size_t _max ="
                     f" {component}_{name}_max_out(self->handle);\n"
-                    f"        if (!_max) _max = (size_t)n;\n"
+                    f"        if (!_max) _max = {_lazy_fallback};\n"
                     f"        self->_{name}_buf ="
                     f" malloc(_max * sizeof({ret_disp}));\n"
                     f"        if (!self->_{name}_buf) {{"
