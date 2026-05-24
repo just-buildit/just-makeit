@@ -7091,8 +7091,11 @@ TODO: describe your project.
 - A C99 compiler (GCC, Clang, or MSVC)
 - NumPy (installed automatically by `make` if missing)
 
-**Linux:** `sudo apt-get install cmake gcc pkg-config`
-**macOS:** `brew install cmake pkg-config` (compiler via `xcode-select --install`)
+Install system build dependencies (detects OS/distro automatically):
+
+```bash
+jbx install-deps -g dev
+```
 
 ## Quickstart
 
@@ -7115,4 +7118,77 @@ make test                # CTest + pytest
 pip install just-buildit
 just-makeit build        # wheel -> dist/
 ```
+"""
+
+JB_TOML = """\
+[project]
+name    = "<<project_underscore>>"
+version = "<<version>>"
+
+[tools.install-deps]
+source = "just-bashit:install-deps"
+groups = ["dev"]
+
+[tools.just-makeit]
+source = "just-bashit:just-makeit"
+config = "just-makeit.toml"
+
+# Build dependencies — populated by just-makeit new.
+# Add [runtime.*] sections for your project's own system libraries.
+
+[dev.apt]
+packages = [
+    "build-essential",
+    "cmake",
+    "pkg-config",
+    "python3-dev",
+    "python3-numpy",
+]
+
+[dev.pacman]
+packages = [
+    "base-devel",
+    "cmake",
+    "pkgconf",
+    "python",
+    "python-numpy",
+]
+
+[dev.brew]
+packages = [
+    "cmake",
+    "pkg-config",
+]
+
+[dev.dnf]
+packages = [
+    "gcc",
+    "gcc-c++",
+    "make",
+    "cmake",
+    "pkgconf-pkg-config",
+    "python3-devel",
+    "python3-numpy",
+]
+
+[dev.zypper]
+packages = [
+    "gcc",
+    "gcc-c++",
+    "make",
+    "cmake",
+    "pkg-config",
+    "python3-devel",
+    "python3-numpy",
+]
+
+[dev.msys2]
+packages = [
+    "mingw-w64-ucrt-x86_64-gcc",
+    "mingw-w64-ucrt-x86_64-cmake",
+    "mingw-w64-ucrt-x86_64-python",
+    "mingw-w64-ucrt-x86_64-python-numpy",
+    "make",
+    "pkg-config",
+]
 """

@@ -124,6 +124,7 @@ def run(
     )
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
+    _write(root / "jb.toml", r(T.JB_TOML))
     print()
 
     if object_names:
