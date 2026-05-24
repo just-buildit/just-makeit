@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.13.8] — 2026-05-24
+
+### Added
+
+- **`jb.toml` generation** — `jm new` now emits a `jb.toml` alongside
+  `just-makeit.toml`, pre-populated with dev system dependencies for
+  apt, pacman, brew, dnf, zypper, apk, and msys2. Run
+  `jbx install-deps -g dev` immediately after scaffolding to install
+  build deps without any manual configuration.
+
+### Changed
+
+- CI uses `jbx install-deps` (reads from `jb.toml`) for system
+  dependencies on all platforms, replacing inline `apt-get`/`brew`
+  blocks.
+- Added `examples` CI job that verifies `jb.toml` generation and runs
+  the full scaffold workflow end-to-end on Ubuntu and macOS.
+
+### Fixed
+
+- `make test-examples` failed with `ModuleNotFoundError: No module
+  named 'just_makeit'` when run via `uv run --no-project`. Fixed with
+  a dedicated `PYTEST_EXAMPLES` invocation that includes the local
+  project environment.
+
 ## [0.13.7] — 2026-05-23
 
 ### Fixed
