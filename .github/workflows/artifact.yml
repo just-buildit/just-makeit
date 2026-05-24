@@ -39,8 +39,10 @@ jobs:
           done
           pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
 
-      - name: Install build deps
-        run: jm-install-deps
+      - name: Install jbx
+        run: |
+          . <(curl -sSL https://just-buildit.github.io/get-jb.sh)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # ── TL;DR: run all bundled examples ─────────────────────────────────────
 
@@ -61,6 +63,26 @@ jobs:
             --state "coeffs:float[16]" \
             --state "delay:float _Complex[16]" \
             --state "gain:float:1.0"
+
+      - name: Verify jb.toml generated
+        working-directory: my_fir
+        run: |
+          test -f jb.toml
+          grep 'install-deps' jb.toml
+          grep 'cmake' jb.toml
+          grep 'my_fir' jb.toml
+
+      - name: Install build deps via generated jb.toml (Linux)
+        if: runner.os == 'Linux'
+        working-directory: my_fir
+        run: |
+          sudo apt-get update
+          jbx install-deps -g dev -s apt
+
+      - name: Install build deps via generated jb.toml (macOS)
+        if: runner.os == 'macOS'
+        working-directory: my_fir
+        run: jbx install-deps -g dev -s brew
 
       - name: Implement fir_filter_step
         run: |

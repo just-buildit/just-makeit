@@ -1,0 +1,31 @@
+[project]
+name    = "just-makeit"
+version = "0.13.7"
+
+[tools.install-deps]
+source = "just-bashit:install-deps"
+groups = ["dev"]
+
+# System build deps required to compile generated C extensions in examples/CI.
+
+[dev.apt]
+packages = ["build-essential", "cmake", "pkg-config", "python3-dev"]
+
+[dev.brew]
+packages = ["cmake", "pkg-config"]
+
+[dev.pacman]
+packages = ["base-devel", "cmake", "pkgconf", "python"]
+
+[dev.dnf]
+packages = ["gcc", "make", "cmake", "pkgconf-pkg-config", "python3-devel"]
+
+[dev.zypper]
+packages = ["gcc", "make", "cmake", "pkg-config", "python3-devel"]
+
+[dev.msys2]
+packages = [
+    "mingw-w64-ucrt-x86_64-gcc",
+    "mingw-w64-ucrt-x86_64-cmake",
+    "make",
+]

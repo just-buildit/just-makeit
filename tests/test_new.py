@@ -51,6 +51,9 @@ class TestNewProjectFiles:
     def test_just_makeit_toml_exists(self, project):
         assert (project / "just-makeit.toml").exists()
 
+    def test_jb_toml_exists(self, project):
+        assert (project / "jb.toml").exists()
+
     def test_umbrella_header_exists(self, project):
         assert (project / "native" / "inc" / "my_filter.h").exists()
 
@@ -163,6 +166,70 @@ class TestNewConfig:
             cfg = tomllib.load(f)
         names = [s["name"] for s in cfg["comp"]["state"]]
         assert names == ["cutoff", "order"]
+
+
+class TestJbToml:
+    def _load(self, project):
+        import tomllib
+
+        with (project / "jb.toml").open("rb") as f:
+            return tomllib.load(f)
+
+    def test_project_name(self, project):
+        cfg = self._load(project)
+        assert cfg["project"]["name"] == "my_filter"
+
+    def test_project_version(self, project):
+        cfg = self._load(project)
+        assert cfg["project"]["version"] == "0.1.0"
+
+    def test_install_deps_source(self, project):
+        cfg = self._load(project)
+        assert cfg["tools"]["install-deps"]["source"] == "just-bashit:install-deps"
+
+    def test_install_deps_groups(self, project):
+        cfg = self._load(project)
+        assert cfg["tools"]["install-deps"]["groups"] == ["dev"]
+
+    def test_just_makeit_source(self, project):
+        cfg = self._load(project)
+        assert cfg["tools"]["just-makeit"]["source"] == "just-bashit:just-makeit"
+
+    def test_just_makeit_config(self, project):
+        cfg = self._load(project)
+        assert cfg["tools"]["just-makeit"]["config"] == "just-makeit.toml"
+
+    def test_dev_apt_packages(self, project):
+        cfg = self._load(project)
+        pkgs = cfg["dev"]["apt"]["packages"]
+        assert "cmake" in pkgs
+        assert "build-essential" in pkgs
+        assert "python3-dev" in pkgs
+
+    def test_dev_pacman_packages(self, project):
+        cfg = self._load(project)
+        pkgs = cfg["dev"]["pacman"]["packages"]
+        assert "cmake" in pkgs
+        assert "base-devel" in pkgs
+        assert "python" in pkgs
+
+    def test_dev_brew_packages(self, project):
+        cfg = self._load(project)
+        pkgs = cfg["dev"]["brew"]["packages"]
+        assert "cmake" in pkgs
+
+    def test_no_runtime_section(self, project):
+        cfg = self._load(project)
+        assert "runtime" not in cfg
+
+    def test_no_stray_placeholders(self, project):
+        text = (project / "jb.toml").read_text(encoding="utf-8")
+        assert "<<" not in text
+
+    def test_scaffold_also_gets_jb_toml(self, scaffold):
+        assert (scaffold / "jb.toml").exists()
+        cfg = self._load(scaffold)
+        assert cfg["project"]["name"] == "my_proj"
 
 
 class TestNewContent:

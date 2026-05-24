@@ -101,7 +101,8 @@ my_project/
 ├── cmake/my-project.pc.in         # pkg-config template
 ├── CMakeLists.txt
 ├── Makefile
-└── just-makeit.toml
+├── just-makeit.toml
+└── jb.toml            # tool + system-dep manifest (jbx install-deps)
 ```
 
 ______________________________________________________________________

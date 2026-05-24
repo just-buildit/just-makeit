@@ -134,6 +134,14 @@ def run(root: Path) -> None:
     )
     proj = root / "my_fir"
 
+    # Verify jb.toml was generated with expected structure
+    import tomllib
+    with (proj / "jb.toml").open("rb") as f:
+        jbt = tomllib.load(f)
+    assert jbt["project"]["name"] == "my_fir"
+    assert jbt["tools"]["install-deps"]["source"] == "just-bashit:install-deps"
+    assert "cmake" in jbt["dev"]["apt"]["packages"]
+
     # 2. Implement the FIR step
     _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=proj)
 

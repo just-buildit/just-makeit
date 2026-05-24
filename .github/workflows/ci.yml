@@ -24,6 +24,42 @@ jobs:
       - run: jm-install-deps ${{ runner.temp }}/jm-venv
       - run: jm-run-tests
 
+  examples:
+    name: Examples (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install just-makeit
+        run: uv tool install .
+
+      - name: Install jbx
+        run: |
+          . <(curl -sSL https://just-buildit.github.io/get-jb.sh)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install system deps (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          jbx install-deps -g dev -s apt
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: jbx install-deps -g dev -s brew
+
+      - name: Run example tests
+        run: make test-examples
+
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
