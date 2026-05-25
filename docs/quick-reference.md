@@ -24,7 +24,9 @@ ______________________________________________________________________
 
 ```python
 # Scalar in → scalar out
-def step(self, x: float) -> float: ...
+def step(
+    self, x: float
+) -> float: ...
 ```
 
 </td>
@@ -61,9 +63,9 @@ def step(self) -> complex: ...
 
 ```toml
 [comp]
-arg_type = "void"
+arg_type    = "void"
 return_type = "float _Complex"
-mutable = "true"
+mutable     = "true"
 ```
 
 </td>
@@ -84,7 +86,9 @@ jm object comp \
 
 ```python
 # Sink — no output
-def step(self, x: float) -> None: ...
+def step(
+    self, x: float
+) -> None: ...
 ```
 
 </td>
@@ -113,8 +117,10 @@ jm object comp \
 
 ```python
 # Buffer step
-def step(self, x: NDArray[np.complex64]) \
-    -> NDArray[np.complex64]: ...
+def step(
+    self,
+    x: NDArray[np.complex64],
+) -> NDArray[np.complex64]: ...
 ```
 
 </td>
@@ -142,7 +148,10 @@ jm object comp \
 ```python
 # Stateful constructor
 class Gain:
-    def __init__(self, gain: float = ...) -> None: ...
+    def __init__(
+        self,
+        gain: float = ...,
+    ) -> None: ...
 ```
 
 </td>
@@ -186,7 +195,8 @@ class_name = "NCO"
 <td>
 
 ```sh
-jm object nco --class-name NCO
+jm object nco \
+  --class-name NCO
 ```
 
 </td>
@@ -214,7 +224,10 @@ ______________________________________________________________________
 
 ```python
 # Scalar with default
-def __init__(self, order: int = 4) -> None: ...
+def __init__(
+    self,
+    order: int = 4,
+) -> None: ...
 ```
 
 </td>
@@ -247,8 +260,10 @@ jm object comp \
 
 ```python
 # Required array
-def __init__(self,
-    coeff: NDArray[np.complex64]) -> None: ...
+def __init__(
+    self,
+    coeff: NDArray[np.complex64],
+) -> None: ...
 ```
 
 </td>
@@ -265,7 +280,8 @@ type = "float _Complex[]"
 
 ```sh
 jm object comp --no-state \
-  --init-param "coeff:float _Complex[]"
+  --init-param \
+  "coeff:float _Complex[]"
 ```
 
 </td>
@@ -276,11 +292,14 @@ jm object comp --no-state \
 
 ```python
 # Optional 2-D array
-def __init__(self,
-    bank: NDArray[np.float32] | None = None,
-    rate: float = ...) -> None: ...
-# bank provided → fir_create_poly(dim0, dim1, ptr, rate)
-# bank omitted  → fir_create(rate)
+def __init__(
+    self,
+    bank: NDArray[np.float32]
+         | None = None,
+    rate: float = ...,
+) -> None: ...
+# bank → fir_create_poly(d0,d1,ptr,rate)
+# None → fir_create(rate)
 ```
 
 </td>
@@ -300,7 +319,8 @@ create_fn = "fir_create_poly"
 ```sh
 jm object comp --no-state \
   --init-param \
-  "bank:float[][]:optional:fir_create_poly"
+  "bank:float[][]:optional:\
+fir_create_poly"
 ```
 
 </td>
@@ -312,8 +332,11 @@ jm object comp --no-state \
 ```python
 # String-enum choice
 from typing import Literal
-def __init__(self,
-    mode: Literal["fast", "hq"] = "fast") -> None: ...
+def __init__(
+    self,
+    mode: Literal["fast", "hq"]
+        = "fast",
+) -> None: ...
 ```
 
 </td>
@@ -329,8 +352,9 @@ default = "fast"
 </td>
 <td>
 
-*TOML only* — add to `just-makeit.toml`,
-then run `jm apply`.
+*TOML only* — add to
+`just-makeit.toml`, then
+run `jm apply`.
 
 </td>
 </tr>
@@ -340,7 +364,8 @@ then run `jm apply`.
 
 ```python
 # Dtype-dispatched array
-# int16 → real_create_fn, otherwise create_fn
+# int16 → real_create_fn
+# other → create_fn
 ```
 
 </td>
@@ -384,7 +409,9 @@ ______________________________________________________________________
 
 ```python
 # Named method
-def execute_ctrl(self, x: float) -> float: ...
+def execute_ctrl(
+    self, x: float
+) -> float: ...
 ```
 
 </td>
@@ -414,8 +441,9 @@ jm method comp execute_ctrl \
 
 ```python
 # Variable-length output
-def execute(self,
-    x: NDArray[np.complex64]
+def execute(
+    self,
+    x: NDArray[np.complex64],
 ) -> NDArray[np.complex64]: ...
 ```
 
@@ -444,8 +472,13 @@ jm method comp execute \
 
 ```python
 # Dual output
-def execute(self, x: NDArray[np.uint32]
-) -> tuple[NDArray[np.uint32], NDArray[np.uint8]]: ...
+def execute(
+    self,
+    x: NDArray[np.uint32],
+) -> tuple[
+    NDArray[np.uint32],
+    NDArray[np.uint8],
+]: ...
 ```
 
 </td>
@@ -477,8 +510,9 @@ jm method comp execute \
 
 ```python
 # Struct-list return
-def find_peaks(self,
-    x: NDArray[np.float32]
+def find_peaks(
+    self,
+    x: NDArray[np.float32],
 ) -> list[tuple[int, float]]: ...
 ```
 
@@ -487,8 +521,8 @@ def find_peaks(self,
 
 ```toml
 [[comp.methods]]
-name     = "find_peaks"
-arg_type = "float[]"
+name        = "find_peaks"
+arg_type    = "float[]"
 max_results = 64
 
 [[comp.methods.result_fields]]
@@ -504,9 +538,9 @@ type = "float"
 <td>
 
 *TOML only* for field types.
-Scaffold with `jm method`, then
-edit `just-makeit.toml` and run
-`jm apply`.
+Scaffold with `jm method`,
+then edit `just-makeit.toml`
+and run `jm apply`.
 
 </td>
 </tr>
@@ -533,7 +567,8 @@ type = "int"
 <td>
 
 ```sh
-jm property comp length --type int
+jm property comp length \
+  --type int
 ```
 
 </td>
@@ -547,7 +582,9 @@ jm property comp length --type int
 @property
 def gain(self) -> float: ...
 @gain.setter
-def gain(self, value: float) -> None: ...
+def gain(
+    self, value: float
+) -> None: ...
 ```
 
 </td>
@@ -565,7 +602,8 @@ writable = true
 
 ```sh
 jm property comp gain \
-  --type double --writable
+  --type double \
+  --writable
 ```
 
 </td>
@@ -576,8 +614,10 @@ jm property comp gain \
 
 ```python
 # Module-level function
-def apply(x: NDArray[np.float32],
-          scale: float) -> float: ...
+def apply(
+    x: NDArray[np.float32],
+    scale: float,
+) -> float: ...
 ```
 
 </td>
@@ -601,7 +641,8 @@ type = "float"
 <td>
 
 ```sh
-jm function apply --module dsp \
+jm function apply \
+  --module dsp \
   --param "x:float[]" \
   --param "scale:float" \
   --return-type float
@@ -615,7 +656,8 @@ jm function apply --module dsp \
 
 ```python
 # Inline function (header-only)
-# same signature, compiler can inline
+# same signature; compiler
+# can inline at call sites
 ```
 
 </td>
@@ -631,7 +673,8 @@ inline = true
 <td>
 
 ```sh
-jm function apply --module dsp \
+jm function apply \
+  --module dsp \
   --inline ...
 ```
 
@@ -645,7 +688,7 @@ jm function apply --module dsp \
 # Function with array output
 def magnitude_db(
     x: NDArray[np.complex64],
-    floor: float
+    floor: float,
 ) -> NDArray[np.float32]: ...
 ```
 
