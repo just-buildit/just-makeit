@@ -311,14 +311,23 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
 
 
 def init_params(cfg: dict, component: str) -> list[tuple]:
-    """Return --init-param entries as [(name, type, default, default_raw), ...].
+    """Return --init-param entries as [(name, type, default, default_raw, real_type, real_create_fn), ...].
 
-    ``default_raw`` is the C-literal initial value for the raw parse variable
-    (overrides the type's parse_zero when non-empty).  Most params omit it;
-    callers should unpack defensively with ``param[:3]`` for the 3-tuple form.
+    ``default_raw`` overrides the type's parse_zero for the raw C variable.
+    ``real_type`` / ``real_create_fn`` enable dtype-dispatch: when the array
+    arrives as the ``real_type`` numpy dtype, ``real_create_fn`` is called
+    instead of the default ``<component>_create``.  Both default to ``""``
+    when absent.  Callers may unpack defensively with ``param[:3]``.
     """
     return [
-        (p["name"], p["type"], p.get("default", ""), p.get("default_raw", ""))
+        (
+            p["name"],
+            p["type"],
+            p.get("default", ""),
+            p.get("default_raw", ""),
+            p.get("real_type", ""),
+            p.get("real_create_fn", ""),
+        )
         for p in cfg.get(component, {}).get("init_params", [])
     ]
 
@@ -473,6 +482,10 @@ def add_component(
                 rec["default"] = d
             if len(p) > 3 and p[3]:
                 rec["default_raw"] = p[3]
+            if len(p) > 4 and p[4]:
+                rec["real_type"] = p[4]
+            if len(p) > 5 and p[5]:
+                rec["real_create_fn"] = p[5]
             entry["init_params"].append(rec)
     if class_name_:
         entry["class_name"] = class_name_
@@ -568,6 +581,10 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'default = "{p["default"]}"')
             if "default_raw" in p:
                 lines.append(f'default_raw = "{p["default_raw"]}"')
+            if "real_type" in p:
+                lines.append(f'real_type = "{p["real_type"]}"')
+            if "real_create_fn" in p:
+                lines.append(f'real_create_fn = "{p["real_create_fn"]}"')
             lines.append("")
         if comp_data.get("init_post_parse"):
             ipp = comp_data["init_post_parse"].replace('"""', '\\"\\"\\"')

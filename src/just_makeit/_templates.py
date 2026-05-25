@@ -1043,14 +1043,25 @@ def _build_no_state_init_ctx(
     str_enum_ip: list[tuple[str, list[str], str]] = []
     # (name, ctype, default, default_raw)
     scalar_ip: list[tuple] = []
+    # name → (real_elem_ct, real_npy_enum, real_create_fn) for dispatch params
+    dispatch_meta: dict[str, tuple[str, str, str]] = {}
 
     for param in params:
         name, ct, dflt = param[:3]
         dflt_raw = param[3] if len(param) > 3 else ""
+        real_type = param[4] if len(param) > 4 else ""
+        real_create_fn_p = param[5] if len(param) > 5 else ""
         if is_array_param_type(ct):
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
             arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
+            if real_type and real_create_fn_p:
+                real_elem_ct = array_elem_ctype(real_type)
+                dispatch_meta[name] = (
+                    real_elem_ct,
+                    _CTYPE_TO_NPY[real_elem_ct],
+                    real_create_fn_p,
+                )
         elif is_string_enum_type(ct):
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
         else:
@@ -1269,9 +1280,56 @@ def _build_no_state_init_ctx(
         )
         allocated.append(name)
 
-    for aname, _, andim, anpy in arr_ip:
+    for aname, act, andim, anpy in arr_ip:
         cleanup = "".join(f" Py_DECREF({n}_arr);" for n in allocated)
-        if andim == 2:
+        if aname in dispatch_meta:
+            # Dtype-dispatch: probe the incoming array's dtype and branch.
+            real_ect, real_npy, d_create_fn = dispatch_meta[aname]
+            real_adisp = _ctype_display(real_ect)
+            complex_adisp = _ctype_display(act)
+            # Replace the complex cast in create_call_args with the real cast.
+            complex_cast = (
+                f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
+            )
+            real_cast = f"(const {real_adisp} *)PyArray_DATA({aname}_arr)"
+            real_call_args = create_call_args.replace(complex_cast, real_cast, 1)
+            aapb_lines.append(
+                f"    /* dtype dispatch: {real_adisp} → {d_create_fn},"
+                f" {complex_adisp} → {component}_create */\n"
+                f"    {{\n"
+                f"        PyArrayObject *_{aname}_probe ="
+                f" (PyArrayObject *)PyArray_CheckFromAny(\n"
+                f"            {aname}_obj, NULL, 1, 1,"
+                f" NPY_ARRAY_C_CONTIGUOUS, NULL);\n"
+                f"        int _{aname}_real = _{aname}_probe &&"
+                f" (PyArray_TYPE(_{aname}_probe) == {real_npy});\n"
+                f"        Py_XDECREF(_{aname}_probe);\n"
+                f"        if (_{aname}_real) {{\n"
+                f"            PyArrayObject *{aname}_arr ="
+                f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"                {aname}_obj, {real_npy},"
+                f" NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+                f"            size_t {aname}_len ="
+                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                f"            self->handle = {d_create_fn}({real_call_args});\n"
+                f"            Py_DECREF({aname}_arr);\n"
+                f"        }} else {{\n"
+                f"            PyArrayObject *{aname}_arr ="
+                f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"                {aname}_obj, {anpy},"
+                f" NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+                f"            size_t {aname}_len ="
+                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                f"            self->handle ="
+                f" {component}_create({create_call_args});\n"
+                f"            Py_DECREF({aname}_arr);\n"
+                f"        }}\n"
+                f"    }}\n"
+            )
+            # Do NOT add to allocated — decref happens inside the dispatch block.
+        elif andim == 2:
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
                 f"        {aname}_obj, {anpy}, NPY_ARRAY_C_CONTIGUOUS);\n"
@@ -1284,6 +1342,7 @@ def _build_no_state_init_ctx(
                 f"    size_t {aname}_dim0 = (size_t)PyArray_DIM({aname}_arr, 0);\n"
                 f"    size_t {aname}_dim1 = (size_t)PyArray_DIM({aname}_arr, 1);\n"
             )
+            allocated.append(aname)
         else:
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
@@ -1291,10 +1350,19 @@ def _build_no_state_init_ctx(
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
                 f"    size_t {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
             )
-        allocated.append(aname)
+            allocated.append(aname)
 
     array_args_parse_block = "".join(aapb_lines)
     array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name in allocated)
+
+    # create_line: the self->handle assignment.  Empty when a dispatch block
+    # already emitted both create calls inside the if/else branches.
+    if dispatch_meta:
+        create_line = ""
+    else:
+        create_line = (
+            f"    self->handle = {component}_create({create_call_args});\n"
+        )
 
     # ── pyi / test helpers ────────────────────────────────────────────────────
 
@@ -1376,6 +1444,7 @@ def _build_no_state_init_ctx(
         "init_parse_block": init_parse_block,
         "array_args_parse_block": array_args_parse_block,
         "array_args_decref": array_args_decref,
+        "create_line": create_line,
         "create_call_args": create_call_args,
         "init_params_pyi": init_params_pyi,
         "pyi_param_docs": pyi_param_docs,
@@ -1554,6 +1623,9 @@ def make_state_ctx(
             "reset_test_c": f"    /* reset */\n    {component}_reset(obj);",
             "array_args_parse_block": "",
             "array_args_decref": "",
+            "create_line": (
+                f"    self->handle = {component}_create();\n"
+            ),
             "method_decls": "",
             "extra_buf_fields": "",
             "extra_buf_free": "",
@@ -2195,6 +2267,9 @@ def make_state_ctx(
         "init_parse_args": init_parse_args,
         "init_parse_block": init_parse_block,
         "create_call_args": create_call_args,
+        "create_line": (
+            f"    self->handle = {component}_create({create_call_args});\n"
+        ),
         "getter_setter_methods_c": getter_setter_methods_c,
         "getter_setter_pymethoddef": getter_setter_pymethoddef,
         "init_params_pyi": init_params_pyi,
@@ -5145,8 +5220,7 @@ static PyObject *
 static int
 <<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
-<<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
-<<array_args_decref>>    if (!self->handle) {
+<<init_parse_block>><<array_args_parse_block>><<create_line>><<array_args_decref>>    if (!self->handle) {
         PyErr_SetString(PyExc_MemoryError,
                         "<<component>>_create returned NULL");
         return -1;
@@ -5289,8 +5363,7 @@ static PyObject *
 static int
 <<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
-<<init_parse_block>><<array_args_parse_block>>    self->handle = <<component>>_create(<<create_call_args>>);
-<<array_args_decref>>    if (!self->handle) {
+<<init_parse_block>><<array_args_parse_block>><<create_line>><<array_args_decref>>    if (!self->handle) {
         PyErr_SetString(PyExc_MemoryError,
                         "<<component>>_create returned NULL");
         return -1;

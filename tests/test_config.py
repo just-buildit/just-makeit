@@ -254,7 +254,10 @@ class TestAddComponentFlags:
             init_params_=[("n", "int", "16"), ("order", "int", "4")],
         )
         result = init_params(cfg, "gen")
-        assert result == [("n", "int", "16", ""), ("order", "int", "4", "")]
+        assert result == [
+            ("n", "int", "16", "", "", ""),
+            ("order", "int", "4", "", "", ""),
+        ]
 
 
 class TestDumpFlagFields:
