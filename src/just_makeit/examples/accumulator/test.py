@@ -57,11 +57,11 @@ def run(root: Path) -> None:
         mutable=True,
     )
 
-    ext_c = (
-        dest / "native" / "src" / "accumulator" / "accumulator_ext.c"
+    frag_f32 = (
+        dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_f32.c"
     ).read_text()
-    assert "AccF32Object" in ext_c
-    assert "AccCf64Object" not in ext_c
+    assert "AccF32Object" in frag_f32
+    assert "AccCf64Object" not in frag_f32
 
     # ── 3. Add AccCf64 object ─────────────────────────────────────────────────
     object_run(
@@ -74,11 +74,14 @@ def run(root: Path) -> None:
         mutable=True,
     )
 
-    ext_c = (
-        dest / "native" / "src" / "accumulator" / "accumulator_ext.c"
+    frag_f32 = (
+        dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_f32.c"
     ).read_text()
-    assert "AccF32Object" in ext_c
-    assert "AccCf64Object" in ext_c
+    frag_cf64 = (
+        dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_cf64.c"
+    ).read_text()
+    assert "AccF32Object" in frag_f32
+    assert "AccCf64Object" in frag_cf64
 
     init_py = (
         dest / "src" / "my_acc" / "accumulator" / "__init__.py"

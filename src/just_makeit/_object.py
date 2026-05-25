@@ -397,20 +397,45 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         )
         comp_ctxs.append(ctx)
 
-    # Module ext.c — preserve any user-edited C function bodies before
-    # overwriting so that implementations added via `just-makeit method`
-    # (or manually edited) survive re-scaffolding.
+    # Per-object fragment files (<module>_ext_<comp>.c).
+    # Each fragment is preserved independently: body-preservation reads from
+    # the existing fragment when present, or from the old monolithic ext.c
+    # when migrating from a pre-split layout.  Only functions whose names
+    # appear in the freshly rendered template survive (no cross-contamination).
     functions = C.module_functions(cfg, module)
-    ext_c_path = root / "native" / "src" / module / f"{module}_ext.c"
-    existing_bodies: dict[str, str] = {}
-    if ext_c_path.exists():
-        existing_bodies = _extract_c_function_bodies(
-            ext_c_path.read_text(encoding="utf-8")
-        )
-    ext_c = T.render_module_ext_c(module, comp_ctxs, functions)
-    if existing_bodies:
-        ext_c = _restore_c_function_bodies(ext_c, existing_bodies)
-    _write(ext_c_path, ext_c, "update")
+    ext_dir = root / "native" / "src" / module
+    ext_c_path = ext_dir / f"{module}_ext.c"
+
+    # Load migration source once: existing monolith bodies (used as fallback
+    # when a fragment file does not yet exist).
+    monolith_bodies: dict[str, str] = {}
+    if ext_c_path.exists() and comp_ctxs:
+        raw = ext_c_path.read_text(encoding="utf-8")
+        # Only treat the file as a migration source when it is a monolith
+        # (i.e. it does not yet contain #include lines for fragments).
+        first_frag = f'{module}_ext_{comp_ctxs[0]["component"]}.c'
+        if first_frag not in raw:
+            monolith_bodies = _extract_c_function_bodies(raw)
+
+    for ctx in comp_ctxs:
+        comp = ctx["component"]
+        frag_path = ext_dir / f"{module}_ext_{comp}.c"
+        # Prefer bodies from the existing fragment; fall back to the monolith
+        # during migration (only matching function names will be spliced in).
+        if frag_path.exists():
+            preserved = _extract_c_function_bodies(
+                frag_path.read_text(encoding="utf-8")
+            )
+        else:
+            preserved = monolith_bodies
+        frag = T.render_module_ext_fragment(ctx)
+        if preserved:
+            frag = _restore_c_function_bodies(frag, preserved)
+        _write(frag_path, frag, "update" if frag_path.exists() else "create")
+
+    # Aggregator (<module>_ext.c) — pure boilerplate, always overwritten.
+    aggregator = T.render_module_ext_aggregator(module, comp_ctxs, functions)
+    _write(ext_c_path, aggregator, "update")
 
     # Module CMakeLists
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)

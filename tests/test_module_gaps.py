@@ -195,7 +195,7 @@ class TestCBodyPreservation:
             multi_output=[],
         )
 
-        ext_path = root / "native" / "src" / "dsp" / "dsp_ext.c"
+        ext_path = root / "native" / "src" / "dsp" / "dsp_ext_nco.c"
         original = ext_path.read_text(encoding="utf-8")
         # Inject a sentinel inside the Nco_get_freq body (uses RuntimeError).
         sentinel = "/* SENTINEL: user-edited body */"
@@ -231,13 +231,16 @@ class TestNoStepInModule:
         # No-step object.
         object_run(root, "util", "dsp", state_vars=[], no_step=True)
 
-        ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+        nco_ext = (root / "native" / "src" / "dsp" / "dsp_ext_nco.c").read_text(
+            encoding="utf-8"
+        )
+        util_ext = (root / "native" / "src" / "dsp" / "dsp_ext_util.c").read_text(
             encoding="utf-8"
         )
         # The nco wrappers should be present.
-        assert "Nco_step" in ext_c
+        assert "Nco_step" in nco_ext
         # No step wrapper should be emitted for util.
-        assert "Util_step" not in ext_c
+        assert "Util_step" not in util_ext
 
     def test_no_step_object_has_no_step_in_core_c(self, tmp_path):
         root = tmp_path / "pkg"

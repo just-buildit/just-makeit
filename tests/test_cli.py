@@ -714,7 +714,7 @@ class TestArrayArgTypeCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_filt.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "Filt_steps" not in ext
 
@@ -1041,7 +1041,7 @@ class TestMethodVariableOutputCLI:
             "--variable-output",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
         assert "buf" in ext and "malloc" in ext
 
 
@@ -1108,7 +1108,7 @@ class TestMethodMultiOutputCLI:
             "uint8_t",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
         assert "PyTuple_Pack" in ext
 
 
@@ -1207,7 +1207,7 @@ class TestPropertyCLI:
             "uint32_t",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
         assert "phase" in ext
 
 
@@ -1467,7 +1467,7 @@ class TestMethodOutTypeCLI:
             "void",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(encoding="utf-8")
         assert "PyArray_EMPTY" in ext
 
     def test_out_type_bad_type_exits_1(self, tmp_path):
@@ -1505,7 +1505,7 @@ class TestMethodOutTypeCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        ext = (dest / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(encoding="utf-8")
         assert "/ 2" in ext
 
     def test_out_divisor_non_positive_exits_1(self, tmp_path):

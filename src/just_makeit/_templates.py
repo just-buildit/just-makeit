@@ -5837,6 +5837,93 @@ def render_module_ext_c(
     return "".join(parts)
 
 
+_FRAGMENT_FILE_HEADER = """\
+/*
+ * <<module>>_ext_<<component>>.c — <<Component>> type for the <<module>> module.
+ *
+ * Included by <<module>>_ext.c (the module aggregator).
+ * Hand-patches to this file are preserved across jm commands.
+ * Do NOT compile this file directly — only <<module>>_ext.c is compiled.
+ */
+"""
+
+
+def render_module_ext_fragment(comp_ctx: dict) -> str:
+    """Render the per-object section for one fragment file.
+
+    The returned text is the content of ``<module>_ext_<comp>.c``: a brief
+    warning header followed by the full ``COMPONENT_TYPE_SECTION`` for the
+    object.  It contains no Python.h include (the aggregator provides it).
+    """
+    header = render(_FRAGMENT_FILE_HEADER, comp_ctx)
+    return header + render(COMPONENT_TYPE_SECTION, comp_ctx)
+
+
+def render_module_ext_aggregator(
+    module: str,
+    comp_ctxs: list[dict],
+    functions: list[dict] = (),
+) -> str:
+    """Render the thin aggregator ``<module>_ext.c``.
+
+    The aggregator #includes each per-object fragment in order, then defines
+    the module-level PyModuleDef and PyInit_.  It contains no hand-writable
+    code and is safe to overwrite on every regeneration.
+    """
+    Module = "".join(w.title() for w in module.split("_"))
+    object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
+    fn_ctx = make_functions_ctx(module, Module, list(functions))
+    has_module_fns = bool(functions)
+    module_core_include = (
+        f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
+    )
+    header_ctx = {
+        "module": module,
+        "Module": Module,
+        "object_list": object_list,
+        "module_core_include": module_core_include,
+    }
+    parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
+    # Replace the "Objects: ..." comment to clarify this is the aggregator.
+    parts[0] = parts[0].replace(
+        f" * Objects: {object_list}",
+        f" * Objects: {object_list}\n"
+        f" * GENERATED — do not hand-edit. Patches belong in the _ext_<obj>.c fragments.",
+    )
+    # Include each per-object fragment.
+    include_lines = "\n".join(
+        f'#include "{module}_ext_{ctx["component"]}.c"'
+        for ctx in comp_ctxs
+    )
+    parts.append(f"\n{include_lines}\n")
+    if fn_ctx["function_wrappers"]:
+        parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
+    type_ready_checks = "\n".join(
+        f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
+        for ctx in comp_ctxs
+    )
+    add_object_calls_lines: list[str] = []
+    for ctx in comp_ctxs:
+        C_ = ctx["Component"]
+        CW_ = ctx["ComponentW"]
+        add_object_calls_lines += [
+            f"    Py_INCREF(&{CW_}Type);",
+            f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{CW_}Type) < 0) {{',
+            f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
+            "    }",
+        ]
+    add_object_calls = "\n".join(add_object_calls_lines)
+    footer_ctx = {
+        "module": module,
+        "Module": Module,
+        "type_ready_checks": type_ready_checks,
+        "add_object_calls": add_object_calls,
+        **fn_ctx,
+    }
+    parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
+    return "".join(parts)
+
+
 CMAKE_LISTS_OBJECT_CORE = """\
 # OBJECT library — pure C core, no Python dependency.
 add_library(<<component>>_core OBJECT <<component>>_core.c)

@@ -63,12 +63,12 @@ class TestArrayArgExtC:
         assert ext.index("Py_DECREF(h_arr)") < ext.index("if (!self->handle)")
 
     def test_required_array_before_optional_scalar(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
+        ext = (in_module / "native/src/filter/filter_ext_hbdecim.c").read_text(encoding="utf-8")
         # Format: O (required array) before | (optional scalars)
         assert '"O|i"' in ext
 
     def test_kwlist_array_before_scalar(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
+        ext = (in_module / "native/src/filter/filter_ext_hbdecim.c").read_text(encoding="utf-8")
         assert ext.index('"h"') < ext.index('"factor"')
 
     def test_array_only_steps_format(self, standalone):
@@ -77,7 +77,7 @@ class TestArrayArgExtC:
         assert '"O|O"' in ext
 
     def test_in_module_ext_has_array_parse(self, in_module):
-        ext = (in_module / "native/src/filter/filter_ext.c").read_text(encoding="utf-8")
+        ext = (in_module / "native/src/filter/filter_ext_hbdecim.c").read_text(encoding="utf-8")
         assert "PyArray_FROM_OTF" in ext
         assert "(const float *)PyArray_DATA(h_arr), h_len" in ext
 

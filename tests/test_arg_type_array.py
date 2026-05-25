@@ -106,7 +106,8 @@ class TestExtC:
         assert "PyFloat_FromDouble" in ext or "PyLong_From" in ext
 
     def test_complex_elem_npy_enum(self, in_module_void):
-        ext = (in_module_void / "native/src/filter/filter_ext.c").read_text()
+        # NPY enum lives in the per-object fragment, not the aggregator.
+        ext = (in_module_void / "native/src/filter/filter_ext_sink.c").read_text()
         assert "NPY_CFLOAT" in ext or "NPY_COMPLEX64" in ext
 
 

@@ -350,7 +350,7 @@ class TestPropertyFieldModule:
         property_run(
             mod_project, "nco", "phase", "sig", "uint32_t", False, field=True
         )
-        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext_nco.c").read_text(
             encoding="utf-8"
         )
         assert "self->handle->phase" in ext
@@ -359,7 +359,7 @@ class TestPropertyFieldModule:
         property_run(
             mod_project, "nco", "phase", "sig", "uint32_t", True, field=True
         )
-        ext = (mod_project / "native" / "src" / "sig" / "sig_ext.c").read_text(
+        ext = (mod_project / "native" / "src" / "sig" / "sig_ext_nco.c").read_text(
             encoding="utf-8"
         )
         assert "self->handle->phase = v;" in ext
