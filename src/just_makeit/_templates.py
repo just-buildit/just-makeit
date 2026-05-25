@@ -5540,6 +5540,62 @@ def fn_c_decl(
     return f"{ret_disp} {fn_name}({c_param_str});\n"
 
 
+def fn_c_inline_stub(
+    fn_name: str,
+    params: list[tuple[str, str]],
+    return_type: str,
+) -> str:
+    """C body stub for embedding in ``_core.h`` as ``static inline``.
+
+    Emits the full ``static inline`` definition so callers see the body at
+    compile time.  No entry is written to ``_core.c``.  Intended for pure,
+    stateless functions that benefit from inlining at every call site.
+
+    Parameters
+    ----------
+    fn_name : str
+        C function name (without module prefix).
+    params : list of (name, type)
+        Scalar parameters only — array params and out_type are not supported
+        for inline functions.
+    return_type : str
+        C return type string (e.g. ``"int16_t"``, ``"float"``).
+
+    Returns
+    -------
+    str
+        ``static inline`` C source ready to splice into ``_core.h``.
+
+    Examples
+    --------
+    >>> print(fn_c_inline_stub("clip_f32", [("x", "float"), ("lo", "float")], "float"))
+    /* <<IMPLEMENT: clip_f32>> */
+    static inline float
+    clip_f32(float x, float lo)
+    {
+        return (float)0.0f; /* placeholder */
+    }
+    <BLANKLINE>
+    """
+    ret_disp = _ctype_display(return_type)
+    ret_meta = _CTYPE_META.get(return_type)
+    c_param_str, suppress = _fn_c_params(params)
+    c_ret_line = (
+        f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
+        if ret_meta
+        else ""
+    )
+    return (
+        f"/* <<IMPLEMENT: {fn_name}>> */\n"
+        f"static inline {ret_disp}\n"
+        f"{fn_name}({c_param_str})\n"
+        f"{{\n"
+        + (suppress + "\n" if suppress else "")
+        + (c_ret_line + "\n" if c_ret_line else "")
+        + "}\n"
+    )
+
+
 def fn_c_stub(
     fn_name: str,
     params: list[tuple[str, str]],

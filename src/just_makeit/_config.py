@@ -541,6 +541,8 @@ def _dump(cfg: dict) -> str:
                     for p in fn["params"]
                 )
                 lines.append(f"params = [{parts}]")
+            if fn.get("inline"):
+                lines.append("inline = true")
             lines.append("")
 
     for comp in components(cfg):

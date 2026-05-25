@@ -502,3 +502,80 @@ class TestNoStrayPlaceholders:
         self, module_with_objects_and_functions
     ):
         self._check(module_with_objects_and_functions)
+
+
+# ---------------------------------------------------------------------------
+# inline = True  (issue #23)
+# ---------------------------------------------------------------------------
+
+
+class TestInlineFunction:
+    """inline=True emits static inline body in _core.h; nothing in _core.c."""
+
+    @pytest.fixture()
+    def inline_fn(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["cvt"])
+        function_run(
+            root,
+            "f32_to_i16",
+            "cvt",
+            params=[("x", "float"), ("scale", "float")],
+            return_type="int16_t",
+            inline=True,
+        )
+        return root
+
+    def test_core_h_has_static_inline(self, inline_fn):
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        assert "static inline" in h
+        assert "f32_to_i16" in h
+
+    def test_core_h_has_implement_comment(self, inline_fn):
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        assert "<<IMPLEMENT: f32_to_i16>>" in h
+
+    def test_core_h_has_placeholder_return(self, inline_fn):
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        assert "return" in h and "placeholder" in h
+
+    def test_core_c_has_no_entry(self, inline_fn):
+        c = (inline_fn / "native/src/cvt/cvt_core.c").read_text(encoding="utf-8")
+        assert "f32_to_i16" not in c
+
+    def test_core_h_has_no_bare_declaration(self, inline_fn):
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        # A bare forward declaration would have a semicolon-terminated signature
+        # with no body.  The inline stub must NOT produce such a line.
+        assert "int16_t f32_to_i16(float x, float scale);" not in h
+
+    def test_ext_c_wrapper_present(self, inline_fn):
+        # The Python binding calls the inline function just like any other.
+        agg = (inline_fn / "native/src/cvt/cvt_ext.c").read_text(encoding="utf-8")
+        assert "_bind_f32_to_i16" in agg
+
+    def test_config_stores_inline_true(self, inline_fn):
+        cfg = load(inline_fn)
+        fns = cfg_module_functions(cfg, "cvt")
+        fn = next(f for f in fns if f["name"] == "f32_to_i16")
+        assert fn.get("inline") is True
+
+    def test_toml_has_inline_true(self, inline_fn):
+        toml = (inline_fn / "just-makeit.toml").read_text(encoding="utf-8")
+        assert "inline = true" in toml
+
+    def test_non_inline_function_unaffected(self, tmp_path):
+        """A regular (non-inline) function still goes in _core.c."""
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"])
+        function_run(root, "fft_setup", "fft", return_type="void")
+        c = (root / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        assert "fft_setup" in c
+        h = (root / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        assert "static inline" not in h
+
+    def test_no_stray_placeholders(self, inline_fn):
+        for path in inline_fn.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml"):
+                m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
+                assert m is None, f"Stray placeholder in {path}"

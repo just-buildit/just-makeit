@@ -71,6 +71,31 @@ def _inject_into_core_h(
     print(f"  update  {path}")
 
 
+def _inject_inline_into_core_h(
+    path: Path,
+    fn_name: str,
+    params: list[tuple[str, str]],
+    return_type: str,
+    module: str,
+) -> None:
+    """Inject a ``static inline`` body stub into ``_core.h``.
+
+    Used when ``inline=True``: the full definition goes into the header so
+    every translation unit that includes it sees the body and the compiler can
+    inline at call sites.  No entry is written to ``_core.c``.
+    """
+    stub = T.fn_c_inline_stub(fn_name, params, return_type)
+    existing = path.read_text(encoding="utf-8")
+    cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
+    if cplusplus_end in existing:
+        existing = existing.replace(cplusplus_end, f"{stub}\n\n{cplusplus_end}")
+    else:
+        marker = f"#endif /* {module.upper()}_CORE_H */"
+        existing = existing.replace(marker, f"{stub}\n{marker}")
+    path.write_text(existing, encoding="utf-8")
+    print(f"  update  {path}")
+
+
 def run(
     root: Path,
     fn_name: str,
@@ -82,6 +107,7 @@ def run(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    inline: bool = False,
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -127,37 +153,42 @@ def run(
 
     params = params or []
 
-    # Append C stub to <module>_core.c
     core_c = root / "native" / "src" / module / f"{module}_core.c"
-    if impl_body is not None:
-        from . import _impl as I
-
-        stub = T.fn_c_stub(
-            fn_name, params, return_type,
-            out_type=out_type,
-            result_fields=result_fields,
-            max_results_param=max_results_param,
-        )
-        stub = I.inject_body_into_stub(stub, impl_body)
-        existing = core_c.read_text(encoding="utf-8")
-        core_c.write_text(existing + "\n" + stub, encoding="utf-8")
-        print(f"  update  {core_c}")
-    else:
-        _append_to_core_c(
-            core_c, fn_name, params, return_type,
-            out_type=out_type,
-            result_fields=result_fields,
-            max_results_param=max_results_param,
-        )
-
-    # Inject declaration into <module>_core.h
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
-    _inject_into_core_h(
-        core_h, fn_name, params, return_type, module,
-        out_type=out_type,
-        result_fields=result_fields,
-        max_results_param=max_results_param,
-    )
+
+    if inline:
+        # Inline functions live entirely in the header — no _core.c entry.
+        _inject_inline_into_core_h(core_h, fn_name, params, return_type, module)
+    else:
+        # Append C stub to <module>_core.c
+        if impl_body is not None:
+            from . import _impl as I
+
+            stub = T.fn_c_stub(
+                fn_name, params, return_type,
+                out_type=out_type,
+                result_fields=result_fields,
+                max_results_param=max_results_param,
+            )
+            stub = I.inject_body_into_stub(stub, impl_body)
+            existing_c = core_c.read_text(encoding="utf-8")
+            core_c.write_text(existing_c + "\n" + stub, encoding="utf-8")
+            print(f"  update  {core_c}")
+        else:
+            _append_to_core_c(
+                core_c, fn_name, params, return_type,
+                out_type=out_type,
+                result_fields=result_fields,
+                max_results_param=max_results_param,
+            )
+
+        # Inject declaration into <module>_core.h
+        _inject_into_core_h(
+            core_h, fn_name, params, return_type, module,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+        )
 
     # Update config
     fn_entry: dict = {"name": fn_name}
@@ -173,6 +204,8 @@ def run(
         fn_entry["result_fields"] = result_fields
     if max_results_param:
         fn_entry["max_results_param"] = max_results_param
+    if inline:
+        fn_entry["inline"] = True
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
@@ -184,4 +217,7 @@ def run(
     _write_compile_commands(root, C.components(cfg), C.modules(cfg))
 
     print()
-    print(f"Done!  Implement {fn_name}() in {core_c.name}")
+    if inline:
+        print(f"Done!  Implement {fn_name}() in {core_h.name}")
+    else:
+        print(f"Done!  Implement {fn_name}() in {core_c.name}")

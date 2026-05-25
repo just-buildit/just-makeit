@@ -18,6 +18,7 @@ def run(args: list[str]) -> None:
     fn_return_type = "void"
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
+    fn_inline = False
 
     remaining = args[1:]
     i = 0
@@ -100,6 +101,9 @@ def run(args: list[str]) -> None:
 
             replacements_f.append(_I.parse_replace(remaining[i]))
             i += 1
+        elif tok == "--inline":
+            fn_inline = True
+            i += 1
         else:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
@@ -124,4 +128,5 @@ def run(args: list[str]) -> None:
         params=fn_params,
         return_type=fn_return_type,
         impl_body=impl_body_f,
+        inline=fn_inline,
     )

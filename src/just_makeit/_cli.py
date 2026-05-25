@@ -65,6 +65,7 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --return-type TYPE          Return type (default: void).
     --doc "text"                Docstring shown in Python help().
+    --inline                    Emit static inline body in _core.h (no _core.c entry).
     --impl file::funcname       Lift function body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 
