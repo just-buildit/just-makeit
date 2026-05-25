@@ -1045,23 +1045,32 @@ def _build_no_state_init_ctx(
     scalar_ip: list[tuple] = []
     # name → (real_elem_ct, real_npy_enum, real_create_fn) for dispatch params
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
+    # (name, elem_ctype, ndim, npy_enum, alt_create_fn) — optional array kwarg
+    opt_arr_ip: list[tuple[str, str, int, str, str]] = []
 
     for param in params:
         name, ct, dflt = param[:3]
         dflt_raw = param[3] if len(param) > 3 else ""
         real_type = param[4] if len(param) > 4 else ""
         real_create_fn_p = param[5] if len(param) > 5 else ""
+        optional_flag = param[6] if len(param) > 6 else False
+        alt_create_fn = param[7] if len(param) > 7 else ""
         if is_array_param_type(ct):
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
-            arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
-            if real_type and real_create_fn_p:
-                real_elem_ct = array_elem_ctype(real_type)
-                dispatch_meta[name] = (
-                    real_elem_ct,
-                    _CTYPE_TO_NPY[real_elem_ct],
-                    real_create_fn_p,
+            if optional_flag:
+                opt_arr_ip.append(
+                    (name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct], alt_create_fn)
                 )
+            else:
+                arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
+                if real_type and real_create_fn_p:
+                    real_elem_ct = array_elem_ctype(real_type)
+                    dispatch_meta[name] = (
+                        real_elem_ct,
+                        _CTYPE_TO_NPY[real_elem_ct],
+                        real_create_fn_p,
+                    )
         elif is_string_enum_type(ct):
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
         else:
@@ -1087,6 +1096,8 @@ def _build_no_state_init_ctx(
     _scalar_meta: dict[str, tuple] = {
         n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
     }
+    # Optional array param names — excluded from sig/call building (handled separately).
+    _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
 
     sig_parts: list[str] = []
     doc_parts: list[str] = []
@@ -1105,11 +1116,13 @@ def _build_no_state_init_ctx(
         )
         c_create_parts_ordered.append("NULL, 0")
 
-    # Init params in TOML declaration order.
+    # Init params in TOML declaration order (optional array params excluded here).
     for param in params:
         pname = param[0]
         pct = param[1]
         pdflt = param[2] if len(param) > 2 else ""
+        if pname in _opt_arr_names:
+            continue
         if pname in _arr_meta:
             act, andim = _arr_meta[pname]
             adisp = _ctype_display(act)
@@ -1173,6 +1186,7 @@ def _build_no_state_init_ctx(
         [f'"{name}"' for name, _ in _aa]
         + [f'"{name}"' for name, _, __, ___ in arr_ip]
         + [f'"{name}"' for name, _, __ in str_enum_ip]
+        + [f'"{name}"' for name, *_ in opt_arr_ip]
         + [f'"{name}"' for name, *_ in scalar_ip]
         + ["NULL"]
     )
@@ -1181,6 +1195,7 @@ def _build_no_state_init_ctx(
     local_lines: list[str] = (
         [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
         + [f"    PyObject *{name}_obj = NULL;" for name, _, __, ___ in arr_ip]
+        + [f"    PyObject *{name}_obj = NULL;" for name, *_ in opt_arr_ip]
     )
     parse_args: list[str] = (
         [f"&{name}_obj" for name, _ in _aa]
@@ -1210,6 +1225,10 @@ def _build_no_state_init_ctx(
         ]
         post_lines.extend(enum_lines)
 
+    # Optional array params: "O" format, optional (after |); NULL means absent.
+    for oname, *_ in opt_arr_ip:
+        parse_args.append(f"&{oname}_obj")
+
     # Scalar params: optional (after |)
     for name, ct, dflt, *_dflt_raw in scalar_ip:
         dflt_raw = _dflt_raw[0] if _dflt_raw else ""
@@ -1236,9 +1255,10 @@ def _build_no_state_init_ctx(
     array_fmt = "O" * n_required
     optional_fmt = (
         "s" * len(str_enum_ip)
+        + "O" * len(opt_arr_ip)
         + "".join(_CTYPE_META[ct]["fmt"] for _, ct, *_ in scalar_ip)
     )
-    if str_enum_ip or scalar_ip:
+    if str_enum_ip or opt_arr_ip or scalar_ip:
         init_parse_fmt = array_fmt + "|" + optional_fmt
     else:
         init_parse_fmt = array_fmt or "|"
@@ -1251,7 +1271,7 @@ def _build_no_state_init_ctx(
 
     # ── init_parse_block ──────────────────────────────────────────────────────
 
-    if _aa or arr_ip or str_enum_ip or scalar_ip:
+    if _aa or arr_ip or str_enum_ip or opt_arr_ip or scalar_ip:
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
             f"{init_locals}\n"
@@ -1352,12 +1372,66 @@ def _build_no_state_init_ctx(
             )
             allocated.append(aname)
 
+    # Optional array params: if/else dispatch — self->handle assigned inside.
+    scalar_call_str = create_call_args  # scalars-only at this point (opt_arr excluded)
+    for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
+        odisp = _ctype_display(oact)
+        if ondim == 2:
+            aapb_lines.append(
+                f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
+                f"        PyArrayObject *{oname}_arr ="
+                f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"            {oname}_obj, {onpy},"
+                f" NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        if (PyArray_NDIM({oname}_arr) != 2) {{\n"
+                f"            PyErr_SetString(PyExc_ValueError,\n"
+                f'                            "{oname} must be a 2-D array");\n'
+                f"            Py_DECREF({oname}_arr); return -1;\n"
+                f"        }}\n"
+                f"        size_t {oname}_dim0 ="
+                f" (size_t)PyArray_DIM({oname}_arr, 0);\n"
+                f"        size_t {oname}_dim1 ="
+                f" (size_t)PyArray_DIM({oname}_arr, 1);\n"
+                f"        self->handle = {oalt_fn}(\n"
+                f"            {oname}_dim0, {oname}_dim1,\n"
+                f"            (const {odisp} *)PyArray_DATA({oname}_arr)"
+                + (f",\n            {scalar_call_str}" if scalar_call_str else "")
+                + f");\n"
+                f"        Py_DECREF({oname}_arr);\n"
+                f"    }} else {{\n"
+                f"        self->handle ="
+                f" {component}_create({scalar_call_str});\n"
+                f"    }}\n"
+            )
+        else:
+            aapb_lines.append(
+                f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
+                f"        PyArrayObject *{oname}_arr ="
+                f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                f"            {oname}_obj, {onpy},"
+                f" NPY_ARRAY_C_CONTIGUOUS);\n"
+                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        size_t {oname}_len ="
+                f" (size_t)PyArray_SIZE({oname}_arr);\n"
+                f"        self->handle = {oalt_fn}(\n"
+                f"            {oname}_len,"
+                f" (const {odisp} *)PyArray_DATA({oname}_arr)"
+                + (f",\n            {scalar_call_str}" if scalar_call_str else "")
+                + f");\n"
+                f"        Py_DECREF({oname}_arr);\n"
+                f"    }} else {{\n"
+                f"        self->handle ="
+                f" {component}_create({scalar_call_str});\n"
+                f"    }}\n"
+            )
+
     array_args_parse_block = "".join(aapb_lines)
     array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name in allocated)
 
-    # create_line: the self->handle assignment.  Empty when a dispatch block
-    # already emitted both create calls inside the if/else branches.
-    if dispatch_meta:
+    # create_line: the self->handle assignment.  Empty when a dispatch or
+    # optional-array block already assigned self->handle inside its branches.
+    if dispatch_meta or opt_arr_ip:
         create_line = ""
     else:
         create_line = (
@@ -1380,6 +1454,7 @@ def _build_no_state_init_ctx(
         [f"{name}: npt.ArrayLike" for name, _ in _aa]
         + [f"{aname}: npt.ArrayLike" for aname, _, __, ___ in arr_ip]
         + [f'{sname}: str = "{sdflt}"' for sname, _, sdflt in str_enum_ip]
+        + [f"{oname}: npt.ArrayLike | None = None" for oname, *_ in opt_arr_ip]
         + [
             f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
             for name, ct, dflt, *_ in scalar_ip
@@ -1406,6 +1481,14 @@ def _build_no_state_init_ctx(
             f"        One of: {', '.join(choices)}."
             for sname, choices, sdflt in str_enum_ip
         ))
+    if opt_arr_ip:
+        pyi_doc_sections.append("\n".join(
+            f"    {oname} : array-like or None, optional"
+            f"{', shape (rows, cols)' if ondim == 2 else ''}\n"
+            f"        {_ctype_display(oact)} array; when supplied {oalt_fn}"
+            f" is called instead of the default constructor."
+            for oname, oact, ondim, _, oalt_fn in opt_arr_ip
+        ))
     if scalar_ip:
         pyi_doc_sections.append("\n".join(
             f"    {name} : {_CTYPE_META[ct]['py_type']},"
@@ -1426,6 +1509,7 @@ def _build_no_state_init_ctx(
             else f"np.zeros(1, dtype={npt})"
         )
     py_create_parts += [f'"{sdflt}"' for _, _, sdflt in str_enum_ip]
+    # Optional array params are omitted from py_create_args (they default to None).
     py_create_parts += [_py_default(ct, dflt) for _, ct, dflt, *_ in scalar_ip]
     py_create_args = ", ".join(py_create_parts)
 

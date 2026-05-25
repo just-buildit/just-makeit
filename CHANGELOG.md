@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.13.10] — 2026-05-25
+
+### Added
+
+- **Optional array init-param** — `[[comp.init_params]]` entries may now set
+  `optional = true` (with `create_fn = "Alt_create"`) on any array type.
+  When the caller supplies the kwarg, `create_fn` is called with the array
+  dimensions, a const pointer to its data, and any scalar params; when
+  omitted, `<comp>_create` is called with scalars only.  1-D arrays pass
+  `(len, ptr, scalars…)`; 2-D arrays pass `(dim0, dim1, ptr, scalars…)` and
+  include an `ndim == 2` guard.  CLI spelling:
+  `--init-param bank:float[][]:optional:Alt_create`.  Covers the Resampler
+  use-case where a polyphase bank may or may not be user-supplied. (gh#25)
+
 ## [0.13.9] — 2026-05-24
 
 ### Added

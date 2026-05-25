@@ -36,6 +36,7 @@ Commands:
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
     --init-param name:type[:default]  Constructor param for --no-state objects; repeatable.
+                                      Optional array form: name:type[]:optional[:create_fn]
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --impl file::funcname       Lift step() body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.

@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from ._cli_parse import parse_state_flag
+from ._cli_parse import parse_init_param_flag, parse_state_flag
 
 
 def run(args: list[str]) -> None:
@@ -115,7 +115,7 @@ def run(args: list[str]) -> None:
             no_step = True
             i += 1
         elif tok == "--init-param":
-            ip_var, i = parse_state_flag(remaining, i)
+            ip_var, i = parse_init_param_flag(remaining, i)
             init_params_obj.append(ip_var)
         elif tok == "--variable-output":
             variable_output_obj = True
