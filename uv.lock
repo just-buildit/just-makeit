@@ -224,7 +224,7 @@ wheels = [
 
 [[package]]
 name = "just-makeit"
-version = "0.13.7"
+version = "0.13.12"
 source = { editable = "." }
 
 [package.dev-dependencies]
