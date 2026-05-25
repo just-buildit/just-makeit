@@ -113,6 +113,7 @@ jobs:
         run: |
           uv run pytest \
             --cov=just_makeit \
+            --cov-branch \
             --cov-report=xml \
             --junit-xml=junit.xml \
             -q
