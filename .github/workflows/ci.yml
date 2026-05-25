@@ -114,10 +114,18 @@ jobs:
           uv run pytest \
             --cov=just_makeit \
             --cov-report=xml \
+            --junit-xml=junit.xml \
             -q
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          files: junit.xml
           fail_ci_if_error: false
