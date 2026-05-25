@@ -45,18 +45,13 @@ jobs:
       - name: Install jbx
         run: |
           _JBS="https://raw.githubusercontent.com/just-buildit/just-bashit/main/src"
-          mkdir -p "$HOME/.local/bin" "$HOME/.cache/just-runit"
+          mkdir -p "$HOME/.local/bin"
           curl -fsSL "${_JBS}/just-runit" -o "$HOME/.local/bin/just-runit"
           chmod +x "$HOME/.local/bin/just-runit"
           ln -sf just-runit "$HOME/.local/bin/jb"
           ln -sf just-runit "$HOME/.local/bin/jbx"
           ln -sf just-runit "$HOME/.local/bin/just-buildit"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # install-deps.sh sources toml.sh and pkg.sh from its own directory
-          # at runtime; pre-seed them so the cache lookup succeeds on runners
-          # that have no persistent home between jobs.
-          curl -fsSL "${_JBS}/toml.sh" -o "$HOME/.cache/just-runit/toml.sh"
-          curl -fsSL "${_JBS}/pkg.sh"  -o "$HOME/.cache/just-runit/pkg.sh"
 
       - name: Install system deps (Ubuntu)
         if: runner.os == 'Linux'
