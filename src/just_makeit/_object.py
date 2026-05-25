@@ -469,12 +469,17 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         )
         libs_parts = [f"{module}_core"] + [f"{obj}_core" for obj in object_names]
     object_core_libs = "\n    ".join(libs_parts)
+    extra_libs = C.extra_link_libs(cfg, module)
+    extra_link_libs_block = (
+        "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
+    )
     cmake_ctx = {
         "module": module,
         "Module": Module,
         "object_list": object_list,
         "object_core_libs": object_core_libs,
         "module_core_lib_block": module_core_lib_block,
+        "extra_link_libs_block": extra_link_libs_block,
     }
     # Collocated objects share the same CMakeLists file as the module itself;
     # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.

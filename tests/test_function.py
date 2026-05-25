@@ -579,3 +579,57 @@ class TestInlineFunction:
             if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml"):
                 m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
+
+
+# ---------------------------------------------------------------------------
+# out_type = "dtype[param]" scalar-sized output (gh-29)
+# ---------------------------------------------------------------------------
+
+
+class TestOutTypeScalarParam:
+    """out_type = "float64[M]" generates an output array sized by scalar M."""
+
+    @pytest.fixture()
+    def scalar_sized(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["resample"])
+        function_run(
+            root,
+            "ciccompmf",
+            "resample",
+            params=[
+                ("N", "uint32_t"),
+                ("R", "uint32_t"),
+                ("M", "uint32_t"),
+            ],
+            return_type="void",
+            out_type="float64[M]",
+        )
+        return root
+
+    def test_binding_uses_scalar_len(self, scalar_sized):
+        """Generated _bind_ciccompmf uses M (not array_len) as the dim."""
+        ext = (
+            scalar_sized / "native/src/resample/resample_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "(npy_intp)M" in ext
+
+    def test_binding_allocates_double_array(self, scalar_sized):
+        ext = (
+            scalar_sized / "native/src/resample/resample_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "NPY_DOUBLE" in ext
+
+    def test_stub_returns_ndarray_float64(self, scalar_sized):
+        pyi = (
+            scalar_sized / "src/dsp/resample/resample.pyi"
+        ).read_text(encoding="utf-8")
+        assert "NDArray[np.float64]" in pyi
+
+    def test_no_stray_placeholders(self, scalar_sized):
+        for path in scalar_sized.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml"):
+                m = _STRAY_PLACEHOLDER.search(
+                    path.read_text(encoding="utf-8")
+                )
+                assert m is None, f"Stray placeholder in {path}"

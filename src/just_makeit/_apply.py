@@ -157,6 +157,33 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             continue
         _module.run(temp_root, mod)
 
+    # After module scaffolding, copy module-level metadata (e.g.
+    # extra_link_libs) from the real project TOML into the temp TOML so
+    # _regenerate_module() inside object.run() picks it up.
+    _mods_need_update = [
+        m for m in mods
+        if cfg.get("module", {}).get(m, {}).get("extra_link_libs")
+        and not C.is_no_generate_module(cfg, m)
+    ]
+    if _mods_need_update:
+        tcfg2 = C.load(temp_root)
+        for mod in _mods_need_update:
+            extra = cfg["module"][mod]["extra_link_libs"]
+            tcfg2.setdefault("module", {}).setdefault(mod, {})[
+                "extra_link_libs"
+            ] = extra
+        C.save(temp_root, tcfg2)
+
+    # Seed _extra.c files from the real project so _regenerate_module()
+    # detects and re-includes them in the temp aggregator.
+    for mod in mods:
+        src_dir = project_root / "native" / "src" / mod
+        dst_dir = temp_root / "native" / "src" / mod
+        if src_dir.is_dir():
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for extra in src_dir.glob("*_extra.c"):
+                shutil.copy2(extra, dst_dir / extra.name)
+
     for comp in standalone:
         octx = _object_ctx(cfg, comp, None)
         impl = _resolve_impl(

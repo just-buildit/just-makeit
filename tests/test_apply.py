@@ -408,3 +408,41 @@ class TestApplySelectiveOnly:
 
         with pytest.raises(SystemExit):
             apply_run(proj, only="nonexistent")
+
+
+class TestApplyExtraC:
+    """apply preserves hand-written *_extra.c files through re-materialisation
+    and keeps them wired into the module aggregator (gh-28)."""
+
+    def test_extra_c_preserved_through_apply(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        extra = proj / "native" / "src" / "dsp" / "dsp_ext_extra.c"
+        extra.write_text("/* hand-written extra */\n", encoding="utf-8")
+
+        apply_run(proj)
+
+        assert extra.exists(), "extra.c deleted by apply"
+        assert extra.read_text(encoding="utf-8") == "/* hand-written extra */\n"
+
+    def test_extra_c_included_in_aggregator_after_apply(self, tmp_path):
+        proj = tmp_path / "proj"
+        new_run("proj", proj, [], [])
+        module_run(proj, "dsp")
+        object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        object_run(
+            proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")]
+        )
+
+        extra = proj / "native" / "src" / "dsp" / "dsp_ext_extra.c"
+        extra.write_text("/* extra */\n", encoding="utf-8")
+
+        apply_run(proj)
+
+        ext_c = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "dsp_ext_extra.c" in ext_c

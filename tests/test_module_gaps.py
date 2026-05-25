@@ -391,3 +391,55 @@ class TestExtraFiles:
             encoding="utf-8"
         )
         assert "_extra.c" not in agg
+
+
+# ---------------------------------------------------------------------------
+# Gap #7 — extra_link_libs in module CMakeLists (gh-27)
+# ---------------------------------------------------------------------------
+
+
+class TestExtraLinkLibs:
+    """extra_link_libs in just-makeit.toml appear in the module CMakeLists."""
+
+    def test_extra_libs_appear_in_cmake(self, tmp_path):
+        """Libs declared in [module.dsp].extra_link_libs land in CMakeLists."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(
+            root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")]
+        )
+
+        manifest = root / "just-makeit.toml"
+        toml_text = manifest.read_text(encoding="utf-8")
+        # Inject extra_link_libs into the existing [module.dsp] section.
+        toml_text = toml_text.replace(
+            "[module.dsp]",
+            '[module.dsp]\nextra_link_libs = ["resamp_core", "m"]',
+        )
+        manifest.write_text(toml_text, encoding="utf-8")
+
+        from just_makeit._apply import run as apply_run
+        apply_run(root)
+
+        cmake = (
+            root / "native" / "src" / "dsp" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        assert "resamp_core" in cmake
+        assert "m" in cmake
+
+    def test_no_extra_libs_by_default(self, tmp_path):
+        """Without extra_link_libs, CMakeLists contains only the standard libs."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(
+            root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")]
+        )
+
+        cmake = (
+            root / "native" / "src" / "dsp" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        libs_line = [
+            l for l in cmake.splitlines() if "target_link_libraries" in l
+        ]
+        assert libs_line
+        assert "Python3::NumPy" in cmake

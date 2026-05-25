@@ -276,6 +276,21 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return cfg.get(component, {}).get("no_step") == "true"
 
 
+def extra_link_libs(cfg: dict, module: str) -> list[str]:
+    """Return hand-declared extra link targets for a module's CMakeLists.
+
+    These are appended to the generated ``target_link_libraries`` block and
+    survive every ``jm apply`` / ``jm object`` call.  Declare them in TOML as:
+
+    .. code-block:: toml
+
+        [module.resample]
+        extra_link_libs = ["resamp_core", "hbdecim_core", "m"]
+    """
+    v = cfg.get("module", {}).get(module, {}).get("extra_link_libs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def is_no_generate_module(cfg: dict, module: str) -> bool:
     """Return True if the module's files are entirely hand-written.
 
@@ -529,6 +544,10 @@ def _dump(cfg: dict) -> str:
             objs = data.get("objects", [])
             objs_str = ", ".join(f'"{o}"' for o in objs)
             lines.append(f"objects = [{objs_str}]")
+        extra = data.get("extra_link_libs", [])
+        if extra:
+            libs_str = ", ".join(f'"{lib}"' for lib in extra)
+            lines.append(f"extra_link_libs = [{libs_str}]")
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{mod}.functions]]")

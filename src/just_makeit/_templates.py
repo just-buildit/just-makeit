@@ -270,6 +270,32 @@ def array_elem_ctype(ptype: str) -> str:
     return ptype
 
 
+def parse_out_type(out_type: str) -> tuple[str, str | None]:
+    """Parse an out_type value and return (c_element_type, len_param_or_None).
+
+    Accepts two forms:
+      - bare C type:           ``"double"``    → ``("double", None)``
+      - numpy dtype + scalar:  ``"float64[M]"`` → ``("double", "M")``
+
+    The ``[name]`` suffix names the scalar C parameter whose runtime value
+    is used as the output-array length.  The dtype prefix (``float64``,
+    ``uint32``, etc.) is resolved via ``_ARRAY_DTYPE``; bare C types
+    (``double``, ``float``) are accepted directly via ``_CTYPE_TO_NPY``.
+    """
+    import re as _re
+    m = _re.fullmatch(r"(.+?)\[([A-Za-z_][A-Za-z_0-9]*)\]", out_type)
+    if m:
+        base, param_name = m.group(1), m.group(2)
+        if base in _ARRAY_DTYPE:
+            c_type = _ARRAY_DTYPE[base][0]
+        elif base in _CTYPE_TO_NPY:
+            c_type = base
+        else:
+            c_type = base
+        return c_type, param_name
+    return out_type, None
+
+
 def is_string_enum_type(ptype: str) -> bool:
     """Return True if ptype is a string-enum spec ('string_enum:a,b,...')."""
     return ptype.startswith("string_enum:")
@@ -5830,10 +5856,18 @@ def _py_wrapper_for_function(
         )
     elif out_type:
         # Allocate output array, insert after array args, before scalars.
-        out_npy = _CTYPE_TO_NPY[out_type]
-        out_disp = _ctype_display(out_type)
-        first_arr = next((n for n, t in params if is_array_param_type(t)), None)
-        len_expr = f"{first_arr}_len" if first_arr else "1"
+        # out_type may carry a [param_name] suffix naming the scalar that
+        # holds the output length (e.g. "float64[M]").
+        _base_ctype, _scalar_len_param = parse_out_type(out_type)
+        out_npy = _CTYPE_TO_NPY[_base_ctype]
+        out_disp = _ctype_display(_base_ctype)
+        if _scalar_len_param:
+            len_expr = _scalar_len_param
+        else:
+            first_arr = next(
+                (n for n, t in params if is_array_param_type(t)), None
+            )
+            len_expr = f"{first_arr}_len" if first_arr else "1"
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
         _arr_count = sum(1 for _, t in params if is_array_param_type(t))
@@ -6116,7 +6150,7 @@ CMAKE_LISTS_MODULE = """\
 Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c)
 target_link_libraries(<<module>> PRIVATE
     <<object_core_libs>>
-    Python3::NumPy)
+    <<extra_link_libs_block>>Python3::NumPy)
 target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_link_options(<<module>> PRIVATE -static-libgcc)

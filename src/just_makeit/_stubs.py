@@ -62,6 +62,23 @@ _CTYPE_TO_NP: dict[str, str] = {
     "size_t": "np.uintp",
 }
 
+_DTYPE_TO_CTYPE: dict[str, str] = {
+    "float32": "float",
+    "float64": "double",
+    "complex64": "float _Complex",
+    "complex128": "double _Complex",
+    "int8": "int8_t",
+    "int16": "int16_t",
+    "int32": "int32_t",
+    "int64": "int64_t",
+    "uint8": "uint8_t",
+    "uint16": "uint16_t",
+    "uint32": "uint32_t",
+    "uint64": "uint64_t",
+    "uintp": "size_t",
+    "intp": "ptrdiff_t",
+}
+
 
 def _py(ctype: str) -> str:
     """Return the Python annotation string for a C type."""
@@ -454,7 +471,11 @@ def _fn_stub(fn: dict) -> str:
     name = fn["name"]
     out_type = fn.get("out_type")
     if out_type:
-        ret = _py(f"{out_type}[]")
+        # Strip optional [param_name] length suffix (e.g. "float64[M]" → "float64")
+        _ot_base = _re.sub(r"\[[A-Za-z_][A-Za-z_0-9]*\]$", "", out_type)
+        # Resolve numpy dtype aliases (e.g. "float64" → "double") for _py().
+        _ot_ctype = _DTYPE_TO_CTYPE.get(_ot_base, _ot_base)
+        ret = _py(f"{_ot_ctype}[]")
     else:
         ret = _py(fn.get("return_type", "void"))
     params = fn.get("params", [])

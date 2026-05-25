@@ -85,6 +85,7 @@ def run(root: Path, module: str) -> None:
             f"target_include_directories({module}_core PRIVATE"
             f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
         ),
+        "extra_link_libs_block": "",
     }
     _write(
         root / "native" / "src" / module / "CMakeLists.txt",

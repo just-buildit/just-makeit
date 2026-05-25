@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.13.12] — 2026-05-25
+
+### Added
+
+- **`extra_link_libs` for module CMakeLists** — declare
+  `extra_link_libs = ["resamp_core", "m"]` under `[module.X]` in
+  `just-makeit.toml` to inject additional `target_link_libraries` entries
+  into the generated module CMakeLists.  Useful when a module's C code
+  depends on a pre-existing OBJECT or INTERFACE library not owned by
+  just-makeit.  `jm apply` propagates the setting correctly through
+  re-materialisation. (gh#27)
+
+- **`out_type = "dtype[param]"` scalar-sized output arrays** — `jm function`
+  now accepts `out_type = "float64[M]"` (or any numpy dtype name), where
+  `M` is the name of a scalar C parameter that provides the output array
+  length at runtime.  The generated binding allocates `npy_intp _dim = M`
+  and passes `(double *)PyArray_DATA(...)` to the C function.  The `.pyi`
+  stub emits `NDArray[np.float64]` as the return type. (gh#29)
+
+### Fixed
+
+- **`jm apply` preserves `*_extra.c` files** — hand-written
+  `<mod>_ext_extra.c` and `<mod>_ext_<obj>_extra.c` files are now seeded
+  into the temporary replay directory before `_regenerate_module()` runs, so
+  they appear in the regenerated aggregator `#include` list and survive
+  `jm apply` without being dropped. (gh#28)
+
 ## [0.13.11] — 2026-05-25
 
 ### Fixed
