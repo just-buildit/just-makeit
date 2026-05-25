@@ -101,9 +101,12 @@ ______________________________________________________________________
 
 ## Step 3 — No-state filter: Fir
 
-A FIR filter has no persistent history across calls — all state is set at
-construction time (the coefficient array).  Use `--no-state` with
-`--init-param` to declare what the constructor needs.
+A FIR filter owns its own state (coefficients + delay line), but that struct
+is defined and allocated in C — you write `fir_create()` yourself rather than
+having jm generate struct fields from TOML declarations.  That is what
+`--no-state` means: jm skips the auto-generated struct and just wires the
+Python constructor to call your `fir_create()` with the init-params you
+declare.
 
 ```sh
 just-makeit object fir --module signal \
