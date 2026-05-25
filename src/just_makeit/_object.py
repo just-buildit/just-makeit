@@ -255,18 +255,22 @@ def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> st
 
 
 def _extract_c_function_bodies(source: str) -> dict[str, str]:
-    """Extract ``static PyObject *`` function bodies from C source.
+    """Extract static function bodies from C source.
 
     Returns ``{function_name: full_function_text}`` for every
-    ``static PyObject *`` function in *source*.  Used to preserve
-    user-edited implementations when regenerating module_ext.c.
+    ``static <returntype>\\n<name>(`` function in *source*.  Covers
+    ``static PyObject *`` method wrappers and ``static int`` init/traverse
+    functions so that hand-patches to any generated function survive
+    regeneration of module_ext.c.
 
     Uses brace-counting rather than a regex for the body so that nested
     braces and parentheses inside parameter lists (e.g. ``Py_UNUSED(...)``)
     are handled correctly.
     """
-    # Locate every "static PyObject *\n<name>(" header.
-    header_pat = re.compile(r"static PyObject \*\n(\w+)\(")
+    # Match "static <return-type>\n<name>(" for any return type.
+    # [^\n]+ stops at the newline so struct/array definitions (which have
+    # no "(" immediately after the identifier) are not captured.
+    header_pat = re.compile(r"static [^\n]+\n(\w+)\(")
     result: dict[str, str] = {}
     for hm in header_pat.finditer(source):
         fn_name = hm.group(1)
@@ -314,7 +318,7 @@ def _restore_c_function_bodies(new_source: str, preserved: dict[str, str]) -> st
     for fn_name, old_body in preserved.items():
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
-        header_pat = re.compile(r"static PyObject \*\n" + re.escape(fn_name) + r"\(")
+        header_pat = re.compile(r"static [^\n]+\n" + re.escape(fn_name) + r"\(")
         hm = header_pat.search(new_source)
         if not hm:
             continue
