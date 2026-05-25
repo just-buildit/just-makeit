@@ -389,3 +389,201 @@ class TestMultiOutputArrayStub:
     def test_no_any_in_multi_output(self, multi_out_project):
         pyi = _pyi(multi_out_project, "dsp", "myproj")
         assert "NDArray[Any]" not in pyi
+
+
+# ── issue #26 fixes ───────────────────────────────────────────────────────────
+
+
+class TestStringEnumStub:
+    @pytest.fixture()
+    def enum_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "det",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float",
+            return_type="float",
+            init_params=[
+                ("rate", "double", "1.0", "", "", "", False, ""),
+                ("mode", "string_enum:mean,median,min", "mean", "", "", "", False, ""),
+            ],
+        )
+        return root
+
+    def test_literal_in_init(self, enum_project):
+        pyi = _pyi(enum_project, "dsp", "myproj")
+        assert 'Literal["mean", "median", "min"]' in pyi
+
+    def test_literal_import_emitted(self, enum_project):
+        pyi = _pyi(enum_project, "dsp", "myproj")
+        assert "from typing import Literal" in pyi
+
+    def test_literal_before_numpy(self, enum_project):
+        pyi = _pyi(enum_project, "dsp", "myproj")
+        lines = pyi.splitlines()
+        lit_idx = next(i for i, l in enumerate(lines) if "from typing import Literal" in l)
+        np_idx = next(i for i, l in enumerate(lines) if "import numpy" in l)
+        assert lit_idx < np_idx
+
+    def test_default_quoted_in_init(self, enum_project):
+        pyi = _pyi(enum_project, "dsp", "myproj")
+        assert 'mode: Literal["mean", "median", "min"] = "mean"' in pyi
+
+    def test_no_any_for_enum_param(self, enum_project):
+        pyi = _pyi(enum_project, "dsp", "myproj")
+        assert "mode: Any" not in pyi
+
+    def test_no_literal_import_when_no_enum(self, basic_project):
+        pyi = _pyi(basic_project, "dsp", "myproj")
+        assert "from typing import Literal" not in pyi
+
+
+class TestOutTypeFunctionStub:
+    @pytest.fixture()
+    def out_type_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(root, "dummy", "dsp", arg_type="float", return_type="float")
+        function_run(
+            root,
+            "magnitude_db",
+            "dsp",
+            params=[("x", "float _Complex[]"), ("floor", "float")],
+            return_type="void",
+            out_type="float",
+        )
+        return root
+
+    def test_out_type_ndarray_return(self, out_type_project):
+        pyi = _pyi(out_type_project, "dsp", "myproj")
+        assert "def magnitude_db(" in pyi
+        assert "-> NDArray[np.float32]:" in pyi
+
+    def test_out_type_not_none_return(self, out_type_project):
+        pyi = _pyi(out_type_project, "dsp", "myproj")
+        for line in pyi.splitlines():
+            if "def magnitude_db" in line:
+                assert "-> None:" not in line
+
+    def test_numpy_imported_for_out_type(self, out_type_project):
+        pyi = _pyi(out_type_project, "dsp", "myproj")
+        assert "from numpy.typing import NDArray" in pyi
+
+
+class TestResultFieldsStub:
+    @pytest.fixture()
+    def result_fields_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "det",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float _Complex[]",
+            return_type="void",
+        )
+        method_run(
+            root,
+            "det",
+            "push",
+            "dsp",
+            "float _Complex[]",
+            "float",
+            False,
+            [],
+            result_fields=[
+                {"name": "lag", "type": "size_t"},
+                {"name": "peak", "type": "float"},
+                {"name": "snr", "type": "double"},
+            ],
+        )
+        return root
+
+    def test_result_fields_return_type(self, result_fields_project):
+        pyi = _pyi(result_fields_project, "dsp", "myproj")
+        assert "list[tuple[int, float, float]]" in pyi
+
+    def test_no_bare_list_tuple(self, result_fields_project):
+        pyi = _pyi(result_fields_project, "dsp", "myproj")
+        assert "list[tuple]" not in pyi
+
+    def test_result_fields_method_present(self, result_fields_project):
+        pyi = _pyi(result_fields_project, "dsp", "myproj")
+        assert "def push(" in pyi
+
+
+class TestArrayInitParamDocstring:
+    @pytest.fixture()
+    def array_ip_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "fir",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            init_params=[
+                ("n_taps", "int", "64", "", "", "", False, ""),
+                ("coeff", "float _Complex[]", "", "", "", "", False, ""),
+            ],
+        )
+        return root
+
+    def test_array_param_docstring_type(self, array_ip_project):
+        pyi = _pyi(array_ip_project, "dsp", "myproj")
+        assert "coeff : NDArray[np.complex64]" in pyi
+
+    def test_no_any_in_docstring(self, array_ip_project):
+        pyi = _pyi(array_ip_project, "dsp", "myproj")
+        assert "coeff : Any" not in pyi
+
+
+class TestTwoDArrayStub:
+    @pytest.fixture()
+    def twod_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "resamp",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float",
+            return_type="float",
+            init_params=[
+                ("rate", "double", "1.0", "", "", "", False, ""),
+                (
+                    "bank",
+                    "float[][]",
+                    "",
+                    "",
+                    "",
+                    "",
+                    True,
+                    "Resamp_create_custom",
+                ),
+            ],
+        )
+        return root
+
+    def test_2d_array_ndarray_annotation(self, twod_project):
+        pyi = _pyi(twod_project, "dsp", "myproj")
+        assert "NDArray[np.float32]" in pyi
+
+    def test_2d_array_not_any(self, twod_project):
+        pyi = _pyi(twod_project, "dsp", "myproj")
+        assert "bank: Any" not in pyi
+
+    def test_optional_null_default(self, twod_project):
+        pyi = _pyi(twod_project, "dsp", "myproj")
+        assert "bank: NDArray[np.float32] | None = None" in pyi

@@ -68,15 +68,23 @@ def _py(ctype: str) -> str:
     if ctype == "void":
         return "None"
     if ctype.endswith("[]"):
-        elem = ctype[:-2]
+        # Strip all [] suffixes to handle both 1-D (float[]) and 2-D (float[][]).
+        elem = ctype
+        while elem.endswith("[]"):
+            elem = elem[:-2]
         npt = _CTYPE_TO_NP.get(elem, "Any")
         return f"NDArray[{npt}]"
+    if ctype.startswith("string_enum:"):
+        choices = ctype[len("string_enum:"):].split(",")
+        return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
     return _CTYPE_TO_PY.get(ctype, "Any")
 
 
 def _np(ctype: str) -> str:
     """Return the numpy dtype string for a C type (scalar or array) for NDArray hints."""
-    elem = ctype[:-2] if ctype.endswith("[]") else ctype
+    elem = ctype
+    while elem.endswith("[]"):
+        elem = elem[:-2]
     return _CTYPE_TO_NP.get(elem, "Any")
 
 
@@ -177,9 +185,15 @@ def _build_class_docstring(
                     f"        {name} state variable.",
                 ]
     elif init_params:
-        for name, ctype, dflt, *_ in init_params:
-            py_t = _CTYPE_TO_PY.get(ctype, "Any")
-            py_d = _py_default_stub(ctype, dflt)
+        for name, ctype, dflt, *rest in init_params:
+            optional = rest[4] if len(rest) >= 5 else False
+            py_t = _py(ctype)
+            if optional:
+                py_t = f"{py_t} or None"
+            if ctype.startswith("string_enum:"):
+                py_d = f'"{dflt}"' if dflt else "..."
+            else:
+                py_d = _py_default_stub(ctype, dflt)
             param_lines += [
                 f"    {name} : {py_t}, default {py_d}",
                 f"        {name} constructor parameter.",
@@ -288,7 +302,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif ip:
-        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, *_ in ip)
+        parts_init: list[str] = []
+        for param in ip:
+            n, t = param[0], param[1]
+            optional = param[6] if len(param) > 6 else False
+            if optional:
+                parts_init.append(f"{n}: {_py(t)} | None = None")
+            elif t.startswith("string_enum:"):
+                dflt = param[2] if len(param) > 2 else ""
+                parts_init.append(
+                    f'{n}: {_py(t)} = "{dflt}"' if dflt else f"{n}: {_py(t)} = ..."
+                )
+            else:
+                parts_init.append(f"{n}: {_py(t)} = ...")
+        init_params_str = ", ".join(parts_init)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
         lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")
@@ -355,6 +382,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_arg = m.get("arg_type", "void")
         m_var = m.get("variable_output", False)
         m_multi = m.get("multi_output", [])
+        m_result_fields = m.get("result_fields", [])
 
         param_parts: list[str] = []
         if m_arg != "void":
@@ -362,7 +390,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         for p in m_params:
             param_parts.append(f"{p['name']}: {_py(p['type'])}")
 
-        if m_var:
+        if m_result_fields:
+            field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
+            ret_ann = f"list[tuple[{field_types}]]"
+        elif m_var:
             all_rts = [m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
             ret_ann = (
@@ -421,7 +452,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
 def _fn_stub(fn: dict) -> str:
     name = fn["name"]
-    ret = _py(fn.get("return_type", "void"))
+    out_type = fn.get("out_type")
+    if out_type:
+        ret = _py(f"{out_type}[]")
+    else:
+        ret = _py(fn.get("return_type", "void"))
     params = fn.get("params", [])
     doc = fn.get("doc", "")
     parts = [f"{p['name']}: {_py(p['type'])}" for p in params]
@@ -431,6 +466,15 @@ def _fn_stub(fn: dict) -> str:
 
 
 # ── numpy import decision ─────────────────────────────────────────────────────
+
+
+def _uses_literal(cfg: dict, module: str) -> bool:
+    """Return True if any object in this module has a string_enum init param."""
+    for obj in C.module_objects(cfg, module):
+        for param in C.init_params(cfg, obj):
+            if param[1].startswith("string_enum:"):
+                return True
+    return False
 
 
 def _uses_numpy(cfg: dict, module: str) -> bool:
@@ -448,6 +492,8 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
                 if p["type"].endswith("[]"):
                     return True
     for fn in C.module_functions(cfg, module):
+        if fn.get("out_type"):
+            return True
         for p in fn.get("params", []):
             if p["type"].endswith("[]"):
                 return True
@@ -479,9 +525,12 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         def apply(x: float) -> float: ...
     """
     needs_numpy = _uses_numpy(cfg, module)
+    needs_literal = _uses_literal(cfg, module)
     parts: list[str] = [
         f"# {module}/{module}.pyi — type stubs for the {module} C extension."
     ]
+    if needs_literal:
+        parts.append("from typing import Literal")
     if needs_numpy:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")

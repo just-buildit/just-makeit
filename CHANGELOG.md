@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.13.11] — 2026-05-25
+
+### Fixed
+
+- **`string_enum` init-params emit `Literal[...]`** instead of `Any` in
+  `.pyi` stubs; `from typing import Literal` is added to the stub header
+  automatically when needed.  Enum default values are quoted strings in both
+  the `__init__` signature and the numpy-style docstring. (gh#26)
+- **`out_type` on module-level functions emits `NDArray[...]`** instead of
+  `None` in `.pyi` stubs; numpy is also imported when a function uses
+  `out_type` but no object uses arrays. (gh#26)
+- **`result_fields` methods emit `list[tuple[t1, t2, ...]]`** with per-field
+  Python type annotations derived from the C field types, instead of the
+  untyped `list[tuple]`. (gh#26)
+- **Array init-param docstrings emit `NDArray[...]`** instead of `Any` for
+  both 1-D and 2-D array types. (gh#26)
+- **2-D array init-params (`float[][]`) map to `NDArray[np.float32]`** in
+  stubs instead of `Any`. (gh#26)
+
 ## [0.13.10] — 2026-05-25
 
 ### Added
