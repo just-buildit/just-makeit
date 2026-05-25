@@ -158,12 +158,51 @@ ______________________________________________________________________
 
 | Workflow       | Trigger                | What it does                                                                                                              |
 | -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14                                                                             |
+| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14; separate `coverage` job uploads to Codecov                                |
 | `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                |
 | `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification |
 | `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                            |
 
 **CI must be green on `main` before tagging a release.**
+
+______________________________________________________________________
+
+## Contributing
+
+**`main` is always working code.** Never commit directly to `main`.
+
+### Branch workflow
+
+1. Create a feature branch from `main`:
+
+    ```sh
+    git checkout main && git pull
+    git checkout -b feat/my-feature   # or fix/, docs/, chore/
+    ```
+
+2. Make your changes. Commit early and often on the branch.
+
+3. Push and open a PR:
+
+    ```sh
+    git push -u origin feat/my-feature
+    gh pr create
+    ```
+
+4. Wait for CI to go green on the PR. Fix any failures before merging.
+
+5. Merge to `main` (squash or merge commit — both fine).
+
+6. Delete the branch after merge.
+
+### Branch naming
+
+| Prefix  | When to use                                |
+| ------- | ------------------------------------------ |
+| `feat/` | New command, flag, or template feature     |
+| `fix/`  | Bug fix                                    |
+| `docs/` | Docs-only changes                          |
+| `chore/`| Deps, CI config, version bumps, formatting |
 
 ______________________________________________________________________
 
