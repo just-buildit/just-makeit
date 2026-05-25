@@ -331,8 +331,7 @@ create_fn = "fir_create_poly"
 ```sh
 jm object comp --no-state \
   --init-param \
-  "bank:float[][]:optional:\
-fir_create_poly"
+    "bank:float[][]:optional:fir_create_poly"
 ```
 
 </td>
