@@ -736,6 +736,38 @@ jm function magnitude_db \
 </td>
 </tr>
 
+<tr>
+<td>
+
+```python
+# Output length from scalar param
+def ciccompmf(
+    N: int,
+    R: int,
+    M: int,
+) -> NDArray[np.float64]: ...
+```
+
+</td>
+<td>
+
+```toml
+[[module.resample.functions]]
+name     = "ciccompmf"
+out_type = "float64[M]"
+```
+
+</td>
+<td>
+
+*TOML only* — set `out_type`
+to `"dtype[param]"` after
+scaffolding, then run
+`jm apply`.
+
+</td>
+</tr>
+
 </tbody>
 </table>
 
@@ -752,3 +784,5 @@ ______________________________________________________________________
 | Split TOML | Move each object section into `objects/<name>.toml` | `just-makeit split-objects` |
 | Regenerate files | Re-emit all files implied by the current TOML (add-only) | `just-makeit apply` |
 | Dry run | Show what would be compiled without building | `just-makeit dry-run` |
+| Extra link libs | Link a module against an additional library not owned by jm — add `extra_link_libs = ["mylib", "m"]` under `[module.X]` | TOML only |
+| Extra types | Register a hand-written CPython type from a `*_extra.c` file in `PyInit_` — add `extra_types = ["MyType"]` under `[module.X]` | TOML only |
