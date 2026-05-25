@@ -41,13 +41,17 @@ jobs:
 
       - name: Install jbx
         run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://raw.githubusercontent.com/just-buildit/just-bashit/main/src/just-runit" \
-            -o "$HOME/.local/bin/just-runit"
+          _JBS="https://raw.githubusercontent.com/just-buildit/just-bashit/main/src"
+          mkdir -p "$HOME/.local/bin" "$HOME/.cache/just-runit"
+          curl -fsSL "${_JBS}/just-runit" -o "$HOME/.local/bin/just-runit"
           chmod +x "$HOME/.local/bin/just-runit"
           ln -sf just-runit "$HOME/.local/bin/jb"
           ln -sf just-runit "$HOME/.local/bin/jbx"
           ln -sf just-runit "$HOME/.local/bin/just-buildit"
+          # install-deps.sh sources toml.sh and pkg.sh relative to its cached
+          # location; pre-seed them so the lookup succeeds on fresh runners.
+          curl -fsSL "${_JBS}/toml.sh" -o "$HOME/.cache/just-runit/toml.sh"
+          curl -fsSL "${_JBS}/pkg.sh"  -o "$HOME/.cache/just-runit/pkg.sh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # ── TL;DR: run all bundled examples ─────────────────────────────────────
@@ -237,9 +241,10 @@ jobs:
       - name: Verify generated structure
         working-directory: filter_module_test/my_filters
         run: |
-          # Both types in one ext.c
-          grep "FirObject"    native/src/filter/filter_ext.c
-          grep "BiquadObject" native/src/filter/filter_ext.c
+          # Each type lives in its own per-object fragment
+          grep "FirObject"    native/src/filter/filter_ext_fir.c
+          grep "BiquadObject" native/src/filter/filter_ext_biquad.c
+          # Aggregator owns PyInit and #includes the fragments
           grep "PyInit_filter" native/src/filter/filter_ext.c
           # Subpackage __init__ re-exports both
           grep "Fir"   src/my_filters/filter/__init__.py
@@ -434,9 +439,9 @@ jobs:
             --arg-type float \
             --return-type float \
             --state "gain:float:1.0"
-          grep "IirObject"   native/src/filter/filter_ext.c
-          grep "FirObject"   native/src/filter/filter_ext.c
-          grep "BiquadObject" native/src/filter/filter_ext.c
+          grep "IirObject"    native/src/filter/filter_ext_iir.c
+          grep "FirObject"    native/src/filter/filter_ext_fir.c
+          grep "BiquadObject" native/src/filter/filter_ext_biquad.c
           grep "iir_core"    native/src/filter/CMakeLists.txt
           grep "Iir"         src/my_filters/filter/__init__.py
 
