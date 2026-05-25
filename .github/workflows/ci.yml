@@ -133,3 +133,14 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: junit.xml
           fail_ci_if_error: false
+
+  ci-passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    needs: [test, examples, install-deps-smoke, coverage]
+    if: always()
+    steps:
+      - run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            exit 1
+          fi
