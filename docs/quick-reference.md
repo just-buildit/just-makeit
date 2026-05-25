@@ -1,3 +1,8 @@
+---
+hide:
+  - toc
+---
+
 # Quick reference — Python → TOML → CLI
 
 Each row shows an annotated Python stub, the `just-makeit.toml` fragment that
