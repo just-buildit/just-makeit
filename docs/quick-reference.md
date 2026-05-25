@@ -43,8 +43,10 @@ return_type = "float"
 
 ```sh
 jm object comp \
-  --arg-type float \
-  --return-type float
+  --arg-type \
+    float \
+  --return-type \
+    float
 ```
 
 </td>
@@ -74,7 +76,8 @@ mutable     = "true"
 ```sh
 jm object comp \
   --arg-type void \
-  --return-type "float _Complex" \
+  --return-type \
+    "float _Complex" \
   --mutable
 ```
 
@@ -105,8 +108,10 @@ return_type = "void"
 
 ```sh
 jm object comp \
-  --arg-type float \
-  --return-type void
+  --arg-type \
+    float \
+  --return-type \
+    void
 ```
 
 </td>
@@ -136,7 +141,8 @@ arg_type = "float _Complex[]"
 
 ```sh
 jm object comp \
-  --arg-type "float _Complex[]"
+  --arg-type \
+    "float _Complex[]"
 ```
 
 </td>
@@ -429,8 +435,10 @@ return_type = "float"
 
 ```sh
 jm method comp execute_ctrl \
-  --arg-type float \
-  --return-type float
+  --arg-type \
+    float \
+  --return-type \
+    float
 ```
 
 </td>
@@ -497,9 +505,11 @@ multi_output    = ["uint8_t[]"]
 
 ```sh
 jm method comp execute \
-  --return-type "uint32_t[]" \
+  --return-type \
+    "uint32_t[]" \
   --variable-output \
-  --multi-output "uint8_t[]"
+  --multi-output \
+    "uint8_t[]"
 ```
 
 </td>
@@ -568,7 +578,8 @@ type = "int"
 
 ```sh
 jm property comp length \
-  --type int
+  --type \
+    int
 ```
 
 </td>
@@ -602,7 +613,8 @@ writable = true
 
 ```sh
 jm property comp gain \
-  --type double \
+  --type \
+    double \
   --writable
 ```
 
@@ -645,7 +657,8 @@ jm function apply \
   --module dsp \
   --param "x:float[]" \
   --param "scale:float" \
-  --return-type float
+  --return-type \
+    float
 ```
 
 </td>
@@ -707,10 +720,12 @@ out_type = "float"
 ```sh
 jm function magnitude_db \
   --module dsp \
-  --param "x:float _Complex[]" \
+  --param \
+    "x:float _Complex[]" \
   --param "floor:float" \
   --return-type void \
-  --out-type float
+  --out-type \
+    float
 ```
 
 </td>
