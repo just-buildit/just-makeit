@@ -58,7 +58,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["just_makeit"]
-omit = ["*/tests/*"]
+omit = ["*/tests/*", "*/examples/*"]
 
 [tool.coverage.report]
 exclude_lines = [
