@@ -115,7 +115,8 @@ jobs:
             --cov=just_makeit \
             --cov-branch \
             --cov-report=xml \
-            --junit-xml=junit.xml \
+            --junitxml=junit.xml \
+            -o junit_family=legacy \
             -q
 
       - name: Upload coverage to Codecov
@@ -128,5 +129,6 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: junit.xml
           fail_ci_if_error: false
