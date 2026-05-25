@@ -36,23 +36,23 @@ version = "X.Y.Z"
 - ...
 ```
 
-Commit:
+Commit on a branch and merge via PR:
 
 ```sh
+git checkout -b chore/bump-X.Y.Z
 git add pyproject.toml CHANGELOG.md
 git commit -m "chore: bump to X.Y.Z"
+git push -u origin chore/bump-X.Y.Z
+gh pr create --fill
+# squash-merge once CI is green
 ```
 
 ______________________________________________________________________
 
-## 3. Push and wait for CI
-
-```sh
-git push origin main
-```
+## 3. Wait for CI on the bump PR
 
 Watch the [CI workflow](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml).
-**Do not tag until CI is green.**
+**Do not tag until CI is green and the bump PR is merged.**
 
 ______________________________________________________________________
 

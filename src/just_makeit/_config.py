@@ -276,6 +276,25 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return cfg.get(component, {}).get("no_step") == "true"
 
 
+def extra_types(cfg: dict, module: str) -> list[str]:
+    """Return hand-declared extra Python type names for a module's PyInit_.
+
+    Types listed here have ``PyType_Ready`` and ``PyModule_AddObject`` calls
+    generated in the aggregator ``PyInit_<module>`` automatically, so they
+    survive every ``jm apply`` / ``jm object`` call without a hand-patch.
+
+    The types themselves must be defined in a ``*_extra.c`` file (which jm
+    never modifies).  Declare them in TOML as:
+
+    .. code-block:: toml
+
+        [module.resample]
+        extra_types = ["HalfbandDecimatorDp", "HalfbandDecimatorR2C"]
+    """
+    v = cfg.get("module", {}).get(module, {}).get("extra_types", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def extra_link_libs(cfg: dict, module: str) -> list[str]:
     """Return hand-declared extra link targets for a module's CMakeLists.
 
@@ -544,6 +563,10 @@ def _dump(cfg: dict) -> str:
             objs = data.get("objects", [])
             objs_str = ", ".join(f'"{o}"' for o in objs)
             lines.append(f"objects = [{objs_str}]")
+        extra_t = data.get("extra_types", [])
+        if extra_t:
+            types_str = ", ".join(f'"{t}"' for t in extra_t)
+            lines.append(f"extra_types = [{types_str}]")
         extra = data.get("extra_link_libs", [])
         if extra:
             libs_str = ", ".join(f'"{lib}"' for lib in extra)

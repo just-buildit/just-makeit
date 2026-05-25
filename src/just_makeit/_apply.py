@@ -162,16 +162,21 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # _regenerate_module() inside object.run() picks it up.
     _mods_need_update = [
         m for m in mods
-        if cfg.get("module", {}).get(m, {}).get("extra_link_libs")
-        and not C.is_no_generate_module(cfg, m)
+        if not C.is_no_generate_module(cfg, m)
+        and (
+            cfg.get("module", {}).get(m, {}).get("extra_link_libs")
+            or cfg.get("module", {}).get(m, {}).get("extra_types")
+        )
     ]
     if _mods_need_update:
         tcfg2 = C.load(temp_root)
         for mod in _mods_need_update:
-            extra = cfg["module"][mod]["extra_link_libs"]
-            tcfg2.setdefault("module", {}).setdefault(mod, {})[
-                "extra_link_libs"
-            ] = extra
+            mod_data = cfg["module"][mod]
+            tmod = tcfg2.setdefault("module", {}).setdefault(mod, {})
+            if mod_data.get("extra_types"):
+                tmod["extra_types"] = mod_data["extra_types"]
+            if mod_data.get("extra_link_libs"):
+                tmod["extra_link_libs"] = mod_data["extra_link_libs"]
         C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()

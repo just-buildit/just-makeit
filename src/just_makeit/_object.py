@@ -445,7 +445,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     aggregator = T.render_module_ext_aggregator(
-        module, comp_ctxs, functions, extra_files
+        module, comp_ctxs, functions, extra_files,
+        extra_types=C.extra_types(cfg, module),
     )
     _write(ext_c_path, aggregator, "update")
 
