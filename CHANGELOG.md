@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [0.13.9] — 2026-05-24
+
+### Added
+
+- **Per-object ext fragments** — each object in a module now generates its
+  own `<module>_ext_<obj>.c` fragment file. The thin aggregator
+  `<module>_ext.c` `#include`s all fragments and owns only the
+  `PyModuleDef` and `PyInit_`. Adding a new object no longer rewrites
+  sibling objects' hand-edited code. Migration from a monolithic ext is
+  automatic on the next `jm` command. (gh#20)
+- **`_extra.c` convention** — if `<module>_ext_extra.c` or
+  `<module>_ext_<obj>_extra.c` exist on disk, the aggregator includes them
+  automatically. jm never creates or modifies `*_extra.c` files, making them
+  safe for hand-written Python types with no TOML representation. (gh#24)
+- **`inline = true` on module-level functions** — `jm function foo --module m
+  --inline` emits a `static inline` body stub directly into `<module>_core.h`
+  instead of a forward declaration in the header plus definition in
+  `_core.c`. Ideal for pure, stateless functions that should be inlined at
+  every call site. (gh#23)
+- **Dtype-dispatched constructors** — `real_type` / `real_create_fn` fields
+  on `init_params` array entries emit a dtype probe at construction time:
+  if the incoming array matches `real_type`, `real_create_fn` is called
+  instead of the default `<comp>_create`. Covers the common DSP pattern of
+  a filter that has both a real-tap and a complex-tap variant. (gh#22)
+
+### Fixed
+
+- **PascalCase object names** — `_to_title()` now preserves internal
+  capitalisation (e.g. `my_NCO` → `MyNCO`). Previously `str.title()` lower-
+  cased all characters after the first, mangling names like `NCO`. (gh#19)
+- **Module `target_sources` for new objects** — adding an object to an
+  existing module now inserts `target_sources(…)` independently of
+  `add_subdirectory`, so the object is compiled even when the subdirectory
+  entry already existed. (gh#21)
+- **`static int` body preservation** — the ext-file body extractor now
+  matches `static int` functions (init, traverse) in addition to
+  `static PyObject *`, preventing hand-patched `tp_init` / `tp_traverse`
+  implementations from being overwritten on module regeneration. (gh#20)
+
 ## [0.13.8] — 2026-05-24
 
 ### Added
