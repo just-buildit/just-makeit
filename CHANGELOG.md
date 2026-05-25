@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.13.13] — 2026-05-25
+
+### Added
+
+- **`extra_types` TOML key — declarative `PyInit_` registration** — declare
+  `extra_types = ["MyType"]` under `[module.X]` to automatically emit
+  `PyType_Ready(&MyTypeType)` and `PyModule_AddObject(...)` calls in the
+  generated `PyInit_<module>` function.  Hand-written types in `*_extra.c`
+  files no longer require manual patching after every `jm apply`.  jm-owned
+  types are registered first; extra types follow in declaration order. (gh#28)
+
+### Changed
+
+- **Coverage reporting via Codecov** — CI now runs `pytest --cov` on every
+  push/PR and uploads results to Codecov (tokenless OIDC for public repos).
+  Coverage badge added to README.
+
+### Documentation
+
+- **Branch workflow documented** — `docs/developers/START_HERE.md` now covers
+  the `feat/`/`fix/`/`docs/`/`chore/` branch convention, PR requirements, and
+  CI-green-before-merge rule.
+- **Quick-reference additions** — three new rows in the Advanced table:
+  scalar-sized output arrays (`out_type = "dtype[param]"`), extra link libs,
+  and extra types.
+
 ## [0.13.12] — 2026-05-25
 
 ### Added
