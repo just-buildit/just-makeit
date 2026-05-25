@@ -433,8 +433,20 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             frag = _restore_c_function_bodies(frag, preserved)
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
-    # Aggregator (<module>_ext.c) — pure boilerplate, always overwritten.
-    aggregator = T.render_module_ext_aggregator(module, comp_ctxs, functions)
+    # Discover *_extra.c files — jm never creates or modifies them, but
+    # includes them in the aggregator so hand-written types survive regen.
+    extra_files: set[str] = set()
+    for ctx in comp_ctxs:
+        comp = ctx["component"]
+        if (ext_dir / f"{module}_ext_{comp}_extra.c").exists():
+            extra_files.add(f"{module}_ext_{comp}_extra.c")
+    if (ext_dir / f"{module}_ext_extra.c").exists():
+        extra_files.add(f"{module}_ext_extra.c")
+
+    # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
+    aggregator = T.render_module_ext_aggregator(
+        module, comp_ctxs, functions, extra_files
+    )
     _write(ext_c_path, aggregator, "update")
 
     # Module CMakeLists

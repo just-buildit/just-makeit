@@ -5863,12 +5863,23 @@ def render_module_ext_aggregator(
     module: str,
     comp_ctxs: list[dict],
     functions: list[dict] = (),
+    extra_files: "set[str] | frozenset[str]" = frozenset(),
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
     The aggregator #includes each per-object fragment in order, then defines
-    the module-level PyModuleDef and PyInit_.  It contains no hand-writable
-    code and is safe to overwrite on every regeneration.
+    the module-level PyModuleDef and PyInit_.  It is always overwritten on
+    regeneration; hand-written code belongs in the fragment files or in
+    never-touched ``*_extra.c`` files.
+
+    Parameters
+    ----------
+    extra_files : set of str
+        Basenames of ``*_extra.c`` files that exist on disk (e.g.
+        ``{"filter_ext_fir_extra.c", "filter_ext_extra.c"}``).
+        Per-object extras are included immediately after their fragment;
+        the per-module extra is included after all fragments.
+        jm never creates or modifies these files.
     """
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
@@ -5890,12 +5901,25 @@ def render_module_ext_aggregator(
         f" * Objects: {object_list}\n"
         f" * GENERATED — do not hand-edit. Patches belong in the _ext_<obj>.c fragments.",
     )
-    # Include each per-object fragment.
-    include_lines = "\n".join(
-        f'#include "{module}_ext_{ctx["component"]}.c"'
-        for ctx in comp_ctxs
-    )
-    parts.append(f"\n{include_lines}\n")
+    # Include each per-object fragment, then its per-object extra if present.
+    include_parts: list[str] = []
+    for ctx in comp_ctxs:
+        comp = ctx["component"]
+        include_parts.append(f'#include "{module}_ext_{comp}.c"')
+        obj_extra = f"{module}_ext_{comp}_extra.c"
+        if obj_extra in extra_files:
+            include_parts.append(
+                f'#include "{obj_extra}"'
+                f"  /* hand-written — jm never modifies */"
+            )
+    # Per-module extra goes after all fragments.
+    mod_extra = f"{module}_ext_extra.c"
+    if mod_extra in extra_files:
+        include_parts.append(
+            f'#include "{mod_extra}"'
+            f"  /* hand-written — jm never modifies */"
+        )
+    parts.append("\n" + "\n".join(include_parts) + "\n")
     if fn_ctx["function_wrappers"]:
         parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
     type_ready_checks = "\n".join(

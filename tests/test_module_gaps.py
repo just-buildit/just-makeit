@@ -320,3 +320,74 @@ class TestCMakeExternalLibBlocks:
         assert "DOPPLER_C_LIB" in mixer_cmake
         assert "mixer" in mixer_cmake  # placeholder replaced with new comp name
         assert "nco" not in mixer_cmake  # old comp name not left behind
+
+
+# ---------------------------------------------------------------------------
+# Gap #7 — _extra.c convention (issue #24)
+# ---------------------------------------------------------------------------
+
+
+class TestExtraFiles:
+    """*_extra.c files are included in the aggregator and never modified."""
+
+    def test_obj_extra_included_after_fragment(self, tmp_path):
+        """Per-object extra is #included after its fragment when it exists."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        extra = root / "native" / "src" / "dsp" / "dsp_ext_nco_extra.c"
+        extra.write_text("/* hand-written nco extras */\n", encoding="utf-8")
+
+        # Trigger aggregator regen by adding a second object.
+        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+
+        agg = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert '#include "dsp_ext_nco_extra.c"' in agg
+        # Extra must appear after its fragment, not before.
+        assert agg.index("dsp_ext_nco.c") < agg.index("dsp_ext_nco_extra.c")
+
+    def test_module_extra_included_after_all_fragments(self, tmp_path):
+        """Per-module extra appears after all per-object fragments."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        extra = root / "native" / "src" / "dsp" / "dsp_ext_extra.c"
+        extra.write_text("/* hand-written module extras */\n", encoding="utf-8")
+
+        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+
+        agg = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert '#include "dsp_ext_extra.c"' in agg
+        # Module extra must come after all fragment includes.
+        assert agg.index("dsp_ext_mixer.c") < agg.index("dsp_ext_extra.c")
+
+    def test_extra_file_not_modified(self, tmp_path):
+        """jm never overwrites an _extra.c file."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        sentinel = "/* SENTINEL: jm must not touch this */\n"
+        extra = root / "native" / "src" / "dsp" / "dsp_ext_nco_extra.c"
+        extra.write_text(sentinel, encoding="utf-8")
+
+        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+
+        assert extra.read_text(encoding="utf-8") == sentinel
+
+    def test_no_include_when_extra_absent(self, tmp_path):
+        """Aggregator contains no _extra.c includes when none exist."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        agg = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert "_extra.c" not in agg
