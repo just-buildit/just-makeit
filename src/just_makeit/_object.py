@@ -703,36 +703,48 @@ def run(
 
     # Root CMakeLists: insert add_subdirectory into Components sentinel section,
     # then wire OBJECT library into both shared and static C library targets.
+    # These two operations are independent: a same-name module (module.agc with
+    # object "agc") may have the add_subdirectory already present from the
+    # `just-makeit module` step, but the target_sources lines still need adding.
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
         cmake_text = cmake_path.read_text(encoding="utf-8")
+        changed = False
         sub = f"add_subdirectory(native/src/{comp})\n"
         if sub not in cmake_text:
             sentinel = "# ── Components"
-            obj_lines = ""
-            for dep in depends_on:
-                obj_lines += (
-                    f"target_sources({pkg}_lib PRIVATE "
-                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
-                    f"target_sources({pkg}_lib_static PRIVATE "
-                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
-                )
-            obj_lines += (
-                f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
-                f"target_sources({pkg}_lib_static PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
-            )
             if sentinel in cmake_text:
-                # Insert after the sentinel comment line
-                cmake_text = cmake_text.replace(
-                    sentinel,
-                    sentinel,
-                    1,
-                )
                 idx = cmake_text.index(sentinel)
                 idx = cmake_text.index("\n", idx) + 1
-                cmake_text = cmake_text[:idx] + sub + obj_lines + cmake_text[idx:]
+                cmake_text = cmake_text[:idx] + sub + cmake_text[idx:]
             else:
-                cmake_text += sub + obj_lines
+                cmake_text += sub
+            changed = True
+        obj_lines = ""
+        for dep in depends_on:
+            ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{dep}_core>)\n"
+            if ts not in cmake_text:
+                obj_lines += (
+                    ts
+                    + f"target_sources({pkg}_lib_static PRIVATE "
+                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                )
+        ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
+        if ts not in cmake_text:
+            obj_lines += (
+                ts
+                + f"target_sources({pkg}_lib_static PRIVATE "
+                f"$<TARGET_OBJECTS:{comp}_core>)\n"
+            )
+        if obj_lines:
+            sub_idx = cmake_text.find(sub)
+            if sub_idx != -1:
+                ins = cmake_text.index("\n", sub_idx) + 1
+                cmake_text = cmake_text[:ins] + obj_lines + cmake_text[ins:]
+            else:
+                cmake_text += obj_lines
+            changed = True
+        if changed:
             cmake_path.write_text(cmake_text, encoding="utf-8")
             print(f"  update  {cmake_path}")
 
