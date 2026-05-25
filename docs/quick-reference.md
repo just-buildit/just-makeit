@@ -175,7 +175,8 @@ default = "1.0"
 
 ```sh
 jm object gain \
-  --state gain:double:1.0
+  --state \
+    gain:double:1.0
 ```
 
 </td>
