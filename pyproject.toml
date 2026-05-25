@@ -56,6 +56,17 @@ per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_make
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["just_makeit"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
 
 [dependency-groups]
 dev = [
