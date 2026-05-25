@@ -144,6 +144,47 @@ to keep the normal suite fast.
 
 ______________________________________________________________________
 
+## Git workflow
+
+All non-trivial changes — new features, bug fixes, refactors, docs — go through
+a branch and a PR. Direct pushes to `main` are reserved for release mechanics
+(version bump + CHANGELOG commit, see [release-checklist.md](release-checklist.md)).
+
+### Branch naming
+
+| Prefix | Use |
+|---|---|
+| `feat/` | new command, flag, or generated output |
+| `fix/` | bug fix |
+| `docs/` | documentation only |
+| `chore/` | tooling, CI, deps, version bump |
+
+```sh
+git checkout -b feat/out-type-scalar-param
+# ... make changes, commit ...
+gh pr create --fill
+```
+
+### PR rules
+
+- CI must be green before merging (`ci.yml` runs on every PR).
+- Keep PRs focused — one logical change per PR makes bisect and revert easy.
+- The PR title becomes the CHANGELOG entry; write it accordingly
+  (`fix: jm apply drops extra_link_libs on regeneration`).
+
+### Merging
+
+Squash-merge PRs to keep `main` history linear. After merge, delete the branch.
+
+### What goes directly on `main`
+
+Only two things skip the PR process:
+
+1. **Release bump** — `chore: bump to X.Y.Z` (pyproject.toml + CHANGELOG only).
+2. **Hotfix** — a one-liner fix that is urgent and trivially correct (rare).
+
+______________________________________________________________________
+
 ## Adding a new template / feature
 
 1. Add or edit the template constant in `_templates.py`.

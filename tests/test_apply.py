@@ -446,3 +446,62 @@ class TestApplyExtraC:
             proj / "native" / "src" / "dsp" / "dsp_ext.c"
         ).read_text(encoding="utf-8")
         assert "dsp_ext_extra.c" in ext_c
+
+
+class TestApplyExtraTypes:
+    """extra_types in just-makeit.toml registers hand-written CPython types
+    in PyInit_ and survives jm apply re-materialisation (gh-28 full fix)."""
+
+    def _proj_with_extra_types(self, root):
+        new_run("proj", root, [], [])
+        module_run(root, "dsp")
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        manifest = root / "just-makeit.toml"
+        toml_text = manifest.read_text(encoding="utf-8")
+        toml_text = toml_text.replace(
+            "[module.dsp]",
+            '[module.dsp]\nextra_types = ["HalfbandDp", "HalfbandR2C"]',
+        )
+        manifest.write_text(toml_text, encoding="utf-8")
+        return root
+
+    def test_extra_types_in_pyinit_after_object(self, tmp_path):
+        """Adding an object after extra_types are declared keeps them in PyInit_."""
+        proj = tmp_path / "proj"
+        self._proj_with_extra_types(proj)
+        object_run(
+            proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")]
+        )
+        ext_c = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "PyType_Ready(&HalfbandDpType)" in ext_c
+        assert "PyType_Ready(&HalfbandR2CType)" in ext_c
+        assert 'PyModule_AddObject(m, "HalfbandDp"' in ext_c
+        assert 'PyModule_AddObject(m, "HalfbandR2C"' in ext_c
+
+    def test_extra_types_survive_apply(self, tmp_path):
+        """jm apply preserves extra_types registrations in PyInit_."""
+        proj = tmp_path / "proj"
+        self._proj_with_extra_types(proj)
+        apply_run(proj)
+        ext_c = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        assert "PyType_Ready(&HalfbandDpType)" in ext_c
+        assert 'PyModule_AddObject(m, "HalfbandDp"' in ext_c
+
+    def test_extra_types_after_jm_owned_types(self, tmp_path):
+        """Extra type registrations appear after jm-owned types in PyInit_."""
+        proj = tmp_path / "proj"
+        self._proj_with_extra_types(proj)
+        apply_run(proj)
+        ext_c = (
+            proj / "native" / "src" / "dsp" / "dsp_ext.c"
+        ).read_text(encoding="utf-8")
+        nco_pos = ext_c.find("NcoType")
+        hb_pos = ext_c.find("HalfbandDpType")
+        assert nco_pos != -1
+        assert hb_pos != -1
+        assert nco_pos < hb_pos, "extra types must follow jm-owned types"

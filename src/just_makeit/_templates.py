@@ -6038,6 +6038,7 @@ def render_module_ext_aggregator(
     comp_ctxs: list[dict],
     functions: list[dict] = (),
     extra_files: "set[str] | frozenset[str]" = frozenset(),
+    extra_types: "list[str] | None" = None,
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -6054,6 +6055,11 @@ def render_module_ext_aggregator(
         Per-object extras are included immediately after their fragment;
         the per-module extra is included after all fragments.
         jm never creates or modifies these files.
+    extra_types : list of str, optional
+        Names of hand-written CPython types declared in ``*_extra.c`` files
+        that should be registered in ``PyInit_<module>``.  For each name
+        ``T``, jm emits ``PyType_Ready(&TType)`` and
+        ``PyModule_AddObject(m, "T", (PyObject *)&TType)``.
     """
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
@@ -6096,10 +6102,15 @@ def render_module_ext_aggregator(
     parts.append("\n" + "\n".join(include_parts) + "\n")
     if fn_ctx["function_wrappers"]:
         parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
-    type_ready_checks = "\n".join(
+    _extra_types = extra_types or []
+    type_ready_lines = [
         f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
         for ctx in comp_ctxs
-    )
+    ] + [
+        f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
+        for et in _extra_types
+    ]
+    type_ready_checks = "\n".join(type_ready_lines)
     add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:
         C_ = ctx["Component"]
@@ -6108,6 +6119,13 @@ def render_module_ext_aggregator(
             f"    Py_INCREF(&{CW_}Type);",
             f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{CW_}Type) < 0) {{',
             f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
+            "    }",
+        ]
+    for et in _extra_types:
+        add_object_calls_lines += [
+            f"    Py_INCREF(&{et}Type);",
+            f'    if (PyModule_AddObject(m, "{et}", (PyObject *)&{et}Type) < 0) {{',
+            f"        Py_DECREF(&{et}Type); Py_DECREF(m); return NULL;",
             "    }",
         ]
     add_object_calls = "\n".join(add_object_calls_lines)
