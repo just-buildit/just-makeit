@@ -86,3 +86,109 @@ class TestCliMethod:
             args = mock_run.call_args[0]
             assert args[3] == "signal"
             assert args[4] == "float"
+
+    def test_multi_output_valid(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--multi-output", "float"])
+            args, _ = mock_run.call_args
+            assert "float" in args[7]  # multi_output is positional arg 7
+
+    def test_param_valid_scalar(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--param", "n:int"])
+            _, kwargs = mock_run.call_args
+            assert ("n", "int") in kwargs.get("params", [])
+
+    def test_param_valid_array(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--param", "coeffs:float[]"])
+            _, kwargs = mock_run.call_args
+            assert ("coeffs", "float[]") in kwargs.get("params", [])
+
+    def test_param_bad_array_elem_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--param", "x:notatype[]"])
+
+    def test_param_bad_scalar_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--param", "x:notatype"])
+
+    def test_out_divisor_valid(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--out-divisor", "4"])
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("out_divisor") == 4
+
+    def test_out_divisor_negative_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--out-divisor", "-1"])
+
+    def test_out_divisor_non_int_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--out-divisor", "abc"])
+
+    def test_out_type_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--out-type"])
+
+    def test_out_type_bad_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--out-type", "notatype"])
+
+    def test_out_type_valid(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--out-type", "float"])
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("out_type") == "float"
+
+    def test_arg_type_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--arg-type"])
+
+    def test_arg_type_bad_array_elem_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--arg-type", "notatype[]"])
+
+    def test_arg_type_bad_scalar_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--arg-type", "notatype"])
+
+    def test_arg_type_array_valid(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--arg-type", "float[]"])
+            args = mock_run.call_args[0]
+            assert args[4] == "float[]"
+
+    def test_return_type_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--return-type"])
+
+    def test_return_type_valid(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--return-type", "float"])
+            args = mock_run.call_args[0]
+            assert args[5] == "float"
+
+    def test_impl_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--impl"])
+
+    def test_replace_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--replace"])
+
+    def test_impl_loading(self):
+        with patch("just_makeit._method.run") as mock_run:
+            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+                _run(["fir", "execute", "--impl", "src.c::fir_step"])
+                mock_load.assert_called_once_with("src.c::fir_step", [])
+                _, kwargs = mock_run.call_args
+                assert kwargs.get("impl_body") == "body"
+
+    def test_replace_with_impl(self):
+        with patch("just_makeit._method.run"):
+            with patch("just_makeit._impl.load_impl", return_value="body"):
+                with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
+                    _run(["fir", "execute",
+                          "--replace", "a::b",
+                          "--impl", "src.c::fir_step"])

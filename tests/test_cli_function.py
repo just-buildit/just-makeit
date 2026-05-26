@@ -53,3 +53,55 @@ class TestCliFunction:
             _, kwargs = mock_run.call_args
             assert kwargs["return_type"] == "float"
             assert ("x", "float") in kwargs["params"]
+
+    def test_doc_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--doc"])
+
+    def test_doc_flag(self):
+        with patch("just_makeit._function.run") as mock_run:
+            _run(["fn", "--module", "dsp", "--doc", "Compute magnitude."])
+            args, _ = mock_run.call_args
+            assert args[3] == "Compute magnitude."  # doc is positional arg 3
+
+    def test_param_bad_array_elem_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--param", "x:notatype[]"])
+
+    def test_param_bad_scalar_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--param", "x:notatype"])
+
+    def test_param_valid_array(self):
+        with patch("just_makeit._function.run") as mock_run:
+            _run(["fn", "--module", "dsp", "--param", "buf:float[]"])
+            _, kwargs = mock_run.call_args
+            assert ("buf", "float[]") in kwargs["params"]
+
+    def test_return_type_bad_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--return-type", "notatype"])
+
+    def test_impl_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--impl"])
+
+    def test_replace_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--replace"])
+
+    def test_impl_loading(self):
+        with patch("just_makeit._function.run") as mock_run:
+            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+                _run(["fn", "--module", "dsp", "--impl", "src.c::fn"])
+                mock_load.assert_called_once_with("src.c::fn", [])
+                _, kwargs = mock_run.call_args
+                assert kwargs.get("impl_body") == "body"
+
+    def test_replace_with_impl(self):
+        with patch("just_makeit._function.run"):
+            with patch("just_makeit._impl.load_impl", return_value="body"):
+                with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
+                    _run(["fn", "--module", "dsp",
+                          "--replace", "a::b",
+                          "--impl", "src.c::fn"])

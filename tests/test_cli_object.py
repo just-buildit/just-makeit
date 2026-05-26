@@ -104,3 +104,80 @@ class TestCliObject:
             _, kwargs = mock_run.call_args
             assert kwargs["no_state"] is True
             assert len(kwargs["init_params"]) == 1
+
+    def test_perf_flag(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--perf"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["perf"] is True
+
+    def test_return_type_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--return-type"])
+
+    def test_arg_type_bad_array_elem_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--arg-type", "notatype[]"])
+
+    def test_arg_type_array_valid(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--arg-type", "float[]"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["arg_type"] == "float[]"
+
+    def test_array_arg_bad_dtype_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--array-arg", "buf:notatype"])
+
+    def test_array_arg_valid(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--array-arg", "buf:float32"])
+            _, kwargs = mock_run.call_args
+            assert len(kwargs["array_args"]) == 1
+
+    def test_multi_output_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--multi-output"])
+
+    def test_multi_output_bad_type_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--multi-output", "notatype"])
+
+    def test_multi_output_valid(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--multi-output", "float"])
+            _, kwargs = mock_run.call_args
+            assert "float" in kwargs["multi_output"]
+
+    def test_method_name_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--method-name"])
+
+    def test_method_name_flag(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--method-name", "process"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["method_name"] == "process"
+
+    def test_impl_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--impl"])
+
+    def test_replace_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--replace"])
+
+    def test_impl_loading(self):
+        with patch("just_makeit._object.run") as mock_run:
+            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+                _run(["fir", "--impl", "src.c::fir_step"])
+                mock_load.assert_called_once_with("src.c::fir_step", [])
+                _, kwargs = mock_run.call_args
+                assert kwargs.get("impl_body") == "body"
+
+    def test_variable_output_sets_no_step(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--variable-output"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["no_step"] is True
+            assert kwargs["variable_output"] is True
