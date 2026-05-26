@@ -686,6 +686,8 @@ def _dump(cfg: dict) -> str:
                     for f in m["result_fields"]
                 )
                 lines.append(f"result_fields = [{rf_parts}]")
+            if m.get("py_return_type"):
+                lines.append(f'py_return_type = "{m["py_return_type"]}"')
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")

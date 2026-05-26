@@ -244,6 +244,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 none_on_empty=bool(m.get("none_on_empty")),
                 result_fields=list(m.get("result_fields", [])),
                 max_results=int(m.get("max_results", 64)),
+                py_return_type=m.get("py_return_type", ""),
             )
         for p in C.properties(cfg, comp):
             _property.run(

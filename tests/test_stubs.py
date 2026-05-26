@@ -518,6 +518,80 @@ class TestResultFieldsStub:
         assert "def push(" in pyi
 
 
+class TestPyReturnTypeStub:
+    @pytest.fixture()
+    def py_ret_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "det",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float _Complex[]",
+            return_type="void",
+        )
+        method_run(
+            root,
+            "det",
+            "push",
+            "dsp",
+            "float _Complex[]",
+            "void",
+            False,
+            [],
+            py_return_type="list[tuple[int, float, float]]",
+        )
+        return root
+
+    def test_py_return_type_used_in_stub(self, py_ret_project):
+        pyi = _pyi(py_ret_project, "dsp", "myproj")
+        assert "def push(self, x: NDArray[np.complex64]) -> list[tuple[int, float, float]]:" in pyi
+
+    def test_no_any_with_py_return_type(self, py_ret_project):
+        pyi = _pyi(py_ret_project, "dsp", "myproj")
+        for line in pyi.splitlines():
+            if "def push" in line:
+                assert "Any" not in line
+
+    def test_py_return_type_persisted_in_toml(self, py_ret_project):
+        import just_makeit._config as C
+        cfg = C.load(py_ret_project)
+        methods = cfg.get("det", {}).get("methods", [])
+        push = next(m for m in methods if m["name"] == "push")
+        assert push.get("py_return_type") == "list[tuple[int, float, float]]"
+
+
+class TestStringEnumDocstring:
+    @pytest.fixture()
+    def enum_doc_project(self, tmp_path):
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "det",
+            "dsp",
+            no_state=True,
+            no_step=True,
+            arg_type="float",
+            return_type="float",
+            init_params=[
+                ("rate", "double", "1.0", "", "", "", False, ""),
+                ("mode", "string_enum:mean,median,min", "mean", "", "", "", False, ""),
+            ],
+        )
+        return root
+
+    def test_enum_docstring_not_any(self, enum_doc_project):
+        pyi = _pyi(enum_doc_project, "dsp", "myproj")
+        assert "mode : Any" not in pyi
+
+    def test_enum_docstring_shows_literal(self, enum_doc_project):
+        pyi = _pyi(enum_doc_project, "dsp", "myproj")
+        assert 'mode : Literal["mean", "median", "min"]' in pyi
+
+
 class TestArrayInitParamDocstring:
     @pytest.fixture()
     def array_ip_project(self, tmp_path):

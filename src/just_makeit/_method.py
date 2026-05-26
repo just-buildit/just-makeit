@@ -310,6 +310,7 @@ def run(
     none_on_empty: bool = False,
     result_fields: list[dict] | None = None,
     max_results: int = 64,
+    py_return_type: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -416,6 +417,8 @@ def run(
     if result_fields:
         method_entry["result_fields"] = result_fields
         method_entry["max_results"] = max_results
+    if py_return_type:
+        method_entry["py_return_type"] = py_return_type
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)

@@ -26,6 +26,7 @@ def run(args: list[str]) -> None:
     out_type: str | None = None
     out_divisor: int = 1
     no_bench = False
+    py_return_type: str = ""
     impl_spec_m: str | None = None
     replacements_m: list[tuple[str, str]] = []
 
@@ -160,6 +161,16 @@ def run(args: list[str]) -> None:
             else:
                 return_type = val
             i += 1
+        elif tok == "--py-return-type":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --py-return-type requires a Python type string",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            py_return_type = remaining[i]
+            i += 1
         elif tok == "--impl":
             i += 1
             if i >= len(remaining):
@@ -208,4 +219,5 @@ def run(args: list[str]) -> None:
         impl_body=impl_body_m,
         batch=batch_method,
         no_bench=no_bench,
+        py_return_type=py_return_type,
     )
