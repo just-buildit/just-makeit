@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _render as T
 from ._init import _write_compile_commands
 from ._object import _regenerate_module
 

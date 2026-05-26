@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import _color as Color
 from . import _config as C
-from . import _templates as T
+from . import _render as T
 
 
 def _make_project_ctx(

@@ -18,8 +18,10 @@ from pathlib import Path
 
 from . import _color as Color
 from . import _config as C
+from . import _context as Ctx
+from . import _render as R
 from . import _stubs as S
-from . import _templates as T
+from . import _types as T
 from ._init import (
     _make_component_ctx,
     _preserve_core_bodies,
@@ -61,9 +63,9 @@ def _make_object_ctx(
             "version": version,
         }
     )
-    ctx.update(T.make_sample_ctx(arg_type, return_type))
+    ctx.update(Ctx.make_sample_ctx(arg_type, return_type))
     ctx.update(
-        T.make_state_ctx(
+        Ctx.make_state_ctx(
             ctx["component"],
             ctx["Component"],
             state_vars,
@@ -73,9 +75,9 @@ def _make_object_ctx(
             init_post_parse_impl=init_post_parse_impl,
         )
     )
-    ctx.update(T.make_perf_ctx(perf))
+    ctx.update(Ctx.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
+    ctx.update(Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
     # Re-generate pyi_examples now that package and Component are in ctx.
     # make_state_ctx emits placeholder text; we replace it with the real values.
     scalar_state = (
@@ -90,7 +92,7 @@ def _make_object_ctx(
     has_aa = bool(array_args)
     import_line = f"from {pkg} import {ctx['Component']}"
     ctx["pyi_examples"] = (
-        T._pyi_examples_block(
+        Ctx._pyi_examples_block(
             scalar_state,
             has_aa,
             import_line,
@@ -378,7 +380,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             class_name=C.class_name(cfg, obj),
         )
         ctx.update(
-            T.make_methods_ctx(
+            Ctx.make_methods_ctx(
                 ctx["component"],
                 ctx["Component"],
                 C.methods(cfg, obj),
@@ -388,7 +390,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             )
         )
         ctx.update(
-            T.make_properties_ctx(
+            Ctx.make_properties_ctx(
                 ctx["component"],
                 ctx["Component"],
                 C.properties(cfg, obj),
@@ -428,7 +430,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             )
         else:
             preserved = monolith_bodies
-        frag = T.render_module_ext_fragment(ctx)
+        frag = R.render_module_ext_fragment(ctx)
         if preserved:
             frag = _restore_c_function_bodies(frag, preserved)
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
@@ -444,7 +446,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         extra_files.add(f"{module}_ext_extra.c")
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
-    aggregator = T.render_module_ext_aggregator(
+    aggregator = R.render_module_ext_aggregator(
         module, comp_ctxs, functions, extra_files,
         extra_types=C.extra_types(cfg, module),
     )
@@ -490,7 +492,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
         if obj == module:
-            obj_cmake = T.render(T.CMAKE_LISTS_OBJECT_CORE, ctx_)
+            obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_)
             methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
             if methods_c.exists():
                 old_lib = f"add_library({obj}_core OBJECT {obj}_core.c)"
@@ -499,7 +501,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             collocated_cmake += obj_cmake
     _write(
         root / "native" / "src" / module / "CMakeLists.txt",
-        collocated_cmake + T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
+        collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
         "update",
     )
 
@@ -524,7 +526,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             "object_imports": object_imports,
             "object_all": object_all,
         }
-        _write(init_path, T.render(T.MODULE_INIT_PY, init_ctx), "update")
+        _write(init_path, R.render(R.MODULE_INIT_PY, init_ctx), "update")
 
     # Type stubs — regenerated in full every time the module changes.
     _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module), "update")
@@ -655,7 +657,7 @@ def run(
         class_name=class_name,
     )
     ctx.update(
-        T.make_methods_ctx(
+        Ctx.make_methods_ctx(
             ctx["component"],
             ctx["Component"],
             [],
@@ -666,7 +668,7 @@ def run(
     )
 
     def r(tmpl):
-        return T.render(tmpl, ctx)
+        return R.render(tmpl, ctx)
 
     comp = ctx["component"]
     print(
@@ -681,7 +683,7 @@ def run(
     core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
     _write(
         core_h_path,
-        _preserve_core_bodies(core_h_path, r(T.COMPONENT_CORE_H), comp),
+        _preserve_core_bodies(core_h_path, r(R.COMPONENT_CORE_H), comp),
         "update" if core_h_path.exists() else "create",
     )
     if impl_body is not None and not no_step:
@@ -693,34 +695,34 @@ def run(
     core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
     _write(
         core_c_path,
-        _preserve_core_bodies(core_c_path, r(T.COMPONENT_CORE_C), comp),
+        _preserve_core_bodies(core_c_path, r(R.COMPONENT_CORE_C), comp),
         "update" if core_c_path.exists() else "create",
     )
     obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
-    _write(obj_cmake_path, r(T.CMAKE_LISTS_OBJECT_CORE))
+    _write(obj_cmake_path, r(R.CMAKE_LISTS_OBJECT_CORE))
     # Propagate any external-library cmake blocks from sibling objects so the
     # new component picks up the same if(SOME_LIB) include/link wiring without
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
-    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(T.COMPONENT_TEST_C))
+    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(R.COMPONENT_TEST_C))
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
-        r(T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C),
+        r(R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C),
     )
     jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
     if not jm_bench_h.exists():
-        _write(jm_bench_h, T.JM_BENCH_H)
+        _write(jm_bench_h, R.JM_BENCH_H)
 
     # Python tests and benchmarks for this module object
     pkg_mod_dir = root / "src" / pkg / module
     tests_init = pkg_mod_dir / "tests" / "__init__.py"
     if not tests_init.exists():
-        _write(tests_init, T.TESTS_INIT_PY)
+        _write(tests_init, R.TESTS_INIT_PY)
     test_py_tmpl = (
-        T.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg) else T.MODULE_PYTEST_TEST
+        R.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg) else R.MODULE_PYTEST_TEST
     )
     bench_py_tmpl = (
-        T.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg) else T.MODULE_BENCH_PY
+        R.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg) else R.MODULE_BENCH_PY
     )
     _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(test_py_tmpl))
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"

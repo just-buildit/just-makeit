@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
+from . import _types as T
 from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
 from ._object import _make_object_ctx, _regenerate_module
 
@@ -133,7 +135,7 @@ def run(
             init_params=C.init_params(cfg, object_name),
         )
         ctx.update(
-            T.make_methods_ctx(
+            Ctx.make_methods_ctx(
                 object_name,
                 Component,
                 C.methods(cfg, object_name),
@@ -143,7 +145,7 @@ def run(
             )
         )
         ctx.update(
-            T.make_properties_ctx(
+            Ctx.make_properties_ctx(
                 object_name,
                 Component,
                 C.properties(cfg, object_name),
@@ -156,7 +158,7 @@ def run(
         if core_h.exists():
             core_h.write_text(
                 _preserve_core_bodies(
-                    core_h, T.render(T.COMPONENT_CORE_H, ctx), object_name
+                    core_h, R.render(R.COMPONENT_CORE_H, ctx), object_name
                 ),
                 encoding="utf-8",
             )
@@ -178,9 +180,9 @@ def run(
                 "version": version,
             }
         )
-        ctx.update(T.make_sample_ctx(arg_type_, return_type_))
+        ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
         ctx.update(
-            T.make_state_ctx(
+            Ctx.make_state_ctx(
                 object_name,
                 Component,
                 state_vars_list,
@@ -189,9 +191,9 @@ def run(
                 init_params=C.init_params(cfg, object_name),
             )
         )
-        ctx.update(T.make_perf_ctx(perf))
+        ctx.update(Ctx.make_perf_ctx(perf))
         ctx.update(
-            T.make_step_ctx(
+            Ctx.make_step_ctx(
                 ctx,
                 arg_type_,
                 return_type_,
@@ -199,7 +201,7 @@ def run(
             )
         )
         ctx.update(
-            T.make_methods_ctx(
+            Ctx.make_methods_ctx(
                 object_name,
                 Component,
                 C.methods(cfg, object_name),
@@ -209,7 +211,7 @@ def run(
             )
         )
         ctx.update(
-            T.make_properties_ctx(
+            Ctx.make_properties_ctx(
                 object_name,
                 Component,
                 C.properties(cfg, object_name),
@@ -218,7 +220,7 @@ def run(
         )
 
         def r(tmpl):
-            return T.render(tmpl, ctx)
+            return R.render(tmpl, ctx)
 
         core_h = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
@@ -227,13 +229,13 @@ def run(
         if core_h.exists():
             core_h.write_text(
                 _preserve_core_bodies(
-                    core_h, r(T.COMPONENT_CORE_H), object_name
+                    core_h, r(R.COMPONENT_CORE_H), object_name
                 ),
                 encoding="utf-8",
             )
             print(f"  update  {core_h}")
         if ext_c.exists():
-            ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")
+            ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
 
     print()

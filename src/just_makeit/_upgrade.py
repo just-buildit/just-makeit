@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
 
 
 @dataclass
@@ -162,12 +163,12 @@ def _build_ctx(cfg: dict) -> dict[str, str]:
 
 def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
     if isinstance(step, AddFile):
-        dest = root / T.render(step.path, ctx)
+        dest = root / R.render(step.path, ctx)
         if dest.exists():
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
-        template = getattr(T, step.template_attr)
-        dest.write_text(T.render(template, ctx), encoding="utf-8")
+        template = getattr(R, step.template_attr)
+        dest.write_text(R.render(template, ctx), encoding="utf-8")
         print(f"  create  {dest.relative_to(root)}")
 
     elif isinstance(step, AddTomlKey):
@@ -204,7 +205,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             if not bench_c.exists():
                 continue
             no_step = C.is_no_step(cfg, comp)
-            tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
+            tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
             comp_ctx: dict = {"component": comp, "Component": comp.title()}
             comp_ctx.update({
                 "package": pkg,
@@ -215,9 +216,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             })
             arg_type = C.arg_type(cfg, comp)
             return_type = C.return_type(cfg, comp)
-            comp_ctx.update(T.make_sample_ctx(arg_type, return_type))
+            comp_ctx.update(Ctx.make_sample_ctx(arg_type, return_type))
             comp_ctx.update(
-                T.make_state_ctx(
+                Ctx.make_state_ctx(
                     comp,
                     comp_ctx["Component"],
                     C.state_vars(cfg, comp),
@@ -226,9 +227,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     init_params=C.init_params(cfg, comp),
                 )
             )
-            comp_ctx.update(T.make_perf_ctx(perf))
+            comp_ctx.update(Ctx.make_perf_ctx(perf))
             comp_ctx.update(
-                T.make_step_ctx(
+                Ctx.make_step_ctx(
                     comp_ctx,
                     arg_type,
                     return_type,
@@ -237,7 +238,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                 )
             )
             comp_ctx.update(
-                T.make_methods_ctx(
+                Ctx.make_methods_ctx(
                     comp,
                     comp_ctx["Component"],
                     C.methods(cfg, comp),
@@ -266,7 +267,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     )
                     comp_ctx["bench_destroy_stmt"] = ""
                     comp_ctx["bench_methods_timing_block"] = ""
-            bench_c.write_text(T.render(tmpl, comp_ctx), encoding="utf-8")
+            bench_c.write_text(R.render(tmpl, comp_ctx), encoding="utf-8")
             print(f"  update  {bench_c.relative_to(root)}")
 
 

@@ -21,23 +21,24 @@ from pathlib import Path
 
 from . import _config as C
 from . import _init
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
 
 
 def _stateful_templates(cfg: dict) -> list:
-    test_tmpl = T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
+    test_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_tmpl = (
-        T.COMPONENT_BENCH_PYTEST_BM
+        R.COMPONENT_BENCH_PYTEST_BM
         if C.is_pytest_benchmark(cfg)
-        else T.COMPONENT_BENCH_PY
+        else R.COMPONENT_BENCH_PY
     )
     return [
-        ("native/inc/{c}/{c}_core.h", T.COMPONENT_CORE_H),
-        ("native/src/{c}/{c}_core.c", T.COMPONENT_CORE_C),
-        ("native/src/{c}/{c}_ext.c", T.COMPONENT_EXT_C),
-        ("native/tests/test_{c}_core.c", T.COMPONENT_TEST_C),
-        ("native/benchmarks/bench_{c}_core.c", T.COMPONENT_BENCH_C),
-        ("src/{p}/{c}.pyi", T.COMPONENT_PYI),
+        ("native/inc/{c}/{c}_core.h", R.COMPONENT_CORE_H),
+        ("native/src/{c}/{c}_core.c", R.COMPONENT_CORE_C),
+        ("native/src/{c}/{c}_ext.c", R.COMPONENT_EXT_C),
+        ("native/tests/test_{c}_core.c", R.COMPONENT_TEST_C),
+        ("native/benchmarks/bench_{c}_core.c", R.COMPONENT_BENCH_C),
+        ("src/{p}/{c}.pyi", R.COMPONENT_PYI),
         ("src/{p}/tests/test_{c}.py", test_tmpl),
         ("src/{p}/benchmarks/bench_{c}.py", bench_tmpl),
     ]
@@ -134,9 +135,9 @@ def run(
 
     arg_type_ = C.arg_type(cfg, component)
     return_type_ = C.return_type(cfg, component)
-    ctx.update(T.make_sample_ctx(arg_type_, return_type_))
+    ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
     ctx.update(
-        T.make_state_ctx(
+        Ctx.make_state_ctx(
             ctx["component"],
             ctx["Component"],
             all_vars,
@@ -145,14 +146,14 @@ def run(
     )
     templates = _stateful_templates(cfg)
 
-    ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
+    ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
     ctx.update(
-        T.make_step_ctx(
+        Ctx.make_step_ctx(
             ctx, arg_type_, return_type_, mutable=C.is_mutable(cfg, component)
         )
     )
     ctx.update(
-        T.make_methods_ctx(
+        Ctx.make_methods_ctx(
             component,
             ctx["Component"],
             C.methods(cfg, component),
@@ -161,7 +162,7 @@ def run(
         )
     )
     ctx.update(
-        T.make_properties_ctx(
+        Ctx.make_properties_ctx(
             component,
             ctx["Component"],
             C.properties(cfg, component),
@@ -170,7 +171,7 @@ def run(
     )
 
     def r(tmpl):
-        return T.render(tmpl, ctx)
+        return R.render(tmpl, ctx)
 
     paths = [root / _expand(pat, component, pkg) for pat, _ in templates]
 
@@ -188,7 +189,7 @@ def run(
             # core files; the struct merge keeps the freshly added state var.
             # create/reset are excluded so the new variable is wired into the
             # constructor and reset paths rather than left uninitialised.
-            if tmpl in (T.COMPONENT_CORE_H, T.COMPONENT_CORE_C):
+            if tmpl in (R.COMPONENT_CORE_H, R.COMPONENT_CORE_C):
                 text = _init._preserve_core_bodies(
                     path,
                     text,

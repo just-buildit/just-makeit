@@ -16,7 +16,8 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
 from ._init import (
     _make_component_ctx,
     _preserve_core_bodies,
@@ -374,9 +375,9 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
     )
     if module:
         ctx.update({"module": module, "Module": _to_title(module)})
-    ctx.update(T.make_sample_ctx(arg_t, ret_t))
+    ctx.update(Ctx.make_sample_ctx(arg_t, ret_t))
     ctx.update(
-        T.make_state_ctx(
+        Ctx.make_state_ctx(
             obj,
             Component,
             state_vars,
@@ -385,9 +386,9 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             init_params=C.init_params(cfg, obj),
         )
     )
-    ctx.update(T.make_perf_ctx(C.is_perf(cfg)))
+    ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
     ctx.update(
-        T.make_step_ctx(
+        Ctx.make_step_ctx(
             ctx,
             arg_t,
             ret_t,
@@ -396,7 +397,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
         )
     )
     ctx.update(
-        T.make_methods_ctx(
+        Ctx.make_methods_ctx(
             obj,
             Component,
             C.methods(cfg, obj),
@@ -406,7 +407,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
         )
     )
     ctx.update(
-        T.make_properties_ctx(
+        Ctx.make_properties_ctx(
             obj,
             Component,
             C.properties(cfg, obj),
@@ -428,7 +429,7 @@ def _regenerate_object_bindings(
     if core_h.exists():
         core_h.write_text(
             _preserve_core_bodies(
-                core_h, T.render(T.COMPONENT_CORE_H, ctx), obj
+                core_h, R.render(R.COMPONENT_CORE_H, ctx), obj
             ),
             encoding="utf-8",
         )
@@ -441,20 +442,20 @@ def _regenerate_object_bindings(
 
     ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
     if ext_c.exists():
-        ext_c.write_text(T.render(T.COMPONENT_EXT_C, ctx), encoding="utf-8")
+        ext_c.write_text(R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8")
         print(f"  update  {ext_c}")
     pyi = root / "src" / pkg / f"{obj}.pyi"
     if pyi.exists():
-        pyi.write_text(T.render(T.COMPONENT_PYI, ctx), encoding="utf-8")
+        pyi.write_text(R.render(R.COMPONENT_PYI, ctx), encoding="utf-8")
         print(f"  update  {pyi}")
     bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
     if bench_c.exists():
         tmpl = (
-            T.NO_STEP_BENCH_C
+            R.NO_STEP_BENCH_C
             if C.is_no_step(cfg, obj)
-            else T.COMPONENT_BENCH_C
+            else R.COMPONENT_BENCH_C
         )
-        bench_c.write_text(T.render(tmpl, ctx), encoding="utf-8")
+        bench_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
         print(f"  update  {bench_c}")
 
 

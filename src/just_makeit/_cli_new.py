@@ -11,7 +11,7 @@ def run(args: list[str]) -> None:
         print("error: 'new' requires a project name.", file=sys.stderr)
         sys.exit(1)
     from . import _new
-    from . import _templates as T
+    from . import _types as T
 
     project = args[0]
     dest = None

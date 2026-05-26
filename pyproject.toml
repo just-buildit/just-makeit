@@ -50,6 +50,9 @@ jm-docker-e2e = "just_makeit._scripts:docker_e2e"
 # verbatim (keeping those .c/.h files) and compile nothing.
 pure = true
 
+[tool.ruff]
+extend-exclude = ["src/just_makeit/templates/"]
+
 [tool.ruff.lint]
 per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }
 
@@ -72,6 +75,7 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
+    "cmakelang",
     "just-buildit",
     "mkdocstrings-python>=2.0.3",
     "numpy",
