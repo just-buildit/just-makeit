@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.13.14] — 2026-05-26
+
+### Added
+
+- **`py_return_type` key for method stubs** — add `py_return_type =
+  "list[tuple[int, float]]"` to a `[[obj.methods]]` entry to override the
+  auto-derived Python return annotation in the `.pyi` stub.  Useful when a
+  method returns a custom C struct whose Python representation cannot be
+  inferred from the `return_type` field alone. (gh#26)
+
+### Fixed
+
+- **`jm remove` warns when `no_step` object's `_core.c` holds user code** —
+  for `no_step = true` objects the algorithm lives in `_core.c`, not the
+  header.  `jm remove` now checks `_core.c` for the `/* <<IMPLEMENT: */`
+  placeholder; its absence signals that the user has replaced the scaffold,
+  and a stderr warning is emitted before the file is deleted. (gh#46)
+
+- **`jm remove` warns when `_core.h` holds hand-written step()** — if the
+  `/* TODO: implement */` stub in the generated `_core.h` has been replaced
+  with real algorithm code, `jm remove` and `jm remove --force` now print a
+  warning to stderr so the user knows they are about to permanently destroy
+  their implementation. (gh#41)
+
+- **`jm apply <fragment>` succeeds when fragment already under include glob**
+  — running `jm apply` a second time on a fragment already present in the
+  `objects/` directory (and covered by the `include` glob) no longer raises
+  a "duplicate section" error; the conflict check is skipped for fragments
+  that are already wired in. (gh#42)
+
+- **`string_enum` parameter docstring uses `str` instead of `Any`** — the
+  numpy-style docstring for `string_enum:…` init parameters now emits the
+  correct type (`str`, not `Any`). (gh#26)
+
 ## [0.13.13] — 2026-05-25
 
 ### Added
