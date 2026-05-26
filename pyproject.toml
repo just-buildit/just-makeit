@@ -54,7 +54,8 @@ pure = true
 per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src/just_makeit"]
+addopts = ["--doctest-modules", "--ignore=src/just_makeit/_templates.py", "--ignore=src/just_makeit/examples"]
 
 [tool.coverage.run]
 source = ["just_makeit"]
