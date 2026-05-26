@@ -15,17 +15,39 @@ from . import _config as C
 
 
 def _q(s: str) -> str:
-    """Quote a CLI value if it contains spaces or special characters."""
+    """Quote a CLI value if it contains spaces or special characters.
+
+    >>> _q("float")
+    'float'
+    >>> _q("float _Complex")
+    '"float _Complex"'
+    >>> _q("float _Complex[]")
+    '"float _Complex[]"'
+    >>> _q("fir_create_poly(d0,d1,ptr)")
+    '"fir_create_poly(d0,d1,ptr)"'
+    """
     if " " in s or "(" in s or ")" in s or "[" in s:
         return f'"{s}"'
     return s
 
 
 def _flag(name: str, val: str) -> str:
+    """Format a single CLI flag line.
+
+    >>> _flag("--arg-type", "float")
+    '    --arg-type float \\\\\\n'
+    >>> _flag("--arg-type", "float _Complex")
+    '    --arg-type "float _Complex" \\\\\\n'
+    """
     return f"    {name} {_q(val)} \\\n"
 
 
 def _bool_flag(name: str) -> str:
+    """Format a boolean CLI flag line.
+
+    >>> _bool_flag("--mutable")
+    '    --mutable \\\\\\n'
+    """
     return f"    {name} \\\n"
 
 
