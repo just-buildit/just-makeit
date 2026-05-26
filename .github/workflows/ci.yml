@@ -118,7 +118,6 @@ jobs:
         run: |
           uv run pytest \
             --cov=just_makeit \
-            --cov-branch \
             --cov-report=xml \
             --junitxml=junit.xml \
             -o junit_family=legacy \
