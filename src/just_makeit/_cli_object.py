@@ -11,7 +11,7 @@ def run(args: list[str]) -> None:
         print("error: 'object' requires an object name.", file=sys.stderr)
         sys.exit(1)
     from . import _object
-    from . import _templates as T
+    from . import _types as T
 
     object_name = args[0]
     module = None

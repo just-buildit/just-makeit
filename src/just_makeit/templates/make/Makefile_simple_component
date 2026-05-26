@@ -1,0 +1,7 @@
+src/<<package>>/<<component>>$(EXT): native/src/<<component>>/<<component>>_core.c native/src/<<component>>/<<component>>_ext.c
+	@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
+	$(CC) $(CFLAGS) $(INC) -I$$($(PYTHON) -c "import numpy; print(numpy.get_include())") -shared $^ -o $@
+
+test_<<component>>_core: native/tests/test_<<component>>_core.c native/src/<<component>>/<<component>>_core.c
+	$(CC) -O2 -std=c99 -Inative/inc $^ -o $@
+

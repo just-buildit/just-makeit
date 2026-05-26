@@ -12,7 +12,7 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
     from . import _method
-    from . import _templates as T
+    from . import _types as T
 
     object_name = args[0]
     method_name = args[1]

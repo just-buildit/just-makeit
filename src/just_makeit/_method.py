@@ -20,7 +20,9 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
+from . import _types as T
 from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
 from ._object import _regenerate_module
 
@@ -441,9 +443,9 @@ def run(
                 "version": version_,
             }
         )
-        ctx_.update(T.make_sample_ctx(arg_type_, return_type_))
+        ctx_.update(Ctx.make_sample_ctx(arg_type_, return_type_))
         ctx_.update(
-            T.make_state_ctx(
+            Ctx.make_state_ctx(
                 object_name,
                 _to_title(object_name),
                 state_vars_list,
@@ -451,9 +453,9 @@ def run(
                 no_state=C.is_no_state(cfg, object_name),
             )
         )
-        ctx_.update(T.make_perf_ctx(perf_))
+        ctx_.update(Ctx.make_perf_ctx(perf_))
         ctx_.update(
-            T.make_step_ctx(
+            Ctx.make_step_ctx(
                 ctx_,
                 arg_type_,
                 return_type_,
@@ -462,7 +464,7 @@ def run(
             )
         )
         ctx_.update(
-            T.make_methods_ctx(
+            Ctx.make_methods_ctx(
                 object_name,
                 _to_title(object_name),
                 C.methods(cfg, object_name),
@@ -472,7 +474,7 @@ def run(
             )
         )
         ctx_.update(
-            T.make_properties_ctx(
+            Ctx.make_properties_ctx(
                 object_name,
                 _to_title(object_name),
                 C.properties(cfg, object_name),
@@ -485,7 +487,7 @@ def run(
         if core_h_.exists():
             core_h_.write_text(
                 _preserve_core_bodies(
-                    core_h_, T.render(T.COMPONENT_CORE_H, ctx_), object_name
+                    core_h_, R.render(R.COMPONENT_CORE_H, ctx_), object_name
                 ),
                 encoding="utf-8",
             )
@@ -509,9 +511,9 @@ def run(
                 "version": version,
             }
         )
-        ctx.update(T.make_sample_ctx(arg_type_, return_type_))
+        ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
         ctx.update(
-            T.make_state_ctx(
+            Ctx.make_state_ctx(
                 object_name,
                 Component,
                 state_vars_list,
@@ -519,14 +521,14 @@ def run(
                 no_state=C.is_no_state(cfg, object_name),
             )
         )
-        ctx.update(T.make_perf_ctx(perf))
+        ctx.update(Ctx.make_perf_ctx(perf))
         ctx.update(
-            T.make_step_ctx(
+            Ctx.make_step_ctx(
                 ctx, arg_type_, return_type_, no_step=C.is_no_step(cfg, object_name)
             )
         )
         ctx.update(
-            T.make_methods_ctx(
+            Ctx.make_methods_ctx(
                 object_name,
                 Component,
                 C.methods(cfg, object_name),
@@ -536,7 +538,7 @@ def run(
             )
         )
         ctx.update(
-            T.make_properties_ctx(
+            Ctx.make_properties_ctx(
                 object_name,
                 Component,
                 C.properties(cfg, object_name),
@@ -545,21 +547,21 @@ def run(
         )
 
         def r(tmpl):
-            return T.render(tmpl, ctx)
+            return R.render(tmpl, ctx)
 
         # Re-render _core.h (to update method_decls) and _ext.c
         core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         no_step = C.is_no_step(cfg, object_name)
-        bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
+        bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         if core_h.exists():
             core_h.write_text(
-                _preserve_core_bodies(core_h, r(T.COMPONENT_CORE_H), object_name),
+                _preserve_core_bodies(core_h, r(R.COMPONENT_CORE_H), object_name),
                 encoding="utf-8",
             )
             print(f"  update  {core_h}")
         if ext_c.exists():
-            ext_c.write_text(r(T.COMPONENT_EXT_C), encoding="utf-8")
+            ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
         bench_c = (
             root / "native" / "benchmarks"
@@ -570,7 +572,7 @@ def run(
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
         if pyi_path.exists():
-            pyi_path.write_text(r(T.COMPONENT_PYI), encoding="utf-8")
+            pyi_path.write_text(r(R.COMPONENT_PYI), encoding="utf-8")
             print(f"  update  {pyi_path}")
 
     print()

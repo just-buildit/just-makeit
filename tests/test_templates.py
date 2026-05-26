@@ -7,12 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._templates import (
-    render,
-    make_state_ctx,
-    make_methods_ctx,
-    SUPPORTED_TYPES,
-)
+from just_makeit._render import render
+from just_makeit._context import make_state_ctx, make_methods_ctx
+from just_makeit._types import SUPPORTED_TYPES
 from just_makeit._init import _make_component_ctx
 from just_makeit._new import _make_project_ctx
 
@@ -217,54 +214,54 @@ class TestMakeStateCtx:
 
 class TestParseArrayType:
     def test_float_array(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("float[64]") == ("float", 64)
 
     def test_double_array(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("double[128]") == ("double", 128)
 
     def test_int32_array(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("int32_t[32]") == ("int32_t", 32)
 
     def test_complex_array(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("float _Complex[16]") == ("float _Complex", 16)
 
     def test_scalar_returns_none(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("double") is None
 
     def test_unknown_elem_returns_none(self):
-        from just_makeit._templates import parse_array_type
+        from just_makeit._types import parse_array_type
 
         assert parse_array_type("bad_type[8]") is None
 
 
 class TestIsValidType:
     def test_scalar_valid(self):
-        from just_makeit._templates import is_valid_type
+        from just_makeit._types import is_valid_type
 
         assert is_valid_type("double")
 
     def test_array_valid(self):
-        from just_makeit._templates import is_valid_type
+        from just_makeit._types import is_valid_type
 
         assert is_valid_type("float[64]")
 
     def test_unknown_invalid(self):
-        from just_makeit._templates import is_valid_type
+        from just_makeit._types import is_valid_type
 
         assert not is_valid_type("complex128")
 
     def test_array_unknown_elem_invalid(self):
-        from just_makeit._templates import is_valid_type
+        from just_makeit._types import is_valid_type
 
         assert not is_valid_type("bad_type[8]")
 

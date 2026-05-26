@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _stubs as S
-from . import _templates as T
+from . import _render as T
 from ._init import _to_title, _write, _write_compile_commands
 
 

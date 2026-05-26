@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _context as Ctx
+from . import _render as R
+from . import _types as T
 
 
 def _to_title(snake: str) -> str:
@@ -407,11 +409,11 @@ def run(
         }
     )
 
-    sample_ctx = T.make_sample_ctx(arg_type, return_type)
+    sample_ctx = Ctx.make_sample_ctx(arg_type, return_type)
     ctx.update(sample_ctx)
 
     ctx.update(
-        T.make_state_ctx(
+        Ctx.make_state_ctx(
             ctx["component"],
             ctx["Component"],
             vars_,
@@ -420,13 +422,13 @@ def run(
             init_params=init_params,
         )
     )
-    ctx.update(T.make_perf_ctx(perf))
+    ctx.update(Ctx.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
     ctx.update(
-        T.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
+        Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
     )
     ctx.update(
-        T.make_methods_ctx(
+        Ctx.make_methods_ctx(
             ctx["component"],
             ctx["Component"],
             [],
@@ -447,7 +449,7 @@ def run(
     )
     import_line = f"from {pkg} import {ctx['Component']}"
     ctx["pyi_examples"] = (
-        T._pyi_examples_block(
+        Ctx._pyi_examples_block(
             scalar_state,
             bool(array_args),
             import_line,
@@ -459,7 +461,7 @@ def run(
     )
 
     def r(tmpl):
-        return T.render(tmpl, ctx)
+        return R.render(tmpl, ctx)
 
     comp = ctx["component"]
 
@@ -472,24 +474,24 @@ def run(
     if perf:
         perf_h = root / "native" / "inc" / "jm_perf.h"
         if not perf_h.exists():
-            _write(perf_h, r(T.JM_PERF_H))
+            _write(perf_h, r(R.JM_PERF_H))
         simd_h = root / "native" / "inc" / "jm_simd.h"
         if not simd_h.exists():
-            _write(simd_h, T.JM_SIMD_H)
+            _write(simd_h, R.JM_SIMD_H)
 
-    core_h_tmpl = T.COMPONENT_CORE_H
-    core_c_tmpl = T.COMPONENT_CORE_C
-    ext_c_tmpl = T.COMPONENT_EXT_C
-    test_c_tmpl = T.COMPONENT_TEST_C
-    bench_c_tmpl = T.NO_STEP_BENCH_C if no_step else T.COMPONENT_BENCH_C
-    pyi_tmpl = T.COMPONENT_PYI
-    pytest_tmpl = T.PYTEST_TEST_PURE if C.is_pytest(cfg) else T.PYTEST_TEST
+    core_h_tmpl = R.COMPONENT_CORE_H
+    core_c_tmpl = R.COMPONENT_CORE_C
+    ext_c_tmpl = R.COMPONENT_EXT_C
+    test_c_tmpl = R.COMPONENT_TEST_C
+    bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
+    pyi_tmpl = R.COMPONENT_PYI
+    pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (
-        T.COMPONENT_BENCH_PYTEST_BM
+        R.COMPONENT_BENCH_PYTEST_BM
         if C.is_pytest_benchmark(cfg)
-        else T.COMPONENT_BENCH_PY
+        else R.COMPONENT_BENCH_PY
     )
-    init_py_tmpl = T.PACKAGE_INIT_PY
+    init_py_tmpl = R.PACKAGE_INIT_PY
 
     # C headers
     core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
@@ -520,7 +522,7 @@ def run(
     if build == "cmake":
         _write(
             root / "native" / "src" / comp / "CMakeLists.txt",
-            r(T.CMAKE_LISTS_COMPONENT),
+            r(R.CMAKE_LISTS_COMPONENT),
         )
 
     # C test
@@ -533,7 +535,7 @@ def run(
     )
     jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
     if not jm_bench_h.exists():
-        _write(jm_bench_h, T.JM_BENCH_H)
+        _write(jm_bench_h, R.JM_BENCH_H)
 
     # Python package — create __init__.py on first component; splice on subsequent ones
     init_py = root / "src" / pkg / "__init__.py"
@@ -543,7 +545,7 @@ def run(
         _splice_init_py(init_py, comp, ctx["Component"])
 
     _write(root / "src" / pkg / f"{comp}.pyi", r(pyi_tmpl))
-    _write(root / "src" / pkg / "tests" / "__init__.py", T.TESTS_INIT_PY)
+    _write(root / "src" / pkg / "tests" / "__init__.py", R.TESTS_INIT_PY)
     _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(pytest_tmpl))
 
     # Python benchmark
@@ -564,13 +566,13 @@ def run(
         # Write cmake/pkg.pc.in if the project predates v0.4
         pc_in = root / "cmake" / f"{pkg.replace('_', '-')}.pc.in"
         if not pc_in.exists():
-            _write(pc_in, T.render(T.CMAKE_PC_IN, ctx))
+            _write(pc_in, R.render(R.CMAKE_PC_IN, ctx))
 
         # Write or update the umbrella header
         umbrella = root / "native" / "inc" / f"{pkg}.h"
         include_line = f'#include "{comp}/{comp}_core.h"\n'
         if not umbrella.exists():
-            _write(umbrella, T.render(T.UMBRELLA_H, ctx))
+            _write(umbrella, R.render(R.UMBRELLA_H, ctx))
         umbrella_text = umbrella.read_text(encoding="utf-8")
         if include_line not in umbrella_text:
             # Insert before the closing #endif
@@ -626,7 +628,7 @@ def run(
         ctest = f"test_{comp}_core"
         mf = re.sub(r"^(TARGETS\s*:=.*)$", rf"\1 {target}", mf, flags=re.M)
         mf = re.sub(r"^(C_TESTS\s*:=.*)$", rf"\1 {ctest}", mf, flags=re.M)
-        rules = T.render(T.MAKEFILE_SIMPLE_COMPONENT, ctx)
+        rules = R.render(R.MAKEFILE_SIMPLE_COMPONENT, ctx)
         mf = mf.replace("# ── Fixed targets", rules + "# ── Fixed targets")
         mf_path.write_text(mf, encoding="utf-8")
         print(f"  update  {mf_path}")

@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _templates as T
+from . import _render as T
 
 
 def _patch_core_h(header: Path, comp: str) -> bool:

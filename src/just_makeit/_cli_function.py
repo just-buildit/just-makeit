@@ -9,7 +9,7 @@ def run(args: list[str]) -> None:
         print("error: 'function' requires a function name.", file=sys.stderr)
         sys.exit(1)
     from . import _function
-    from . import _templates as T
+    from . import _types as T
 
     fn_name = args[0]
     module = None

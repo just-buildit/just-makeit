@@ -8,7 +8,7 @@ def parse_state_flag(remaining: list[str], i: int) -> tuple[tuple[str, str, str]
 
     Returns ((name, ctype, default), new_i).
     """
-    from . import _templates as T
+    from . import _types as T
 
     i += 1
     if i >= len(remaining):
@@ -58,7 +58,7 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
     Returns an 8-tuple and the advanced index:
     ``(name, type, default, default_raw, real_type, real_create_fn, optional, create_fn)``
     """
-    from . import _templates as T
+    from . import _types as T
 
     i += 1
     if i >= len(remaining):

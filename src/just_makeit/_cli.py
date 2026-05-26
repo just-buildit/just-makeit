@@ -364,7 +364,7 @@ def main() -> None:
             )
             sys.exit(1)
         from . import _property
-        from . import _templates as T
+        from . import _types as T
 
         object_name = args[1]
         prop_name = args[2]
