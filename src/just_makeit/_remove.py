@@ -27,6 +27,23 @@ from ._init import (
 from ._object import _regenerate_module
 
 
+_STUB_MARKER = "/* TODO: implement"
+
+
+def _is_implemented(path: Path) -> bool:
+    """Return True if path exists and its TODO stub placeholder has been replaced.
+
+    The inline ``step()`` function in a freshly scaffolded ``_core.h``
+    contains either ``/* TODO: implement */`` (stateless objects) or
+    ``/* TODO: implement using state variables */`` (stateful objects).
+    Both share the prefix ``/* TODO: implement``.  Once the user writes their
+    algorithm that prefix disappears, making its absence a reliable signal
+    that the file holds hand-written code that ``jm remove`` would
+    permanently destroy.
+    """
+    return path.exists() and _STUB_MARKER not in path.read_text(encoding="utf-8")
+
+
 def _confirm(prompt: str, force: bool) -> bool:
     """Ask the user to confirm a destructive action; --force skips the prompt."""
     if force:
@@ -156,6 +173,19 @@ def _remove_object_files(
         _strip_pkg_init(root, pkg, obj, _to_title(obj))
 
 
+def _warn_if_implemented(core_h: Path) -> bool:
+    """Print a stderr warning when *core_h* has hand-written code; return True
+    if implemented."""
+    if _is_implemented(core_h):
+        print(
+            f"  warning: {core_h} contains hand-written code"
+            " that will be permanently deleted (no recovery without git).",
+            file=sys.stderr,
+        )
+        return True
+    return False
+
+
 def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
@@ -163,15 +193,20 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         sys.exit(1)
     module = C.component_module(cfg, obj)
 
-    core_c = root / "native" / "src" / obj / f"{obj}_core.c"
-    warn = (
-        f"\n  note: {core_c} may hold your hand-written implementation."
-        if core_c.exists()
-        else ""
-    )
+    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    implemented = _warn_if_implemented(core_h)
+
     where = f" from module '{module}'" if module else ""
+    if implemented:
+        prompt_note = "\n  This cannot be recovered without git."
+    elif core_h.exists():
+        prompt_note = (
+            f"\n  note: {core_h} may hold your hand-written implementation."
+        )
+    else:
+        prompt_note = ""
     if not _confirm(
-        f"Remove object '{obj}'{where} and all its generated files?{warn}",
+        f"Remove object '{obj}'{where} and all its generated files?{prompt_note}",
         force,
     ):
         print("Aborted.")
@@ -208,8 +243,17 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
 
     objects = C.module_objects(cfg, module)
     detail = f" and its objects ({', '.join(objects)})" if objects else ""
+
+    any_implemented = any(
+        _warn_if_implemented(root / "native" / "inc" / obj / f"{obj}_core.h")
+        for obj in objects
+    )
+    prompt_note = (
+        "\n  This cannot be recovered without git." if any_implemented else ""
+    )
     if not _confirm(
-        f"Remove module '{module}'{detail} and all generated files?", force
+        f"Remove module '{module}'{detail} and all generated files?{prompt_note}",
+        force,
     ):
         print("Aborted.")
         return

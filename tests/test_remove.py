@@ -13,7 +13,7 @@ from just_makeit._module import run as module_run
 from just_makeit._method import run as method_run
 from just_makeit._property import run as property_run
 from just_makeit._function import run as function_run
-from just_makeit._remove import run as remove_run
+from just_makeit._remove import run as remove_run, _is_implemented, _STUB_MARKER
 from just_makeit._config import load, components, modules, module_objects
 
 
@@ -151,3 +151,69 @@ class TestRemoveMethodPropertyFunction:
             remove_run(
                 project, "method", "ghost", object_name="nco", force=True
             )
+
+
+class TestIsImplemented:
+    def test_stub_not_implemented(self, project):
+        core_h = project / "native" / "inc" / "gadget" / "gadget_core.h"
+        assert core_h.exists()
+        assert not _is_implemented(core_h)
+
+    def test_missing_file_not_implemented(self, tmp_path):
+        assert not _is_implemented(tmp_path / "nonexistent.h")
+
+    def test_implemented_after_marker_removed(self, project):
+        core_h = project / "native" / "inc" / "gadget" / "gadget_core.h"
+        text = core_h.read_text(encoding="utf-8")
+        # gadget has state vars so it uses the longer form of the marker
+        assert "/* TODO: implement using state variables */" in text
+        assert _STUB_MARKER in text  # prefix check
+        core_h.write_text(
+            text.replace(
+                "(void)state; /* TODO: implement using state variables */",
+                "state->g = 0.5f;",
+            ),
+            encoding="utf-8",
+        )
+        assert _is_implemented(core_h)
+
+
+class TestRemoveWarnsOnImplemented:
+    def _implement(self, project, obj):
+        """Replace the TODO stub in obj's _core.h to simulate user code."""
+        core_h = project / "native" / "inc" / obj / f"{obj}_core.h"
+        text = core_h.read_text(encoding="utf-8")
+        # Strip every variant of the TODO marker (with or without state suffix)
+        import re
+        new_text = re.sub(
+            r"\(void\)state; /\* TODO: implement[^*]* \*/",
+            "state->phase += state->freq; /* user algorithm */",
+            text,
+        )
+        core_h.write_text(new_text, encoding="utf-8")
+
+    def test_force_prints_warning_to_stderr(self, project, capsys):
+        self._implement(project, "gadget")
+        remove_run(project, "object", "gadget", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" in err
+        assert "gadget_core.h" in err
+
+    def test_stub_only_no_stderr_warning(self, project, capsys):
+        # gadget _core.h is still a fresh stub — no warning expected
+        remove_run(project, "object", "gadget", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" not in err
+
+    def test_module_force_warns_for_implemented_objects(self, project, capsys):
+        self._implement(project, "nco")
+        remove_run(project, "module", "dsp", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" in err
+        assert "nco_core.h" in err
+
+    def test_module_force_no_warning_for_stubs(self, project, capsys):
+        # neither nco nor mixer has been implemented
+        remove_run(project, "module", "dsp", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" not in err
