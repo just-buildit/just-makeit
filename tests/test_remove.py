@@ -13,7 +13,13 @@ from just_makeit._module import run as module_run
 from just_makeit._method import run as method_run
 from just_makeit._property import run as property_run
 from just_makeit._function import run as function_run
-from just_makeit._remove import run as remove_run, _is_implemented, _STUB_MARKER
+from just_makeit._remove import (
+    run as remove_run,
+    _is_implemented,
+    _STUB_MARKER,
+    _core_c_is_implemented,
+    _CORE_C_STUB_MARKER,
+)
 from just_makeit._config import load, components, modules, module_objects
 
 
@@ -215,5 +221,123 @@ class TestRemoveWarnsOnImplemented:
     def test_module_force_no_warning_for_stubs(self, project, capsys):
         # neither nco nor mixer has been implemented
         remove_run(project, "module", "dsp", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" not in err
+
+
+@pytest.fixture()
+def no_step_project(tmp_path):
+    """Project with two no_step objects: one no_state and one with state."""
+    root = tmp_path / "nsp"
+    new_run("nsp", root, ["sink"], [("buf", "float", "0.0f")])
+    # no_step + no_state: lifecycle stubs in _core.c carry <<IMPLEMENT markers
+    object_run(root, "chunker", None, no_step=True, no_state=True)
+    # no_step + has_state + one method: method body in _core.c carries <<IMPLEMENT
+    object_run(
+        root,
+        "detector",
+        None,
+        state_vars=[("thr", "float", "0.5f")],
+        no_step=True,
+    )
+    method_run(
+        root,
+        "detector",
+        "push",
+        None,
+        "float _Complex",
+        "void",
+        False,
+        [],
+    )
+    return root
+
+
+class TestCoreIsImplemented:
+    def test_no_state_fresh_stub_not_implemented(self, no_step_project):
+        core_c = (
+            no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
+        )
+        assert core_c.exists()
+        assert _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
+        assert not _core_c_is_implemented(core_c, is_no_state=True, has_methods=False)
+
+    def test_no_state_implemented_after_marker_removed(self, no_step_project):
+        core_c = (
+            no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
+        )
+        text = core_c.read_text(encoding="utf-8")
+        core_c.write_text(text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8")
+        assert not _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
+        assert _core_c_is_implemented(core_c, is_no_state=True, has_methods=False)
+
+    def test_has_state_with_method_fresh_stub_not_implemented(self, no_step_project):
+        core_c = (
+            no_step_project / "native" / "src" / "detector" / "detector_core.c"
+        )
+        assert core_c.exists()
+        assert _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
+        assert not _core_c_is_implemented(core_c, is_no_state=False, has_methods=True)
+
+    def test_has_state_with_method_implemented_after_marker_removed(
+        self, no_step_project
+    ):
+        core_c = (
+            no_step_project / "native" / "src" / "detector" / "detector_core.c"
+        )
+        text = core_c.read_text(encoding="utf-8")
+        core_c.write_text(text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8")
+        assert _core_c_is_implemented(core_c, is_no_state=False, has_methods=True)
+
+    def test_has_state_no_methods_always_false(self, no_step_project):
+        # no_step + has_state + no methods: generated file never had markers;
+        # can't distinguish fresh from modified, so always returns False
+        core_c = (
+            no_step_project / "native" / "src" / "detector" / "detector_core.c"
+        )
+        # even if markers are absent, returns False when has_methods=False
+        assert not _core_c_is_implemented(core_c, is_no_state=False, has_methods=False)
+
+    def test_missing_file_not_implemented(self, tmp_path):
+        assert not _core_c_is_implemented(
+            tmp_path / "nonexistent.c", is_no_state=True, has_methods=False
+        )
+
+
+class TestRemoveWarnsOnNoStepImplemented:
+    def _implement_core_c(self, root, obj):
+        core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+        text = core_c.read_text(encoding="utf-8")
+        core_c.write_text(
+            text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8"
+        )
+
+    def test_no_state_force_warns_to_stderr(self, no_step_project, capsys):
+        self._implement_core_c(no_step_project, "chunker")
+        remove_run(no_step_project, "object", "chunker", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" in err
+        assert "chunker_core.c" in err
+
+    def test_no_state_fresh_no_warning(self, no_step_project, capsys):
+        remove_run(no_step_project, "object", "chunker", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" not in err
+
+    def test_has_state_with_method_force_warns(self, no_step_project, capsys):
+        self._implement_core_c(no_step_project, "detector")
+        remove_run(no_step_project, "object", "detector", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" in err
+        assert "detector_core.c" in err
+
+    def test_has_state_with_method_fresh_no_warning(self, no_step_project, capsys):
+        remove_run(no_step_project, "object", "detector", force=True)
+        err = capsys.readouterr().err
+        assert "hand-written code" not in err
+
+    def test_standard_step_object_not_affected(self, no_step_project, capsys):
+        # 'sink' is a normal object with step() — its _core.h is checked, not _core.c
+        remove_run(no_step_project, "object", "sink", force=True)
         err = capsys.readouterr().err
         assert "hand-written code" not in err

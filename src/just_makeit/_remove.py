@@ -28,6 +28,7 @@ from ._object import _regenerate_module
 
 
 _STUB_MARKER = "/* TODO: implement"
+_CORE_C_STUB_MARKER = "/* <<IMPLEMENT:"
 
 
 def _is_implemented(path: Path) -> bool:
@@ -42,6 +43,47 @@ def _is_implemented(path: Path) -> bool:
     permanently destroy.
     """
     return path.exists() and _STUB_MARKER not in path.read_text(encoding="utf-8")
+
+
+def _core_c_is_implemented(
+    path: Path, is_no_state: bool, has_methods: bool
+) -> bool:
+    """Return True if a ``no_step`` object's ``_core.c`` likely holds user code.
+
+    A freshly scaffolded ``_core.c`` for a ``no_step`` object contains
+    ``/* <<IMPLEMENT: ... >> */`` placeholders in:
+
+    - Lifecycle stubs (``create``/``destroy``/``reset``) for ``no_state``
+      objects — the struct and its lifecycle are left for the user to fill in.
+    - Method bodies added via ``jm method`` — each method stub carries an
+      ``/* <<IMPLEMENT: name >> */`` comment.
+
+    Once the user replaces every placeholder, the marker disappears.  Its
+    absence is therefore a reliable signal that the file contains hand-written
+    code that ``jm remove`` would permanently destroy.
+
+    The exception is a ``no_step + has_state + no methods`` object: its
+    generated ``_core.c`` never contains the marker even on a fresh scaffold
+    (the lifecycle is fully emitted from the TOML state variables), so the
+    heuristic cannot distinguish "untouched" from "modified".  In that case
+    the function returns ``False`` to avoid spurious warnings.
+
+    Parameters
+    ----------
+    path : Path
+        Absolute path to ``{obj}_core.c``.
+    is_no_state : bool
+        True when the object was scaffolded with ``--no-state``.
+    has_methods : bool
+        True when the TOML lists at least one named extra method.
+    """
+    if not path.exists():
+        return False
+    # For has_state + no methods: the generated file never contains the
+    # <<IMPLEMENT marker, so we cannot tell fresh from modified.  Skip.
+    if not is_no_state and not has_methods:
+        return False
+    return _CORE_C_STUB_MARKER not in path.read_text(encoding="utf-8")
 
 
 def _confirm(prompt: str, force: bool) -> bool:
@@ -186,6 +228,21 @@ def _warn_if_implemented(core_h: Path) -> bool:
     return False
 
 
+def _core_c_warn_if_implemented(
+    core_c: Path, is_no_state: bool, has_methods: bool
+) -> bool:
+    """Print a stderr warning when a ``no_step`` *core_c* has user code; return
+    True if implemented."""
+    if _core_c_is_implemented(core_c, is_no_state, has_methods):
+        print(
+            f"  warning: {core_c} contains hand-written code"
+            " that will be permanently deleted (no recovery without git).",
+            file=sys.stderr,
+        )
+        return True
+    return False
+
+
 def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
@@ -194,14 +251,24 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     module = C.component_module(cfg, obj)
 
     core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
-    implemented = _warn_if_implemented(core_h)
+    if C.is_no_step(cfg, obj):
+        core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+        implemented = _core_c_warn_if_implemented(
+            core_c,
+            C.is_no_state(cfg, obj),
+            bool(C.methods(cfg, obj)),
+        )
+        impl_path = core_c
+    else:
+        implemented = _warn_if_implemented(core_h)
+        impl_path = core_h
 
     where = f" from module '{module}'" if module else ""
     if implemented:
         prompt_note = "\n  This cannot be recovered without git."
-    elif core_h.exists():
+    elif impl_path.exists():
         prompt_note = (
-            f"\n  note: {core_h} may hold your hand-written implementation."
+            f"\n  note: {impl_path} may hold your hand-written implementation."
         )
     else:
         prompt_note = ""
@@ -244,10 +311,19 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     objects = C.module_objects(cfg, module)
     detail = f" and its objects ({', '.join(objects)})" if objects else ""
 
-    any_implemented = any(
-        _warn_if_implemented(root / "native" / "inc" / obj / f"{obj}_core.h")
-        for obj in objects
-    )
+    def _obj_implemented(obj: str) -> bool:
+        if C.is_no_step(cfg, obj):
+            core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+            return _core_c_warn_if_implemented(
+                core_c,
+                C.is_no_state(cfg, obj),
+                bool(C.methods(cfg, obj)),
+            )
+        return _warn_if_implemented(
+            root / "native" / "inc" / obj / f"{obj}_core.h"
+        )
+
+    any_implemented = any(_obj_implemented(obj) for obj in objects)
     prompt_note = (
         "\n  This cannot be recovered without git." if any_implemented else ""
     )
