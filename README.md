@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
-[![codecov](https://codecov.io/gh/just-buildit/just-makeit/graph/badge.svg)](https://codecov.io/gh/just-buildit/just-makeit)
+[![codecov](https://codecov.io/gh/just-buildit/just-makeit/graph/badge.svg?token=29J7ACUITR)](https://codecov.io/gh/just-buildit/just-makeit)
 
 Getting an algorithm right is paramount. Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build
