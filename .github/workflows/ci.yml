@@ -108,11 +108,13 @@ jobs:
 
       - name: Install just-makeit and build deps
         run: |
-          uv tool install .
-          jm-install-deps ${{ runner.temp }}/jm-venv
           uv sync --group dev
+          uv pip install -e .
+          uv run jm-install-deps ${{ runner.temp }}/jm-venv
 
       - name: Run full test suite with coverage
+        env:
+          COVERAGE_PROCESS_START: pyproject.toml
         run: |
           uv run pytest \
             --cov=just_makeit \
