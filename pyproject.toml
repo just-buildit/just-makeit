@@ -58,6 +58,8 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["just_makeit"]
+branch = true
+parallel = true
 omit = ["*/tests/*", "*/examples/*"]
 
 [tool.coverage.report]
