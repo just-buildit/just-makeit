@@ -334,6 +334,63 @@ class TestApplyModuleDirective:
         with pytest.raises(SystemExit):
             apply_run(proj, fragment=frag)
 
+    def test_fragment_already_in_objects_dir_succeeds(self, tmp_path):
+        """jm apply objects/Foo.toml works when the fragment is already on
+        disk under the include glob (issue #42).
+
+        The "conflict" detected by _merge_fragment is the glob loading the
+        fragment itself, which is the expected state — apply should proceed
+        directly to materialization rather than raising an error."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+
+        # Simulate the user manually copying the fragment into objects/.
+        objects_dir = proj / "objects"
+        objects_dir.mkdir()
+        dest = objects_dir / "counter.toml"
+        dest.write_text(_COUNTER_FRAGMENT)
+
+        # Wire in the include glob and module membership by hand (as a user
+        # who skipped jm apply the first time would do).
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+        from just_makeit._apply import _wire_module_object
+        _wire_module_object(manifest, "dsp", "counter")
+
+        # Must not raise — proceeds straight to materialization.
+        apply_run(proj, fragment=dest)
+
+        # Materialization actually ran.
+        assert (proj / "native" / "src" / "counter" / "counter_core.c").exists()
+
+    def test_fragment_already_in_objects_dir_no_duplicate_copy(self, tmp_path):
+        """When the fragment is already in objects/, no second copy is made."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+
+        objects_dir = proj / "objects"
+        objects_dir.mkdir()
+        dest = objects_dir / "counter.toml"
+        dest.write_text(_COUNTER_FRAGMENT)
+
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+        from just_makeit._apply import _wire_module_object
+        _wire_module_object(manifest, "dsp", "counter")
+
+        original_mtime = dest.stat().st_mtime
+        apply_run(proj, fragment=dest)
+        # The fragment itself must not be overwritten.
+        assert dest.stat().st_mtime == original_mtime
+
 
 class TestApplySelectiveOnly:
     def test_only_module_skips_other_module(self, tmp_path):

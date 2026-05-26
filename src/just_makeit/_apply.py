@@ -673,12 +673,33 @@ def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
                 )
 
 
+def _fragment_already_included(root: Path, fragment_path: Path) -> bool:
+    """Return True when *fragment_path* is already covered by the manifest's
+    ``include`` glob — i.e. the file is in place and the loader already sees
+    its objects in the merged config.  This is the normal state after a user
+    manually copies a fragment into ``objects/`` before running ``jm apply``."""
+    manifest = C.load_manifest(root)
+    includes = manifest.get("include")
+    if not includes:
+        return False
+    fragment_resolved = fragment_path.resolve()
+    return any(
+        p.resolve() == fragment_resolved
+        for p in C._resolve_includes(root, includes)
+    )
+
+
 def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     """Validate *fragment_path*, copy it into `objects/`, and ensure the
     manifest's `include` glob covers it. Returns the destination path.
 
     Errors with the design-specified remedy if the fragment declares an
     object that the project already has.
+
+    If the fragment is already on disk under the existing include glob (e.g.
+    the user placed it in ``objects/`` manually before running ``jm apply``),
+    the copy and conflict-check steps are skipped and the command proceeds
+    directly to materialization — identical to running bare ``jm apply``.
 
     If a component section carries `module = "X"`, the component is wired
     into `[module.X].objects` in the manifest so `_replay` routes it to the
@@ -688,10 +709,16 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
 
     with fragment_path.open("rb") as f:
         fragment = tomllib.load(f)
-    # Test-merge against the current resolved cfg to surface conflicts
-    # before we touch any files. _merge_fragment raises ValueError naming
-    # the conflicting object and the recommended remedy.
-    C._merge_fragment(C.load(root), fragment, fragment_path)
+
+    already_included = _fragment_already_included(root, fragment_path)
+
+    if not already_included:
+        # Test-merge against the current resolved cfg to surface conflicts
+        # before we touch any files. _merge_fragment raises ValueError naming
+        # the conflicting object and the recommended remedy.
+        # Skip when already_included: the "conflict" is the glob loading the
+        # fragment itself, which is the expected state.
+        C._merge_fragment(C.load(root), fragment, fragment_path)
     _validate_fragment_impl_keys(fragment, str(fragment_path))
 
     # Collect module-routing directives and validate before side-effects.
