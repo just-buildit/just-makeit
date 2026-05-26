@@ -51,7 +51,10 @@ the user only writes the DSP algorithm.
 | File | Role |
 |---|---|
 | `_cli.py` | Entry point; dispatches `just-makeit <cmd>` to submodules |
-| `_templates.py` | **Central registry**: `_CTYPE_META` dict (C type → format/zero/numpy-enum metadata), all `TEMPLATE_*` string constants with `<<placeholder>>` syntax, and `make_*_ctx()` functions that build render dicts |
+| `_types.py` | **Type system**: `_CTYPE_META` dict, all type-query helpers (`is_valid_type`, `array_elem_ctype`, etc.) |
+| `_context.py` | **Context builders**: all `make_*_ctx()` functions that assemble render dicts |
+| `_render.py` | **Render engine**: `render()`, 45 template constants loaded from files at import, `fn_c_stub/decl`, `render_module_ext_*` |
+| `templates/` | **Template files**: `c/inc/`, `c/src/`, `cmake/`, `py/`, `make/`, `toml/`, `doc/`, `misc/` — 45 files; C/H use `/*<<token>>*/` placeholders for clang-format compatibility |
 | `_config.py` | Read/write `just-makeit.toml`; all project state lives here |
 | `_init.py` | `just-makeit new` / `just-makeit object` — standalone object scaffolding |
 | `_object.py` | `just-makeit object` — builds render context and calls `_init.py` writers |
@@ -70,11 +73,12 @@ the user only writes the DSP algorithm.
 
 ### Template rendering
 
-Templates live entirely in `_templates.py` as module-level string constants
-(e.g. `TEMPLATE_CORE_H`, `TEMPLATE_EXT_C`, `MAKEFILE`). Placeholders use
-`<<name>>` syntax (not `{}` or `%s`) to avoid collisions with C/CMake brace
-syntax. Rendering calls `tmpl.replace("<<key>>", value)` sequentially — there
-is no template engine dependency.
+Templates live as real files in `src/just_makeit/templates/` and are loaded
+at import time by `_render._load(relpath)`. Placeholders use `<<name>>`
+syntax (not `{}` or `%s`) to avoid collisions with C/CMake brace syntax.
+C/H templates use `/*<<token>>*/` so clang-format can parse them as valid C.
+`render()` in `_render.py` tries the wrapped form first, then the bare form —
+both are handled in a single pass.
 
 Context dicts are assembled by chaining `make_*_ctx()` functions:
 - `make_sample_ctx(arg_type, return_type)` — step() type metadata
@@ -146,8 +150,8 @@ The perf path uses a C macro defined in the generated `jm_perf.h` header.
 `JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)` stamps out the
 `fn_steps()` dispatch loop that selects between SIMD batch processing
 (`fn_step_batch()`) and scalar fallback (`fn_step()`). User code only provides
-`fn_step()` and optionally `fn_step_batch()`. The macro is in `_templates.py`
-as `JM_PERF_H`.
+`fn_step()` and optionally `fn_step_batch()`. The macro template lives at `templates/c/inc/jm_perf.h`, loaded as
+`JM_PERF_H` in `_render.py`.
 
 ### `--impl` lifting
 
@@ -160,7 +164,7 @@ or `patch_function_body`.
 
 ### Type system
 
-All supported C types are registered in `_CTYPE_META` in `_templates.py`.
+All supported C types are registered in `_CTYPE_META` in `_types.py`.
 Each entry specifies: `kind` (float/int/complex), `fmt` (PyArg_ParseTuple
 format char), `zero` (C zero literal), `py_type` (numpy dtype string),
 `parse_type` (intermediate C type for arg parsing), and `to_py` (lambda

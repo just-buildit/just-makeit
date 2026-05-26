@@ -400,6 +400,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_var = m.get("variable_output", False)
         m_multi = m.get("multi_output", [])
         m_result_fields = m.get("result_fields", [])
+        m_py_return_type = m.get("py_return_type", "")
 
         param_parts: list[str] = []
         if m_arg != "void":
@@ -407,7 +408,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         for p in m_params:
             param_parts.append(f"{p['name']}: {_py(p['type'])}")
 
-        if m_result_fields:
+        if m_py_return_type:
+            ret_ann = m_py_return_type
+        elif m_result_fields:
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             ret_ann = f"list[tuple[{field_types}]]"
         elif m_var:
