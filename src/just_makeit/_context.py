@@ -1445,6 +1445,13 @@ def make_state_ctx(
                 f'    {{"reset",    (PyCFunction){_ns_reset_fn},    METH_NOARGS,\n'
                 f'     "Reset state to post-create defaults."}},\n'
             ),
+            "builtin_reset_decl": (
+                f"/**\n"
+                f" * @brief Reset {Component} to its post-create state.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" */\n"
+                f"void {component}_reset({component}_state_t *state);"
+            ),
         }
         if init_params or array_args:
             base.update(
@@ -2131,6 +2138,16 @@ def make_state_ctx(
             f'    {{"reset",    (PyCFunction){Component}_reset,    METH_NOARGS,\n'
             f'     "Reset state to post-create defaults."}},\n'
         ),
+        # Callers may zero this out via make_methods_ctx() when user defines
+        # a custom "reset" method — suppresses the no-arg declaration from
+        # the header so the user's parameterised declaration is the only one.
+        "builtin_reset_decl": (
+            f"/**\n"
+            f" * @brief Reset {Component} to its post-create state.\n"
+            f" * @param state  Must be non-NULL.\n"
+            f" */\n"
+            f"void {component}_reset({component}_state_t *state);"
+        ),
     }
 
 
@@ -2497,6 +2514,15 @@ def make_methods_ctx(
 
         out_type: str | None = m.get("out_type")
         out_divisor: int = int(m.get("out_divisor", 1))
+        # For variable_output: out_type (when set) specifies the output buffer
+        # element type, overriding return_type.  Non-variable paths use
+        # out_type differently (per-call allocated ndarray with out_divisor).
+        _vo_out_elem = out_type if (variable_output and out_type) else return_type
+        _vo_out_disp = _ctype_display(_vo_out_elem)
+        _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
+        _vo_out_np = (
+            _NP_ENUM.get(_vo_out_meta["py_type"]) if _vo_out_meta else "NPY_FLOAT"
+        )
         has_params = bool(params)
         has_arg = arg_type != "void"
         if has_arg:
@@ -2512,7 +2538,12 @@ def make_methods_ctx(
         for _p in params:
             _pdisp = _ctype_display(_p["type"])
             _param_docs += f" * @param {_p['name']}  {_pdisp} parameter.\n"
-        _ret_doc = f" * @return Result ({ret_disp}).\n" if return_type != "void" else ""
+        _doc_ret_disp = _vo_out_disp if variable_output else ret_disp
+        _ret_doc = (
+            f" * @return Result ({_doc_ret_disp}).\n"
+            if return_type != "void"
+            else ""
+        )
         _method_doc = f"/**\n * @brief {name}.\n *\n{_param_docs}{_ret_doc} */"
         _ndecl = len(decl_lines)  # index before this method adds declarations
 
@@ -2645,7 +2676,7 @@ def make_methods_ctx(
                     f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
                     f"size_t {component}_{name}({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
-                    f" {ret_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params});"
                 )
             elif has_params:
                 _vp_parts: list[str] = []
@@ -2662,13 +2693,13 @@ def make_methods_ctx(
                     f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
                     f"size_t {component}_{name}({component}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
-                    f" {ret_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params});"
                 )
             else:
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
                     f"size_t {component}_{name}({component}_state_t *state, size_t n,"
-                    f" {ret_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params});"
                 )
         else:
             extra_params = "".join(
@@ -2726,7 +2757,7 @@ def make_methods_ctx(
 
         # ── pre-allocated buffer fields + alloc + free ────────────────────────
         if variable_output:
-            all_return_types = [return_type] + list(multi_output)
+            all_return_types = [_vo_out_elem] + list(multi_output)
             _malloc_lines: list[str] = []
             for i, rt in enumerate(all_return_types):
                 suffix = f"_{i}" if i > 0 else ""
@@ -2946,7 +2977,7 @@ def make_methods_ctx(
                     f" {component}_{name}_max_out(self->handle);\n"
                     f"        if (!_max) _max = {_lazy_fallback};\n"
                     f"        self->_{name}_buf ="
-                    f" malloc(_max * sizeof({ret_disp}));\n"
+                    f" malloc(_max * sizeof({_vo_out_disp}));\n"
                     f"        if (!self->_{name}_buf) {{"
                     f" {_decref_early_vo}PyErr_NoMemory();"
                     f" return NULL; }}\n"
@@ -2963,7 +2994,7 @@ def make_methods_ctx(
                     f"{_none_on_empty_line}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
-                    f"        1, &dim, {ret_np}, self->_{name}_buf);\n"
+                    f"        1, &dim, {_vo_out_np}, self->_{name}_buf);\n"
                     f"    if (!arr) return NULL;\n"
                     f"    PyArray_SetBaseObject((PyArrayObject *)arr, (PyObject *)self);\n"
                     f"    Py_INCREF(self);\n"
@@ -2971,7 +3002,7 @@ def make_methods_ctx(
                     f"    return arr;\n"
                     f"}}"
                 )
-            _all_rts_vo = [return_type] + list(multi_output)
+            _all_rts_vo = [_vo_out_elem] + list(multi_output)
             _dtype_strs_vo = [
                 _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"].replace("np.", "")
                 for rt in _all_rts_vo
@@ -3343,6 +3374,7 @@ def make_methods_ctx(
         **({
             "builtin_reset_c": "",
             "builtin_reset_pmd": "",
+            "builtin_reset_decl": "",
         } if user_has_reset else {}),
     }
 

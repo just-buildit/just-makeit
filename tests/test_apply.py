@@ -562,3 +562,132 @@ class TestApplyExtraTypes:
         assert nco_pos != -1
         assert hb_pos != -1
         assert nco_pos < hb_pos, "extra types must follow jm-owned types"
+
+
+_VOID_ARG_METHODS_FRAGMENT = """\
+[drain_obj]
+arg_type = "void"
+return_type = "uint64_t"
+mutable = "true"
+
+[[drain_obj.state]]
+name = "pos"
+type = "uint64_t"
+default = "0"
+
+[[drain_obj.methods]]
+name = "drain"
+params = [{name = "n", type = "uint32_t"}]
+return_type = "uint64_t"
+variable_output = true
+
+[[drain_obj.methods]]
+name = "reset"
+params = [{name = "start", type = "uint32_t"}]
+return_type = "void"
+"""
+
+# Same as above but uses out_type instead of return_type to specify the buffer
+# element type — tests that out_type is honoured for variable_output methods.
+_OUT_TYPE_METHODS_FRAGMENT = """\
+[lfsr_obj]
+arg_type = "void"
+return_type = "uint8_t"
+mutable = "true"
+
+[[lfsr_obj.state]]
+name = "state"
+type = "uint64_t"
+default = "0x3FF"
+
+[[lfsr_obj.methods]]
+name = "steps"
+params = [{name = "n", type = "uint32_t"}]
+out_type = "uint8_t"
+variable_output = true
+"""
+
+
+class TestMethodReplayArgType:
+    """Verify that apply replay uses 'void' as the default arg_type for methods
+    (not 'float _Complex'), fixing gh#49."""
+
+    def _apply_fragment(self, proj, frag_text):
+        new_run("proj", proj)
+        frag = proj.parent / "frag.toml"
+        frag.write_text(frag_text)
+        apply_run(proj, fragment=frag)
+        return (
+            proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h"
+        ).read_text(encoding="utf-8")
+
+    def test_variable_output_params_used_not_float_complex(self, tmp_path):
+        """drain() should use uint32_t n, not const float complex *in."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        assert "uint32_t n" in header
+        assert "float complex" not in header
+
+    def test_variable_output_correct_return_type(self, tmp_path):
+        """drain() output array is uint64_t *, not float complex *."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        assert "uint64_t *out" in header
+
+    def test_reset_with_params_no_duplicate(self, tmp_path):
+        """User reset(start) suppresses the builtin no-arg reset declaration."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        # User's parameterised reset should be present
+        assert "uint32_t start" in header
+        # Builtin no-arg reset declaration should be absent (suppressed)
+        reset_decls = [
+            line for line in header.splitlines()
+            if "drain_obj_reset" in line and line.strip().startswith("void")
+        ]
+        assert len(reset_decls) == 1, (
+            f"Expected exactly one reset declaration, got: {reset_decls}"
+        )
+        assert "uint32_t start" in reset_decls[0]
+
+    def test_standard_object_reset_decl_present(self, tmp_path):
+        """A normal object (no user reset method) still emits the builtin reset."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        object_run(proj, "osc", None, state_vars=[("phase", "float", "0.0f")])
+        header = (
+            proj / "native" / "inc" / "osc" / "osc_core.h"
+        ).read_text(encoding="utf-8")
+        assert "void osc_reset(osc_state_t *state);" in header
+
+
+class TestVariableOutputOutType:
+    """Verify that out_type is honoured as the buffer element type for
+    variable_output methods (gh#49 follow-up)."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "frag.toml"
+        frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        header = (
+            proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h"
+        ).read_text(encoding="utf-8")
+        core_c = (
+            proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c"
+        ).read_text(encoding="utf-8")
+        return header, core_c
+
+    def test_header_uses_out_type_not_return_type(self, tmp_path):
+        """Header buffer param should be uint8_t *, not float complex *."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "uint8_t *out" in header
+        assert "float complex" not in header
+
+    def test_header_params_used(self, tmp_path):
+        """Header should carry the declared uint32_t n param."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "uint32_t n" in header
+
+    def test_core_c_uses_out_type(self, tmp_path):
+        """_core.c stub signature should use uint8_t *out."""
+        _, core_c = self._apply(tmp_path / "proj")
+        assert "uint8_t *out" in core_c
+        assert "float complex" not in core_c

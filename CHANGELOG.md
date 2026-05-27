@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.13.15] — 2026-05-27
+
+### Fixed
+
+- **`out_type` now respected for `variable_output` methods** — when a method
+  declares `variable_output = true` and sets `out_type = "uint8_t"` (or any
+  scalar type), the output buffer parameter, pre-allocated field, and
+  `PyArray_SimpleNewFromData` call now all use `out_type` as the element type.
+  Previously `out_type` was silently ignored and `return_type` (defaulting to
+  `float _Complex`) was used instead, producing wrong C signatures and wrong
+  NumPy dtypes. (gh#49)
+
+- **`jm apply` method replay uses `void` as default `arg_type`** — when a
+  `[[obj.methods]]` entry omits `arg_type`, the replay in `jm apply` now
+  defaults to `"void"` (matching the CLI default) instead of `"float _Complex"`,
+  so methods with only `params` no longer receive a spurious
+  `const float complex *in, size_t n_in` input parameter. (gh#49)
+
 ## [0.13.14] — 2026-05-26
 
 ### Added
