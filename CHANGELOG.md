@@ -53,6 +53,14 @@
   `lfsr_state_t *state` local).  Generated `create_assignments` lines
   (`obj->field = value;`) are updated accordingly.  (gh#51 follow-up)
 
+- **Scalar setter parameter renamed from `<name>` to `val`** — the generated
+  `<comp>_set_<name>()` functions now use `val` as the new-value parameter so
+  that a field named `state` no longer causes a redeclaration error in the
+  setter (`<comp>_state_t *state` vs `uint64_t state`).  The generated
+  getter/setter implementations are also excluded from `_preserve_core_bodies`
+  preservation so future signature changes apply cleanly on regeneration.
+  (gh#51 follow-up)
+
 ## [0.13.15] — 2026-05-27
 
 ### Fixed
