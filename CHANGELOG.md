@@ -61,6 +61,18 @@
   preservation so future signature changes apply cleanly on regeneration.
   (gh#51 follow-up)
 
+- **`variable_output` buffer grows automatically at call time** — the
+  pre-allocated output buffer for `variable_output` methods previously used a
+  fixed-at-construction size, causing a heap overflow when `<comp>_max_out()`
+  returns 0 (placeholder) and the caller passes a scalar count `n` larger than
+  the 1-element fallback.  The wrapper now tracks `_<name>_buf_cap` alongside
+  the buffer pointer and uses `realloc` to grow the allocation whenever the
+  requested output count exceeds the current capacity.  For
+  `params`-driven methods with scalar-only arguments (e.g. `steps(uint32_t n)`),
+  the fallback size is now `(size_t)n` instead of `1`, so the very first call
+  allocates enough memory even when `max_out()` is not yet implemented.
+  (gh#51 follow-up)
+
 ## [0.13.15] — 2026-05-27
 
 ### Fixed
