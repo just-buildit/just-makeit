@@ -44,11 +44,7 @@ typedef struct {
  */
 void /*<<component>>*/_destroy(/*<<component>>*/_state_t *state);
 
-/**
- * @brief Reset /*<<component>>*/ to its post-create state.
- * @param state  Must be non-NULL.
- */
-void /*<<component>>*/_reset(/*<<component>>*/_state_t *state);
+/*<<builtin_reset_decl>>*/
 
 /*<<step_impl_def>>*/
 

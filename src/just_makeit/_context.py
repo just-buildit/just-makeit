@@ -1445,6 +1445,13 @@ def make_state_ctx(
                 f'    {{"reset",    (PyCFunction){_ns_reset_fn},    METH_NOARGS,\n'
                 f'     "Reset state to post-create defaults."}},\n'
             ),
+            "builtin_reset_decl": (
+                f"/**\n"
+                f" * @brief Reset {Component} to its post-create state.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" */\n"
+                f"void {component}_reset({component}_state_t *state);"
+            ),
         }
         if init_params or array_args:
             base.update(
@@ -2130,6 +2137,16 @@ def make_state_ctx(
         "builtin_reset_pmd": (
             f'    {{"reset",    (PyCFunction){Component}_reset,    METH_NOARGS,\n'
             f'     "Reset state to post-create defaults."}},\n'
+        ),
+        # Callers may zero this out via make_methods_ctx() when user defines
+        # a custom "reset" method — suppresses the no-arg declaration from
+        # the header so the user's parameterised declaration is the only one.
+        "builtin_reset_decl": (
+            f"/**\n"
+            f" * @brief Reset {Component} to its post-create state.\n"
+            f" * @param state  Must be non-NULL.\n"
+            f" */\n"
+            f"void {component}_reset({component}_state_t *state);"
         ),
     }
 
@@ -3343,6 +3360,7 @@ def make_methods_ctx(
         **({
             "builtin_reset_c": "",
             "builtin_reset_pmd": "",
+            "builtin_reset_decl": "",
         } if user_has_reset else {}),
     }
 

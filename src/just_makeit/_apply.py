@@ -232,7 +232,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 comp,
                 m["name"],
                 mod,
-                m.get("arg_type", "float _Complex"),
+                m.get("arg_type", "void"),
                 m.get("return_type", "float _Complex"),
                 bool(m.get("variable_output")),
                 list(m.get("multi_output", [])),

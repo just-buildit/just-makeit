@@ -562,3 +562,77 @@ class TestApplyExtraTypes:
         assert nco_pos != -1
         assert hb_pos != -1
         assert nco_pos < hb_pos, "extra types must follow jm-owned types"
+
+
+_VOID_ARG_METHODS_FRAGMENT = """\
+[drain_obj]
+arg_type = "void"
+return_type = "uint64_t"
+mutable = "true"
+
+[[drain_obj.state]]
+name = "pos"
+type = "uint64_t"
+default = "0"
+
+[[drain_obj.methods]]
+name = "drain"
+params = [{name = "n", type = "uint32_t"}]
+return_type = "uint64_t"
+variable_output = true
+
+[[drain_obj.methods]]
+name = "reset"
+params = [{name = "start", type = "uint32_t"}]
+return_type = "void"
+"""
+
+
+class TestMethodReplayArgType:
+    """Verify that apply replay uses 'void' as the default arg_type for methods
+    (not 'float _Complex'), fixing gh#49."""
+
+    def _apply_fragment(self, proj, frag_text):
+        new_run("proj", proj)
+        frag = proj.parent / "frag.toml"
+        frag.write_text(frag_text)
+        apply_run(proj, fragment=frag)
+        return (
+            proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h"
+        ).read_text(encoding="utf-8")
+
+    def test_variable_output_params_used_not_float_complex(self, tmp_path):
+        """drain() should use uint32_t n, not const float complex *in."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        assert "uint32_t n" in header
+        assert "float complex" not in header
+
+    def test_variable_output_correct_return_type(self, tmp_path):
+        """drain() output array is uint64_t *, not float complex *."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        assert "uint64_t *out" in header
+
+    def test_reset_with_params_no_duplicate(self, tmp_path):
+        """User reset(start) suppresses the builtin no-arg reset declaration."""
+        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        # User's parameterised reset should be present
+        assert "uint32_t start" in header
+        # Builtin no-arg reset declaration should be absent (suppressed)
+        reset_decls = [
+            line for line in header.splitlines()
+            if "drain_obj_reset" in line and line.strip().startswith("void")
+        ]
+        assert len(reset_decls) == 1, (
+            f"Expected exactly one reset declaration, got: {reset_decls}"
+        )
+        assert "uint32_t start" in reset_decls[0]
+
+    def test_standard_object_reset_decl_present(self, tmp_path):
+        """A normal object (no user reset method) still emits the builtin reset."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        object_run(proj, "osc", None, state_vars=[("phase", "float", "0.0f")])
+        header = (
+            proj / "native" / "inc" / "osc" / "osc_core.h"
+        ).read_text(encoding="utf-8")
+        assert "void osc_reset(osc_state_t *state);" in header
