@@ -215,7 +215,7 @@ void nco_steps(nco_state_t *state, float *output, size_t n);
 
 // Getter / setter for each --state variable
 double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double gain);
+void   engine_set_gain(engine_state_t *state, double val);
 ```
 
 ______________________________________________________________________
