@@ -1563,10 +1563,10 @@ def make_state_ctx(
 
     # ── CORE_C: assignments ──────────────────────────────────────────────────
 
-    create_assign_lines = [f"    state->{n} = {n};" for n, _, _ in scalar_vars]
+    create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in scalar_vars]
     for name, _, size in array_info:
         create_assign_lines.append(
-            f"    memset(state->{name}, 0, sizeof(state->{name}));"
+            f"    memset(obj->{name}, 0, sizeof(obj->{name}));"
         )
     create_assignments = "\n".join(create_assign_lines)
 

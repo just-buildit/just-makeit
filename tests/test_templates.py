@@ -293,7 +293,7 @@ class TestMakeStateCtxArrays:
     def test_array_create_assignment_uses_memset(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
         assert (
-            "memset(state->coeffs, 0, sizeof(state->coeffs))"
+            "memset(obj->coeffs, 0, sizeof(obj->coeffs))"
             in ctx["create_assignments"]
         )
 

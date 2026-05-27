@@ -37,7 +37,21 @@
   `create_impl_file = "path/to/file.c::funcname"` and
   `reset_impl_file = "path/to/file.c::funcname"` variants are also supported
   for lifting bodies from existing C files (analogous to `impl_file` for
-  step).  Each pair is mutually exclusive.  (gh#51)
+  step).  Each pair is mutually exclusive.
+
+  **Note:** inside `create_impl`, the freshly allocated struct pointer is
+  named `obj` (not `state`).  Use `obj->field = value;` to initialise fields.
+  The parameter names come directly from state field names; `obj` avoids a
+  collision when a field is also named `state`.  (gh#51)
+
+### Fixed
+
+- **`<comp>_create()` local pointer renamed from `state` to `obj`** — the
+  generated create function now uses `obj` for the freshly `calloc`'d struct
+  pointer so that a state field named `state` no longer causes a C compiler
+  redeclaration error (`uint64_t state` parameter vs.
+  `lfsr_state_t *state` local).  Generated `create_assignments` lines
+  (`obj->field = value;`) are updated accordingly.  (gh#51 follow-up)
 
 ## [0.13.15] — 2026-05-27
 

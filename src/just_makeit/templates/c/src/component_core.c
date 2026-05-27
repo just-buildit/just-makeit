@@ -3,11 +3,11 @@
 /*<<component>>*/_state_t *
 /*<<component>>*/_create(/*<<create_params>>*/)
 {
-    /*<<component>>*/_state_t *state = calloc(1, sizeof(*state));
-    if (!state)
+    /*<<component>>*/_state_t *obj = calloc(1, sizeof(*obj));
+    if (!obj)
         return NULL;
 /*<<create_assignments>>*/
-    return state;
+    return obj;
 }
 
 void

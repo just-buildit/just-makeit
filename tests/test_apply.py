@@ -700,8 +700,8 @@ return_type = "uint8_t"
 mutable = "true"
 create_impl = \"\"\"
 if (initial_state == 0) return NULL;
-state->initial_state = initial_state;
-state->state = initial_state;
+obj->initial_state = initial_state;
+obj->state = initial_state;
 \"\"\"
 reset_impl = \"\"\"
 state->state = state->initial_state;
@@ -736,7 +736,7 @@ class TestCreateResetImpl:
         """create_impl body should appear inside lfsr_create()."""
         core_c = self._apply(tmp_path / "proj")
         assert "if (initial_state == 0) return NULL;" in core_c
-        assert "state->initial_state = initial_state;" in core_c
+        assert "obj->initial_state = initial_state;" in core_c
 
     def test_reset_impl_body_present(self, tmp_path):
         """reset_impl body should appear inside lfsr_reset()."""
@@ -744,12 +744,12 @@ class TestCreateResetImpl:
         assert "state->state = state->initial_state;" in core_c
 
     def test_generated_assignments_replaced(self, tmp_path):
-        """Generated state->state = state; assignment must not survive."""
+        """Custom create_impl replaces the generated obj->field = value block."""
         core_c = self._apply(tmp_path / "proj")
-        # The generated create assignment would be "state->state = state;"
-        # (name collision); our create_impl replaces that entire block.
-        # Just confirm the literal generated line is gone.
-        assert "state->initial_state = initial_state;\n    state->state = state;" not in core_c
+        # Generated assignments would be "obj->initial_state = initial_state;"
+        # followed by "obj->state = state;" — the latter collides with the
+        # local parameter named 'state'. Our create_impl replaces the block.
+        assert "obj->state = state;" not in core_c
 
     def test_create_impl_indented(self, tmp_path):
         """create_impl lines must be 4-space indented in the output."""
