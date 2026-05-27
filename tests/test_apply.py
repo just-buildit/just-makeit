@@ -691,3 +691,67 @@ class TestVariableOutputOutType:
         _, core_c = self._apply(tmp_path / "proj")
         assert "uint8_t *out" in core_c
         assert "float complex" not in core_c
+
+
+_CREATE_RESET_IMPL_FRAGMENT = """\
+[lfsr]
+arg_type = "void"
+return_type = "uint8_t"
+mutable = "true"
+create_impl = \"\"\"
+if (initial_state == 0) return NULL;
+obj->initial_state = initial_state;
+obj->state = initial_state;
+\"\"\"
+reset_impl = \"\"\"
+state->state = state->initial_state;
+\"\"\"
+
+[[lfsr.state]]
+name = "initial_state"
+type = "uint64_t"
+default = "0"
+
+[[lfsr.state]]
+name = "state"
+type = "uint64_t"
+default = "0"
+"""
+
+
+class TestCreateResetImpl:
+    """Verify that create_impl and reset_impl override the generated
+    field-assignment blocks in component_core.c (gh#51)."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "lfsr.toml"
+        frag.write_text(_CREATE_RESET_IMPL_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        return (
+            proj / "native" / "src" / "lfsr" / "lfsr_core.c"
+        ).read_text(encoding="utf-8")
+
+    def test_create_impl_body_present(self, tmp_path):
+        """create_impl body should appear inside lfsr_create()."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "if (initial_state == 0) return NULL;" in core_c
+        assert "obj->initial_state = initial_state;" in core_c
+
+    def test_reset_impl_body_present(self, tmp_path):
+        """reset_impl body should appear inside lfsr_reset()."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "state->state = state->initial_state;" in core_c
+
+    def test_generated_assignments_replaced(self, tmp_path):
+        """Custom create_impl replaces the generated obj->field = value block."""
+        core_c = self._apply(tmp_path / "proj")
+        # Generated assignments would be "obj->initial_state = initial_state;"
+        # followed by "obj->state = state;" — the latter collides with the
+        # local parameter named 'state'. Our create_impl replaces the block.
+        assert "obj->state = state;" not in core_c
+
+    def test_create_impl_indented(self, tmp_path):
+        """create_impl lines must be 4-space indented in the output."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "    if (initial_state == 0) return NULL;" in core_c

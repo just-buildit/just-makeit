@@ -1532,9 +1532,9 @@ def make_state_ctx(
             f"/**\n"
             f" * @brief Set {name}.\n"
             f" * @param state  Must be non-NULL.\n"
-            f" * @param {name}  New value.\n"
+            f" * @param val    New value.\n"
             f" */\n"
-            f"void {component}_set_{name}({component}_state_t *state, {ct} {name});"
+            f"void {component}_set_{name}({component}_state_t *state, {ct} val);"
         )
     for name, elem_ct, size in array_info:
         decl_parts.append(
@@ -1563,10 +1563,10 @@ def make_state_ctx(
 
     # ── CORE_C: assignments ──────────────────────────────────────────────────
 
-    create_assign_lines = [f"    state->{n} = {n};" for n, _, _ in scalar_vars]
+    create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in scalar_vars]
     for name, _, size in array_info:
         create_assign_lines.append(
-            f"    memset(state->{name}, 0, sizeof(state->{name}));"
+            f"    memset(obj->{name}, 0, sizeof(obj->{name}));"
         )
     create_assignments = "\n".join(create_assign_lines)
 
@@ -1601,9 +1601,9 @@ def make_state_ctx(
             f"}}\n"
             f"\n"
             f"void\n"
-            f"{component}_set_{name}({component}_state_t *state, {ct} {name})\n"
+            f"{component}_set_{name}({component}_state_t *state, {ct} val)\n"
             f"{{\n"
-            f"    state->{name} = {name};\n"
+            f"    state->{name} = val;\n"
             f"}}"
         )
     for name, elem_ct, size in array_info:
@@ -2774,15 +2774,22 @@ def make_methods_ctx(
                     f"        if (!self->{field_name}) {{"
                     f" PyErr_NoMemory(); return -1; }}\n"
                 )
+            # Cap field tracks current allocation size; used by the runtime
+            # grow logic to detect when a realloc is needed.
+            buf_fields.append(
+                f"    size_t _{name}_buf_cap;"
+                f"  /* allocated capacity for {name} */\n"
+            )
             # Guard against max_out() returning 0 at construction time
             # (output size is input-dependent; lazy alloc in the wrapper
-            # handles this case transparently at first call).
+            # handles grow/realloc transparently at each call).
             buf_alloc.append(
                 f"    {{\n"
                 f"        size_t _max ="
                 f" {component}_{name}_max_out(self->handle);\n"
                 f"        if (_max) {{\n"
                 + "".join(_malloc_lines)
+                + f"            self->_{name}_buf_cap = _max;\n"
                 + f"        }}\n"
                 f"    }}\n"
             )
@@ -2815,6 +2822,7 @@ def make_methods_ctx(
                 _fmt = ""
                 _fmt_args: list[str] = []
                 _first_arr: str | None = None
+                _first_scalar: str | None = None
                 for _p in params:
                     _pn = _p["name"]
                     _pt = _p["type"]
@@ -2859,6 +2867,8 @@ def make_methods_ctx(
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
+                        if _first_scalar is None:
+                            _first_scalar = _pn
                 _cd_parts.append(f"self->_{name}_buf")
                 _fmt_str = '", "'.join([f'"{_fmt}', ", ".join(_fmt_args) + ")"])
                 parse_block = (
@@ -2890,12 +2900,15 @@ def make_methods_ctx(
                 parse_block += "\n".join(_conv_lines) + "\n" if _conv_lines else ""
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
-                # Lazy-alloc fallback: use the first array param's size if
-                # available; otherwise the output count is always 1 (scalar
-                # params only, e.g. a single complex "D" argument).
+                # Lazy-alloc / grow fallback: prefer the first array param's
+                # length, then the first scalar param (e.g. steps(uint32_t n)),
+                # then 1 as a last resort.
                 _lazy_fallback = (
                     f"(size_t)PyArray_SIZE({_first_arr}_arr)"
-                    if _first_arr is not None else "1"
+                    if _first_arr is not None
+                    else f"(size_t){_first_scalar}"
+                    if _first_scalar is not None
+                    else "1"
                 )
             else:
                 parse_block = (
@@ -2960,9 +2973,10 @@ def make_methods_ctx(
                     "    if (!n_out) Py_RETURN_NONE;\n"
                     if none_on_empty else ""
                 )
-                # Lazy-alloc for the case where max_out() returned 0 at
-                # construction (output size is input-dependent).  On first
-                # call, re-query max_out(); fall back to n if still 0.
+                # Grow the buffer when it is NULL (max_out() returned 0 at
+                # construction) or when the caller requests more output than
+                # the current allocation can hold.  _need is the minimum
+                # number of elements required for this call.
                 _decref_early_vo = (
                     " ".join(
                         l.strip()
@@ -2972,15 +2986,20 @@ def make_methods_ctx(
                     if decref_in.strip() else ""
                 )
                 _lazy_alloc_vo = (
-                    f"    if (!self->_{name}_buf) {{\n"
+                    f"    size_t _need = {_lazy_fallback};\n"
+                    f"    if (!self->_{name}_buf"
+                    f" || self->_{name}_buf_cap < _need) {{\n"
                     f"        size_t _max ="
                     f" {component}_{name}_max_out(self->handle);\n"
-                    f"        if (!_max) _max = {_lazy_fallback};\n"
-                    f"        self->_{name}_buf ="
-                    f" malloc(_max * sizeof({_vo_out_disp}));\n"
-                    f"        if (!self->_{name}_buf) {{"
+                    f"        if (!_max || _max < _need) _max = _need;\n"
+                    f"        {_vo_out_disp} *_tmp = realloc("
+                    f"self->_{name}_buf,"
+                    f" _max * sizeof({_vo_out_disp}));\n"
+                    f"        if (!_tmp) {{"
                     f" {_decref_early_vo}PyErr_NoMemory();"
                     f" return NULL; }}\n"
+                    f"        self->_{name}_buf = _tmp;\n"
+                    f"        self->_{name}_buf_cap = _max;\n"
                     f"    }}\n"
                 )
                 wrapper = (

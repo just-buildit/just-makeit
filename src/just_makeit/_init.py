@@ -206,6 +206,13 @@ def _preserve_core_bodies(
         funcs = _extract_core_c_funcs(old)
         for name in exclude:
             funcs.pop(name, None)
+        # Getter/setter impls are trivial auto-generated one-liners that
+        # users never hand-edit — always re-emit the freshly generated version
+        # so parameter/signature changes (e.g. val rename) take effect.
+        gs_prefix = (f"{comp}_get_", f"{comp}_set_")
+        for fn in list(funcs):
+            if fn.startswith(gs_prefix):
+                funcs.pop(fn)
         return _restore_core_c_funcs(new_text, funcs)
     # header: merge struct fields, then restore the inline step() definition
     old_struct = _STRUCT_RE.search(old)
@@ -350,6 +357,8 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     impl_body: str | None = None,
+    create_impl_body: str | None = None,
+    reset_impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
@@ -459,6 +468,15 @@ def run(
         if scalar_state
         else ""
     )
+
+    if create_impl_body is not None:
+        from ._object import _indent_body
+
+        ctx["create_assignments"] = _indent_body(create_impl_body)
+    if reset_impl_body is not None:
+        from ._object import _indent_body
+
+        ctx["reset_assignments"] = _indent_body(reset_impl_body)
 
     def r(tmpl):
         return R.render(tmpl, ctx)

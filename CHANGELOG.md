@@ -2,6 +2,77 @@
 
 ## [Unreleased]
 
+## [0.13.16] — 2026-05-27
+
+### Added
+
+- **`create_impl` and `reset_impl` TOML keys** — add custom C bodies for
+  `<comp>_create()` and `<comp>_reset()` directly in TOML, bypassing the
+  generated field-assignment code.  Use these when scaffolded assignments are
+  insufficient: parameter validation, lookup tables, computed masks, or
+  anything that can't be expressed as plain field copies.
+
+  Place the keys in the `[comp]` section *before* any `[[comp.state]]` arrays
+  (TOML requires this — keys must precede sub-table arrays in the same section):
+
+  ```toml
+  [lfsr]
+  arg_type = "void"
+  return_type = "uint8_t"
+  create_impl = """
+  if (initial_state == 0) return NULL;
+  state->initial_state = initial_state;
+  state->state = initial_state;
+  """
+  reset_impl = """
+  state->state = state->initial_state;
+  """
+
+  [[lfsr.state]]
+  name = "initial_state"
+  type = "uint64_t"
+  default = "0"
+  ```
+
+  `create_impl_file = "path/to/file.c::funcname"` and
+  `reset_impl_file = "path/to/file.c::funcname"` variants are also supported
+  for lifting bodies from existing C files (analogous to `impl_file` for
+  step).  Each pair is mutually exclusive.
+
+  **Note:** inside `create_impl`, the freshly allocated struct pointer is
+  named `obj` (not `state`).  Use `obj->field = value;` to initialise fields.
+  The parameter names come directly from state field names; `obj` avoids a
+  collision when a field is also named `state`.  (gh#51)
+
+### Fixed
+
+- **`<comp>_create()` local pointer renamed from `state` to `obj`** — the
+  generated create function now uses `obj` for the freshly `calloc`'d struct
+  pointer so that a state field named `state` no longer causes a C compiler
+  redeclaration error (`uint64_t state` parameter vs.
+  `lfsr_state_t *state` local).  Generated `create_assignments` lines
+  (`obj->field = value;`) are updated accordingly.  (gh#51 follow-up)
+
+- **Scalar setter parameter renamed from `<name>` to `val`** — the generated
+  `<comp>_set_<name>()` functions now use `val` as the new-value parameter so
+  that a field named `state` no longer causes a redeclaration error in the
+  setter (`<comp>_state_t *state` vs `uint64_t state`).  The generated
+  getter/setter implementations are also excluded from `_preserve_core_bodies`
+  preservation so future signature changes apply cleanly on regeneration.
+  (gh#51 follow-up)
+
+- **`variable_output` buffer grows automatically at call time** — the
+  pre-allocated output buffer for `variable_output` methods previously used a
+  fixed-at-construction size, causing a heap overflow when `<comp>_max_out()`
+  returns 0 (placeholder) and the caller passes a scalar count `n` larger than
+  the 1-element fallback.  The wrapper now tracks `_<name>_buf_cap` alongside
+  the buffer pointer and uses `realloc` to grow the allocation whenever the
+  requested output count exceeds the current capacity.  For
+  `params`-driven methods with scalar-only arguments (e.g. `steps(uint32_t n)`),
+  the fallback size is now `(size_t)n` instead of `1`, so the very first call
+  allocates enough memory even when `max_out()` is not yet implemented.
+  (gh#51 follow-up)
+
 ## [0.13.15] — 2026-05-27
 
 ### Fixed

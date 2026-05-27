@@ -1042,7 +1042,7 @@ class TestMethodVariableOutputCLI:
             cwd=dest,
         )
         ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
-        assert "buf" in ext and "malloc" in ext
+        assert "_execute_cf32_buf" in ext and "realloc" in ext
 
 
 class TestMethodMultiOutputCLI:

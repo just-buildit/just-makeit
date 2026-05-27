@@ -31,6 +31,19 @@ from ._init import (
 )
 
 
+def _indent_body(body: str, indent: str = "    ") -> str:
+    """Indent each non-empty line of *body* with *indent* (default 4 spaces).
+
+    Strips leading/trailing whitespace from the full body first so that TOML
+    triple-quoted strings with a leading newline don't produce a blank first
+    line.
+    """
+    return "\n".join(
+        indent + line if line.strip() else line
+        for line in body.strip().splitlines()
+    )
+
+
 def _make_object_ctx(
     component: str,
     module: str,
@@ -545,6 +558,8 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     impl_body: str | None = None,
+    create_impl_body: str | None = None,
+    reset_impl_body: str | None = None,
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     variable_output: bool = False,
@@ -589,6 +604,8 @@ def run(
             no_step=no_step,
             mutable=mutable,
             impl_body=impl_body,
+            create_impl_body=create_impl_body,
+            reset_impl_body=reset_impl_body,
             init_params=init_params,
             class_name=class_name,
             depends_on=list(depends_on),
@@ -666,6 +683,11 @@ def run(
             no_state=no_state,
         )
     )
+
+    if create_impl_body is not None:
+        ctx["create_assignments"] = _indent_body(create_impl_body)
+    if reset_impl_body is not None:
+        ctx["reset_assignments"] = _indent_body(reset_impl_body)
 
     def r(tmpl):
         return R.render(tmpl, ctx)

@@ -105,13 +105,13 @@ void <component>_steps(
 
 ```c
 float   <component>_get_gain(const <component>_state_t *state);
-void    <component>_set_gain(<component>_state_t *state, float gain);
+void    <component>_set_gain(<component>_state_t *state, float val);
 
 float   <component>_get_bandwidth(const <component>_state_t *state);
-void    <component>_set_bandwidth(<component>_state_t *state, float bandwidth);
+void    <component>_set_bandwidth(<component>_state_t *state, float val);
 
 int32_t <component>_get_order(const <component>_state_t *state);
-void    <component>_set_order(<component>_state_t *state, int32_t order);
+void    <component>_set_order(<component>_state_t *state, int32_t val);
 ```
 
 ______________________________________________________________________

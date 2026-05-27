@@ -3,7 +3,7 @@
 ## Before you start
 
 - [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally (988 passed as of v0.13.2)
+- [ ] `uv run pytest` passes locally
 - [ ] CI badge on `main` is green
 - [ ] Run `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"` and visually confirm all examples pass locally — catches environment-sensitive failures (missing `pytest`, `cmake`, etc.) that CI may not surface
 
@@ -26,8 +26,9 @@ ______________________________________________________________________
 ## 2. Update version and changelog
 
 ```sh
-# pyproject.toml
+# pyproject.toml — single source of truth for the version
 version = "X.Y.Z"
+# jb.toml is auto-synced by the pre-commit hook (sync-jb-version)
 
 # CHANGELOG.md — add a new section at the top:
 ## [X.Y.Z] — YYYY-MM-DD

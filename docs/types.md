@@ -108,10 +108,10 @@ the same type:
 
 ```c
 double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double gain);
+void   engine_set_gain(engine_state_t *state, double val);
 
 uint8_t engine_get_channel(const engine_state_t *state);
-void    engine_set_channel(engine_state_t *state, uint8_t channel);
+void    engine_set_channel(engine_state_t *state, uint8_t val);
 ```
 
 ```python
