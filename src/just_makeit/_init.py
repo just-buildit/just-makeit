@@ -206,6 +206,13 @@ def _preserve_core_bodies(
         funcs = _extract_core_c_funcs(old)
         for name in exclude:
             funcs.pop(name, None)
+        # Getter/setter impls are trivial auto-generated one-liners that
+        # users never hand-edit — always re-emit the freshly generated version
+        # so parameter/signature changes (e.g. val rename) take effect.
+        gs_prefix = (f"{comp}_get_", f"{comp}_set_")
+        for fn in list(funcs):
+            if fn.startswith(gs_prefix):
+                funcs.pop(fn)
         return _restore_core_c_funcs(new_text, funcs)
     # header: merge struct fields, then restore the inline step() definition
     old_struct = _STRUCT_RE.search(old)

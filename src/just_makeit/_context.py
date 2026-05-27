@@ -1532,9 +1532,9 @@ def make_state_ctx(
             f"/**\n"
             f" * @brief Set {name}.\n"
             f" * @param state  Must be non-NULL.\n"
-            f" * @param {name}  New value.\n"
+            f" * @param val    New value.\n"
             f" */\n"
-            f"void {component}_set_{name}({component}_state_t *state, {ct} {name});"
+            f"void {component}_set_{name}({component}_state_t *state, {ct} val);"
         )
     for name, elem_ct, size in array_info:
         decl_parts.append(
@@ -1601,9 +1601,9 @@ def make_state_ctx(
             f"}}\n"
             f"\n"
             f"void\n"
-            f"{component}_set_{name}({component}_state_t *state, {ct} {name})\n"
+            f"{component}_set_{name}({component}_state_t *state, {ct} val)\n"
             f"{{\n"
-            f"    state->{name} = {name};\n"
+            f"    state->{name} = val;\n"
             f"}}"
         )
     for name, elem_ct, size in array_info:
