@@ -336,6 +336,12 @@ your changes on the next command. The rules:
 - **Order matters for state variables**: `[[<object>.state]]` entries are
     emitted in the order they appear, which controls constructor argument order
     in both C and Python.
+- **Keys must come before sub-table arrays**: all scalar keys on an object
+    section (`impl`, `create_impl`, `reset_impl`, `arg_type`, `mutable`, …)
+    must appear **before** the first `[[<object>.state]]` or
+    `[[<object>.methods]]` entry.  TOML parses bare keys after an
+    array-of-tables header as part of that entry, not the parent section,
+    so keys placed after a `[[…]]` line are silently dropped by the parser.
 - **Removing a state variable** from TOML does not touch the generated source
     files. Re-run `just-makeit script | sh` in a clean directory if you want a
     fully regenerated scaffold that matches TOML.

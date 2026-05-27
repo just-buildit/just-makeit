@@ -129,6 +129,94 @@ Two more keys are honoured on object and method sections:
 `impl` and `impl_file` are mutually exclusive; apply errors before any
 side effects if both are set.
 
+### Custom `create()` and `reset()` bodies
+
+When the generated field-assignment code is not enough — parameter
+validation, lookup tables, computed masks — add `create_impl` and/or
+`reset_impl` to the object section:
+
+```toml
+[lfsr]
+arg_type    = "void"
+return_type = "uint8_t"
+mutable     = "true"
+no_step     = "true"    # suppress default step/steps when using custom methods
+create_impl = """
+if (initial_state == 0) return NULL;
+obj->initial_state = initial_state;
+obj->state         = initial_state;
+obj->mask          = (length == 64) ? ~0ULL : ((1ULL << length) - 1);
+"""
+reset_impl = """
+state->state = state->initial_state;
+"""
+
+[[lfsr.state]]
+name = "initial_state"
+type = "uint64_t"
+default = "0"
+...
+```
+
+!!! warning "TOML ordering: keys before sub-table arrays"
+
+    All scalar keys (`impl`, `create_impl`, `reset_impl`, `arg_type`, …)
+    **must appear before** any `[[comp.state]]` (or `[[comp.methods]]`)
+    entries in the same section.  TOML requires this: once an array-of-tables
+    header appears, all subsequent bare keys are parsed as part of that entry,
+    not the parent section.
+
+    **Correct** — keys first, state arrays after:
+
+    ```toml
+    [lfsr]
+    arg_type    = "void"
+    create_impl = """…"""
+
+    [[lfsr.state]]
+    name = "initial_state"
+    ...
+    ```
+
+    **Wrong** — key after array-of-tables header (silently dropped):
+
+    ```toml
+    [lfsr]
+    arg_type = "void"
+
+    [[lfsr.state]]
+    name = "initial_state"
+    ...
+
+    create_impl = """…"""   # ← parsed into the last [[lfsr.state]] entry, not [lfsr]!
+    ```
+
+!!! note "`obj` vs `state` in `create_impl`"
+
+    Inside a `create_impl` body the freshly `calloc`'d struct pointer is
+    named **`obj`** (not `state`).  This avoids a C compiler redeclaration
+    error when a state field happens to be named `state`:
+
+    ```c
+    /* create_impl sees: */
+    lfsr_state_t *obj = calloc(1, sizeof(*obj));
+    /* parameters are state field names, e.g. uint64_t initial_state */
+    ```
+
+    Inside a `reset_impl` body the pointer is the function parameter
+    **`state`** (as in every other C function that takes a
+    `<comp>_state_t *state`).
+
+File-reference variants are also supported:
+
+```toml
+create_impl_file = "legacy/lfsr_core.c::lfsr_create"
+reset_impl_file  = "legacy/lfsr_core.c::lfsr_reset"
+```
+
+`create_impl` / `create_impl_file` are mutually exclusive, as are
+`reset_impl` / `reset_impl_file`.
+
 ---
 
 ## Integrating hand-written C libraries (`c_deps`, `no_generate`, `depends_on`)
