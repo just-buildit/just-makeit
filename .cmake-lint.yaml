@@ -1,0 +1,9 @@
+# cmake-lint configuration.
+#
+# Formatting rules (line length, indentation) are deferred to cmake-format —
+# see .cmake-format.yaml.  We enforce naming conventions and completeness
+# rules so generated CMakeLists.txt files stay clean for users who run
+# cmake-lint in their own projects.
+disabled_codes:
+  - C0301  # line too long (cmake-format enforces line width)
+  - C0307  # bad indentation (cmake-format enforces indent style)

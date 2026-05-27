@@ -19,7 +19,7 @@ ENV JM_HOME=/home/just-makeit
 # the current HEAD — no version lag.
 COPY . /src
 RUN python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir numpy pytest /src
+    python -m pip install --no-cache-dir numpy pytest cmakelang /src
 
 # ── Install build deps (cmake, gcc, pkg-config) ───────────────────────────────
 RUN just-makeit install-deps
