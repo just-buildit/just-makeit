@@ -587,6 +587,26 @@ params = [{name = "start", type = "uint32_t"}]
 return_type = "void"
 """
 
+# Same as above but uses out_type instead of return_type to specify the buffer
+# element type — tests that out_type is honoured for variable_output methods.
+_OUT_TYPE_METHODS_FRAGMENT = """\
+[lfsr_obj]
+arg_type = "void"
+return_type = "uint8_t"
+mutable = "true"
+
+[[lfsr_obj.state]]
+name = "state"
+type = "uint64_t"
+default = "0x3FF"
+
+[[lfsr_obj.methods]]
+name = "steps"
+params = [{name = "n", type = "uint32_t"}]
+out_type = "uint8_t"
+variable_output = true
+"""
+
 
 class TestMethodReplayArgType:
     """Verify that apply replay uses 'void' as the default arg_type for methods
@@ -636,3 +656,38 @@ class TestMethodReplayArgType:
             proj / "native" / "inc" / "osc" / "osc_core.h"
         ).read_text(encoding="utf-8")
         assert "void osc_reset(osc_state_t *state);" in header
+
+
+class TestVariableOutputOutType:
+    """Verify that out_type is honoured as the buffer element type for
+    variable_output methods (gh#49 follow-up)."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "frag.toml"
+        frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        header = (
+            proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h"
+        ).read_text(encoding="utf-8")
+        core_c = (
+            proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c"
+        ).read_text(encoding="utf-8")
+        return header, core_c
+
+    def test_header_uses_out_type_not_return_type(self, tmp_path):
+        """Header buffer param should be uint8_t *, not float complex *."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "uint8_t *out" in header
+        assert "float complex" not in header
+
+    def test_header_params_used(self, tmp_path):
+        """Header should carry the declared uint32_t n param."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "uint32_t n" in header
+
+    def test_core_c_uses_out_type(self, tmp_path):
+        """_core.c stub signature should use uint8_t *out."""
+        _, core_c = self._apply(tmp_path / "proj")
+        assert "uint8_t *out" in core_c
+        assert "float complex" not in core_c

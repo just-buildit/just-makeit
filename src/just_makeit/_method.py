@@ -34,9 +34,11 @@ def _methods_c_stub_variable(
     return_type: str,
     multi_output: list[str],
     params: list[tuple[str, str]] | None = None,
+    out_type: str | None = None,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method."""
-    ret_disp = T._ctype_display(return_type)
+    buf_type = out_type if out_type else return_type
+    ret_disp = T._ctype_display(buf_type)
     has_arg = arg_type != "void"
     params = params or []
 
@@ -370,6 +372,7 @@ def run(
         stub = _methods_c_stub_variable(
             object_name, method_name, arg_type, return_type, multi_output,
             params=[(p[0], p[1]) for p in params],
+            out_type=out_type,
         )
     else:
         stub = _methods_c_stub_fixed(
