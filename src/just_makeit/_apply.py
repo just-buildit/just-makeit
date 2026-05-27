@@ -42,17 +42,24 @@ def _interpolate(body: str, ctx: dict) -> str:
 
 
 def _resolve_impl(
-    section: dict, ctx: dict, root: Path, label: str
+    section: dict,
+    ctx: dict,
+    root: Path,
+    label: str,
+    impl_key: str = "impl",
+    impl_file_key: str = "impl_file",
 ) -> str | None:
-    """Honour `impl` / `impl_file` / `replace` on a TOML section. Returns
-    the resolved body (interpolated + substituted) or None when neither
-    key is set. Raises ValueError on mutual-exclusion violations."""
-    inline = section.get("impl")
-    file_ref = section.get("impl_file")
+    """Honour `<impl_key>` / `<impl_file_key>` / `replace` on a TOML section.
+
+    Returns the resolved body (interpolated + substituted) or None when
+    neither key is set.  Raises ValueError on mutual-exclusion violations.
+    The *replace* dict is only honoured for the default impl/impl_file pair."""
+    inline = section.get(impl_key)
+    file_ref = section.get(impl_file_key)
     if inline and file_ref:
         raise ValueError(
-            f"{label}: `impl` and `impl_file` are mutually exclusive — "
-            f"set one or the other."
+            f"{label}: `{impl_key}` and `{impl_file_key}` are mutually "
+            f"exclusive — set one or the other."
         )
     if not inline and not file_ref:
         return None
@@ -63,7 +70,7 @@ def _resolve_impl(
         path_part, _, func = file_ref.partition("::")
         if not func:
             raise ValueError(
-                f"{label}: impl_file must be 'path::funcname', "
+                f"{label}: {impl_file_key} must be 'path::funcname', "
                 f"got {file_ref!r}."
             )
         body = I.extract_body(root / path_part, func)
@@ -72,11 +79,12 @@ def _resolve_impl(
 
     body = _interpolate(body, ctx)
 
-    replace = section.get("replace") or {}
-    if replace:
-        from . import _impl as I
+    if impl_key == "impl":
+        replace = section.get("replace") or {}
+        if replace:
+            from . import _impl as I
 
-        body = I.apply_replacements(body, list(replace.items()))
+            body = I.apply_replacements(body, list(replace.items()))
 
     return body
 
@@ -191,14 +199,23 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
 
     for comp in standalone:
         octx = _object_ctx(cfg, comp, None)
-        impl = _resolve_impl(
-            cfg.get(comp, {}), octx, project_root, f"object {comp}"
+        sec = cfg.get(comp, {})
+        impl = _resolve_impl(sec, octx, project_root, f"object {comp}")
+        create_impl = _resolve_impl(
+            sec, octx, project_root, f"object {comp} create",
+            impl_key="create_impl", impl_file_key="create_impl_file",
+        )
+        reset_impl = _resolve_impl(
+            sec, octx, project_root, f"object {comp} reset",
+            impl_key="reset_impl", impl_file_key="reset_impl_file",
         )
         _object.run(
             temp_root,
             comp,
             None,
             impl_body=impl,
+            create_impl_body=create_impl,
+            reset_impl_body=reset_impl,
             **_object_kwargs(cfg, comp),
         )
     for mod in mods:
@@ -206,14 +223,23 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             continue
         for comp in C.module_objects(cfg, mod):
             octx = _object_ctx(cfg, comp, mod)
-            impl = _resolve_impl(
-                cfg.get(comp, {}), octx, project_root, f"object {comp}"
+            sec = cfg.get(comp, {})
+            impl = _resolve_impl(sec, octx, project_root, f"object {comp}")
+            create_impl = _resolve_impl(
+                sec, octx, project_root, f"object {comp} create",
+                impl_key="create_impl", impl_file_key="create_impl_file",
+            )
+            reset_impl = _resolve_impl(
+                sec, octx, project_root, f"object {comp} reset",
+                impl_key="reset_impl", impl_file_key="reset_impl_file",
             )
             _object.run(
                 temp_root,
                 comp,
                 mod,
                 impl_body=impl,
+                create_impl_body=create_impl,
+                reset_impl_body=reset_impl,
                 **_object_kwargs(cfg, comp),
             )
 
@@ -654,18 +680,25 @@ def _wire_module_object(manifest: Path, mod_name: str, comp: str) -> bool:
 
 
 def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
-    """Check `impl` / `impl_file` mutual-exclusion on every section in
-    *fragment* before any side-effects happen."""
+    """Check impl/impl_file mutual-exclusion on every section in *fragment*
+    before any side-effects happen.  Covers impl, create_impl, and reset_impl
+    pairs."""
+    _impl_pairs = [
+        ("impl", "impl_file"),
+        ("create_impl", "create_impl_file"),
+        ("reset_impl", "reset_impl_file"),
+    ]
     for key, value in fragment.items():
         if key in ("project", "module", "include"):
             continue
         if not isinstance(value, dict):
             continue
-        if value.get("impl") and value.get("impl_file"):
-            raise ValueError(
-                f"{label}: object {key}: `impl` and `impl_file` are "
-                f"mutually exclusive — set one or the other."
-            )
+        for ik, ifk in _impl_pairs:
+            if value.get(ik) and value.get(ifk):
+                raise ValueError(
+                    f"{label}: object {key}: `{ik}` and `{ifk}` are "
+                    f"mutually exclusive — set one or the other."
+                )
         for m in value.get("methods", []):
             if m.get("impl") and m.get("impl_file"):
                 raise ValueError(

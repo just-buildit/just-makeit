@@ -350,6 +350,8 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     impl_body: str | None = None,
+    create_impl_body: str | None = None,
+    reset_impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
@@ -459,6 +461,15 @@ def run(
         if scalar_state
         else ""
     )
+
+    if create_impl_body is not None:
+        from ._object import _indent_body
+
+        ctx["create_assignments"] = _indent_body(create_impl_body)
+    if reset_impl_body is not None:
+        from ._object import _indent_body
+
+        ctx["reset_assignments"] = _indent_body(reset_impl_body)
 
     def r(tmpl):
         return R.render(tmpl, ctx)

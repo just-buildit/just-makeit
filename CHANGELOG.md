@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.13.16] — 2026-05-27
+
+### Added
+
+- **`create_impl` and `reset_impl` TOML keys** — add custom C bodies for
+  `<comp>_create()` and `<comp>_reset()` directly in TOML, bypassing the
+  generated field-assignment code.  Use these when scaffolded assignments are
+  insufficient: parameter validation, lookup tables, computed masks, or
+  anything that can't be expressed as plain field copies.
+
+  Place the keys in the `[comp]` section *before* any `[[comp.state]]` arrays
+  (TOML requires this — keys must precede sub-table arrays in the same section):
+
+  ```toml
+  [lfsr]
+  arg_type = "void"
+  return_type = "uint8_t"
+  create_impl = """
+  if (initial_state == 0) return NULL;
+  state->initial_state = initial_state;
+  state->state = initial_state;
+  """
+  reset_impl = """
+  state->state = state->initial_state;
+  """
+
+  [[lfsr.state]]
+  name = "initial_state"
+  type = "uint64_t"
+  default = "0"
+  ```
+
+  `create_impl_file = "path/to/file.c::funcname"` and
+  `reset_impl_file = "path/to/file.c::funcname"` variants are also supported
+  for lifting bodies from existing C files (analogous to `impl_file` for
+  step).  Each pair is mutually exclusive.  (gh#51)
+
 ## [0.13.15] — 2026-05-27
 
 ### Fixed
