@@ -86,8 +86,8 @@ def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
 
     # 1. Empty project — manifest only.
-    proj = root / "demo"
-    jm_new("demo", proj)
+    proj = root / "opaque_counter_demo"
+    jm_new("opaque_counter_demo", proj)
 
     # 2. Author the whole component in one fragment.
     fragment = root / "opaque_counter.toml"

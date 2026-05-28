@@ -178,7 +178,7 @@ _PYTEST_BODY = '''"""End-to-end test for the delay_line component."""
 
 import numpy as np
 
-from demo import DelayLine
+from delay_line_demo import DelayLine
 
 
 def test_delay_by_n():
@@ -228,8 +228,8 @@ def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
 
     # 1. Empty project.
-    proj = root / "demo"
-    jm_new("demo", proj)
+    proj = root / "delay_line_demo"
+    jm_new("delay_line_demo", proj)
 
     # 2. Author the whole component in one fragment.
     fragment = root / "delay_line.toml"
@@ -272,7 +272,7 @@ def run(root: Path) -> None:
     _patch_step(core_h)
 
     # 6. Replace the auto-generated pytest with the real one.
-    py_test = proj / "src" / "demo" / "tests" / "test_delay_line.py"
+    py_test = proj / "src" / "delay_line_demo" / "tests" / "test_delay_line.py"
     py_test.write_text(_PYTEST_BODY, encoding="utf-8")
 
     # 7. The auto-generated C test asserts that reset() restores `length`
