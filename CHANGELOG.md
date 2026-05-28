@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.13.17] — 2026-05-27
+
+### Added
+
+- **`destroy_impl` TOML key** — splice a custom teardown body into
+  `<comp>_destroy()` before the trailing `free(state)`.  Closes the loop on
+  the `create_impl` / `reset_impl` story shipped in 0.13.16 — objects that
+  allocate auxiliary resources (heap buffers, file handles, child objects)
+  in `create_impl` can now release them declaratively in the same TOML file.
+
+  ```toml
+  [buf]
+  destroy_impl = """
+  if (state->log) fclose(state->log);
+  free(state->scratch);
+  """
+  ```
+
+  `destroy_impl_file = "legacy.c::buf_destroy"` lifts an existing function
+  body from a file.  `destroy_impl` / `destroy_impl_file` are mutually
+  exclusive.  Same TOML ordering rule: keys must precede any
+  `[[comp.state]]` arrays in the section.
+
 ## [0.13.16] — 2026-05-27
 
 ### Added

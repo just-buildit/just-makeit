@@ -560,6 +560,7 @@ def run(
     impl_body: str | None = None,
     create_impl_body: str | None = None,
     reset_impl_body: str | None = None,
+    destroy_impl_body: str | None = None,
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     variable_output: bool = False,
@@ -606,6 +607,7 @@ def run(
             impl_body=impl_body,
             create_impl_body=create_impl_body,
             reset_impl_body=reset_impl_body,
+            destroy_impl_body=destroy_impl_body,
             init_params=init_params,
             class_name=class_name,
             depends_on=list(depends_on),
@@ -688,6 +690,8 @@ def run(
         ctx["create_assignments"] = _indent_body(create_impl_body)
     if reset_impl_body is not None:
         ctx["reset_assignments"] = _indent_body(reset_impl_body)
+    if destroy_impl_body is not None:
+        ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
     def r(tmpl):
         return R.render(tmpl, ctx)

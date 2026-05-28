@@ -755,3 +755,71 @@ class TestCreateResetImpl:
         """create_impl lines must be 4-space indented in the output."""
         core_c = self._apply(tmp_path / "proj")
         assert "    if (initial_state == 0) return NULL;" in core_c
+
+
+_DESTROY_IMPL_FRAGMENT = """\
+[buf]
+arg_type = "void"
+return_type = "void"
+mutable = "true"
+destroy_impl = \"\"\"
+if (state->log) fclose(state->log);
+\"\"\"
+
+[[buf.state]]
+name = "n"
+type = "uint32_t"
+default = "0"
+"""
+
+
+class TestDestroyImpl:
+    """Verify destroy_impl TOML key splices a custom body into
+    component_destroy() before the trailing free(state) (gh#51)."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "buf.toml"
+        frag.write_text(_DESTROY_IMPL_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        return (
+            proj / "native" / "src" / "buf" / "buf_core.c"
+        ).read_text(encoding="utf-8")
+
+    def test_destroy_impl_body_present(self, tmp_path):
+        """destroy_impl body should appear inside buf_destroy()."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "if (state->log) fclose(state->log);" in core_c
+
+    def test_destroy_impl_before_free(self, tmp_path):
+        """Custom destroy_impl must run before the trailing free(state)."""
+        core_c = self._apply(tmp_path / "proj")
+        body_pos = core_c.index("fclose(state->log)")
+        free_pos = core_c.index("free(state);")
+        assert body_pos < free_pos
+
+    def test_destroy_impl_indented(self, tmp_path):
+        """destroy_impl lines must be 4-space indented."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "    if (state->log) fclose(state->log);" in core_c
+
+    def test_free_state_still_emitted(self, tmp_path):
+        """free(state) must still be generated — destroy_impl prepends, not replaces."""
+        core_c = self._apply(tmp_path / "proj")
+        assert "    free(state);" in core_c
+
+
+class TestDestroyImplMutex:
+    """destroy_impl and destroy_impl_file are mutually exclusive."""
+
+    def test_both_set_raises(self, tmp_path):
+        from just_makeit._apply import _validate_fragment_impl_keys
+
+        fragment = {
+            "buf": {
+                "destroy_impl": "free(state->x);",
+                "destroy_impl_file": "legacy.c::buf_destroy",
+            },
+        }
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            _validate_fragment_impl_keys(fragment, "test.toml")

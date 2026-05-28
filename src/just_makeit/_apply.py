@@ -209,6 +209,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             sec, octx, project_root, f"object {comp} reset",
             impl_key="reset_impl", impl_file_key="reset_impl_file",
         )
+        destroy_impl = _resolve_impl(
+            sec, octx, project_root, f"object {comp} destroy",
+            impl_key="destroy_impl", impl_file_key="destroy_impl_file",
+        )
         _object.run(
             temp_root,
             comp,
@@ -216,6 +220,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             impl_body=impl,
             create_impl_body=create_impl,
             reset_impl_body=reset_impl,
+            destroy_impl_body=destroy_impl,
             **_object_kwargs(cfg, comp),
         )
     for mod in mods:
@@ -233,6 +238,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 sec, octx, project_root, f"object {comp} reset",
                 impl_key="reset_impl", impl_file_key="reset_impl_file",
             )
+            destroy_impl = _resolve_impl(
+                sec, octx, project_root, f"object {comp} destroy",
+                impl_key="destroy_impl", impl_file_key="destroy_impl_file",
+            )
             _object.run(
                 temp_root,
                 comp,
@@ -240,6 +249,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 impl_body=impl,
                 create_impl_body=create_impl,
                 reset_impl_body=reset_impl,
+                destroy_impl_body=destroy_impl,
                 **_object_kwargs(cfg, comp),
             )
 
@@ -681,12 +691,13 @@ def _wire_module_object(manifest: Path, mod_name: str, comp: str) -> bool:
 
 def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
     """Check impl/impl_file mutual-exclusion on every section in *fragment*
-    before any side-effects happen.  Covers impl, create_impl, and reset_impl
-    pairs."""
+    before any side-effects happen.  Covers impl, create_impl, reset_impl,
+    and destroy_impl pairs."""
     _impl_pairs = [
         ("impl", "impl_file"),
         ("create_impl", "create_impl_file"),
         ("reset_impl", "reset_impl_file"),
+        ("destroy_impl", "destroy_impl_file"),
     ]
     for key, value in fragment.items():
         if key in ("project", "module", "include"):

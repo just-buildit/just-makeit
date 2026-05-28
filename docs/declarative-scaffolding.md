@@ -217,6 +217,48 @@ reset_impl_file  = "legacy/lfsr_core.c::lfsr_reset"
 `create_impl` / `create_impl_file` are mutually exclusive, as are
 `reset_impl` / `reset_impl_file`.
 
+### Custom `destroy()` body — `destroy_impl`
+
+Objects that allocate auxiliary resources in `create_impl` (heap buffers,
+file handles, child objects) need matching teardown.  `destroy_impl` splices
+a body into `comp_destroy()` **before** the trailing `free(state)` that
+releases the struct itself:
+
+```toml
+[buf]
+arg_type      = "void"
+return_type   = "void"
+mutable       = "true"
+destroy_impl  = """
+if (state->log) fclose(state->log);
+free(state->scratch);
+"""
+
+[[buf.state]]
+name = "n"
+type = "uint32_t"
+default = "0"
+```
+
+…generates:
+
+```c
+void
+buf_destroy(buf_state_t *state)
+{
+    if (state->log) fclose(state->log);
+    free(state->scratch);
+    free(state);
+}
+```
+
+Use `state->field` (the function parameter is named `state`).  Do **not**
+write `free(state)` yourself — it is appended automatically.
+
+`destroy_impl` / `destroy_impl_file` are mutually exclusive.  The same TOML
+ordering rule applies: place the scalar key **before** any `[[buf.state]]`
+arrays.
+
 ---
 
 ## Integrating hand-written C libraries (`c_deps`, `no_generate`, `depends_on`)

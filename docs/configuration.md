@@ -337,7 +337,7 @@ your changes on the next command. The rules:
     emitted in the order they appear, which controls constructor argument order
     in both C and Python.
 - **Keys must come before sub-table arrays**: all scalar keys on an object
-    section (`impl`, `create_impl`, `reset_impl`, `arg_type`, `mutable`, …)
+    section (`impl`, `create_impl`, `reset_impl`, `destroy_impl`, `arg_type`, `mutable`, …)
     must appear **before** the first `[[<object>.state]]` or
     `[[<object>.methods]]` entry.  TOML parses bare keys after an
     array-of-tables header as part of that entry, not the parent section,

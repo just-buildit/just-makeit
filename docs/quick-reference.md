@@ -781,6 +781,7 @@ ______________________________________________________________________
 | Rename on lift | String substitution applied to the extracted body | `--replace old::new` |
 | Custom create() | Override generated field assignments in `<comp>_create()` — add `create_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `obj->` for the local pointer) | TOML only |
 | Custom reset() | Override generated field assignments in `<comp>_reset()` — add `reset_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->` for the pointer parameter) | TOML only |
+| Custom destroy() | Splice teardown into `<comp>_destroy()` before the trailing `free(state)` — add `destroy_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->`) | TOML only |
 | Perf annotations | Add `JM_HOT` / `JM_FORCEINLINE` to every `step()` | `just-makeit perf` |
 | Reconstruct CLI | Print the full command sequence that reproduces the project | `just-makeit script` |
 | Split TOML | Move each object section into `objects/<name>.toml` | `just-makeit split-objects` |
