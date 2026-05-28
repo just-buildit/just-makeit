@@ -108,6 +108,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "class_name": C.class_name(cfg, comp),
         "depends_on": C.depends_on(cfg, comp),
         "opaque_fields": C.opaque_fields(cfg, comp),
+        "no_ctor_names": C.no_ctor_names(cfg, comp),
     }
 
 
@@ -217,8 +218,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             impl_file_key="reset_impl_file",
         )
         destroy_impl = _resolve_impl(
-            sec, octx, project_root, f"object {comp} destroy",
-            impl_key="destroy_impl", impl_file_key="destroy_impl_file",
+            sec,
+            octx,
+            project_root,
+            f"object {comp} destroy",
+            impl_key="destroy_impl",
+            impl_file_key="destroy_impl_file",
         )
         _object.run(
             temp_root,
@@ -254,8 +259,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 impl_file_key="reset_impl_file",
             )
             destroy_impl = _resolve_impl(
-                sec, octx, project_root, f"object {comp} destroy",
-                impl_key="destroy_impl", impl_file_key="destroy_impl_file",
+                sec,
+                octx,
+                project_root,
+                f"object {comp} destroy",
+                impl_key="destroy_impl",
+                impl_file_key="destroy_impl_file",
             )
             _object.run(
                 temp_root,

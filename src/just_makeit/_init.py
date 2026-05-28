@@ -354,6 +354,7 @@ def run(
     destroy_impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     opaque_fields: list[tuple[str, str]] = (),
+    no_ctor_names: "frozenset[str]" = frozenset(),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
@@ -422,6 +423,7 @@ def run(
             no_state=no_state,
             init_params=init_params,
             opaque_fields=opaque_fields,
+            no_ctor_names=no_ctor_names,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))

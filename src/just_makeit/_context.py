@@ -556,7 +556,9 @@ def make_sample_ctx(
                 zip(
                     ("bm_step_py", "bm_steps_py"),
                     _pytest_bm_blocks(
-                        arg_type, f"np.zeros(4, dtype={in_np_dtype})", in_np_dtype
+                        arg_type,
+                        f"np.zeros(4, dtype={in_np_dtype})",
+                        in_np_dtype,
                     ),
                 )
             ),
@@ -769,7 +771,13 @@ def _build_no_state_init_ctx(
             ndim = array_param_ndim(ct)
             if optional_flag:
                 opt_arr_ip.append(
-                    (name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct], alt_create_fn)
+                    (
+                        name,
+                        elem_ct,
+                        ndim,
+                        _CTYPE_TO_NPY[elem_ct],
+                        alt_create_fn,
+                    )
                 )
             else:
                 arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
@@ -1352,6 +1360,7 @@ def make_state_ctx(
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
+    no_ctor_names: "frozenset[str]" = frozenset(),
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1478,6 +1487,11 @@ def make_state_ctx(
         if parsed:
             array_info.append((n, parsed[0], parsed[1]))
 
+    # no_ctor fields: in struct/getters/reset but NOT in create() signature or
+    # Python kwlist.  Initialised to their TOML default inside create_assignments.
+    ctor_scalars = [v for v in scalar_vars if v[0] not in no_ctor_names]
+    hidden_scalars = [v for v in scalar_vars if v[0] in no_ctor_names]
+
     # ── CORE_H: state_struct_fields ──────────────────────────────────────────
 
     struct_field_lines = []
@@ -1499,7 +1513,8 @@ def make_state_ctx(
         f"const {ct} *{name}, size_t {name}_len"
         for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
     ]
-    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in scalar_vars]
+    # Only ctor_scalars become C params — no_ctor fields are hidden.
+    scalar_param_parts = [f"{ct} {name}" for name, ct, _ in ctor_scalars]
     all_param_parts = arr_param_parts + scalar_param_parts
     create_params = ", ".join(all_param_parts) or "void"
 
@@ -1509,7 +1524,7 @@ def make_state_ctx(
     ]
     scalar_doc_parts = [
         f" * @param {name}  Initial {name} (default: {dflt})."
-        for name, _, dflt in scalar_vars
+        for name, _, dflt in ctor_scalars
     ]
     all_docs = arr_doc_parts + scalar_doc_parts
     create_param_docs = (
@@ -1561,7 +1576,10 @@ def make_state_ctx(
 
     # ── CORE_C: assignments ──────────────────────────────────────────────────
 
-    create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in scalar_vars]
+    # ctor_scalars: assigned from their param (name = name).
+    # hidden_scalars: not in the signature; initialised to their TOML default.
+    create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in ctor_scalars]
+    create_assign_lines += [f"    obj->{n} = {dflt};" for n, _, dflt in hidden_scalars]
     for name, _, size in array_info:
         create_assign_lines.append(f"    memset(obj->{name}, 0, sizeof(obj->{name}));")
     create_assignments = "\n".join(create_assign_lines)
@@ -1626,19 +1644,19 @@ def make_state_ctx(
 
     # ── EXT_C: init parse block (array args first, then scalars) ────────────
 
-    # kwlist: array arg names first (required), then scalar names (optional)
+    # kwlist: only ctor_scalars — no_ctor fields are invisible to Python.
     kwlist_items = (
         [f'"{name}"' for name, _ in _aa]
-        + [f'"{name}"' for name, _, __ in scalar_vars]
+        + [f'"{name}"' for name, _, __ in ctor_scalars]
         + ["NULL"]
     )
     init_kwlist = ", ".join(kwlist_items)
 
-    # Locals: PyObject* for each array arg, then scalar locals
+    # Locals: PyObject* for each array arg, then ctor scalar locals
     local_lines = [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
     post_lines = []
     parse_args = [f"&{name}_obj" for name, _ in _aa]
-    for name, ct, dflt in scalar_vars:
+    for name, ct, dflt in ctor_scalars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
             local_lines.append(
@@ -1652,25 +1670,25 @@ def make_state_ctx(
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
-    # Format: required O per array arg, then optional scalars after |
+    # Format: required O per array arg, then optional ctor scalars after |
     array_fmt = "O" * len(_aa)
-    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in scalar_vars)
-    if scalar_vars:
+    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in ctor_scalars)
+    if ctor_scalars:
         init_parse_fmt = array_fmt + "|" + scalar_fmt_str
     else:
         init_parse_fmt = array_fmt or "|"  # "|" means no args required
 
     init_parse_args = ", ".join(parse_args)
 
-    # create_call_args: array (ptr, len) pairs first, then scalars
+    # create_call_args: array (ptr, len) pairs first, then ctor scalars only
     arr_call_parts = [
         f"(const {ct} *)PyArray_DATA({name}_arr), {name}_len"
         for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
     ]
-    scalar_call_parts = [name for name, _, __ in scalar_vars]
+    scalar_call_parts = [name for name, _, __ in ctor_scalars]
     create_call_args = ", ".join(arr_call_parts + scalar_call_parts)
 
-    if _aa or scalar_vars:
+    if _aa or ctor_scalars:
         post_str = ("\n".join(post_lines) + "\n") if post_lines else ""
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
@@ -1703,7 +1721,7 @@ def make_state_ctx(
 
     # c_create_args: for C test templates — pass NULL, 0 per array arg
     c_arr_call_parts = ["NULL, 0" for _ in _aa]
-    c_create_args = ", ".join(c_arr_call_parts + [dflt for _, _, dflt in scalar_vars])
+    c_create_args = ", ".join(c_arr_call_parts + [dflt for _, _, dflt in ctor_scalars])
 
     # py_create_args: for Python test/bench/pyi templates
     _NP_PY_TYPE: dict[str, str] = {
@@ -1870,13 +1888,13 @@ def make_state_ctx(
 
     init_params_pyi = ", ".join(
         f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
-        for name, ct, dflt in scalar_vars
+        for name, ct, dflt in ctor_scalars
     )
 
     pyi_param_docs = "\n".join(
         f"    {name} : {_CTYPE_META[ct]['py_type']}, default {_py_default(ct, dflt)}\n"
         f"        {name} state variable."
-        for name, ct, dflt in scalar_vars
+        for name, ct, dflt in ctor_scalars
     )
 
     stub_groups: list[str] = []
@@ -1919,22 +1937,22 @@ def make_state_ctx(
 
     # ── Shared: create args ───────────────────────────────────────────────────
 
-    # Array args appear first; scalar args follow.
+    # Only ctor_scalars are exposed — no_ctor fields are not constructor args.
     py_create_args = ", ".join(
-        py_arr_args + [_py_default(ct, dflt) for _, ct, dflt in scalar_vars]
+        py_arr_args + [_py_default(ct, dflt) for _, ct, dflt in ctor_scalars]
     )
-    # c_create_args already computed above (NULL, 0 per array arg + scalar defaults)
+    # c_create_args already computed above (NULL, 0 per array arg + ctor defaults)
 
     # ── PYI Examples ─────────────────────────────────────────────────────────
     pyi_examples = (
         _pyi_examples_block(
-            scalar_vars,
+            ctor_scalars,
             bool(py_arr_args),
             "from <<package>> import <<Component>>",
             py_create_args,
             Component,
         )
-        if scalar_vars
+        if ctor_scalars
         else ""
     )
 
@@ -3185,7 +3203,8 @@ def make_methods_ctx(
                 out_disp = _ctype_display(out_type)
                 out_npy = _CTYPE_TO_NPY[out_type]
                 first_arr = next(
-                    (p["name"] for p in params if is_array_param_type(p["type"])), None
+                    (p["name"] for p in params if is_array_param_type(p["type"])),
+                    None,
                 )
                 raw_len = f"{first_arr}_len" if first_arr else "0"
                 if out_divisor > 1:

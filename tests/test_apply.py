@@ -766,9 +766,9 @@ class TestDestroyImpl:
         frag = proj.parent / "buf.toml"
         frag.write_text(_DESTROY_IMPL_FRAGMENT)
         apply_run(proj, fragment=frag)
-        return (
-            proj / "native" / "src" / "buf" / "buf_core.c"
-        ).read_text(encoding="utf-8")
+        return (proj / "native" / "src" / "buf" / "buf_core.c").read_text(
+            encoding="utf-8"
+        )
 
     def test_destroy_impl_body_present(self, tmp_path):
         """destroy_impl body should appear inside buf_destroy()."""
@@ -901,3 +901,131 @@ class TestOpaqueRequiresCreateImpl:
             },
         }
         _validate_fragment_impl_keys(fragment, "test.toml")
+
+
+# Fragment: one ctor param (size), two no_ctor fields (idx, sum), one opaque (buf).
+_NO_CTOR_FRAGMENT = """\
+[ring]
+arg_type    = "float"
+return_type = "float"
+mutable     = "true"
+create_impl = \"\"\"
+obj->size = size;
+obj->buf  = calloc(size, sizeof(float));
+if (!obj->buf) { free(obj); return NULL; }
+obj->idx  = 0;
+obj->sum  = 0.0f;
+\"\"\"
+destroy_impl = \"\"\"
+free(state->buf);
+\"\"\"
+
+[[ring.state]]
+name   = "buf"
+type   = "float *"
+opaque = true
+
+[[ring.state]]
+name    = "size"
+type    = "size_t"
+default = "16"
+
+[[ring.state]]
+name    = "idx"
+type    = "size_t"
+default = "0"
+no_ctor = true
+
+[[ring.state]]
+name    = "sum"
+type    = "float"
+default = "0.0f"
+no_ctor = true
+"""
+
+
+class TestNoCtorState:
+    """no_ctor = true fields stay in the struct with getters/setters and reset
+    logic, but are excluded from the C create() signature and Python kwlist.
+    They are silently initialised to their TOML default in create_assignments."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "ring.toml"
+        frag.write_text(_NO_CTOR_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        return (
+            (proj / "native" / "inc" / "ring" / "ring_core.h").read_text(),
+            (proj / "native" / "src" / "ring" / "ring_core.c").read_text(),
+            (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(),
+        )
+
+    def test_no_ctor_fields_in_struct(self, tmp_path):
+        """no_ctor fields must still appear in the state struct."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "size_t idx;" in header
+        assert "float sum;" in header
+
+    def test_no_ctor_excluded_from_c_signature(self, tmp_path):
+        """no_ctor fields must NOT appear in the C create() signature."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "ring_create(size_t size)" in header
+        assert "idx" not in header.split("ring_create")[1].split(")")[0]
+        assert "sum" not in header.split("ring_create")[1].split(")")[0]
+
+    def test_no_ctor_excluded_from_python_kwlist(self, tmp_path):
+        """no_ctor fields must NOT appear in the Python __init__ kwlist."""
+        _, _, ext_c = self._apply(tmp_path / "proj")
+        kwlist_line = next(
+            line for line in ext_c.splitlines() if "kwlist" in line and "char" in line
+        )
+        assert '"idx"' not in kwlist_line
+        assert '"sum"' not in kwlist_line
+        assert '"size"' in kwlist_line
+
+    def test_no_ctor_fields_have_getters_setters(self, tmp_path):
+        """no_ctor fields must still have auto-generated getters/setters."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "ring_get_idx" in header
+        assert "ring_set_idx" in header
+        assert "ring_get_sum" in header
+        assert "ring_set_sum" in header
+
+    def test_no_ctor_initialised_to_default_in_create(self, tmp_path):
+        """When create_impl is absent, no_ctor fields are set to their default
+        in create_assignments.  With create_impl, the user handles it."""
+        _, core_c, _ = self._apply(tmp_path / "proj")
+        # create_impl overrides create_assignments here, so the defaults are
+        # set by the user's create_impl body — just verify the signature.
+        assert "ring_create(size_t size)" in core_c
+
+    def test_no_ctor_no_impl_auto_initialised(self, tmp_path):
+        """Without create_impl the no_ctor fields must be auto-assigned their
+        TOML default inside create_assignments."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        frag = proj.parent / "ring2.toml"
+        # Same but without create_impl so auto-assignments kick in.
+        frag.write_text("""\
+[ring2]
+arg_type    = "float"
+return_type = "float"
+
+[[ring2.state]]
+name    = "gain"
+type    = "float"
+default = "1.0f"
+
+[[ring2.state]]
+name    = "phase"
+type    = "float"
+default = "0.0f"
+no_ctor = true
+""")
+        apply_run(proj, fragment=frag)
+        core_c = (proj / "native" / "src" / "ring2" / "ring2_core.c").read_text()
+        # gain is a ctor param — assigned from param
+        assert "obj->gain = gain;" in core_c
+        # phase is no_ctor — assigned from TOML default, not a param
+        assert "obj->phase = 0.0f;" in core_c
+        assert "ring2_create(float gain)" in core_c

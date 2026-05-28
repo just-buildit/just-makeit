@@ -425,6 +425,21 @@ def opaque_fields(cfg: dict, component: str) -> list[tuple[str, str]]:
     ]
 
 
+def no_ctor_names(cfg: dict, component: str) -> frozenset[str]:
+    """Names of non-opaque state entries flagged ``no_ctor = true``.
+
+    These fields appear in the struct, have auto-getter/setter, and are
+    included in reset_assignments — but are NOT exposed as constructor
+    parameters.  The C create() signature omits them; they are
+    silently initialised to their TOML default inside create_assignments
+    (or inside create_impl if the user overrides it)."""
+    return frozenset(
+        s["name"]
+        for s in cfg.get(component, {}).get("state", [])
+        if s.get("no_ctor") and not s.get("opaque")
+    )
+
+
 def schema_version(cfg: dict) -> int:
     """Return the project's schema version (1 for pre-schema projects)."""
     return int(cfg.get("project", {}).get("schema", 1))
@@ -508,6 +523,8 @@ def add_component(
     init_params_: list[tuple[str, str, str]] = (),
     class_name_: str | None = None,
     depends_on_: list[str] = (),
+    opaque_fields_: "list[tuple[str, str]]" = (),
+    no_ctor_names_: "frozenset[str]" = frozenset(),
 ) -> dict:
     rt = (
         return_type_
@@ -516,13 +533,23 @@ def add_component(
         if arg_type_.endswith("[]")
         else arg_type_
     )
+    state_entries = [
+        {
+            "name": n,
+            "type": t,
+            "default": d,
+            **({"no_ctor": True} if n in no_ctor_names_ else {}),
+        }
+        for n, t, d in vars_
+    ]
+    state_entries += [{"name": n, "type": t, "opaque": True} for n, t in opaque_fields_]
     entry: dict = {
         "arg_type": arg_type_,
         "return_type": rt,
         "mutable": "true" if mutable_ else "false",
         "no_state": "true" if no_state_ else "false",
         "no_step": "true" if no_step_ else "false",
-        "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_],
+        "state": state_entries,
     }
     if array_args_:
         entry["array_args"] = [{"name": n, "type": dt} for n, dt in array_args_]
@@ -638,7 +665,12 @@ def _dump(cfg: dict) -> str:
             lines.append(f"[[{comp}.state]]")
             lines.append(f'name = "{s["name"]}"')
             lines.append(f'type = "{s["type"]}"')
-            lines.append(f'default = "{s["default"]}"')
+            if "default" in s:
+                lines.append(f'default = "{s["default"]}"')
+            if s.get("opaque"):
+                lines.append("opaque = true")
+            if s.get("no_ctor"):
+                lines.append("no_ctor = true")
             lines.append("")
         for p in comp_data.get("init_params", []):
             lines.append(f"[[{comp}.init_params]]")
