@@ -57,7 +57,7 @@ RUN gcc --version; mingw32-make --version; make --version; cmake --version
 # Installing from source ensures the image always reflects the current HEAD.
 COPY . C:\src
 RUN python -m pip install --no-cache-dir --upgrade pip; `
-    pip install --no-cache-dir numpy pytest C:\src
+    pip install --no-cache-dir numpy pytest cmakelang C:\src
 
 # ── Scaffold, build, and test all bundled examples ────────────────────────────
 COPY docker/build_examples.py C:\build_examples.py
