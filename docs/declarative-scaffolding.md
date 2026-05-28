@@ -218,7 +218,7 @@ reset_impl_file  = "legacy/lfsr_core.c::lfsr_reset"
 ### Custom `destroy()` body — `destroy_impl`
 
 Objects that allocate auxiliary resources in `create_impl` (heap buffers,
-file handles, child objects) need matching teardown.  `destroy_impl` splices
+file handles, child objects) need matching teardown. `destroy_impl` splices
 a body into `comp_destroy()` **before** the trailing `free(state)` that
 releases the struct itself:
 
@@ -250,10 +250,10 @@ buf_destroy(buf_state_t *state)
 }
 ```
 
-Use `state->field` (the function parameter is named `state`).  Do **not**
+Use `state->field` (the function parameter is named `state`). Do **not**
 write `free(state)` yourself — it is appended automatically.
 
-`destroy_impl` / `destroy_impl_file` are mutually exclusive.  The same TOML
+`destroy_impl` / `destroy_impl_file` are mutually exclusive. The same TOML
 ordering rule applies: place the scalar key **before** any `[[buf.state]]`
 arrays.
 
@@ -261,10 +261,10 @@ arrays.
 
 Heap buffers, file handles, FFTW plans, and other resources whose C type
 isn't a numeric scalar are declared with `opaque = true` on a
-`[[<comp>.state]]` entry.  The field is emitted into the state struct
+`[[<comp>.state]]` entry. The field is emitted into the state struct
 verbatim with **no** auto-generated getter/setter, **no** constructor
 parameter, **no** kwlist entry, and **no** reset assignment — Python sees
-nothing of it.  Lifecycle is entirely yours via `create_impl` (mandatory)
+nothing of it. Lifecycle is entirely yours via `create_impl` (mandatory)
 and `destroy_impl` (strongly recommended).
 
 ```toml
@@ -312,14 +312,14 @@ bodies verbatim.
     `jm apply` refuses to materialize a fragment that declares any opaque
     state field without a matching `create_impl` or `create_impl_file` —
     the auto-generated `create()` would leave the pointer uninitialized,
-    and the first read would dereference garbage.  Pair every opaque field
+    and the first read would dereference garbage. Pair every opaque field
     with a `create_impl` that initializes it, and a `destroy_impl` that
     releases it (the validator does not enforce `destroy_impl` because
     some opaque fields are borrowed and shouldn't be freed, but most
     should be).
 
 Opaque fields are TOML-only — there is no `--state name:opaque:type` CLI
-syntax.  The type string can be anything the compiler accepts (raw
+syntax. The type string can be anything the compiler accepts (raw
 pointers, typedef'd handles, function-pointer typedefs); the just-makeit
 type system doesn't inspect it.
 
@@ -331,7 +331,159 @@ just-makeit example opaque_counter   # dead-simple: heap-allocated counter
 just-makeit example delay_line       # complex: circular delay with runtime length
 ```
 
----
+#### Pitfalls and idioms
+
+Opaque fields put the user in charge of ownership. The five footguns
+below come up most often when teaching this feature; each is paired
+with the idiom that avoids it.
+
+!!! danger "Don't reach for opaque when a fixed-length array works"
+
+    If the buffer size is a compile-time constant, declare it as
+    `type = "float[N]"` instead. Fixed-length arrays live **inside**
+    the state struct — one `calloc` covers everything, no separate
+    `free`, no lifetime to manage, no validator constraints. Opaque
+    is for storage whose size or type isn't known until construction.
+
+    === "Wrong — heap-alloc'd for no reason"
+
+        ```toml
+        create_impl  = "obj->taps = calloc(16, sizeof(float));"
+        destroy_impl = "free(state->taps);"
+
+        [[delay.state]]
+        name   = "taps"
+        type   = "float *"
+        opaque = true
+        ```
+
+    === "Right — fixed array, zero machinery"
+
+        ```toml
+        [[delay.state]]
+        name = "taps"
+        type = "float[16]"
+        ```
+
+!!! warning "Always pair `create_impl` with `destroy_impl` for owned pointers"
+
+    The validator enforces `create_impl` (otherwise the pointer is
+    uninitialized garbage), but it does **not** enforce `destroy_impl`
+    — because some opaque fields are *borrowed* and must not be freed.
+    For every opaque field you `malloc`/`calloc`/`fftw_malloc`/`open`/
+    etc., add the matching teardown.
+
+    === "Wrong — leaks every instance"
+
+        ```toml
+        create_impl = """
+        obj->scratch = malloc(1024 * sizeof(float));
+        """
+        # no destroy_impl — buffer leaks at destroy time
+        ```
+
+    === "Right — paired lifetime"
+
+        ```toml
+        create_impl  = """
+        obj->scratch = malloc(1024 * sizeof(float));
+        if (!obj->scratch) { free(obj); return NULL; }
+        """
+        destroy_impl = "free(state->scratch);"
+        ```
+
+!!! warning "Unwind partial allocations on `create_impl` failure"
+
+    `comp_destroy()` is **not** called when `comp_create()` returns
+    NULL, so any successful allocations made before a later failure
+    must be freed inside `create_impl` itself. The pattern is
+    "alloc — check — alloc — check, freeing all prior on each
+    failure path."
+
+    === "Wrong — `scratch` leaks if `plan` fails"
+
+        ```c
+        obj->scratch = malloc(N * sizeof(float));
+        if (!obj->scratch) { free(obj); return NULL; }
+        obj->plan = fftwf_plan_dft_1d(N, ...);
+        if (!obj->plan) { free(obj); return NULL; }  /* leaks scratch! */
+        ```
+
+    === "Right — unwind in reverse order"
+
+        ```c
+        obj->scratch = malloc(N * sizeof(float));
+        if (!obj->scratch) { free(obj); return NULL; }
+        obj->plan = fftwf_plan_dft_1d(N, ...);
+        if (!obj->plan) {
+            free(obj->scratch);
+            free(obj);
+            return NULL;
+        }
+        ```
+
+!!! tip "Borrowed pointers: opaque without `destroy_impl` is correct"
+
+    When the opaque field stores a pointer that **another object
+    owns** — a shared lookup table, a parent context, a const
+    function pointer — `destroy_impl` must **not** free it. Declare
+    the opaque field, set it in `create_impl`, and leave teardown
+    alone. Document the ownership in a TOML comment so the next
+    reader knows it's deliberate.
+
+    ```toml
+    create_impl  = """
+    obj->lut = lut;   /* borrowed — caller retains ownership */
+    """
+    # no destroy_impl — we don't own `lut`
+
+    [[fir.state]]
+    name   = "lut"
+    type   = "const float *"
+    opaque = true
+    ```
+
+!!! warning "Scalar setters don't realloc opaque buffers"
+
+    A scalar field like `length` gets an auto-generated
+    `comp_set_length()` that just writes to the struct. If the
+    opaque buffer was sized using that scalar, calling
+    `set_length(N_NEW)` will **not** resize the buffer — subsequent
+    reads/writes overflow or under-utilize. If the field genuinely
+    needs to resize at runtime, expose a custom method that
+    `realloc`s the buffer and updates the scalar atomically; if it
+    doesn't, treat the field as construction-only and don't expose a
+    setter at all (use `reset_impl` to preserve it across `reset()`,
+    as in the `delay_line` example).
+
+    === "Wrong — set_length() leaves taps the old size"
+
+        ```python
+        obj = DelayLine(length=16)   # taps is 16 floats
+        obj.set_length(64)           # taps is STILL 16 floats — UB on access
+        ```
+
+    === "Right — resize is an explicit method"
+
+        ```toml
+        [[delay.methods]]
+        name        = "resize"
+        arg_type    = "uint32_t"
+        return_type = "void"
+        impl        = """
+        float *new_taps = realloc(state->taps, n * sizeof(float));
+        if (!new_taps) return;  /* keep old buffer on failure */
+        if (n > state->length) {
+            memset(new_taps + state->length, 0,
+                   (n - state->length) * sizeof(float));
+        }
+        state->taps   = new_taps;
+        state->length = n;
+        state->idx    = state->idx % n;
+        """
+        ```
+
+______________________________________________________________________
 
 ## Integrating hand-written C libraries (`c_deps`, `no_generate`, `depends_on`)
 
