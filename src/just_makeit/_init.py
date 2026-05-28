@@ -359,6 +359,7 @@ def run(
     impl_body: str | None = None,
     create_impl_body: str | None = None,
     reset_impl_body: str | None = None,
+    destroy_impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
@@ -477,6 +478,10 @@ def run(
         from ._object import _indent_body
 
         ctx["reset_assignments"] = _indent_body(reset_impl_body)
+    if destroy_impl_body is not None:
+        from ._object import _indent_body
+
+        ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
     def r(tmpl):
         return R.render(tmpl, ctx)
