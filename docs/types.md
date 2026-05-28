@@ -77,6 +77,16 @@ Array fields work with `--state` (standalone objects and `object --module`)
 and are recorded verbatim in `just-makeit.toml`, so `jm add` and `jm config`
 round-trip them correctly.
 
+### Opaque state fields (pointers, handles)
+
+For heap pointers, file handles, FFTW plans, or any C type that doesn't
+fit `_CTYPE_META`, declare the field as `opaque = true` in TOML. The
+type string is emitted into the struct verbatim and no auto-getter,
+setter, kwarg, or reset assignment is generated — lifecycle is your
+responsibility via `create_impl` / `destroy_impl`. See
+[declarative-scaffolding.md](declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
+for the full pattern.
+
 ______________________________________________________________________
 
 ## Defaults

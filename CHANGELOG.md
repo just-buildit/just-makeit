@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [0.13.18] — 2026-05-27
+
+### Added
+
+- **`opaque = true` flag on `[[<comp>.state]]` entries** — declare pointer,
+  handle, or any-C-type state fields directly in TOML without hand-editing
+  `_core.h`.  Opaque fields are emitted into the state struct verbatim with
+  no auto-getter/setter, no constructor parameter, no kwarg, and no reset
+  assignment — Python sees nothing of them.  Lifecycle is the user's
+  responsibility via `create_impl` (required — validator enforces) and
+  `destroy_impl` (recommended; pairs with the 0.13.17 feature).
+
+  ```toml
+  [fft]
+  no_state     = "true"
+  create_impl  = """
+  obj->scratch = fftwf_malloc(sizeof(float _Complex) * n);
+  obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
+                                   FFTW_FORWARD, FFTW_ESTIMATE);
+  """
+  destroy_impl = """
+  if (state->plan) fftwf_destroy_plan(state->plan);
+  fftwf_free(state->scratch);
+  """
+
+  [[fft.state]]
+  name   = "scratch"
+  type   = "float _Complex *"
+  opaque = true
+
+  [[fft.state]]
+  name   = "plan"
+  type   = "fftwf_plan"
+  opaque = true
+  ```
+
+  `jm apply` raises before any side effects when an opaque field is
+  declared without `create_impl` / `create_impl_file`.  Opaque fields are
+  TOML-only — no `--state` CLI syntax.
+
+- **`opaque_counter` and `delay_line` examples** — minimal and realistic
+  end-to-end demos of opaque state fields, both built and tested in CI.
+
 ## [0.13.17] — 2026-05-27
 
 ### Added
@@ -30,545 +73,538 @@
 ### Added
 
 - **`create_impl` and `reset_impl` TOML keys** — add custom C bodies for
-  `<comp>_create()` and `<comp>_reset()` directly in TOML, bypassing the
-  generated field-assignment code.  Use these when scaffolded assignments are
-  insufficient: parameter validation, lookup tables, computed masks, or
-  anything that can't be expressed as plain field copies.
+    `<comp>_create()` and `<comp>_reset()` directly in TOML, bypassing the
+    generated field-assignment code. Use these when scaffolded assignments are
+    insufficient: parameter validation, lookup tables, computed masks, or
+    anything that can't be expressed as plain field copies.
 
-  Place the keys in the `[comp]` section *before* any `[[comp.state]]` arrays
-  (TOML requires this — keys must precede sub-table arrays in the same section):
+    Place the keys in the `[comp]` section *before* any `[[comp.state]]` arrays
+    (TOML requires this — keys must precede sub-table arrays in the same section):
 
-  ```toml
-  [lfsr]
-  arg_type = "void"
-  return_type = "uint8_t"
-  create_impl = """
-  if (initial_state == 0) return NULL;
-  state->initial_state = initial_state;
-  state->state = initial_state;
-  """
-  reset_impl = """
-  state->state = state->initial_state;
-  """
+    ```toml
+    [lfsr]
+    arg_type = "void"
+    return_type = "uint8_t"
+    create_impl = """
+    if (initial_state == 0) return NULL;
+    state->initial_state = initial_state;
+    state->state = initial_state;
+    """
+    reset_impl = """
+    state->state = state->initial_state;
+    """
 
-  [[lfsr.state]]
-  name = "initial_state"
-  type = "uint64_t"
-  default = "0"
-  ```
+    [[lfsr.state]]
+    name = "initial_state"
+    type = "uint64_t"
+    default = "0"
+    ```
 
-  `create_impl_file = "path/to/file.c::funcname"` and
-  `reset_impl_file = "path/to/file.c::funcname"` variants are also supported
-  for lifting bodies from existing C files (analogous to `impl_file` for
-  step).  Each pair is mutually exclusive.
+    `create_impl_file = "path/to/file.c::funcname"` and
+    `reset_impl_file = "path/to/file.c::funcname"` variants are also supported
+    for lifting bodies from existing C files (analogous to `impl_file` for
+    step). Each pair is mutually exclusive.
 
-  **Note:** inside `create_impl`, the freshly allocated struct pointer is
-  named `obj` (not `state`).  Use `obj->field = value;` to initialise fields.
-  The parameter names come directly from state field names; `obj` avoids a
-  collision when a field is also named `state`.  (gh#51)
+    **Note:** inside `create_impl`, the freshly allocated struct pointer is
+    named `obj` (not `state`). Use `obj->field = value;` to initialise fields.
+    The parameter names come directly from state field names; `obj` avoids a
+    collision when a field is also named `state`. (gh#51)
 
 ### Fixed
 
 - **`<comp>_create()` local pointer renamed from `state` to `obj`** — the
-  generated create function now uses `obj` for the freshly `calloc`'d struct
-  pointer so that a state field named `state` no longer causes a C compiler
-  redeclaration error (`uint64_t state` parameter vs.
-  `lfsr_state_t *state` local).  Generated `create_assignments` lines
-  (`obj->field = value;`) are updated accordingly.  (gh#51 follow-up)
+    generated create function now uses `obj` for the freshly `calloc`'d struct
+    pointer so that a state field named `state` no longer causes a C compiler
+    redeclaration error (`uint64_t state` parameter vs.
+    `lfsr_state_t *state` local). Generated `create_assignments` lines
+    (`obj->field = value;`) are updated accordingly. (gh#51 follow-up)
 
 - **Scalar setter parameter renamed from `<name>` to `val`** — the generated
-  `<comp>_set_<name>()` functions now use `val` as the new-value parameter so
-  that a field named `state` no longer causes a redeclaration error in the
-  setter (`<comp>_state_t *state` vs `uint64_t state`).  The generated
-  getter/setter implementations are also excluded from `_preserve_core_bodies`
-  preservation so future signature changes apply cleanly on regeneration.
-  (gh#51 follow-up)
+    `<comp>_set_<name>()` functions now use `val` as the new-value parameter so
+    that a field named `state` no longer causes a redeclaration error in the
+    setter (`<comp>_state_t *state` vs `uint64_t state`). The generated
+    getter/setter implementations are also excluded from `_preserve_core_bodies`
+    preservation so future signature changes apply cleanly on regeneration.
+    (gh#51 follow-up)
 
 - **`variable_output` buffer grows automatically at call time** — the
-  pre-allocated output buffer for `variable_output` methods previously used a
-  fixed-at-construction size, causing a heap overflow when `<comp>_max_out()`
-  returns 0 (placeholder) and the caller passes a scalar count `n` larger than
-  the 1-element fallback.  The wrapper now tracks `_<name>_buf_cap` alongside
-  the buffer pointer and uses `realloc` to grow the allocation whenever the
-  requested output count exceeds the current capacity.  For
-  `params`-driven methods with scalar-only arguments (e.g. `steps(uint32_t n)`),
-  the fallback size is now `(size_t)n` instead of `1`, so the very first call
-  allocates enough memory even when `max_out()` is not yet implemented.
-  (gh#51 follow-up)
+    pre-allocated output buffer for `variable_output` methods previously used a
+    fixed-at-construction size, causing a heap overflow when `<comp>_max_out()`
+    returns 0 (placeholder) and the caller passes a scalar count `n` larger than
+    the 1-element fallback. The wrapper now tracks `_<name>_buf_cap` alongside
+    the buffer pointer and uses `realloc` to grow the allocation whenever the
+    requested output count exceeds the current capacity. For
+    `params`-driven methods with scalar-only arguments (e.g. `steps(uint32_t n)`),
+    the fallback size is now `(size_t)n` instead of `1`, so the very first call
+    allocates enough memory even when `max_out()` is not yet implemented.
+    (gh#51 follow-up)
 
 ## [0.13.15] — 2026-05-27
 
 ### Fixed
 
 - **`out_type` now respected for `variable_output` methods** — when a method
-  declares `variable_output = true` and sets `out_type = "uint8_t"` (or any
-  scalar type), the output buffer parameter, pre-allocated field, and
-  `PyArray_SimpleNewFromData` call now all use `out_type` as the element type.
-  Previously `out_type` was silently ignored and `return_type` (defaulting to
-  `float _Complex`) was used instead, producing wrong C signatures and wrong
-  NumPy dtypes. (gh#49)
+    declares `variable_output = true` and sets `out_type = "uint8_t"` (or any
+    scalar type), the output buffer parameter, pre-allocated field, and
+    `PyArray_SimpleNewFromData` call now all use `out_type` as the element type.
+    Previously `out_type` was silently ignored and `return_type` (defaulting to
+    `float _Complex`) was used instead, producing wrong C signatures and wrong
+    NumPy dtypes. (gh#49)
 
 - **`jm apply` method replay uses `void` as default `arg_type`** — when a
-  `[[obj.methods]]` entry omits `arg_type`, the replay in `jm apply` now
-  defaults to `"void"` (matching the CLI default) instead of `"float _Complex"`,
-  so methods with only `params` no longer receive a spurious
-  `const float complex *in, size_t n_in` input parameter. (gh#49)
+    `[[obj.methods]]` entry omits `arg_type`, the replay in `jm apply` now
+    defaults to `"void"` (matching the CLI default) instead of `"float _Complex"`,
+    so methods with only `params` no longer receive a spurious
+    `const float complex *in, size_t n_in` input parameter. (gh#49)
 
 ## [0.13.14] — 2026-05-26
 
 ### Added
 
-- **`py_return_type` key for method stubs** — add `py_return_type =
-  "list[tuple[int, float]]"` to a `[[obj.methods]]` entry to override the
-  auto-derived Python return annotation in the `.pyi` stub.  Useful when a
-  method returns a custom C struct whose Python representation cannot be
-  inferred from the `return_type` field alone. (gh#26)
+- **`py_return_type` key for method stubs** — add `py_return_type = "list[tuple[int, float]]"` to a `[[obj.methods]]` entry to override the
+    auto-derived Python return annotation in the `.pyi` stub. Useful when a
+    method returns a custom C struct whose Python representation cannot be
+    inferred from the `return_type` field alone. (gh#26)
 
 ### Fixed
 
 - **`jm remove` warns when `no_step` object's `_core.c` holds user code** —
-  for `no_step = true` objects the algorithm lives in `_core.c`, not the
-  header.  `jm remove` now checks `_core.c` for the `/* <<IMPLEMENT: */`
-  placeholder; its absence signals that the user has replaced the scaffold,
-  and a stderr warning is emitted before the file is deleted. (gh#46)
+    for `no_step = true` objects the algorithm lives in `_core.c`, not the
+    header. `jm remove` now checks `_core.c` for the `/* <<IMPLEMENT: */`
+    placeholder; its absence signals that the user has replaced the scaffold,
+    and a stderr warning is emitted before the file is deleted. (gh#46)
 
 - **`jm remove` warns when `_core.h` holds hand-written step()** — if the
-  `/* TODO: implement */` stub in the generated `_core.h` has been replaced
-  with real algorithm code, `jm remove` and `jm remove --force` now print a
-  warning to stderr so the user knows they are about to permanently destroy
-  their implementation. (gh#41)
+    `/* TODO: implement */` stub in the generated `_core.h` has been replaced
+    with real algorithm code, `jm remove` and `jm remove --force` now print a
+    warning to stderr so the user knows they are about to permanently destroy
+    their implementation. (gh#41)
 
 - **`jm apply <fragment>` succeeds when fragment already under include glob**
-  — running `jm apply` a second time on a fragment already present in the
-  `objects/` directory (and covered by the `include` glob) no longer raises
-  a "duplicate section" error; the conflict check is skipped for fragments
-  that are already wired in. (gh#42)
+    — running `jm apply` a second time on a fragment already present in the
+    `objects/` directory (and covered by the `include` glob) no longer raises
+    a "duplicate section" error; the conflict check is skipped for fragments
+    that are already wired in. (gh#42)
 
 - **`string_enum` parameter docstring uses `str` instead of `Any`** — the
-  numpy-style docstring for `string_enum:…` init parameters now emits the
-  correct type (`str`, not `Any`). (gh#26)
+    numpy-style docstring for `string_enum:…` init parameters now emits the
+    correct type (`str`, not `Any`). (gh#26)
 
 ## [0.13.13] — 2026-05-25
 
 ### Added
 
 - **`extra_types` TOML key — declarative `PyInit_` registration** — declare
-  `extra_types = ["MyType"]` under `[module.X]` to automatically emit
-  `PyType_Ready(&MyTypeType)` and `PyModule_AddObject(...)` calls in the
-  generated `PyInit_<module>` function.  Hand-written types in `*_extra.c`
-  files no longer require manual patching after every `jm apply`.  jm-owned
-  types are registered first; extra types follow in declaration order. (gh#28)
+    `extra_types = ["MyType"]` under `[module.X]` to automatically emit
+    `PyType_Ready(&MyTypeType)` and `PyModule_AddObject(...)` calls in the
+    generated `PyInit_<module>` function. Hand-written types in `*_extra.c`
+    files no longer require manual patching after every `jm apply`. jm-owned
+    types are registered first; extra types follow in declaration order. (gh#28)
 
 ### Changed
 
 - **Coverage reporting via Codecov** — CI now runs `pytest --cov` on every
-  push/PR and uploads results to Codecov (tokenless OIDC for public repos).
-  Coverage badge added to README.
+    push/PR and uploads results to Codecov (tokenless OIDC for public repos).
+    Coverage badge added to README.
 
 ### Documentation
 
 - **Branch workflow documented** — `docs/developers/START_HERE.md` now covers
-  the `feat/`/`fix/`/`docs/`/`chore/` branch convention, PR requirements, and
-  CI-green-before-merge rule.
+    the `feat/`/`fix/`/`docs/`/`chore/` branch convention, PR requirements, and
+    CI-green-before-merge rule.
 - **Quick-reference additions** — three new rows in the Advanced table:
-  scalar-sized output arrays (`out_type = "dtype[param]"`), extra link libs,
-  and extra types.
+    scalar-sized output arrays (`out_type = "dtype[param]"`), extra link libs,
+    and extra types.
 
 ## [0.13.12] — 2026-05-25
 
 ### Added
 
 - **`extra_link_libs` for module CMakeLists** — declare
-  `extra_link_libs = ["resamp_core", "m"]` under `[module.X]` in
-  `just-makeit.toml` to inject additional `target_link_libraries` entries
-  into the generated module CMakeLists.  Useful when a module's C code
-  depends on a pre-existing OBJECT or INTERFACE library not owned by
-  just-makeit.  `jm apply` propagates the setting correctly through
-  re-materialisation. (gh#27)
+    `extra_link_libs = ["resamp_core", "m"]` under `[module.X]` in
+    `just-makeit.toml` to inject additional `target_link_libraries` entries
+    into the generated module CMakeLists. Useful when a module's C code
+    depends on a pre-existing OBJECT or INTERFACE library not owned by
+    just-makeit. `jm apply` propagates the setting correctly through
+    re-materialisation. (gh#27)
 
 - **`out_type = "dtype[param]"` scalar-sized output arrays** — `jm function`
-  now accepts `out_type = "float64[M]"` (or any numpy dtype name), where
-  `M` is the name of a scalar C parameter that provides the output array
-  length at runtime.  The generated binding allocates `npy_intp _dim = M`
-  and passes `(double *)PyArray_DATA(...)` to the C function.  The `.pyi`
-  stub emits `NDArray[np.float64]` as the return type. (gh#29)
+    now accepts `out_type = "float64[M]"` (or any numpy dtype name), where
+    `M` is the name of a scalar C parameter that provides the output array
+    length at runtime. The generated binding allocates `npy_intp _dim = M`
+    and passes `(double *)PyArray_DATA(...)` to the C function. The `.pyi`
+    stub emits `NDArray[np.float64]` as the return type. (gh#29)
 
 ### Fixed
 
 - **`jm apply` preserves `*_extra.c` files** — hand-written
-  `<mod>_ext_extra.c` and `<mod>_ext_<obj>_extra.c` files are now seeded
-  into the temporary replay directory before `_regenerate_module()` runs, so
-  they appear in the regenerated aggregator `#include` list and survive
-  `jm apply` without being dropped. (gh#28)
+    `<mod>_ext_extra.c` and `<mod>_ext_<obj>_extra.c` files are now seeded
+    into the temporary replay directory before `_regenerate_module()` runs, so
+    they appear in the regenerated aggregator `#include` list and survive
+    `jm apply` without being dropped. (gh#28)
 
 ## [0.13.11] — 2026-05-25
 
 ### Fixed
 
 - **`string_enum` init-params emit `Literal[...]`** instead of `Any` in
-  `.pyi` stubs; `from typing import Literal` is added to the stub header
-  automatically when needed.  Enum default values are quoted strings in both
-  the `__init__` signature and the numpy-style docstring. (gh#26)
+    `.pyi` stubs; `from typing import Literal` is added to the stub header
+    automatically when needed. Enum default values are quoted strings in both
+    the `__init__` signature and the numpy-style docstring. (gh#26)
 - **`out_type` on module-level functions emits `NDArray[...]`** instead of
-  `None` in `.pyi` stubs; numpy is also imported when a function uses
-  `out_type` but no object uses arrays. (gh#26)
+    `None` in `.pyi` stubs; numpy is also imported when a function uses
+    `out_type` but no object uses arrays. (gh#26)
 - **`result_fields` methods emit `list[tuple[t1, t2, ...]]`** with per-field
-  Python type annotations derived from the C field types, instead of the
-  untyped `list[tuple]`. (gh#26)
+    Python type annotations derived from the C field types, instead of the
+    untyped `list[tuple]`. (gh#26)
 - **Array init-param docstrings emit `NDArray[...]`** instead of `Any` for
-  both 1-D and 2-D array types. (gh#26)
+    both 1-D and 2-D array types. (gh#26)
 - **2-D array init-params (`float[][]`) map to `NDArray[np.float32]`** in
-  stubs instead of `Any`. (gh#26)
+    stubs instead of `Any`. (gh#26)
 
 ## [0.13.10] — 2026-05-25
 
 ### Added
 
 - **Optional array init-param** — `[[comp.init_params]]` entries may now set
-  `optional = true` (with `create_fn = "Alt_create"`) on any array type.
-  When the caller supplies the kwarg, `create_fn` is called with the array
-  dimensions, a const pointer to its data, and any scalar params; when
-  omitted, `<comp>_create` is called with scalars only.  1-D arrays pass
-  `(len, ptr, scalars…)`; 2-D arrays pass `(dim0, dim1, ptr, scalars…)` and
-  include an `ndim == 2` guard.  CLI spelling:
-  `--init-param bank:float[][]:optional:Alt_create`.  Covers the Resampler
-  use-case where a polyphase bank may or may not be user-supplied. (gh#25)
+    `optional = true` (with `create_fn = "Alt_create"`) on any array type.
+    When the caller supplies the kwarg, `create_fn` is called with the array
+    dimensions, a const pointer to its data, and any scalar params; when
+    omitted, `<comp>_create` is called with scalars only. 1-D arrays pass
+    `(len, ptr, scalars…)`; 2-D arrays pass `(dim0, dim1, ptr, scalars…)` and
+    include an `ndim == 2` guard. CLI spelling:
+    `--init-param bank:float[][]:optional:Alt_create`. Covers the Resampler
+    use-case where a polyphase bank may or may not be user-supplied. (gh#25)
 
 ## [0.13.9] — 2026-05-24
 
 ### Added
 
 - **Per-object ext fragments** — each object in a module now generates its
-  own `<module>_ext_<obj>.c` fragment file. The thin aggregator
-  `<module>_ext.c` `#include`s all fragments and owns only the
-  `PyModuleDef` and `PyInit_`. Adding a new object no longer rewrites
-  sibling objects' hand-edited code. Migration from a monolithic ext is
-  automatic on the next `jm` command. (gh#20)
+    own `<module>_ext_<obj>.c` fragment file. The thin aggregator
+    `<module>_ext.c` `#include`s all fragments and owns only the
+    `PyModuleDef` and `PyInit_`. Adding a new object no longer rewrites
+    sibling objects' hand-edited code. Migration from a monolithic ext is
+    automatic on the next `jm` command. (gh#20)
 - **`_extra.c` convention** — if `<module>_ext_extra.c` or
-  `<module>_ext_<obj>_extra.c` exist on disk, the aggregator includes them
-  automatically. jm never creates or modifies `*_extra.c` files, making them
-  safe for hand-written Python types with no TOML representation. (gh#24)
-- **`inline = true` on module-level functions** — `jm function foo --module m
-  --inline` emits a `static inline` body stub directly into `<module>_core.h`
-  instead of a forward declaration in the header plus definition in
-  `_core.c`. Ideal for pure, stateless functions that should be inlined at
-  every call site. (gh#23)
+    `<module>_ext_<obj>_extra.c` exist on disk, the aggregator includes them
+    automatically. jm never creates or modifies `*_extra.c` files, making them
+    safe for hand-written Python types with no TOML representation. (gh#24)
+- **`inline = true` on module-level functions** — `jm function foo --module m --inline` emits a `static inline` body stub directly into `<module>_core.h`
+    instead of a forward declaration in the header plus definition in
+    `_core.c`. Ideal for pure, stateless functions that should be inlined at
+    every call site. (gh#23)
 - **Dtype-dispatched constructors** — `real_type` / `real_create_fn` fields
-  on `init_params` array entries emit a dtype probe at construction time:
-  if the incoming array matches `real_type`, `real_create_fn` is called
-  instead of the default `<comp>_create`. Covers the common DSP pattern of
-  a filter that has both a real-tap and a complex-tap variant. (gh#22)
+    on `init_params` array entries emit a dtype probe at construction time:
+    if the incoming array matches `real_type`, `real_create_fn` is called
+    instead of the default `<comp>_create`. Covers the common DSP pattern of
+    a filter that has both a real-tap and a complex-tap variant. (gh#22)
 
 ### Fixed
 
 - **PascalCase object names** — `_to_title()` now preserves internal
-  capitalisation (e.g. `my_NCO` → `MyNCO`). Previously `str.title()` lower-
-  cased all characters after the first, mangling names like `NCO`. (gh#19)
+    capitalisation (e.g. `my_NCO` → `MyNCO`). Previously `str.title()` lower-
+    cased all characters after the first, mangling names like `NCO`. (gh#19)
 - **Module `target_sources` for new objects** — adding an object to an
-  existing module now inserts `target_sources(…)` independently of
-  `add_subdirectory`, so the object is compiled even when the subdirectory
-  entry already existed. (gh#21)
+    existing module now inserts `target_sources(…)` independently of
+    `add_subdirectory`, so the object is compiled even when the subdirectory
+    entry already existed. (gh#21)
 - **`static int` body preservation** — the ext-file body extractor now
-  matches `static int` functions (init, traverse) in addition to
-  `static PyObject *`, preventing hand-patched `tp_init` / `tp_traverse`
-  implementations from being overwritten on module regeneration. (gh#20)
+    matches `static int` functions (init, traverse) in addition to
+    `static PyObject *`, preventing hand-patched `tp_init` / `tp_traverse`
+    implementations from being overwritten on module regeneration. (gh#20)
 
 ## [0.13.8] — 2026-05-24
 
 ### Added
 
 - **`jb.toml` generation** — `jm new` now emits a `jb.toml` alongside
-  `just-makeit.toml`, pre-populated with dev system dependencies for
-  apt, pacman, brew, dnf, zypper, apk, and msys2. Run
-  `jbx install-deps -g dev` immediately after scaffolding to install
-  build deps without any manual configuration.
+    `just-makeit.toml`, pre-populated with dev system dependencies for
+    apt, pacman, brew, dnf, zypper, apk, and msys2. Run
+    `jbx install-deps -g dev` immediately after scaffolding to install
+    build deps without any manual configuration.
 
 ### Changed
 
 - CI uses `jbx install-deps` (reads from `jb.toml`) for system
-  dependencies on all platforms, replacing inline `apt-get`/`brew`
-  blocks.
+    dependencies on all platforms, replacing inline `apt-get`/`brew`
+    blocks.
 - Added `examples` CI job that verifies `jb.toml` generation and runs
-  the full scaffold workflow end-to-end on Ubuntu and macOS.
+    the full scaffold workflow end-to-end on Ubuntu and macOS.
 
 ### Fixed
 
-- `make test-examples` failed with `ModuleNotFoundError: No module
-  named 'just_makeit'` when run via `uv run --no-project`. Fixed with
-  a dedicated `PYTEST_EXAMPLES` invocation that includes the local
-  project environment.
+- `make test-examples` failed with `ModuleNotFoundError: No module named 'just_makeit'` when run via `uv run --no-project`. Fixed with
+    a dedicated `PYTEST_EXAMPLES` invocation that includes the local
+    project environment.
 
 ## [0.13.7] — 2026-05-23
 
 ### Fixed
 
-- `sliding_power` bundled example missing `__main__` block — `jm example
-  sliding_power` exited immediately with no output instead of building and
-  testing the project.
+- `sliding_power` bundled example missing `__main__` block — `jm example sliding_power` exited immediately with no output instead of building and
+    testing the project.
 
 ## [0.13.6] — 2026-05-22
 
 ### Fixed
 
 - **`--no-state` PascalCase name collision (gh#9)** — all Python-layer C
-  wrapper functions (`dealloc`, `new`, `init`, `destroy`, `enter`, `exit`,
-  methods array, `TypeObject`) now use a `{Component}Obj_` prefix (e.g.
-  `ResamplerObj_destroy`) instead of `{Component}_`. Previously, when the
-  object name was PascalCase, the generated wrapper function names collided
-  with identically-named functions declared in the user's included C header,
-  causing a link error. The Python import API (`PyModule_AddObject`) still
-  uses the undecorated name so the user-facing class name is unchanged.
+    wrapper functions (`dealloc`, `new`, `init`, `destroy`, `enter`, `exit`,
+    methods array, `TypeObject`) now use a `{Component}Obj_` prefix (e.g.
+    `ResamplerObj_destroy`) instead of `{Component}_`. Previously, when the
+    object name was PascalCase, the generated wrapper function names collided
+    with identically-named functions declared in the user's included C header,
+    causing a link error. The Python import API (`PyModule_AddObject`) still
+    uses the undecorated name so the user-facing class name is unchanged.
 - **`variable_output` `malloc(0)` heap corruption (gh#17)** — when
-  `{comp}_{method}_max_out()` returns 0 at construction (e.g. a FIR filter
-  whose output size is input-dependent), the output buffer is now left `NULL`
-  instead of calling `malloc(0)`. The first Python call re-queries `max_out()`
-  and falls back to the input length `n` if it still returns 0, then
-  allocates. All subsequent calls take the pre-allocated zero-copy path.
+    `{comp}_{method}_max_out()` returns 0 at construction (e.g. a FIR filter
+    whose output size is input-dependent), the output buffer is now left `NULL`
+    instead of calling `malloc(0)`. The first Python call re-queries `max_out()`
+    and falls back to the input length `n` if it still returns 0, then
+    allocates. All subsequent calls take the pre-allocated zero-copy path.
 - **`c_deps` CMake ordering (gh#16)** — `add_subdirectory` blocks for
-  `c_deps` entries were appended after component blocks, so any
-  `target_sources(… TARGET_OBJECTS:dep_core)` reference appeared before
-  the target definition. They are now prepended.
+    `c_deps` entries were appended after component blocks, so any
+    `target_sources(… TARGET_OBJECTS:dep_core)` reference appeared before
+    the target definition. They are now prepended.
 - `jm apply <fragment>` now honours `module = "X"` inside a component
-  section: the component is wired into `[module.X].objects` in the
-  manifest and materialised as a module object (sharing the module's
-  `_ext.c`, no standalone extension). Previously the directive was
-  silently ignored and the object was scaffolded as standalone.
-  The `module` annotation is also preserved through subsequent
-  `C.save()` mutations (`_dump`'s `scalar_keys` now includes `"module"`).
+    section: the component is wired into `[module.X].objects` in the
+    manifest and materialised as a module object (sharing the module's
+    `_ext.c`, no standalone extension). Previously the directive was
+    silently ignored and the object was scaffolded as standalone.
+    The `module` annotation is also preserved through subsequent
+    `C.save()` mutations (`_dump`'s `scalar_keys` now includes `"module"`).
 - Windows / MinGW parallel-build race when a project has more than one
-  standalone object: each component's CMakeLists attached a POST_BUILD
-  step that copied `libwinpthread-1.dll` into the shared
-  `PYTHON_PACKAGE_DIR`; `mingw32-make --parallel` ran them concurrently
-  and one copy would fail with "no such file or directory" while the
-  other was writing the same file. The copy is now done once at
-  configure time in the top-level CMakeLists.txt (where the package
-  directory is already known); per-component CMakeLists keep their
-  `-static-libgcc` link option but no longer do the copy.
+    standalone object: each component's CMakeLists attached a POST_BUILD
+    step that copied `libwinpthread-1.dll` into the shared
+    `PYTHON_PACKAGE_DIR`; `mingw32-make --parallel` ran them concurrently
+    and one copy would fail with "no such file or directory" while the
+    other was writing the same file. The copy is now done once at
+    configure time in the top-level CMakeLists.txt (where the package
+    directory is already known); per-component CMakeLists keep their
+    `-static-libgcc` link option but no longer do the copy.
 - Property getter declaration now emitted into `_core.h` for module
-  objects (gh#8) — previously missing, causing a compile error when
-  the getter was called from outside the translation unit.
+    objects (gh#8) — previously missing, causing a compile error when
+    the getter was called from outside the translation unit.
 
 ### Added
 
 - **`c_deps`** — new `[project]` TOML key (gh#12). List C-only dependency
-  subdirectories; `jm apply` emits `add_subdirectory(native/src/<dep>)`
-  blocks prepended before all component blocks. No Python scaffolding is
-  generated for these entries.
-- **`no_generate`** — new `[module.X]` flag (gh#12). When `no_generate =
-  "true"`, `jm apply` wires the module into the root `CMakeLists.txt` but
-  skips all scaffolding — useful for hand-written modules that share the
-  CMake build tree.
-- **`depends_on`** — new per-component list (gh#13). `jm object name
-  --depends-on dep` (or `depends_on = ["dep"]` in TOML) emits transitive
-  `target_sources(… TARGET_OBJECTS:dep_core)` entries before the
-  component's own CMake entry, so the Python extension links the C objects
-  it needs without a separate shared library per dependency.
+    subdirectories; `jm apply` emits `add_subdirectory(native/src/<dep>)`
+    blocks prepended before all component blocks. No Python scaffolding is
+    generated for these entries.
+- **`no_generate`** — new `[module.X]` flag (gh#12). When `no_generate = "true"`, `jm apply` wires the module into the root `CMakeLists.txt` but
+    skips all scaffolding — useful for hand-written modules that share the
+    CMake build tree.
+- **`depends_on`** — new per-component list (gh#13). `jm object name --depends-on dep` (or `depends_on = ["dep"]` in TOML) emits transitive
+    `target_sources(… TARGET_OBJECTS:dep_core)` entries before the
+    component's own CMake entry, so the Python extension links the C objects
+    it needs without a separate shared library per dependency.
 - **`jm apply` bench retrofit (gh#14)** — `apply` now appends a missing
-  `bench_{comp}_core` CMake target to each component's
-  `native/src/<comp>/CMakeLists.txt` when one isn't already present.
-  Idempotent; existing projects gain C benchmark targets without a
-  manual edit.
+    `bench_{comp}_core` CMake target to each component's
+    `native/src/<comp>/CMakeLists.txt` when one isn't already present.
+    Idempotent; existing projects gain C benchmark targets without a
+    manual edit.
 - **`jm apply --only=NAME` (gh#15)** — restrict wiring regeneration to a
-  single named component. Aggregate files (`__init__.py`, root
-  `CMakeLists.txt`, umbrella header) are still updated; only the named
-  component's per-file output is regenerated. Speeds up `apply` on large
-  projects.
+    single named component. Aggregate files (`__init__.py`, root
+    `CMakeLists.txt`, umbrella header) are still updated; only the named
+    component's per-file output is regenerated. Speeds up `apply` on large
+    projects.
 
 ## [0.13.5] — 2026-05-19
 
 ### Fixed
 
 - `jm apply` now reconciles the wiring files that tie components into a
-  project — without this, an apply-materialized project's top
-  `CMakeLists.txt` never gained `add_subdirectory(native/src/<obj>)`, the
-  umbrella header never gained the component include, and the package
-  `__init__.py` never gained `from .<obj> import <Obj>`. The project
-  scaffolded but did not actually build the component. Reconciled files:
-  top `CMakeLists.txt` (sentinel-section replacement, user content
-  outside the Components / Modules regions preserved), umbrella header,
-  package `__init__.py` (uses the existing `_splice_init_py` so user
-  content survives), module subpackage `__init__.py` (uses
-  `_merge_module_init` so user wrapper classes survive), and per-module
-  `<mod>_ext.c` / `<mod>/CMakeLists.txt` / `<mod>.pyi`.
+    project — without this, an apply-materialized project's top
+    `CMakeLists.txt` never gained `add_subdirectory(native/src/<obj>)`, the
+    umbrella header never gained the component include, and the package
+    `__init__.py` never gained `from .<obj> import <Obj>`. The project
+    scaffolded but did not actually build the component. Reconciled files:
+    top `CMakeLists.txt` (sentinel-section replacement, user content
+    outside the Components / Modules regions preserved), umbrella header,
+    package `__init__.py` (uses the existing `_splice_init_py` so user
+    content survives), module subpackage `__init__.py` (uses
+    `_merge_module_init` so user wrapper classes survive), and per-module
+    `<mod>_ext.c` / `<mod>/CMakeLists.txt` / `<mod>.pyi`.
 - `_init.run` (the path `jm new --object X` takes) now inserts
-  `add_subdirectory(native/src/X)` into the `# ── Components` sentinel
-  section instead of appending at the end of the manifest — matches
-  what `_object.run` already does, and makes `jm apply` idempotent
-  against projects scaffolded via either path.
+    `add_subdirectory(native/src/X)` into the `# ── Components` sentinel
+    section instead of appending at the end of the manifest — matches
+    what `_object.run` already does, and makes `jm apply` idempotent
+    against projects scaffolded via either path.
 - Windows docker smoke-test PowerShell quoting — `(scaffold-only)` was
-  being parsed as a function call instead of part of the literal
-  message; switched to `-f` format with single-quoted templates.
+    being parsed as a function call instead of part of the literal
+    message; switched to `-f` format with single-quoted templates.
 
 ### Added
 
 - `declarative_scaffold/test.py` now asserts the agc extension actually
-  built (`agc*.so` / `.pyd` present in `src/demo/`). Without this, a
-  cmake build that skipped the agc target silently passed ctest with
-  zero registered tests.
+    built (`agc*.so` / `.pyd` present in `src/demo/`). Without this, a
+    cmake build that skipped the agc target silently passed ctest with
+    zero registered tests.
 - Four `TestApplyReconcilesAggregates` regression tests covering the
-  top-CMakeLists sentinel splice, umbrella include, package
-  `__init__.py` import, and preservation of user CMake content outside
-  the sentinel regions.
+    top-CMakeLists sentinel splice, umbrella include, package
+    `__init__.py` import, and preservation of user CMake content outside
+    the sentinel regions.
 
 ## [0.13.4] — 2026-05-19
 
 ### Fixed
 
 - A module-level function with no parameters generated a binding with
-  `(void)args;` while its parameter was `Py_UNUSED(args)` — an
-  undeclared-identifier compile error. Any project with a zero-arg
-  module function failed to build.
+    `(void)args;` while its parameter was `Py_UNUSED(args)` — an
+    undeclared-identifier compile error. Any project with a zero-arg
+    module function failed to build.
 - Module `__init__.py` corruption (gh#5, #6) — when a formatter
-  (ruff / black) reflowed a long single-line import into the
-  parenthesized multi-line form, a subsequent `jm property` /
-  `jm method` regeneration treated the `(` as an import name and wrote
-  `from .dsp import (, A, B  # noqa: E402` plus a leftover `)` block —
-  a `SyntaxError`. The merge regex now accepts both forms and collapses
-  back to a single canonical line.
+    (ruff / black) reflowed a long single-line import into the
+    parenthesized multi-line form, a subsequent `jm property` /
+    `jm method` regeneration treated the `(` as an import name and wrote
+    `from .dsp import (, A, B  # noqa: E402` plus a leftover `)` block —
+    a `SyntaxError`. The merge regex now accepts both forms and collapses
+    back to a single canonical line.
 
 ### Added
 
 - **`declarative_scaffold` example** — bundled end-to-end demo of the
-  schema-6 workflow: one TOML fragment with inline `impl` and
-  `{placeholder}` interpolation → `jm apply` → cmake + ctest green;
-  plus a `jm split-objects` round-trip on a legacy single-file project.
-  Run with `just-makeit example declarative_scaffold`.
+    schema-6 workflow: one TOML fragment with inline `impl` and
+    `{placeholder}` interpolation → `jm apply` → cmake + ctest green;
+    plus a `jm split-objects` round-trip on a legacy single-file project.
+    Run with `just-makeit example declarative_scaffold`.
 - **`just-makeit split-objects`** — migrate a single-file project to the
-  split layout: every top-level `[obj]` section moves out of the
-  manifest into `objects/<obj>.toml`, and the manifest gains
-  `include = ["objects/*.toml"]`. `[project]` and `[module.X]` stay in
-  the manifest. Idempotent — running on an already-split project is a
-  no-op. The loaded merged cfg is byte-identical before and after.
+    split layout: every top-level `[obj]` section moves out of the
+    manifest into `objects/<obj>.toml`, and the manifest gains
+    `include = ["objects/*.toml"]`. `[project]` and `[module.X]` stay in
+    the manifest. Idempotent — running on an already-split project is a
+    no-op. The loaded merged cfg is byte-identical before and after.
 - **Split-TOML save routing** — `_config.save()` now re-derives
-  provenance from disk and routes each section back to the file that
-  owns it. A mutation on a split-layout project (`jm method`,
-  `jm property`, `jm remove`, …) updates only that section's fragment
-  file; the manifest and sibling fragments are byte-for-byte
-  unchanged. `[project]` / `[module.X]` always live in the manifest.
-  A new object on a split-layout project is written to a new
-  `objects/<name>.toml`; an emptied fragment is deleted. Single-file
-  projects are unaffected. User comments inside fragments are not yet
-  preserved across save (we still use the deterministic `_dump`
-  writer); tomlkit-based comment preservation can layer on later.
+    provenance from disk and routes each section back to the file that
+    owns it. A mutation on a split-layout project (`jm method`,
+    `jm property`, `jm remove`, …) updates only that section's fragment
+    file; the manifest and sibling fragments are byte-for-byte
+    unchanged. `[project]` / `[module.X]` always live in the manifest.
+    A new object on a split-layout project is written to a new
+    `objects/<name>.toml`; an emptied fragment is deleted. Single-file
+    projects are unaffected. User comments inside fragments are not yet
+    preserved across save (we still use the deterministic `_dump`
+    writer); tomlkit-based comment preservation can layer on later.
 - **Inline `impl` / `impl_file` in object and method TOML sections** —
-  consumed by `jm apply`. `impl = '''…'''` is a TOML literal heredoc
-  carrying a C body; `impl_file = "path::funcname"` lifts the body from
-  an existing C file (the existing `--impl` semantics, but declared in
-  the TOML). Both forms accept Python-f-string-style `{placeholder}`
-  interpolation against the object context — `{component}`,
-  `{Component}`, `{module}`, `{Module}`, `{arg_type}`, `{return_type}`
-  (plus `{method}` on methods, `{function}` on functions). Unknown
-  placeholders and literal C braces (`{0}`, `{ … }`) pass through
-  untouched, so no escape friction. An optional `replace = {...}` table
-  applies string substitutions on top, layering with the existing
-  `--replace` mechanism. `impl` and `impl_file` are mutually exclusive
-  and validated before any side effects.
+    consumed by `jm apply`. `impl = '''…'''` is a TOML literal heredoc
+    carrying a C body; `impl_file = "path::funcname"` lifts the body from
+    an existing C file (the existing `--impl` semantics, but declared in
+    the TOML). Both forms accept Python-f-string-style `{placeholder}`
+    interpolation against the object context — `{component}`,
+    `{Component}`, `{module}`, `{Module}`, `{arg_type}`, `{return_type}`
+    (plus `{method}` on methods, `{function}` on functions). Unknown
+    placeholders and literal C braces (`{0}`, `{ … }`) pass through
+    untouched, so no escape friction. An optional `replace = {...}` table
+    applies string substitutions on top, layering with the existing
+    `--replace` mechanism. `impl` and `impl_file` are mutually exclusive
+    and validated before any side effects.
 - **Split per-object TOMLs** (schema 6) — the manifest's new
-  `include = ["objects/*.toml"]` key pulls in fragments containing
-  one or more `[obj]` sections (and optionally `[[module.X.functions]]`
-  extensions). `_config.load()` resolves the includes and merges them
-  into the single dict every consumer already expects — backward
-  compatible: a manifest without `include` behaves exactly as today.
-  Duplicate-object across fragments errors with a specific remedy
-  (`jm remove object X` first, or rename in the fragment).
+    `include = ["objects/*.toml"]` key pulls in fragments containing
+    one or more `[obj]` sections (and optionally `[[module.X.functions]]`
+    extensions). `_config.load()` resolves the includes and merges them
+    into the single dict every consumer already expects — backward
+    compatible: a manifest without `include` behaves exactly as today.
+    Duplicate-object across fragments errors with a specific remedy
+    (`jm remove object X` first, or rename in the fragment).
 - **`just-makeit apply <fragment>`** — compose-fragment path: copies the
-  fragment into `objects/`, adds it to the manifest's `include` set,
-  then materializes. Phase 2 (provenance + multi-file save) will let
-  mutating commands write back to fragment files; for now mutations
-  still target the manifest.
+    fragment into `objects/`, adds it to the manifest's `include` set,
+    then materializes. Phase 2 (provenance + multi-file save) will let
+    mutating commands write back to fragment files; for now mutations
+    still target the manifest.
 - **`just-makeit apply`** — materialize a project from its
-  `just-makeit.toml`: generate every file each object / module / function
-  in the manifest implies. Add-only — it creates missing files and never
-  overwrites or deletes, so it is safe to run repeatedly. Makes a project
-  reproducible from its manifest (plus any hand-written `*_core.c` /
-  `*_core.h`) alone.
+    `just-makeit.toml`: generate every file each object / module / function
+    in the manifest implies. Add-only — it creates missing files and never
+    overwrites or deletes, so it is safe to run repeatedly. Makes a project
+    reproducible from its manifest (plus any hand-written `*_core.c` /
+    `*_core.h`) alone.
 - **`just-makeit remove`** — the explicit, destructive counterpart to the
-  additive commands. `remove object` / `remove module` delete the
-  generated files, strip the `CMakeLists.txt` / umbrella-header /
-  package `__init__.py` wiring, and drop the `just-makeit.toml` section;
-  `remove method` / `remove property` / `remove function` drop the TOML
-  entry and regenerate the affected `ext.c` / `core.h` / `.pyi`. Prompts
-  for confirmation unless `--force` is given.
+    additive commands. `remove object` / `remove module` delete the
+    generated files, strip the `CMakeLists.txt` / umbrella-header /
+    package `__init__.py` wiring, and drop the `just-makeit.toml` section;
+    `remove method` / `remove property` / `remove function` drop the TOML
+    entry and regenerate the affected `ext.c` / `core.h` / `.pyi`. Prompts
+    for confirmation unless `--force` is given.
 
 ## [0.13.3] — 2026-05-19
 
 ### Fixed
 
 - `jm property --field` on an object that has `init_params` no longer
-  reverts the generated `create()` prototype to `(void)`. The header was
-  regenerated without the params while the implementation kept them,
-  producing a conflicting-types compile error (gh#4).
+    reverts the generated `create()` prototype to `(void)`. The header was
+    regenerated without the params while the implementation kept them,
+    producing a conflicting-types compile error (gh#4).
 - `jm module <name>` no longer writes a syntactically invalid
-  `__init__.py`. A freshly-created module emitted
-  `from .<module> import` with an empty name list — a `SyntaxError` —
-  leaving the module unimportable until the first object was added. The
-  import line is now added only once an object or function exists.
+    `__init__.py`. A freshly-created module emitted
+    `from .<module> import` with an empty name list — a `SyntaxError` —
+    leaving the module unimportable until the first object was added. The
+    import line is now added only once an object or function exists.
 
 ### Changed
 
 - just-makeit now builds with the `just-buildit` backend instead of
-  `hatchling`, dogfooding the backend its own scaffolded projects use.
-  Requires `just-buildit >= 0.3.6` (the `pure` build option).
+    `hatchling`, dogfooding the backend its own scaffolded projects use.
+    Requires `just-buildit >= 0.3.6` (the `pure` build option).
 
 ## [0.13.2] — 2026-05-19
 
 ### Added
 
 - **`just-makeit bench`** now builds and runs C *and* Python benchmarks,
-  trims the raw per-iteration arrays (`stats.data` / `runtimes`) that
-  bloat pytest-benchmark JSON by 1000x+, and writes dated snapshots to
-  `benchmarks/history/`. New flags: `--tag`, `--c-only`, `--python-only`.
+    trims the raw per-iteration arrays (`stats.data` / `runtimes`) that
+    bloat pytest-benchmark JSON by 1000x+, and writes dated snapshots to
+    `benchmarks/history/`. New flags: `--tag`, `--c-only`, `--python-only`.
 - **`BUILD_PYTHON`** CMake option in generated projects — guards the
-  Python extension targets so the C library can build without Python.
+    Python extension targets so the C library can build without Python.
 
 ### Changed
 
 - `jm object` / `property` / `method` / `add` now preserve hand-written
-  `core.c` / `core.h` function bodies across regeneration, matching the
-  existing `ext.c` behaviour.
-- The generated `Makefile` `bench` target delegates to `just-makeit
-  bench`. Schema 4 → 5: `jm upgrade` rewrites the bench target in
-  existing projects' Makefiles.
+    `core.c` / `core.h` function bodies across regeneration, matching the
+    existing `ext.c` behaviour.
+- The generated `Makefile` `bench` target delegates to `just-makeit bench`. Schema 4 → 5: `jm upgrade` rewrites the bench target in
+    existing projects' Makefiles.
 
 ## [0.13.1] — 2026-05-18
 
 ### Fixed
 
 - **`full_workflow` example**: `unittest discover` picked up `test_ema.py`
-  (pytest-style) on systems without pytest installed, causing the artifact
-  smoke test to fail.  Step 8 now targets `test_gain.py` directly.
+    (pytest-style) on systems without pytest installed, causing the artifact
+    smoke test to fail. Step 8 now targets `test_gain.py` directly.
 
 ## [0.13.0] — 2026-05-18
 
 ### Added
 
 - **`just-makeit bench`**: build and run C benchmarks, then display a
-  pytest-benchmark-style ASCII table with per-benchmark min/max/mean/stddev/
-  median/IQR and MSa/s throughput. On subsequent runs a **Δ vs prev** column
-  appears automatically, showing throughput change vs the previous run.
-  Results are saved to `.benchmarks/c/<comp>.json`.
+    pytest-benchmark-style ASCII table with per-benchmark min/max/mean/stddev/
+    median/IQR and MSa/s throughput. On subsequent runs a **Δ vs prev** column
+    appears automatically, showing throughput change vs the previous run.
+    Results are saved to `.benchmarks/c/<comp>.json`.
 
 - **`jm_bench.h`**: header-only C library dropped into `native/benchmarks/`
-  on every new project. Each timing section records per-round elapsed times;
-  `jm_bench_write_json()` at the end of `main()` writes
-  `bench_<comp>_core.json` in **pytest-benchmark-compatible JSON** format
-  (min/max/mean/stddev/median/q1/q3/iqr/ops/total/rounds/iterations) so C
-  and Python bench results can be compared directly.
+    on every new project. Each timing section records per-round elapsed times;
+    `jm_bench_write_json()` at the end of `main()` writes
+    `bench_<comp>_core.json` in **pytest-benchmark-compatible JSON** format
+    (min/max/mean/stddev/median/q1/q3/iqr/ops/total/rounds/iterations) so C
+    and Python bench results can be compared directly.
 
 - **Schema 4 migration**: `just-makeit upgrade` now drops `jm_bench.h` and
-  regenerates bench C files to use per-round timing for all existing projects.
+    regenerates bench C files to use per-round timing for all existing projects.
 
 - **Per-method bench timing**: each named extra method added with
-  `just-makeit method` gets its own per-round timing block in the C bench
-  file. Methods can be excluded with `--no-bench`.
+    `just-makeit method` gets its own per-round timing block in the C bench
+    file. Methods can be excluded with `--no-bench`.
 
 ### Fixed
 
 - `NO_STEP_BENCH_C` template: unresolved `<<bench_create_stmt>>` placeholder
-  when scaffolding `--no-step` objects that have no `--init-param` arguments
-  (e.g. the `stream_chunker` example). `make_state_ctx` now always provides
-  `bench_create_stmt` and `bench_destroy_stmt`, emitting a `/* TODO */`
-  comment when `c_create_args` is empty so the bench file compiles cleanly.
+    when scaffolding `--no-step` objects that have no `--init-param` arguments
+    (e.g. the `stream_chunker` example). `make_state_ctx` now always provides
+    `bench_create_stmt` and `bench_destroy_stmt`, emitting a `/* TODO */`
+    comment when `c_create_args` is empty so the bench file compiles cleanly.
 
 ______________________________________________________________________
 
@@ -577,8 +613,8 @@ ______________________________________________________________________
 ### Fixed
 
 - `full_workflow` example: guard the step-7 pytest invocation with an
-  availability check and skip gracefully when pytest is not installed,
-  matching the same pattern used by the pytest-benchmark and coverage steps.
+    availability check and skip gracefully when pytest is not installed,
+    matching the same pattern used by the pytest-benchmark and coverage steps.
 
 ______________________________________________________________________
 
@@ -587,15 +623,15 @@ ______________________________________________________________________
 ### Added
 
 - **`just-makeit upgrade`**: schema-versioned migration system for existing
-  projects. Running `just-makeit upgrade` from a project root applies all
-  pending migrations idempotently — existing user-edited files are never
-  overwritten, and `just-makeit.toml` keys are only added, never removed.
-  Mutating commands (`object`, `module`, `method`, `property`, `function`,
-  `add`) now warn on stderr when the project schema is behind `CURRENT_SCHEMA`.
+    projects. Running `just-makeit upgrade` from a project root applies all
+    pending migrations idempotently — existing user-edited files are never
+    overwritten, and `just-makeit.toml` keys are only added, never removed.
+    Mutating commands (`object`, `module`, `method`, `property`, `function`,
+    `add`) now warn on stderr when the project schema is behind `CURRENT_SCHEMA`.
 
 - **Schema 1 → 2 migration**: adds documentation scaffolding (`zensical.toml`,
-  `docs/index.md`, `docs/api.md`) to projects created before v0.12.0. New
-  projects scaffold these files automatically.
+    `docs/index.md`, `docs/api.md`) to projects created before v0.12.0. New
+    projects scaffold these files automatically.
 
 ______________________________________________________________________
 

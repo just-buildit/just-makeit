@@ -25,6 +25,7 @@ from ._types import (
     SUPPORTED_TYPES,
 )
 
+
 def _build_ml_doc(lines: list[str]) -> str:
     """Render a list of logical doc lines into adjacent C string literals.
 
@@ -795,15 +796,11 @@ def _build_no_state_init_ctx(
     # hand-written *_core.c functions are called with the right argument layout.
 
     # Build per-param lookup dicts keyed by name.
-    _arr_meta: dict[str, tuple] = {
-        n: (act, andim) for n, act, andim, _ in arr_ip
-    }
+    _arr_meta: dict[str, tuple] = {n: (act, andim) for n, act, andim, _ in arr_ip}
     _str_enum_meta: dict[str, tuple] = {
         sn: (choices, sdflt) for sn, choices, sdflt in str_enum_ip
     }
-    _scalar_meta: dict[str, tuple] = {
-        n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
-    }
+    _scalar_meta: dict[str, tuple] = {n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip}
     # Optional array param names — excluded from sig/call building (handled separately).
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
 
@@ -819,16 +816,14 @@ def _build_no_state_init_ctx(
         doc_parts.append(
             f" * @param {name}  Input {dt} array (length passed as {name}_len)."
         )
-        call_parts.append(
-            f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len"
-        )
+        call_parts.append(f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len")
         c_create_parts_ordered.append("NULL, 0")
 
     # Init params in TOML declaration order (optional array params excluded here).
     for param in params:
         pname = param[0]
-        pct = param[1]
-        pdflt = param[2] if len(param) > 2 else ""
+        param[1]
+        param[2] if len(param) > 2 else ""
         if pname in _opt_arr_names:
             continue
         if pname in _arr_meta:
@@ -836,8 +831,7 @@ def _build_no_state_init_ctx(
             adisp = _ctype_display(act)
             if andim == 2:
                 sig_parts.append(
-                    f"const {adisp} *{pname},"
-                    f" size_t {pname}_dim0, size_t {pname}_dim1"
+                    f"const {adisp} *{pname}, size_t {pname}_dim0, size_t {pname}_dim1"
                 )
                 doc_parts.append(
                     f" * @param {pname}  Input {adisp} 2-D array"
@@ -849,9 +843,7 @@ def _build_no_state_init_ctx(
                 )
                 c_create_parts_ordered.append("NULL, 0, 0")
             else:
-                sig_parts.append(
-                    f"const {adisp} *{pname}, size_t {pname}_len"
-                )
+                sig_parts.append(f"const {adisp} *{pname}, size_t {pname}_len")
                 doc_parts.append(
                     f" * @param {pname}  Input {adisp} array"
                     f" (length passed as {pname}_len)."
@@ -865,20 +857,14 @@ def _build_no_state_init_ctx(
             sig_parts.append(f"int {pname}")
             doc_parts.append(
                 f" * @param {pname}  Enum index; 0={choices[0]}"
-                + (
-                    f"…{len(choices)-1}={choices[-1]}."
-                    if len(choices) > 1
-                    else "."
-                )
+                + (f"…{len(choices) - 1}={choices[-1]}." if len(choices) > 1 else ".")
             )
             call_parts.append(pname)
             c_create_parts_ordered.append("0")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(f"{ct_s} {pname}")
-            doc_parts.append(
-                f" * @param {pname}  {pname} (default: {dflt_s})."
-            )
+            doc_parts.append(f" * @param {pname}  {pname} (default: {dflt_s}).")
             call_parts.append(pname)
             c_create_parts_ordered.append(dflt_s)
 
@@ -905,10 +891,9 @@ def _build_no_state_init_ctx(
         + [f"    PyObject *{name}_obj = NULL;" for name, _, __, ___ in arr_ip]
         + [f"    PyObject *{name}_obj = NULL;" for name, *_ in opt_arr_ip]
     )
-    parse_args: list[str] = (
-        [f"&{name}_obj" for name, _ in _aa]
-        + [f"&{name}_obj" for name, _, __, ___ in arr_ip]
-    )
+    parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa] + [
+        f"&{name}_obj" for name, _, __, ___ in arr_ip
+    ]
     post_lines: list[str] = []
 
     # String-enum: "s" format, optional (after |)
@@ -920,16 +905,15 @@ def _build_no_state_init_ctx(
         for i, choice in enumerate(choices):
             kw = "if" if i == 0 else "else if"
             enum_lines.append(
-                f'    {kw} (strcmp({sname}_str, "{choice}") == 0)'
-                f" {sname} = {i};"
+                f'    {kw} (strcmp({sname}_str, "{choice}") == 0) {sname} = {i};'
             )
         choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
         enum_lines += [
-            f"    else {{",
+            "    else {",
             f'        PyErr_Format(PyExc_ValueError, "{sname} must be one of'
-            f' {choices_str}, got \'%s\'", {sname}_str);',
-            f"        return -1;",
-            f"    }}",
+            f" {choices_str}, got '%s'\", {sname}_str);",
+            "        return -1;",
+            "    }",
         ]
         post_lines.extend(enum_lines)
 
@@ -943,9 +927,7 @@ def _build_no_state_init_ctx(
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
             raw_init = dflt_raw if dflt_raw else meta["parse_zero"]
-            local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {raw_init};"
-            )
+            local_lines.append(f"    {meta['parse_type']} {name}_raw = {raw_init};")
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")
         else:
@@ -1016,9 +998,7 @@ def _build_no_state_init_ctx(
             real_adisp = _ctype_display(real_ect)
             complex_adisp = _ctype_display(act)
             # Replace the complex cast in create_call_args with the real cast.
-            complex_cast = (
-                f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
-            )
+            complex_cast = f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
             real_cast = f"(const {real_adisp} *)PyArray_DATA({aname}_arr)"
             real_call_args = create_call_args.replace(complex_cast, real_cast, 1)
             aapb_lines.append(
@@ -1142,20 +1122,25 @@ def _build_no_state_init_ctx(
     if dispatch_meta or opt_arr_ip:
         create_line = ""
     else:
-        create_line = (
-            f"    self->handle = {component}_create({create_call_args});\n"
-        )
+        create_line = f"    self->handle = {component}_create({create_call_args});\n"
 
     # ── pyi / test helpers ────────────────────────────────────────────────────
 
     _NP_PY_TYPE: dict[str, str] = {
-        "float32": "np.float32",   "float64": "np.float64",
-        "complex64": "np.complex64", "complex128": "np.complex128",
-        "int8": "np.int8",   "int16": "np.int16",
-        "int32": "np.int32", "int64": "np.int64",
-        "uint8": "np.uint8", "uint16": "np.uint16",
-        "uint32": "np.uint32", "uint64": "np.uint64",
-        "uintp": "np.uintp", "intp": "np.intp",
+        "float32": "np.float32",
+        "float64": "np.float64",
+        "complex64": "np.complex64",
+        "complex128": "np.complex128",
+        "int8": "np.int8",
+        "int16": "np.int16",
+        "int32": "np.int32",
+        "int64": "np.int64",
+        "uint8": "np.uint8",
+        "uint16": "np.uint16",
+        "uint32": "np.uint32",
+        "uint64": "np.uint64",
+        "uintp": "np.uintp",
+        "intp": "np.intp",
     }
 
     pyi_parts: list[str] = (
@@ -1172,48 +1157,61 @@ def _build_no_state_init_ctx(
 
     pyi_doc_sections: list[str] = []
     if _aa:
-        pyi_doc_sections.append("\n".join(
-            f"    {name} : array-like\n        {dt} coefficients."
-            for name, dt in _aa
-        ))
+        pyi_doc_sections.append(
+            "\n".join(
+                f"    {name} : array-like\n        {dt} coefficients."
+                for name, dt in _aa
+            )
+        )
     if arr_ip:
-        pyi_doc_sections.append("\n".join(
-            f"    {aname} : array-like"
-            f"{', shape (rows, cols)' if andim == 2 else ''}\n"
-            f"        {_ctype_display(act)} {'matrix' if andim == 2 else 'array'}."
-            for aname, act, andim, _ in arr_ip
-        ))
+        pyi_doc_sections.append(
+            "\n".join(
+                f"    {aname} : array-like"
+                f"{', shape (rows, cols)' if andim == 2 else ''}\n"
+                f"        {_ctype_display(act)} {'matrix' if andim == 2 else 'array'}."
+                for aname, act, andim, _ in arr_ip
+            )
+        )
     if str_enum_ip:
-        pyi_doc_sections.append("\n".join(
-            f'    {sname} : str, default "{sdflt}"\n'
-            f"        One of: {', '.join(choices)}."
-            for sname, choices, sdflt in str_enum_ip
-        ))
+        pyi_doc_sections.append(
+            "\n".join(
+                f'    {sname} : str, default "{sdflt}"\n'
+                f"        One of: {', '.join(choices)}."
+                for sname, choices, sdflt in str_enum_ip
+            )
+        )
     if opt_arr_ip:
-        pyi_doc_sections.append("\n".join(
-            f"    {oname} : array-like or None, optional"
-            f"{', shape (rows, cols)' if ondim == 2 else ''}\n"
-            f"        {_ctype_display(oact)} array; when supplied {oalt_fn}"
-            f" is called instead of the default constructor."
-            for oname, oact, ondim, _, oalt_fn in opt_arr_ip
-        ))
+        pyi_doc_sections.append(
+            "\n".join(
+                f"    {oname} : array-like or None, optional"
+                f"{', shape (rows, cols)' if ondim == 2 else ''}\n"
+                f"        {_ctype_display(oact)} array; when supplied {oalt_fn}"
+                f" is called instead of the default constructor."
+                for oname, oact, ondim, _, oalt_fn in opt_arr_ip
+            )
+        )
     if scalar_ip:
-        pyi_doc_sections.append("\n".join(
-            f"    {name} : {_CTYPE_META[ct]['py_type']},"
-            f" default {_py_default(ct, dflt)}\n"
-            f"        {name} constructor parameter."
-            for name, ct, dflt, *_ in scalar_ip
-        ))
+        pyi_doc_sections.append(
+            "\n".join(
+                f"    {name} : {_CTYPE_META[ct]['py_type']},"
+                f" default {_py_default(ct, dflt)}\n"
+                f"        {name} constructor parameter."
+                for name, ct, dflt, *_ in scalar_ip
+            )
+        )
     pyi_param_docs = "\n".join(pyi_doc_sections) or "    (none)"
 
     py_create_parts: list[str] = []
     for _, dt in _aa:
-        py_create_parts.append(f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})")
+        py_create_parts.append(
+            f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})"
+        )
     for aname, act, andim, _ in arr_ip:
         dt = _CTYPE_TO_DTYPE.get(act, "float32")
         npt = _NP_PY_TYPE.get(dt, "np.float32")
         py_create_parts.append(
-            f"np.zeros((1, 1), dtype={npt})" if andim == 2
+            f"np.zeros((1, 1), dtype={npt})"
+            if andim == 2
             else f"np.zeros(1, dtype={npt})"
         )
     py_create_parts += [f'"{sdflt}"' for _, _, sdflt in str_enum_ip]
@@ -1243,22 +1241,18 @@ def _build_no_state_init_ctx(
         "py_create_args": py_create_args,
         "c_create_args": c_create_args,
         "bench_create_stmt": (
-            f"    {component}_state_t *obj"
-            f" = {component}_create({c_create_args});"
+            f"    {component}_state_t *obj = {component}_create({c_create_args});"
             if c_create_args
             else (
-                f"    /* TODO: {component}_state_t *obj"
-                f" = {component}_create(...); */"
+                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
             )
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
-            test_obj
-            + "\n        pass  # no auto-state; add assertions for your fields"
+            test_obj + "\n        pass  # no auto-state; add assertions for your fields"
         ),
         "reset_test_py": (
-            test_obj
-            + "\n        pass  # no auto-state; add assertions for your reset"
+            test_obj + "\n        pass  # no auto-state; add assertions for your reset"
         ),
     }
 
@@ -1357,6 +1351,7 @@ def make_state_ctx(
     no_state: bool = False,
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
+    opaque_fields: list[tuple[str, str]] = (),
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1407,17 +1402,14 @@ def make_state_ctx(
             "reset_test_py_pure": "    pass  # no auto-state; add assertions for your reset",
             "c_create_args": "",
             "bench_create_stmt": (
-                f"    /* TODO: {component}_state_t *obj"
-                f" = {component}_create(...); */"
+                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
             ),
             "bench_destroy_stmt": "",
             "getter_setter_test_c": "",
             "reset_test_c": f"    /* reset */\n    {component}_reset(obj);",
             "array_args_parse_block": "",
             "array_args_decref": "",
-            "create_line": (
-                f"    self->handle = {component}_create();\n"
-            ),
+            "create_line": (f"    self->handle = {component}_create();\n"),
             "method_decls": "",
             "extra_buf_fields": "",
             "extra_buf_free": "",
@@ -1463,6 +1455,10 @@ def make_state_ctx(
                     init_post_parse_impl=init_post_parse_impl,
                 )
             )
+        if opaque_fields:
+            base["state_struct_fields"] = "\n".join(
+                f"    {ct} {name};" for name, ct in opaque_fields
+            )
         return base
 
     if roles is None:
@@ -1491,6 +1487,8 @@ def make_state_ctx(
             struct_field_lines.append(f"    {parsed[0]} {name}[{parsed[1]}];")
         else:
             struct_field_lines.append(f"    {ct} {name};")
+    for name, ct in opaque_fields:
+        struct_field_lines.append(f"    {ct} {name};")
     state_struct_fields = "\n".join(struct_field_lines)
 
     # Array args (from --array-arg) go first in create() signature/kwlist.
@@ -1565,9 +1563,7 @@ def make_state_ctx(
 
     create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in scalar_vars]
     for name, _, size in array_info:
-        create_assign_lines.append(
-            f"    memset(obj->{name}, 0, sizeof(obj->{name}));"
-        )
+        create_assign_lines.append(f"    memset(obj->{name}, 0, sizeof(obj->{name}));")
     create_assignments = "\n".join(create_assign_lines)
 
     reset_assign_lines = []
@@ -2090,12 +2086,10 @@ def make_state_ctx(
         ),
         "c_create_args": c_create_args,
         "bench_create_stmt": (
-            f"    {component}_state_t *obj"
-            f" = {component}_create({c_create_args});"
+            f"    {component}_state_t *obj = {component}_create({c_create_args});"
             if c_create_args
             else (
-                f"    /* TODO: {component}_state_t *obj"
-                f" = {component}_create(...); */"
+                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
             )
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
@@ -2329,23 +2323,20 @@ def _bench_method_block(component: str, m: dict) -> str:
         ]
         chk_vars = f"{name}_in && {name}_out" if has_arg else f"{name}_out"
         lines += [
-            f"        if (!({chk_vars}))"
-            f" {{ fprintf(stderr, \"OOM\\n\"); return 1; }}",
+            f'        if (!({chk_vars})) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
         ]
         in_arg = f" {name}_in," if has_arg else ""
-        call = (
-            f"{component}_{name}(obj,{in_arg} BENCH_N, {name}_out)"
-        )
+        call = f"{component}_{name}(obj,{in_arg} BENCH_N, {name}_out)"
         # Warmup then per-round timing.
         lines += [
-            f"        for (int i = 0; i < 4; i++)",
+            "        for (int i = 0; i < 4; i++)",
             f"            {call};",
-            f"        for (int r = 0; r < ITERATIONS; r++) {{",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "        for (int r = 0; r < ITERATIONS; r++) {",
+            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
             f"            {call};",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
             f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
-            f"        }}",
+            "        }",
         ]
         if has_arg:
             lines.append(f"        free({name}_in);")
@@ -2358,26 +2349,21 @@ def _bench_method_block(component: str, m: dict) -> str:
             f"        {arg_elem_disp} *{name}_in ="
             f" ({arg_elem_disp} *)calloc("
             f"BENCH_N, sizeof({arg_elem_disp}));",
-            f"        if (!{name}_in)"
-            f" {{ fprintf(stderr, \"OOM\\n\"); return 1; }}",
+            f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
         ]
         if has_ret:
-            lines.append(
-                f"        volatile {ret_disp} {name}_sink;"
-            )
+            lines.append(f"        volatile {ret_disp} {name}_sink;")
         sink = f"{name}_sink = " if has_ret else ""
-        call = (
-            f"{component}_{name}(obj, {name}_in, BENCH_N{param_args})"
-        )
+        call = f"{component}_{name}(obj, {name}_in, BENCH_N{param_args})"
         lines += [
-            f"        for (int i = 0; i < 4; i++)",
+            "        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
-            f"        for (int r = 0; r < ITERATIONS; r++) {{",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "        for (int r = 0; r < ITERATIONS; r++) {",
+            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
             f"            {sink}{call};",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
             f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
-            f"        }}",
+            "        }",
             f"        free({name}_in);",
         ]
 
@@ -2391,29 +2377,27 @@ def _bench_method_block(component: str, m: dict) -> str:
         call = f"{component}_{name}(obj{in_arg}{param_args})"
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
-            f"        for (int r = 0; r < ITERATIONS; r++) {{",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t0);",
-            f"            for (int i = 0; i < BENCH_N; i++)",
+            "        for (int r = 0; r < ITERATIONS; r++) {",
+            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "            for (int i = 0; i < BENCH_N; i++)",
             f"                {sink}{call};",
-            f"            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
             f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
-            f"        }}",
+            "        }",
         ]
 
     # Register with bench harness and print mean throughput.
     add_line = (
-        f"        jm_bench_add(&_bench, \"{name}\","
-        f" _times_{name}, ITERATIONS, BENCH_N);"
+        f'        jm_bench_add(&_bench, "{name}", _times_{name}, ITERATIONS, BENCH_N);'
     )
     lines += [
         add_line,
-        f"        {{",
-        f"            double _s = 0.0;",
-        f"            for (int r = 0; r < ITERATIONS; r++)"
-        f" _s += _times_{name}[r];",
+        "        {",
+        "            double _s = 0.0;",
+        f"            for (int r = 0; r < ITERATIONS; r++) _s += _times_{name}[r];",
         f'            printf("  {name}()  %8.1f MSa/s\\n",',
-        f"                   (double)BENCH_N / (_s / ITERATIONS) / 1e6);",
-        f"        }}",
+        "                   (double)BENCH_N / (_s / ITERATIONS) / 1e6);",
+        "        }",
     ]
 
     lines.append("    }")
@@ -2540,9 +2524,7 @@ def make_methods_ctx(
             _param_docs += f" * @param {_p['name']}  {_pdisp} parameter.\n"
         _doc_ret_disp = _vo_out_disp if variable_output else ret_disp
         _ret_doc = (
-            f" * @return Result ({_doc_ret_disp}).\n"
-            if return_type != "void"
-            else ""
+            f" * @return Result ({_doc_ret_disp}).\n" if return_type != "void" else ""
         )
         _method_doc = f"/**\n * @brief {name}.\n *\n{_param_docs}{_ret_doc} */"
         _ndecl = len(decl_lines)  # index before this method adds declarations
@@ -2686,9 +2668,7 @@ def make_methods_ctx(
                         _vp_parts.append(f"const {_e} *{_p['name']}")
                         _vp_parts.append(f"size_t {_p['name']}_len")
                     else:
-                        _vp_parts.append(
-                            f"{_ctype_display(_p['type'])} {_p['name']}"
-                        )
+                        _vp_parts.append(f"{_ctype_display(_p['type'])} {_p['name']}")
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out({component}_state_t *state);\n"
                     f"size_t {component}_{name}({component}_state_t *state,"
@@ -2714,7 +2694,7 @@ def make_methods_ctx(
                     if is_array_param_type(arg_type):
                         _e_disp = _ctype_display(array_elem_ctype(arg_type))
                         p_parts.append(f"const {_e_disp} *x")
-                        p_parts.append(f"size_t x_len")
+                        p_parts.append("size_t x_len")
                     else:
                         p_parts.append(f"{arg_disp} x")
                 for p in params:
@@ -2777,8 +2757,7 @@ def make_methods_ctx(
             # Cap field tracks current allocation size; used by the runtime
             # grow logic to detect when a realloc is needed.
             buf_fields.append(
-                f"    size_t _{name}_buf_cap;"
-                f"  /* allocated capacity for {name} */\n"
+                f"    size_t _{name}_buf_cap;  /* allocated capacity for {name} */\n"
             )
             # Guard against max_out() returning 0 at construction time
             # (output size is input-dependent; lazy alloc in the wrapper
@@ -2790,8 +2769,8 @@ def make_methods_ctx(
                 f"        if (_max) {{\n"
                 + "".join(_malloc_lines)
                 + f"            self->_{name}_buf_cap = _max;\n"
-                + f"        }}\n"
-                f"    }}\n"
+                + "        }\n"
+                "    }\n"
             )
 
         # ── Python wrapper in ext.c ───────────────────────────────────────────
@@ -2838,9 +2817,7 @@ def make_methods_ctx(
                         _pb_lines += [
                             f"    PyArrayObject *{_pn}_arr = NULL;",
                         ]
-                        _cd_parts.append(
-                            f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)"
-                        )
+                        _cd_parts.append(f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)")
                         _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
                         _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
                         if _first_arr is None:
@@ -2849,21 +2826,15 @@ def make_methods_ctx(
                         _pt_meta = _CTYPE_META.get(_pt, {})
                         _fmt_char = _pt_meta.get("fmt", "d")
                         _has_parse = "parse_type" in _pt_meta
-                        _parse_t = _pt_meta.get(
-                            "parse_type", _ctype_display(_pt)
-                        )
+                        _parse_t = _pt_meta.get("parse_type", _ctype_display(_pt))
                         _parse_zero = _pt_meta.get("parse_zero", "0")
                         if _has_parse:
                             _raw = f"{_pn}_raw"
-                            _pb_lines.append(
-                                f"    {_parse_t} {_raw} = {_parse_zero};"
-                            )
+                            _pb_lines.append(f"    {_parse_t} {_raw} = {_parse_zero};")
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_raw}")
                         else:
-                            _pb_lines.append(
-                                f"    {_parse_t} {_pn} = {_parse_zero};"
-                            )
+                            _pb_lines.append(f"    {_parse_t} {_pn} = {_parse_zero};")
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
@@ -2874,7 +2845,8 @@ def make_methods_ctx(
                 parse_block = (
                     "\n".join(_pb_lines) + "\n"
                     f'    if (!PyArg_ParseTuple(args, "{_fmt}", '
-                    + ", ".join(_fmt_args) + "))\n"
+                    + ", ".join(_fmt_args)
+                    + "))\n"
                     "        return NULL;\n"
                 )
                 # Convert obj pointers to arrays and Py_complex to C complex
@@ -2927,7 +2899,9 @@ def make_methods_ctx(
                     f", self->_{name}_buf_{i}" for i in range(1, len(all_rts))
                 )
                 np_enums = [
-                    _NP_ENUM[_CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"]]
+                    _NP_ENUM[
+                        _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"]
+                    ]
                     for rt in all_rts
                 ]
                 arr_decls = "\n".join(
@@ -2970,8 +2944,7 @@ def make_methods_ctx(
                 )
             else:
                 _none_on_empty_line = (
-                    "    if (!n_out) Py_RETURN_NONE;\n"
-                    if none_on_empty else ""
+                    "    if (!n_out) Py_RETURN_NONE;\n" if none_on_empty else ""
                 )
                 # Grow the buffer when it is NULL (max_out() returned 0 at
                 # construction) or when the caller requests more output than
@@ -2979,11 +2952,11 @@ def make_methods_ctx(
                 # number of elements required for this call.
                 _decref_early_vo = (
                     " ".join(
-                        l.strip()
-                        for l in decref_in.splitlines()
-                        if l.strip()
-                    ) + " "
-                    if decref_in.strip() else ""
+                        line.strip() for line in decref_in.splitlines() if line.strip()
+                    )
+                    + " "
+                    if decref_in.strip()
+                    else ""
                 )
                 _lazy_alloc_vo = (
                     f"    size_t _need = {_lazy_fallback};\n"
@@ -3023,7 +2996,9 @@ def make_methods_ctx(
                 )
             _all_rts_vo = [_vo_out_elem] + list(multi_output)
             _dtype_strs_vo = [
-                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"].replace("np.", "")
+                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"].replace(
+                    "np.", ""
+                )
                 for rt in _all_rts_vo
             ]
             _ret_hint_vo = (
@@ -3120,9 +3095,7 @@ def make_methods_ctx(
                 f"}}"
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
-            _rf_call_arg = (
-                f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
-            )
+            _rf_call_arg = f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
             _rf_doc_lines = [
                 f"{name}({'x' if has_arg else ''}) -> list[tuple]",
                 "",
@@ -3148,9 +3121,7 @@ def make_methods_ctx(
                 # _build_params_parse so array args get PyArray_FROM_OTF.
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
-                parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    _combined
-                )
+                parse_block, _p_call, _p_cleanup = _build_params_parse(_combined)
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
@@ -3162,9 +3133,7 @@ def make_methods_ctx(
             elif has_arg and arg_type.endswith("[]"):
                 # Array primary arg, no extra params.
                 _x_param = {"name": "x", "type": arg_type}
-                parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    [_x_param]
-                )
+                parse_block, _p_call, _p_cleanup = _build_params_parse([_x_param])
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
@@ -3177,9 +3146,7 @@ def make_methods_ctx(
             else:
                 parse_block = ""
                 call_args_c = "self->handle"
-                fn_sig = (
-                    f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
-                )
+                fn_sig = f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
                 meth_flags = "METH_NOARGS"
 
             if multi_output:
@@ -3372,13 +3339,9 @@ def make_methods_ctx(
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
-    _method_bench_blocks = [
-        _bench_method_block(component, m) for m in methods
-    ]
+    _method_bench_blocks = [_bench_method_block(component, m) for m in methods]
     _filled = [b for b in _method_bench_blocks if b]
-    bench_methods_timing_block = (
-        "\n" + "\n\n".join(_filled) if _filled else ""
-    )
+    bench_methods_timing_block = "\n" + "\n\n".join(_filled) if _filled else ""
     return {
         "method_decls": method_decls,
         "extra_buf_fields": "".join(buf_fields),
@@ -3390,11 +3353,15 @@ def make_methods_ctx(
         "bench_methods_timing_block": bench_methods_timing_block,
         # When user defines a "reset" method suppress the template's built-in
         # one so it is not emitted twice (bug #10).
-        **({
-            "builtin_reset_c": "",
-            "builtin_reset_pmd": "",
-            "builtin_reset_decl": "",
-        } if user_has_reset else {}),
+        **(
+            {
+                "builtin_reset_c": "",
+                "builtin_reset_pmd": "",
+                "builtin_reset_decl": "",
+            }
+            if user_has_reset
+            else {}
+        ),
     }
 
 
@@ -3453,7 +3420,8 @@ def make_properties_ctx(
             _np_enum = _NP_ENUM.get(_elem_meta["py_type"], "NPY_CFLOAT")
             _valid_check = (
                 f"    if (!self->handle->{valid_field}) Py_RETURN_NONE;\n"
-                if valid_field else ""
+                if valid_field
+                else ""
             )
             getter = (
                 f"static PyObject *\n"
@@ -4135,8 +4103,8 @@ def make_step_ctx(
     # Each round is measured individually so jm_bench_write_json() can compute
     # full statistics compatible with the pytest-benchmark JSON format.
     _bsink = ctx.get("bench_sink_assign", "")
-    _bsep  = ctx.get("bench_step_input_sep", "")
-    _barg  = ctx.get("bench_step_input_arg", "")
+    _bsep = ctx.get("bench_step_input_sep", "")
+    _barg = ctx.get("bench_step_input_arg", "")
     _is_arr = arg_type.endswith("[]")
     if _is_arr:
         # One call per round processes BENCH_N samples.
@@ -4159,7 +4127,7 @@ def make_step_ctx(
         f"{_inner}"
         f"        _times_step[r] = elapsed_sec(&t0, &t1);\n"
         f"    }}\n"
-        f"    jm_bench_add(&_bench, \"step\","
+        f'    jm_bench_add(&_bench, "step",'
         f" _times_step, ITERATIONS, BENCH_N);\n"
         f"    {{\n"
         f"        double _s = 0.0;\n"
@@ -4184,7 +4152,7 @@ def make_step_ctx(
             f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
             f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
             f"    }}\n"
-            f"    jm_bench_add(&_bench, \"steps\","
+            f'    jm_bench_add(&_bench, "steps",'
             f" _times_steps, ITERATIONS, BENCH_N);\n"
             f"    {{\n"
             f"        double _s = 0.0;\n"
@@ -4542,4 +4510,3 @@ def make_step_ctx(
         "step_pytest_methods_pure": step_pytest_methods_pure,
         "lifecycle_pytest_methods_pure": lifecycle_pytest_methods_pure,
     }
-

@@ -7,13 +7,12 @@ workflow end to end.
 
 > Schema 6, available since v0.13.5. The design doc lives at
 > [developers/declarative-scaffolding.md](developers/declarative-scaffolding.md).
-> A runnable end-to-end demo is bundled as `just-makeit example
-> declarative_scaffold`.
+> A runnable end-to-end demo is bundled as `just-makeit example declarative_scaffold`.
 
 > **New to just-makeit?** Install it first — see the
 > [Quickstart on the home page](index.md#quickstart) for the one-liner.
 
----
+______________________________________________________________________
 
 ## TL;DR
 
@@ -32,7 +31,7 @@ it via `include = ["objects/*.toml"]`, materializes every file the spec
 implies, and wires it into the top `CMakeLists.txt`, the package
 `__init__.py`, and the umbrella header. From there it builds.
 
----
+______________________________________________________________________
 
 ## Three layouts
 
@@ -60,16 +59,15 @@ flowchart LR
     C -.->|materializes into| B
 ```
 
-| Layout | Best when… |
-|---|---|
-| **Monolith** | small project, single author, everything fits on a page |
-| **Split** | many components, multi-author / multi-machine, less merge churn |
+| Layout               | Best when…                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| **Monolith**         | small project, single author, everything fits on a page                                    |
+| **Split**            | many components, multi-author / multi-machine, less merge churn                            |
 | **Fragment + apply** | composing a new project from a manifest you (or a generator) wrote elsewhere; CI templates |
 
-`jm split-objects` migrates Monolith → Split in one command; `jm apply
-<fragment>` composes a Fragment into either layout.
+`jm split-objects` migrates Monolith → Split in one command; `jm apply <fragment>` composes a Fragment into either layout.
 
----
+______________________________________________________________________
 
 ## The fragment
 
@@ -110,21 +108,21 @@ default = "1.0f"
 
 Known placeholders:
 
-| Placeholder | Substituted with |
-|---|---|
-| `{component}` | lowercase object name (`agc`) |
-| `{Component}` | title-cased class name (`Agc`) |
-| `{module}` / `{Module}` | module name / title-cased |
-| `{arg_type}` / `{return_type}` | step argument and return types |
-| `{method}` | method name (only on `[[X.methods]]` sections) |
-| `{function}` | function name (only on `[[module.X.functions]]` sections) |
+| Placeholder                    | Substituted with                                          |
+| ------------------------------ | --------------------------------------------------------- |
+| `{component}`                  | lowercase object name (`agc`)                             |
+| `{Component}`                  | title-cased class name (`Agc`)                            |
+| `{module}` / `{Module}`        | module name / title-cased                                 |
+| `{arg_type}` / `{return_type}` | step argument and return types                            |
+| `{method}`                     | method name (only on `[[X.methods]]` sections)            |
+| `{function}`                   | function name (only on `[[module.X.functions]]` sections) |
 
 Two more keys are honoured on object and method sections:
 
 - `impl_file = "path::funcname"` — lift the body from an existing C file
-  (same `--impl` semantics as the CLI; relative to the project root).
+    (same `--impl` semantics as the CLI; relative to the project root).
 - `replace = { "old" = "new" }` — string substitutions applied *after*
-  placeholder interpolation.
+    placeholder interpolation.
 
 `impl` and `impl_file` are mutually exclusive; apply errors before any
 side effects if both are set.
@@ -162,7 +160,7 @@ default = "0"
 
     All scalar keys (`impl`, `create_impl`, `reset_impl`, `arg_type`, …)
     **must appear before** any `[[comp.state]]` (or `[[comp.methods]]`)
-    entries in the same section.  TOML requires this: once an array-of-tables
+    entries in the same section. TOML requires this: once an array-of-tables
     header appears, all subsequent bare keys are parsed as part of that entry,
     not the parent section.
 
@@ -194,7 +192,7 @@ default = "0"
 !!! note "`obj` vs `state` in `create_impl`"
 
     Inside a `create_impl` body the freshly `calloc`'d struct pointer is
-    named **`obj`** (not `state`).  This avoids a C compiler redeclaration
+    named **`obj`** (not `state`). This avoids a C compiler redeclaration
     error when a state field happens to be named `state`:
 
     ```c
@@ -259,6 +257,80 @@ write `free(state)` yourself — it is appended automatically.
 ordering rule applies: place the scalar key **before** any `[[buf.state]]`
 arrays.
 
+### Opaque state fields — pointers and handles
+
+Heap buffers, file handles, FFTW plans, and other resources whose C type
+isn't a numeric scalar are declared with `opaque = true` on a
+`[[<comp>.state]]` entry.  The field is emitted into the state struct
+verbatim with **no** auto-generated getter/setter, **no** constructor
+parameter, **no** kwlist entry, and **no** reset assignment — Python sees
+nothing of it.  Lifecycle is entirely yours via `create_impl` (mandatory)
+and `destroy_impl` (strongly recommended).
+
+```toml
+[fft]
+arg_type     = "void"
+return_type  = "void"
+no_state     = "true"           # no scalar state, only opaque fields
+create_impl  = """
+obj->n = 1024;
+obj->scratch = fftwf_malloc(sizeof(float _Complex) * obj->n);
+if (!obj->scratch) { free(obj); return NULL; }
+obj->plan = fftwf_plan_dft_1d(obj->n, obj->scratch, obj->scratch,
+                              FFTW_FORWARD, FFTW_ESTIMATE);
+"""
+destroy_impl = """
+if (state->plan) fftwf_destroy_plan(state->plan);
+fftwf_free(state->scratch);
+"""
+
+[[fft.state]]
+name   = "scratch"
+type   = "float _Complex *"
+opaque = true
+
+[[fft.state]]
+name   = "plan"
+type   = "fftwf_plan"
+opaque = true
+```
+
+Generates a struct like:
+
+```c
+typedef struct {
+    float _Complex *scratch;
+    fftwf_plan      plan;
+} fft_state_t;
+```
+
+…and a constructor + destructor that run your `create_impl` / `destroy_impl`
+bodies verbatim.
+
+!!! warning "Opaque fields require `create_impl`"
+
+    `jm apply` refuses to materialize a fragment that declares any opaque
+    state field without a matching `create_impl` or `create_impl_file` —
+    the auto-generated `create()` would leave the pointer uninitialized,
+    and the first read would dereference garbage.  Pair every opaque field
+    with a `create_impl` that initializes it, and a `destroy_impl` that
+    releases it (the validator does not enforce `destroy_impl` because
+    some opaque fields are borrowed and shouldn't be freed, but most
+    should be).
+
+Opaque fields are TOML-only — there is no `--state name:opaque:type` CLI
+syntax.  The type string can be anything the compiler accepts (raw
+pointers, typedef'd handles, function-pointer typedefs); the just-makeit
+type system doesn't inspect it.
+
+See the **opaque_counter** and **delay_line** bundled examples for
+minimal and realistic patterns:
+
+```sh
+just-makeit example opaque_counter   # dead-simple: heap-allocated counter
+just-makeit example delay_line       # complex: circular delay with runtime length
+```
+
 ---
 
 ## Integrating hand-written C libraries (`c_deps`, `no_generate`, `depends_on`)
@@ -275,8 +347,7 @@ c_deps = ["resamp", "fft"]
 
 `jm apply` emits an `add_subdirectory(native/src/<dep>)` block for each
 entry, **prepended before all component and module blocks** so that CMake
-sees the target definitions before any `target_sources(…
-TARGET_OBJECTS:<dep>_core)` that references them.
+sees the target definitions before any `target_sources(… TARGET_OBJECTS:<dep>_core)` that references them.
 
 No Python scaffolding is generated for `c_deps` entries — they are C-only
 libraries. Create their `CMakeLists.txt` by hand; `jm apply` only wires
@@ -333,7 +404,7 @@ jm apply    # wires all three into CMakeLists.txt; skips legacy scaffolding
 make && make test
 ```
 
----
+______________________________________________________________________
 
 ## What `jm apply` does
 
@@ -357,20 +428,20 @@ flowchart TD
 Key properties:
 
 - **Add only.** `apply` never deletes anything — removing a component is
-  `jm remove`'s job.
+    `jm remove`'s job.
 - **Idempotent.** Re-running on a complete project is a no-op.
 - **Reproducible.** A `just-makeit.toml` + any hand-written `*_core.c` /
-  `*_core.h` bodies fully describe a project; `apply` materializes the
-  rest.
+    `*_core.h` bodies fully describe a project; `apply` materializes the
+    rest.
 - **Safe with user edits.** `*_core.c` and `*_core.h` bodies survive
-  re-apply; the top `CMakeLists.txt` preserves content outside the
-  `# ── Components` and `# ── Modules` sentinel regions; module
-  `__init__.py` keeps any wrapper classes you added below the
-  re-exports.
+    re-apply; the top `CMakeLists.txt` preserves content outside the
+    `# ── Components` and `# ── Modules` sentinel regions; module
+    `__init__.py` keeps any wrapper classes you added below the
+    re-exports.
 - **Bench retrofit.** `apply` also checks every component's
-  `native/src/<comp>/CMakeLists.txt` and appends a missing
-  `bench_<comp>_core` CMake target if one isn't already present — so
-  existing projects gain C benchmark targets without a manual edit.
+    `native/src/<comp>/CMakeLists.txt` and appends a missing
+    `bench_<comp>_core` CMake target if one isn't already present — so
+    existing projects gain C benchmark targets without a manual edit.
 
 ### `--only=NAME` — single-component reconciliation
 
@@ -383,7 +454,7 @@ Restricts wiring regeneration to the named component: only `fir`'s
 aggregate files (`__init__.py`, root `CMakeLists.txt`, umbrella header)
 are still updated. Useful on large projects where a full re-apply is slow.
 
----
+______________________________________________________________________
 
 ## Load and save — provenance routing
 
@@ -411,17 +482,17 @@ flowchart LR
 Properties:
 
 - `[project]` and `[module.X]` declarations **always** live in the
-  manifest.
+    manifest.
 - A mutation to `[agc]` rewrites `objects/agc.toml` — the manifest and
-  sibling fragments are **byte-for-byte unchanged**.
+    sibling fragments are **byte-for-byte unchanged**.
 - A new object on a split-layout project gets a brand-new
-  `objects/<name>.toml`.
+    `objects/<name>.toml`.
 - An emptied fragment (`jm remove` of its last section) is deleted.
 
 Single-file projects (no `include` key) are unaffected: `save()` writes
 the whole cfg back to the manifest exactly as before.
 
----
+______________________________________________________________________
 
 ## Migrating an existing project
 
@@ -437,7 +508,7 @@ gains `include = ["objects/*.toml"]`. The merged cfg every just-makeit
 consumer sees is **byte-identical** before and after. Idempotent —
 running on an already-split project is a no-op.
 
----
+______________________________________________________________________
 
 ## See it work
 
@@ -454,7 +525,7 @@ runs `jm apply`, builds + ctests the result, and round-trips a separate
 legacy project through `split-objects`. The `agc*.so` assertion at the
 end means a silently-skipped target would fail loudly, not pass green.
 
----
+______________________________________________________________________
 
 ## See also
 

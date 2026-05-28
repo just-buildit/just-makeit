@@ -117,21 +117,19 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
         cmake_text = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
         # add_subdirectory must be inside the Components sentinel section.
-        comp_block = cmake_text.split("# ── Components", 1)[1].split(
-            "# ── Modules", 1
-        )[0]
+        comp_block = cmake_text.split("# ── Components", 1)[1].split("# ── Modules", 1)[
+            0
+        ]
         assert "add_subdirectory(native/src/agc)" in comp_block
         assert (
-            "target_sources(proj_lib PRIVATE $<TARGET_OBJECTS:agc_core>)"
-            in comp_block
+            "target_sources(proj_lib PRIVATE $<TARGET_OBJECTS:agc_core>)" in comp_block
         )
 
     def test_umbrella_header_gets_include(self, tmp_path):
@@ -148,15 +146,12 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
-        umbrella = (proj / "native" / "inc" / "proj.h").read_text(
-            encoding="utf-8"
-        )
+        umbrella = (proj / "native" / "inc" / "proj.h").read_text(encoding="utf-8")
         assert '#include "agc/agc_core.h"' in umbrella
 
     def test_package_init_py_gets_import(self, tmp_path):
@@ -173,15 +168,12 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
-        init = (proj / "src" / "proj" / "__init__.py").read_text(
-            encoding="utf-8"
-        )
+        init = (proj / "src" / "proj" / "__init__.py").read_text(encoding="utf-8")
         assert "from .agc import Agc" in init
         assert '"Agc"' in init  # __all__
 
@@ -197,7 +189,9 @@ class TestApplyReconcilesAggregates:
         # section (i.e., between Modules sentinel and # ── Install).
         cmake = proj / "CMakeLists.txt"
         text = cmake.read_text(encoding="utf-8")
-        marker = "# ── Vendored libfoo (user content) ───\nadd_library(foo INTERFACE)\n\n"
+        marker = (
+            "# ── Vendored libfoo (user content) ───\nadd_library(foo INTERFACE)\n\n"
+        )
         text = text.replace("# ── Install", marker + "# ── Install")
         cmake.write_text(text, encoding="utf-8")
 
@@ -209,8 +203,7 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
@@ -296,13 +289,11 @@ class TestApplyModuleDirective:
         # Module object: core files exist in own subdir (normal)
         assert (proj / "native" / "src" / "counter" / "counter_core.c").exists()
         # Module object: no standalone ext.c (would exist for standalone objects)
-        assert not (
-            proj / "native" / "src" / "counter" / "counter_ext.c"
-        ).exists()
+        assert not (proj / "native" / "src" / "counter" / "counter_ext.c").exists()
         # Module's ext.c was updated to include counter
-        dsp_ext = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        dsp_ext = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "counter" in dsp_ext
 
     def test_module_directive_preserved_through_mutation(self, tmp_path):
@@ -355,10 +346,10 @@ class TestApplyModuleDirective:
         # who skipped jm apply the first time would do).
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
         from just_makeit._apply import _wire_module_object
+
         _wire_module_object(manifest, "dsp", "counter")
 
         # Must not raise — proceeds straight to materialization.
@@ -380,10 +371,10 @@ class TestApplyModuleDirective:
 
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
         )
         from just_makeit._apply import _wire_module_object
+
         _wire_module_object(manifest, "dsp", "counter")
 
         original_mtime = dest.stat().st_mtime
@@ -399,9 +390,7 @@ class TestApplySelectiveOnly:
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         module_run(proj, "util")
-        object_run(
-            proj, "helper", "util", state_vars=[("x", "float", "0.0f")]
-        )
+        object_run(proj, "helper", "util", state_vars=[("x", "float", "0.0f")])
         apply_run(proj)
 
         util_ext = proj / "native" / "src" / "util" / "util_ext.c"
@@ -428,9 +417,9 @@ class TestApplySelectiveOnly:
 
         fir_core = proj / "native" / "src" / "fir" / "fir_core.c"
         assert fir_core.exists()
-        dsp_ext = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        dsp_ext = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "fir" in dsp_ext
 
     def test_only_comp_skips_unrelated_module(self, tmp_path):
@@ -439,9 +428,7 @@ class TestApplySelectiveOnly:
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         module_run(proj, "util")
-        object_run(
-            proj, "helper", "util", state_vars=[("x", "float", "0.0f")]
-        )
+        object_run(proj, "helper", "util", state_vars=[("x", "float", "0.0f")])
         apply_run(proj)
 
         util_ext = proj / "native" / "src" / "util" / "util_ext.c"
@@ -490,18 +477,16 @@ class TestApplyExtraC:
         new_run("proj", proj, [], [])
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
-        object_run(
-            proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")]
-        )
+        object_run(proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")])
 
         extra = proj / "native" / "src" / "dsp" / "dsp_ext_extra.c"
         extra.write_text("/* extra */\n", encoding="utf-8")
 
         apply_run(proj)
 
-        ext_c = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "dsp_ext_extra.c" in ext_c
 
 
@@ -527,12 +512,10 @@ class TestApplyExtraTypes:
         """Adding an object after extra_types are declared keeps them in PyInit_."""
         proj = tmp_path / "proj"
         self._proj_with_extra_types(proj)
-        object_run(
-            proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")]
+        object_run(proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")])
+        ext_c = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
         )
-        ext_c = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
         assert "PyType_Ready(&HalfbandDpType)" in ext_c
         assert "PyType_Ready(&HalfbandR2CType)" in ext_c
         assert 'PyModule_AddObject(m, "HalfbandDp"' in ext_c
@@ -543,9 +526,9 @@ class TestApplyExtraTypes:
         proj = tmp_path / "proj"
         self._proj_with_extra_types(proj)
         apply_run(proj)
-        ext_c = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyType_Ready(&HalfbandDpType)" in ext_c
         assert 'PyModule_AddObject(m, "HalfbandDp"' in ext_c
 
@@ -554,9 +537,9 @@ class TestApplyExtraTypes:
         proj = tmp_path / "proj"
         self._proj_with_extra_types(proj)
         apply_run(proj)
-        ext_c = (
-            proj / "native" / "src" / "dsp" / "dsp_ext.c"
-        ).read_text(encoding="utf-8")
+        ext_c = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
+            encoding="utf-8"
+        )
         nco_pos = ext_c.find("NcoType")
         hb_pos = ext_c.find("HalfbandDpType")
         assert nco_pos != -1
@@ -617,9 +600,9 @@ class TestMethodReplayArgType:
         frag = proj.parent / "frag.toml"
         frag.write_text(frag_text)
         apply_run(proj, fragment=frag)
-        return (
-            proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h"
-        ).read_text(encoding="utf-8")
+        return (proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h").read_text(
+            encoding="utf-8"
+        )
 
     def test_variable_output_params_used_not_float_complex(self, tmp_path):
         """drain() should use uint32_t n, not const float complex *in."""
@@ -639,7 +622,8 @@ class TestMethodReplayArgType:
         assert "uint32_t start" in header
         # Builtin no-arg reset declaration should be absent (suppressed)
         reset_decls = [
-            line for line in header.splitlines()
+            line
+            for line in header.splitlines()
             if "drain_obj_reset" in line and line.strip().startswith("void")
         ]
         assert len(reset_decls) == 1, (
@@ -652,9 +636,9 @@ class TestMethodReplayArgType:
         proj = tmp_path / "proj"
         new_run("proj", proj)
         object_run(proj, "osc", None, state_vars=[("phase", "float", "0.0f")])
-        header = (
-            proj / "native" / "inc" / "osc" / "osc_core.h"
-        ).read_text(encoding="utf-8")
+        header = (proj / "native" / "inc" / "osc" / "osc_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "void osc_reset(osc_state_t *state);" in header
 
 
@@ -667,12 +651,12 @@ class TestVariableOutputOutType:
         frag = proj.parent / "frag.toml"
         frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
         apply_run(proj, fragment=frag)
-        header = (
-            proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h"
-        ).read_text(encoding="utf-8")
-        core_c = (
-            proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c"
-        ).read_text(encoding="utf-8")
+        header = (proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h").read_text(
+            encoding="utf-8"
+        )
+        core_c = (proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c").read_text(
+            encoding="utf-8"
+        )
         return header, core_c
 
     def test_header_uses_out_type_not_return_type(self, tmp_path):
@@ -728,9 +712,9 @@ class TestCreateResetImpl:
         frag = proj.parent / "lfsr.toml"
         frag.write_text(_CREATE_RESET_IMPL_FRAGMENT)
         apply_run(proj, fragment=frag)
-        return (
-            proj / "native" / "src" / "lfsr" / "lfsr_core.c"
-        ).read_text(encoding="utf-8")
+        return (proj / "native" / "src" / "lfsr" / "lfsr_core.c").read_text(
+            encoding="utf-8"
+        )
 
     def test_create_impl_body_present(self, tmp_path):
         """create_impl body should appear inside lfsr_create()."""
@@ -823,3 +807,97 @@ class TestDestroyImplMutex:
         }
         with pytest.raises(ValueError, match="mutually exclusive"):
             _validate_fragment_impl_keys(fragment, "test.toml")
+
+
+_OPAQUE_FIELD_FRAGMENT = """\
+[fft]
+arg_type    = "void"
+return_type = "void"
+no_state    = "true"
+create_impl = \"\"\"
+obj->scratch = malloc(sizeof(float) * 8);
+if (!obj->scratch) { free(obj); return NULL; }
+\"\"\"
+
+[[fft.state]]
+name   = "scratch"
+type   = "float *"
+opaque = true
+"""
+
+
+class TestOpaqueState:
+    """Opaque state fields are emitted verbatim into the struct with no
+    auto-getter/setter, no constructor parameter, and no reset logic.
+    Lifecycle is the user's responsibility via create_impl/destroy_impl."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        frag = proj.parent / "fft.toml"
+        frag.write_text(_OPAQUE_FIELD_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        return (
+            (proj / "native" / "inc" / "fft" / "fft_core.h").read_text(),
+            (proj / "native" / "src" / "fft" / "fft_core.c").read_text(),
+            (proj / "native" / "src" / "fft" / "fft_ext.c").read_text(),
+        )
+
+    def test_opaque_field_in_struct(self, tmp_path):
+        """Opaque field's verbatim type appears as a struct member."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "float * scratch;" in header
+
+    def test_no_getter_setter_decl(self, tmp_path):
+        """Opaque fields must not generate fft_get_scratch / fft_set_scratch."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "fft_get_scratch" not in header
+        assert "fft_set_scratch" not in header
+
+    def test_no_getter_setter_impl(self, tmp_path):
+        """Opaque fields must not generate getter/setter bodies in core.c."""
+        _, core_c, _ = self._apply(tmp_path / "proj")
+        assert "fft_get_scratch" not in core_c
+        assert "fft_set_scratch" not in core_c
+
+    def test_not_in_constructor_params(self, tmp_path):
+        """Opaque fields must not appear in the C create() signature."""
+        header, _, _ = self._apply(tmp_path / "proj")
+        assert "fft_create(void)" in header
+
+    def test_not_in_python_init_kwlist(self, tmp_path):
+        """Opaque fields must not appear in the Python __init__ kwlist."""
+        _, _, ext_c = self._apply(tmp_path / "proj")
+        assert '"scratch"' not in ext_c
+
+    def test_create_impl_initializes_opaque(self, tmp_path):
+        """create_impl body should run and reference obj->scratch."""
+        _, core_c, _ = self._apply(tmp_path / "proj")
+        assert "obj->scratch = malloc" in core_c
+
+
+class TestOpaqueRequiresCreateImpl:
+    """An opaque field without create_impl would leave a wild pointer in
+    the struct — validate up front and fail fast."""
+
+    def test_missing_create_impl_raises(self):
+        from just_makeit._apply import _validate_fragment_impl_keys
+
+        fragment = {
+            "fft": {
+                "no_state": "true",
+                "state": [{"name": "scratch", "type": "float *", "opaque": True}],
+            },
+        }
+        with pytest.raises(ValueError, match="opaque state field"):
+            _validate_fragment_impl_keys(fragment, "test.toml")
+
+    def test_create_impl_file_satisfies(self):
+        from just_makeit._apply import _validate_fragment_impl_keys
+
+        fragment = {
+            "fft": {
+                "create_impl_file": "legacy.c::fft_create",
+                "state": [{"name": "scratch", "type": "float *", "opaque": True}],
+            },
+        }
+        _validate_fragment_impl_keys(fragment, "test.toml")
