@@ -25,9 +25,9 @@ set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 # copies race on parallel builds when multiple standalone objects share
 # PYTHON_PACKAGE_DIR.
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU" AND BUILD_PYTHON)
-    get_filename_component(_gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
-    if(EXISTS "${_gcc_bin}/libwinpthread-1.dll")
-        file(COPY "${_gcc_bin}/libwinpthread-1.dll"
+    get_filename_component(gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    if(EXISTS "${gcc_bin}/libwinpthread-1.dll")
+        file(COPY "${gcc_bin}/libwinpthread-1.dll"
              DESTINATION "${PYTHON_PACKAGE_DIR}")
     endif()
 endif()
@@ -36,11 +36,11 @@ endif()
 # Component OBJECT libraries are wired in via target_sources below.
 add_library(<<project_underscore>>_lib SHARED native/src/<<project_underscore>>_lib.c)
 add_library(<<project_underscore>>_lib_static STATIC native/src/<<project_underscore>>_lib.c)
-foreach(_t <<project_underscore>>_lib <<project_underscore>>_lib_static)
-    target_include_directories(${_t} PUBLIC
+foreach(lib_target <<project_underscore>>_lib <<project_underscore>>_lib_static)
+    target_include_directories(${lib_target} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/native/inc>
         $<INSTALL_INTERFACE:include>)
-    set_target_properties(${_t} PROPERTIES OUTPUT_NAME <<project_underscore>>)
+    set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME <<project_underscore>>)
 endforeach()
 
 enable_testing()

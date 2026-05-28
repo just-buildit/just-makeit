@@ -23,7 +23,8 @@ add_custom_command(TARGET <<component>> POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:<<component>>>"
         "${PYTHON_PACKAGE_DIR}/$<TARGET_FILE_NAME:<<component>>>"
-    VERBATIM)
+    VERBATIM
+    COMMENT "Copy <<component>> extension module")
 endif()
 
 add_executable(test_<<component>>_core

@@ -12,9 +12,13 @@ Skip conditions (checked once, applied to all examples):
 
 import importlib.util
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
+
+# Formatting rules are cmake-format's responsibility.
+_CMAKE_LINT_DISABLED = ["C0301", "C0307"]
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
 
@@ -77,3 +81,22 @@ def test_example(example_dir, tmp_path):
         pytest.skip(_SKIP)
     run = _load_run(example_dir)
     run(tmp_path)
+    _cmake_lint_check(tmp_path)
+
+
+def _cmake_lint_check(root: Path) -> None:
+    """Run cmake-lint on all CMakeLists.txt under *root*, skip if not on PATH."""
+    if not shutil.which("cmake-lint"):
+        return
+    cmake_files = list(root.rglob("CMakeLists.txt"))
+    if not cmake_files:
+        return
+    r = subprocess.run(
+        ["cmake-lint", "--disabled-codes"] + _CMAKE_LINT_DISABLED
+        + ["--"] + [str(f) for f in cmake_files],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, (
+        f"cmake-lint found violations in generated project:\n{r.stdout}"
+    )
