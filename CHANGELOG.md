@@ -2,71 +2,127 @@
 
 ## [Unreleased]
 
+## [0.13.19] — 2026-05-28
+
+### Added
+
+- **`no_ctor = true` flag on `[[<comp>.state]]` entries** — exclude a state
+    field from the C `create()` signature and the Python `__init__` kwlist while
+    keeping it in the struct, getters/setters, and `reset()`. Fields marked
+    `no_ctor` are silently initialised to their TOML `default` value inside
+    `create_assignments` (or overridden by `create_impl` when present). Use
+    this when `create_impl` manages a field internally and you don't want Python
+    callers to supply it. TOML-only — no `--state` CLI syntax.
+
+    ```toml
+    [ring]
+    arg_type    = "float"
+    return_type = "float"
+    mutable     = "true"
+    create_impl = """
+    obj->size = size;
+    obj->buf  = calloc(size, sizeof(float));
+    if (!obj->buf) { free(obj); return NULL; }
+    obj->idx  = 0;
+    obj->sum  = 0.0f;
+    """
+    destroy_impl = """
+    free(state->buf);
+    """
+
+    [[ring.state]]
+    name = "buf";  type = "float *"; opaque = true
+
+    [[ring.state]]
+    name = "size"; type = "size_t"; default = "16"   # ← Python kwarg
+
+    [[ring.state]]
+    name = "idx";  type = "size_t"; default = "0"; no_ctor = true  # hidden
+
+    [[ring.state]]
+    name = "sum";  type = "float";  default = "0.0f"; no_ctor = true  # hidden
+    ```
+
+    Python: `Ring(size=16)` — `idx` and `sum` are invisible to callers.
+    C: `ring_create(size_t size)` — only `size` in the signature.
+
+### Fixed
+
+- **Module objects with `opaque` or `no_ctor` state fields** — `add_component`
+    now preserves `opaque = true` and `no_ctor = true` flags when writing the
+    in-memory cfg used by `_regenerate_module`. Previously, both flags were
+    silently lost after `add_component` rewrote the state list, causing the
+    module ext fragment (`*_ext_<comp>.c`) to be generated with wrong struct
+    fields and create() signatures. Standalone objects were unaffected.
+    Also fixes `_dump()` to emit `opaque = true` and `no_ctor = true` when
+    writing state entries, and to not emit `default =` for opaque fields
+    that have no default. (gh#57)
+
 ## [0.13.18] — 2026-05-27
 
 ### Added
 
 - **`opaque = true` flag on `[[<comp>.state]]` entries** — declare pointer,
-  handle, or any-C-type state fields directly in TOML without hand-editing
-  `_core.h`.  Opaque fields are emitted into the state struct verbatim with
-  no auto-getter/setter, no constructor parameter, no kwarg, and no reset
-  assignment — Python sees nothing of them.  Lifecycle is the user's
-  responsibility via `create_impl` (required — validator enforces) and
-  `destroy_impl` (recommended; pairs with the 0.13.17 feature).
+    handle, or any-C-type state fields directly in TOML without hand-editing
+    `_core.h`. Opaque fields are emitted into the state struct verbatim with
+    no auto-getter/setter, no constructor parameter, no kwarg, and no reset
+    assignment — Python sees nothing of them. Lifecycle is the user's
+    responsibility via `create_impl` (required — validator enforces) and
+    `destroy_impl` (recommended; pairs with the 0.13.17 feature).
 
-  ```toml
-  [fft]
-  no_state     = "true"
-  create_impl  = """
-  obj->scratch = fftwf_malloc(sizeof(float _Complex) * n);
-  obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
-                                   FFTW_FORWARD, FFTW_ESTIMATE);
-  """
-  destroy_impl = """
-  if (state->plan) fftwf_destroy_plan(state->plan);
-  fftwf_free(state->scratch);
-  """
+    ```toml
+    [fft]
+    no_state     = "true"
+    create_impl  = """
+    obj->scratch = fftwf_malloc(sizeof(float _Complex) * n);
+    obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
+                                     FFTW_FORWARD, FFTW_ESTIMATE);
+    """
+    destroy_impl = """
+    if (state->plan) fftwf_destroy_plan(state->plan);
+    fftwf_free(state->scratch);
+    """
 
-  [[fft.state]]
-  name   = "scratch"
-  type   = "float _Complex *"
-  opaque = true
+    [[fft.state]]
+    name   = "scratch"
+    type   = "float _Complex *"
+    opaque = true
 
-  [[fft.state]]
-  name   = "plan"
-  type   = "fftwf_plan"
-  opaque = true
-  ```
+    [[fft.state]]
+    name   = "plan"
+    type   = "fftwf_plan"
+    opaque = true
+    ```
 
-  `jm apply` raises before any side effects when an opaque field is
-  declared without `create_impl` / `create_impl_file`.  Opaque fields are
-  TOML-only — no `--state` CLI syntax.
+    `jm apply` raises before any side effects when an opaque field is
+    declared without `create_impl` / `create_impl_file`. Opaque fields are
+    TOML-only — no `--state` CLI syntax.
 
 - **`opaque_counter` and `delay_line` examples** — minimal and realistic
-  end-to-end demos of opaque state fields, both built and tested in CI.
+    end-to-end demos of opaque state fields, both built and tested in CI.
 
 ## [0.13.17] — 2026-05-27
 
 ### Added
 
 - **`destroy_impl` TOML key** — splice a custom teardown body into
-  `<comp>_destroy()` before the trailing `free(state)`.  Closes the loop on
-  the `create_impl` / `reset_impl` story shipped in 0.13.16 — objects that
-  allocate auxiliary resources (heap buffers, file handles, child objects)
-  in `create_impl` can now release them declaratively in the same TOML file.
+    `<comp>_destroy()` before the trailing `free(state)`. Closes the loop on
+    the `create_impl` / `reset_impl` story shipped in 0.13.16 — objects that
+    allocate auxiliary resources (heap buffers, file handles, child objects)
+    in `create_impl` can now release them declaratively in the same TOML file.
 
-  ```toml
-  [buf]
-  destroy_impl = """
-  if (state->log) fclose(state->log);
-  free(state->scratch);
-  """
-  ```
+    ```toml
+    [buf]
+    destroy_impl = """
+    if (state->log) fclose(state->log);
+    free(state->scratch);
+    """
+    ```
 
-  `destroy_impl_file = "legacy.c::buf_destroy"` lifts an existing function
-  body from a file.  `destroy_impl` / `destroy_impl_file` are mutually
-  exclusive.  Same TOML ordering rule: keys must precede any
-  `[[comp.state]]` arrays in the section.
+    `destroy_impl_file = "legacy.c::buf_destroy"` lifts an existing function
+    body from a file. `destroy_impl` / `destroy_impl_file` are mutually
+    exclusive. Same TOML ordering rule: keys must precede any
+    `[[comp.state]]` arrays in the section.
 
 ## [0.13.16] — 2026-05-27
 

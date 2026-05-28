@@ -60,6 +60,7 @@ def _make_object_ctx(
     init_post_parse_impl: str = "",
     class_name: str | None = None,
     opaque_fields: list[tuple[str, str]] = (),
+    no_ctor_names: "frozenset[str]" = frozenset(),
 ) -> dict:
     """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
@@ -87,6 +88,7 @@ def _make_object_ctx(
             init_params=init_params,
             init_post_parse_impl=init_post_parse_impl,
             opaque_fields=opaque_fields,
+            no_ctor_names=no_ctor_names,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -393,6 +395,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             init_params=C.init_params(cfg, obj),
             class_name=C.class_name(cfg, obj),
             opaque_fields=C.opaque_fields(cfg, obj),
+            no_ctor_names=C.no_ctor_names(cfg, obj),
         )
         ctx.update(
             Ctx.make_methods_ctx(
@@ -545,7 +548,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         _write(init_path, R.render(R.MODULE_INIT_PY, init_ctx), "update")
 
     # Type stubs — regenerated in full every time the module changes.
-    _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module), "update")
+    _write(
+        pkg_module_dir / f"{module}.pyi",
+        S.make_module_pyi(cfg, module),
+        "update",
+    )
 
 
 def run(
@@ -567,6 +574,7 @@ def run(
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
+    no_ctor_names: "frozenset[str]" = frozenset(),
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -614,6 +622,7 @@ def run(
             destroy_impl_body=destroy_impl_body,
             init_params=init_params,
             opaque_fields=opaque_fields,
+            no_ctor_names=no_ctor_names,
             class_name=class_name,
             depends_on=list(depends_on),
             _hint=_hint and not variable_output,
@@ -680,6 +689,7 @@ def run(
         init_post_parse_impl=init_post_parse_impl,
         class_name=class_name,
         opaque_fields=opaque_fields,
+        no_ctor_names=no_ctor_names,
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -736,7 +746,10 @@ def run(
     # new component picks up the same if(SOME_LIB) include/link wiring without
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
-    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(R.COMPONENT_TEST_C))
+    _write(
+        root / "native" / "tests" / f"test_{comp}_core.c",
+        r(R.COMPONENT_TEST_C),
+    )
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
         r(R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C),
@@ -777,6 +790,8 @@ def run(
         init_params_=init_params,
         class_name_=class_name,
         depends_on_=list(depends_on),
+        opaque_fields_=list(opaque_fields),
+        no_ctor_names_=no_ctor_names,
     )
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
