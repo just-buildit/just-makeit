@@ -409,6 +409,19 @@ def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     return [
         (s["name"], s["type"], s["default"])
         for s in cfg.get(component, {}).get("state", [])
+        if not s.get("opaque")
+    ]
+
+
+def opaque_fields(cfg: dict, component: str) -> list[tuple[str, str]]:
+    """State entries flagged ``opaque = true`` — pointer or handle fields
+    emitted into the struct verbatim with no auto-getter/setter, no kwlist
+    entry, and no create/reset assignments.  Lifecycle is the user's
+    responsibility via ``create_impl`` / ``destroy_impl``."""
+    return [
+        (s["name"], s["type"])
+        for s in cfg.get(component, {}).get("state", [])
+        if s.get("opaque")
     ]
 
 
@@ -512,9 +525,7 @@ def add_component(
         "state": [{"name": n, "type": t, "default": d} for n, t, d in vars_],
     }
     if array_args_:
-        entry["array_args"] = [
-            {"name": n, "type": dt} for n, dt in array_args_
-        ]
+        entry["array_args"] = [{"name": n, "type": dt} for n, dt in array_args_]
     if init_params_:
         entry["init_params"] = []
         for p in init_params_:
@@ -692,9 +703,7 @@ def _dump(cfg: dict) -> str:
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
             lines.append(f'name = "{p["name"]}"')
-            lines.append(
-                f'type = "{p.get("type") or p.get("ctype", "size_t")}"'
-            )
+            lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
             if p.get("writable"):
                 lines.append("writable = true")
             if p.get("field"):

@@ -1,12 +1,15 @@
----
+______________________________________________________________________
+
 hide:
-  - toc
----
+
+- toc
+
+______________________________________________________________________
 
 # Quick reference — Python → TOML → CLI
 
 Each row shows an annotated Python stub, the `just-makeit.toml` fragment that
-produces it, and the CLI command that writes that fragment.  *TOML only* means
+produces it, and the CLI command that writes that fragment. *TOML only* means
 the feature is not reachable from the CLI and must be written by hand (or via
 `jm apply <fragment>`).
 
@@ -775,17 +778,18 @@ ______________________________________________________________________
 
 ## Advanced
 
-| Feature | What it does | CLI |
-|---------|-------------|-----|
-| Lift C body | Inject an existing function body into the generated `<<IMPLEMENT>>` stub | `--impl path/to/file.c::funcname` |
-| Rename on lift | String substitution applied to the extracted body | `--replace old::new` |
-| Custom create() | Override generated field assignments in `<comp>_create()` — add `create_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `obj->` for the local pointer) | TOML only |
-| Custom reset() | Override generated field assignments in `<comp>_reset()` — add `reset_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->` for the pointer parameter) | TOML only |
-| Custom destroy() | Splice teardown into `<comp>_destroy()` before the trailing `free(state)` — add `destroy_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->`) | TOML only |
-| Perf annotations | Add `JM_HOT` / `JM_FORCEINLINE` to every `step()` | `just-makeit perf` |
-| Reconstruct CLI | Print the full command sequence that reproduces the project | `just-makeit script` |
-| Split TOML | Move each object section into `objects/<name>.toml` | `just-makeit split-objects` |
-| Regenerate files | Re-emit all files implied by the current TOML (add-only) | `just-makeit apply` |
-| Dry run | Show what would be compiled without building | `just-makeit dry-run` |
-| Extra link libs | Link a module against an additional library not owned by jm — add `extra_link_libs = ["mylib", "m"]` under `[module.X]` | TOML only |
-| Extra types | Register a hand-written CPython type from a `*_extra.c` file in `PyInit_` — add `extra_types = ["MyType"]` under `[module.X]` | TOML only |
+| Feature            | What it does                                                                                                                                                                                   | CLI                               |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Lift C body        | Inject an existing function body into the generated `<<IMPLEMENT>>` stub                                                                                                                       | `--impl path/to/file.c::funcname` |
+| Rename on lift     | String substitution applied to the extracted body                                                                                                                                              | `--replace old::new`              |
+| Custom create()    | Override generated field assignments in `<comp>_create()` — add `create_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `obj->` for the local pointer)     | TOML only                         |
+| Custom reset()     | Override generated field assignments in `<comp>_reset()` — add `reset_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->` for the pointer parameter) | TOML only                         |
+| Custom destroy()   | Splice teardown into `<comp>_destroy()` before the trailing `free(state)` — add `destroy_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->`)        | TOML only                         |
+| Opaque state field | Declare a pointer/handle struct field with no auto-getter/setter, no kwarg — set `opaque = true` on a `[[comp.state]]` entry. Requires `create_impl` to initialize it (validator enforces).    | TOML only                         |
+| Perf annotations   | Add `JM_HOT` / `JM_FORCEINLINE` to every `step()`                                                                                                                                              | `just-makeit perf`                |
+| Reconstruct CLI    | Print the full command sequence that reproduces the project                                                                                                                                    | `just-makeit script`              |
+| Split TOML         | Move each object section into `objects/<name>.toml`                                                                                                                                            | `just-makeit split-objects`       |
+| Regenerate files   | Re-emit all files implied by the current TOML (add-only)                                                                                                                                       | `just-makeit apply`               |
+| Dry run            | Show what would be compiled without building                                                                                                                                                   | `just-makeit dry-run`             |
+| Extra link libs    | Link a module against an additional library not owned by jm — add `extra_link_libs = ["mylib", "m"]` under `[module.X]`                                                                        | TOML only                         |
+| Extra types        | Register a hand-written CPython type from a `*_extra.c` file in `PyInit_` — add `extra_types = ["MyType"]` under `[module.X]`                                                                  | TOML only                         |

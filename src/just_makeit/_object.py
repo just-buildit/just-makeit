@@ -39,8 +39,7 @@ def _indent_body(body: str, indent: str = "    ") -> str:
     line.
     """
     return "\n".join(
-        indent + line if line.strip() else line
-        for line in body.strip().splitlines()
+        indent + line if line.strip() else line for line in body.strip().splitlines()
     )
 
 
@@ -60,6 +59,7 @@ def _make_object_ctx(
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     class_name: str | None = None,
+    opaque_fields: list[tuple[str, str]] = (),
 ) -> dict:
     """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
@@ -86,6 +86,7 @@ def _make_object_ctx(
             no_state=no_state,
             init_params=init_params,
             init_post_parse_impl=init_post_parse_impl,
+            opaque_fields=opaque_fields,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -391,6 +392,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             mutable=C.is_mutable(cfg, obj),
             init_params=C.init_params(cfg, obj),
             class_name=C.class_name(cfg, obj),
+            opaque_fields=C.opaque_fields(cfg, obj),
         )
         ctx.update(
             Ctx.make_methods_ctx(
@@ -428,7 +430,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         raw = ext_c_path.read_text(encoding="utf-8")
         # Only treat the file as a migration source when it is a monolith
         # (i.e. it does not yet contain #include lines for fragments).
-        first_frag = f'{module}_ext_{comp_ctxs[0]["component"]}.c'
+        first_frag = f"{module}_ext_{comp_ctxs[0]['component']}.c"
         if first_frag not in raw:
             monolith_bodies = _extract_c_function_bodies(raw)
 
@@ -460,7 +462,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     aggregator = R.render_module_ext_aggregator(
-        module, comp_ctxs, functions, extra_files,
+        module,
+        comp_ctxs,
+        functions,
+        extra_files,
         extra_types=C.extra_types(cfg, module),
     )
     _write(ext_c_path, aggregator, "update")
@@ -486,9 +491,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         libs_parts = [f"{module}_core"] + [f"{obj}_core" for obj in object_names]
     object_core_libs = "\n    ".join(libs_parts)
     extra_libs = C.extra_link_libs(cfg, module)
-    extra_link_libs_block = (
-        "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
-    )
+    extra_link_libs_block = "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
     cmake_ctx = {
         "module": module,
         "Module": Module,
@@ -563,6 +566,7 @@ def run(
     destroy_impl_body: str | None = None,
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
+    opaque_fields: list[tuple[str, str]] = (),
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -609,6 +613,7 @@ def run(
             reset_impl_body=reset_impl_body,
             destroy_impl_body=destroy_impl_body,
             init_params=init_params,
+            opaque_fields=opaque_fields,
             class_name=class_name,
             depends_on=list(depends_on),
             _hint=_hint and not variable_output,
@@ -674,6 +679,7 @@ def run(
         init_params=init_params,
         init_post_parse_impl=init_post_parse_impl,
         class_name=class_name,
+        opaque_fields=opaque_fields,
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -800,15 +806,13 @@ def run(
             ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{dep}_core>)\n"
             if ts not in cmake_text:
                 obj_lines += (
-                    ts
-                    + f"target_sources({pkg}_lib_static PRIVATE "
+                    ts + f"target_sources({pkg}_lib_static PRIVATE "
                     f"$<TARGET_OBJECTS:{dep}_core>)\n"
                 )
         ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
         if ts not in cmake_text:
             obj_lines += (
-                ts
-                + f"target_sources({pkg}_lib_static PRIVATE "
+                ts + f"target_sources({pkg}_lib_static PRIVATE "
                 f"$<TARGET_OBJECTS:{comp}_core>)\n"
             )
         if obj_lines:
