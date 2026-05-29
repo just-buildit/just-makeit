@@ -58,6 +58,8 @@ def run_tests() -> None:
             "numpy",
             "--with",
             "just-buildit",
+            "--with",
+            "tomlkit",
             "pytest",
             "-v",
             *sys.argv[1:],
