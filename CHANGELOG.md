@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.13.20] — 2026-05-28
+
+### Fixed
+
+- **TOML comment preservation** — `save()` now round-trips `[project]` and
+    `[module.X]` sections through `tomlkit` so user-written comments (file-level,
+    section-header, and inline key comments) survive every `jm add` / `jm method`
+    / `jm property` mutation. Component sections (`[[comp.state]]` repeated tables)
+    are still rebuilt from `_dump()` — comment preservation inside repeated-table
+    arrays is impractical with tomlkit. Adds `tomlkit>=0.15` as a runtime
+    dependency.
+
 ## [0.13.19] — 2026-05-28
 
 ### Added

@@ -4,7 +4,7 @@ build-backend = "just_buildit"
 
 [project]
 name = "just-makeit"
-version = "0.13.19"
+version = "0.13.20"
 description = "Scaffold and build Python C extensions with CMake and just-buildit."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,9 @@ authors = [
     { name = "Matthew T. Hunter, Ph.D." },
     { name = "Claude Code", email = "noreply@anthropic.com" },
 ]
-dependencies = []
+dependencies = [
+    "tomlkit>=0.15.0",
+]
 keywords = [
     "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
     "code-generation", "numpy", "packaging", "wheel",

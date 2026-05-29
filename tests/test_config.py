@@ -379,3 +379,103 @@ class TestBackwardCompat:
     def test_dump_build_cmake_written(self):
         cfg = from_new("p")
         assert 'build = "cmake"' in _dump(cfg)
+
+
+class TestCommentPreservation:
+    """save() must preserve user comments in [project] and [module.X]
+    sections across load → mutate → save round-trips.  Component sections
+    (repeated tables) are rebuilt from _dump() and do not preserve comments
+    — this is documented behaviour."""
+
+    def _write(self, path: Path, text: str) -> None:
+        path.write_text(text, encoding="utf-8")
+
+    def test_file_level_comment_survives(self, tmp_path):
+        """A comment at the top of just-makeit.toml survives a save()."""
+        toml = tmp_path / "just-makeit.toml"
+        self._write(
+            toml,
+            "# top-level project comment\n"
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\npytest = "false"\n'
+            'pytest_benchmark = "false"\nschema = "6"\n',
+        )
+        cfg = load(tmp_path)
+        cfg["project"]["version"] = "0.2.0"
+        save(tmp_path, cfg)
+        result = toml.read_text(encoding="utf-8")
+        assert "# top-level project comment" in result
+        assert '0.2.0"' in result
+
+    def test_project_inline_comment_survives(self, tmp_path):
+        """An inline comment on a [project] key survives a save()."""
+        toml = tmp_path / "just-makeit.toml"
+        self._write(
+            toml,
+            '[project]\nname = "p"  # package name\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\npytest = "false"\n'
+            'pytest_benchmark = "false"\nschema = "6"\n',
+        )
+        cfg = load(tmp_path)
+        cfg["project"]["perf"] = "true"
+        save(tmp_path, cfg)
+        result = toml.read_text(encoding="utf-8")
+        assert "# package name" in result
+
+    def test_project_section_comment_survives(self, tmp_path):
+        """A comment block before [project] survives a save()."""
+        toml = tmp_path / "just-makeit.toml"
+        self._write(
+            toml,
+            "# === project config ===\n"
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\npytest = "false"\n'
+            'pytest_benchmark = "false"\nschema = "6"\n',
+        )
+        cfg = load(tmp_path)
+        add_component(cfg, "engine", [("gain", "float", "1.0f")])
+        save(tmp_path, cfg)
+        result = toml.read_text(encoding="utf-8")
+        assert "# === project config ===" in result
+        assert "[engine]" in result
+
+    def test_module_section_comment_survives(self, tmp_path):
+        """A comment on a [module.X] section survives a save()."""
+        toml = tmp_path / "just-makeit.toml"
+        self._write(
+            toml,
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "cmake"\nperf = "false"\npytest = "false"\n'
+            'pytest_benchmark = "false"\nschema = "6"\n\n'
+            "# DSP filter bank\n"
+            "[module.dsp]\nobjects = []\n",
+        )
+        cfg = load(tmp_path)
+        cfg.setdefault("module", {}).setdefault("dsp", {}).setdefault(
+            "objects", []
+        ).append("fir")
+        save(tmp_path, cfg)
+        result = toml.read_text(encoding="utf-8")
+        assert "# DSP filter bank" in result
+        assert '"fir"' in result
+
+    def test_new_file_created_without_error(self, tmp_path):
+        """Writing to a non-existent file still works (no tomlkit round-trip)."""
+        cfg = from_new("brand_new")
+        save(tmp_path, cfg)
+        assert (tmp_path / "just-makeit.toml").exists()
+
+    def test_unchanged_project_keys_intact(self, tmp_path):
+        """Keys not touched by the mutation survive verbatim."""
+        toml = tmp_path / "just-makeit.toml"
+        self._write(
+            toml,
+            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            'build = "make"\nperf = "false"\npytest = "false"\n'
+            'pytest_benchmark = "false"\nschema = "6"\n',
+        )
+        cfg = load(tmp_path)
+        cfg["project"]["perf"] = "true"
+        save(tmp_path, cfg)
+        result = toml.read_text(encoding="utf-8")
+        assert 'build = "make"' in result  # untouched key preserved

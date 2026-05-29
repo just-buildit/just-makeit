@@ -21,6 +21,8 @@ default = "8"
 import tomllib
 from pathlib import Path
 
+import tomlkit
+
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
@@ -146,6 +148,93 @@ def _provenance(root: Path) -> tuple[dict[str, Path], list[str]]:
     return owners, include_list
 
 
+def _sync_tomlkit_table(tbl: tomlkit.items.Table, new_data: dict) -> None:
+    """Update a tomlkit table in-place from new_data.
+
+    Existing keys whose values change are updated (preserving inline
+    comments).  Keys absent from new_data are removed.  New keys are
+    appended.  The caller is responsible for any nested structure."""
+    for k, v in new_data.items():
+        tbl[k] = v
+    for k in list(tbl.keys()):
+        if k not in new_data:
+            del tbl[k]
+
+
+def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
+    """Write cfg to path.
+
+    For existing files the ``[project]`` section, ``[module.X]`` sections,
+    and the ``include`` key are updated in-place using tomlkit so that user
+    comments survive a round-trip.  Component sections (which contain
+    ``[[comp.state]]`` repeated tables) are always rebuilt from ``_dump()``
+    and appended after the preserved header — comment preservation inside
+    repeated-table arrays is impractical with tomlkit.
+
+    For brand-new files the output is identical to the previous plain-
+    ``_dump()`` behaviour."""
+    comps = {k: v for k, v in cfg.items() if k not in ("project", "module")}
+    comp_text = _dump(comps)
+
+    if not path.exists():
+        text = _dump(cfg)
+        if include_list:
+            text = f"include = {_toml_string_array(include_list)}\n\n" + text
+        path.write_text(text, encoding="utf-8")
+        return
+
+    doc = tomlkit.loads(path.read_text(encoding="utf-8"))
+
+    # -- include list ---------------------------------------------------------
+    if include_list is not None:
+        arr = tomlkit.array()
+        for item in include_list:
+            arr.append(item)
+        doc["include"] = arr
+    elif "include" in doc:
+        del doc["include"]
+
+    # -- [project] ------------------------------------------------------------
+    new_proj = cfg.get("project")
+    if new_proj:
+        if "project" not in doc:
+            doc.add("project", tomlkit.table())
+        _sync_tomlkit_table(doc["project"], new_proj)
+    elif "project" in doc:
+        del doc["project"]
+
+    # -- [module.X] -----------------------------------------------------------
+    new_mod = cfg.get("module", {})
+    if "module" not in doc:
+        if new_mod:
+            doc.add("module", tomlkit.table())
+    if "module" in doc:
+        mod_tbl = doc["module"]
+        for mod, data in new_mod.items():
+            if mod not in mod_tbl:
+                mod_tbl.add(mod, tomlkit.table())
+            _sync_tomlkit_table(mod_tbl[mod], data)
+        for mod in list(mod_tbl.keys()):
+            if mod not in new_mod:
+                del mod_tbl[mod]
+        if not new_mod:
+            del doc["module"]
+
+    # -- component sections ---------------------------------------------------
+    # Strip old component keys from the document; they will be replaced by
+    # the _dump()-generated text spliced in below.
+    for k in list(doc.keys()):
+        if k not in ("project", "module", "include"):
+            del doc[k]
+
+    header = tomlkit.dumps(doc).rstrip("\n")
+    body = comp_text.strip()
+    path.write_text(
+        ((header + "\n\n" + body) if body else header).strip() + "\n",
+        encoding="utf-8",
+    )
+
+
 def save(root: Path, cfg: dict) -> None:
     """Write cfg back to disk, routing each top-level object section to
     the file that owns it on disk. `[project]` / `[module.X]` always
@@ -158,11 +247,9 @@ def save(root: Path, cfg: dict) -> None:
 
     # Group every top-level object section in cfg by destination file.
     by_file: dict[Path, dict] = {}
-    objects_in_cfg: set[str] = set()
     for key, value in cfg.items():
         if key in ("project", "module", "include"):
             continue
-        objects_in_cfg.add(key)
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -180,12 +267,7 @@ def save(root: Path, cfg: dict) -> None:
         manifest_content["module"] = cfg["module"]
     manifest_content.update(by_file.get(manifest_path, {}))
 
-    manifest_text = _dump(manifest_content)
-    if include_list:
-        manifest_text = (
-            f"include = {_toml_string_array(include_list)}\n\n" + manifest_text
-        )
-    manifest_path.write_text(manifest_text, encoding="utf-8")
+    _write_doc(manifest_path, manifest_content, include_list or None)
 
     # Each fragment file gets only its remaining sections; an empty
     # fragment is removed.
@@ -194,7 +276,7 @@ def save(root: Path, cfg: dict) -> None:
         sections = by_file.get(fragment_path, {})
         if sections:
             fragment_path.parent.mkdir(parents=True, exist_ok=True)
-            fragment_path.write_text(_dump(sections), encoding="utf-8")
+            _write_doc(fragment_path, sections, None)
         else:
             fragment_path.unlink(missing_ok=True)
 
@@ -205,7 +287,7 @@ def save(root: Path, cfg: dict) -> None:
         if fragment_path in seen_fragments:
             continue
         fragment_path.parent.mkdir(parents=True, exist_ok=True)
-        fragment_path.write_text(_dump(sections), encoding="utf-8")
+        _write_doc(fragment_path, sections, None)
 
 
 def components(cfg: dict) -> list[str]:
