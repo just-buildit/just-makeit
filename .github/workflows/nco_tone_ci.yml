@@ -38,7 +38,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends cmake gcc
 
       - name: Install just-makeit
-        run: uv tool install .
+        run: |
+          uv tool install .
+          uv sync
 
       - name: Install jm build deps (cmake, Python, NumPy)
         run: jm-install-deps ${{ runner.temp }}/jm-venv
@@ -82,5 +84,5 @@ jobs:
       # (cmake's default prefix search may not look there on all platforms).
       - name: Run nco_tone example
         run: |
-          python src/just_makeit/examples/nco_tone/test.py \
+          uv run python src/just_makeit/examples/nco_tone/test.py \
             --doppler-prefix /tmp/doppler
