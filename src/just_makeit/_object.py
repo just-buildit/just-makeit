@@ -332,8 +332,15 @@ def _restore_c_function_bodies(new_source: str, preserved: dict[str, str]) -> st
     Only replaces functions that already existed in the old source AND still
     exist in the newly generated source.  New functions (first-time stubs) are
     left unchanged, so fresh scaffolded methods get their TODO stubs.
+
+    Buffer-lifecycle functions (_dealloc, _init) are always regenerated from
+    the template so that newly added variable_output free() and malloc() calls
+    are never silently dropped when the old fragment has no buffers yet.
     """
+    _INFRA_SUFFIXES = ("_dealloc", "_init")
     for fn_name, old_body in preserved.items():
+        if any(fn_name.endswith(s) for s in _INFRA_SUFFIXES):
+            continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
         header_pat = re.compile(r"static [^\n]+\n" + re.escape(fn_name) + r"\(")
@@ -580,6 +587,7 @@ def run(
     method_name: str = "run",
     class_name: str | None = None,
     depends_on: list[str] = (),
+    extra_link_libs: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -625,6 +633,7 @@ def run(
             no_ctor_names=no_ctor_names,
             class_name=class_name,
             depends_on=list(depends_on),
+            extra_link_libs=list(extra_link_libs),
             _hint=_hint and not variable_output,
         )
         if variable_output:

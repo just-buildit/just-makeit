@@ -368,6 +368,7 @@ def run(
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
     depends_on: list[str] = (),
+    extra_link_libs: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -395,7 +396,14 @@ def run(
         )
         sys.exit(1)
 
-    vars_ = [] if no_state else (state_vars or [("gain", "float", "0.0f")])
+    # Only inject the default "gain" field when there are no regular state
+    # vars AND no opaque fields — opaque-only structs are fully user-managed.
+    _has_opaque = bool(opaque_fields)
+    vars_ = (
+        []
+        if no_state
+        else (state_vars or ([] if _has_opaque else [("gain", "float", "0.0f")]))
+    )
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:
@@ -480,10 +488,25 @@ def run(
 
         ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
+    extra_link_libs_block = (
+        "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
+    )
+    ctx["extra_link_libs_block"] = extra_link_libs_block
+
     def r(tmpl):
         return R.render(tmpl, ctx)
 
     comp = ctx["component"]
+
+    # extra_link_on_core: propagates external includes to the OBJECT library
+    # so that its header files can #include external library headers directly.
+    if extra_link_libs:
+        parts = "\n    ".join(extra_link_libs)
+        ctx["extra_link_on_core"] = (
+            f"target_link_libraries({comp}_core PUBLIC\n    {parts})\n"
+        )
+    else:
+        ctx["extra_link_on_core"] = ""
 
     print(f"just-makeit: adding component '{comp}' to project '{pkg}'")
     print()
@@ -665,6 +688,7 @@ def run(
         init_params_=init_params,
         class_name_=class_name,
         depends_on_=list(depends_on),
+        extra_link_libs_=list(extra_link_libs),
     )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

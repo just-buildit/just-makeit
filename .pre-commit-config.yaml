@@ -32,6 +32,7 @@ repos:
     hooks:
       - id: cmake-format
         files: ^src/just_makeit/templates/cmake/
+        exclude: CMakeLists_component\.cmake
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0 # Use latest version

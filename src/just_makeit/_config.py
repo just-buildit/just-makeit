@@ -415,6 +415,55 @@ def c_deps(cfg: dict) -> list[str]:
     return list(cfg.get("project", {}).get("c_deps", []))
 
 
+def find_packages(cfg: dict) -> list[str]:
+    """Return CMake package names declared under [project].
+
+    Each name is emitted as ``find_package(X REQUIRED)`` inside the
+    ``# ── External deps`` sentinel block in the top CMakeLists.txt,
+    maintained by ``jm apply``.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [project]
+        find_packages = ["Doppler"]
+    """
+    v = cfg.get("project", {}).get("find_packages", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def pkg_modules(cfg: dict) -> list[str]:
+    """Return pkg-config module names declared under [project].
+
+    Each name X is emitted as
+    ``pkg_check_modules(X_upper REQUIRED IMPORTED_TARGET X)`` inside the
+    ``# ── External deps`` block, maintained by ``jm apply``.  The
+    resulting imported target is ``PkgConfig::X_UPPER``.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [project]
+        pkg_modules = ["doppler"]
+    """
+    v = cfg.get("project", {}).get("pkg_modules", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def component_extra_link_libs(cfg: dict, component: str) -> list[str]:
+    """Return hand-declared extra link targets for a standalone component.
+
+    Appended to the generated ``target_link_libraries`` blocks for both the
+    Python extension and the CTest executable.  Survive every ``jm apply``.
+    Declare in TOML as:
+
+    .. code-block:: toml
+
+        [tone]
+        extra_link_libs = ["PkgConfig::DOPPLER"]
+    """
+    v = cfg.get(component, {}).get("extra_link_libs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def depends_on(cfg: dict, component: str) -> list[str]:
     """Return the transitive C OBJECT library deps for a component.
 
@@ -624,6 +673,7 @@ def add_component(
     depends_on_: list[str] = (),
     opaque_fields_: "list[tuple[str, str]]" = (),
     no_ctor_names_: "frozenset[str]" = frozenset(),
+    extra_link_libs_: list[str] = (),
 ) -> dict:
     rt = (
         return_type_
@@ -674,6 +724,8 @@ def add_component(
         entry["class_name"] = class_name_
     if depends_on_:
         entry["depends_on"] = list(depends_on_)
+    if extra_link_libs_:
+        entry["extra_link_libs"] = list(extra_link_libs_)
     cfg[component] = entry
     return cfg
 
@@ -685,9 +737,9 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
-            if k == "c_deps":
-                deps_str = ", ".join(f'"{d}"' for d in v)
-                lines.append(f"c_deps = [{deps_str}]")
+            if k in ("c_deps", "find_packages", "pkg_modules"):
+                items_str = ", ".join(f'"{x}"' for x in v)
+                lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')
         lines.append("")
@@ -754,6 +806,9 @@ def _dump(cfg: dict) -> str:
         if comp_data.get("depends_on"):
             deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
             lines.append(f"depends_on = [{deps_str}]")
+        if comp_data.get("extra_link_libs"):
+            libs_str = ", ".join(f'"{lib}"' for lib in comp_data["extra_link_libs"])
+            lines.append(f"extra_link_libs = [{libs_str}]")
         lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
