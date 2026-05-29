@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.13.22] — 2026-05-29
+
 ### Added
 
 - **`extra_include_dirs` config** (gh-66) — counterpart to `extra_link_libs`
@@ -45,6 +47,18 @@
     `--out-param name:type[]` flag mirroring `--param`. Previously every
     array param was hard-coded `const`, so any function trying to write
     to an output buffer hit `assignment of read-only location`.
+
+### Docs
+
+- **Decision tree** (`docs/decision-tree.md`) — a flat "where do I start"
+    lookup: Step 1 (no project? `jm new`), Step 2 (what are you adding?),
+    three sub-decisions (object shape, method output, external deps), an
+    "I want… → do…" table, and an explicit list of TOML-only features
+    that the CLI can't reach.
+- **`jm wizard` design sketch** (`docs/developers/wizard-design.md`) —
+    proposal-only design note for an interactive companion to the decision
+    tree that would emit a shell script + TOML fragment + impl snippets
+    from a single guided session. Not implemented.
 
 ## [0.13.21] — 2026-05-29
 
