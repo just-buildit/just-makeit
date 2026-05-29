@@ -41,9 +41,7 @@ class TestRemoveObjectStandalone:
         assert not (project / "native" / "inc" / "gadget").exists()
         assert not (project / "native" / "src" / "gadget").exists()
         assert not (project / "src" / "proj" / "gadget.pyi").exists()
-        assert not (
-            project / "native" / "tests" / "test_gadget_core.c"
-        ).exists()
+        assert not (project / "native" / "tests" / "test_gadget_core.c").exists()
 
     def test_toml_section_dropped(self, project):
         remove_run(project, "object", "gadget", force=True)
@@ -54,16 +52,12 @@ class TestRemoveObjectStandalone:
         cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "native/src/gadget" not in cmake
         assert "gadget_core>" not in cmake
-        umbrella = (project / "native" / "inc" / "proj.h").read_text(
-            encoding="utf-8"
-        )
+        umbrella = (project / "native" / "inc" / "proj.h").read_text(encoding="utf-8")
         assert "gadget/gadget_core.h" not in umbrella
 
     def test_pkg_init_import_removed(self, project):
         remove_run(project, "object", "gadget", force=True)
-        init = (project / "src" / "proj" / "__init__.py").read_text(
-            encoding="utf-8"
-        )
+        init = (project / "src" / "proj" / "__init__.py").read_text(encoding="utf-8")
         assert "Gadget" not in init
         compile(init, "__init__.py", "exec")
 
@@ -133,12 +127,8 @@ class TestRemoveMethodPropertyFunction:
         assert not cfg["nco"].get("methods")
 
     def test_remove_property_drops_toml_entry(self, project):
-        property_run(
-            project, "nco", "locked", "dsp", "uint8_t", True, field=True
-        )
-        remove_run(
-            project, "property", "locked", object_name="nco", force=True
-        )
+        property_run(project, "nco", "locked", "dsp", "uint8_t", True, field=True)
+        remove_run(project, "property", "locked", object_name="nco", force=True)
         cfg = load(project)
         assert not cfg["nco"].get("properties")
 
@@ -154,9 +144,7 @@ class TestRemoveMethodPropertyFunction:
 
     def test_unknown_method_exits(self, project):
         with pytest.raises(SystemExit):
-            remove_run(
-                project, "method", "ghost", object_name="nco", force=True
-            )
+            remove_run(project, "method", "ghost", object_name="nco", force=True)
 
 
 class TestIsImplemented:
@@ -191,6 +179,7 @@ class TestRemoveWarnsOnImplemented:
         text = core_h.read_text(encoding="utf-8")
         # Strip every variant of the TODO marker (with or without state suffix)
         import re
+
         new_text = re.sub(
             r"\(void\)state; /\* TODO: implement[^*]* \*/",
             "state->phase += state->freq; /* user algorithm */",
@@ -255,26 +244,20 @@ def no_step_project(tmp_path):
 
 class TestCoreIsImplemented:
     def test_no_state_fresh_stub_not_implemented(self, no_step_project):
-        core_c = (
-            no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
-        )
+        core_c = no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
         assert core_c.exists()
         assert _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
         assert not _core_c_is_implemented(core_c, is_no_state=True, has_methods=False)
 
     def test_no_state_implemented_after_marker_removed(self, no_step_project):
-        core_c = (
-            no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
-        )
+        core_c = no_step_project / "native" / "src" / "chunker" / "chunker_core.c"
         text = core_c.read_text(encoding="utf-8")
         core_c.write_text(text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8")
-        assert not _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
+        assert _CORE_C_STUB_MARKER not in core_c.read_text(encoding="utf-8")
         assert _core_c_is_implemented(core_c, is_no_state=True, has_methods=False)
 
     def test_has_state_with_method_fresh_stub_not_implemented(self, no_step_project):
-        core_c = (
-            no_step_project / "native" / "src" / "detector" / "detector_core.c"
-        )
+        core_c = no_step_project / "native" / "src" / "detector" / "detector_core.c"
         assert core_c.exists()
         assert _CORE_C_STUB_MARKER in core_c.read_text(encoding="utf-8")
         assert not _core_c_is_implemented(core_c, is_no_state=False, has_methods=True)
@@ -282,9 +265,7 @@ class TestCoreIsImplemented:
     def test_has_state_with_method_implemented_after_marker_removed(
         self, no_step_project
     ):
-        core_c = (
-            no_step_project / "native" / "src" / "detector" / "detector_core.c"
-        )
+        core_c = no_step_project / "native" / "src" / "detector" / "detector_core.c"
         text = core_c.read_text(encoding="utf-8")
         core_c.write_text(text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8")
         assert _core_c_is_implemented(core_c, is_no_state=False, has_methods=True)
@@ -292,9 +273,7 @@ class TestCoreIsImplemented:
     def test_has_state_no_methods_always_false(self, no_step_project):
         # no_step + has_state + no methods: generated file never had markers;
         # can't distinguish fresh from modified, so always returns False
-        core_c = (
-            no_step_project / "native" / "src" / "detector" / "detector_core.c"
-        )
+        core_c = no_step_project / "native" / "src" / "detector" / "detector_core.c"
         # even if markers are absent, returns False when has_methods=False
         assert not _core_c_is_implemented(core_c, is_no_state=False, has_methods=False)
 
@@ -308,9 +287,7 @@ class TestRemoveWarnsOnNoStepImplemented:
     def _implement_core_c(self, root, obj):
         core_c = root / "native" / "src" / obj / f"{obj}_core.c"
         text = core_c.read_text(encoding="utf-8")
-        core_c.write_text(
-            text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8"
-        )
+        core_c.write_text(text.replace("/* <<IMPLEMENT:", "/* done:"), encoding="utf-8")
 
     def test_no_state_force_warns_to_stderr(self, no_step_project, capsys):
         self._implement_core_c(no_step_project, "chunker")
@@ -341,3 +318,86 @@ class TestRemoveWarnsOnNoStepImplemented:
         remove_run(no_step_project, "object", "sink", force=True)
         err = capsys.readouterr().err
         assert "hand-written code" not in err
+
+
+class TestRemoveStateField:
+    """jm remove state <name> --object <comp> drops the state entry from TOML
+    and regenerates core.h, core.c, ext.c, and .pyi with create() / reset()
+    updated for the new field list."""
+
+    def test_toml_entry_dropped(self, project):
+        """State field is removed from just-makeit.toml."""
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        cfg = load(project)
+        names = [s["name"] for s in cfg.get("widget", {}).get("state", [])]
+        assert "gain" not in names
+
+    def test_struct_no_longer_has_field(self, project):
+        """After removal, core.h no longer declares the struct member."""
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        header = (project / "native" / "inc" / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "float gain;" not in header
+
+    def test_create_signature_updated(self, project):
+        """After removal, create() signature no longer includes the field."""
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        header = (project / "native" / "inc" / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "widget_create(void)" in header
+
+    def test_getter_setter_removed(self, project):
+        """After removal, getter/setter declarations are gone."""
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        header = (project / "native" / "inc" / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "widget_get_gain" not in header
+        assert "widget_set_gain" not in header
+
+    def test_ext_c_kwlist_updated(self, project):
+        """After removal, the Python kwlist in ext.c no longer has the field."""
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        ext_c = (project / "native" / "src" / "widget" / "widget_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"gain"' not in ext_c
+
+    def test_unknown_field_exits(self, project):
+        """Removing a nonexistent field exits with an error."""
+        with pytest.raises(SystemExit):
+            remove_run(
+                project, "state", "nonexistent", object_name="widget", force=True
+            )
+
+    def test_unknown_object_exits(self, project):
+        """Removing from a nonexistent object exits with an error."""
+        with pytest.raises(SystemExit):
+            remove_run(project, "state", "gain", object_name="ghost", force=True)
+
+    def test_requires_object_flag(self, project):
+        """'remove state' without --object exits."""
+        with pytest.raises(SystemExit):
+            remove_run(project, "state", "gain", force=True)
+
+    def test_warns_when_referenced_in_code(self, project, capsys):
+        """Prints a warning when state-><name> is found in a core file."""
+        core_h = project / "native" / "inc" / "widget" / "widget_core.h"
+        text = core_h.read_text(encoding="utf-8")
+        # Inject a reference that looks like user code
+        core_h.write_text(text + "\n// state->gain = 1.0f;\n", encoding="utf-8")
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        assert "gain" in capsys.readouterr().err
+
+    def test_sibling_field_survives(self, project):
+        """Removing one field leaves other state fields intact."""
+        from just_makeit._add import run as add_run
+
+        add_run(project, "widget", [("level", "float", "0.5f")])
+        remove_run(project, "state", "gain", object_name="widget", force=True)
+        cfg = load(project)
+        names = [s["name"] for s in cfg.get("widget", {}).get("state", [])]
+        assert "level" in names
+        assert "gain" not in names

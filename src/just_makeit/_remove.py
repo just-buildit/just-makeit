@@ -45,9 +45,7 @@ def _is_implemented(path: Path) -> bool:
     return path.exists() and _STUB_MARKER not in path.read_text(encoding="utf-8")
 
 
-def _core_c_is_implemented(
-    path: Path, is_no_state: bool, has_methods: bool
-) -> bool:
+def _core_c_is_implemented(path: Path, is_no_state: bool, has_methods: bool) -> bool:
     """Return True if a ``no_step`` object's ``_core.c`` likely holds user code.
 
     A freshly scaffolded ``_core.c`` for a ``no_step`` object contains
@@ -107,9 +105,7 @@ def _rm(path: Path) -> None:
         print(f"  remove  {path}")
 
 
-def _object_paths(
-    root: Path, pkg: str, obj: str, module: str | None
-) -> list[Path]:
+def _object_paths(root: Path, pkg: str, obj: str, module: str | None) -> list[Path]:
     """Return every generated path that belongs to object *obj*."""
     paths = [
         root / "native" / "inc" / obj,
@@ -157,9 +153,7 @@ def _strip_cmake_module(root: Path, module: str) -> None:
         return
     lines = cmake.read_text(encoding="utf-8").splitlines(keepends=True)
     kept = [
-        ln
-        for ln in lines
-        if ln.strip() != f"add_subdirectory(native/src/{module})"
+        ln for ln in lines if ln.strip() != f"add_subdirectory(native/src/{module})"
     ]
     if len(kept) != len(lines):
         cmake.write_text("".join(kept), encoding="utf-8")
@@ -185,11 +179,7 @@ def _strip_pkg_init(root: Path, pkg: str, obj: str, Component: str) -> None:
     if not init.exists():
         return
     lines = init.read_text(encoding="utf-8").splitlines(keepends=True)
-    kept = [
-        ln
-        for ln in lines
-        if not ln.startswith(f"from .{obj} import {Component}")
-    ]
+    kept = [ln for ln in lines if not ln.startswith(f"from .{obj} import {Component}")]
     text = "".join(kept)
     # Drop the name from __all__ = [...], handling both quote styles.
     for token in (f'"{Component}"', f"'{Component}'"):
@@ -319,14 +309,10 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
                 C.is_no_state(cfg, obj),
                 bool(C.methods(cfg, obj)),
             )
-        return _warn_if_implemented(
-            root / "native" / "inc" / obj / f"{obj}_core.h"
-        )
+        return _warn_if_implemented(root / "native" / "inc" / obj / f"{obj}_core.h")
 
     any_implemented = any(_obj_implemented(obj) for obj in objects)
-    prompt_note = (
-        "\n  This cannot be recovered without git." if any_implemented else ""
-    )
+    prompt_note = "\n  This cannot be recovered without git." if any_implemented else ""
     if not _confirm(
         f"Remove module '{module}'{detail} and all generated files?{prompt_note}",
         force,
@@ -368,9 +354,108 @@ def _drop_named_entry(entries: list[dict], name: str) -> bool:
     return False
 
 
-def _remove_method(
-    root: Path, cfg: dict, obj: str, name: str, force: bool
-) -> None:
+def _warn_if_state_ref(core_h: Path, core_c: Path, name: str) -> None:
+    """Print a stderr warning if state-><name> appears in any core file."""
+    for path in (core_h, core_c):
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if f"state->{name}" in text or f"obj->{name}" in text:
+            print(
+                f"  warning: '{name}' is referenced in {path}."
+                " Update any hand-written code that uses it.",
+                file=sys.stderr,
+            )
+
+
+def _regenerate_after_state_change(root: Path, cfg: dict, obj: str, pkg: str) -> None:
+    """Re-render all generated files after the state list changes.
+
+    Preserves the user's step() body in core.h and non-lifecycle functions
+    in core.c, but regenerates create() and reset() so they reflect the
+    updated state fields — same pattern used by `jm add`."""
+    module = C.component_module(cfg, obj)
+    ctx = _object_ctx(cfg, obj, pkg, module)
+    excl = (f"{obj}_create", f"{obj}_reset")
+
+    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    if core_h.exists():
+        core_h.write_text(
+            _preserve_core_bodies(
+                core_h,
+                R.render(R.COMPONENT_CORE_H, ctx),
+                obj,
+                exclude=excl,
+                skip_struct_merge=True,
+            ),
+            encoding="utf-8",
+        )
+        print(f"  update  {core_h}")
+
+    core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+    if core_c.exists():
+        core_c.write_text(
+            _preserve_core_bodies(
+                core_c, R.render(R.COMPONENT_CORE_C, ctx), obj, exclude=excl
+            ),
+            encoding="utf-8",
+        )
+        print(f"  update  {core_c}")
+
+    if module:
+        _regenerate_module(root, cfg, module, pkg)
+        return
+
+    for path, tmpl in [
+        (root / "native" / "src" / obj / f"{obj}_ext.c", R.COMPONENT_EXT_C),
+        (root / "src" / pkg / f"{obj}.pyi", R.COMPONENT_PYI),
+    ]:
+        if path.exists():
+            path.write_text(R.render(tmpl, ctx), encoding="utf-8")
+            print(f"  update  {path}")
+
+    bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
+    if bench_c.exists():
+        tmpl = R.NO_STEP_BENCH_C if C.is_no_step(cfg, obj) else R.COMPONENT_BENCH_C
+        bench_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
+        print(f"  update  {bench_c}")
+
+
+def _remove_state(root: Path, cfg: dict, obj: str, name: str, force: bool) -> None:
+    pkg = C.project_name(cfg)
+    if obj not in C.components(cfg):
+        print(f"error: object '{obj}' not found.", file=sys.stderr)
+        sys.exit(1)
+    state = cfg.get(obj, {}).get("state", [])
+    if not any(s.get("name") == name for s in state):
+        print(
+            f"error: state field '{name}' not found on object '{obj}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+    _warn_if_state_ref(core_h, core_c, name)
+
+    if not _confirm(f"Remove state field '{name}' from object '{obj}'?", force):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing state field '{name}' from '{obj}'")
+    print()
+    _drop_named_entry(state, name)
+    if not state:
+        cfg[obj].pop("state", None)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+
+    _regenerate_after_state_change(root, cfg, obj, pkg)
+    print()
+    print(f"Done!  State field '{name}' removed.")
+
+
+def _remove_method(root: Path, cfg: dict, obj: str, name: str, force: bool) -> None:
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -402,9 +487,7 @@ def _remove_method(
     )
 
 
-def _remove_property(
-    root: Path, cfg: dict, obj: str, name: str, force: bool
-) -> None:
+def _remove_property(root: Path, cfg: dict, obj: str, name: str, force: bool) -> None:
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -455,9 +538,7 @@ def _remove_function(
             file=sys.stderr,
         )
         sys.exit(1)
-    if not _confirm(
-        f"Remove function '{name}' from module '{module}'?", force
-    ):
+    if not _confirm(f"Remove function '{name}' from module '{module}'?", force):
         print("Aborted.")
         return
 
@@ -537,9 +618,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
     return ctx
 
 
-def _regenerate_object_bindings(
-    root: Path, cfg: dict, obj: str, pkg: str
-) -> None:
+def _regenerate_object_bindings(root: Path, cfg: dict, obj: str, pkg: str) -> None:
     """Re-render core.h / ext.c / .pyi / bench after a method or property
     entry was dropped from the TOML."""
     module = C.component_module(cfg, obj)
@@ -548,9 +627,7 @@ def _regenerate_object_bindings(
     core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
     if core_h.exists():
         core_h.write_text(
-            _preserve_core_bodies(
-                core_h, R.render(R.COMPONENT_CORE_H, ctx), obj
-            ),
+            _preserve_core_bodies(core_h, R.render(R.COMPONENT_CORE_H, ctx), obj),
             encoding="utf-8",
         )
         print(f"  update  {core_h}")
@@ -570,11 +647,7 @@ def _regenerate_object_bindings(
         print(f"  update  {pyi}")
     bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
     if bench_c.exists():
-        tmpl = (
-            R.NO_STEP_BENCH_C
-            if C.is_no_step(cfg, obj)
-            else R.COMPONENT_BENCH_C
-        )
+        tmpl = R.NO_STEP_BENCH_C if C.is_no_step(cfg, obj) else R.COMPONENT_BENCH_C
         bench_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
         print(f"  update  {bench_c}")
 
@@ -590,14 +663,21 @@ def run(
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
-            f"error: no {C.FILENAME} found in {root}.\n"
-            "Run 'just-makeit new' first.",
+            f"error: no {C.FILENAME} found in {root}.\nRun 'just-makeit new' first.",
             file=sys.stderr,
         )
         sys.exit(1)
     cfg = C.load(root)
 
-    if kind == "object":
+    if kind == "state":
+        if not object_name:
+            print(
+                "error: 'remove state' requires --object <obj>.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remove_state(root, cfg, object_name, name, force)
+    elif kind == "object":
         _remove_object(root, cfg, name, force)
     elif kind == "module":
         _remove_module(root, cfg, name, force)
