@@ -31,7 +31,9 @@ def _append_to_core_c(
     max_results_param: str = "",
 ) -> None:
     stub = T.fn_c_stub(
-        fn_name, params, return_type,
+        fn_name,
+        params,
+        return_type,
         out_type=out_type,
         result_fields=result_fields,
         max_results_param=max_results_param,
@@ -52,7 +54,9 @@ def _inject_into_core_h(
     max_results_param: str = "",
 ) -> None:
     decl = T.fn_c_decl(
-        fn_name, params, return_type,
+        fn_name,
+        params,
+        return_type,
         out_type=out_type,
         result_fields=result_fields,
         max_results_param=max_results_param,
@@ -165,7 +169,9 @@ def run(
             from . import _impl as I
 
             stub = T.fn_c_stub(
-                fn_name, params, return_type,
+                fn_name,
+                params,
+                return_type,
                 out_type=out_type,
                 result_fields=result_fields,
                 max_results_param=max_results_param,
@@ -176,7 +182,10 @@ def run(
             print(f"  update  {core_c}")
         else:
             _append_to_core_c(
-                core_c, fn_name, params, return_type,
+                core_c,
+                fn_name,
+                params,
+                return_type,
                 out_type=out_type,
                 result_fields=result_fields,
                 max_results_param=max_results_param,
@@ -184,7 +193,11 @@ def run(
 
         # Inject declaration into <module>_core.h
         _inject_into_core_h(
-            core_h, fn_name, params, return_type, module,
+            core_h,
+            fn_name,
+            params,
+            return_type,
+            module,
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
@@ -195,7 +208,16 @@ def run(
     if doc:
         fn_entry["doc"] = doc
     if params:
-        fn_entry["params"] = [{"name": n, "type": t} for n, t in params]
+        # Round-trip the optional `out` flag from 3-tuples so it survives
+        # apply / script regeneration (gh-72).
+        _entries: list[dict] = []
+        for p in params:
+            n, t = p[0], p[1]
+            entry = {"name": n, "type": t}
+            if len(p) > 2 and p[2]:
+                entry["out"] = True
+            _entries.append(entry)
+        fn_entry["params"] = _entries
     if return_type != "void":
         fn_entry["return_type"] = return_type
     if out_type:

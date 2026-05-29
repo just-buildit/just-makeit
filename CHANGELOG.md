@@ -38,6 +38,13 @@
     `init_params`; state fields remain in the struct with getters/setters
     but are no longer exposed as constructor parameters. Use `create_impl`
     to initialise the state from the user-facing parameters.
+- **Array params can opt out of `const`** (gh-72). Module functions with
+    output buffers now honour `out = true` on the param definition,
+    generating `T *name` instead of `const T *name` in both the header
+    declaration and the implementation stub. The CLI gains an
+    `--out-param name:type[]` flag mirroring `--param`. Previously every
+    array param was hard-coded `const`, so any function trying to write
+    to an output buffer hit `assignment of read-only location`.
 
 ## [0.13.21] — 2026-05-29
 

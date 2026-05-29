@@ -821,11 +821,13 @@ def _dump(cfg: dict) -> str:
                 )
                 lines.append(f"result_fields = [{rf_parts}]")
             if fn.get("params"):
-                parts = ", ".join(
-                    f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
-                    for p in fn["params"]
-                )
-                lines.append(f"params = [{parts}]")
+                _emit = []
+                for p in fn["params"]:
+                    base = f'name = "{p["name"]}", type = "{p["type"]}"'
+                    if p.get("out"):
+                        base += ", out = true"
+                    _emit.append("{" + base + "}")
+                lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
                 lines.append("inline = true")
             lines.append("")

@@ -1,11 +1,12 @@
 """Unit tests for just_makeit._cli_function."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def _run(args):
     from just_makeit import _cli_function
+
     _cli_function.run(args)
 
 
@@ -47,12 +48,21 @@ class TestCliFunction:
 
     def test_valid_call(self):
         with patch("just_makeit._function.run") as mock_run:
-            _run(["magnitude_db", "--module", "dsp",
-                  "--param", "x:float", "--return-type", "float"])
+            _run(
+                [
+                    "magnitude_db",
+                    "--module",
+                    "dsp",
+                    "--param",
+                    "x:float",
+                    "--return-type",
+                    "float",
+                ]
+            )
             mock_run.assert_called_once()
             _, kwargs = mock_run.call_args
             assert kwargs["return_type"] == "float"
-            assert ("x", "float") in kwargs["params"]
+            assert ("x", "float", False) in kwargs["params"]
 
     def test_doc_missing_value_exits(self):
         with pytest.raises(SystemExit):
@@ -76,7 +86,18 @@ class TestCliFunction:
         with patch("just_makeit._function.run") as mock_run:
             _run(["fn", "--module", "dsp", "--param", "buf:float[]"])
             _, kwargs = mock_run.call_args
-            assert ("buf", "float[]") in kwargs["params"]
+            assert ("buf", "float[]", False) in kwargs["params"]
+
+    def test_out_param_array(self):
+        with patch("just_makeit._function.run") as mock_run:
+            _run(["fn", "--module", "dsp", "--out-param", "out:float[]"])
+            _, kwargs = mock_run.call_args
+            assert ("out", "float[]", True) in kwargs["params"]
+
+    def test_out_param_scalar_exits(self):
+        # --out-param only applies to array params; scalars are rejected.
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--out-param", "x:float"])
 
     def test_return_type_bad_exits(self):
         with pytest.raises(SystemExit):
@@ -102,6 +123,14 @@ class TestCliFunction:
         with patch("just_makeit._function.run"):
             with patch("just_makeit._impl.load_impl", return_value="body"):
                 with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
-                    _run(["fn", "--module", "dsp",
-                          "--replace", "a::b",
-                          "--impl", "src.c::fn"])
+                    _run(
+                        [
+                            "fn",
+                            "--module",
+                            "dsp",
+                            "--replace",
+                            "a::b",
+                            "--impl",
+                            "src.c::fn",
+                        ]
+                    )

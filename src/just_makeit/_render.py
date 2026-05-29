@@ -247,18 +247,25 @@ PyInit_<<module>>(void)
 
 
 def _fn_c_params(
-    params: list[tuple[str, str]],
+    params: list[tuple],
 ) -> tuple[str, str]:
-    """Return (c_param_str, suppress_lines) for a list of (name, type) params.
+    """Return (c_param_str, suppress_lines) for a list of param tuples.
 
-    Array params ("type[]") expand to (const elem_t *name, size_t name_len).
+    Each param is either ``(name, type)`` or ``(name, type, out)`` where the
+    optional third element is a bool. Array params ("type[]") expand to
+    ``(const elem_t *name, size_t name_len)`` by default; when ``out=True``
+    the ``const`` is dropped so the function can write through the pointer
+    (gh-72).
     """
     c_parts: list[str] = []
     suppress_parts: list[str] = []
-    for n, t in params:
+    for p in params:
+        n, t = p[0], p[1]
+        is_out = bool(p[2]) if len(p) > 2 else False
         if is_array_param_type(t):
             elem_disp = _ctype_display(array_elem_ctype(t))
-            c_parts.append(f"const {elem_disp} *{n}")
+            qual = "" if is_out else "const "
+            c_parts.append(f"{qual}{elem_disp} *{n}")
             c_parts.append(f"size_t {n}_len")
             suppress_parts.append(f"(void){n};")
             suppress_parts.append(f"(void){n}_len;")
@@ -297,15 +304,18 @@ def fn_c_decl(
             extra += ", size_t max_results"
         return f"size_t {fn_name}({c_param_str}{extra});\n"
     if out_type:
-        arr_p = [(n, t) for n, t in params if is_array_param_type(t)]
-        scl_p = [(n, t) for n, t in params if not is_array_param_type(t)]
+        arr_p = [p for p in params if is_array_param_type(p[1])]
+        scl_p = [p for p in params if not is_array_param_type(p[1])]
         out_disp = _ctype_display(out_type)
         c_parts: list[str] = []
-        for n, t in arr_p:
-            c_parts.append(f"const {_ctype_display(array_elem_ctype(t))} *{n}")
+        for p in arr_p:
+            n, t = p[0], p[1]
+            qual = "" if (len(p) > 2 and p[2]) else "const "
+            c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
             c_parts.append(f"size_t {n}_len")
         c_parts.append(f"{out_disp} *out")
-        for n, t in scl_p:
+        for p in scl_p:
+            n, t = p[0], p[1]
             c_parts.append(f"{_ctype_display(t)} {n}")
         full_params = ", ".join(c_parts) if c_parts else "void"
         return f"void {fn_name}({full_params});\n"
@@ -405,18 +415,21 @@ def fn_c_stub(
             f"{{\n" + suppress_line + "\n" + "    return 0; /* placeholder */\n" + "}\n"
         )
     if out_type:
-        arr_p = [(n, t) for n, t in params if is_array_param_type(t)]
-        scl_p = [(n, t) for n, t in params if not is_array_param_type(t)]
+        arr_p = [p for p in params if is_array_param_type(p[1])]
+        scl_p = [p for p in params if not is_array_param_type(p[1])]
         out_disp = _ctype_display(out_type)
         c_parts: list[str] = []
         suppress_parts: list[str] = []
-        for n, t in arr_p:
-            c_parts.append(f"const {_ctype_display(array_elem_ctype(t))} *{n}")
+        for p in arr_p:
+            n, t = p[0], p[1]
+            qual = "" if (len(p) > 2 and p[2]) else "const "
+            c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
             c_parts.append(f"size_t {n}_len")
             suppress_parts += [f"(void){n};", f"(void){n}_len;"]
         c_parts.append(f"{out_disp} *out")
         suppress_parts.append("(void)out;")
-        for n, t in scl_p:
+        for p in scl_p:
+            n, t = p[0], p[1]
             c_parts.append(f"{_ctype_display(t)} {n}")
             suppress_parts.append(f"(void){n};")
         full_params = ", ".join(c_parts) if c_parts else "void"

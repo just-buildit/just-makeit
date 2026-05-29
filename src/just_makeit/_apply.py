@@ -338,7 +338,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 fn["name"],
                 mod,
                 doc=fn.get("doc", ""),
-                params=[(p["name"], p["type"]) for p in fn.get("params", [])],
+                params=[
+                    (p["name"], p["type"], bool(p.get("out", False)))
+                    for p in fn.get("params", [])
+                ],
                 return_type=fn.get("return_type", "void"),
                 impl_body=f_impl,
                 out_type=fn.get("out_type", ""),
