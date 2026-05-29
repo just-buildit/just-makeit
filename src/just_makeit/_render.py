@@ -78,6 +78,10 @@ COMPONENT_BENCH_PY = _load("py/component_bench.py")
 COMPONENT_BENCH_PYTEST_BM = _load("py/component_bench_pytest_bm.py")
 MODULE_BENCH_PY = _load("py/module_bench.py")
 MODULE_BENCH_PYTEST_BM = _load("py/module_bench_pytest_bm.py")
+# ── App scaffolds ────────────────────────────────────────────────────────────
+APP_MAIN_C = _load("c/app_main.c")
+APP_CONSOLE_CLI = _load("py/app_console_cli.py")
+APP_PEP723 = _load("py/app_pep723.py")
 # Empty tests package init — written as a blank __init__.py.
 TESTS_INIT_PY = ""
 
@@ -389,17 +393,16 @@ def fn_c_stub(
         suppress_extra = " (void)result;"
         if not max_results_param:
             suppress_extra += " (void)max_results;"
-        suppress_line = (suppress + suppress_extra) if suppress else (
-            "    " + suppress_extra.strip()
+        suppress_line = (
+            (suppress + suppress_extra)
+            if suppress
+            else ("    " + suppress_extra.strip())
         )
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
             f"size_t\n"
             f"{fn_name}({c_param_str}{extra_params})\n"
-            f"{{\n"
-            + suppress_line + "\n"
-            + "    return 0; /* placeholder */\n"
-            + "}\n"
+            f"{{\n" + suppress_line + "\n" + "    return 0; /* placeholder */\n" + "}\n"
         )
     if out_type:
         arr_p = [(n, t) for n, t in params if is_array_param_type(t)]
@@ -417,16 +420,12 @@ def fn_c_stub(
             c_parts.append(f"{_ctype_display(t)} {n}")
             suppress_parts.append(f"(void){n};")
         full_params = ", ".join(c_parts) if c_parts else "void"
-        suppress = (
-            "    " + " ".join(suppress_parts) if suppress_parts else ""
-        )
+        suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
             f"void\n"
             f"{fn_name}({full_params})\n"
-            f"{{\n"
-            + (suppress + "\n" if suppress else "")
-            + "}\n"
+            f"{{\n" + (suppress + "\n" if suppress else "") + "}\n"
         )
     ret_disp = _ctype_display(return_type)
     ret_meta = _CTYPE_META.get(return_type)
@@ -620,9 +619,7 @@ def _py_wrapper_for_function(
         if _scalar_len_param:
             len_expr = _scalar_len_param
         else:
-            first_arr = next(
-                (n for n, t in params if is_array_param_type(t)), None
-            )
+            first_arr = next((n for n, t in params if is_array_param_type(t)), None)
             len_expr = f"{first_arr}_len" if first_arr else "1"
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
@@ -686,12 +683,16 @@ def make_functions_ctx(module: str, Module: str, functions: list[dict]) -> dict:
         return_type = fn.get("return_type", "void")
         doc = fn.get("doc", f"{name}.")
         flags = "METH_VARARGS" if params else "METH_NOARGS"
-        wrappers.append(_py_wrapper_for_function(
-            name, params, return_type,
-            out_type=fn.get("out_type", ""),
-            result_fields=fn.get("result_fields", []),
-            max_results_param=fn.get("max_results_param", ""),
-        ))
+        wrappers.append(
+            _py_wrapper_for_function(
+                name,
+                params,
+                return_type,
+                out_type=fn.get("out_type", ""),
+                result_fields=fn.get("result_fields", []),
+                max_results_param=fn.get("max_results_param", ""),
+            )
+        )
         entries.append(f'    {{"{name}", _bind_{name}, {flags}, "{doc}"}},')
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)
@@ -845,15 +846,13 @@ def render_module_ext_aggregator(
         obj_extra = f"{module}_ext_{comp}_extra.c"
         if obj_extra in extra_files:
             include_parts.append(
-                f'#include "{obj_extra}"'
-                f"  /* hand-written — jm never modifies */"
+                f'#include "{obj_extra}"  /* hand-written — jm never modifies */'
             )
     # Per-module extra goes after all fragments.
     mod_extra = f"{module}_ext_extra.c"
     if mod_extra in extra_files:
         include_parts.append(
-            f'#include "{mod_extra}"'
-            f"  /* hand-written — jm never modifies */"
+            f'#include "{mod_extra}"  /* hand-written — jm never modifies */'
         )
     parts.append("\n" + "\n".join(include_parts) + "\n")
     if fn_ctx["function_wrappers"]:
@@ -862,10 +861,7 @@ def render_module_ext_aggregator(
     type_ready_lines = [
         f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
         for ctx in comp_ctxs
-    ] + [
-        f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
-        for et in _extra_types
-    ]
+    ] + [f"    if (PyType_Ready(&{et}Type) < 0) return NULL;" for et in _extra_types]
     type_ready_checks = "\n".join(type_ready_lines)
     add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:

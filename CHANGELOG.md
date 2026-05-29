@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.13.21] — 2026-05-29
+
+### Added
+
+- **`jm app` command** — scaffold a shippable standalone application from
+    any existing component. Three targets via `--target`:
+
+    - `c` — generates `native/src/app/<name>.c` with a `main()` that calls
+        your component's `create`/`step`/`destroy` lifecycle, and appends an
+        `add_executable` target to `CMakeLists.txt`. Build with
+        `make && ./build/<name>`.
+    - `console` — generates `src/<pkg>/cli.py` with argparse boilerplate
+        where every constructor parameter becomes a `--flag`, and updates
+        `[project.scripts]` in `pyproject.toml`. Install with `pip install -e .`
+        and run with `<name> --help`.
+    - `pep723` — generates `<name>.py` in the project root with an embedded
+        `# /// script` dependency block. Distributable as a single file;
+        runs anywhere with `uv run <name>.py --help` without a full install.
+
+    All targets write a `[app]` section to `just-makeit.toml` so
+    `jm apply` can regenerate the scaffold. `--object` and `--name` default
+    to the first component and project name respectively. 25 new tests.
+
 ## [0.13.19] — 2026-05-28
 
 ### Added
