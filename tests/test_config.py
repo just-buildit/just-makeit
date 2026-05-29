@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._config import (
@@ -381,11 +383,19 @@ class TestBackwardCompat:
         assert 'build = "cmake"' in _dump(cfg)
 
 
+tomlkit = pytest.importorskip("tomlkit", reason="tomlkit not installed")
+
+
 class TestCommentPreservation:
     """save() must preserve user comments in [project] and [module.X]
     sections across load → mutate → save round-trips.  Component sections
     (repeated tables) are rebuilt from _dump() and do not preserve comments
-    — this is documented behaviour."""
+    — this is documented behaviour.
+
+    Skipped when tomlkit is not installed (just-buildit does not propagate
+    [project].dependencies to the wheel, so tomlkit may be absent in
+    tool-installed environments; comment preservation is a quality-of-life
+    feature and its tests must not block CI)."""
 
     def _write(self, path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
