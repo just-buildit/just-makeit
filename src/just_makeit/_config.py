@@ -21,8 +21,6 @@ default = "8"
 import tomllib
 from pathlib import Path
 
-import tomlkit
-
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
@@ -148,19 +146,6 @@ def _provenance(root: Path) -> tuple[dict[str, Path], list[str]]:
     return owners, include_list
 
 
-def _sync_tomlkit_table(tbl: tomlkit.items.Table, new_data: dict) -> None:
-    """Update a tomlkit table in-place from new_data.
-
-    Existing keys whose values change are updated (preserving inline
-    comments).  Keys absent from new_data are removed.  New keys are
-    appended.  The caller is responsible for any nested structure."""
-    for k, v in new_data.items():
-        tbl[k] = v
-    for k in list(tbl.keys()):
-        if k not in new_data:
-            del tbl[k]
-
-
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     """Write cfg to path.
 
@@ -170,6 +155,11 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     ``[[comp.state]]`` repeated tables) are always rebuilt from ``_dump()``
     and appended after the preserved header — comment preservation inside
     repeated-table arrays is impractical with tomlkit.
+
+    Falls back silently to plain ``_dump()`` if tomlkit is not installed
+    (just-buildit does not propagate ``[project].dependencies`` to the wheel,
+    so tomlkit may be absent in tool-installed environments; comment
+    preservation is a nice-to-have, not a hard requirement).
 
     For brand-new files the output is identical to the previous plain-
     ``_dump()`` behaviour."""
@@ -183,11 +173,28 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         path.write_text(text, encoding="utf-8")
         return
 
-    doc = tomlkit.loads(path.read_text(encoding="utf-8"))
+    try:
+        import tomlkit as _tk
+    except ModuleNotFoundError:
+        # tomlkit not available — fall back to full rewrite (no comment preservation)
+        text = _dump(cfg)
+        if include_list:
+            text = f"include = {_toml_string_array(include_list)}\n\n" + text
+        path.write_text(text, encoding="utf-8")
+        return
+
+    def _sync(tbl: "_tk.items.Table", new_data: dict) -> None:
+        for k, v in new_data.items():
+            tbl[k] = v
+        for k in list(tbl.keys()):
+            if k not in new_data:
+                del tbl[k]
+
+    doc = _tk.loads(path.read_text(encoding="utf-8"))
 
     # -- include list ---------------------------------------------------------
     if include_list is not None:
-        arr = tomlkit.array()
+        arr = _tk.array()
         for item in include_list:
             arr.append(item)
         doc["include"] = arr
@@ -198,8 +205,8 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     new_proj = cfg.get("project")
     if new_proj:
         if "project" not in doc:
-            doc.add("project", tomlkit.table())
-        _sync_tomlkit_table(doc["project"], new_proj)
+            doc.add("project", _tk.table())
+        _sync(doc["project"], new_proj)
     elif "project" in doc:
         del doc["project"]
 
@@ -207,13 +214,13 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     new_mod = cfg.get("module", {})
     if "module" not in doc:
         if new_mod:
-            doc.add("module", tomlkit.table())
+            doc.add("module", _tk.table())
     if "module" in doc:
         mod_tbl = doc["module"]
         for mod, data in new_mod.items():
             if mod not in mod_tbl:
-                mod_tbl.add(mod, tomlkit.table())
-            _sync_tomlkit_table(mod_tbl[mod], data)
+                mod_tbl.add(mod, _tk.table())
+            _sync(mod_tbl[mod], data)
         for mod in list(mod_tbl.keys()):
             if mod not in new_mod:
                 del mod_tbl[mod]
@@ -221,13 +228,12 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
             del doc["module"]
 
     # -- component sections ---------------------------------------------------
-    # Strip old component keys from the document; they will be replaced by
-    # the _dump()-generated text spliced in below.
+    # Strip old component keys; they will be replaced by _dump()-generated text.
     for k in list(doc.keys()):
         if k not in ("project", "module", "include"):
             del doc[k]
 
-    header = tomlkit.dumps(doc).rstrip("\n")
+    header = _tk.dumps(doc).rstrip("\n")
     body = comp_text.strip()
     path.write_text(
         ((header + "\n\n" + body) if body else header).strip() + "\n",
