@@ -349,19 +349,26 @@ def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
     return cfg
 
 
+def _truthy(v: object) -> bool:
+    """Accept both ``"true"`` (canonical string form written by jm) and
+    Python ``True`` (what tomllib returns for ``key = true``).  Anything
+    else — ``"false"``, ``False``, ``None``, missing — is false."""
+    return v is True or v == "true"
+
+
 def is_mutable(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --mutable."""
-    return cfg.get(component, {}).get("mutable") == "true"
+    return _truthy(cfg.get(component, {}).get("mutable"))
 
 
 def is_no_state(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-state."""
-    return cfg.get(component, {}).get("no_state") == "true"
+    return _truthy(cfg.get(component, {}).get("no_state"))
 
 
 def is_no_step(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-step."""
-    return cfg.get(component, {}).get("no_step") == "true"
+    return _truthy(cfg.get(component, {}).get("no_step"))
 
 
 def extra_types(cfg: dict, module: str) -> list[str]:
@@ -398,13 +405,27 @@ def extra_link_libs(cfg: dict, module: str) -> list[str]:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def extra_include_dirs(cfg: dict, module: str) -> list[str]:
+    """Return hand-declared extra include directories for a module's CMakeLists.
+
+    Counterpart to :func:`extra_link_libs` for ``target_include_directories``.
+    CMake variables (``${...}``) are honoured.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [module.source]
+        extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]
+    """
+    v = cfg.get("module", {}).get(module, {}).get("extra_include_dirs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def is_no_generate_module(cfg: dict, module: str) -> bool:
     """Return True if the module's files are entirely hand-written.
 
     A no_generate module gets only an add_subdirectory CMake entry from
     jm apply; no _ext.c, __init__.py, or test scaffolding is touched."""
-    v = cfg.get("module", {}).get(module, {}).get("no_generate")
-    return v is True or v == "true"
+    return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
 def c_deps(cfg: dict) -> list[str]:
@@ -413,6 +434,69 @@ def c_deps(cfg: dict) -> list[str]:
     These are pure-C libraries (no Python extension) whose add_subdirectory
     entries are maintained by jm apply inside the Components sentinel."""
     return list(cfg.get("project", {}).get("c_deps", []))
+
+
+def find_packages(cfg: dict) -> list[str]:
+    """Return CMake package names declared under [project].
+
+    Each name is emitted as ``find_package(X REQUIRED)`` inside the
+    ``# ── External deps`` sentinel block in the top CMakeLists.txt,
+    maintained by ``jm apply``.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [project]
+        find_packages = ["Doppler"]
+    """
+    v = cfg.get("project", {}).get("find_packages", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def pkg_modules(cfg: dict) -> list[str]:
+    """Return pkg-config module names declared under [project].
+
+    Each name X is emitted as
+    ``pkg_check_modules(X_upper REQUIRED IMPORTED_TARGET X)`` inside the
+    ``# ── External deps`` block, maintained by ``jm apply``.  The
+    resulting imported target is ``PkgConfig::X_UPPER``.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [project]
+        pkg_modules = ["doppler"]
+    """
+    v = cfg.get("project", {}).get("pkg_modules", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def component_extra_link_libs(cfg: dict, component: str) -> list[str]:
+    """Return hand-declared extra link targets for a standalone component.
+
+    Appended to the generated ``target_link_libraries`` blocks for both the
+    Python extension and the CTest executable.  Survive every ``jm apply``.
+    Declare in TOML as:
+
+    .. code-block:: toml
+
+        [tone]
+        extra_link_libs = ["PkgConfig::DOPPLER"]
+    """
+    v = cfg.get(component, {}).get("extra_link_libs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def component_extra_include_dirs(cfg: dict, component: str) -> list[str]:
+    """Return hand-declared extra include directories for a standalone component.
+
+    Counterpart to :func:`component_extra_link_libs`.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [tone]
+        extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]
+    """
+    v = cfg.get(component, {}).get("extra_include_dirs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
 
 
 def depends_on(cfg: dict, component: str) -> list[str]:
@@ -553,15 +637,15 @@ def build_system(cfg: dict) -> str:
 
 
 def is_perf(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("perf") == "true"
+    return _truthy(cfg.get("project", {}).get("perf"))
 
 
 def is_pytest(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("pytest") == "true"
+    return _truthy(cfg.get("project", {}).get("pytest"))
 
 
 def is_pytest_benchmark(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("pytest_benchmark") == "true"
+    return _truthy(cfg.get("project", {}).get("pytest_benchmark"))
 
 
 def from_new(
@@ -624,6 +708,8 @@ def add_component(
     depends_on_: list[str] = (),
     opaque_fields_: "list[tuple[str, str]]" = (),
     no_ctor_names_: "frozenset[str]" = frozenset(),
+    extra_link_libs_: list[str] = (),
+    extra_include_dirs_: list[str] = (),
 ) -> dict:
     rt = (
         return_type_
@@ -674,6 +760,10 @@ def add_component(
         entry["class_name"] = class_name_
     if depends_on_:
         entry["depends_on"] = list(depends_on_)
+    if extra_link_libs_:
+        entry["extra_link_libs"] = list(extra_link_libs_)
+    if extra_include_dirs_:
+        entry["extra_include_dirs"] = list(extra_include_dirs_)
     cfg[component] = entry
     return cfg
 
@@ -685,9 +775,9 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
-            if k == "c_deps":
-                deps_str = ", ".join(f'"{d}"' for d in v)
-                lines.append(f"c_deps = [{deps_str}]")
+            if k in ("c_deps", "find_packages", "pkg_modules"):
+                items_str = ", ".join(f'"{x}"' for x in v)
+                lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')
         lines.append("")
@@ -708,6 +798,10 @@ def _dump(cfg: dict) -> str:
         if extra:
             libs_str = ", ".join(f'"{lib}"' for lib in extra)
             lines.append(f"extra_link_libs = [{libs_str}]")
+        extra_inc = data.get("extra_include_dirs", [])
+        if extra_inc:
+            inc_str = ", ".join(f'"{d}"' for d in extra_inc)
+            lines.append(f"extra_include_dirs = [{inc_str}]")
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{mod}.functions]]")
@@ -727,11 +821,13 @@ def _dump(cfg: dict) -> str:
                 )
                 lines.append(f"result_fields = [{rf_parts}]")
             if fn.get("params"):
-                parts = ", ".join(
-                    f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
-                    for p in fn["params"]
-                )
-                lines.append(f"params = [{parts}]")
+                _emit = []
+                for p in fn["params"]:
+                    base = f'name = "{p["name"]}", type = "{p["type"]}"'
+                    if p.get("out"):
+                        base += ", out = true"
+                    _emit.append("{" + base + "}")
+                lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
                 lines.append("inline = true")
             lines.append("")
@@ -754,6 +850,12 @@ def _dump(cfg: dict) -> str:
         if comp_data.get("depends_on"):
             deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
             lines.append(f"depends_on = [{deps_str}]")
+        if comp_data.get("extra_link_libs"):
+            libs_str = ", ".join(f'"{lib}"' for lib in comp_data["extra_link_libs"])
+            lines.append(f"extra_link_libs = [{libs_str}]")
+        if comp_data.get("extra_include_dirs"):
+            inc_str = ", ".join(f'"{d}"' for d in comp_data["extra_include_dirs"])
+            lines.append(f"extra_include_dirs = [{inc_str}]")
         lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")

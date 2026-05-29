@@ -14,7 +14,7 @@ def run(args: list[str]) -> None:
     fn_name = args[0]
     module = None
     doc = ""
-    fn_params: list[tuple[str, str]] = []
+    fn_params: list[tuple] = []
     fn_return_type = "void"
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
@@ -38,21 +38,22 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             doc = remaining[i]
             i += 1
-        elif tok == "--param":
+        elif tok in ("--param", "--out-param"):
+            is_out_flag = tok == "--out-param"
             i += 1
             if i >= len(remaining):
-                print("error: --param requires name:type", file=sys.stderr)
+                print(f"error: {tok} requires name:type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --param '{val}' must be name:type", file=sys.stderr)
+                print(f"error: {tok} '{val}' must be name:type", file=sys.stderr)
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
             if T.is_array_param_type(ptype):
                 elem_ct = T.array_elem_ctype(ptype)
                 if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
                     print(
-                        f"error: --param array element type '{elem_ct}'"
+                        f"error: {tok} array element type '{elem_ct}'"
                         f" is not supported.\n"
                         f"Supported element types: "
                         f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
@@ -61,14 +62,22 @@ def run(args: list[str]) -> None:
                     sys.exit(1)
             elif ptype not in T._CTYPE_META:
                 print(
-                    f"error: --param type '{ptype}' is not a supported type.\n"
+                    f"error: {tok} type '{ptype}' is not a supported type.\n"
                     f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
                     f"Array syntax: name:type[]"
                     f'  e.g. ctrl:"float _Complex[]"',
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            fn_params.append((pname, ptype))
+            if is_out_flag and not T.is_array_param_type(ptype):
+                print(
+                    f"error: --out-param '{pname}' must be an array type"
+                    f" (got '{ptype}'); --out-param only applies to writable"
+                    f" array params.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_params.append((pname, ptype, is_out_flag))
             i += 1
         elif tok == "--return-type":
             i += 1

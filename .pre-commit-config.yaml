@@ -32,6 +32,9 @@ repos:
     hooks:
       - id: cmake-format
         files: ^src/just_makeit/templates/cmake/
+        # Templates that lead with ``<<placeholder>>`` tokens are not valid
+        # CMake until rendered, so cmake-format's tokenizer rejects them.
+        exclude: CMakeLists_(component|module)\.cmake
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0 # Use latest version

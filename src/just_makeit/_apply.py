@@ -109,6 +109,8 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "depends_on": C.depends_on(cfg, comp),
         "opaque_fields": C.opaque_fields(cfg, comp),
         "no_ctor_names": C.no_ctor_names(cfg, comp),
+        "extra_link_libs": C.component_extra_link_libs(cfg, comp),
+        "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
     }
 
 
@@ -174,6 +176,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         and (
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
+            or cfg.get("module", {}).get(m, {}).get("extra_include_dirs")
         )
     ]
     if _mods_need_update:
@@ -185,6 +188,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 tmod["extra_types"] = mod_data["extra_types"]
             if mod_data.get("extra_link_libs"):
                 tmod["extra_link_libs"] = mod_data["extra_link_libs"]
+            if mod_data.get("extra_include_dirs"):
+                tmod["extra_include_dirs"] = mod_data["extra_include_dirs"]
         C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()
@@ -333,7 +338,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 fn["name"],
                 mod,
                 doc=fn.get("doc", ""),
-                params=[(p["name"], p["type"]) for p in fn.get("params", [])],
+                params=[
+                    (p["name"], p["type"], bool(p.get("out", False)))
+                    for p in fn.get("params", [])
+                ],
                 return_type=fn.get("return_type", "void"),
                 impl_body=f_impl,
                 out_type=fn.get("out_type", ""),
@@ -364,9 +372,71 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
     return created
 
 
+_EXTDEPS_BEGIN = "# ── External deps"
+_EXTDEPS_END = "# ── End external deps"
+
+
+def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
+    """Insert or replace the managed external-deps block in the top CMakeLists.
+
+    Reads ``[project] find_packages`` and ``[project] pkg_modules`` from
+    *cfg*, generates the corresponding ``find_package()`` /
+    ``pkg_check_modules()`` lines, and either:
+
+    - Replaces the content between existing ``# ── External deps`` /
+      ``# ── End external deps`` sentinel lines, or
+    - Inserts the whole block (including sentinels) immediately before the
+      ``# ── Components`` sentinel when the block is absent.
+
+    Returns True if the file was modified.  If both sentinel lines are absent
+    and there is nothing to write, the file is left untouched."""
+    find_pkgs = C.find_packages(cfg)
+    pkg_mods = C.pkg_modules(cfg)
+
+    real = real_path.read_text(encoding="utf-8")
+
+    lines: list[str] = []
+    if find_pkgs:
+        for pkg in find_pkgs:
+            lines.append(f"find_package({pkg} REQUIRED)\n")
+    if pkg_mods:
+        lines.append("find_package(PkgConfig REQUIRED)\n")
+        for mod in pkg_mods:
+            lines.append(
+                f"pkg_check_modules({mod.upper()} REQUIRED IMPORTED_TARGET {mod})\n"
+            )
+
+    has_begin = _EXTDEPS_BEGIN in real
+    has_end = _EXTDEPS_END in real
+
+    if not lines:
+        return False
+
+    content = "".join(lines)
+
+    if has_begin and has_end:
+        begin_idx = real.index(_EXTDEPS_BEGIN)
+        begin_line_end = real.index("\n", begin_idx) + 1
+        end_idx = real.index(_EXTDEPS_END)
+        new_real = real[:begin_line_end] + content + real[end_idx:]
+    elif not has_begin and not has_end:
+        if "# ── Components" not in real:
+            return False
+        idx = real.index("# ── Components")
+        block = f"{_EXTDEPS_BEGIN}\n{content}{_EXTDEPS_END}\n\n"
+        new_real = real[:idx] + block + real[idx:]
+    else:
+        return False  # mismatched sentinels — leave the file alone
+
+    if new_real != real:
+        real_path.write_text(new_real, encoding="utf-8")
+        return True
+    return False
+
+
 _SUBDIR_BLOCK = re.compile(
-    r"^add_subdirectory\(native/src/(\w+)\)\s*\n"
-    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)\s*\n)*",
+    r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
+    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)[ \t]*\n)*",
     re.MULTILINE,
 )
 
@@ -484,6 +554,26 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
+def _merge_module_core(real: Path, temp: Path, module: str) -> bool:
+    """Merge module-level ``<mod>_core.c`` / ``<mod>_core.h`` from temp into real.
+
+    Temp carries TOML-declared function impls; real may hold hand-written
+    bodies (or be a fresh scaffold with no impls). ``_preserve_core_bodies``
+    keeps user bodies whenever they exist and lets the temp impls flow
+    through for any function the user did not write."""
+    if not temp.exists():
+        return False
+    from ._init import _preserve_core_bodies
+
+    new_text = temp.read_text(encoding="utf-8")
+    merged = _preserve_core_bodies(real, new_text, module)
+    if real.exists() and real.read_text(encoding="utf-8") == merged:
+        return False
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text(merged, encoding="utf-8")
+    return True
+
+
 def _add_cmake_block_for(
     real_path: Path, temp_path: Path, comp: str, cfg: dict
 ) -> bool:
@@ -594,6 +684,11 @@ def _sync_aggregates(
         else:
             if _splice_cmake_components(real_cmake, temp_cmake, cfg):
                 updated.append(real_cmake)
+    # Maintain the external-deps sentinel block regardless of --only.
+    if real_cmake.exists():
+        if _splice_cmake_external_deps(real_cmake, cfg):
+            if real_cmake not in updated:
+                updated.append(real_cmake)
 
     umbrella = root / "native" / "inc" / f"{pkg}.h"
     temp_umbrella = temp_root / "native" / "inc" / f"{pkg}.h"
@@ -631,6 +726,28 @@ def _sync_aggregates(
         ):
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
+        # Module-level core sources carry user-written function bodies and
+        # any TOML-declared `impl` for `[[module.X.functions]]`. The header
+        # also accumulates declarations as functions are added.
+        for rel in (
+            f"native/src/{mod}/{mod}_core.c",
+            f"native/inc/{mod}/{mod}_core.h",
+        ):
+            if _merge_module_core(root / rel, temp_root / rel, mod):
+                if root / rel not in updated:
+                    updated.append(root / rel)
+
+    # Regenerate standalone component CMakeLists so extra_link_libs changes
+    # in the TOML are reflected without a full re-scaffold.
+    module_owned = {o for m in C.modules(cfg) for o in C.module_objects(cfg, m)}
+    for comp in C.components(cfg):
+        if comp in module_owned:
+            continue
+        if only_comp is not None and comp != only_comp:
+            continue
+        rel = f"native/src/{comp}/CMakeLists.txt"
+        if _overwrite_if_changed(root / rel, temp_root / rel):
+            updated.append(root / rel)
 
     return updated
 

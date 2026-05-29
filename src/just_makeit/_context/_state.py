@@ -906,8 +906,17 @@ def make_state_ctx(
         if parsed:
             array_info.append((n, parsed[0], parsed[1]))
 
-    ctor_scalars = [v for v in scalar_vars if v[0] not in no_ctor_names]
-    hidden_scalars = [v for v in scalar_vars if v[0] in no_ctor_names]
+    # When the user supplies ``init_params``, those drive the constructor
+    # signature instead of state-field names — state stays internal and the
+    # user manages it via ``create_impl`` / setters (gh-69). Hiding every
+    # scalar from the ctor avoids generating ``obj->fd = fd;`` lines that
+    # reference parameters that no longer exist.
+    if init_params:
+        ctor_scalars: list = []
+        hidden_scalars = list(scalar_vars)
+    else:
+        ctor_scalars = [v for v in scalar_vars if v[0] not in no_ctor_names]
+        hidden_scalars = [v for v in scalar_vars if v[0] in no_ctor_names]
 
     # ── CORE_H: state_struct_fields ─────────────────────────────────────
 
@@ -1487,7 +1496,7 @@ def make_state_ctx(
         ]
     reset_test_c = "\n".join(rst_lines)
 
-    return {
+    result: dict[str, str] = {
         "state_struct_fields": state_struct_fields,
         "create_params": create_params,
         "create_param_docs": create_param_docs,
@@ -1576,3 +1585,38 @@ def make_state_ctx(
             f"void {component}_reset({component}_state_t *state);"
         ),
     }
+    # gh-69: when init_params are present, they replace state-field-driven
+    # ctor signature and Python __init__ parsing. The state struct, getters,
+    # setters, and reset tests stay intact — only the user-facing ctor and
+    # the bench/create boilerplate are swapped.
+    if init_params:
+        _init_ctx = _build_no_state_init_ctx(
+            component,
+            Component,
+            list(init_params),
+            list(array_args),
+            init_post_parse_impl=init_post_parse_impl,
+        )
+        _CTOR_OVERRIDE_KEYS = (
+            "create_params",
+            "create_param_docs",
+            "init_kwlist",
+            "init_locals",
+            "init_post_parse",
+            "init_parse_fmt",
+            "init_parse_args",
+            "init_parse_block",
+            "array_args_parse_block",
+            "array_args_decref",
+            "create_line",
+            "create_call_args",
+            "init_params_pyi",
+            "pyi_param_docs",
+            "py_create_args",
+            "c_create_args",
+            "bench_create_stmt",
+        )
+        for _k in _CTOR_OVERRIDE_KEYS:
+            if _k in _init_ctx:
+                result[_k] = _init_ctx[_k]
+    return result

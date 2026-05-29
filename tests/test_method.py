@@ -11,6 +11,8 @@ _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
+from just_makeit._module import run as module_run
+from just_makeit._object import run as object_run
 from just_makeit._method import run as method_run
 from just_makeit._config import load, methods
 
@@ -747,6 +749,100 @@ class TestMethodFixedMultiOutput:
         assert "PyTuple_Pack(3," in ext
 
 
+# ---------------------------------------------------------------------------
+# Regression: infrastructure functions (_dealloc, _init, ...) must never be
+# body-preserved when regenerating a module fragment.  Before the fix,
+# _restore_c_function_bodies would splice the old _dealloc / _init back in,
+# silently dropping variable_output free() calls and multi_output secondary
+# buffer allocs that the template had just generated correctly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def module_project(tmp_path):
+    dest = tmp_path / "dsp"
+    new_run("dsp", dest)
+    module_run(dest, "sig")
+    object_run(dest, "nco", "sig", state_vars=[("freq", "double", "0.0")])
+    return dest
+
+
+def _nco_frag(module_project: Path) -> str:
+    return (module_project / "native" / "src" / "sig" / "sig_ext_nco.c").read_text(
+        encoding="utf-8"
+    )
+
+
+class TestModuleInfraRegenOnMethod:
+    """Adding a method to a module object must keep _dealloc / _init correct.
+
+    The fragment for object 'nco' in module 'sig' is created (without any
+    variable_output buffers) when the object is first registered.  When
+    method_run is then called with variable_output / multi_output, the fresh
+    template includes free() in _dealloc and malloc() in _init.  The bug was
+    that _restore_c_function_bodies would overwrite those correct functions
+    with the old (pre-method) bodies, silently breaking memory management.
+    """
+
+    def test_dealloc_has_free_after_variable_output_method(self, module_project):
+        method_run(
+            module_project,
+            "nco",
+            "execute_cf32",
+            "sig",
+            "void",
+            "float _Complex",
+            True,
+            [],
+        )
+        assert "free(self->_execute_cf32_buf)" in _nco_frag(module_project)
+
+    def test_init_allocs_buf_after_variable_output_method(self, module_project):
+        method_run(
+            module_project,
+            "nco",
+            "execute_cf32",
+            "sig",
+            "void",
+            "float _Complex",
+            True,
+            [],
+        )
+        frag = _nco_frag(module_project)
+        assert "_execute_cf32_buf" in frag
+        assert "malloc(" in frag
+
+    def test_dealloc_has_free_after_multi_output_method(self, module_project):
+        method_run(
+            module_project,
+            "nco",
+            "execute_iq",
+            "sig",
+            "void",
+            "float _Complex",
+            True,
+            ["float _Complex"],
+        )
+        frag = _nco_frag(module_project)
+        assert "free(self->_execute_iq_buf)" in frag
+        assert "free(self->_execute_iq_buf_1)" in frag
+
+    def test_init_allocs_secondary_buf_after_multi_output_method(self, module_project):
+        method_run(
+            module_project,
+            "nco",
+            "execute_iq",
+            "sig",
+            "void",
+            "float _Complex",
+            True,
+            ["float _Complex"],
+        )
+        frag = _nco_frag(module_project)
+        assert "_execute_iq_buf_1" in frag
+        assert "malloc(_max * sizeof(float complex))" in frag
+
+
 class TestMethodWithParams:
     """--param name:type generates named C params and typed Python wrapper."""
 
@@ -1123,3 +1219,36 @@ class TestMethodArrayArgWithParams:
         hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
         assert "const float *x" in hdr
         assert "const float *h" in hdr
+
+
+class TestOutTypeScalarLength:
+    """gh-65: a fixed-output method declared with `out_type` and a scalar
+    integer param (no array param) must size the returned ndarray from the
+    scalar param, not from a hardcoded ``0`` that produces an empty array."""
+
+    @pytest.fixture()
+    def project(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")])
+        method_run(
+            dest,
+            "nco",
+            "gen_samples",
+            None,
+            arg_type="void",
+            return_type="void",
+            variable_output=False,
+            multi_output=[],
+            params=[("n", "uint32_t")],
+            out_type="float",
+        )
+        return dest
+
+    def test_dims_uses_scalar_param(self, project):
+        """``npy_intp _dims[]`` must reference the scalar param, not ``0``."""
+        ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+        # The buggy output is `{(npy_intp)0}` — the fix sizes from `n`.
+        assert "(npy_intp)n" in ext
+        assert "(npy_intp)0" not in ext

@@ -23,7 +23,7 @@ ______________________________________________________________________
 
 Click the badge to launch a pre-built sandbox in your browser — no install, no
 compiler, no Docker required. You'll land in a GitHub Codespaces environment
-with `just-makeit` installed, all nine bundled examples already scaffolded and
+with `just-makeit` installed, all twenty bundled examples already scaffolded and
 compiled, and a terminal ready to go. Run an example end-to-end, browse the
 generated C and Python source, or start a fresh project with
 `just-makeit new`.

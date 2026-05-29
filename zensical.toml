@@ -13,6 +13,7 @@ copyright        = "Copyright &copy; 2026 just-buildit contributors — MIT Lice
 nav = [
   { "Home"               = "index.md"        },
   { "Workflow"           = "workflow.md"     },
+  { "Decision tree"      = "decision-tree.md"},
   { "Feature tour"       = "feature-tour.md" },
   { "Commands" = [
     { "Scaffold"    = "commands/scaffold.md" },
@@ -53,6 +54,7 @@ nav = [
     { "Test philosophy"    = "developers/testing.md"          },
     { "pkg-config & CMake" = "developers/pkg-config.md"       },
     { "Declarative scaffolding design" = "developers/declarative-scaffolding.md" },
+    { "Wizard design (proposal)" = "developers/wizard-design.md" },
     { "Release checklist"  = "developers/release-checklist.md"},
   ]},
 ]

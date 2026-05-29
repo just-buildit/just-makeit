@@ -1,0 +1,88 @@
+name: nco_tone example
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/just_makeit/examples/nco_tone/**"
+      - "src/just_makeit/_apply.py"
+      - "src/just_makeit/_config.py"
+      - "src/just_makeit/_init.py"
+      - "src/just_makeit/templates/cmake/CMakeLists_component.cmake"
+      - ".github/workflows/nco_tone_ci.yml"
+  pull_request:
+    paths:
+      - "src/just_makeit/examples/nco_tone/**"
+      - "src/just_makeit/_apply.py"
+      - "src/just_makeit/_config.py"
+      - "src/just_makeit/_init.py"
+      - "src/just_makeit/templates/cmake/CMakeLists_component.cmake"
+      - ".github/workflows/nco_tone_ci.yml"
+  workflow_dispatch:
+
+jobs:
+  nco-tone:
+    name: nco_tone (Ubuntu, static doppler)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake gcc
+
+      - name: Install just-makeit
+        run: |
+          uv tool install .
+          uv sync
+
+      - name: Install jm build deps (cmake, Python, NumPy)
+        run: jm-install-deps ${{ runner.temp }}/jm-venv
+
+      # ── Install doppler static library from GitHub release ─────────────────
+      # Download the pre-built release tarball, strip the shared library so
+      # only libdoppler.a is available, and patch the cmake config to declare
+      # doppler::doppler_lib as STATIC — ensuring the Python extension embeds
+      # doppler symbols instead of requiring a runtime libdoppler.so.
+      - name: Download doppler release
+        run: |
+          gh release download \
+            --repo doppler-dsp/doppler \
+            --pattern "doppler-*-linux-x86_64.tar.gz" \
+            --dir /tmp/doppler-dl
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install doppler (static only)
+        run: |
+          mkdir -p /tmp/doppler
+          tar xzf /tmp/doppler-dl/doppler-*-linux-x86_64.tar.gz \
+              -C /tmp/doppler --strip-components=1
+
+          # Remove the shared library so the linker cannot accidentally use it.
+          rm -f /tmp/doppler/lib64/libdoppler.so
+
+          # Patch the cmake config: change SHARED → STATIC and point to .a.
+          sed -i \
+            -e 's/add_library(doppler::doppler_lib SHARED/add_library(doppler::doppler_lib STATIC/' \
+            /tmp/doppler/lib64/cmake/doppler/doppler-targets.cmake
+
+          sed -i \
+            -e 's|IMPORTED_LOCATION_RELEASE ".*libdoppler\.so"|IMPORTED_LOCATION_RELEASE "${_IMPORT_PREFIX}/lib64/libdoppler.a"|' \
+            -e '/IMPORTED_SONAME_RELEASE/d' \
+            -e 's|".*libdoppler\.so"|"${_IMPORT_PREFIX}/lib64/libdoppler.a"|g' \
+            /tmp/doppler/lib64/cmake/doppler/doppler-targets-release.cmake
+
+      # ── Run the nco_tone example ────────────────────────────────────────────
+      # Pass Doppler_DIR directly since doppler installs under lib64/cmake
+      # (cmake's default prefix search may not look there on all platforms).
+      - name: Run nco_tone example
+        run: |
+          uv run python src/just_makeit/examples/nco_tone/test.py \
+            --doppler-prefix /tmp/doppler

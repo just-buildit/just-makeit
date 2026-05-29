@@ -158,9 +158,7 @@ class TestExtCFooter:
         identifier — `(void)args;` would be an undeclared-identifier
         compile error.
         """
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
-            encoding="utf-8"
-        )
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         body = ext.split("_bind_fft_global_setup(PyObject *self", 1)[1]
         body = body.split("}", 1)[0]
         assert "Py_UNUSED(args)" in body
@@ -609,27 +607,69 @@ class TestOutTypeScalarParam:
 
     def test_binding_uses_scalar_len(self, scalar_sized):
         """Generated _bind_ciccompmf uses M (not array_len) as the dim."""
-        ext = (
-            scalar_sized / "native/src/resample/resample_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (scalar_sized / "native/src/resample/resample_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "(npy_intp)M" in ext
 
     def test_binding_allocates_double_array(self, scalar_sized):
-        ext = (
-            scalar_sized / "native/src/resample/resample_ext.c"
-        ).read_text(encoding="utf-8")
+        ext = (scalar_sized / "native/src/resample/resample_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "NPY_DOUBLE" in ext
 
     def test_stub_returns_ndarray_float64(self, scalar_sized):
-        pyi = (
-            scalar_sized / "src/dsp/resample/resample.pyi"
-        ).read_text(encoding="utf-8")
+        pyi = (scalar_sized / "src/dsp/resample/resample.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "NDArray[np.float64]" in pyi
 
     def test_no_stray_placeholders(self, scalar_sized):
         for path in scalar_sized.rglob("*"):
             if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml"):
-                m = _STRAY_PLACEHOLDER.search(
-                    path.read_text(encoding="utf-8")
-                )
+                m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
+
+
+class TestOutArrayParamNotConst:
+    """gh-72: array params marked ``out = true`` must drop the ``const``
+    qualifier in both the header declaration and the implementation stub.
+    Without this the generated impl can't write into the buffer (compile
+    error: ``assignment of read-only location``) or the decl/impl signatures
+    diverge."""
+
+    @pytest.fixture()
+    def out_param_fn(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["io"])
+        function_run(
+            root,
+            "convert",
+            "io",
+            params=[
+                ("input", "float[]", False),
+                ("output", "float[]", True),
+                ("n", "size_t", False),
+            ],
+            return_type="void",
+        )
+        return root
+
+    def test_decl_output_not_const(self, out_param_fn):
+        h = (out_param_fn / "native/inc/io/io_core.h").read_text(encoding="utf-8")
+        # Output must be `float *output`, not `const float *output`.
+        assert "float *output" in h
+        assert "const float *output" not in h
+        # Input must remain const.
+        assert "const float *input" in h
+
+    def test_impl_output_not_const(self, out_param_fn):
+        c = (out_param_fn / "native/src/io/io_core.c").read_text(encoding="utf-8")
+        assert "float *output" in c
+        assert "const float *output" not in c
+        assert "const float *input" in c
+
+    def test_toml_round_trips_out_flag(self, out_param_fn):
+        cfg = (out_param_fn / "just-makeit.toml").read_text(encoding="utf-8")
+        # The dumped manifest preserves `out = true` for the output param.
+        assert "out = true" in cfg

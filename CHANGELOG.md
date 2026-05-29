@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.13.22] — 2026-05-29
+
+### Added
+
+- **`extra_include_dirs` config** (gh-66) — counterpart to `extra_link_libs`
+    for `target_include_directories`. Declare in `[module.X]` or `[component]`
+    sections of `just-makeit.toml`; CMake variables (`${DOPPLER_INCLUDE_DIR}`)
+    are honoured. The OBJECT library carries the dirs as `PUBLIC` so the
+    Python extension, CTest, and benchmark targets inherit them transitively.
+
+### Fixed
+
+- **Module function `impl` blocks now materialize into `<mod>_core.c`**
+    (gh-68). Previously `jm apply` wrote the body to the throwaway temp tree
+    but `_sync_missing` skipped the existing (empty) real `<mod>_core.c`, so
+    function declarations and bodies were silently dropped. The fix splices
+    module-level core sources via body preservation, so both the impl body
+    and the header declaration land in the real project.
+- **Methods with `out_type` and a scalar param size the output correctly**
+    (gh-65). When no array param is present, the wrapper now uses the first
+    integer scalar param as the buffer length instead of falling back to
+    `0` (which produced empty `(0,)`-shaped arrays).
+- **TOML boolean flags honoured everywhere** (gh-71). `no_step = true`,
+    `no_state = true`, `mutable = true`, `perf = true`, etc. (the natural
+    form for hand-authored fragments) are now treated identically to the
+    canonical string form `no_step = "true"` jm writes. Previously the
+    readers did `== "true"` which silently rejected the boolean form, so
+    `no_step = true` still emitted `step()` and `steps()`.
+- **Properties no longer duplicate state-field struct members** (gh-70). A
+    `[[properties]]` entry with `field = true` and a name matching an
+    existing state field now generates only the Python accessor — the
+    struct member stays single. Previously the duplicate field tripped a
+    compile error.
+- **`init_params` honoured alongside `state`** (gh-69). When both are
+    declared, the constructor signature (C and Python) is now driven by
+    `init_params`; state fields remain in the struct with getters/setters
+    but are no longer exposed as constructor parameters. Use `create_impl`
+    to initialise the state from the user-facing parameters.
+- **Array params can opt out of `const`** (gh-72). Module functions with
+    output buffers now honour `out = true` on the param definition,
+    generating `T *name` instead of `const T *name` in both the header
+    declaration and the implementation stub. The CLI gains an
+    `--out-param name:type[]` flag mirroring `--param`. Previously every
+    array param was hard-coded `const`, so any function trying to write
+    to an output buffer hit `assignment of read-only location`.
+
+### Docs
+
+- **Decision tree** (`docs/decision-tree.md`) — a flat "where do I start"
+    lookup: Step 1 (no project? `jm new`), Step 2 (what are you adding?),
+    three sub-decisions (object shape, method output, external deps), an
+    "I want… → do…" table, and an explicit list of TOML-only features
+    that the CLI can't reach.
+- **`jm wizard` design sketch** (`docs/developers/wizard-design.md`) —
+    proposal-only design note for an interactive companion to the decision
+    tree that would emit a shell script + TOML fragment + impl snippets
+    from a single guided session. Not implemented.
+
 ## [0.13.21] — 2026-05-29
 
 ### Added
