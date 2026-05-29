@@ -25,6 +25,25 @@
     `jm apply` can regenerate the scaffold. `--object` and `--name` default
     to the first component and project name respectively. 25 new tests.
 
+- **Three new bundled examples** covering previously undocumented commands:
+
+    - `jm_app` — scaffolding verification for all three `jm app` targets.
+    - `jm_function` — full end-to-end for module-level C functions (`jm   function`), including a `--inline` static-inline variant, cmake
+        build, and Python smoke test.
+    - `jm_remove` — file and TOML state verification across all five `jm   remove` surfaces: method, property, function, state field, and
+        entire object.
+
+    Run any of them with `jm example jm_app` etc.
+
+- **`jm app` in CLI help** — `jm help` now lists the command with flags
+    and usage examples.
+
+- **`docs/commands/app.md`** — reference page for all three `jm app`
+    targets with usage, generated-file tables, and the TOML `[app]` record.
+
+- **Quick-reference table** — three `jm app` rows added to
+    `docs/quick-reference.md`.
+
 ## [0.13.19] — 2026-05-28
 
 ### Added

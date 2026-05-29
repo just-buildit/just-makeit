@@ -80,6 +80,11 @@ Commands:
     --module name               Module the function lives in (required for function).
     --force, -f                 Skip the confirmation prompt.
 
+  app [OPTIONS]                 Scaffold a shippable standalone application from an object.
+    --target c|console|pep723   Output target (default: c).
+    --object name               Component to scaffold from (default: first object).
+    --name name                 App/script name (default: project name).
+
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   apply [fragment]              Materialize every file just-makeit.toml implies (add only).
                                 With a fragment path, copy it into objects/, add to include,
@@ -163,6 +168,15 @@ Examples:
   # add state var / constructor param
   jm add --state order:int:4
   jm add --param n_taps:int:16
+
+  # scaffold a C executable from an existing object
+  jm app --target c --object engine --name dsp_tool
+
+  # scaffold a Python console script (updates pyproject.toml [project.scripts])
+  jm app --target console --object engine --name dsp_tool
+
+  # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
+  jm app --target pep723 --object engine --name dsp_tool
 
   # config, build, test
   jm config
