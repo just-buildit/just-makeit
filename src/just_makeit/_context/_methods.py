@@ -1256,7 +1256,12 @@ def make_properties_ctx(
                 f"}}"
             )
         elif field:
-            struct_field_lines.append(f"    {disp} {pname};")
+            # When a property aliases an existing state field (same name), do
+            # not re-emit the struct member — make_state_ctx already declared
+            # it.  Otherwise the struct ends up with duplicate fields and the
+            # compiler errors out (gh-70).
+            if pname not in state_var_names:
+                struct_field_lines.append(f"    {disp} {pname};")
             to_py = meta["to_py"](f"self->handle->{pname}")
             getter = (
                 f"static PyObject *\n"

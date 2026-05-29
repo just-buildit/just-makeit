@@ -226,6 +226,23 @@ class TestAddComponentFlags:
         assert is_mutable(cfg, "nco") is True
         assert is_mutable(cfg, "missing") is False
 
+    def test_truthy_flag_accepts_boolean_true(self):
+        """gh-71: ``no_step = true`` (TOML boolean) must be honoured the same
+        as ``no_step = "true"`` (the canonical string form jm writes).
+        Hand-authored fragments commonly use the boolean form."""
+        cfg = from_new("p")
+        cfg["sink"] = {"no_step": True, "no_state": True, "mutable": True}
+        assert is_no_step(cfg, "sink") is True
+        assert is_no_state(cfg, "sink") is True
+        assert is_mutable(cfg, "sink") is True
+
+    def test_truthy_flag_rejects_boolean_false(self):
+        cfg = from_new("p")
+        cfg["sink"] = {"no_step": False, "no_state": False, "mutable": False}
+        assert is_no_step(cfg, "sink") is False
+        assert is_no_state(cfg, "sink") is False
+        assert is_mutable(cfg, "sink") is False
+
     def test_arg_type_non_default_stored(self):
         cfg = from_new("p")
         add_component(cfg, "nco", [], arg_type_="void")

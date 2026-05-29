@@ -349,19 +349,26 @@ def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
     return cfg
 
 
+def _truthy(v: object) -> bool:
+    """Accept both ``"true"`` (canonical string form written by jm) and
+    Python ``True`` (what tomllib returns for ``key = true``).  Anything
+    else — ``"false"``, ``False``, ``None``, missing — is false."""
+    return v is True or v == "true"
+
+
 def is_mutable(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --mutable."""
-    return cfg.get(component, {}).get("mutable") == "true"
+    return _truthy(cfg.get(component, {}).get("mutable"))
 
 
 def is_no_state(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-state."""
-    return cfg.get(component, {}).get("no_state") == "true"
+    return _truthy(cfg.get(component, {}).get("no_state"))
 
 
 def is_no_step(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-step."""
-    return cfg.get(component, {}).get("no_step") == "true"
+    return _truthy(cfg.get(component, {}).get("no_step"))
 
 
 def extra_types(cfg: dict, module: str) -> list[str]:
@@ -418,8 +425,7 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
 
     A no_generate module gets only an add_subdirectory CMake entry from
     jm apply; no _ext.c, __init__.py, or test scaffolding is touched."""
-    v = cfg.get("module", {}).get(module, {}).get("no_generate")
-    return v is True or v == "true"
+    return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
 def c_deps(cfg: dict) -> list[str]:
@@ -631,15 +637,15 @@ def build_system(cfg: dict) -> str:
 
 
 def is_perf(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("perf") == "true"
+    return _truthy(cfg.get("project", {}).get("perf"))
 
 
 def is_pytest(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("pytest") == "true"
+    return _truthy(cfg.get("project", {}).get("pytest"))
 
 
 def is_pytest_benchmark(cfg: dict) -> bool:
-    return cfg.get("project", {}).get("pytest_benchmark") == "true"
+    return _truthy(cfg.get("project", {}).get("pytest_benchmark"))
 
 
 def from_new(

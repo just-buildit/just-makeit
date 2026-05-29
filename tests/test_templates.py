@@ -293,8 +293,7 @@ class TestMakeStateCtxArrays:
     def test_array_create_assignment_uses_memset(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
         assert (
-            "memset(obj->coeffs, 0, sizeof(obj->coeffs))"
-            in ctx["create_assignments"]
+            "memset(obj->coeffs, 0, sizeof(obj->coeffs))" in ctx["create_assignments"]
         )
 
     def test_array_reset_uses_memset(self):
@@ -508,3 +507,52 @@ class TestVariableOutputComplexParam:
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
         assert "float complex x = (float)x_raw.real + (float)x_raw.imag * I" in c
+
+
+class TestInitParamsWithState:
+    """gh-69: when ``[[obj.init_params]]`` is non-empty alongside ``state``,
+    the ctor signature must come from init_params; state fields remain
+    internal (struct + getters/setters) but are NOT exposed in __init__."""
+
+    def _ctx(self, state_vars, init_params):
+        return make_state_ctx(
+            "reader",
+            "Reader",
+            state_vars,
+            init_params=init_params,
+        )
+
+    def test_ctor_uses_init_params_not_state(self):
+        ctx = self._ctx(
+            [("fd", "int", "-1"), ("file_size", "size_t", "0")],
+            [("filepath", "const char *", ""), ("hdr", "size_t", "0")],
+        )
+        # C signature reflects init_params, not state fields.
+        assert "filepath" in ctx["create_params"]
+        assert "hdr" in ctx["create_params"]
+        assert "int fd" not in ctx["create_params"]
+        assert "size_t file_size" not in ctx["create_params"]
+
+    def test_state_fields_still_in_struct(self):
+        ctx = self._ctx(
+            [("fd", "int", "-1"), ("file_size", "size_t", "0")],
+            [("filepath", "const char *", "")],
+        )
+        assert "int fd;" in ctx["state_struct_fields"]
+        assert "size_t file_size;" in ctx["state_struct_fields"]
+
+    def test_state_getters_setters_still_generated(self):
+        ctx = self._ctx(
+            [("fd", "int", "-1")],
+            [("filepath", "const char *", "")],
+        )
+        assert "reader_get_fd" in ctx["getter_setter_decls"]
+        assert "reader_set_fd" in ctx["getter_setter_decls"]
+
+    def test_pyi_init_uses_init_params(self):
+        ctx = self._ctx(
+            [("fd", "int", "-1")],
+            [("hdr", "size_t", "0")],
+        )
+        assert "hdr" in ctx["init_params_pyi"]
+        assert "fd" not in ctx["init_params_pyi"]

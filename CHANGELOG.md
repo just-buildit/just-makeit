@@ -22,6 +22,22 @@
     (gh-65). When no array param is present, the wrapper now uses the first
     integer scalar param as the buffer length instead of falling back to
     `0` (which produced empty `(0,)`-shaped arrays).
+- **TOML boolean flags honoured everywhere** (gh-71). `no_step = true`,
+    `no_state = true`, `mutable = true`, `perf = true`, etc. (the natural
+    form for hand-authored fragments) are now treated identically to the
+    canonical string form `no_step = "true"` jm writes. Previously the
+    readers did `== "true"` which silently rejected the boolean form, so
+    `no_step = true` still emitted `step()` and `steps()`.
+- **Properties no longer duplicate state-field struct members** (gh-70). A
+    `[[properties]]` entry with `field = true` and a name matching an
+    existing state field now generates only the Python accessor — the
+    struct member stays single. Previously the duplicate field tripped a
+    compile error.
+- **`init_params` honoured alongside `state`** (gh-69). When both are
+    declared, the constructor signature (C and Python) is now driven by
+    `init_params`; state fields remain in the struct with getters/setters
+    but are no longer exposed as constructor parameters. Use `create_impl`
+    to initialise the state from the user-facing parameters.
 
 ## [0.13.21] — 2026-05-29
 
