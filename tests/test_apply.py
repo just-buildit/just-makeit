@@ -1029,3 +1029,121 @@ no_ctor = true
         # phase is no_ctor — assigned from TOML default, not a param
         assert "obj->phase = 0.0f;" in core_c
         assert "ring2_create(float gain)" in core_c
+
+
+# ---------------------------------------------------------------------------
+# Module-path integration: opaque and no_ctor fields in module objects
+# ---------------------------------------------------------------------------
+
+_OPAQUE_MODULE_FRAGMENT = """\
+[fft]
+module      = "dsp"
+arg_type    = "void"
+return_type = "void"
+no_state    = "true"
+create_impl = \"\"\"
+obj->scratch = malloc(sizeof(float) * 8);
+if (!obj->scratch) { free(obj); return NULL; }
+\"\"\"
+destroy_impl = \"\"\"
+free(state->scratch);
+\"\"\"
+
+[[fft.state]]
+name   = "scratch"
+type   = "float *"
+opaque = true
+"""
+
+_NO_CTOR_MODULE_FRAGMENT = """\
+[ticker]
+module      = "dsp"
+arg_type    = "float"
+return_type = "float"
+mutable     = "true"
+
+[[ticker.state]]
+name    = "gain"
+type    = "float"
+default = "1.0f"
+
+[[ticker.state]]
+name    = "count"
+type    = "size_t"
+default = "0"
+no_ctor = true
+"""
+
+
+class TestOpaqueInModule:
+    """Opaque fields on a module object must propagate correctly through
+    _regenerate_module: present in the struct, absent from the ext fragment
+    kwlist and binding wrappers, no getter/setter generated."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+        frag = proj.parent / "fft.toml"
+        frag.write_text(_OPAQUE_MODULE_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        ext_dir = proj / "native" / "src" / "dsp"
+        return (
+            (proj / "native" / "inc" / "fft" / "fft_core.h").read_text(),
+            (ext_dir / "dsp_ext_fft.c").read_text(),
+        )
+
+    def test_opaque_field_in_struct(self, tmp_path):
+        """Opaque field appears verbatim in the module object's struct."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "float * scratch;" in header
+
+    def test_no_getter_setter_in_ext_fragment(self, tmp_path):
+        """Opaque fields must not generate binding wrappers in the module ext fragment."""
+        _, ext_frag = self._apply(tmp_path / "proj")
+        assert "fft_get_scratch" not in ext_frag
+        assert "fft_set_scratch" not in ext_frag
+
+    def test_not_in_module_ext_kwlist(self, tmp_path):
+        """Opaque fields must not appear in the Python kwlist in the module ext fragment."""
+        _, ext_frag = self._apply(tmp_path / "proj")
+        assert '"scratch"' not in ext_frag
+
+
+class TestNoCtorInModule:
+    """no_ctor fields on a module object must propagate correctly through
+    _regenerate_module: present in the struct with getters/setters, absent
+    from the C create() signature and the Python kwlist in the ext fragment."""
+
+    def _apply(self, proj):
+        new_run("proj", proj)
+        module_run(proj, "dsp")
+        frag = proj.parent / "ticker.toml"
+        frag.write_text(_NO_CTOR_MODULE_FRAGMENT)
+        apply_run(proj, fragment=frag)
+        ext_dir = proj / "native" / "src" / "dsp"
+        return (
+            (proj / "native" / "inc" / "ticker" / "ticker_core.h").read_text(),
+            (ext_dir / "dsp_ext_ticker.c").read_text(),
+        )
+
+    def test_no_ctor_field_in_struct(self, tmp_path):
+        """no_ctor field must still appear in the module object's state struct."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "size_t count;" in header
+
+    def test_no_ctor_excluded_from_c_signature(self, tmp_path):
+        """no_ctor field must NOT appear in the C create() signature."""
+        header, _ = self._apply(tmp_path / "proj")
+        assert "ticker_create(float gain)" in header
+
+    def test_no_ctor_excluded_from_module_ext_kwlist(self, tmp_path):
+        """no_ctor field must NOT appear in the Python kwlist in the module ext fragment."""
+        _, ext_frag = self._apply(tmp_path / "proj")
+        assert '"count"' not in ext_frag
+        assert '"gain"' in ext_frag
+
+    def test_no_ctor_getters_setters_in_ext_fragment(self, tmp_path):
+        """no_ctor fields must still have getter/setter bindings in the module ext fragment."""
+        _, ext_frag = self._apply(tmp_path / "proj")
+        assert "ticker_get_count" in ext_frag
+        assert "ticker_set_count" in ext_frag

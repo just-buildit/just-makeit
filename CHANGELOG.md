@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.13.21] — 2026-05-29
+
+### Added
+
+- **`jm app` command** — scaffold a shippable standalone application from
+    any existing component. Three targets via `--target`:
+
+    - `c` — generates `native/src/app/<name>.c` with a `main()` that calls
+        your component's `create`/`step`/`destroy` lifecycle, and appends an
+        `add_executable` target to `CMakeLists.txt`. Build with
+        `make && ./build/<name>`.
+    - `console` — generates `src/<pkg>/cli.py` with argparse boilerplate
+        where every constructor parameter becomes a `--flag`, and updates
+        `[project.scripts]` in `pyproject.toml`. Install with `pip install -e .`
+        and run with `<name> --help`.
+    - `pep723` — generates `<name>.py` in the project root with an embedded
+        `# /// script` dependency block. Distributable as a single file;
+        runs anywhere with `uv run <name>.py --help` without a full install.
+
+    All targets write a `[app]` section to `just-makeit.toml` so
+    `jm apply` can regenerate the scaffold. `--object` and `--name` default
+    to the first component and project name respectively. 25 new tests.
+
+- **Three new bundled examples** covering previously undocumented commands:
+
+    - `jm_app` — scaffolding verification for all three `jm app` targets.
+    - `jm_function` — full end-to-end for module-level C functions (`jm   function`), including a `--inline` static-inline variant, cmake
+        build, and Python smoke test.
+    - `jm_remove` — file and TOML state verification across all five `jm   remove` surfaces: method, property, function, state field, and
+        entire object.
+
+    Run any of them with `jm example jm_app` etc.
+
+- **`jm app` in CLI help** — `jm help` now lists the command with flags
+    and usage examples.
+
+- **`docs/commands/app.md`** — reference page for all three `jm app`
+    targets with usage, generated-file tables, and the TOML `[app]` record.
+
+- **Quick-reference table** — three `jm app` rows added to
+    `docs/quick-reference.md`.
+
 ## [0.13.19] — 2026-05-28
 
 ### Added

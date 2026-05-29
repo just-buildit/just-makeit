@@ -922,3 +922,8 @@ def run(
         )
     else:
         print(f"Done!  Project already matches {C.FILENAME} — nothing to do.")
+
+    if C.app_config(cfg):
+        from . import _app
+
+        _app.run(root, cfg)
