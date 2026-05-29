@@ -4,7 +4,7 @@ add_library(<<component>>_core OBJECT <<component>>_core.c)
 target_include_directories(<<component>>_core PUBLIC
     ${CMAKE_SOURCE_DIR}/native/inc
     ${CMAKE_SOURCE_DIR}/native/inc/<<component>>)
-<<extra_link_on_core>>
+<<extra_include_dirs_on_core>><<extra_link_on_core>>
 if(BUILD_PYTHON)
 Python3_add_library(<<component>> MODULE WITH_SOABI <<component>>_ext.c)
 target_link_libraries(<<component>> PRIVATE

@@ -398,6 +398,21 @@ def extra_link_libs(cfg: dict, module: str) -> list[str]:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def extra_include_dirs(cfg: dict, module: str) -> list[str]:
+    """Return hand-declared extra include directories for a module's CMakeLists.
+
+    Counterpart to :func:`extra_link_libs` for ``target_include_directories``.
+    CMake variables (``${...}``) are honoured.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [module.source]
+        extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]
+    """
+    v = cfg.get("module", {}).get(module, {}).get("extra_include_dirs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def is_no_generate_module(cfg: dict, module: str) -> bool:
     """Return True if the module's files are entirely hand-written.
 
@@ -461,6 +476,20 @@ def component_extra_link_libs(cfg: dict, component: str) -> list[str]:
         extra_link_libs = ["PkgConfig::DOPPLER"]
     """
     v = cfg.get(component, {}).get("extra_link_libs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def component_extra_include_dirs(cfg: dict, component: str) -> list[str]:
+    """Return hand-declared extra include directories for a standalone component.
+
+    Counterpart to :func:`component_extra_link_libs`.  Declare in TOML as:
+
+    .. code-block:: toml
+
+        [tone]
+        extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]
+    """
+    v = cfg.get(component, {}).get("extra_include_dirs", [])
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
@@ -674,6 +703,7 @@ def add_component(
     opaque_fields_: "list[tuple[str, str]]" = (),
     no_ctor_names_: "frozenset[str]" = frozenset(),
     extra_link_libs_: list[str] = (),
+    extra_include_dirs_: list[str] = (),
 ) -> dict:
     rt = (
         return_type_
@@ -726,6 +756,8 @@ def add_component(
         entry["depends_on"] = list(depends_on_)
     if extra_link_libs_:
         entry["extra_link_libs"] = list(extra_link_libs_)
+    if extra_include_dirs_:
+        entry["extra_include_dirs"] = list(extra_include_dirs_)
     cfg[component] = entry
     return cfg
 
@@ -760,6 +792,10 @@ def _dump(cfg: dict) -> str:
         if extra:
             libs_str = ", ".join(f'"{lib}"' for lib in extra)
             lines.append(f"extra_link_libs = [{libs_str}]")
+        extra_inc = data.get("extra_include_dirs", [])
+        if extra_inc:
+            inc_str = ", ".join(f'"{d}"' for d in extra_inc)
+            lines.append(f"extra_include_dirs = [{inc_str}]")
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{mod}.functions]]")
@@ -809,6 +845,9 @@ def _dump(cfg: dict) -> str:
         if comp_data.get("extra_link_libs"):
             libs_str = ", ".join(f'"{lib}"' for lib in comp_data["extra_link_libs"])
             lines.append(f"extra_link_libs = [{libs_str}]")
+        if comp_data.get("extra_include_dirs"):
+            inc_str = ", ".join(f'"{d}"' for d in comp_data["extra_include_dirs"])
+            lines.append(f"extra_include_dirs = [{inc_str}]")
         lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")

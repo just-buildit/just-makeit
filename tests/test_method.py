@@ -1219,3 +1219,36 @@ class TestMethodArrayArgWithParams:
         hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
         assert "const float *x" in hdr
         assert "const float *h" in hdr
+
+
+class TestOutTypeScalarLength:
+    """gh-65: a fixed-output method declared with `out_type` and a scalar
+    integer param (no array param) must size the returned ndarray from the
+    scalar param, not from a hardcoded ``0`` that produces an empty array."""
+
+    @pytest.fixture()
+    def project(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")])
+        method_run(
+            dest,
+            "nco",
+            "gen_samples",
+            None,
+            arg_type="void",
+            return_type="void",
+            variable_output=False,
+            multi_output=[],
+            params=[("n", "uint32_t")],
+            out_type="float",
+        )
+        return dest
+
+    def test_dims_uses_scalar_param(self, project):
+        """``npy_intp _dims[]`` must reference the scalar param, not ``0``."""
+        ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+        # The buggy output is `{(npy_intp)0}` — the fix sizes from `n`.
+        assert "(npy_intp)n" in ext
+        assert "(npy_intp)0" not in ext

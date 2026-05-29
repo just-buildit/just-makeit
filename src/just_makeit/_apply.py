@@ -110,6 +110,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "opaque_fields": C.opaque_fields(cfg, comp),
         "no_ctor_names": C.no_ctor_names(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),
+        "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
     }
 
 
@@ -175,6 +176,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         and (
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
+            or cfg.get("module", {}).get(m, {}).get("extra_include_dirs")
         )
     ]
     if _mods_need_update:
@@ -186,6 +188,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 tmod["extra_types"] = mod_data["extra_types"]
             if mod_data.get("extra_link_libs"):
                 tmod["extra_link_libs"] = mod_data["extra_link_libs"]
+            if mod_data.get("extra_include_dirs"):
+                tmod["extra_include_dirs"] = mod_data["extra_include_dirs"]
         C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()
@@ -547,6 +551,26 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
+def _merge_module_core(real: Path, temp: Path, module: str) -> bool:
+    """Merge module-level ``<mod>_core.c`` / ``<mod>_core.h`` from temp into real.
+
+    Temp carries TOML-declared function impls; real may hold hand-written
+    bodies (or be a fresh scaffold with no impls). ``_preserve_core_bodies``
+    keeps user bodies whenever they exist and lets the temp impls flow
+    through for any function the user did not write."""
+    if not temp.exists():
+        return False
+    from ._init import _preserve_core_bodies
+
+    new_text = temp.read_text(encoding="utf-8")
+    merged = _preserve_core_bodies(real, new_text, module)
+    if real.exists() and real.read_text(encoding="utf-8") == merged:
+        return False
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text(merged, encoding="utf-8")
+    return True
+
+
 def _add_cmake_block_for(
     real_path: Path, temp_path: Path, comp: str, cfg: dict
 ) -> bool:
@@ -699,6 +723,16 @@ def _sync_aggregates(
         ):
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
+        # Module-level core sources carry user-written function bodies and
+        # any TOML-declared `impl` for `[[module.X.functions]]`. The header
+        # also accumulates declarations as functions are added.
+        for rel in (
+            f"native/src/{mod}/{mod}_core.c",
+            f"native/inc/{mod}/{mod}_core.h",
+        ):
+            if _merge_module_core(root / rel, temp_root / rel, mod):
+                if root / rel not in updated:
+                    updated.append(root / rel)
 
     # Regenerate standalone component CMakeLists so extra_link_libs changes
     # in the TOML are reflected without a full re-scaffold.

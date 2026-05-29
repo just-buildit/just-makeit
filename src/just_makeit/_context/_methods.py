@@ -965,7 +965,24 @@ def make_methods_ctx(
                     (p["name"] for p in params if is_array_param_type(p["type"])),
                     None,
                 )
-                raw_len = f"{first_arr}_len" if first_arr else "0"
+                # Buffer size: prefer the length of the first array param.
+                # If there is no array param, fall back to the first scalar
+                # integer param so methods like ``foo(n: int) -> ndarray`` (n
+                # samples requested) allocate an n-sized output rather than
+                # an empty one (gh-65).
+                if first_arr:
+                    raw_len = f"{first_arr}_len"
+                else:
+                    first_int = next(
+                        (
+                            p["name"]
+                            for p in params
+                            if not is_array_param_type(p["type"])
+                            and _CTYPE_META.get(p["type"], {}).get("kind") == "int"
+                        ),
+                        None,
+                    )
+                    raw_len = first_int if first_int else "0"
                 if out_divisor > 1:
                     len_expr = f"({raw_len} / {out_divisor})"
                 else:

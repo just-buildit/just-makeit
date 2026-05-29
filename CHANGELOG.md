@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`extra_include_dirs` config** (gh-66) — counterpart to `extra_link_libs`
+    for `target_include_directories`. Declare in `[module.X]` or `[component]`
+    sections of `just-makeit.toml`; CMake variables (`${DOPPLER_INCLUDE_DIR}`)
+    are honoured. The OBJECT library carries the dirs as `PUBLIC` so the
+    Python extension, CTest, and benchmark targets inherit them transitively.
+
+### Fixed
+
+- **Module function `impl` blocks now materialize into `<mod>_core.c`**
+    (gh-68). Previously `jm apply` wrote the body to the throwaway temp tree
+    but `_sync_missing` skipped the existing (empty) real `<mod>_core.c`, so
+    function declarations and bodies were silently dropped. The fix splices
+    module-level core sources via body preservation, so both the impl body
+    and the header declaration land in the real project.
+- **Methods with `out_type` and a scalar param size the output correctly**
+    (gh-65). When no array param is present, the wrapper now uses the first
+    integer scalar param as the buffer length instead of falling back to
+    `0` (which produced empty `(0,)`-shaped arrays).
+
 ## [0.13.21] — 2026-05-29
 
 ### Added

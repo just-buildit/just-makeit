@@ -487,16 +487,21 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # <mod>_core.  Non-collocated: we define <mod>_core separately so that
     # module-level functions in <mod>_core.c are compiled and linked in.
     has_collocated = module in object_names
+    extra_inc_dirs = C.extra_include_dirs(cfg, module)
+    inc_dirs_extra = "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
     if has_collocated:
         # <mod>_core is the collocated object's OBJECT lib; it's already in
         # object_names so it will appear in object_core_libs below.
         module_core_lib_block = ""
         libs_parts = [f"{obj}_core" for obj in object_names]
     else:
+        # Module-only OBJECT lib (no collocated object). Use PUBLIC for the
+        # include dirs so any extra include dirs propagate transitively to
+        # the Python extension when it links against {module}_core.
         module_core_lib_block = (
             f"add_library({module}_core OBJECT {module}_core.c)\n"
-            f"target_include_directories({module}_core PRIVATE"
-            f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
+            f"target_include_directories({module}_core PUBLIC"
+            f" ${{CMAKE_SOURCE_DIR}}/native/inc{inc_dirs_extra})\n\n"
         )
         libs_parts = [f"{module}_core"] + [f"{obj}_core" for obj in object_names]
     object_core_libs = "\n    ".join(libs_parts)
@@ -509,6 +514,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "object_core_libs": object_core_libs,
         "module_core_lib_block": module_core_lib_block,
         "extra_link_libs_block": extra_link_libs_block,
+        "extra_include_dirs_block": inc_dirs_extra,
     }
     # Collocated objects share the same CMakeLists file as the module itself;
     # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.
@@ -588,6 +594,7 @@ def run(
     class_name: str | None = None,
     depends_on: list[str] = (),
     extra_link_libs: list[str] = (),
+    extra_include_dirs: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -634,6 +641,7 @@ def run(
             class_name=class_name,
             depends_on=list(depends_on),
             extra_link_libs=list(extra_link_libs),
+            extra_include_dirs=list(extra_include_dirs),
             _hint=_hint and not variable_output,
         )
         if variable_output:

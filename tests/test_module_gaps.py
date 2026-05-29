@@ -446,3 +446,115 @@ class TestExtraLinkLibs:
         libs_line = [ln for ln in cmake.splitlines() if "target_link_libraries" in ln]
         assert libs_line
         assert "Python3::NumPy" in cmake
+
+
+# ---------------------------------------------------------------------------
+# Gap #66 — extra_include_dirs in module CMakeLists (gh-66)
+# ---------------------------------------------------------------------------
+
+
+class TestExtraIncludeDirs:
+    """``extra_include_dirs`` in just-makeit.toml flows into the module's
+    ``target_include_directories`` calls, matching the existing
+    ``extra_link_libs`` plumbing.  Honours CMake variables (``${...}``)."""
+
+    def test_extra_dirs_appear_in_module_cmake(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        manifest = root / "just-makeit.toml"
+        toml_text = manifest.read_text(encoding="utf-8")
+        toml_text = toml_text.replace(
+            "[module.dsp]",
+            '[module.dsp]\nextra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]',
+        )
+        manifest.write_text(toml_text, encoding="utf-8")
+
+        from just_makeit._apply import run as apply_run
+
+        apply_run(root)
+
+        cmake = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        assert "${DOPPLER_INCLUDE_DIR}" in cmake
+        # The Python ext target's target_include_directories block contains it.
+        ext_block_start = cmake.index("target_include_directories(dsp PRIVATE")
+        ext_block_end = cmake.index(")", ext_block_start)
+        assert "${DOPPLER_INCLUDE_DIR}" in cmake[ext_block_start:ext_block_end]
+
+    def test_extra_dirs_on_module_core_lib(self, tmp_path):
+        """Module-only OBJECT lib carries the extra dirs PUBLIC so any
+        downstream consumer (Python ext) inherits them transitively."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        manifest = root / "just-makeit.toml"
+        toml_text = manifest.read_text(encoding="utf-8")
+        toml_text = toml_text.replace(
+            "[module.dsp]",
+            '[module.dsp]\nextra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]',
+        )
+        manifest.write_text(toml_text, encoding="utf-8")
+
+        from just_makeit._apply import run as apply_run
+
+        apply_run(root)
+
+        cmake = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        # Look for the dsp_core OBJECT lib include block — PUBLIC so the
+        # extra dir flows through to the Python ext via target_link_libraries.
+        assert "target_include_directories(dsp_core PUBLIC" in cmake
+        assert "${DOPPLER_INCLUDE_DIR}" in cmake
+
+    def test_idempotent_apply(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "[module.dsp]",
+                '[module.dsp]\nextra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]',
+            ),
+            encoding="utf-8",
+        )
+
+        from just_makeit._apply import run as apply_run
+
+        apply_run(root)
+        cmake_before = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text()
+        apply_run(root)
+        cmake_after = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text()
+        assert cmake_before == cmake_after
+
+    def test_standalone_component_extra_include_dirs(self, tmp_path):
+        """Standalone component CMakeLists gets a PUBLIC
+        ``target_include_directories(<comp>_core ...)`` that propagates to
+        every downstream target."""
+        root = tmp_path / "pkg"
+        new_run("pkg", root, ["nco"], [("freq", "float", "0.0f")])
+
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "[nco]",
+                '[nco]\nextra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]',
+            ),
+            encoding="utf-8",
+        )
+
+        from just_makeit._apply import run as apply_run
+
+        apply_run(root)
+
+        cmake = (root / "native" / "src" / "nco" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        assert "target_include_directories(nco_core PUBLIC" in cmake
+        assert "${DOPPLER_INCLUDE_DIR}" in cmake

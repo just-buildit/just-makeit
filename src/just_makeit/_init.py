@@ -369,6 +369,7 @@ def run(
     class_name: str | None = None,
     depends_on: list[str] = (),
     extra_link_libs: list[str] = (),
+    extra_include_dirs: list[str] = (),
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -492,6 +493,14 @@ def run(
         "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
+    # extra_include_dirs is a list of CMake include dirs (literals or ${VAR}
+    # references). Each dir lands on its own indented line inside the
+    # target_include_directories(...) blocks; leading "\n    " puts the first
+    # entry on a new line so the closing ')' stays clean.
+    extra_include_dirs_block = (
+        "\n    " + "\n    ".join(extra_include_dirs) if extra_include_dirs else ""
+    )
+    ctx["extra_include_dirs_block"] = extra_include_dirs_block
 
     def r(tmpl):
         return R.render(tmpl, ctx)
@@ -507,6 +516,15 @@ def run(
         )
     else:
         ctx["extra_link_on_core"] = ""
+    # extra_include_dirs_on_core: PUBLIC include dirs on the OBJECT library so
+    # downstream consumers (Python ext, test, bench) inherit them transitively.
+    if extra_include_dirs:
+        parts = "\n    ".join(extra_include_dirs)
+        ctx["extra_include_dirs_on_core"] = (
+            f"target_include_directories({comp}_core PUBLIC\n    {parts})\n"
+        )
+    else:
+        ctx["extra_include_dirs_on_core"] = ""
 
     print(f"just-makeit: adding component '{comp}' to project '{pkg}'")
     print()
@@ -689,6 +707,7 @@ def run(
         class_name_=class_name,
         depends_on_=list(depends_on),
         extra_link_libs_=list(extra_link_libs),
+        extra_include_dirs_=list(extra_include_dirs),
     )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
