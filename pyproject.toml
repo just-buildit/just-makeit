@@ -12,7 +12,9 @@ authors = [
     { name = "Matthew T. Hunter, Ph.D." },
     { name = "Claude Code", email = "noreply@anthropic.com" },
 ]
-dependencies = []
+dependencies = [
+    "tomlkit>=0.15.0",
+]
 keywords = [
     "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
     "code-generation", "numpy", "packaging", "wheel",
