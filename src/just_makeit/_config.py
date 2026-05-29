@@ -297,8 +297,8 @@ def save(root: Path, cfg: dict) -> None:
 
 
 def components(cfg: dict) -> list[str]:
-    """Return component names — all top-level keys except 'project' and 'module'."""
-    return [k for k in cfg if k not in ("project", "module")]
+    """Return component names — all top-level keys except reserved sections."""
+    return [k for k in cfg if k not in ("project", "module", "app")]
 
 
 def modules(cfg: dict) -> list[str]:
@@ -585,6 +585,17 @@ def from_new(
     }
 
 
+def app_config(cfg: dict) -> dict:
+    """Return the [app] section, or an empty dict if absent."""
+    return cfg.get("app", {})
+
+
+def set_app(cfg: dict, target: str, name: str, object_: str) -> dict:
+    """Write (or overwrite) the [app] section in cfg and return cfg."""
+    cfg["app"] = {"target": target, "name": name, "object": object_}
+    return cfg
+
+
 def arg_type(cfg: dict, component: str) -> str:
     return cfg.get(component, {}).get("arg_type", "float _Complex")
 
@@ -836,5 +847,13 @@ def _dump(cfg: dict) -> str:
             if p.get("expr"):
                 lines.append(f'expr = "{p["expr"]}"')
             lines.append("")
+
+    app = cfg.get("app", {})
+    if app:
+        lines.append("[app]")
+        lines.append(f'target = "{app["target"]}"')
+        lines.append(f'name = "{app["name"]}"')
+        lines.append(f'object = "{app["object"]}"')
+        lines.append("")
 
     return "\n".join(lines)

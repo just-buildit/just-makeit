@@ -80,6 +80,11 @@ Commands:
     --module name               Module the function lives in (required for function).
     --force, -f                 Skip the confirmation prompt.
 
+  app [OPTIONS]                 Scaffold a shippable standalone application from an object.
+    --target c|console|pep723   Output target (default: c).
+    --object name               Component to scaffold from (default: first object).
+    --name name                 App/script name (default: project name).
+
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   apply [fragment]              Materialize every file just-makeit.toml implies (add only).
                                 With a fragment path, copy it into objects/, add to include,
@@ -164,6 +169,15 @@ Examples:
   jm add --state order:int:4
   jm add --param n_taps:int:16
 
+  # scaffold a C executable from an existing object
+  jm app --target c --object engine --name dsp_tool
+
+  # scaffold a Python console script (updates pyproject.toml [project.scripts])
+  jm app --target console --object engine --name dsp_tool
+
+  # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
+  jm app --target pep723 --object engine --name dsp_tool
+
   # config, build, test
   jm config
   jm config version 0.2.0
@@ -187,7 +201,6 @@ def _colorize(text: str) -> str:
         return text
 
     RST = "\x1b[0m"
-    BOLD = "\x1b[1m"
     DIM = "\x1b[2m"
     ITALIC = "\x1b[3m"
     CYAN = "\x1b[36m"
@@ -275,9 +288,7 @@ def _colorize(text: str) -> str:
                 out.append(c(DIM, raw) + nl)
                 continue
             # Dim trailing comments, bold command name, cyan flags
-            raw = re.sub(
-                r"(\s+#.*)$", lambda m: c(DIM, m.group(1)), raw
-            )
+            raw = re.sub(r"(\s+#.*)$", lambda m: c(DIM, m.group(1)), raw)
             raw = re.sub(
                 r"^(  )(just-makeit|jm)(\s+)([a-z][\w-]*)",
                 lambda m: (
@@ -288,9 +299,7 @@ def _colorize(text: str) -> str:
                 ),
                 raw,
             )
-            raw = re.sub(
-                r"(--[\w-]+)", lambda m: c(CYAN, m.group(1)), raw
-            )
+            raw = re.sub(r"(--[\w-]+)", lambda m: c(CYAN, m.group(1)), raw)
             out.append(raw + nl)
 
         else:
@@ -551,6 +560,34 @@ def main() -> None:
         sys.argv = [sys.argv[0]] + args[1:]
         _scripts.install_deps()
 
+    elif cmd == "app":
+        _warn_schema()
+        from . import _app
+
+        target = "c"
+        name: str | None = None
+        object_: str | None = None
+        i = 1
+        while i < len(args):
+            tok = args[i]
+            if tok in ("--target", "-t") and i + 1 < len(args):
+                i += 1
+                target = args[i]
+            elif tok.startswith("--target="):
+                target = tok[len("--target=") :]
+            elif tok == "--object" and i + 1 < len(args):
+                i += 1
+                object_ = args[i]
+            elif tok.startswith("--object="):
+                object_ = tok[len("--object=") :]
+            elif tok == "--name" and i + 1 < len(args):
+                i += 1
+                name = args[i]
+            elif tok.startswith("--name="):
+                name = tok[len("--name=") :]
+            i += 1
+        _app.run(Path.cwd(), target=target, name=name, object_=object_)
+
     elif cmd == "example":
         from . import _example
 
@@ -575,7 +612,7 @@ def main() -> None:
         positional: list[str] = []
         for a in args[1:]:
             if a.startswith("--only="):
-                only = a[len("--only="):]
+                only = a[len("--only=") :]
             elif a == "--only":
                 print(
                     "error: --only requires a value (--only=NAME).",
