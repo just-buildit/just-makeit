@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import _remove
 
-_KINDS = ("object", "module", "method", "property", "function")
+_KINDS = ("object", "module", "method", "property", "function", "state")
 
 
 def run(args: list[str]) -> None:
@@ -22,7 +22,7 @@ def run(args: list[str]) -> None:
         print(
             "error: 'remove' requires a kind and a name.\n"
             "  just-makeit remove "
-            "object|module|method|property|function <name> [options]",
+            "object|module|state|method|property|function <name> [options]",
             file=sys.stderr,
         )
         sys.exit(1)

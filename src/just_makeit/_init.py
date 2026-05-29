@@ -182,7 +182,11 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
 
 
 def _preserve_core_bodies(
-    path: Path, new_text: str, comp: str, exclude: tuple[str, ...] = ()
+    path: Path,
+    new_text: str,
+    comp: str,
+    exclude: tuple[str, ...] = (),
+    skip_struct_merge: bool = False,
 ) -> str:
     """Splice hand-written bodies from an existing core file into *new_text*.
 
@@ -194,6 +198,10 @@ def _preserve_core_bodies(
     *exclude* names functions whose freshly rendered body must win over the
     old one — used by ``just-makeit add``, which has to rewrite ``create`` /
     ``reset`` so the newly added state variable is actually initialised.
+
+    *skip_struct_merge* suppresses the struct-field merge for header files.
+    Use this when the caller deliberately removed a state field and the new
+    template already has the correct struct — merging would re-add the field.
     """
     if not path.exists():
         return new_text
@@ -210,14 +218,15 @@ def _preserve_core_bodies(
             if fn.startswith(gs_prefix):
                 funcs.pop(fn)
         return _restore_core_c_funcs(new_text, funcs)
-    # header: merge struct fields, then restore the inline step() definition
-    old_struct = _STRUCT_RE.search(old)
-    new_struct = _STRUCT_RE.search(new_text)
-    if old_struct and new_struct:
-        merged = _merge_struct_fields(new_struct.group(2), old_struct.group(2))
-        new_text = (
-            new_text[: new_struct.start(2)] + merged + new_text[new_struct.end(2) :]
-        )
+    # header: optionally merge struct fields, then restore the inline step()
+    if not skip_struct_merge:
+        old_struct = _STRUCT_RE.search(old)
+        new_struct = _STRUCT_RE.search(new_text)
+        if old_struct and new_struct:
+            merged = _merge_struct_fields(new_struct.group(2), old_struct.group(2))
+            new_text = (
+                new_text[: new_struct.start(2)] + merged + new_text[new_struct.end(2) :]
+            )
     old_step = _step_func_span(old, comp)
     new_step = _step_func_span(new_text, comp)
     if old_step and new_step:
