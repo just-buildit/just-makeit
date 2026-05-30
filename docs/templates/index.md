@@ -54,13 +54,44 @@ Every preset page has the same five sections:
 
 ## Status
 
-- **Today (shipped)**: `processor` and `function` are reachable from
-    the current CLI. Their pages show real generated output.
-- **Proposed**: `blockwise`, `generator`, `consumer`, `reader` are
-    flag additions tracked in
-    [`developers/wizard-design.md`](../developers/wizard-design.md).
-    Their pages show the *intended* skeletons so the design can be
-    reviewed before any code is written.
+**Goal**: every preset's command produces a scaffold that compiles
+and passes `jm build && jm test` immediately. Fill in the
+`/* TODO */` body with your logic; everything around it stays green.
+
+Honest state as of 0.13.23 (verified by running each preset's
+command in a clean temp dir with a realistic snake_case name like
+`my_filter`, building, and testing):
+
+| Preset      | CLI today                                                   | Green today                                    | Phase 3a goal                                              |
+| ----------- | ----------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------- |
+| `processor` | `jm new --object my_filter ...`                             | ✅ build + 8 pytest pass                       | `--preset processor` (no-op alias)                         |
+| `blockwise` | (not implementable today)                                   | ❌ renderer `KeyError` on `T[]` IO             | `--preset blockwise` + renderer support for `T[]` IO       |
+| `generator` | `jm new --object my_nco --arg-type void ...`                | ✅ build + tests pass                          | `--preset generator`                                       |
+| `consumer`  | `jm new --object my_acc --return-type void ...`             | ✅ build + 7 pytest pass                       | `--preset consumer`                                        |
+| `reader`    | two-step: `jm new` then `jm object iq_reader --no-step ...` | ⚠ builds green; pytest fails on `NULL` default | `--preset reader` (single-step; auto-adds read/seek/close) |
+| `function`  | `jm new` + `jm module` + `jm function FN --module MOD ...`  | ✅ build + ctest pass                          | (already shipped; no preset needed)                        |
+
+**Known foot-guns blocking "green from day one" on 0.13.23** (verified
+2026-05-30):
+
+- **`blockwise`** (#86): renderer's `_CTYPE_META[return_type]` lookup
+    throws `KeyError` on array types like `float _Complex[]`, so the
+    preset is unreachable via CLI *or* hand-authored TOML. The
+    preset page documents the design intent for review.
+- **`reader`** (#88): generated pytest uses C `NULL` for `const char *`
+    init-param defaults (e.g. `filepath:const char *`), which is
+    undefined in Python. Build is green; auto-generated tests fail
+    with `NameError: name 'NULL' is not defined`.
+- **`reader`** CLI ergonomics: `--no-step` isn't accepted by
+    `jm new --object`, only by the separate `jm object` verb — so
+    the reader preset needs the two-step form today. Phase 3a's
+    `--preset reader` consolidates this.
+- **Placeholder-name collision** (#85): components named identically
+    in snake_case and PascalCase (e.g. `NAME`, `name`) trigger a
+    `<comp>_ext.c` symbol collision in lifecycle methods. Does **not**
+    affect real-world snake_case names like `my_filter` or
+    `iq_reader`. Mostly a gotcha for users who copy `NAME` verbatim
+    from these pages.
 
 A preset only ships when its page is fully worked, its CLI flag has a
 regression test, and the bundled example confirms the skeleton compiles

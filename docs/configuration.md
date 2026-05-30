@@ -160,7 +160,14 @@ Phase 2 acceptance bar from the
 [implementation plan](developers/implementation-plan.md): no feature
 should require a TOML edit before it can be used.
 
-Status legend: ✅ on main · 🔴 TOML-only by design.
+Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
+
+> CLI and TOML are both first-class authoring paths. The CLI is the
+> recommended way (presets, validators, errors); TOML editing is a
+> fully supported alternative for power users or for knobs the CLI
+> hasn't yet exposed. The 🟡 rows below are TOML-only today and are
+> tracked for CLI parity — but unlike previous phrasing, this is no
+> longer "by design"; the goal is parity.
 
 ### `[project]` keys
 
@@ -188,7 +195,7 @@ Status legend: ✅ on main · 🔴 TOML-only by design.
 | `no_step`            | `jm object --no-step`                             | ✅           |                                                                                         |
 | `class_name`         | `jm object --class-name NAME`                     | ✅           |                                                                                         |
 | `depends_on`         | (inferred from `--module`)                        | ✅           | Set automatically when an object lives in a module.                                     |
-| `extra_link_libs`    | (component scope: TOML only)                      | 🔴           | Per-module is `jm module --extra-link-libs`; per-component still TOML-only (rare case). |
+| `extra_link_libs`    | (component scope: TOML only)                      | 🟡           | Per-module is `jm module --extra-link-libs`; per-component still TOML-only (rare case). |
 | `extra_include_dirs` | `jm object --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |                                                                                         |
 
 ### `[[<component>.state]]` entries
@@ -196,14 +203,15 @@ Status legend: ✅ on main · 🔴 TOML-only by design.
 | TOML field                         | CLI flag                                             | Status |
 | ---------------------------------- | ---------------------------------------------------- | ------ |
 | `name`, `type`, `default`          | `jm object --state name:type[:default]` (repeatable) | ✅     |
-| `name`, `type`, `opaque = true`    | (TOML only)                                          | 🔴     |
-| `name`, `type`, `no_ctor = true`   | (TOML only)                                          | 🔴     |
-| `name`, `type`, `roles = "config"` | (TOML only)                                          | 🔴     |
+| `name`, `type`, `opaque = true`    | (TOML only)                                          | 🟡     |
+| `name`, `type`, `no_ctor = true`   | (TOML only)                                          | 🟡     |
+| `name`, `type`, `roles = "config"` | (TOML only)                                          | 🟡     |
 
-The three rare modifiers (`opaque`, `no_ctor`, `roles`) stay TOML-only by
-design — they're advanced controls used by ≤5% of components, and
-exposing them via flag syntax would clutter `jm object`'s surface for
-marginal gain.
+The three rare modifiers (`opaque`, `no_ctor`, `roles`) currently
+require editing `just-makeit.toml` directly. CLI flags are pending
+(syntax under discussion: `--state name:type:opaque`,
+`--state name:type:no-ctor`, `--state name:type:role=config`). Until
+those land, hand-editing the manifest is the workaround.
 
 ### `[[<component>.init_params]]` entries
 
@@ -211,7 +219,7 @@ marginal gain.
 | --------------------------------------------------------- | --------------------------------------------------------- | --------------------------- |
 | `name`, `type`, `default`                                 | `jm object --init-param name:type[:default]` (repeatable) | ✅                          |
 | `optional = true`                                         | `jm object --init-param 'name:type[]:optional'`           | ✅ (syntax extension)       |
-| `default_raw`, `real_type`, `real_create_fn`, `create_fn` | (TOML only)                                               | 🔴                          |
+| `default_raw`, `real_type`, `real_create_fn`, `create_fn` | (TOML only)                                               | 🟡                          |
 | compose with `[[state]]`                                  | `--init-param + --state` together                         | ✅ (0.13.23) (gate dropped) |
 
 ### `[[<component>.methods]]` entries
@@ -228,7 +236,7 @@ marginal gain.
 | `batch = true`                    | `jm method --batch`                                     | ✅           |
 | `bench = false`                   | `jm method --no-bench`                                  | ✅           |
 | `result_fields = [{name, type}]`  | `jm method --result-field name:type` (repeatable)       | ✅ (0.13.23) |
-| `max_results = N`                 | (TOML only; default 64)                                 | 🔴           |
+| `max_results = N`                 | (TOML only; default 64)                                 | 🟡           |
 | `py_return_type = "..."`          | `jm method --py-return-type STR`                        | ✅           |
 | `impl = "..."` body               | `jm method --impl file::funcname`                       | ✅           |
 
@@ -239,7 +247,7 @@ marginal gain.
 | `name`, `type`                                  | `jm property <obj> <prop> --type T` | ✅     |
 | `writable = true`                               | `jm property --writable`            | ✅     |
 | `field = true`                                  | `jm property --field`               | ✅     |
-| `buf_field`, `len_field`, `valid_field`, `expr` | (TOML only)                         | 🔴     |
+| `buf_field`, `len_field`, `valid_field`, `expr` | (TOML only)                         | 🟡     |
 
 ### `[<component>]` lifecycle impl bodies
 
@@ -249,7 +257,7 @@ marginal gain.
 | `create_impl = "..."`          | `jm object --impl create::file::funcname`  | ✅ (0.13.23) |
 | `reset_impl = "..."`           | `jm object --impl reset::file::funcname`   | ✅ (0.13.23) |
 | `destroy_impl = "..."`         | `jm object --impl destroy::file::funcname` | ✅ (0.13.23) |
-| `init_post_parse_impl = "..."` | (TOML only)                                | 🔴           |
+| `init_post_parse_impl = "..."` | (TOML only)                                | 🟡           |
 
 ### `[module.<name>]` keys
 
@@ -259,7 +267,7 @@ marginal gain.
 | `extra_link_libs`      | `jm module --extra-link-libs TARGET` (repeatable) | ✅ (0.13.23) |
 | `extra_include_dirs`   | `jm module --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |
 | `extra_types`          | `jm module --extra-types NAME` (repeatable)       | ✅ (0.13.23) |
-| `no_generate = "true"` | (TOML only)                                       | 🔴           |
+| `no_generate = "true"` | (TOML only)                                       | 🟡           |
 | `functions`            | (auto-populated by `jm function --module <mod>`)  | ✅           |
 
 ### `[[module.<name>.functions]]` entries
@@ -271,18 +279,15 @@ marginal gain.
 | `inline = true`                  | `jm function --inline`                                      | ✅           |
 | `out_type = "T"`                 | `jm function --out-type T`                                  | ✅ (0.13.23) |
 | `result_fields = [{name, type}]` | `jm function --result-field name:type` (repeatable)         | ✅ (0.13.23) |
-| `max_results_param`              | (TOML only)                                                 | 🔴           |
+| `max_results_param`              | (TOML only)                                                 | 🟡           |
 | `impl = "..."` body              | `jm function --impl file::funcname`                         | ✅           |
 
 ### Counts
 
 - **✅ on main**: ~66 keys (every common path; Phase 2 stack shipped in 0.13.23)
-- **🔴 TOML-only by design**: 15 keys — all rare modifiers (`opaque`, `no_ctor`, `roles`, `buf_field`/`expr` property variants, `init_post_parse_impl`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These stay TOML-only because:
-    1. Each is used by ≤5% of components in practice.
-    1. Exposing them would clutter the CLI surface for marginal gain.
-    1. Power users authoring TOML directly is a first-class workflow.
+- **🟡 CLI flag pending**: 15 keys — rare modifiers (`opaque`, `no_ctor`, `roles`, `buf_field`/`expr` property variants, `init_post_parse_impl`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
 
-Phase 2 acceptance bar — "every TOML field has a 'Reachable via CLI' column ✓" — is met for the common path; the rare-modifier list is the explicit, documented set of TOML-only fields that remain by design.
+Phase 2 acceptance bar — "every TOML field has a 'Reachable via CLI' column ✓" — is met for the common path. The remaining 🟡 rows are tracked Phase 3 work, not by-design exceptions.
 
 ______________________________________________________________________
 

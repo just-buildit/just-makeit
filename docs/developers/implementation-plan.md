@@ -197,20 +197,17 @@ Thread 3b: **Bind expansion.**
 - [ ] Parse opaque state (forward decl in header, definition in `.c`).
 - [ ] `jm bind --check` runs in CI for every bundled example.
 
-Thread 3c: **Wizard.**
-
-- [ ] `_wizard.py` with prompts for each phase (project gate, preset,
-    types/state, optional impl bodies, extras).
-- [ ] Runs commands in-process; never emits TOML or shell scripts.
-- [ ] One end-to-end test per preset: feed canned answers, assert the
-    generated project's tree matches the canonical scaffolded one.
+Thread 3c (Wizard) was **cut** in the v0.13.23 retrospective for
+maintenance burden and the small finite pattern set. The gallery's
+preset pages + CLI commands cover the same need without a parallel
+interactive surface. See [`wizard-design.md`](wizard-design.md) for
+the retirement note.
 
 Success bar:
 
-- Every preset, run with default wizard answers, produces a project
-    where `jm build && jm test` passes immediately.
+- Every preset, run with the documented CLI command, produces a
+    project where `jm build && jm test` passes immediately.
 - `jm bind --check` is green on every bundled example.
-- The wizard prints zero TOML keys.
 
 ### Phase 4 — third-party importability, libclang fallback, docs reordering
 
