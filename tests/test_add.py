@@ -66,7 +66,9 @@ class TestAddStateVar:
 
     def test_add_multiple_vars_at_once(self, project):
         add_run(
-            project, None, [("bandwidth", "double", "200.0"), ("poles", "int", "2")]
+            project,
+            None,
+            [("bandwidth", "double", "200.0"), ("poles", "int", "2")],
         )
         core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
@@ -77,9 +79,51 @@ class TestAddStateVar:
     def test_no_unreplaced_placeholders(self, project):
         add_run(project, None, [("order", "int", "4")])
         for path in project.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
+
+
+class TestAddPreservesInitParams:
+    """gh-87 class of bug, in jm add: a component with both --state and
+    --init-param has an init-param-driven ctor. jm add regenerated the
+    state context without init_params, silently rebuilding a state-driven
+    ctor and dropping the init params from the generated C while they
+    stayed in the manifest -- a guaranteed build break on the next mutation.
+    """
+
+    @pytest.fixture()
+    def init_param_project(self, tmp_path):
+        from just_makeit._object import run as object_run
+
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "obj",
+            None,
+            [("x", "float", "0")],
+            init_params=[("n", "int", "4")],
+        )
+        return dest
+
+    def test_ctor_keeps_init_param_after_add(self, init_param_project):
+        add_run(init_param_project, "obj", [("y", "float", "1")])
+        core = (init_param_project / "native" / "inc" / "obj" / "obj_core.h").read_text(
+            encoding="utf-8"
+        )
+        # Constructor stays init-param-driven: obj_create(int n), NOT
+        # obj_create(float x, float y).
+        assert "obj_create(int n)" in core
+        assert "obj_create(float" not in core
+        # The new internal state field is still added.
+        assert "float y;" in core
 
 
 class TestAddUpdatesConfig:
