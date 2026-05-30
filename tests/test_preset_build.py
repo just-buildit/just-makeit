@@ -11,7 +11,6 @@ Skipped when the C toolchain is unavailable (matches test_examples.py).
 
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -58,10 +57,12 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
         capture_output=True,
         text=True,
     )
+    # A clean build (compile + link) is the foot-gun #1 regression signal:
+    # the bug was a destroy() arg-count mismatch that failed to *compile*.
+    # We deliberately don't assert on a built artifact path/extension — the
+    # Python module lands in src/<pkg>/ (not build/) and is .so on Unix but
+    # .pyd on Windows, which made the old check fail in CI cross-platform.
     assert bld.returncode == 0, (
         f"build failed for --preset {preset} "
         f"(foot-gun #1 regression):\n{bld.stdout}\n{bld.stderr}"
     )
-    assert list(Path(build).rglob("comp*.so")) or list(
-        Path(build).rglob("*.so")
-    ), "no extension module produced"
