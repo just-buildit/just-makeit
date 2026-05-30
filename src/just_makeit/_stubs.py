@@ -92,7 +92,7 @@ def _py(ctype: str) -> str:
         npt = _CTYPE_TO_NP.get(elem, "Any")
         return f"NDArray[{npt}]"
     if ctype.startswith("string_enum:"):
-        choices = ctype[len("string_enum:"):].split(",")
+        choices = ctype[len("string_enum:") :].split(",")
         return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
     return _CTYPE_TO_PY.get(ctype, "Any")
 
@@ -287,12 +287,18 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # Constructor arg string for doctest
     scalar_vars = [
-        (n, ct, dflt) for n, ct, dflt in state_vars if not _ARRAY_RE.match(ct.strip())
+        (n, ct, dflt)
+        for n, ct, dflt in state_vars
+        if not _ARRAY_RE.match(ct.strip())
     ]
     py_create_args = (
         ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars)
         if (scalar_vars and not no_state)
-        else (", ".join(_py_default_stub(ct, dflt) for _, ct, dflt, *_ in ip) if ip else "")
+        else (
+            ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt, *_ in ip)
+            if ip
+            else ""
+        )
     )
 
     import_line = (
@@ -316,7 +322,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # __init__
     if state_vars and not no_state:
-        init_params_str = ", ".join(f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars)
+        init_params_str = ", ".join(
+            f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars
+        )
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif ip:
         parts_init: list[str] = []
@@ -328,7 +336,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             elif t.startswith("string_enum:"):
                 dflt = param[2] if len(param) > 2 else ""
                 parts_init.append(
-                    f'{n}: {_py(t)} = "{dflt}"' if dflt else f"{n}: {_py(t)} = ..."
+                    f'{n}: {_py(t)} = "{dflt}"'
+                    if dflt
+                    else f"{n}: {_py(t)} = ..."
                 )
             else:
                 parts_init.append(f"{n}: {_py(t)} = ...")
@@ -417,7 +427,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             all_rts = [m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
             ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]" if len(ndarrays) > 1 else ndarrays[0]
+                f"tuple[{', '.join(ndarrays)}]"
+                if len(ndarrays) > 1
+                else ndarrays[0]
             )
         else:
             ret_ann = _py(m_ret)
@@ -485,7 +497,11 @@ def _fn_stub(fn: dict) -> str:
     doc = fn.get("doc", "")
     parts = [f"{p['name']}: {_py(p['type'])}" for p in params]
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
-    one_liner = doc.split("\n")[0] if doc else name.replace("_", " ").capitalize() + "."
+    one_liner = (
+        doc.split("\n")[0]
+        if doc
+        else name.replace("_", " ").capitalize() + "."
+    )
     return f'{sig}\n    """{one_liner}"""'
 
 

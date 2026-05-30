@@ -197,7 +197,9 @@ class TestCliObject:
 
     def test_impl_loading(self):
         with patch("just_makeit._object.run") as mock_run:
-            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+            with patch(
+                "just_makeit._impl.load_impl", return_value="body"
+            ) as mock_load:
                 _run(["fir", "--impl", "src.c::fir_step"])
                 mock_load.assert_called_once_with("src.c::fir_step", [])
                 _, kwargs = mock_run.call_args
@@ -232,7 +234,10 @@ class TestCliObject:
             # Step body lifted by the bare 2-part spec lands in impl_body.
             assert kwargs["impl_body"] == "body_for_src/io.c::iq_reader_step"
             # Lifecycle body lifted by the SLOT prefix lands in create_impl_body.
-            assert kwargs["create_impl_body"] == "body_for_src/io.c::iq_reader_create"
+            assert (
+                kwargs["create_impl_body"]
+                == "body_for_src/io.c::iq_reader_create"
+            )
             # Other lifecycle slots remain None when not set.
             assert kwargs["reset_impl_body"] is None
             assert kwargs["destroy_impl_body"] is None

@@ -5,15 +5,16 @@ Run as a pre-commit hook (pass_filenames: false).  Exits 1 when it
 modifies jb.toml so pre-commit reports the file as changed and prompts
 the user to re-stage it (same convention as ruff --fix and uv-lock).
 """
+
 import re
 import sys
 import tomllib
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-version = tomllib.loads(
-    (root / "pyproject.toml").read_text(encoding="utf-8")
-)["project"]["version"]
+version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 
 jb_path = root / "jb.toml"
 original = jb_path.read_text(encoding="utf-8")

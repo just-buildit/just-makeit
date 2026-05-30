@@ -11,6 +11,7 @@ import pytest
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _ctx(params, component="resamp", Component="Resamp", array_args=()):
     from just_makeit._context import _build_no_state_init_ctx
 
@@ -29,6 +30,7 @@ def _parse_init_param(spec):
 
 # ── _build_no_state_init_ctx: 2-D optional array ─────────────────────────────
 
+
 class TestOptionalArray2D:
     PARAMS = [
         ("bank", "float[][]", "", "", "", "", True, "Resamp_create_custom"),
@@ -45,7 +47,10 @@ class TestOptionalArray2D:
 
     def test_none_check_block_present(self):
         ctx = _ctx(self.PARAMS)
-        assert "if (bank_obj && bank_obj != Py_None)" in ctx["array_args_parse_block"]
+        assert (
+            "if (bank_obj && bank_obj != Py_None)"
+            in ctx["array_args_parse_block"]
+        )
 
     def test_ndim_validation_present(self):
         ctx = _ctx(self.PARAMS)
@@ -108,6 +113,7 @@ class TestOptionalArray2D:
 
 # ── _build_no_state_init_ctx: 1-D optional array ─────────────────────────────
 
+
 class TestOptionalArray1D:
     PARAMS = [
         ("taps", "float[]", "", "", "", "", True, "Filt_create_custom"),
@@ -123,17 +129,17 @@ class TestOptionalArray1D:
         assert "PyArray_NDIM" not in ctx["array_args_parse_block"]
 
     def test_len_arg_before_data_ptr(self):
-        block = _ctx(
-            self.PARAMS, component="filt", Component="Filt"
-        )["array_args_parse_block"]
+        block = _ctx(self.PARAMS, component="filt", Component="Filt")[
+            "array_args_parse_block"
+        ]
         len_pos = block.index("taps_len")
         ptr_pos = block.index("PyArray_DATA(taps_arr)")
         assert len_pos < ptr_pos
 
     def test_alt_create_fn_called(self):
-        block = _ctx(
-            self.PARAMS, component="filt", Component="Filt"
-        )["array_args_parse_block"]
+        block = _ctx(self.PARAMS, component="filt", Component="Filt")[
+            "array_args_parse_block"
+        ]
         assert "Filt_create_custom(" in block
 
     def test_create_line_empty(self):
@@ -143,17 +149,32 @@ class TestOptionalArray1D:
 
 # ── TOML round-trip ───────────────────────────────────────────────────────────
 
+
 class TestOptionalArrayToml:
     def test_optional_true_written(self):
         from just_makeit._config import (
-            from_new, add_component, _dump, init_params,
+            from_new,
+            add_component,
+            _dump,
         )
 
         cfg = from_new("proj")
         add_component(
-            cfg, "resamp", [], no_state_=True,
+            cfg,
+            "resamp",
+            [],
+            no_state_=True,
             init_params_=[
-                ("bank", "float[][]", "", "", "", "", True, "Resamp_create_custom"),
+                (
+                    "bank",
+                    "float[][]",
+                    "",
+                    "",
+                    "",
+                    "",
+                    True,
+                    "Resamp_create_custom",
+                ),
                 ("rate", "double", "0.0"),
             ],
         )
@@ -166,7 +187,10 @@ class TestOptionalArrayToml:
 
         cfg = from_new("proj")
         add_component(
-            cfg, "resamp", [], no_state_=True,
+            cfg,
+            "resamp",
+            [],
+            no_state_=True,
             init_params_=[("rate", "double", "0.0")],
         )
         assert "optional" not in _dump(cfg)
@@ -175,14 +199,30 @@ class TestOptionalArrayToml:
         import tempfile
         from pathlib import Path
         from just_makeit._config import (
-            from_new, add_component, save, load, init_params,
+            from_new,
+            add_component,
+            save,
+            load,
+            init_params,
         )
 
         cfg = from_new("proj")
         add_component(
-            cfg, "resamp", [], no_state_=True,
+            cfg,
+            "resamp",
+            [],
+            no_state_=True,
             init_params_=[
-                ("bank", "float[][]", "", "", "", "", True, "Resamp_create_custom"),
+                (
+                    "bank",
+                    "float[][]",
+                    "",
+                    "",
+                    "",
+                    "",
+                    True,
+                    "Resamp_create_custom",
+                ),
                 ("rate", "double", "0.0"),
             ],
         )
@@ -191,7 +231,16 @@ class TestOptionalArrayToml:
             save(root, cfg)
             loaded = load(root)
             result = init_params(loaded, "resamp")
-        assert result[0] == ("bank", "float[][]", "", "", "", "", True, "Resamp_create_custom")
+        assert result[0] == (
+            "bank",
+            "float[][]",
+            "",
+            "",
+            "",
+            "",
+            True,
+            "Resamp_create_custom",
+        )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
 
@@ -200,7 +249,10 @@ class TestOptionalArrayToml:
 
         cfg = from_new("proj")
         add_component(
-            cfg, "gen", [], no_state_=True,
+            cfg,
+            "gen",
+            [],
+            no_state_=True,
             init_params_=[("n", "int", "16")],
         )
         result = init_params(cfg, "gen")
@@ -209,14 +261,33 @@ class TestOptionalArrayToml:
 
 # ── CLI parser ────────────────────────────────────────────────────────────────
 
+
 class TestParseInitParamCLI:
     def test_optional_2d_returns_8tuple(self):
         tok = _parse_init_param("bank:float[][]:optional:Resamp_create_custom")
-        assert tok == ("bank", "float[][]", "", "", "", "", True, "Resamp_create_custom")
+        assert tok == (
+            "bank",
+            "float[][]",
+            "",
+            "",
+            "",
+            "",
+            True,
+            "Resamp_create_custom",
+        )
 
     def test_optional_1d_returns_8tuple(self):
         tok = _parse_init_param("taps:float[]:optional:Filt_create_custom")
-        assert tok == ("taps", "float[]", "", "", "", "", True, "Filt_create_custom")
+        assert tok == (
+            "taps",
+            "float[]",
+            "",
+            "",
+            "",
+            "",
+            True,
+            "Filt_create_custom",
+        )
 
     def test_optional_without_create_fn(self):
         tok = _parse_init_param("taps:float[]:optional")

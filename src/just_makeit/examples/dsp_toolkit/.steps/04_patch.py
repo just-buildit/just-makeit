@@ -22,7 +22,10 @@ stub_re = re.compile(
 text = header.read_text()
 m = stub_re.search(text)
 if not m:
-    print("ERROR: stub not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stub not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 qualifier = m.group(1)

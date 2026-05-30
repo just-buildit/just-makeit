@@ -93,12 +93,16 @@ def parse_header(path: Path) -> dict:
 
     m_state = _STATE_STRUCT_RE.search(text)
     if not m_state:
-        raise ValueError(f"{path}: no `typedef struct {{ ... }} <comp>_state_t;` block")
+        raise ValueError(
+            f"{path}: no `typedef struct {{ ... }} <comp>_state_t;` block"
+        )
     struct_body, comp = m_state.group(1), m_state.group(2)
 
     field_pairs = _FIELD_RE.findall(struct_body)
     if not field_pairs:
-        raise ValueError(f"{path}: state struct has no parseable scalar fields")
+        raise ValueError(
+            f"{path}: state struct has no parseable scalar fields"
+        )
     fields: list[tuple[str, str]] = []
     for raw_ct, name in field_pairs:
         ct = _normalize_ctype(raw_ct)
@@ -114,12 +118,20 @@ def parse_header(path: Path) -> dict:
         raise ValueError(
             f"{path}: no inline `static inline <RET> <comp>_step(...)` found"
         )
-    ret_raw, step_comp, arg_decl = m_step.group(1), m_step.group(2), m_step.group(3)
+    ret_raw, step_comp, arg_decl = (
+        m_step.group(1),
+        m_step.group(2),
+        m_step.group(3),
+    )
     if step_comp != comp:
-        raise ValueError(f"{path}: step prefix '{step_comp}' != state prefix '{comp}'")
+        raise ValueError(
+            f"{path}: step prefix '{step_comp}' != state prefix '{comp}'"
+        )
     return_type = _normalize_ctype(ret_raw)
     if return_type not in T._CTYPE_META:
-        raise ValueError(f"{path}: step return type '{return_type}' not supported")
+        raise ValueError(
+            f"{path}: step return type '{return_type}' not supported"
+        )
 
     # arg_decl is e.g. "float _Complex x"; we only need the type half.
     arg_decl_norm = " ".join(arg_decl.strip().split())
@@ -158,7 +170,10 @@ def parse_reset_defaults(core_c: Path) -> dict[str, str]:
     )
     if not m:
         return {}
-    return {name: value.strip() for name, value in _RESET_ASSIGN_RE.findall(m.group(1))}
+    return {
+        name: value.strip()
+        for name, value in _RESET_ASSIGN_RE.findall(m.group(1))
+    }
 
 
 def _read_pkg(root: Path) -> str:

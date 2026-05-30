@@ -77,7 +77,9 @@ class TestMergeModuleInit:
     def test_order_preserved_existing_first(self):
         src = 'from .dsp import Nco, Lo\n__all__ = ["Nco", "Lo"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Lo", "Mixer"])
-        import_line = [ln for ln in out.splitlines() if ln.startswith("from .dsp")][0]
+        import_line = [
+            ln for ln in out.splitlines() if ln.startswith("from .dsp")
+        ][0]
         assert import_line == "from .dsp import Nco, Lo, Mixer  # noqa: E402"
 
     def test_empty_exports_list_returns_unchanged(self):

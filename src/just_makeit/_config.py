@@ -727,7 +727,9 @@ def add_component(
         }
         for n, t, d in vars_
     ]
-    state_entries += [{"name": n, "type": t, "opaque": True} for n, t in opaque_fields_]
+    state_entries += [
+        {"name": n, "type": t, "opaque": True} for n, t in opaque_fields_
+    ]
     entry: dict = {
         "arg_type": arg_type_,
         "return_type": rt,
@@ -737,7 +739,9 @@ def add_component(
         "state": state_entries,
     }
     if array_args_:
-        entry["array_args"] = [{"name": n, "type": dt} for n, dt in array_args_]
+        entry["array_args"] = [
+            {"name": n, "type": dt} for n, dt in array_args_
+        ]
     if init_params_:
         entry["init_params"] = []
         for p in init_params_:
@@ -813,7 +817,9 @@ def _dump(cfg: dict) -> str:
             if fn.get("out_type"):
                 lines.append(f'out_type = "{fn["out_type"]}"')
             if fn.get("max_results_param"):
-                lines.append(f'max_results_param = "{fn["max_results_param"]}"')
+                lines.append(
+                    f'max_results_param = "{fn["max_results_param"]}"'
+                )
             if fn.get("result_fields"):
                 rf_parts = ", ".join(
                     f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
@@ -851,10 +857,14 @@ def _dump(cfg: dict) -> str:
             deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
             lines.append(f"depends_on = [{deps_str}]")
         if comp_data.get("extra_link_libs"):
-            libs_str = ", ".join(f'"{lib}"' for lib in comp_data["extra_link_libs"])
+            libs_str = ", ".join(
+                f'"{lib}"' for lib in comp_data["extra_link_libs"]
+            )
             lines.append(f"extra_link_libs = [{libs_str}]")
         if comp_data.get("extra_include_dirs"):
-            inc_str = ", ".join(f'"{d}"' for d in comp_data["extra_include_dirs"])
+            inc_str = ", ".join(
+                f'"{d}"' for d in comp_data["extra_include_dirs"]
+            )
             lines.append(f"extra_include_dirs = [{inc_str}]")
         lines.append("")
         for a in comp_data.get("array_args", []):
@@ -938,7 +948,9 @@ def _dump(cfg: dict) -> str:
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
             lines.append(f'name = "{p["name"]}"')
-            lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
+            lines.append(
+                f'type = "{p.get("type") or p.get("ctype", "size_t")}"'
+            )
             if p.get("writable"):
                 lines.append("writable = true")
             if p.get("field"):

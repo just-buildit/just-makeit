@@ -55,7 +55,9 @@ def _install_smoke(proj: Path) -> None:
     config_files = list(install_prefix.rglob("*-config.cmake"))
     targets_files = list(install_prefix.rglob("*-targets.cmake"))
     assert config_files, f"No *-config.cmake installed under {install_prefix}"
-    assert targets_files, f"No *-targets.cmake installed under {install_prefix}"
+    assert targets_files, (
+        f"No *-targets.cmake installed under {install_prefix}"
+    )
     config_text = config_files[0].read_text()
     assert "PACKAGE_PREFIX_DIR" in config_text, (
         "@PACKAGE_INIT@ not present in installed config file — "
@@ -92,7 +94,9 @@ def _install_smoke(proj: Path) -> None:
     # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
     if sys.platform == "win32" or not shutil.which("pkg-config"):
         return
-    pc_dir = next((p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None)
+    pc_dir = next(
+        (p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None
+    )
     if pc_dir is None:
         return
     env = os.environ.copy()
@@ -110,7 +114,9 @@ def _install_smoke(proj: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0, f"pkg-config --cflags --libs my-fir failed:\n{r.stderr}"
+    assert r.returncode == 0, (
+        f"pkg-config --cflags --libs my-fir failed:\n{r.stderr}"
+    )
     assert "-lmy_fir" in r.stdout, (
         f"Expected -lmy_fir in pkg-config output; got: {r.stdout!r}"
     )
@@ -136,6 +142,7 @@ def run(root: Path) -> None:
 
     # Verify jb.toml was generated with expected structure
     import tomllib
+
     with (proj / "jb.toml").open("rb") as f:
         jbt = tomllib.load(f)
     assert jbt["project"]["name"] == "my_fir"

@@ -18,7 +18,10 @@ stub_re = re.compile(
 
 text = header.read_text()
 if not stub_re.search(text):
-    print("ERROR: stub not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stub not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 header.write_text(stub_re.sub(impl.read_text().strip(), text))

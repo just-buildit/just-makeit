@@ -86,27 +86,41 @@ def run(root: Path) -> None:
 
     # ── 3. Structural assertions (pre-build). ────────────────────────────
     ext = (dest / "native/src/utils/utils_ext.c").read_text(encoding="utf-8")
-    assert "_bind_linear_to_db" in ext, "utils_ext.c missing _bind_linear_to_db"
+    assert "_bind_linear_to_db" in ext, (
+        "utils_ext.c missing _bind_linear_to_db"
+    )
     assert "_bind_clamp" in ext, "utils_ext.c missing _bind_clamp"
 
-    header = (dest / "native/inc/utils/utils_core.h").read_text(encoding="utf-8")
-    assert "linear_to_db" in header, "utils_core.h missing linear_to_db declaration"
+    header = (dest / "native/inc/utils/utils_core.h").read_text(
+        encoding="utf-8"
+    )
+    assert "linear_to_db" in header, (
+        "utils_core.h missing linear_to_db declaration"
+    )
     assert "clamp" in header, "utils_core.h missing clamp inline body"
 
     # linear_to_db is a regular function: stub must be in _core.c
-    core_c = (dest / "native/src/utils/utils_core.c").read_text(encoding="utf-8")
+    core_c = (dest / "native/src/utils/utils_core.c").read_text(
+        encoding="utf-8"
+    )
     assert "linear_to_db" in core_c, "utils_core.c missing linear_to_db stub"
 
     # clamp is inline: must NOT appear in _core.c (only in _core.h)
-    assert "clamp" not in core_c, "utils_core.c must not contain inline clamp stub"
+    assert "clamp" not in core_c, (
+        "utils_core.c must not contain inline clamp stub"
+    )
 
     with (dest / "just-makeit.toml").open("rb") as f:
         cfg = tomllib.load(f)
-    fn_names = [fn["name"] for fn in cfg["module"]["utils"].get("functions", [])]
+    fn_names = [
+        fn["name"] for fn in cfg["module"]["utils"].get("functions", [])
+    ]
     assert "linear_to_db" in fn_names, (
         "TOML missing linear_to_db in [module.utils].functions"
     )
-    assert "clamp" in fn_names, "TOML missing clamp in [module.utils].functions"
+    assert "clamp" in fn_names, (
+        "TOML missing clamp in [module.utils].functions"
+    )
 
     # ── 4. Patch stubs with real implementations. ────────────────────────
     _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=dest)

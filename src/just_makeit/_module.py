@@ -138,16 +138,16 @@ def run(
     # handle these keys (gh-66 / v0.13.22 for include_dirs and link_libs;
     # extra_types from the earlier gh-28 extras work).
     if extra_include_dirs:
-        cfg.setdefault("module", {}).setdefault(module, {})["extra_include_dirs"] = (
-            list(extra_include_dirs)
-        )
+        cfg.setdefault("module", {}).setdefault(module, {})[
+            "extra_include_dirs"
+        ] = list(extra_include_dirs)
     if extra_link_libs:
-        cfg.setdefault("module", {}).setdefault(module, {})["extra_link_libs"] = list(
-            extra_link_libs
-        )
+        cfg.setdefault("module", {}).setdefault(module, {})[
+            "extra_link_libs"
+        ] = list(extra_link_libs)
     if extra_types:
-        cfg.setdefault("module", {}).setdefault(module, {})["extra_types"] = list(
-            extra_types
+        cfg.setdefault("module", {}).setdefault(module, {})["extra_types"] = (
+            list(extra_types)
         )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
@@ -156,4 +156,6 @@ def run(
     _write_compile_commands(root, C.components(cfg), C.modules(cfg))
 
     print()
-    print(f"Done!  Add types with: just-makeit object <name> --module {module}")
+    print(
+        f"Done!  Add types with: just-makeit object <name> --module {module}"
+    )

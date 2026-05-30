@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLES_DIR = Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
+EXAMPLES_DIR = (
+    Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
+)
 
 
 def _discover_assemblers():

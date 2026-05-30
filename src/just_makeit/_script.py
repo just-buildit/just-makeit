@@ -51,7 +51,9 @@ def _bool_flag(name: str) -> str:
     return f"    {name} \\\n"
 
 
-def _object_flags(cfg: dict, comp: str, module: str | None = None) -> list[str]:
+def _object_flags(
+    cfg: dict, comp: str, module: str | None = None
+) -> list[str]:
     """Return the CLI flag lines for a single object."""
     parts: list[str] = []
 
@@ -193,7 +195,10 @@ def run(root: Path) -> None:
     module_owned = {obj for mod in mods for obj in C.module_objects(cfg, mod)}
     standalone = [c for c in C.components(cfg) if c not in module_owned]
 
-    lines: list[str] = ["#!/usr/bin/env sh\n", f"# Reconstructed from {C.FILENAME}\n\n"]
+    lines: list[str] = [
+        "#!/usr/bin/env sh\n",
+        f"# Reconstructed from {C.FILENAME}\n\n",
+    ]
 
     # ── new ──────────────────────────────────────────────────────────────────
     new_flags: list[str] = []
@@ -257,7 +262,9 @@ def run(root: Path) -> None:
         for p in C.properties(cfg, comp):
             flags = _property_flags(p, mod)
             prop_lines.append(
-                _render_cmd(["just-makeit", "property", comp, p["name"]], flags)
+                _render_cmd(
+                    ["just-makeit", "property", comp, p["name"]], flags
+                )
             )
     if prop_lines:
         lines += prop_lines
@@ -268,7 +275,9 @@ def run(root: Path) -> None:
     for mod in mods:
         for fn in C.module_functions(cfg, mod):
             flags = _function_flags(fn, mod)
-            fn_lines.append(_render_cmd(["just-makeit", "function", fn["name"]], flags))
+            fn_lines.append(
+                _render_cmd(["just-makeit", "function", fn["name"]], flags)
+            )
     if fn_lines:
         lines += fn_lines
         lines.append("\n")

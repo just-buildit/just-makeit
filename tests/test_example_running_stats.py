@@ -120,7 +120,10 @@ class TestStep5C:
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
         if sys.platform == "win32":
             exe = str(project / "demo.exe")
-            env = {**os.environ, "PATH": f"{build_dir};{os.environ.get('PATH', '')}"}
+            env = {
+                **os.environ,
+                "PATH": f"{build_dir};{os.environ.get('PATH', '')}",
+            }
         else:
             exe = "./demo"
             env = None

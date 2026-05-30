@@ -68,7 +68,9 @@ class TestAppTargetC:
 
     def test_no_state_vars_no_ctor_args(self, no_state_project):
         app_run(no_state_project, target="c", name="tool", object_="gen")
-        text = (no_state_project / "native" / "src" / "app" / "tool.c").read_text()
+        text = (
+            no_state_project / "native" / "src" / "app" / "tool.c"
+        ).read_text()
         assert "gen_create" in text
 
 

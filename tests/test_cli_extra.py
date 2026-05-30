@@ -44,7 +44,9 @@ class TestColorize:
         from just_makeit._cli import _colorize
 
         with patch("just_makeit._cli._color_supported", return_value=True):
-            result = _colorize("Usage: just-makeit  (alias: jm)  <command> [options]\n")
+            result = _colorize(
+                "Usage: just-makeit  (alias: jm)  <command> [options]\n"
+            )
             assert "Usage" in result
 
     def test_with_color_commands_section(self):
@@ -355,7 +357,9 @@ class TestPropertyDispatch:
             with patch("just_makeit._cli._warn_schema"):
                 _main(["property", "nco", "phase", "--writable"])
             _, kwargs = mock.call_args
-            assert kwargs.get("writable") is True or mock.call_args[0][5] is True
+            assert (
+                kwargs.get("writable") is True or mock.call_args[0][5] is True
+            )
 
     def test_property_field_flag(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

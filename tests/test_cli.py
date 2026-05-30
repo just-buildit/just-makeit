@@ -13,7 +13,12 @@ SRC = Path(__file__).parent.parent / "src"
 
 def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()", *args],
+        [
+            sys.executable,
+            "-c",
+            "from just_makeit._cli import main; main()",
+            *args,
+        ],
         cwd=cwd or Path.cwd(),
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
@@ -87,7 +92,9 @@ class TestNewCLI:
 
     def test_new_multiple_objects(self, tmp_path):
         dest = tmp_path / "dsp"
-        r = _cli("new", "dsp", str(dest), "--object", "fir", "--object", "biquad")
+        r = _cli(
+            "new", "dsp", str(dest), "--object", "fir", "--object", "biquad"
+        )
         assert r.returncode == 0
         assert (dest / "native" / "inc" / "fir" / "fir_core.h").exists()
         assert (dest / "native" / "inc" / "biquad" / "biquad_core.h").exists()
@@ -95,7 +102,9 @@ class TestNewCLI:
     def test_new_multiple_objects_both_in_init(self, tmp_path):
         dest = tmp_path / "dsp"
         _cli("new", "dsp", str(dest), "--object", "fir", "--object", "biquad")
-        init = (dest / "src" / "dsp" / "__init__.py").read_text(encoding="utf-8")
+        init = (dest / "src" / "dsp" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
         assert "Fir" in init
         assert "Biquad" in init
 
@@ -103,7 +112,15 @@ class TestNewCLI:
 class TestNewStateCLI:
     def test_state_flag_written_to_header(self, tmp_path):
         dest = tmp_path / "bpf"
-        _cli("new", "bpf", str(dest), "--object", "bpf", "--state", "cutoff:double")
+        _cli(
+            "new",
+            "bpf",
+            str(dest),
+            "--object",
+            "bpf",
+            "--state",
+            "cutoff:double",
+        )
         core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(
             encoding="utf-8"
         )
@@ -112,10 +129,18 @@ class TestNewStateCLI:
     def test_state_flag_with_default(self, tmp_path):
         dest = tmp_path / "bpf"
         r = _cli(
-            "new", "bpf", str(dest), "--object", "bpf", "--state", "gain:double:1.5"
+            "new",
+            "bpf",
+            str(dest),
+            "--object",
+            "bpf",
+            "--state",
+            "gain:double:1.5",
         )
         assert r.returncode == 0
-        c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text(encoding="utf-8")
+        c = (dest / "native" / "src" / "bpf" / "bpf_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "state->gain = 1.5;" in c
 
     def test_multi_state_flags(self, tmp_path):
@@ -204,9 +229,9 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "engine" / "engine_core.h").read_text(
-            encoding="utf-8"
-        )
+        core = (
+            dest / "native" / "inc" / "engine" / "engine_core.h"
+        ).read_text(encoding="utf-8")
         assert "double rate;" in core
 
 
@@ -240,7 +265,9 @@ class TestVoidArgTypeCLI:
             "--return-type",
             "float",
         )
-        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text(encoding="utf-8")
+        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "nco_step(const nco_state_t *state)" in h
 
     def test_object_void_arg_type(self, tmp_path):
@@ -269,7 +296,9 @@ class TestVoidArgTypeCLI:
             "float",
             cwd=dest,
         )
-        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text(encoding="utf-8")
+        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "osc_step(const osc_state_t *state)" in h
 
 
@@ -290,10 +319,18 @@ class TestVoidReturnCLI:
 
     def test_new_void_return_no_volatile_void_in_bench(self, tmp_path):
         dest = tmp_path / "sink"
-        _cli("new", "sink", str(dest), "--object", "sink", "--return-type", "void")
-        bench = (dest / "native" / "benchmarks" / "bench_sink_core.c").read_text(
-            encoding="utf-8"
+        _cli(
+            "new",
+            "sink",
+            str(dest),
+            "--object",
+            "sink",
+            "--return-type",
+            "void",
         )
+        bench = (
+            dest / "native" / "benchmarks" / "bench_sink_core.c"
+        ).read_text(encoding="utf-8")
         assert "volatile void" not in bench
 
     def test_object_void_return_type(self, tmp_path):
@@ -646,7 +683,13 @@ class TestArrayArgTypeCLI:
     def test_array_arg_bad_elem_type_exits_1(self, tmp_path):
         dest = tmp_path / "proc"
         r = _cli(
-            "new", "proc", str(dest), "--object", "filt", "--arg-type", "bogus_t[]"
+            "new",
+            "proc",
+            str(dest),
+            "--object",
+            "filt",
+            "--arg-type",
+            "bogus_t[]",
         )
         assert r.returncode == 1
         assert "array element type" in r.stderr
@@ -680,7 +723,9 @@ class TestArrayArgTypeCLI:
             "--return-type",
             "float",
         )
-        core_h = (dest / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float *x, size_t x_len" in core_h
 
     def test_array_arg_no_steps_in_pymethoddef(self, tmp_path):
@@ -714,7 +759,9 @@ class TestArrayArgTypeCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        ext = (dest / "native/src/dsp/dsp_ext_filt.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_filt.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_FROM_OTF" in ext
         assert "Filt_steps" not in ext
 
@@ -735,7 +782,9 @@ class TestNewBuildSystemCLI:
         assert (dest / "CMakeLists.txt").exists()
 
     def test_build_system_make_exits_0(self, tmp_path):
-        r = _cli("new", "gain", str(tmp_path / "gain"), "--build-system", "make")
+        r = _cli(
+            "new", "gain", str(tmp_path / "gain"), "--build-system", "make"
+        )
         assert r.returncode == 0
 
     def test_build_system_make_has_makefile(self, tmp_path):
@@ -749,7 +798,9 @@ class TestNewBuildSystemCLI:
         assert not (dest / "CMakeLists.txt").exists()
 
     def test_build_system_invalid_exits_1(self, tmp_path):
-        r = _cli("new", "gain", str(tmp_path / "gain"), "--build-system", "meson")
+        r = _cli(
+            "new", "gain", str(tmp_path / "gain"), "--build-system", "meson"
+        )
         assert r.returncode == 1
 
     def test_basic_deprecated_alias_still_works(self, tmp_path):
@@ -811,7 +862,9 @@ class TestModuleCommandCLI:
         _cli("new", "proj", str(dest))
         _cli("module", "dsp", cwd=dest)
         _cli("object", "nco", "--module", "dsp", cwd=dest)
-        bench_py = dest / "src" / "proj" / "dsp" / "benchmarks" / "bench_nco.py"
+        bench_py = (
+            dest / "src" / "proj" / "dsp" / "benchmarks" / "bench_nco.py"
+        )
         assert bench_py.exists()
         text = bench_py.read_text()
         assert "from proj.dsp import Nco" in text
@@ -822,8 +875,12 @@ class TestModuleCommandCLI:
         _cli("module", "dsp", cwd=dest)
         _cli("object", "nco", "--module", "dsp", cwd=dest)
         _cli("object", "mixer", "--module", "dsp", cwd=dest)
-        assert (dest / "src" / "proj" / "dsp" / "tests" / "test_nco.py").exists()
-        assert (dest / "src" / "proj" / "dsp" / "tests" / "test_mixer.py").exists()
+        assert (
+            dest / "src" / "proj" / "dsp" / "tests" / "test_nco.py"
+        ).exists()
+        assert (
+            dest / "src" / "proj" / "dsp" / "tests" / "test_mixer.py"
+        ).exists()
 
 
 class TestObjectNoStateCLI:
@@ -839,7 +896,9 @@ class TestObjectNoStateCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "gen", "--no-state", cwd=dest)
-        core_h = (dest / "native/inc/gen/gen_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/gen/gen_core.h").read_text(
+            encoding="utf-8"
+        )
         # struct frame is present but body is left as a manual-implementation placeholder
         assert "typedef struct" in core_h
         assert "IMPLEMENT" in core_h
@@ -847,7 +906,9 @@ class TestObjectNoStateCLI:
     def test_no_state_and_state_mutually_exclusive(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "gen", "--no-state", "--state", "x:double", cwd=dest)
+        r = _cli(
+            "object", "gen", "--no-state", "--state", "x:double", cwd=dest
+        )
         assert r.returncode == 1
         assert "mutually exclusive" in r.stderr
 
@@ -872,7 +933,9 @@ class TestObjectNoStepCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "sink", "--no-step", cwd=dest)
-        core_h = (dest / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/sink/sink_core.h").read_text(
+            encoding="utf-8"
+        )
         # inline function definition should be absent (docstring examples may mention it)
         assert "static inline" not in core_h
 
@@ -880,7 +943,9 @@ class TestObjectNoStepCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "sink", "--no-step", cwd=dest)
-        ext_c = (dest / "native/src/sink/sink_ext.c").read_text(encoding="utf-8")
+        ext_c = (dest / "native/src/sink/sink_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Sink_step" not in ext_c
 
     def test_no_step_persisted_in_toml(self, tmp_path):
@@ -922,7 +987,9 @@ class TestObjectMutableCLI:
             "float _Complex",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "nco_step(nco_state_t *state)" in core_h
         assert "nco_step(const nco_state_t *state)" not in core_h
 
@@ -938,7 +1005,9 @@ class TestObjectMutableCLI:
             "float _Complex",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "nco_step(const nco_state_t *state)" in core_h
 
     def test_mutable_scalar_arg_removes_const(self, tmp_path):
@@ -954,7 +1023,9 @@ class TestObjectMutableCLI:
             "float",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "filt_step(filt_state_t *state, float x)" in core_h
         assert "filt_step(const filt_state_t *state, float x)" not in core_h
 
@@ -988,14 +1059,18 @@ class TestObjectPerfCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "engine", "--perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "jm_perf.h" in core_h
 
     def test_perf_step_uses_jm_qualifiers(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "engine", "--perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
 
 
@@ -1041,7 +1116,9 @@ class TestMethodVariableOutputCLI:
             "--variable-output",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(
+            encoding="utf-8"
+        )
         assert "_execute_cf32_buf" in ext and "realloc" in ext
 
 
@@ -1108,7 +1185,9 @@ class TestMethodMultiOutputCLI:
             "uint8_t",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyTuple_Pack" in ext
 
 
@@ -1139,19 +1218,33 @@ class TestPropertyCLI:
     def test_property_type_adds_getter_to_ext_c(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli("property", "engine", "gain", "--type", "double", cwd=dest)
-        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "gain" in ext
         assert "PyGetSetDef" in ext or "getset" in ext.lower()
 
     def test_property_bad_type_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)
-        r = _cli("property", "engine", "gain", "--type", "not_a_type", cwd=dest)
+        r = _cli(
+            "property", "engine", "gain", "--type", "not_a_type", cwd=dest
+        )
         assert r.returncode == 1
 
     def test_property_writable_adds_setter(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "engine", "gain", "--type", "double", "--writable", cwd=dest)
-        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        _cli(
+            "property",
+            "engine",
+            "gain",
+            "--type",
+            "double",
+            "--writable",
+            cwd=dest,
+        )
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert (
             "set_gain" in ext
             or "gain_set" in ext
@@ -1161,20 +1254,42 @@ class TestPropertyCLI:
 
     def test_property_writable_has_setter_decl_in_core_h(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "engine", "gain", "--type", "double", "--writable", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        _cli(
+            "property",
+            "engine",
+            "gain",
+            "--type",
+            "double",
+            "--writable",
+            cwd=dest,
+        )
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "set_gain" in core_h or "gain" in core_h
 
     def test_property_readonly_no_setter_in_ext_c(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli("property", "engine", "dropped", "--type", "size_t", cwd=dest)
-        ext = (dest / "native/src/engine/engine_ext.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/engine/engine_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "NULL" in ext  # readonly slot is NULL setter
 
     def test_property_field_adds_struct_member(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "engine", "rate", "--type", "double", "--field", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        _cli(
+            "property",
+            "engine",
+            "rate",
+            "--type",
+            "double",
+            "--field",
+            cwd=dest,
+        )
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double rate;" in core_h
 
     def test_property_module_flag_accepted(self, tmp_path):
@@ -1207,7 +1322,9 @@ class TestPropertyCLI:
             "uint32_t",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(
+            encoding="utf-8"
+        )
         assert "phase" in ext
 
 
@@ -1244,7 +1361,9 @@ class TestFunctionReturnTypeCLI:
             "size_t",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "size_t" in core_h
         assert "get_size" in core_h
 
@@ -1259,7 +1378,9 @@ class TestFunctionReturnTypeCLI:
             "size_t",
             cwd=dest,
         )
-        core_c = (dest / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        core_c = (dest / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "size_t" in core_c
         assert "get_size" in core_c
 
@@ -1317,7 +1438,13 @@ class TestAddParamCLI:
     def _setup(tmp_path):
         dest = tmp_path / "proj"
         _cli(
-            "new", "proj", str(dest), "--object", "norm", "--state", "scale:double:1.0"
+            "new",
+            "proj",
+            str(dest),
+            "--object",
+            "norm",
+            "--state",
+            "scale:double:1.0",
         )
         return dest
 
@@ -1329,7 +1456,9 @@ class TestAddParamCLI:
     def test_add_param_appears_in_header(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli("add", "--param", "offset:double:0.0", cwd=dest)
-        core_h = (dest / "native/inc/norm/norm_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/norm/norm_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double offset" in core_h or "offset" in core_h
 
     def test_add_param_recorded_in_config(self, tmp_path):
@@ -1366,7 +1495,9 @@ class TestPerfCommandCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--object", "engine")
         _cli("perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
 
 
@@ -1467,7 +1598,9 @@ class TestMethodOutTypeCLI:
             "void",
             cwd=dest,
         )
-        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_EMPTY" in ext
 
     def test_out_type_bad_type_exits_1(self, tmp_path):
@@ -1505,7 +1638,9 @@ class TestMethodOutTypeCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(encoding="utf-8")
+        ext = (dest / "native/src/dsp/dsp_ext_conv.c").read_text(
+            encoding="utf-8"
+        )
         assert "/ 2" in ext
 
     def test_out_divisor_non_positive_exits_1(self, tmp_path):
@@ -1572,14 +1707,30 @@ class TestNewModuleRepeatableCLI:
 
     def test_two_modules_both_created(self, tmp_path):
         dest = tmp_path / "proj"
-        r = _cli("new", "proj", str(dest), "--module", "filter", "--module", "source")
+        r = _cli(
+            "new",
+            "proj",
+            str(dest),
+            "--module",
+            "filter",
+            "--module",
+            "source",
+        )
         assert r.returncode == 0
         assert (dest / "native/inc/filter/filter_core.h").exists()
         assert (dest / "native/inc/source/source_core.h").exists()
 
     def test_two_modules_both_in_toml(self, tmp_path):
         dest = tmp_path / "proj"
-        _cli("new", "proj", str(dest), "--module", "filter", "--module", "source")
+        _cli(
+            "new",
+            "proj",
+            str(dest),
+            "--module",
+            "filter",
+            "--module",
+            "source",
+        )
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[module.filter]" in toml
         assert "[module.source]" in toml
@@ -1591,7 +1742,13 @@ class TestScriptCLI:
     def test_script_exits_0(self, tmp_path):
         dest = tmp_path / "proj"
         _cli(
-            "new", "proj", str(dest), "--object", "engine", "--state", "rate:double:1.0"
+            "new",
+            "proj",
+            str(dest),
+            "--object",
+            "engine",
+            "--state",
+            "rate:double:1.0",
         )
         r = _cli("script", cwd=dest)
         assert r.returncode == 0
@@ -1643,7 +1800,9 @@ class TestScriptCLI:
         r = _cli("script", cwd=dest)
         assert "--mutable" in r.stdout
 
-    def test_script_return_type_emitted_when_differs_from_arg_type(self, tmp_path):
+    def test_script_return_type_emitted_when_differs_from_arg_type(
+        self, tmp_path
+    ):
         """--arg-type void --return-type 'float _Complex' must appear explicitly."""
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
@@ -1663,7 +1822,13 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli(
-            "object", "filt", "--arg-type", "float", "--return-type", "float", cwd=dest
+            "object",
+            "filt",
+            "--arg-type",
+            "float",
+            "--return-type",
+            "float",
+            cwd=dest,
         )
         r = _cli("script", cwd=dest)
         assert "--return-type float" not in r.stdout
@@ -1693,7 +1858,15 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "nco", cwd=dest)
-        _cli("property", "nco", "phase", "--type", "uint32_t", "--writable", cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "phase",
+            "--type",
+            "uint32_t",
+            "--writable",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "just-makeit property nco phase" in r.stdout
         assert "--writable" in r.stdout
@@ -1702,7 +1875,13 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--module", "dsp")
         _cli(
-            "function", "dsp_init", "--module", "dsp", "--doc", "Initialize.", cwd=dest
+            "function",
+            "dsp_init",
+            "--module",
+            "dsp",
+            "--doc",
+            "Initialize.",
+            cwd=dest,
         )
         r = _cli("script", cwd=dest)
         assert "just-makeit function dsp_init" in r.stdout
@@ -1729,7 +1908,9 @@ class TestScriptCLI:
     def test_script_init_param(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
         r = _cli("script", cwd=dest)
         assert "--init-param" in r.stdout
         assert "n:int:16" in r.stdout
@@ -1761,7 +1942,9 @@ class TestScriptCLI:
             cwd=dest,
         )
         r = _cli("script", cwd=dest)
-        assert '--out-type "float"' in r.stdout or "--out-type float" in r.stdout
+        assert (
+            '--out-type "float"' in r.stdout or "--out-type float" in r.stdout
+        )
 
     def test_script_method_out_divisor(self, tmp_path):
         dest = tmp_path / "proj"
@@ -1830,7 +2013,15 @@ class TestScriptCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "nco", cwd=dest)
-        _cli("property", "nco", "phase", "--type", "uint32_t", "--field", cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "phase",
+            "--type",
+            "uint32_t",
+            "--field",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
 
@@ -1870,7 +2061,9 @@ class TestInitParamCLI:
     def test_init_param_exits_0(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        r = _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
         assert r.returncode == 0
 
     def test_init_param_composes_with_state(self, tmp_path):
@@ -1903,8 +2096,12 @@ class TestInitParamCLI:
     def test_init_param_constructor_arg_in_core_c(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
-        core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
+        _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
+        core_c = (dest / "native/src/gen/gen_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "int n" in core_c
 
     def test_multiple_init_params(self, tmp_path):
@@ -1921,14 +2118,18 @@ class TestInitParamCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        core_c = (dest / "native/src/gen/gen_core.c").read_text(encoding="utf-8")
+        core_c = (dest / "native/src/gen/gen_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "int n" in core_c
         assert "int order" in core_c
 
     def test_init_param_persisted_in_toml(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
         toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[[gen.init_params]]" in toml
         assert 'name = "n"' in toml
@@ -1936,7 +2137,9 @@ class TestInitParamCLI:
     def test_init_param_default_optional_in_python(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
         ext_c = (dest / "native/src/gen/gen_ext.c").read_text(encoding="utf-8")
         assert "16" in ext_c
 
@@ -1964,7 +2167,9 @@ class TestImplCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "return 0.0f" in core_h
 
     def test_impl_method(self, tmp_path):
@@ -1987,11 +2192,15 @@ class TestImplCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        core_c = (dest / "native/src/proc/proc_core.c").read_text(encoding="utf-8")
+        core_c = (dest / "native/src/proc/proc_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "/* body */" in core_c
 
     def test_impl_missing_file_exits_1(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "nco", "--impl", "/nonexistent/file.c::my_func", cwd=dest)
+        r = _cli(
+            "object", "nco", "--impl", "/nonexistent/file.c::my_func", cwd=dest
+        )
         assert r.returncode == 1

@@ -152,12 +152,12 @@ a branch and a PR. Direct pushes to `main` are reserved for release mechanics
 
 ### Branch naming
 
-| Prefix | Use |
-|---|---|
-| `feat/` | new command, flag, or generated output |
-| `fix/` | bug fix |
-| `docs/` | documentation only |
-| `chore/` | tooling, CI, deps, version bump |
+| Prefix   | Use                                    |
+| -------- | -------------------------------------- |
+| `feat/`  | new command, flag, or generated output |
+| `fix/`   | bug fix                                |
+| `docs/`  | documentation only                     |
+| `chore/` | tooling, CI, deps, version bump        |
 
 ```sh
 git checkout -b feat/out-type-scalar-param
@@ -170,7 +170,7 @@ gh pr create --fill
 - CI must be green before merging (`ci.yml` runs on every PR).
 - Keep PRs focused — one logical change per PR makes bisect and revert easy.
 - The PR title becomes the CHANGELOG entry; write it accordingly
-  (`fix: jm apply drops extra_link_libs on regeneration`).
+    (`fix: jm apply drops extra_link_libs on regeneration`).
 
 ### Merging
 
@@ -181,7 +181,7 @@ Squash-merge PRs to keep `main` history linear. After merge, delete the branch.
 Only two things skip the PR process:
 
 1. **Release bump** — `chore: bump to X.Y.Z` (pyproject.toml + CHANGELOG only).
-2. **Hotfix** — a one-liner fix that is urgent and trivially correct (rare).
+1. **Hotfix** — a one-liner fix that is urgent and trivially correct (rare).
 
 ______________________________________________________________________
 
@@ -199,7 +199,7 @@ ______________________________________________________________________
 
 | Workflow       | Trigger                | What it does                                                                                                              |
 | -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14; separate `coverage` job uploads to Codecov                                |
+| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14; separate `coverage` job uploads to Codecov                                 |
 | `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                |
 | `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification |
 | `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                            |
@@ -221,29 +221,29 @@ ______________________________________________________________________
     git checkout -b feat/my-feature   # or fix/, docs/, chore/
     ```
 
-2. Make your changes. Commit early and often on the branch.
+1. Make your changes. Commit early and often on the branch.
 
-3. Push and open a PR:
+1. Push and open a PR:
 
     ```sh
     git push -u origin feat/my-feature
     gh pr create
     ```
 
-4. Wait for CI to go green on the PR. Fix any failures before merging.
+1. Wait for CI to go green on the PR. Fix any failures before merging.
 
-5. Merge to `main` (squash or merge commit — both fine).
+1. Merge to `main` (squash or merge commit — both fine).
 
-6. Delete the branch after merge.
+1. Delete the branch after merge.
 
 ### Branch naming
 
-| Prefix  | When to use                                |
-| ------- | ------------------------------------------ |
-| `feat/` | New command, flag, or template feature     |
-| `fix/`  | Bug fix                                    |
-| `docs/` | Docs-only changes                          |
-| `chore/`| Deps, CI config, version bumps, formatting |
+| Prefix   | When to use                                |
+| -------- | ------------------------------------------ |
+| `feat/`  | New command, flag, or template feature     |
+| `fix/`   | Bug fix                                    |
+| `docs/`  | Docs-only changes                          |
+| `chore/` | Deps, CI config, version bumps, formatting |
 
 ______________________________________________________________________
 

@@ -1,6 +1,5 @@
 """Unit tests for just_makeit._script — exercises all helper functions."""
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +9,7 @@ from just_makeit import _config as C
 
 
 # ── minimal TOML helpers ──────────────────────────────────────────────────────
+
 
 def _write_toml(root: Path, text: str) -> None:
     (root / C.FILENAME).write_text(text, encoding="utf-8")
@@ -26,7 +26,9 @@ pytest_benchmark = "false"
 schema = "6"
 """
 
-_WITH_COMPONENT = _MINIMAL + """
+_WITH_COMPONENT = (
+    _MINIMAL
+    + """
 [engine]
 arg_type = "float"
 return_type = "float"
@@ -39,8 +41,11 @@ name = "gain"
 type = "double"
 default = "1.0"
 """
+)
 
-_WITH_MODULE = _MINIMAL + """
+_WITH_MODULE = (
+    _MINIMAL
+    + """
 [module.dsp]
 objects = ["nco"]
 
@@ -51,9 +56,11 @@ mutable = "false"
 no_state = "false"
 no_step = "false"
 """
+)
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
+
 
 class TestQ:
     def test_no_quote_plain(self):
@@ -114,6 +121,7 @@ class TestRenderCmd:
 
 # ── method flags ─────────────────────────────────────────────────────────────
 
+
 class TestMethodFlags:
     def test_empty_no_module(self):
         assert _script._method_flags({}, None) == []
@@ -166,6 +174,7 @@ class TestMethodFlags:
 
 # ── property flags ────────────────────────────────────────────────────────────
 
+
 class TestPropertyFlags:
     def test_type_flag(self):
         flags = _script._property_flags({"type": "double"}, None)
@@ -176,7 +185,9 @@ class TestPropertyFlags:
         assert any("--type" in f and "size_t" in f for f in flags)
 
     def test_writable(self):
-        flags = _script._property_flags({"type": "double", "writable": True}, None)
+        flags = _script._property_flags(
+            {"type": "double", "writable": True}, None
+        )
         assert any("--writable" in f for f in flags)
 
     def test_no_writable_by_default(self):
@@ -184,7 +195,9 @@ class TestPropertyFlags:
         assert not any("--writable" in f for f in flags)
 
     def test_field(self):
-        flags = _script._property_flags({"type": "double", "field": True}, None)
+        flags = _script._property_flags(
+            {"type": "double", "field": True}, None
+        )
         assert any("--field" in f for f in flags)
 
     def test_with_module(self):
@@ -193,6 +206,7 @@ class TestPropertyFlags:
 
 
 # ── function flags ────────────────────────────────────────────────────────────
+
 
 class TestFunctionFlags:
     def test_always_has_module(self):
@@ -218,6 +232,7 @@ class TestFunctionFlags:
 
 
 # ── run() ─────────────────────────────────────────────────────────────────────
+
 
 class TestRun:
     def test_no_toml_exits(self, tmp_path):

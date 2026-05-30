@@ -47,7 +47,10 @@ new_linear = (
     "}"
 )
 if old_linear not in text:
-    print("ERROR: linear_to_db stub not found — already patched?", file=sys.stderr)
+    print(
+        "ERROR: linear_to_db stub not found — already patched?",
+        file=sys.stderr,
+    )
     sys.exit(1)
 text = text.replace(old_linear, new_linear)
 core_c.write_text(text, encoding="utf-8")
@@ -90,12 +93,12 @@ print(f"patched {core_h}")
 gain_h = pathlib.Path("native/inc/gain/gain_core.h")
 text = gain_h.read_text(encoding="utf-8")
 
-old_gain = (
-    "    (void)state; /* TODO: implement using state variables */\n    return (float)x;"
-)
+old_gain = "    (void)state; /* TODO: implement using state variables */\n    return (float)x;"
 new_gain = "    return state->gain * x;"
 if old_gain not in text:
-    print("ERROR: gain_step stub not found — already patched?", file=sys.stderr)
+    print(
+        "ERROR: gain_step stub not found — already patched?", file=sys.stderr
+    )
     sys.exit(1)
 text = text.replace(old_gain, new_gain)
 gain_h.write_text(text, encoding="utf-8")

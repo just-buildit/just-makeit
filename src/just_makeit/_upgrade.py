@@ -35,13 +35,15 @@ from . import _render as R
 @dataclass
 class AddFile:
     """Write a rendered template file if it does not already exist."""
-    path: str           # relative path; may contain <<package>>/<<project>>
+
+    path: str  # relative path; may contain <<package>>/<<project>>
     template_attr: str  # attribute name on the _templates module
 
 
 @dataclass
 class AddTomlKey:
     """Insert a key with a default value into a top-level TOML section if absent."""
+
     section: str  # top-level section name, e.g. "project"
     key: str
     default: str
@@ -199,21 +201,21 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         version = C.project_version(cfg)
         perf = C.is_perf(cfg)
         for comp in C.components(cfg):
-            bench_c = (
-                root / "native" / "benchmarks" / f"bench_{comp}_core.c"
-            )
+            bench_c = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
             if not bench_c.exists():
                 continue
             no_step = C.is_no_step(cfg, comp)
             tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
             comp_ctx: dict = {"component": comp, "Component": comp.title()}
-            comp_ctx.update({
-                "package": pkg,
-                "PACKAGE": pkg.upper(),
-                "project": pkg.replace("_", "-"),
-                "project_underscore": pkg,
-                "version": version,
-            })
+            comp_ctx.update(
+                {
+                    "package": pkg,
+                    "PACKAGE": pkg.upper(),
+                    "project": pkg.replace("_", "-"),
+                    "project_underscore": pkg,
+                    "version": version,
+                }
+            )
             arg_type = C.arg_type(cfg, comp)
             return_type = C.return_type(cfg, comp)
             comp_ctx.update(Ctx.make_sample_ctx(arg_type, return_type))

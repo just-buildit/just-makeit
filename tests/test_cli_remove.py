@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 def _run(args):
     from just_makeit import _cli_remove
+
     _cli_remove.run(args)
 
 

@@ -2,12 +2,12 @@
 
 import sys
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def _main(args):
-    import sys
     from just_makeit._cli import main
+
     with patch.object(sys, "argv", ["jm"] + args):
         main()
 

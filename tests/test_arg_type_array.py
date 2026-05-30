@@ -63,7 +63,9 @@ class TestCoreHeader:
         assert re.search(r"\bvoid\b.*proc_step", h, re.DOTALL)
 
     def test_step_returns_scalar_when_explicit(self, standalone_scalar_return):
-        h = (standalone_scalar_return / "native/inc/peak/peak_core.h").read_text()
+        h = (
+            standalone_scalar_return / "native/inc/peak/peak_core.h"
+        ).read_text()
         assert "const float *x, size_t x_len" in h
         assert re.search(r"\bfloat\b.*peak_step", h, re.DOTALL)
 
@@ -107,7 +109,9 @@ class TestExtC:
 
     def test_complex_elem_npy_enum(self, in_module_void):
         # NPY enum lives in the per-object fragment, not the aggregator.
-        ext = (in_module_void / "native/src/filter/filter_ext_sink.c").read_text()
+        ext = (
+            in_module_void / "native/src/filter/filter_ext_sink.c"
+        ).read_text()
         assert "NPY_CFLOAT" in ext or "NPY_COMPLEX64" in ext
 
 
@@ -120,7 +124,9 @@ class TestPytestFile:
         assert "np.zeros" in t or "np.array" in t or "dtype=np.float32" in t
 
     def test_uses_np_array_scalar_return(self, standalone_scalar_return):
-        t = (standalone_scalar_return / "src/dsp/tests/test_peak.py").read_text()
+        t = (
+            standalone_scalar_return / "src/dsp/tests/test_peak.py"
+        ).read_text()
         assert "np.zeros" in t or "dtype=np.float32" in t
 
 
@@ -147,7 +153,13 @@ class TestPyi:
 class TestNoPlaceholders:
     def _check(self, root):
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
 
@@ -176,3 +188,86 @@ class TestConfig:
 
         cfg = load(standalone_scalar_return)
         assert cfg_return_type(cfg, "peak") == "float"
+
+
+# ── Array return type is rejected cleanly ────────────────────────────────────
+
+
+class TestArrayReturnRejected:
+    """v0.14 foot-gun #2: a hand-authored array return type (the T[] -> T[]
+    'blockwise' shape) used to die with a raw `KeyError: 'float _Complex[]'`
+    deep in make_sample_ctx. It now raises a clean, actionable ValueError
+    until the blockwise preset lands."""
+
+    def test_make_sample_ctx_raises_valueerror(self):
+        from just_makeit._context._sample import make_sample_ctx
+
+        with pytest.raises(ValueError, match="array return type"):
+            make_sample_ctx("float _Complex[]", "float _Complex[]")
+
+    def test_scalar_array_arg_still_ok(self):
+        """Array input with scalar/void return is unaffected."""
+        from just_makeit._context._sample import make_sample_ctx
+
+        ctx = make_sample_ctx("float[]", "float")
+        assert ctx["return_ctype"] == "float"
+
+    def test_apply_reports_clean_error(self, tmp_path, capsys):
+        """End-to-end: array return type in hand-authored TOML surfaces a
+        clean `error:` line through jm apply, not a traceback."""
+        root = tmp_path / "blk"
+        new_run("blk", root)
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[filt]\narg_type = "float _Complex[]"\n'
+            'return_type = "float _Complex[]"\n',
+            encoding="utf-8",
+        )
+        from just_makeit import _apply
+
+        with pytest.raises(SystemExit):
+            _apply.run(root)
+        err = capsys.readouterr().err
+        assert "array return type" in err
+
+
+# ── bool scalar type ─────────────────────────────────────────────────────────
+
+
+class TestBoolScalarType:
+    """`bool` is a registered scalar type but `np.bool_` was missing from
+    _NP_ENUM, so make_sample_ctx KeyError'd on a bool arg/return. And the
+    generated C used `bool` without <stdbool.h>, so even past the KeyError
+    the scaffold didn't compile. Both are now fixed."""
+
+    def test_make_sample_ctx_bool_no_keyerror(self):
+        from just_makeit._context._sample import make_sample_ctx
+
+        ctx = make_sample_ctx("bool", "bool")
+        assert ctx["in_np_enum"] == "NPY_BOOL"
+        assert ctx["out_np_enum"] == "NPY_BOOL"
+
+    def test_np_enum_has_bool(self):
+        from just_makeit._types import _CTYPE_META, _NP_ENUM
+
+        # Every registered scalar's py_type must have an _NP_ENUM entry.
+        for key, meta in _CTYPE_META.items():
+            assert meta["py_type"] in _NP_ENUM, (
+                f"_CTYPE_META[{key!r}].py_type={meta['py_type']!r} "
+                f"is missing from _NP_ENUM"
+            )
+
+    def test_common_header_includes_stdbool(self):
+        from just_makeit import _render as R
+
+        assert "#include <stdbool.h>" in R.CLIB_COMMON_H
+
+    def test_bool_object_scaffolds(self, tmp_path):
+        from just_makeit._object import run as object_run
+
+        root = tmp_path / "bp"
+        new_run("bp", root)
+        object_run(root, "flg", None, arg_type="bool", return_type="bool")
+        core = (root / "native" / "inc" / "flg" / "flg_core.h").read_text()
+        assert "bool" in core

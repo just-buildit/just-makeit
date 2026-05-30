@@ -48,7 +48,9 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: {tok} '{val}' must be name:type", file=sys.stderr)
+                print(
+                    f"error: {tok} '{val}' must be name:type", file=sys.stderr
+                )
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
             if T.is_array_param_type(ptype):
@@ -116,7 +118,9 @@ def run(args: list[str]) -> None:
         elif tok == "--result-field":
             i += 1
             if i >= len(remaining):
-                print("error: --result-field requires name:type", file=sys.stderr)
+                print(
+                    "error: --result-field requires name:type", file=sys.stderr
+                )
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:

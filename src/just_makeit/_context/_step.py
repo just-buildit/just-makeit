@@ -667,11 +667,15 @@ def make_step_ctx(
     _step_call = "obj.step()" if _is_void_arg else f"obj.step({_in_val})"
     _step_doc_lines.append(f"    >>> {_step_call}")
     if not is_void_return and return_type in _CTYPE_META:
-        _step_doc_lines.append(f"    {_CTYPE_META[return_type].get('py_zero', '0')}")
+        _step_doc_lines.append(
+            f"    {_CTYPE_META[return_type].get('py_zero', '0')}"
+        )
 
     if steps_ext_fn:
         if _is_void_arg:
-            _steps_sig = "steps(n=1) -> ndarray" if not is_void_return else "steps(n=1)"
+            _steps_sig = (
+                "steps(n=1) -> ndarray" if not is_void_return else "steps(n=1)"
+            )
             _steps_desc = (
                 "Generate n output samples."
                 if not is_void_return
@@ -681,7 +685,9 @@ def make_step_ctx(
         else:
             _steps_sig = "steps(x[, out]) -> ndarray"
             _steps_desc = "Process a block of samples in batch."
-            _steps_call = f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
+            _steps_call = (
+                f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
+            )
         _steps_doc_lines: list[str] = [_steps_sig, "", _steps_desc, ""]
         _steps_doc_lines.append("    >>> import numpy as np")
         _steps_doc_lines += [*_from_pkg, _obj_create, _steps_call]
@@ -763,7 +769,9 @@ def make_step_ctx(
     out_py_isinstance = ctx.get("out_py_isinstance", "float")
     in_np_dtype = ctx.get("in_np_dtype", "np.float32")
     out_np_dtype = ctx.get("out_np_dtype", "np.float32")
-    _step_call_test = "obj.step()" if _is_void_arg else f"obj.step({in_py_test_val})"
+    _step_call_test = (
+        "obj.step()" if _is_void_arg else f"obj.step({in_py_test_val})"
+    )
     _assert_y = (
         "assert y is None"
         if is_void_return

@@ -2,7 +2,7 @@
 
 When a new version of `just-makeit` ships features that change the project
 scaffold — new files, new `just-makeit.toml` keys, new build targets — existing
-projects do not automatically get those additions.  The upgrade system handles
+projects do not automatically get those additions. The upgrade system handles
 this safely and idempotently.
 
 ______________________________________________________________________
@@ -18,7 +18,7 @@ version = "0.1.0"
 schema  = "2"
 ```
 
-When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances.  If your
+When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances. If your
 project's schema is behind, `just-makeit` will remind you whenever you run a
 command that modifies the project:
 
@@ -61,14 +61,14 @@ ______________________________________________________________________
 
 ## Safety guarantees
 
-- **Existing files are never overwritten.**  If `zensical.toml` or `docs/index.md`
-  already exist — whether you created them manually or a previous run wrote them —
-  the upgrade skips those files silently.
-- **`just-makeit.toml` keys are only added, never removed.**  If a key the
-  migration would add is already present (even with a different value), it is
-  left untouched.
-- **Idempotent.**  Running `just-makeit upgrade` twice is safe — the second run
-  is always a no-op.
+- **Existing files are never overwritten.** If `zensical.toml` or `docs/index.md`
+    already exist — whether you created them manually or a previous run wrote them —
+    the upgrade skips those files silently.
+- **`just-makeit.toml` keys are only added, never removed.** If a key the
+    migration would add is already present (even with a different value), it is
+    left untouched.
+- **Idempotent.** Running `just-makeit upgrade` twice is safe — the second run
+    is always a no-op.
 
 ______________________________________________________________________
 
@@ -78,13 +78,13 @@ ______________________________________________________________________
 
 Adds documentation scaffolding.
 
-| File            | Purpose                                              |
-| --------------- | ---------------------------------------------------- |
+| File            | Purpose                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `zensical.toml` | [Zensical](https://zensical.org) docs configuration. `make docs` builds the site; `zensical serve` hot-reloads it. |
-| `docs/index.md` | Project home page stub.                              |
-| `docs/api.md`   | Auto-generated Python API reference page.            |
+| `docs/index.md` | Project home page stub.                                                                                            |
+| `docs/api.md`   | Auto-generated Python API reference page.                                                                          |
 
-These files are starter stubs — edit them freely after the upgrade.  See
+These files are starter stubs — edit them freely after the upgrade. See
 [`make docs` and `make coverage`](commands/build.md) for the build targets
 that use them.
 
@@ -94,5 +94,5 @@ ______________________________________________________________________
 
 If you ship a library built on `just-makeit` and your users upgrade jm
 independently, remind them to run `just-makeit upgrade` after updating the
-tool.  The warning printed by commands like `just-makeit object` is there to
+tool. The warning printed by commands like `just-makeit object` is there to
 catch this automatically.

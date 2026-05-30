@@ -65,13 +65,17 @@ def run(root: Path) -> None:
         ],
     )
 
-    frag_fir = (dest / "native" / "src" / "filter" / "filter_ext_fir.c").read_text()
+    frag_fir = (
+        dest / "native" / "src" / "filter" / "filter_ext_fir.c"
+    ).read_text()
     agg = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text()
     assert "FirObject" in frag_fir
     assert "PyInit_filter" in agg
     assert "BiquadObject" not in frag_fir  # not added yet
 
-    init_py = (dest / "src" / "my_filters" / "filter" / "__init__.py").read_text()
+    init_py = (
+        dest / "src" / "my_filters" / "filter" / "__init__.py"
+    ).read_text()
     assert "Fir" in init_py
     assert "Biquad" not in init_py
 
@@ -93,7 +97,9 @@ def run(root: Path) -> None:
         return_type="float",
     )
 
-    frag_fir = (dest / "native" / "src" / "filter" / "filter_ext_fir.c").read_text()
+    frag_fir = (
+        dest / "native" / "src" / "filter" / "filter_ext_fir.c"
+    ).read_text()
     frag_biquad = (
         dest / "native" / "src" / "filter" / "filter_ext_biquad.c"
     ).read_text()
@@ -102,11 +108,15 @@ def run(root: Path) -> None:
     assert "BiquadObject" in frag_biquad
     assert "PyInit_filter" in agg
 
-    init_py = (dest / "src" / "my_filters" / "filter" / "__init__.py").read_text()
+    init_py = (
+        dest / "src" / "my_filters" / "filter" / "__init__.py"
+    ).read_text()
     assert "Fir" in init_py
     assert "Biquad" in init_py
 
-    cmake_txt = (dest / "native" / "src" / "filter" / "CMakeLists.txt").read_text()
+    cmake_txt = (
+        dest / "native" / "src" / "filter" / "CMakeLists.txt"
+    ).read_text()
     assert "fir_core" in cmake_txt
     assert "biquad_core" in cmake_txt
 

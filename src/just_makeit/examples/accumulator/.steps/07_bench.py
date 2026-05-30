@@ -1,4 +1,5 @@
 """Measure AccF32.steps() and AccCf64.steps() throughput (samples/sec)."""
+
 import sys
 import timeit
 

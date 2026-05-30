@@ -132,9 +132,12 @@ def run(root: Path) -> None:
     method_names = [m["name"] for m in cfg.get("osc", {}).get("methods", [])]
     assert "tune" in method_names, "tune method should exist before removal"
     prop_names = [p["name"] for p in cfg.get("env", {}).get("properties", [])]
-    assert "clipping" in prop_names, "clipping property should exist before removal"
+    assert "clipping" in prop_names, (
+        "clipping property should exist before removal"
+    )
     fn_names = [
-        f["name"] for f in cfg.get("module", {}).get("synth", {}).get("functions", [])
+        f["name"]
+        for f in cfg.get("module", {}).get("synth", {}).get("functions", [])
     ]
     assert "poly_detune" in fn_names, "poly_detune should exist before removal"
 
@@ -145,20 +148,26 @@ def run(root: Path) -> None:
     cfg = C.load(proj)
     method_names = [m["name"] for m in cfg.get("osc", {}).get("methods", [])]
     # The TOML entry must be gone — osc no longer owns a tune method.
-    assert "tune" not in method_names, "tune must be absent from TOML after removal"
+    assert "tune" not in method_names, (
+        "tune must be absent from TOML after removal"
+    )
 
     # For module objects the PyMethodDef entries live in the per-object fragment
     # (synth_ext_osc.c), not in the aggregated synth_ext.c. Osc_tune is the
     # binding name generated for the tune method; its absence from the fragment
     # confirms the method table was rebuilt from the updated config.
-    frag_osc = (proj / "native" / "src" / "synth" / "synth_ext_osc.c").read_text()
+    frag_osc = (
+        proj / "native" / "src" / "synth" / "synth_ext_osc.c"
+    ).read_text()
     assert "Osc_tune" not in frag_osc, (
         "Python binding Osc_tune must not appear in regenerated osc fragment"
     )
     # The aggregated synth_ext.c uses OscType (not OscObject) and must still
     # include the osc fragment — the object type registration must survive.
     ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text()
-    assert "OscType" in ext, "OscType must still be registered in aggregated ext.c"
+    assert "OscType" in ext, (
+        "OscType must still be registered in aggregated ext.c"
+    )
     assert '"synth_ext_osc.c"' in ext, (
         "osc fragment include must remain in synth_ext.c after method removal"
     )
@@ -177,14 +186,18 @@ def run(root: Path) -> None:
     # (synth_ext_env.c). A read-only property produces an entry named
     # "clipping" in that table; its absence confirms the getset table was
     # rebuilt from the updated property list.
-    frag_env = (proj / "native" / "src" / "synth" / "synth_ext_env.c").read_text()
+    frag_env = (
+        proj / "native" / "src" / "synth" / "synth_ext_env.c"
+    ).read_text()
     assert '"clipping"' not in frag_env, (
         '"clipping" PyGetSetDef entry must be gone from regenerated env fragment'
     )
     # The aggregated synth_ext.c must still register EnvType — the object
     # itself was not removed, only one property on it.
     ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text()
-    assert "EnvType" in ext, "EnvType must still be registered in aggregated ext.c"
+    assert "EnvType" in ext, (
+        "EnvType must still be registered in aggregated ext.c"
+    )
 
     # ── 4. Remove module-level function poly_detune from synth ────────────────
 
@@ -192,7 +205,8 @@ def run(root: Path) -> None:
 
     cfg = C.load(proj)
     fn_names = [
-        f["name"] for f in cfg.get("module", {}).get("synth", {}).get("functions", [])
+        f["name"]
+        for f in cfg.get("module", {}).get("synth", {}).get("functions", [])
     ]
     # The TOML functions list must be empty (or absent) after the only function
     # is removed — no stale entry should remain.
@@ -213,7 +227,9 @@ def run(root: Path) -> None:
     cfg = C.load(proj)
     state_names = [s["name"] for s in cfg.get("env", {}).get("state", [])]
     # decay is gone; the remaining fields must be intact.
-    assert "decay" not in state_names, "decay must be absent from TOML after removal"
+    assert "decay" not in state_names, (
+        "decay must be absent from TOML after removal"
+    )
     # attack and level were not removed — confirm the TOML preserved them.
     assert "attack" in state_names, "attack must survive decay removal"
     assert "level" in state_names, "level must survive decay removal"
@@ -222,7 +238,9 @@ def run(root: Path) -> None:
     # and the constructor signature reflect only the surviving fields.
     core_h = (proj / "native" / "inc" / "env" / "env_core.h").read_text()
     # The struct field and any constructor default for "decay" are gone.
-    assert "decay" not in core_h, "'decay' must not appear in regenerated env_core.h"
+    assert "decay" not in core_h, (
+        "'decay' must not appear in regenerated env_core.h"
+    )
     # The surviving fields must still be present in the struct.
     assert "attack" in core_h, "attack field must remain in env_core.h"
 
@@ -243,7 +261,9 @@ def run(root: Path) -> None:
         "native/src/osc/ must be deleted after object removal"
     )
     # env is a sibling in the same module and must be completely unaffected.
-    assert "env" in C.components(cfg), "env must still be present after osc is removed"
+    assert "env" in C.components(cfg), (
+        "env must still be present after osc is removed"
+    )
     assert (proj / "native" / "inc" / "env").exists(), (
         "native/inc/env/ must survive osc removal"
     )

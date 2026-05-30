@@ -22,6 +22,8 @@ def run(args: list[str]) -> None:
     pytest_ = False
     pytest_benchmark_ = False
     mutable = False
+    no_step = False
+    no_state = False
     arg_type = "float _Complex"
     return_type = None
     state_vars: list[tuple[str, str, str]] = []
@@ -117,6 +119,12 @@ def run(args: list[str]) -> None:
         elif tok == "--mutable":
             mutable = True
             i += 1
+        elif tok == "--no-step":
+            no_step = True
+            i += 1
+        elif tok == "--no-state":
+            no_state = True
+            i += 1
         elif tok in ("--arg-type", "--return-type"):
             i += 1
             if i >= len(remaining):
@@ -160,6 +168,13 @@ def run(args: list[str]) -> None:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
 
+    if no_state and state_vars:
+        print(
+            "error: --no-state and --state are mutually exclusive.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     _new.run(
         project,
         dest,
@@ -169,6 +184,8 @@ def run(args: list[str]) -> None:
         build_system=build_system,
         perf=perf,
         mutable=mutable,
+        no_step=no_step,
+        no_state=no_state,
         arg_type=arg_type,
         return_type=return_type,
         pytest_=pytest_,

@@ -35,7 +35,8 @@ guard = "#endif /* Q15_TO_CF32_CORE_H */"
 assert guard in text, "header guard not found"
 text = text.replace(
     guard,
-    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n" + guard,
+    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n"
+    + guard,
     1,
 )
 core_h.write_text(text, encoding="utf-8")

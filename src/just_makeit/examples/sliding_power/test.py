@@ -36,8 +36,12 @@ def run(root: Path) -> None:
         return_type="float",
     )
 
-    assert (dest / "native" / "inc" / "jm_simd.h").exists(), "jm_simd.h missing"
-    assert (dest / "native" / "inc" / "jm_perf.h").exists(), "jm_perf.h missing"
+    assert (dest / "native" / "inc" / "jm_simd.h").exists(), (
+        "jm_simd.h missing"
+    )
+    assert (dest / "native" / "inc" / "jm_perf.h").exists(), (
+        "jm_perf.h missing"
+    )
 
     # Patch step(): replace stub (const + placeholder body) with real implementation.
     # The stub is: JM_FORCEINLINE JM_HOT float\npower_est_step(const ...) { ... }
@@ -68,7 +72,9 @@ def run(root: Path) -> None:
     env = _make_env()
 
     # Build
-    r = subprocess.run(["make"], cwd=dest, env=env, capture_output=True, text=True)
+    r = subprocess.run(
+        ["make"], cwd=dest, env=env, capture_output=True, text=True
+    )
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     # C tests
@@ -100,7 +106,9 @@ print("ok")
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0, f"Python smoke test failed:\n{r.stdout}\n{r.stderr}"
+    assert r.returncode == 0, (
+        f"Python smoke test failed:\n{r.stdout}\n{r.stderr}"
+    )
     assert "ok" in r.stdout
 
     # Verify type stub: complex arg -> float return, steps() present

@@ -210,9 +210,9 @@ class TestMethodDoesNotModifyCMake:
             True,
             [],
         )
-        cmake = (project / "native" / "src" / "nco" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake = (
+            project / "native" / "src" / "nco" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert "nco_methods.c" not in cmake
 
     def test_cmake_still_has_single_source(self, project):
@@ -226,9 +226,9 @@ class TestMethodDoesNotModifyCMake:
             True,
             [],
         )
-        cmake = (project / "native" / "src" / "nco" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake = (
+            project / "native" / "src" / "nco" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert "add_library(nco_core OBJECT nco_core.c)" in cmake
 
     def test_cmake_unchanged_after_two_methods(self, project):
@@ -255,9 +255,9 @@ class TestMethodDoesNotModifyCMake:
             True,
             [],
         )
-        cmake_after = (project / "native" / "src" / "nco" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake_after = (
+            project / "native" / "src" / "nco" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert cmake_before == cmake_after
 
 
@@ -582,7 +582,13 @@ def _check_no_placeholders(project: Path) -> None:
     <<IMPLEMENT:...>> guidance markers in stubs are intentional and excluded.
     """
     for path in project.rglob("*"):
-        if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+        if path.is_file() and path.suffix in (
+            ".py",
+            ".c",
+            ".h",
+            ".toml",
+            ".txt",
+        ):
             text = path.read_text(encoding="utf-8")
             m = _STRAY_PLACEHOLDER.search(text)
             assert m is None, f"Unreplaced placeholder in {path}"
@@ -820,9 +826,9 @@ def module_project(tmp_path):
 
 
 def _nco_frag(module_project: Path) -> str:
-    return (module_project / "native" / "src" / "sig" / "sig_ext_nco.c").read_text(
-        encoding="utf-8"
-    )
+    return (
+        module_project / "native" / "src" / "sig" / "sig_ext_nco.c"
+    ).read_text(encoding="utf-8")
 
 
 class TestModuleInfraRegenOnMethod:
@@ -836,7 +842,9 @@ class TestModuleInfraRegenOnMethod:
     with the old (pre-method) bodies, silently breaking memory management.
     """
 
-    def test_dealloc_has_free_after_variable_output_method(self, module_project):
+    def test_dealloc_has_free_after_variable_output_method(
+        self, module_project
+    ):
         method_run(
             module_project,
             "nco",
@@ -849,7 +857,9 @@ class TestModuleInfraRegenOnMethod:
         )
         assert "free(self->_execute_cf32_buf)" in _nco_frag(module_project)
 
-    def test_init_allocs_buf_after_variable_output_method(self, module_project):
+    def test_init_allocs_buf_after_variable_output_method(
+        self, module_project
+    ):
         method_run(
             module_project,
             "nco",
@@ -879,7 +889,9 @@ class TestModuleInfraRegenOnMethod:
         assert "free(self->_execute_iq_buf)" in frag
         assert "free(self->_execute_iq_buf_1)" in frag
 
-    def test_init_allocs_secondary_buf_after_multi_output_method(self, module_project):
+    def test_init_allocs_secondary_buf_after_multi_output_method(
+        self, module_project
+    ):
         method_run(
             module_project,
             "nco",
@@ -1125,49 +1137,69 @@ class TestMethodWithArrayParam:
         return project
 
     def test_c_stub_has_const_ptr_param(self, arr_method):
-        text = (arr_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        text = (arr_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "const float complex *ctrl" in text
 
     def test_c_stub_has_len_param(self, arr_method):
-        text = (arr_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        text = (arr_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "size_t ctrl_len" in text
 
     def test_c_stub_suppresses_ptr_and_len(self, arr_method):
-        text = (arr_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        text = (arr_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "(void)ctrl;" in text
         assert "(void)ctrl_len;" in text
 
     def test_ext_c_has_pyarray_from_otf(self, arr_method):
-        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_FROM_OTF" in ext
         assert "NPY_COMPLEX64" in ext
 
     def test_ext_c_format_has_O(self, arr_method):
-        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"O"' in ext
 
     def test_ext_c_passes_ptr_and_len(self, arr_method):
-        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "ctrl_len" in ext
 
     def test_ext_c_has_decref(self, arr_method):
-        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_DECREF(ctrl_arr)" in ext
 
     def test_mixed_params_scalar_and_array(self, mixed_method):
-        text = (mixed_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        text = (mixed_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "float gain" in text
         assert "const float *buf" in text
         assert "size_t buf_len" in text
 
     def test_mixed_format_string(self, mixed_method):
-        ext = (mixed_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (mixed_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"fO"' in ext
 
     def test_config_stores_array_type(self, arr_method):
         cfg = load(arr_method)
         m = next(m for m in methods(cfg, "nco") if m["name"] == "process")
-        assert m.get("params") == [{"name": "ctrl", "type": "float _Complex[]"}]
+        assert m.get("params") == [
+            {"name": "ctrl", "type": "float _Complex[]"}
+        ]
 
     def test_no_placeholders(self, arr_method):
         _check_no_placeholders(arr_method)
@@ -1192,19 +1224,27 @@ class TestMethodArrayArgNoParams:
         return project
 
     def test_ext_c_has_pyarray_from_otf(self, add_method):
-        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_FROM_OTF" in ext
 
     def test_ext_c_no_invalid_array_decl(self, add_method):
-        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "float[] x" not in ext
 
     def test_ext_c_passes_ptr_and_len(self, add_method):
-        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "x_len" in ext
 
     def test_ext_c_has_decref(self, add_method):
-        ext = (add_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (add_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_DECREF(x_arr)" in ext
 
     def test_no_placeholders(self, add_method):
@@ -1231,24 +1271,34 @@ class TestMethodArrayArgWithParams:
         return project
 
     def test_ext_c_parses_both_args(self, madd_method):
-        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "x_arr" in ext
         assert "h_arr" in ext
 
     def test_ext_c_passes_x_to_c(self, madd_method):
-        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "x," in ext or "x_len" in ext
 
     def test_ext_c_passes_h_to_c(self, madd_method):
-        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "h_len" in ext
 
     def test_ext_c_format_has_two_O(self, madd_method):
-        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"OO"' in ext
 
     def test_ext_c_decrefs_both(self, madd_method):
-        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(encoding="utf-8")
+        ext = (madd_method / "native/src/nco/nco_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_DECREF(x_arr)" in ext
         assert "Py_DECREF(h_arr)" in ext
 
@@ -1256,19 +1306,27 @@ class TestMethodArrayArgWithParams:
         _check_no_placeholders(madd_method)
 
     def test_core_c_stub_has_x_ptr(self, madd_method):
-        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "const float *x" in core
 
     def test_core_c_stub_has_x_len(self, madd_method):
-        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "size_t x_len" in core
 
     def test_core_c_stub_has_h_ptr(self, madd_method):
-        core = (madd_method / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
+        core = (madd_method / "native/src/nco/nco_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "const float *h" in core
 
     def test_core_h_prototype_has_x_and_h(self, madd_method):
-        hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(encoding="utf-8")
+        hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float *x" in hdr
         assert "const float *h" in hdr
 

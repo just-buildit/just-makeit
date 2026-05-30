@@ -57,10 +57,22 @@ def run(root: Path) -> None:
 
     # 3. Add properties
     jm_property(
-        proj, "cf32_to_q15", "samples_written", "conv", "uint32_t", False, field=True
+        proj,
+        "cf32_to_q15",
+        "samples_written",
+        "conv",
+        "uint32_t",
+        False,
+        field=True,
     )
     jm_property(
-        proj, "q15_to_cf32", "samples_read", "conv", "uint32_t", False, field=True
+        proj,
+        "q15_to_cf32",
+        "samples_read",
+        "conv",
+        "uint32_t",
+        False,
+        field=True,
     )
     jm_property(proj, "q15_to_cf32", "eof", "conv", "int32_t", False)
 

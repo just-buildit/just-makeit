@@ -66,19 +66,29 @@ class TestNewProjectFiles:
 
 class TestNewComponentFiles:
     def test_component_header(self, project):
-        assert (project / "native" / "inc" / "my_filter" / "my_filter_core.h").exists()
+        assert (
+            project / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        ).exists()
 
     def test_component_core_c(self, project):
-        assert (project / "native" / "src" / "my_filter" / "my_filter_core.c").exists()
+        assert (
+            project / "native" / "src" / "my_filter" / "my_filter_core.c"
+        ).exists()
 
     def test_component_ext_c(self, project):
-        assert (project / "native" / "src" / "my_filter" / "my_filter_ext.c").exists()
+        assert (
+            project / "native" / "src" / "my_filter" / "my_filter_ext.c"
+        ).exists()
 
     def test_component_cmake(self, project):
-        assert (project / "native" / "src" / "my_filter" / "CMakeLists.txt").exists()
+        assert (
+            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
+        ).exists()
 
     def test_c_test(self, project):
-        assert (project / "native" / "tests" / "test_my_filter_core.c").exists()
+        assert (
+            project / "native" / "tests" / "test_my_filter_core.c"
+        ).exists()
 
     def test_python_init(self, project):
         assert (project / "src" / "my_filter" / "__init__.py").exists()
@@ -87,10 +97,14 @@ class TestNewComponentFiles:
         assert (project / "src" / "my_filter" / "my_filter.pyi").exists()
 
     def test_tests_init(self, project):
-        assert (project / "src" / "my_filter" / "tests" / "__init__.py").exists()
+        assert (
+            project / "src" / "my_filter" / "tests" / "__init__.py"
+        ).exists()
 
     def test_python_test(self, project):
-        assert (project / "src" / "my_filter" / "tests" / "test_my_filter.py").exists()
+        assert (
+            project / "src" / "my_filter" / "tests" / "test_my_filter.py"
+        ).exists()
 
     def test_compile_commands_exists(self, project):
         assert (project / "compile_commands.json").exists()
@@ -185,7 +199,10 @@ class TestJbToml:
 
     def test_install_deps_source(self, project):
         cfg = self._load(project)
-        assert cfg["tools"]["install-deps"]["source"] == "just-bashit:install-deps"
+        assert (
+            cfg["tools"]["install-deps"]["source"]
+            == "just-bashit:install-deps"
+        )
 
     def test_install_deps_groups(self, project):
         cfg = self._load(project)
@@ -193,7 +210,9 @@ class TestJbToml:
 
     def test_just_makeit_source(self, project):
         cfg = self._load(project)
-        assert cfg["tools"]["just-makeit"]["source"] == "just-bashit:just-makeit"
+        assert (
+            cfg["tools"]["just-makeit"]["source"] == "just-bashit:just-makeit"
+        )
 
     def test_just_makeit_config(self, project):
         cfg = self._load(project)
@@ -248,7 +267,9 @@ class TestNewContent:
 
     def test_cmake_top_has_project_name(self, project):
         cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
-        assert "project(my_filter" in cmake
+        # cmake-format may wrap project() across lines, so match the name
+        # right after the opening paren regardless of intervening whitespace.
+        assert re.search(r"project\(\s*my_filter\b", cmake)
 
     def test_cmake_top_has_python_package_dir(self, project):
         cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -260,24 +281,24 @@ class TestNewContent:
         assert "add_subdirectory(native/src/my_filter)" in cmake
 
     def test_component_cmake_has_python3_add_library(self, project):
-        cmake = (project / "native" / "src" / "my_filter" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake = (
+            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert "Python3_add_library(my_filter" in cmake
 
     def test_header_has_correct_typedef(self, project):
-        h = (project / "native" / "inc" / "my_filter" / "my_filter_core.h").read_text(
-            encoding="utf-8"
-        )
+        h = (
+            project / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        ).read_text(encoding="utf-8")
         assert "my_filter_state_t" in h
         assert "my_filter_create" in h
         assert "my_filter_destroy" in h
         assert "my_filter_step" in h
 
     def test_ext_c_has_correct_class(self, project):
-        ext = (project / "native" / "src" / "my_filter" / "my_filter_ext.c").read_text(
-            encoding="utf-8"
-        )
+        ext = (
+            project / "native" / "src" / "my_filter" / "my_filter_ext.c"
+        ).read_text(encoding="utf-8")
         assert "MyFilterObject" in ext
         assert "PyInit_my_filter" in ext
 
@@ -302,13 +323,15 @@ class TestNewContent:
         assert "add_library(my_filter_lib_static STATIC" in cmake
 
     def test_cmake_component_is_object_lib(self, project):
-        cmake = (project / "native" / "src" / "my_filter" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake = (
+            project / "native" / "src" / "my_filter" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert "add_library(my_filter_core OBJECT" in cmake
 
     def test_umbrella_header_content(self, project):
-        h = (project / "native" / "inc" / "my_filter.h").read_text(encoding="utf-8")
+        h = (project / "native" / "inc" / "my_filter.h").read_text(
+            encoding="utf-8"
+        )
         assert "MY_FILTER_H" in h
 
     def test_umbrella_header_updated_by_init(self, tmp_path):
@@ -317,11 +340,15 @@ class TestNewContent:
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest)
         init_run(dest, "gain")
-        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text(encoding="utf-8")
+        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text(
+            encoding="utf-8"
+        )
         assert '#include "gain/gain_core.h"' in umbrella
 
     def test_pc_in_content(self, project):
-        pc = (project / "cmake" / "my-filter.pc.in").read_text(encoding="utf-8")
+        pc = (project / "cmake" / "my-filter.pc.in").read_text(
+            encoding="utf-8"
+        )
         assert "Name: my-filter" in pc
         assert "-lmy_filter" in pc
         assert "CMAKE_INSTALL_FULL_" not in pc, (
@@ -420,7 +447,12 @@ class TestNewStateVars:
 
     def test_multi_vars(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, ["comp"], [("gain", "double", "1.0"), ("order", "int", "4")])
+        run(
+            "comp",
+            dest,
+            ["comp"],
+            [("gain", "double", "1.0"), ("order", "int", "4")],
+        )
         core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
@@ -492,7 +524,7 @@ class TestNewValidation:
         dest = tmp_path / "gain"
         run("gain", dest, ["gain"])
         cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
-        assert "project(gain" in cmake
+        assert re.search(r"project\(\s*gain\b", cmake)
 
 
 @pytest.mark.skipif(
@@ -559,7 +591,9 @@ class TestNewBuild:
 
         suffix = ".dylib" if platform.system() == "Darwin" else ".so"
         libs = list((built_project / "build").rglob(f"libgain{suffix}"))
-        assert libs, f"Combined shared library libgain{suffix} not found in build/"
+        assert libs, (
+            f"Combined shared library libgain{suffix} not found in build/"
+        )
 
     def test_ctest_passes(self, built_project):
         import subprocess
@@ -578,7 +612,10 @@ class TestNewBuild:
         r = subprocess.run(
             [sys.executable, "-m", "pytest", "src/", "-v"],
             cwd=built_project,
-            env={**__import__("os").environ, "PYTHONPATH": str(built_project / "src")},
+            env={
+                **__import__("os").environ,
+                "PYTHONPATH": str(built_project / "src"),
+            },
             capture_output=True,
             text=True,
         )
@@ -643,7 +680,8 @@ class TestVoidReturn:
         c = (sink / "native/src/sink/sink_core.c").read_text(encoding="utf-8")
         assert "void *output" not in c
         assert "sink_steps(state, input, n)" in c or (
-            "const float complex    *input" in c and "size_t               n)" in c
+            "const float complex    *input" in c
+            and "size_t               n)" in c
         )
 
     def test_core_h_step_example_no_void_y(self, sink):
@@ -658,21 +696,35 @@ class TestVoidReturn:
         assert "volatile void" not in bench
 
     def test_void_gen_steps_takes_only_n(self, void_gen):
-        c = (void_gen / "native/src/ticker/ticker_core.c").read_text(encoding="utf-8")
+        c = (void_gen / "native/src/ticker/ticker_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "ticker_steps(state, n)" in c or (
             "ticker_steps(\n    ticker_state_t *state,\n    size_t" in c
         )
 
     def test_no_stray_placeholders_sink(self, sink):
         for path in sink.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
 
     def test_no_stray_placeholders_void_gen(self, void_gen):
         for path in void_gen.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}"
@@ -695,15 +747,21 @@ class TestArrayArgType:
         return dest
 
     def test_core_h_step_has_ptr_len_params(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float complex *x, size_t x_len" in h
 
     def test_core_h_step_returns_correct_type(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "static inline float complex" in h
 
     def test_core_h_no_steps(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(encoding="utf-8")
+        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "filt_steps" not in h
 
     def test_bench_no_inner_sample_loop(self, arr_obj):
@@ -724,13 +782,17 @@ class TestArrayArgType:
         assert "filt_steps" not in bench
 
     def test_ext_c_step_uses_pyarray(self, arr_obj):
-        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_FROM_OTF" in ext
         assert "PyArray_DATA" in ext
         assert "x_len" in ext
 
     def test_ext_c_no_steps_method(self, arr_obj):
-        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
+        ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Filt_steps" not in ext
 
     def test_pyi_step_annotation(self, arr_obj):

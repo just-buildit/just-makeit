@@ -109,11 +109,15 @@ def _build_no_state_init_ctx(
 
     # ── C create() signature, Doxygen docs, and call args — TOML order ───
 
-    _arr_meta: dict[str, tuple] = {n: (act, andim) for n, act, andim, _ in arr_ip}
+    _arr_meta: dict[str, tuple] = {
+        n: (act, andim) for n, act, andim, _ in arr_ip
+    }
     _str_enum_meta: dict[str, tuple] = {
         sn: (choices, sdflt) for sn, choices, sdflt in str_enum_ip
     }
-    _scalar_meta: dict[str, tuple] = {n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip}
+    _scalar_meta: dict[str, tuple] = {
+        n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
+    }
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
 
     sig_parts: list[str] = []
@@ -127,7 +131,9 @@ def _build_no_state_init_ctx(
         doc_parts.append(
             f" * @param {name}  Input {dt} array (length passed as {name}_len)."
         )
-        call_parts.append(f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len")
+        call_parts.append(
+            f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len"
+        )
         c_create_parts_ordered.append("NULL, 0")
 
     for param in params:
@@ -167,14 +173,20 @@ def _build_no_state_init_ctx(
             sig_parts.append(f"int {pname}")
             doc_parts.append(
                 f" * @param {pname}  Enum index; 0={choices[0]}"
-                + (f"…{len(choices) - 1}={choices[-1]}." if len(choices) > 1 else ".")
+                + (
+                    f"…{len(choices) - 1}={choices[-1]}."
+                    if len(choices) > 1
+                    else "."
+                )
             )
             call_parts.append(pname)
             c_create_parts_ordered.append("0")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(f"{ct_s} {pname}")
-            doc_parts.append(f" * @param {pname}  {pname} (default: {dflt_s}).")
+            doc_parts.append(
+                f" * @param {pname}  {pname} (default: {dflt_s})."
+            )
             call_parts.append(pname)
             c_create_parts_ordered.append(dflt_s)
 
@@ -233,7 +245,9 @@ def _build_no_state_init_ctx(
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
             raw_init = dflt_raw if dflt_raw else meta["parse_zero"]
-            local_lines.append(f"    {meta['parse_type']} {name}_raw = {raw_init};")
+            local_lines.append(
+                f"    {meta['parse_type']} {name}_raw = {raw_init};"
+            )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")
         else:
@@ -297,9 +311,13 @@ def _build_no_state_init_ctx(
             real_ect, real_npy, d_create_fn = dispatch_meta[aname]
             real_adisp = _ctype_display(real_ect)
             complex_adisp = _ctype_display(act)
-            complex_cast = f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
+            complex_cast = (
+                f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
+            )
             real_cast = f"(const {real_adisp} *)PyArray_DATA({aname}_arr)"
-            real_call_args = create_call_args.replace(complex_cast, real_cast, 1)
+            real_call_args = create_call_args.replace(
+                complex_cast, real_cast, 1
+            )
             aapb_lines.append(
                 f"    /* dtype dispatch: {real_adisp} → {d_create_fn},"
                 f" {complex_adisp} → {component}_create */\n"
@@ -388,7 +406,11 @@ def _build_no_state_init_ctx(
                 f"        self->handle = {oalt_fn}(\n"
                 f"            {oname}_dim0, {oname}_dim1,\n"
                 f"            (const {odisp} *)PyArray_DATA({oname}_arr)"
-                + (f",\n            {scalar_call_str}" if scalar_call_str else "")
+                + (
+                    f",\n            {scalar_call_str}"
+                    if scalar_call_str
+                    else ""
+                )
                 + f");\n"
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
@@ -409,7 +431,11 @@ def _build_no_state_init_ctx(
                 f"        self->handle = {oalt_fn}(\n"
                 f"            {oname}_len,"
                 f" (const {odisp} *)PyArray_DATA({oname}_arr)"
-                + (f",\n            {scalar_call_str}" if scalar_call_str else "")
+                + (
+                    f",\n            {scalar_call_str}"
+                    if scalar_call_str
+                    else ""
+                )
                 + f");\n"
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
@@ -419,12 +445,16 @@ def _build_no_state_init_ctx(
             )
 
     array_args_parse_block = "".join(aapb_lines)
-    array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name in allocated)
+    array_args_decref = "".join(
+        f"    Py_DECREF({name}_arr);\n" for name in allocated
+    )
 
     if dispatch_meta or opt_arr_ip:
         create_line = ""
     else:
-        create_line = f"    self->handle = {component}_create({create_call_args});\n"
+        create_line = (
+            f"    self->handle = {component}_create({create_call_args});\n"
+        )
 
     # ── pyi / test helpers ────────────────────────────────────────────────
 
@@ -550,10 +580,12 @@ def _build_no_state_init_ctx(
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
-            test_obj + "\n        pass  # no auto-state; add assertions for your fields"
+            test_obj
+            + "\n        pass  # no auto-state; add assertions for your fields"
         ),
         "reset_test_py": (
-            test_obj + "\n        pass  # no auto-state; add assertions for your reset"
+            test_obj
+            + "\n        pass  # no auto-state; add assertions for your reset"
         ),
     }
 
@@ -638,7 +670,13 @@ def _pyi_examples_block(
         set_val = (
             "0"
             if (kind == "int" and first_out != "0")
-            else ("42" if kind == "int" else "0.0" if first_out != "0.0" else "1.0")
+            else (
+                "42"
+                if kind == "int"
+                else "0.0"
+                if first_out != "0.0"
+                else "1.0"
+            )
         )
         lines += [
             "",
@@ -899,7 +937,9 @@ def make_state_ctx(
                 f"unsupported type '{ct}' for '{name}'. Supported: {supported}"
             )
 
-    scalar_vars = [(n, ct, dflt) for n, ct, dflt in state_vars if ct in _CTYPE_META]
+    scalar_vars = [
+        (n, ct, dflt) for n, ct, dflt in state_vars if ct in _CTYPE_META
+    ]
     array_info: list[tuple[str, str, int]] = []
     for n, ct, _ in state_vars:
         parsed = parse_array_type(ct)
@@ -952,7 +992,8 @@ def make_state_ctx(
     ]
     all_docs = arr_doc_parts + scalar_doc_parts
     create_param_docs = (
-        "\n".join(all_docs) or " * @param (none)  All array fields initialise to zero."
+        "\n".join(all_docs)
+        or " * @param (none)  All array fields initialise to zero."
     )
 
     # ── CORE_H: getter_setter_decls ─────────────────────────────────────
@@ -1006,9 +1047,13 @@ def make_state_ctx(
     # ── CORE_C: assignments ─────────────────────────────────────────────
 
     create_assign_lines = [f"    obj->{n} = {n};" for n, _, _ in ctor_scalars]
-    create_assign_lines += [f"    obj->{n} = {dflt};" for n, _, dflt in hidden_scalars]
+    create_assign_lines += [
+        f"    obj->{n} = {dflt};" for n, _, dflt in hidden_scalars
+    ]
     for name, _, size in array_info:
-        create_assign_lines.append(f"    memset(obj->{name}, 0, sizeof(obj->{name}));")
+        create_assign_lines.append(
+            f"    memset(obj->{name}, 0, sizeof(obj->{name}));"
+        )
     create_assignments = "\n".join(create_assign_lines)
 
     reset_assign_lines = []
@@ -1103,7 +1148,9 @@ def make_state_ctx(
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
     array_fmt = "O" * len(_aa)
-    scalar_fmt_str = "".join(_CTYPE_META[ct]["fmt"] for _, ct, __ in ctor_scalars)
+    scalar_fmt_str = "".join(
+        _CTYPE_META[ct]["fmt"] for _, ct, __ in ctor_scalars
+    )
     if ctor_scalars:
         init_parse_fmt = array_fmt + "|" + scalar_fmt_str
     else:
@@ -1148,10 +1195,14 @@ def make_state_ctx(
         )
         already_allocated.append(name)
     array_args_parse_block = "".join(aapb_lines)
-    array_args_decref = "".join(f"    Py_DECREF({name}_arr);\n" for name, _ in _aa)
+    array_args_decref = "".join(
+        f"    Py_DECREF({name}_arr);\n" for name, _ in _aa
+    )
 
     c_arr_call_parts = ["NULL, 0" for _ in _aa]
-    c_create_args = ", ".join(c_arr_call_parts + [dflt for _, _, dflt in ctor_scalars])
+    c_create_args = ", ".join(
+        c_arr_call_parts + [dflt for _, _, dflt in ctor_scalars]
+    )
 
     _NP_PY_TYPE: dict[str, str] = {
         "float32": "np.float32",
@@ -1282,7 +1333,9 @@ def make_state_ctx(
             f"    Py_RETURN_NONE;\n"
             f"}}"
         )
-        method_parts.append(copy_getter + "\n\n" + view_getter + "\n\n" + array_setter)
+        method_parts.append(
+            copy_getter + "\n\n" + view_getter + "\n\n" + array_setter
+        )
 
     getter_setter_methods_c = "\n\n".join(method_parts)
 
@@ -1425,16 +1478,22 @@ def make_state_ctx(
 
     rs_lines = [f"        obj = {Component}({py_create_args})"]
     for name, ct, _ in scalar_vars:
-        rs_lines.append(f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct])})")
+        rs_lines.append(
+            f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct])})"
+        )
     for name, elem_ct, size in array_info:
         np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
-        rs_lines.append(f"        obj.set_{name}(np.ones({size}, dtype=np.{np_dtype}))")
+        rs_lines.append(
+            f"        obj.set_{name}(np.ones({size}, dtype=np.{np_dtype}))"
+        )
     rs_lines.append("        obj.reset()")
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         iv = _py_default(ct, dflt)
         if meta["kind"] == "float":
-            rs_lines.append(f"        assert obj.get_{name}() == _approx({iv})")
+            rs_lines.append(
+                f"        assert obj.get_{name}() == _approx({iv})"
+            )
         else:
             rs_lines.append(f"        assert obj.get_{name}() == {iv}")
     for name, elem_ct, _ in array_info:

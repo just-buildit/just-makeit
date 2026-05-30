@@ -142,6 +142,17 @@ def run(
             ctx["Component"],
             all_vars,
             array_args=C.array_args(cfg, component),
+            no_state=C.is_no_state(cfg, component),
+            # gh-87 class of bug: a component with both --state and
+            # --init-param has an init-param-driven ctor; regenerating the
+            # state ctx without these keys silently rebuilds a state-driven
+            # ctor, dropping the init params from _core.h / _core.c / _ext.c
+            # while they remain in the manifest. Pass the full ctor metadata
+            # so `jm add` preserves the existing constructor signature.
+            init_params=C.init_params(cfg, component),
+            init_post_parse_impl=C.init_post_parse(cfg, component),
+            opaque_fields=C.opaque_fields(cfg, component),
+            no_ctor_names=C.no_ctor_names(cfg, component),
         )
     )
     templates = _stateful_templates(cfg)
@@ -175,7 +186,9 @@ def run(
 
     paths = [root / _expand(pat, component, pkg) for pat, _ in templates]
 
-    print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'")
+    print(
+        f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'"
+    )
     print()
 
     # Bump mtime by 2 s so GNU Make (1-s timestamp resolution on Windows)

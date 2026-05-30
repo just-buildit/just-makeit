@@ -53,6 +53,7 @@ Commands:
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --extra-include-dirs DIR    CMake include path for this component; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
+    --impl file::N:M            Lift lines N..M (inclusive) instead of a function.
     --impl SLOT::file::funcname Lift body into SLOT = create / reset / destroy.
     --replace old::new          String substitution on --impl body; repeatable.
 
@@ -108,9 +109,13 @@ Commands:
     --name name                 App/script name (default: project name).
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
-  apply [fragment]              Materialize every file just-makeit.toml implies (add only).
-                                With a fragment path, copy it into objects/, add to include,
-                                then materialize.
+  apply [fragment]              Materialize just-makeit.toml: create missing files,
+                                regenerate glue (binding/stub/cmake), preserve sacred
+                                _core.c. With a fragment path, copy it into objects/,
+                                add to include, then materialize.
+  regenerate <component>        Delete a component's generated files and rebuild them
+                                from just-makeit.toml (discards _core.c edits — stash
+                                first). --force skips the confirmation.
   split-objects                 Move each [obj] section out of the manifest into
                                 objects/<name>.toml and add the include glob.
   script                        Print a shell script that fully reconstructs this project via CLI.
@@ -622,11 +627,16 @@ def main() -> None:
                 sys.exit(1)
             else:
                 if comp is not None:
-                    print("error: bind takes one component name", file=sys.stderr)
+                    print(
+                        "error: bind takes one component name", file=sys.stderr
+                    )
                     sys.exit(1)
                 comp = a
         if comp is None:
-            print("Usage: just-makeit bind <component> [--check]", file=sys.stderr)
+            print(
+                "Usage: just-makeit bind <component> [--check]",
+                file=sys.stderr,
+            )
             sys.exit(1)
         if check:
             rendered = _bind.run(Path.cwd(), comp, write=False)
@@ -730,6 +740,26 @@ def main() -> None:
             sys.exit(1)
         fragment = Path(positional[0]) if positional else None
         _apply.run(Path.cwd(), fragment=fragment, only=only)
+
+    elif cmd == "regenerate":
+        _warn_schema()
+        from . import _regenerate
+
+        force = False
+        names: list[str] = []
+        for a in args[1:]:
+            if a == "--force":
+                force = True
+            else:
+                names.append(a)
+        if len(names) != 1:
+            print(
+                "error: 'regenerate' takes exactly one component name.\n"
+                "Usage: just-makeit regenerate <component> [--force]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _regenerate.run(Path.cwd(), names[0], force=force)
 
     elif cmd == "version":
         from . import __version__

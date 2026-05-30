@@ -35,12 +35,18 @@ repos:
         # Templates that lead with ``<<placeholder>>`` tokens are not valid
         # CMake until rendered, so cmake-format's tokenizer rejects them.
         exclude: CMakeLists_(component|module)\.cmake
+        # cmake-format reads .cmake-format.yaml; its isolated hook env needs
+        # PyYAML to parse it, else the hook dies with ModuleNotFoundError.
+        additional_dependencies: [pyyaml]
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0 # Use latest version
     hooks:
     - id: mdformat
-      exclude: ^(examples/|src/just_makeit/examples/|docs/index\.md$)
+      # templates/ holds <<placeholder>> markdown that isn't valid until
+      # rendered; mdformat escapes the `<` (e.g. `# \<<project>>`), which
+      # then renders a stray backslash and breaks mkdocstrings/zensical.
+      exclude: ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$)
       # Add optional plugins (e.g., for GFM or code block formatting)
       additional_dependencies:
       - mdformat-gfm

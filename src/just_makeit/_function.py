@@ -67,7 +67,9 @@ def _inject_into_core_h(
     # guard.  Fall back to the #endif guard if the header omits the C++ block.
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
-        existing = existing.replace(cplusplus_end, f"{decl}\n\n{cplusplus_end}")
+        existing = existing.replace(
+            cplusplus_end, f"{decl}\n\n{cplusplus_end}"
+        )
     else:
         marker = f"#endif /* {module.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{decl}\n{marker}")
@@ -92,7 +94,9 @@ def _inject_inline_into_core_h(
     existing = path.read_text(encoding="utf-8")
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
-        existing = existing.replace(cplusplus_end, f"{stub}\n\n{cplusplus_end}")
+        existing = existing.replace(
+            cplusplus_end, f"{stub}\n\n{cplusplus_end}"
+        )
     else:
         marker = f"#endif /* {module.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{stub}\n{marker}")
@@ -162,7 +166,9 @@ def run(
 
     if inline:
         # Inline functions live entirely in the header — no _core.c entry.
-        _inject_inline_into_core_h(core_h, fn_name, params, return_type, module)
+        _inject_inline_into_core_h(
+            core_h, fn_name, params, return_type, module
+        )
     else:
         # Append C stub to <module>_core.c
         if impl_body is not None:

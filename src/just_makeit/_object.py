@@ -39,7 +39,8 @@ def _indent_body(body: str, indent: str = "    ") -> str:
     line.
     """
     return "\n".join(
-        indent + line if line.strip() else line for line in body.strip().splitlines()
+        indent + line if line.strip() else line
+        for line in body.strip().splitlines()
     )
 
 
@@ -93,7 +94,9 @@ def _make_object_ctx(
     )
     ctx.update(Ctx.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
+    ctx.update(
+        Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
+    )
     # Re-generate pyi_examples now that package and Component are in ctx.
     # make_state_ctx emits placeholder text; we replace it with the real values.
     scalar_state = (
@@ -174,7 +177,9 @@ def _copy_external_cmake_blocks(
                 return  # one source file is enough
 
 
-def _merge_module_init(existing: str, module: str, all_exports: list[str]) -> str:
+def _merge_module_init(
+    existing: str, module: str, all_exports: list[str]
+) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
     Updates only the ``from .<module> import ...`` line and ``__all__`` list to
@@ -326,7 +331,9 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
     return result
 
 
-def _restore_c_function_bodies(new_source: str, preserved: dict[str, str]) -> str:
+def _restore_c_function_bodies(
+    new_source: str, preserved: dict[str, str]
+) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
     Only replaces functions that already existed in the old source AND still
@@ -343,7 +350,9 @@ def _restore_c_function_bodies(new_source: str, preserved: dict[str, str]) -> st
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
-        header_pat = re.compile(r"static [^\n]+\n" + re.escape(fn_name) + r"\(")
+        header_pat = re.compile(
+            r"static [^\n]+\n" + re.escape(fn_name) + r"\("
+        )
         hm = header_pat.search(new_source)
         if not hm:
             continue
@@ -488,7 +497,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # module-level functions in <mod>_core.c are compiled and linked in.
     has_collocated = module in object_names
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
-    inc_dirs_extra = "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
+    inc_dirs_extra = (
+        "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
+    )
     if has_collocated:
         # <mod>_core is the collocated object's OBJECT lib; it's already in
         # object_names so it will appear in object_core_libs below.
@@ -503,10 +514,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             f"target_include_directories({module}_core PUBLIC"
             f" ${{CMAKE_SOURCE_DIR}}/native/inc{inc_dirs_extra})\n\n"
         )
-        libs_parts = [f"{module}_core"] + [f"{obj}_core" for obj in object_names]
+        libs_parts = [f"{module}_core"] + [
+            f"{obj}_core" for obj in object_names
+        ]
     object_core_libs = "\n    ".join(libs_parts)
     extra_libs = C.extra_link_libs(cfg, module)
-    extra_link_libs_block = "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
+    extra_link_libs_block = (
+        "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
+    )
     cmake_ctx = {
         "module": module,
         "Module": Module,
@@ -737,6 +752,22 @@ def run(
     )
     print()
 
+    # Perf headers (the JM_DEFINE_STEPS macro + SIMD helpers) live once at the
+    # project-root include dir, shared by every component. The standalone path
+    # writes them in _init.run; the module path must do the same, else a
+    # --perf object added to a non-perf project emits `#include "jm_perf.h"`
+    # in its core.h against a file that was never created -> fatal build
+    # error. Persist project.perf too so jm apply reproduces the perf build.
+    if perf:
+        if not C.is_perf(cfg):
+            cfg.setdefault("project", {})["perf"] = "true"
+        perf_h = root / "native" / "inc" / "jm_perf.h"
+        if not perf_h.exists():
+            _write(perf_h, r(R.JM_PERF_H), "create")
+        simd_h = root / "native" / "inc" / "jm_simd.h"
+        if not simd_h.exists():
+            _write(simd_h, R.JM_SIMD_H, "create")
+
     # C library files (OBJECT lib only — no standalone Python module).
     # Hand-written bodies in an existing core.h/core.c are spliced into the
     # freshly rendered templates so re-running `just-makeit object` does not
@@ -786,7 +817,9 @@ def run(
         R.MODULE_PYTEST_TEST_PURE if C.is_pytest(cfg) else R.MODULE_PYTEST_TEST
     )
     bench_py_tmpl = (
-        R.MODULE_BENCH_PYTEST_BM if C.is_pytest_benchmark(cfg) else R.MODULE_BENCH_PY
+        R.MODULE_BENCH_PYTEST_BM
+        if C.is_pytest_benchmark(cfg)
+        else R.MODULE_BENCH_PY
     )
     _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(test_py_tmpl))
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"

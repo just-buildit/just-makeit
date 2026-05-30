@@ -1,8 +1,5 @@
 """Unit tests for just_makeit._build."""
 
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -86,7 +83,9 @@ class TestCmdDryRun:
         out = capsys.readouterr().out
         assert "(none)" in out
 
-    def test_cmake_command_shown_when_available(self, tmp_path, monkeypatch, capsys):
+    def test_cmake_command_shown_when_available(
+        self, tmp_path, monkeypatch, capsys
+    ):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
         with patch("shutil.which", return_value="/usr/bin/cmake"):

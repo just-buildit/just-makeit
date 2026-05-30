@@ -36,7 +36,9 @@ _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def _interpolate(body: str, ctx: dict) -> str:
     """Replace `{name}` placeholders with ctx[name]; unknown names are
     left in place so literal `{0}` / `{ static int x; }` C code survives."""
-    return _PLACEHOLDER_RE.sub(lambda m: str(ctx.get(m.group(1), m.group(0))), body)
+    return _PLACEHOLDER_RE.sub(
+        lambda m: str(ctx.get(m.group(1), m.group(0))), body
+    )
 
 
 def _resolve_impl(
@@ -65,12 +67,13 @@ def _resolve_impl(
     if file_ref:
         from . import _impl as I
 
-        path_part, _, func = file_ref.partition("::")
-        if not func:
+        path_part, _, ref = file_ref.partition("::")
+        if not ref:
             raise ValueError(
-                f"{label}: {impl_file_key} must be 'path::funcname', got {file_ref!r}."
+                f"{label}: {impl_file_key} must be 'path::funcname' or "
+                f"'path::N:M', got {file_ref!r}."
             )
-        body = I.extract_body(root / path_part, func)
+        body = I.extract(root / path_part, ref)
     else:
         body = inline
 
@@ -282,12 +285,16 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 **_object_kwargs(cfg, comp),
             )
 
-    all_comps = standalone + [o for m in mods for o in C.module_objects(cfg, m)]
+    all_comps = standalone + [
+        o for m in mods for o in C.module_objects(cfg, m)
+    ]
     for comp in all_comps:
         mod = C.component_module(cfg, comp)
         for m in C.methods(cfg, comp):
             mctx = _object_ctx(cfg, comp, mod) | {"method": m["name"]}
-            m_impl = _resolve_impl(m, mctx, project_root, f"{comp}.{m['name']}")
+            m_impl = _resolve_impl(
+                m, mctx, project_root, f"{comp}.{m['name']}"
+            )
             _method.run(
                 temp_root,
                 comp,
@@ -333,7 +340,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 "Module": _to_title(mod),
                 "return_type": fn.get("return_type", "void"),
             }
-            f_impl = _resolve_impl(fn, fctx, project_root, f"function {fn['name']}")
+            f_impl = _resolve_impl(
+                fn, fctx, project_root, f"function {fn['name']}"
+            )
             _function.run(
                 temp_root,
                 fn["name"],
@@ -442,7 +451,9 @@ _SUBDIR_BLOCK = re.compile(
 )
 
 
-def _splice_cmake_components(real_path: Path, temp_path: Path, cfg: dict) -> bool:
+def _splice_cmake_components(
+    real_path: Path, temp_path: Path, cfg: dict
+) -> bool:
     """Reconcile the top CMakeLists's component / module wiring.
 
     Extracts every `add_subdirectory(native/src/X)` block (with adjacent
@@ -459,9 +470,9 @@ def _splice_cmake_components(real_path: Path, temp_path: Path, cfg: dict) -> boo
     component_blocks: list[str] = []
     module_blocks: list[str] = []
     for m in _SUBDIR_BLOCK.finditer(temp):
-        (module_blocks if m.group(1) in module_names else component_blocks).append(
-            m.group(0)
-        )
+        (
+            module_blocks if m.group(1) in module_names else component_blocks
+        ).append(m.group(0))
 
     # c_deps: pure add_subdirectory, no Python scaffolding.
     # Prepended so their targets exist before any depending component emits
@@ -506,7 +517,9 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     from ._init import _splice_init_py
 
     temp_text = temp_path.read_text(encoding="utf-8")
-    imports = re.findall(r"^from \.(\w+) import (\w+)", temp_text, re.MULTILINE)
+    imports = re.findall(
+        r"^from \.(\w+) import (\w+)", temp_text, re.MULTILINE
+    )
     changed = False
     for comp, Component in imports:
         cur = real_path.read_text(encoding="utf-8")
@@ -517,7 +530,9 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     return changed
 
 
-def _merge_module_init_file(real_path: Path, module: str, temp_path: Path) -> bool:
+def _merge_module_init_file(
+    real_path: Path, module: str, temp_path: Path
+) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
     classes already in the real file."""
@@ -738,16 +753,46 @@ def _sync_aggregates(
                 if root / rel not in updated:
                     updated.append(root / rel)
 
-    # Regenerate standalone component CMakeLists so extra_link_libs changes
-    # in the TOML are reflected without a full re-scaffold.
-    module_owned = {o for m in C.modules(cfg) for o in C.module_objects(cfg, m)}
+    # Standalone components: the sacred/glue split. Glue files (binding,
+    # CMake, type stub) regenerate from the manifest on every apply, so a
+    # TOML edit — a new state field, method, init param, extra_link_libs —
+    # propagates without a full re-scaffold. Core sources are *merged*:
+    # _core.h carries the inline step() body, _core.c the steps()/lifecycle
+    # bodies, and _preserve_core_bodies keeps the user's hand-written code
+    # while letting refreshed declarations/structure flow through. This
+    # mirrors the module loop above; before it, standalone glue was
+    # create-only (_sync_missing) so manifest edits silently never reached
+    # the binding and apply reported "already matches" while it didn't.
+    module_owned = {
+        o for m in C.modules(cfg) for o in C.module_objects(cfg, m)
+    }
     for comp in C.components(cfg):
         if comp in module_owned:
             continue
         if only_comp is not None and comp != only_comp:
             continue
-        rel = f"native/src/{comp}/CMakeLists.txt"
-        if _overwrite_if_changed(root / rel, temp_root / rel):
+        # Glue — pure boilerplate, no user content. Overwrite from the
+        # freshly-rendered scaffold so manifest edits reach the binding,
+        # stub, and build wiring.
+        for rel in (
+            f"native/src/{comp}/{comp}_ext.c",
+            f"native/src/{comp}/CMakeLists.txt",
+            f"src/{pkg}/{comp}.pyi",
+        ):
+            if _overwrite_if_changed(root / rel, temp_root / rel):
+                updated.append(root / rel)
+        # _core.h is a hybrid: declarations (glue) plus the inline step()
+        # body and state struct (sacred). The merge refreshes declarations
+        # — so a TOML-declared method/field shows up in the public API —
+        # while _preserve_core_bodies keeps the user's step() body and any
+        # hand-added struct fields. _core.c is fully sacred: it holds the
+        # steps()/lifecycle bodies, so apply never touches it once it
+        # exists. Adding a method via TOML therefore declares it in the
+        # header but leaves the body to the user (a clean link error until
+        # written), and never clobbers existing algorithm code. Use the
+        # additive verbs (jm method / jm add) to stub the body too.
+        rel = f"native/inc/{comp}/{comp}_core.h"
+        if _merge_module_core(root / rel, temp_root / rel, comp):
             updated.append(root / rel)
 
     return updated
@@ -801,7 +846,9 @@ def _wire_module_object(manifest: Path, mod_name: str, comp: str) -> bool:
     if not m:
         return False
     existing = [
-        s.strip().strip('"') for s in m.group(2).split(",") if s.strip().strip('"')
+        s.strip().strip('"')
+        for s in m.group(2).split(",")
+        if s.strip().strip('"')
     ]
     if comp in existing:
         return False
@@ -864,7 +911,8 @@ def _fragment_already_included(root: Path, fragment_path: Path) -> bool:
         return False
     fragment_resolved = fragment_path.resolve()
     return any(
-        p.resolve() == fragment_resolved for p in C._resolve_includes(root, includes)
+        p.resolve() == fragment_resolved
+        for p in C._resolve_includes(root, includes)
     )
 
 
@@ -903,7 +951,9 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     # Collect module-routing directives and validate before side-effects.
     module_directives: list[tuple[str, str]] = []
     for key, value in fragment.items():
-        if key in ("project", "module", "include") or not isinstance(value, dict):
+        if key in ("project", "module", "include") or not isinstance(
+            value, dict
+        ):
             continue
         mod_name = value.get("module")
         if isinstance(mod_name, str) and mod_name:

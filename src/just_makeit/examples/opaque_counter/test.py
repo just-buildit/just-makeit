@@ -68,8 +68,12 @@ opaque = true
 
 
 # Patch step() to read+write through the opaque pointer.  Idempotent.
-_STEP_PATCH_OLD = "    (void)state; /* TODO: implement */\n    return (uint64_t)0;"
-_STEP_PATCH_NEW = "    *state->count += state->step_size;\n    return *state->count;"
+_STEP_PATCH_OLD = (
+    "    (void)state; /* TODO: implement */\n    return (uint64_t)0;"
+)
+_STEP_PATCH_NEW = (
+    "    *state->count += state->step_size;\n    return *state->count;"
+)
 
 
 def _patch_step(core_h: Path) -> None:
@@ -77,8 +81,12 @@ def _patch_step(core_h: Path) -> None:
     if _STEP_PATCH_NEW.split("\n")[0] in text:
         return  # already patched (idempotent)
     if _STEP_PATCH_OLD not in text:
-        raise AssertionError(f"step() stub not found in {core_h} — template changed?")
-    core_h.write_text(text.replace(_STEP_PATCH_OLD, _STEP_PATCH_NEW), encoding="utf-8")
+        raise AssertionError(
+            f"step() stub not found in {core_h} — template changed?"
+        )
+    core_h.write_text(
+        text.replace(_STEP_PATCH_OLD, _STEP_PATCH_NEW), encoding="utf-8"
+    )
 
 
 def run(root: Path) -> None:
@@ -97,8 +105,12 @@ def run(root: Path) -> None:
     jm_apply(proj, fragment=fragment)
 
     # 4. Sanity-check the generated artefacts before building.
-    core_h = proj / "native" / "inc" / "opaque_counter" / "opaque_counter_core.h"
-    core_c = proj / "native" / "src" / "opaque_counter" / "opaque_counter_core.c"
+    core_h = (
+        proj / "native" / "inc" / "opaque_counter" / "opaque_counter_core.h"
+    )
+    core_c = (
+        proj / "native" / "src" / "opaque_counter" / "opaque_counter_core.c"
+    )
     h = core_h.read_text(encoding="utf-8")
     c = core_c.read_text(encoding="utf-8")
 
@@ -119,7 +131,9 @@ def run(root: Path) -> None:
     # destroy_impl ran — count is freed before the trailing free(state).
     body_pos = c.index("free(state->count)")
     free_pos = c.index("free(state);")
-    assert body_pos < free_pos, "destroy_impl body must execute before free(state)"
+    assert body_pos < free_pos, (
+        "destroy_impl body must execute before free(state)"
+    )
 
     # 5. Patch the step() body to actually use the opaque pointer.
     _patch_step(core_h)

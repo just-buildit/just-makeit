@@ -95,9 +95,7 @@ opaque = true
 
 
 # Patch step() — the real DSP one-liner.  Idempotent on re-run.
-_STEP_PATCH_OLD = (
-    "    (void)state; /* TODO: implement using state variables */\n    return (float)x;"
-)
+_STEP_PATCH_OLD = "    (void)state; /* TODO: implement using state variables */\n    return (float)x;"
 _STEP_PATCH_NEW = (
     "    const float out = state->taps[state->idx];\n"
     "    state->taps[state->idx] = x;\n"
@@ -111,8 +109,12 @@ def _patch_step(core_h: Path) -> None:
     if "const float out = state->taps" in text:
         return  # already patched
     if _STEP_PATCH_OLD not in text:
-        raise AssertionError(f"step() stub not found in {core_h} — template changed?")
-    core_h.write_text(text.replace(_STEP_PATCH_OLD, _STEP_PATCH_NEW), encoding="utf-8")
+        raise AssertionError(
+            f"step() stub not found in {core_h} — template changed?"
+        )
+    core_h.write_text(
+        text.replace(_STEP_PATCH_OLD, _STEP_PATCH_NEW), encoding="utf-8"
+    )
 
 
 # Hand-written C smoke test that matches our reset semantics (length is

@@ -44,6 +44,11 @@ def _find_doppler_prefix() -> str | None:
     candidates = [
         Path("/usr/local"),
         Path("/usr"),
+        # Rootless installs (e.g. unpacking the prebuilt
+        # doppler-<ver>-<plat>.tar.gz into a user prefix) are listed before
+        # the local source build tree, which may be stale or incomplete.
+        Path.home() / ".local" / "doppler",
+        Path.home() / ".local",
         Path.home() / "doppler" / "build",
     ]
     for prefix in candidates:
@@ -91,7 +96,9 @@ opaque = true
 '''
 
 # step() body: advance NCO one sample, map phase → complex exponential.
-_STEP_OLD = "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+_STEP_OLD = (
+    "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+)
 _STEP_NEW = """\
     uint32_t phase;
     nco_steps_u32(state->nco, 1, &phase);
@@ -113,7 +120,9 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     if doppler_prefix is None:
         doppler_prefix = _find_doppler_prefix()
     if doppler_prefix is None:
-        print("nco_tone: SKIP — doppler not found (pass --doppler-prefix PATH)")
+        print(
+            "nco_tone: SKIP — doppler not found (pass --doppler-prefix PATH)"
+        )
         return
 
     from just_makeit import _config as C
@@ -144,12 +153,14 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     # 4. Verify a second jm apply is a no-op (idempotent).
     jm_apply(proj)
     cmake_text2 = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert cmake_text2 == cmake_text, "jm apply changed CMakeLists.txt on second run"
+    assert cmake_text2 == cmake_text, (
+        "jm apply changed CMakeLists.txt on second run"
+    )
 
     # 5. Verify the component CMakeLists links doppler::doppler_lib.
-    comp_cmake = (proj / "native" / "src" / "tone" / "CMakeLists.txt").read_text(
-        encoding="utf-8"
-    )
+    comp_cmake = (
+        proj / "native" / "src" / "tone" / "CMakeLists.txt"
+    ).read_text(encoding="utf-8")
     assert "doppler::doppler_lib" in comp_cmake, comp_cmake
 
     # 6. Verify the generated header has the opaque nco field.

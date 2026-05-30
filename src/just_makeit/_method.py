@@ -73,13 +73,12 @@ def _methods_c_stub_variable(
 
     all_extra = list(multi_output)
     extra_out_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(all_extra)
+        f", {T._ctype_display(rt)} *out{i + 1}"
+        for i, rt in enumerate(all_extra)
     )
 
     if max_out > 0:
-        _max_out_head = (
-            f"/* Worst-case output count for {name}() — set via --max-out {max_out}. */"
-        )
+        _max_out_head = f"/* Worst-case output count for {name}() — set via --max-out {max_out}. */"
         _max_out_body = f"    return {max_out};"
     else:
         _max_out_head = (
@@ -159,9 +158,12 @@ def _methods_c_stub_fixed(
     params = params or []
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(multi_output)
+        f", {T._ctype_display(rt)} *out{i + 1}"
+        for i, rt in enumerate(multi_output)
     )
-    extra_suppress = "".join(f" (void)out{i + 1};" for i in range(len(multi_output)))
+    extra_suppress = "".join(
+        f" (void)out{i + 1};" for i in range(len(multi_output))
+    )
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
     out_suppress = " (void)out;" if out_type else ""
 
@@ -189,9 +191,13 @@ def _methods_c_stub_fixed(
                 param_parts.append(f"{T._ctype_display(t)} {n}")
                 suppress_parts.append(f"(void){n};")
         param_str = ", ".join(param_parts)
-        c_params = f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
+        c_params = (
+            f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
+        )
         suppress_names = " ".join(suppress_parts)
-        suppress = f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
+        suppress = (
+            f"    (void)state; {suppress_names}{extra_suppress}{out_suppress}"
+        )
     elif has_arg:
         if T.is_array_param_type(arg_type):
             elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
@@ -199,20 +205,22 @@ def _methods_c_stub_fixed(
                 f"{component}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
             )
-            suppress = (
-                f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
-            )
+            suppress = f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
         else:
             arg_disp = T._ctype_display(arg_type)
-            c_params = (
-                f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            suppress = (
+                f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
             )
-            suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
-    zero = T._CTYPE_META[return_type]["zero"] if return_type in T._CTYPE_META else None
+    zero = (
+        T._CTYPE_META[return_type]["zero"]
+        if return_type in T._CTYPE_META
+        else None
+    )
     ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
@@ -251,13 +259,16 @@ def _build_method_prototype(
     params = params or []
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(multi_output)
+        f", {T._ctype_display(rt)} *out{i + 1}"
+        for i, rt in enumerate(multi_output)
     )
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
 
     if variable_output:
         if has_arg:
-            step_param = f", const {T._ctype_display(arg_type)} *in, size_t n_in"
+            step_param = (
+                f", const {T._ctype_display(arg_type)} *in, size_t n_in"
+            )
         elif params:
             p_parts: list[str] = []
             for pn, pt in params:
@@ -294,9 +305,7 @@ def _build_method_prototype(
                 parts.append(f"size_t {n}_len")
             else:
                 parts.append(f"{T._ctype_display(t)} {n}")
-        c_params = (
-            f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
-        )
+        c_params = f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
     elif has_arg:
         if T.is_array_param_type(arg_type):
             elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
@@ -521,7 +530,9 @@ def run(
                 frozenset(n for n, _, _ in state_vars_list),
             )
         )
-        core_h_ = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        core_h_ = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
         if core_h_.exists():
             core_h_.write_text(
                 _preserve_core_bodies(
@@ -563,7 +574,10 @@ def run(
         ctx.update(Ctx.make_perf_ctx(perf))
         ctx.update(
             Ctx.make_step_ctx(
-                ctx, arg_type_, return_type_, no_step=C.is_no_step(cfg, object_name)
+                ctx,
+                arg_type_,
+                return_type_,
+                no_step=C.is_no_step(cfg, object_name),
             )
         )
         ctx.update(
@@ -589,20 +603,26 @@ def run(
             return R.render(tmpl, ctx)
 
         # Re-render _core.h (to update method_decls) and _ext.c
-        core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        core_h = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         if core_h.exists():
             core_h.write_text(
-                _preserve_core_bodies(core_h, r(R.COMPONENT_CORE_H), object_name),
+                _preserve_core_bodies(
+                    core_h, r(R.COMPONENT_CORE_H), object_name
+                ),
                 encoding="utf-8",
             )
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
-        bench_c = root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
+        bench_c = (
+            root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
+        )
         if bench_c.exists():
             bench_c.write_text(r(bench_c_tmpl), encoding="utf-8")
             print(f"  update  {bench_c}")

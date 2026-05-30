@@ -53,6 +53,7 @@ jm-docker-e2e = "just_makeit._scripts:docker_e2e"
 pure = true
 
 [tool.ruff]
+line-length = 79
 extend-exclude = ["src/just_makeit/templates/"]
 
 [tool.ruff.lint]

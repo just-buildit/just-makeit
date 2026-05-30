@@ -72,9 +72,7 @@ text = patch_fn(text, "get", "    return state->acc;")
 text = patch_fn(
     text,
     "dump",
-    "    float v = state->acc;\n"
-    "    state->acc = 0.0f;\n"
-    "    return v;",
+    "    float v = state->acc;\n    state->acc = 0.0f;\n    return v;",
 )
 
 text = patch_fn(
@@ -88,8 +86,7 @@ text = patch_fn(
 text = patch_fn(
     text,
     "add2d",
-    "    for (size_t i = 0; i < x_len; i++)\n"
-    "        state->acc += x[i];",
+    "    for (size_t i = 0; i < x_len; i++)\n        state->acc += x[i];",
 )
 
 text = patch_fn(

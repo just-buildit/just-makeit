@@ -66,10 +66,12 @@ The stub:
 
 ```c
 // before
-static inline float complex sliding_correlator_step(const sliding_correlator_state_t *state,
-                                                    float complex                     x) {
-    (void)state; /* TODO: implement DSP using state variables */
-    return x;
+static inline float complex
+sliding_correlator_step (const sliding_correlator_state_t *state,
+                         float complex                     x)
+{
+  (void)state; /* TODO: implement DSP using state variables */
+  return x;
 }
 ```
 
@@ -77,15 +79,16 @@ The implementation:
 
 ```c
 // after
-static inline float complex sliding_correlator_step(sliding_correlator_state_t *state,
-                                                    float complex               x) {
-    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));
-    state->delay[0] = x;
+static inline float complex
+sliding_correlator_step (sliding_correlator_state_t *state, float complex x)
+{
+  memmove (&state->delay[1], &state->delay[0], 15 * sizeof (float complex));
+  state->delay[0] = x;
 
-    float complex acc = 0.0f + 0.0f * I;
-    for (int k = 0; k < 16; k++)
-        acc += conjf(state->ref[k]) * state->delay[k];
-    return acc;
+  float complex acc = 0.0f + 0.0f * I;
+  for (int k = 0; k < 16; k++)
+    acc += conjf (state->ref[k]) * state->delay[k];
+  return acc;
 }
 ```
 
@@ -101,7 +104,9 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/sliding_correlator/sliding_correlator_core.h")
+header = pathlib.Path(
+    "native/inc/sliding_correlator/sliding_correlator_core.h"
+)
 impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
@@ -113,7 +118,10 @@ stub_re = re.compile(
 text = header.read_text()
 m = stub_re.search(text)
 if not m:
-    print("ERROR: stub not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stub not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 qualifier = m.group(1)
@@ -178,14 +186,16 @@ to `native/inc/sliding_correlator/sliding_correlator_core.h` just after
 
 /* No ISA guard needed — _JM_STEPS_SIMD_ only calls this when width > 1.
  * The inner loop is auto-vectorisable; the compiler picks the best ISA. */
-JM_FORCEINLINE JM_HOT void sliding_correlator_step_batch(sliding_correlator_state_t *state,
-                                                         const float complex        *window,
-                                                         float complex              *out) {
-    for (int b = 0; b < CORR_BATCH; b++) {
-        float complex acc = 0.0f + 0.0f * I;
-        for (int k = 0; k < CORR_TAPS; k++)
-            acc += conjf(state->ref[k]) * window[b + CORR_LENGTH - k];
-        out[b] = acc;
+JM_FORCEINLINE JM_HOT void
+sliding_correlator_step_batch (sliding_correlator_state_t *state,
+                               const float complex *window, float complex *out)
+{
+  for (int b = 0; b < CORR_BATCH; b++)
+    {
+      float complex acc = 0.0f + 0.0f * I;
+      for (int k = 0; k < CORR_TAPS; k++)
+        acc += conjf (state->ref[k]) * window[b + CORR_LENGTH - k];
+      out[b] = acc;
     }
 }
 ```
@@ -205,8 +215,8 @@ Replace `sliding_correlator_steps` in `native/src/sliding_correlator/sliding_cor
 ```c
 #define CORR_CHUNK 256
 
-JM_DEFINE_STEPS(sliding_correlator, sliding_correlator_state_t, float complex, CORR_LENGTH,
-                CORR_BATCH, CORR_CHUNK)
+JM_DEFINE_STEPS (sliding_correlator, sliding_correlator_state_t, float complex,
+                 CORR_LENGTH, CORR_BATCH, CORR_CHUNK)
 ```
 
 `JM_DEFINE_STEPS` generates `sliding_correlator_steps()` — scratch buffer,

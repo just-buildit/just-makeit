@@ -25,7 +25,10 @@ stubs_re = re.compile(
 )
 
 if not stubs_re.search(text):
-    print("ERROR: stubs not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stubs not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 patched = stubs_re.sub(after, text)

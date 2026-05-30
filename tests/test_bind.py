@@ -22,7 +22,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
-from just_makeit._bind import parse_header, parse_reset_defaults, run as bind_run
+from just_makeit._bind import (
+    parse_header,
+    parse_reset_defaults,
+    run as bind_run,
+)
 
 
 def _scaffold_filter(root: Path) -> Path:

@@ -93,7 +93,13 @@ _CTYPE_META: dict[str, dict] = {
         "uint16_t", "I", "unsigned int", "0U", "np.uint16", _TO_PY_ULONG, "0U"
     ),
     "uint32_t": _fwint(
-        "uint32_t", "k", "unsigned long", "0UL", "np.uint32", _TO_PY_ULONG, "0U"
+        "uint32_t",
+        "k",
+        "unsigned long",
+        "0UL",
+        "np.uint32",
+        _TO_PY_ULONG,
+        "0U",
     ),
     "uint64_t": _fwint(
         "uint64_t",
@@ -105,7 +111,13 @@ _CTYPE_META: dict[str, dict] = {
         "0U",
     ),
     "size_t": _fwint(
-        "size_t", "K", "unsigned long long", "0ULL", "np.uintp", _TO_PY_ULLONG, "0"
+        "size_t",
+        "K",
+        "unsigned long long",
+        "0ULL",
+        "np.uintp",
+        _TO_PY_ULLONG,
+        "0",
     ),
     "ptrdiff_t": _fwint(
         "ptrdiff_t", "L", "long long", "0LL", "np.intp", _TO_PY_LLONG, "0"
@@ -180,6 +192,9 @@ _NP_ENUM: dict[str, str] = {
     "np.uint64": "NPY_UINT64",
     "np.uintp": "NPY_UINTP",
     "np.intp": "NPY_INTP",
+    # bool is a registered scalar arg/return type; without this entry
+    # make_sample_ctx's `_NP_ENUM[out_np_dtype]` lookup KeyErrors on it.
+    "np.bool_": "NPY_BOOL",
     # const char * — return-type only; steps() array path does not apply.
     "str": "NPY_OBJECT",
 }
@@ -314,7 +329,7 @@ def is_string_enum_type(ptype: str) -> bool:
 
 def string_enum_choices(ptype: str) -> list[str]:
     """Return the ordered choice list from a 'string_enum:a,b,...' type."""
-    return ptype[len("string_enum:"):].split(",")
+    return ptype[len("string_enum:") :].split(",")
 
 
 def parse_array_type(ctype: str) -> tuple[str, int] | None:

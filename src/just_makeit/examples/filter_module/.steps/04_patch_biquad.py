@@ -14,7 +14,9 @@ stub_re = re.compile(
 )
 m = stub_re.search(text)
 if not m:
-    print("ERROR: biquad_step stub not found — already patched?", file=sys.stderr)
+    print(
+        "ERROR: biquad_step stub not found — already patched?", file=sys.stderr
+    )
     sys.exit(1)
 
 impl = (

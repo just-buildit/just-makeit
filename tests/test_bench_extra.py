@@ -1,10 +1,8 @@
 """Additional unit tests for just_makeit._bench — pure helpers."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from just_makeit import _bench as B
 
@@ -78,7 +76,10 @@ class TestTrim:
     def test_keeps_summary_stats(self):
         report = {
             "benchmarks": [
-                {"name": "test", "stats": {"min": 1e-6, "mean": 2e-6, "data": []}}
+                {
+                    "name": "test",
+                    "stats": {"min": 1e-6, "mean": 2e-6, "data": []},
+                }
             ]
         }
         result = B._trim(report)
@@ -121,7 +122,9 @@ class TestSnapshotPath:
 
 class TestPrevSnapshot:
     def test_returns_none_when_no_history_dir(self, tmp_path):
-        result = B._prev_snapshot(tmp_path / "nonexistent", "20240101T000000Z", False)
+        result = B._prev_snapshot(
+            tmp_path / "nonexistent", "20240101T000000Z", False
+        )
         assert result is None
 
     def test_returns_none_when_empty_dir(self, tmp_path):
@@ -159,7 +162,9 @@ class TestSaveSnapshot:
     def test_creates_file(self, tmp_path):
         hdir = tmp_path / "history"
         report = {"benchmarks": []}
-        B._save_snapshot(tmp_path, hdir, "20240101T000000Z", report, is_c=False)
+        B._save_snapshot(
+            tmp_path, hdir, "20240101T000000Z", report, is_c=False
+        )
         assert (hdir / "20240101T000000Z.json").exists()
 
     def test_creates_c_file(self, tmp_path):
@@ -171,7 +176,9 @@ class TestSaveSnapshot:
     def test_file_is_valid_json(self, tmp_path):
         hdir = tmp_path / "history"
         report = {"benchmarks": [{"name": "x"}]}
-        B._save_snapshot(tmp_path, hdir, "20240101T000000Z", report, is_c=False)
+        B._save_snapshot(
+            tmp_path, hdir, "20240101T000000Z", report, is_c=False
+        )
         loaded = json.loads((hdir / "20240101T000000Z.json").read_text())
         assert loaded["benchmarks"][0]["name"] == "x"
 

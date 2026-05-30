@@ -20,7 +20,9 @@ import pytest
 # Formatting rules are cmake-format's responsibility.
 _CMAKE_LINT_DISABLED = ["C0301", "C0307"]
 
-EXAMPLES_DIR = Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
+EXAMPLES_DIR = (
+    Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
+)
 
 
 def _all_example_dirs():
@@ -33,7 +35,9 @@ def _discover_examples():
 
 
 def test_all_examples_have_test_py():
-    missing = [d.name for d in _all_example_dirs() if not (d / "test.py").exists()]
+    missing = [
+        d.name for d in _all_example_dirs() if not (d / "test.py").exists()
+    ]
     assert not missing, (
         f"Example(s) missing test.py: {missing}\n"
         "Add a test.py with a run(root: Path) -> None function. "
@@ -92,8 +96,10 @@ def _cmake_lint_check(root: Path) -> None:
     if not cmake_files:
         return
     r = subprocess.run(
-        ["cmake-lint", "--disabled-codes"] + _CMAKE_LINT_DISABLED
-        + ["--"] + [str(f) for f in cmake_files],
+        ["cmake-lint", "--disabled-codes"]
+        + _CMAKE_LINT_DISABLED
+        + ["--"]
+        + [str(f) for f in cmake_files],
         capture_output=True,
         text=True,
     )

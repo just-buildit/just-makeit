@@ -113,7 +113,9 @@ class TestCliFunction:
 
     def test_impl_loading(self):
         with patch("just_makeit._function.run") as mock_run:
-            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+            with patch(
+                "just_makeit._impl.load_impl", return_value="body"
+            ) as mock_load:
                 _run(["fn", "--module", "dsp", "--impl", "src.c::fn"])
                 mock_load.assert_called_once_with("src.c::fn", [])
                 _, kwargs = mock_run.call_args
@@ -156,7 +158,9 @@ class TestCliFunction:
     def test_replace_with_impl(self):
         with patch("just_makeit._function.run"):
             with patch("just_makeit._impl.load_impl", return_value="body"):
-                with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
+                with patch(
+                    "just_makeit._impl.parse_replace", return_value=("a", "b")
+                ):
                     _run(
                         [
                             "fn",
