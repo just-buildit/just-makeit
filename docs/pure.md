@@ -10,7 +10,9 @@
 | Pure function      | `--no-state`                | `step(const state_t *s, T x) → T`    |
 | Method-only        | `--no-step`                 | _(no step generated)_                |
 
-The sections below explain each shape and when to reach for it.
+The sections below explain each shape and when to reach for it. Each flag
+also works at scaffold time, e.g. `jm new my_proj --object framer --no-step`
+or `--no-state` in a single command.
 
 ______________________________________________________________________
 
@@ -74,7 +76,9 @@ just-makeit object tone_gen --arg-type void --return-type "float _Complex" --mut
 ```
 
 A generator produces samples without consuming input. Pass `--arg-type void`
-to suppress the input parameter from `step()` and `steps()`.
+to suppress the input parameter from `step()` and `steps()`. With no explicit
+`--return-type`, a void-arg object defaults to a `float _Complex` return
+(`--return-type void` is rejected as a no-op object).
 
 ```c
 /* no input parameter */

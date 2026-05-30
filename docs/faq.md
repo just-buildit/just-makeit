@@ -87,26 +87,40 @@ ______________________________________________________________________
 State variables (declared with `--state`) get a constructor parameter,
 getter/setter pair, and reset target. If you just need a field in the struct
 — a scratch buffer, a lookup table, something initialised in `_create` — add
-it manually to `native/inc/<obj>/<obj>_core.h` inside the struct body, after
-the generated fields.
+it manually to `native/inc/<obj>/<obj>_core.h` inside the struct body.
 
-The generator regenerates the struct header when you run `just-makeit add`,
-but your manually-added fields are preserved as long as they appear *after* the
-generated block. To be safe, add a comment: `/* manual */`.
+The state struct (and the inline `step()` body) in `<obj>_core.h` is
+preserved across `just-makeit add` and `just-makeit apply` — only the public
+*declarations* refresh from the manifest. Your hand-added fields stay put.
 
 ______________________________________________________________________
 
-## Does `jm add` overwrite my hand-edited files?
+## Does `jm add` / `jm apply` overwrite my hand-edited files?
 
-No for implementation files, yes for binding and header files. See the
+No — they follow a sacred/glue contract. See the
 [Customization](customization.md#what-regenerates-vs-whats-yours) page for the
 complete table. In short:
 
-- `*_core.c` and test files: yours, never overwritten.
-- `*_ext.c`, `.pyi`, `CMakeLists.txt`: regenerated.
+- **Glue** (`*_ext.c`, `.pyi`, `CMakeLists.txt`): regenerated from the
+    manifest on every apply.
+- **Hybrid** (`*_core.h`): public *declarations* refresh, but the inline
+    `step()` body and the state struct are preserved.
+- **Sacred** (`*_core.c`, tests): yours, never overwritten once they exist.
 
-All regenerated files are backed up before writing. If anything fails, the
-originals are restored.
+So editing the TOML propagates to the glue. A signature change you make in the
+manifest may also need an additive verb (`jm method` / `jm add`) — or a
+`jm regenerate` — to update the sacred `_core.c` body.
+
+______________________________________________________________________
+
+## How do I force everything to rebuild from the manifest?
+
+`just-makeit regenerate <component>` deletes every file the component owns and
+re-runs apply, rebuilding from `just-makeit.toml`. It is the deliberate-refresh
+counterpart to the sacred-file contract: unlike `jm apply` it *does* discard
+hand-written `_core.c` bodies, so `git stash` first. It leaves the manifest
+untouched (unlike `jm remove`). One confirmation prompt; `--force` skips it.
+Works for both standalone and module objects.
 
 ______________________________________________________________________
 
@@ -127,7 +141,7 @@ just-makeit example fir_filter
 ```
 
 This runs the `fir_filter` example end-to-end in a temporary directory — no
-`git clone` required. All 15 bundled examples are shipped inside the wheel.
+`git clone` required. The bundled examples ship inside the wheel.
 For a list: `just-makeit example --list`.
 
 ______________________________________________________________________

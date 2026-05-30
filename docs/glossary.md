@@ -89,4 +89,22 @@ ______________________________________________________________________
 The project manifest — the source of truth for all subsequent commands.
 Records the project name, version, all declared objects and modules, and every
 flag (`--perf`, `--arg-type`, `--return-type`, etc.) so that `just-makeit add`
-regenerates files consistently with the original scaffold.
+and `just-makeit apply` regenerate files consistently with the original
+scaffold.
+
+______________________________________________________________________
+
+**glue file**
+A generated file that is rebuilt from the manifest on every `just-makeit apply`:
+`<comp>_ext.c` (CPython binding), `<comp>.pyi` (type stub), and `CMakeLists.txt`.
+Editing the TOML propagates straight into the glue. `<comp>_core.h` is a
+*hybrid*: its public declarations refresh, but the inline `step()` body and the
+state struct are preserved.
+
+______________________________________________________________________
+
+**sacred file**
+A generated file that apply never overwrites once it exists — `<comp>_core.c`
+(your `steps()` and lifecycle bodies) and the generated tests. To intentionally
+rebuild a sacred file from the manifest, use `just-makeit regenerate <comp>`
+(`git stash` first, since it discards hand-written bodies).

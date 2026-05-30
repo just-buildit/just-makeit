@@ -173,3 +173,41 @@ pip install -e .
 
 After this, Python-only edits take effect immediately; rebuild with `make`
 after any C changes.
+
+______________________________________________________________________
+
+## I edited `just-makeit.toml` but `_core.c` didn't change
+
+**Symptom:** you changed a method's signature (or a state field) in the TOML,
+ran `jm apply`, but `<comp>_core.c` still has the old body.
+
+**Cause:** this is by design. `_core.c` is **sacred** — `jm apply` never
+overwrites it. Apply regenerates the glue (`_ext.c`, `.pyi`, `CMakeLists.txt`)
+and refreshes the `_core.h` declarations, but your hand-written `steps()` and
+lifecycle bodies are yours to keep.
+
+**Fix:** for an additive change use the matching verb (`jm method`, `jm add`).
+For a full rebuild from the manifest, regenerate — but it discards your
+`_core.c` bodies, so stash first:
+
+```sh
+git stash
+just-makeit regenerate <comp>   # deletes the component's files, re-runs apply
+```
+
+`regenerate` leaves the manifest untouched (unlike `jm remove`).
+
+______________________________________________________________________
+
+## `--return-type "T[]"` is rejected
+
+**Symptom:** `just-makeit object x --return-type "float[]"` exits with an error
+about array return types.
+
+**Cause:** array *return* ("blockwise", `T[] -> T[]`) is not yet supported.
+The error is deliberate — earlier versions crashed instead.
+
+**Fix:** array *input* works (`--arg-type "float[]"`), and the result is a
+single sample. If you need block-out, return into an `out=` buffer via a
+`multi_output` method, or emit through a `variable_output` method. There is no
+`blockwise` preset for the same reason.

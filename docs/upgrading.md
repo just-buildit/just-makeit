@@ -15,15 +15,15 @@ Every `just-makeit.toml` carries a `schema` version number:
 [project]
 name    = "my_dsp"
 version = "0.1.0"
-schema  = "2"
+schema  = "6"
 ```
 
-When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances. If your
-project's schema is behind, `just-makeit` will remind you whenever you run a
-command that modifies the project:
+When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances (it is `6`
+as of v0.14). If your project's schema is behind, `just-makeit` will remind
+you whenever you run a command that modifies the project:
 
 ```
-warning: project schema is v1, current is v2.
+warning: project schema is v4, current is v6.
 Run 'just-makeit upgrade' to get new features.
 ```
 
@@ -54,7 +54,7 @@ If the project is already current:
 
 ```sh
 $ just-makeit upgrade
-already up to date (schema 2)
+already up to date (schema 6)
 ```
 
 ______________________________________________________________________
@@ -74,19 +74,17 @@ ______________________________________________________________________
 
 ## What each migration adds
 
-### Schema 1 → 2
+| Migration | Adds                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------- |
+| 1 → 2     | Docs scaffolding: `zensical.toml`, `docs/index.md`, `docs/api.md`.                             |
+| 2 → 3     | Regenerates bench files so per-method timing blocks appear in older projects.                  |
+| 3 → 4     | Adds `native/benchmarks/jm_bench.h` (per-round stats + pytest-benchmark JSON); regens benches. |
+| 4 → 5     | Moves benchmarking under `just-makeit bench`; writes dated snapshots to `benchmarks/history/`. |
+| 5 → 6     | Gates the `include = [...]` split-manifest key; the version bump alone is the migration.       |
 
-Adds documentation scaffolding.
-
-| File            | Purpose                                                                                                            |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `zensical.toml` | [Zensical](https://zensical.org) docs configuration. `make docs` builds the site; `zensical serve` hot-reloads it. |
-| `docs/index.md` | Project home page stub.                                                                                            |
-| `docs/api.md`   | Auto-generated Python API reference page.                                                                          |
-
-These files are starter stubs — edit them freely after the upgrade. See
-[`make docs` and `make coverage`](commands/build.md) for the build targets
-that use them.
+The schema 1 → 2 files are starter stubs — edit them freely after the
+upgrade. See [`make docs` and `make coverage`](commands/build.md) for the
+build targets that use them.
 
 ______________________________________________________________________
 

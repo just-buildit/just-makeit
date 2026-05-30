@@ -1,4 +1,4 @@
-# `jm object NAME --consumer` — consumer (input → ())
+# `jm object NAME --preset consumer` — consumer (input → ())
 
 A **consumer** takes input but produces no output — `step()` accepts a
 sample and returns nothing; state carries whatever the algorithm
@@ -10,15 +10,14 @@ a checksum, a histogram bin counter, a log-line writer that flushes to
 disk, a metric reporter that ships samples to a stats system, or any
 "fold" over an incoming stream.
 
-**Status: proposed.** Tracked in
-[`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--consumer` flag would bundle `--return-type void` with a `_core.c`
-skeleton sized for accumulators, integrators, and writers.
+`--preset consumer` expands to `--return-type void`, which strips the
+output side of `step()`. The scaffold builds and tests green straight
+away.
 
 ## Command
 
 ```sh
-jm object NAME --consumer \
+jm object NAME --preset consumer \
     --arg-type "float _Complex" \
     --state count:uint64_t:0 \
     --state sum:double:0.0
@@ -26,7 +25,7 @@ jm object NAME --consumer \
 
 ## What you get
 
-### `native/inc/NAME/NAME_core.h` (proposed)
+### `native/inc/NAME/NAME_core.h`
 
 ```c
 typedef struct {
@@ -50,7 +49,7 @@ double NAME_get_sum(const NAME_state_t *state);
 uint64_t NAME_get_count(const NAME_state_t *state);
 ```
 
-### `native/src/NAME/NAME_core.c` (proposed)
+### `native/src/NAME/NAME_core.c`
 
 ```c
 static inline void
@@ -91,11 +90,11 @@ print(acc.get_sum(), acc.get_count())
 
 ## Concrete types
 
-| Slot                | Accepts                                                                                                                                     | Rejects                                           | Default                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------- |
-| `--arg-type`        | Any [scalar](../types.md#step-input--output-types).                                                                                         | `const char *`, `void` (use [source](source.md)). | `float _Complex`                   |
-| `--return-type`     | Implicit `void`; sinks produce no output.                                                                                                   | All explicit values — passing one is an error.    | `void`                             |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). State carries the running aggregate, so `uint64_t`, `double`, and complex types are common. | `const char *`.                                   | `count:uint64_t:0, sum:double:0.0` |
+| Slot                | Accepts                                                                                                                                     | Rejects                                                 | Default                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------- |
+| `--arg-type`        | Any [scalar](../types.md#step-input-output-types).                                                                                          | `const char *`, `void` (use [generator](generator.md)). | `float _Complex`                   |
+| `--return-type`     | Implicit `void`; sinks produce no output.                                                                                                   | All explicit values — passing one is an error.          | `void`                             |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). State carries the running aggregate, so `uint64_t`, `double`, and complex types are common. | `const char *`.                                         | `count:uint64_t:0, sum:double:0.0` |
 
 Generated accessors (`get_sum`, `get_count`, etc.) follow the standard
 [State variable types](../types.md#state-variable-types) NumPy mapping.

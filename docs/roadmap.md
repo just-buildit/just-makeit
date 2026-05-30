@@ -348,6 +348,59 @@ do I actually need?" is effectively gone.
 
 ______________________________________________________________________
 
+## v0.12–v0.13 — Presets and CLI ↔ TOML parity ✓ shipped
+
+**Delivered:**
+
+- **`jm object --preset NAME`** — flag bundles for the common object shapes:
+    `processor` (default), `generator`, `consumer`, `reader`. `blockwise` is
+    intentionally excluded — array *return* is not yet supported.
+- **Phase 2 CLI parity** — every common TOML knob gained a CLI flag. The
+    field-by-field status lives in `docs/configuration.md`.
+- The interactive `jm wizard` was **retired** — there is no wizard. Use the
+    explicit verbs and presets.
+
+______________________________________________________________________
+
+## v0.14 — Sacred/glue lifecycle ✓ shipped
+
+The headline change: editing the manifest is now safe and predictable. Files
+are partitioned into **glue** (regenerated from the manifest) and **sacred**
+(yours, never overwritten).
+
+**Delivered:**
+
+- **Sacred/glue `jm apply`** — `apply` is no longer add-only. Glue files
+    (`<comp>_ext.c`, `<comp>.pyi`, `CMakeLists.txt`) regenerate on every apply;
+    `<comp>_core.h` declarations refresh while its inline `step()` body and
+    state struct are preserved; `<comp>_core.c` is sacred and never overwritten
+    once it exists.
+- **`jm regenerate <component>`** — the deliberate-refresh half of the
+    contract. Deletes every file the component owns and re-runs `apply` to
+    rebuild from the manifest, leaving the manifest untouched (unlike
+    `jm remove`). Single confirmation; `--force` skips it. Discards
+    hand-written `_core.c` bodies — `git stash` first. Standalone and module.
+- **`--impl file::N:M`** — lift source lines `N..M` (inclusive, 1-based)
+    instead of a named function body. Composes with `SLOT::file::N:M` and TOML
+    `impl_file = "path::N:M"`. Out-of-bounds/inverted ranges error cleanly.
+    The sacred-file contract removes the old splice-into-existing-files hazard,
+    so `--impl` (and `--replace`, `create_impl`, etc.) is a fully supported
+    feature, not a deprecated one.
+
+**Foot-guns fixed (now work, or fail cleanly):**
+
+- Array *return* type (`--return-type "T[]"`, "blockwise") errors cleanly
+    instead of crashing — still unsupported, but no longer a foot-gun. Array
+    *input* (`--arg-type "T[]"`) works.
+- `jm new --object X --no-step` / `--no-state` work in a single command.
+- `bool` is a usable scalar arg/return/state type.
+- `jm object --module M --perf` writes `jm_perf.h`.
+- `jm add` preserves `init_params`, so the constructor stays correct.
+- The `generator` preset builds — void-arg objects default to a complex
+    return.
+
+______________________________________________________________________
+
 ## What we're thinking about next
 
 These are problems, not promises. If any of them sounds like something you

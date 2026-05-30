@@ -10,25 +10,27 @@ transformer that re-encodes a batch, an image kernel applied across a
 row, or any algorithm where the per-element cost is dominated by a
 shared setup that you'd rather do once per block.
 
-**Status: proposed.** Tracked in
-[`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--blockwise` flag would bundle `--arg-type "T[]"` + `--return-type "T[]"`
-with a `_core.c` skeleton that contains the loop pre-written.
+**Status: not yet available.** A blockwise scaffold needs an array
+*return* type (`--return-type "T[]"`), which just-makeit does not
+support yet. There is no `--preset blockwise`, and passing
+`--return-type "T[]"` errors cleanly at parse time rather than
+generating a broken project. Array *input* (`--arg-type "T[]"`) works
+today — only the array-out half is missing.
 
-## Command
+This page documents the intended shape and shows the workaround that
+already covers the most common case (plan-once / execute-many).
 
-```sh
-jm object NAME --blockwise \
-    --elem-type "float _Complex" \
-    --state gain:float:1.0f
-```
+## The workaround that works today
 
-`--elem-type` is the per-sample type; the array form (`T[]`) is implied
-by `--blockwise`.
+The block pattern that matters most — heavy setup once, fast `steps()`
+per block — needs no array *return* type. Declare the algorithm with a
+sized output param and a scalar `steps()` over an input array; the
+plan-once-execute-many recipe below is the production shape and builds
+today.
 
-## What you get
+## What a blockwise preset would generate (proposed)
 
-### `native/inc/NAME/NAME_core.h` (proposed)
+### `native/inc/NAME/NAME_core.h`
 
 ```c
 typedef struct {
@@ -47,7 +49,7 @@ void NAME_steps(NAME_state_t       *state,
 There is no inline `step()` — block transforms operate on whole
 buffers, so the public surface is `steps()` alone.
 
-### `native/src/NAME/NAME_core.c` (proposed)
+### `native/src/NAME/NAME_core.c`
 
 ```c
 void
@@ -80,8 +82,8 @@ DSP libraries with heavy construction (FFTW plans, pre-computed twiddle
 tables, vendor-opaque handles like `pocketfft_plan`) fit the block
 preset cleanly — the heavy work lives in `create_impl`, the hot path
 stays a `steps()` call. The state struct carries the plan as an
-opaque pointer (declared with `opaque = true` in TOML, or with the
-proposed `--opaque` flag in Phase 2).
+[opaque pointer](../types.md#opaque-state-fields-pointers-handles)
+(declared with `opaque = true` in TOML).
 
 ```c
 typedef struct {
@@ -129,10 +131,13 @@ xform = NAME(gain=1.0)
 out = xform.steps(np.ones(1024, dtype=np.complex64))   # → (1024,) complex64
 ```
 
-## Concrete types
+## Concrete types (proposed)
 
-| Slot                       | Accepts                                                                         | Rejects                                                                                                                           | Default           |
-| -------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types). | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype.                                 | `float _Complex`  |
-| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                 | `const char *`.                                                                                                                   | `gain:float:1.0f` |
-| `--return-type`            | Not accepted — block always emits the same element type as `--elem-type`.       | All values. For width-changing transforms (e.g. `float[]` → `int16_t[]`) use a [library](library.md) function with `--out-param`. | —                 |
+These slots describe the future `--preset blockwise` shape; `--elem-type`
+is not a real flag yet.
+
+| Slot                       | Accepts                                                                                                                                   | Rejects                                                                                           | Default           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------- |
+| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types).                                                           | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype. | `float _Complex`  |
+| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                                                                           | `const char *`.                                                                                   | `gain:float:1.0f` |
+| `--return-type`            | Array return unsupported. For width-changing transforms (`float[]` → `int16_t[]`) use a [function](function.md) with `--out-param` today. | All values.                                                                                       | —                 |

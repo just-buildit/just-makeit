@@ -1,8 +1,9 @@
 # Declarative scaffolding — design
 
-Status: **implemented in v0.13.5** (schema 6). Captures the design for
-three related features: split per-object TOMLs, `jm apply`, and
-`jm remove`. For the user-facing walkthrough with diagrams, see
+Status: **shipped.** Split per-object TOMLs and `jm remove` landed in
+v0.13.5 (schema 6); the sacred/glue `jm apply` contract and
+`jm regenerate` landed in v0.14. For the user-facing walkthrough with
+diagrams, see
 [../declarative-scaffolding.md](../declarative-scaffolding.md). The
 bundled `declarative_scaffold` example is the runnable proof of the
 end-to-end story.
@@ -107,11 +108,18 @@ ______________________________________________________________________
 
 ## Implementation bodies
 
-Today `--impl path/to/file.c::funcname` lifts a C function body from an
-external file into the generated `/* <<IMPLEMENT>> */` placeholder. That
-covers the *file location* case, but a declarative spec should be able
-to carry the implementation **itself** — so one TOML produces a
-complete, buildable component with nothing to wire up by hand.
+`--impl path/to/file.c::funcname` lifts a C function body from an
+external file into the generated `/* <<IMPLEMENT>> */` placeholder.
+`--impl path/to/file.c::N:M` instead lifts lines `N`..`M` (inclusive,
+1-based) when there is no named function to target. Both compose with
+`--replace`. A declarative spec should also be able to carry the
+implementation **itself** — so one TOML produces a complete, buildable
+component with nothing to wire up by hand.
+
+`--impl` is a **supported, recommended** feature, not a legacy hazard.
+The old risk was splicing into an existing, hand-edited file; the
+sacred/glue contract eliminates it — `--impl` feeds the generated stub,
+and the sacred `_core.c` is the user's once it exists.
 
 Two forms, either of which fills the `/* <<IMPLEMENT>> */` placeholder
 for its target:
@@ -142,7 +150,8 @@ replace = { "agc_execute_ctrl" = "execute_ctrl", "TODO" = "done" }
 ```
 
 - `impl` — the C body inline (TOML literal string). The heredoc form.
-- `impl_file` — `"path::funcname"`, the existing file-lift behaviour.
+- `impl_file` — `"path::funcname"` (named function) or `"path::N:M"`
+    (line range `N`..`M`, inclusive, 1-based), the file-lift behaviour.
 - `replace` — a table of `old = new` substitutions applied before
     injection (the existing `--replace`); valid with either form.
 - `impl` and `impl_file` are **mutually exclusive** on one target —
@@ -150,19 +159,19 @@ replace = { "agc_execute_ctrl" = "execute_ctrl", "TODO" = "done" }
 - Both are valid on the object section (the `step()` body) and on each
     `[[X.methods]]` entry (that method's body).
 
-**TOML ownership vs. the body-preservation pass.** When a target carries
+**TOML ownership vs. sacred `.c`.** When a target carries
 `impl`/`impl_file`, the TOML *owns* that body: `apply` writes it and a
-re-`apply` re-asserts it. When neither is set, behaviour is unchanged —
-a hand-written body in `core.c` is preserved across regeneration. A body
-is declared in the TOML *or* edited in the C file, never both; `apply`
-warns before overwriting a hand-edited body that diverges from the spec.
+re-`apply` re-asserts it, even into the otherwise-sacred `_core.c`.
+When neither is set, the sacred-file rule applies — `apply` never
+overwrites a hand-written body in `_core.c`. A body is declared in the
+TOML *or* edited in the C file, never both.
 
 `jm script` round-trips `impl_file` as the reference it is, and emits an
 `impl` body as the literal `'''…'''` block.
 
 ______________________________________________________________________
 
-## `jm apply`
+## `jm apply` — the sacred/glue contract
 
 Materialize everything *declared* in the TOML.
 
@@ -176,17 +185,60 @@ jm apply objects/dsp.toml # merge a fragment in, then materialize
 - A path argument → a **compose fragment**: an object TOML that is
     copied into `objects/` (so the project stays self-contained), added
     to the `include` set, then materialized.
-- `apply` is **add + update only — never deletes.** It is safe to run
-    repeatedly; it reconciles generated files *up to* the spec.
-- Hand-written `core.c` / `core.h` bodies are preserved via the existing
-    body-preservation pass — except where a target declares `impl` /
-    `impl_file` (see [Implementation bodies](#implementation-bodies)), in
-    which case the TOML owns the body.
+- `apply` **never deletes.** It is safe to run repeatedly; deletion is
+    strictly `jm remove`'s job.
+
+`apply` shipped a precise per-file policy. Every file an object owns
+falls into one of three buckets:
+
+| File                   | Class      | What `apply` does                                                                 |
+| ---------------------- | ---------- | --------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **glue**   | Regenerated from the manifest on every apply.                                     |
+| `src/<pkg>/<comp>.pyi` | **glue**   | Regenerated from the manifest on every apply.                                     |
+| `CMakeLists.txt`       | **glue**   | Regenerated from the manifest on every apply.                                     |
+| `<comp>_core.h`        | **hybrid** | Public declarations refresh; the inline `step()` body and state struct preserved. |
+| `<comp>_core.c`        | **sacred** | Never overwritten once it exists. `steps()` / lifecycle bodies are the user's.    |
+
+So editing the manifest always propagates to the glue. The **hybrid**
+header means a TOML-declared method or field reaches the public API on
+the next apply, while the hand-written inline `step()` body and the
+state struct definition survive. The **sacred** `.c` is the one file
+`apply` will not touch — a signature change you make in TOML may need
+an additive verb (`jm method`, `jm add`) or a `jm regenerate` to also
+update the sacred body.
+
+When a target declares `impl` / `impl_file` (see
+[Implementation bodies](#implementation-bodies)), the TOML *owns* that
+body and `apply` re-asserts it even into the otherwise-sacred `.c`.
 
 This is the batch-scaffold path: author a complex object in one TOML,
 `jm apply` it. It also makes a project reproducible from its TOML alone
 — a stronger guarantee than `jm script` (which only replays CLI
 history).
+
+______________________________________________________________________
+
+## `jm regenerate`
+
+The deliberate-refresh half of the sacred/glue contract.
+
+```sh
+jm regenerate <component>          # confirm, then rebuild from the manifest
+jm regenerate <component> --force  # skip the confirmation
+```
+
+- Deletes **every file the component owns** and re-runs `jm apply` to
+    rebuild them from the manifest — including the sacred `_core.c`.
+- Single confirmation prompt; `--force` skips it.
+- Leaves the **manifest untouched** (unlike `jm remove`, which strips
+    the TOML section). The component still exists; only its generated
+    files are rebuilt.
+- Discards hand-written `_core.c` bodies — advise `git stash` first.
+- Works for both standalone and module objects.
+
+Use it when a manifest edit (a new state field, a changed signature)
+needs to reach the sacred `.c` body and the additive verbs don't cover
+the change.
 
 ______________________________________________________________________
 
@@ -250,7 +302,7 @@ Resolved 2026-05-19:
     manifest or sibling object files.
 1. **Inline implementations** — an object/method spec may carry its C
     body inline via `impl` (a TOML literal `'''…'''` heredoc) or by
-    reference via `impl_file` (`"path::funcname"`, the existing `--impl`).
-    The two are mutually exclusive. When either is set, the TOML owns the
-    body and `apply` re-asserts it; otherwise the body-preservation pass
-    keeps hand-written C as today.
+    reference via `impl_file` (`"path::funcname"` or `"path::N:M"`, the
+    `--impl` semantics). The two are mutually exclusive. When either is
+    set, the TOML owns the body and `apply` re-asserts it; otherwise the
+    sacred-file rule keeps hand-written `_core.c` untouched.

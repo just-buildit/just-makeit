@@ -1,4 +1,4 @@
-# `jm object NAME --reader` — reader (external source → output)
+# `jm object NAME --preset reader` — reader (external source → output)
 
 A **reader** opens an external source — file, socket, pipe, mmap'd
 region — and yields data on demand. Unlike a generator (which
@@ -10,33 +10,35 @@ row reader, a WAV / PNG / Parquet loader, a TCP socket consumer, a
 mmap'd shared-memory channel reader, or any source where the data
 lives outside the process.
 
-**Status: proposed.** Tracked in
-[`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--reader` flag would bundle:
-
-- `--no-step` (the standard `step()` interface doesn't fit I/O)
-- `--init-param filepath:"const char *"`
-- Custom methods `read()`, `seek()`, `close()` registered upfront
-- A `_core.c` skeleton with `open()` / `mmap()` already wired
-
-This preset is the direct fix for the workflow gh-69 was trying to
-express via TOML — `init_params` for the user-facing ctor, `state` for
-internal bookkeeping.
+`--preset reader` bundles `--no-step` (the standard `step()` interface
+doesn't fit I/O) with a `filepath:const char *` init-param. The scaffold
+builds and tests green. Add the `read()` / `seek()` / `close()` methods
+yourself with `jm method`; this preset formalises the asymmetry
+init-params solve — `init_params` for the user-facing ctor (`filepath`),
+`state` for internal bookkeeping (`fd`, `position`).
 
 ## Command
 
 ```sh
-jm object NAME --reader \
-    --init-param filepath:"const char *" \
+jm object NAME --preset reader \
     --init-param header_bytes:size_t:0 \
     --state fd:int:-1 \
     --state file_size:size_t:0 \
     --state position:size_t:0
 ```
 
+The `filepath:const char *` init-param comes from the preset; the rest
+are yours. Then add the I/O verbs:
+
+```sh
+jm method NAME read --param n:size_t --out-type "float _Complex"
+jm method NAME seek --param sample_index:size_t --return-type int
+jm method NAME close
+```
+
 ## What you get
 
-### `native/inc/NAME/NAME_core.h` (proposed)
+### `native/inc/NAME/NAME_core.h`
 
 ```c
 typedef struct {
@@ -55,7 +57,7 @@ int    NAME_seek(NAME_state_t *state, size_t sample_index);
 void   NAME_close(NAME_state_t *state);
 ```
 
-### `native/src/NAME/NAME_core.c` (proposed)
+### `native/src/NAME/NAME_core.c`
 
 ```c
 NAME_state_t *
@@ -133,11 +135,11 @@ rdr.close()
 
 ## Concrete types
 
-| Slot                                      | Accepts                                                                                                                                 | Rejects                                                                                          | Default                                            |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `--init-param name:T:D`                   | Path/filename strings use `const char *`. Any [scalar](../types.md#constructor--init-param-types), `T[]`, `T[][]`, `string_enum:a,b,c`. | `T[N]` (fixed length — that's `--state` territory).                                              | `filepath:"const char *", header_bytes:size_t:0`   |
-| `--state field:T:D`                       | Any [scalar](../types.md#state-variable-types). The file descriptor pattern is `fd:int:-1`.                                             | `const char *` (use an `--init-param` to receive the path, then store the parsed `fd` / `size`). | `fd:int:-1, file_size:size_t:0, position:size_t:0` |
-| Method return / output (`out_type = "T"`) | Any [array element type](../types.md#array-element-types). `read()` returns a `T[]` ndarray sized from the requested sample count.      | `bool`, `int`, `const char *`, `long double _Complex`.                                           | `float _Complex`                                   |
+| Slot                                      | Accepts                                                                                                                                | Rejects                                                                                          | Default                                            |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `--init-param name:T:D`                   | Path/filename strings use `const char *`. Any [scalar](../types.md#constructor-init-param-types), `T[]`, `T[][]`, `string_enum:a,b,c`. | `T[N]` (fixed length — that's `--state` territory).                                              | `filepath:"const char *", header_bytes:size_t:0`   |
+| `--state field:T:D`                       | Any [scalar](../types.md#state-variable-types). The file descriptor pattern is `fd:int:-1`.                                            | `const char *` (use an `--init-param` to receive the path, then store the parsed `fd` / `size`). | `fd:int:-1, file_size:size_t:0, position:size_t:0` |
+| Method return / output (`out_type = "T"`) | Any [array element type](../types.md#array-element-types). `read()` returns a `T[]` ndarray sized from the requested sample count.     | `bool`, `int`, `const char *`, `long double _Complex`.                                           | `float _Complex`                                   |
 
 `const char *` is the load-bearing type here. It is a valid init-param
 (PyArg parses the Python str; lifetime is managed on the Python side)

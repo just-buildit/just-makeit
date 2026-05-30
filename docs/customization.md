@@ -7,28 +7,34 @@ ______________________________________________________________________
 
 ## What regenerates vs what's yours
 
-Run `just-makeit add` at any time to add state variables, methods, or
-properties. Some files are fully regenerated; others are never touched once
-created.
+just-makeit follows a **sacred/glue contract**: glue files are rebuilt from
+the manifest on every mutating command (`add`, `method`, `property`, `apply`),
+while sacred files — your algorithm — are never overwritten once they exist.
+One file, `_core.h`, is a hybrid.
 
-| File                                 | Owner           | Notes                                                      |
-| ------------------------------------ | --------------- | ---------------------------------------------------------- |
-| `native/inc/<obj>/<obj>_core.h`      | **regenerated** | struct, getters/setters, inline `step()` stub              |
-| `native/src/<obj>/<obj>_core.c`      | **yours**       | implement `step()` and lifecycle here                      |
-| `native/src/<obj>/<obj>_ext.c`       | **regenerated** | Python binding — don't edit                                |
-| `native/src/<module>/<module>_ext.c` | **regenerated** | module binding — fully rewritten on each `object --module` |
-| `native/src/<obj>/CMakeLists.txt`    | **regenerated** | OBJECT library + test + bench targets                      |
-| `native/tests/test_<obj>_core.c`     | **yours**       | add assertions here; not overwritten                       |
-| `src/<pkg>/<obj>.pyi`                | **regenerated** | type stub — matches generated binding                      |
-| `src/<pkg>/tests/test_<obj>.py`      | **yours**       | add pytest cases here; not overwritten                     |
+| File                                 | Class      | Notes                                                                        |
+| ------------------------------------ | ---------- | ---------------------------------------------------------------------------- |
+| `native/inc/<obj>/<obj>_core.h`      | **hybrid** | declarations refresh from the manifest; inline `step()` body and struct kept |
+| `native/src/<obj>/<obj>_core.c`      | **sacred** | implement `step()` / `steps()` / lifecycle here; never overwritten           |
+| `native/src/<obj>/<obj>_ext.c`       | **glue**   | Python binding — regenerated, don't edit                                     |
+| `native/src/<module>/<module>_ext.c` | **glue**   | module binding — fully rewritten on each `object --module`                   |
+| `native/src/<obj>/CMakeLists.txt`    | **glue**   | OBJECT library + test + bench targets                                        |
+| `native/tests/test_<obj>_core.c`     | **yours**  | add assertions here; not overwritten                                         |
+| `src/<pkg>/<obj>.pyi`                | **glue**   | type stub — matches generated binding                                        |
+| `src/<pkg>/tests/test_<obj>.py`      | **yours**  | add pytest cases here; not overwritten                                       |
 
-**Rule of thumb:** files in `native/src/` ending in `_ext.c` and all
-`CMakeLists.txt` files are owned by the generator. Files in `native/src/`
-ending in `_core.c` and all test files are yours.
+**Rule of thumb:** `_ext.c`, `.pyi`, and `CMakeLists.txt` are glue (owned by
+the generator). `_core.c` and the test files are yours. `_core.h` is shared:
+its public declarations follow the manifest, but your inline `step()` body
+and the state struct stay put.
 
-When you run `just-makeit add`, all files are backed up before regeneration
+When you run a mutating command, all files are backed up before regeneration
 and restored if anything fails. `just-makeit.toml` is updated only after the
 files are written successfully.
+
+To rebuild a component cleanly from its manifest — discarding the sacred
+`_core.c` body — use `jm regenerate <obj>` (`git stash` first; see
+[Declarative scaffolding](declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh)).
 
 ______________________________________________________________________
 
@@ -37,8 +43,8 @@ ______________________________________________________________________
 1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
 1. Open `native/src/fir/fir_core.c` — implement `fir_step()`.
 1. Build and test: `make && make test`.
-1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → regenerates header and binding; your `fir_core.c` is untouched.
-1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to `native/inc/fir/fir_core.h` — the generator won't overwrite your manual additions to the header… with one exception: the struct body itself is regenerated. Add extra fields after the generated block.
+1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → refreshes the header declarations and the binding; your `fir_core.c` and your inline `step()` body are untouched.
+1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to the struct in `native/inc/fir/fir_core.h` — the hybrid header preserves the struct body across re-apply, so your extra fields survive.
 
 ______________________________________________________________________
 
@@ -112,7 +118,8 @@ ______________________________________________________________________
 
 For fields that don't fit the scalar pattern (fixed-size arrays, heap
 allocations, nested structs), add them directly to the struct in
-`<component>/inc/<component>/<component>_core.h`:
+`<component>/inc/<component>/<component>_core.h` — the hybrid header
+preserves the struct body, so manual fields survive re-apply:
 
 ```c
 typedef struct {

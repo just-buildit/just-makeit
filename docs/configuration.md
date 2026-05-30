@@ -13,21 +13,24 @@ ______________________________________________________________________
 
 ## What is stored
 
-| Category                                                          | Stored in TOML                        |
-| ----------------------------------------------------------------- | ------------------------------------- |
-| Project name and version                                          | Yes                                   |
-| Build system (`--build-system`)                                   | Yes                                   |
-| Performance annotations (`--perf`)                                | Yes                                   |
-| Test runner (`--pytest`, `--pytest-benchmark`)                    | Yes                                   |
-| Objects and their state variables                                 | Yes                                   |
-| `arg-type`, `return-type`, `--mutable`, `--no-state`, `--no-step` | Yes                                   |
-| Constructor parameters (`--init-param`)                           | Yes                                   |
-| Extra methods, properties, module-level functions                 | Yes                                   |
-| Module subpackage structure                                       | Yes                                   |
-| `--impl` / `--replace` lifted code                                | **No** — patched directly into source |
+| Category                                                          | Stored in TOML                     |
+| ----------------------------------------------------------------- | ---------------------------------- |
+| Project name and version                                          | Yes                                |
+| Build system (`--build-system`)                                   | Yes                                |
+| Performance annotations (`--perf`)                                | Yes                                |
+| Test runner (`--pytest`, `--pytest-benchmark`)                    | Yes                                |
+| Objects and their state variables                                 | Yes                                |
+| `arg-type`, `return-type`, `--mutable`, `--no-state`, `--no-step` | Yes                                |
+| Constructor parameters (`--init-param`)                           | Yes                                |
+| Extra methods, properties, module-level functions                 | Yes                                |
+| Module subpackage structure                                       | Yes                                |
+| `--impl` / `--replace` lifted code                                | Yes — stored as `impl` / `replace` |
 
-`--impl` bodies are written into the generated C files once and then owned by
-you; they are not round-tripped through TOML.
+A lifted `--impl` body is stored in the manifest (as `impl`, `create_impl`,
+`reset_impl`, `destroy_impl`, …), so `jm regenerate` and `jm apply` can
+re-stamp it. Edits you make afterwards to the sacred `_core.c` are yours and
+live only in source — the manifest holds the original lift, not your later
+changes.
 
 ______________________________________________________________________
 
@@ -254,10 +257,15 @@ those land, hand-editing the manifest is the workaround.
 | TOML field                     | CLI flag                                   | Status       |
 | ------------------------------ | ------------------------------------------ | ------------ |
 | `impl = "..."` (step body)     | `jm object --impl file::funcname`          | ✅           |
+| `impl_file = "path::N:M"`      | `jm object --impl file::N:M` (line range)  | ✅ (0.14)    |
 | `create_impl = "..."`          | `jm object --impl create::file::funcname`  | ✅ (0.13.23) |
 | `reset_impl = "..."`           | `jm object --impl reset::file::funcname`   | ✅ (0.13.23) |
 | `destroy_impl = "..."`         | `jm object --impl destroy::file::funcname` | ✅ (0.13.23) |
 | `init_post_parse_impl = "..."` | (TOML only)                                | 🟡           |
+
+The `--impl file::N:M` form lifts source lines `N..M` (inclusive, 1-based)
+instead of a named function body; it composes with the slot prefixes
+(`create::file::N:M`) and out-of-bounds ranges error cleanly.
 
 ### `[module.<name>]` keys
 
@@ -460,9 +468,10 @@ structure without needing to remember the original command sequence.
 
 !!! note
 
-    The `--impl` / `--replace` lifted code is not stored in TOML. If you used
-    these flags, the patched C bodies are in your source files — keep them in
-    version control.
+    The original `--impl` / `--replace` lift **is** stored in the manifest
+    (`impl`, `replace`, …), so `script | sh` reproduces it. Any edits you
+    made to the sacred `_core.c` afterwards live only in source — keep that
+    in version control.
 
 ______________________________________________________________________
 
@@ -480,8 +489,11 @@ your changes on the next command. The rules:
     `[[<object>.methods]]` entry. TOML parses bare keys after an
     array-of-tables header as part of that entry, not the parent section,
     so keys placed after a `[[…]]` line are silently dropped by the parser.
-- **Removing a state variable** from TOML does not touch the generated source
-    files. Re-run `just-makeit script | sh` in a clean directory if you want a
-    fully regenerated scaffold that matches TOML.
+- **Editing a signature** in TOML (removing a state variable, changing a
+    method's return type) propagates to the glue files (`_ext.c`, `.pyi`,
+    `CMakeLists.txt`) and the public declarations in `_core.h` on the next
+    command, but the sacred `_core.c` body is left as you wrote it. Run
+    `jm regenerate <obj>` to rebuild that component cleanly from the manifest
+    (this discards the `_core.c` body — `git stash` first).
 - **Don't rename the file** — `just-makeit` always looks for `just-makeit.toml`
     at the project root.

@@ -1,13 +1,14 @@
 # Implementation plan — the road to "no TOML for common cases"
 
-Status: **plan locked, partial implementation in flight on
-`feat/jm-bind-mvp`.** This document is the single coordination point
-for the work the four design docs sketch out: the
+Status: **Phases 0–2 shipped; sacred/glue apply, `jm regenerate`, and
+the `--impl` line-range form landed in v0.14.** This document is the
+coordination point for the work the design docs sketch out: the
 [decision tree](../decision-tree.md), the
-[template gallery](../templates/index.md), the
-[wizard design](wizard-design.md), and the
-[bind design](bind-design.md). Read those four for the *why*; this one
-is the *what, in what order, how do we know we're done*.
+[template gallery](../templates/index.md), and the
+[bind design](bind-design.md). The interactive wizard was **cut** (see
+[wizard-design.md](wizard-design.md) for the retirement note). Read the
+design docs for the *why*; this one is the *what, in what order, how do
+we know we're done*.
 
 ______________________________________________________________________
 
@@ -15,18 +16,19 @@ ______________________________________________________________________
 
 A user who knows DSP can ship a Python C extension without ever
 learning **(a)** the just-makeit TOML schema, **(b)** the CPython
-binding ABI, or **(c)** the CMake details. They pick a template, type
-one CLI command (or run the wizard), open `_core.c`, replace the
-`/* TODO */` markers, and `jm build && jm test`. Everything else — the
-manifest, the binding, the CMakeLists, the tests, the bench, the
-Python wrapper — is generated and stays in sync.
+binding ABI, or **(c)** the CMake details. They pick a preset, type
+one CLI command, open `_core.c`, replace the `/* TODO */` markers, and
+`jm build && jm test`. Everything else — the manifest, the binding,
+the CMakeLists, the tests, the bench, the type stub — is generated and
+stays in sync.
 
 This goal does **not** retire TOML. The manifest stays as the on-disk
-truth and `jm apply` keeps materialising from it; advanced users who
-prefer hand-authoring TOML are first-class. What changes is that the
-CLI becomes a *complete* alternative — every feature reachable through
-TOML is also reachable through a flag, and the templates document the
-type allowlist for each slot so neither path surprises.
+truth and `jm apply` keeps materialising from it under the sacred/glue
+contract; advanced users who prefer hand-authoring TOML are
+first-class. What changes is that the CLI becomes a *complete*
+alternative — every common feature reachable through TOML is also
+reachable through a flag, and the templates document the type allowlist
+for each slot so neither path surprises.
 
 ______________________________________________________________________
 
@@ -50,12 +52,12 @@ The load-bearing primitives nothing replaces:
     durable description; `jm apply` materialises from it. Every flag
     added in this plan still round-trips through TOML.
 - **Existing CLI verbs**: `new`, `object`, `module`, `method`,
-    `property`, `function`, `add`, `perf`, `apply`, `remove`, `build`,
-    `test`, `bench`, `app`, `script`, `upgrade`. Behaviour is preserved
-    for every flag they accept today.
-- **The seven gallery shapes** as the canonical taxonomy of
-    components. Every new CLI flag, every wizard prompt, every
-    `jm bind` parse case routes through one of the seven.
+    `property`, `function`, `add`, `perf`, `apply`, `regenerate`,
+    `remove`, `build`, `test`, `bench`, `app`, `script`, `upgrade`.
+    Behaviour is preserved for every flag they accept today.
+- **The gallery shapes** as the canonical taxonomy of components.
+    Every new CLI flag and every `jm bind` parse case routes through
+    one of them.
 
 ______________________________________________________________________
 
@@ -75,9 +77,10 @@ being the *recommended* path the moment their CLI counterpart ships.
     decision tree, template gallery, and quick reference become the
     landing pages; `docs/configuration.md` stays as a reference for
     advanced users but stops being a prerequisite for getting started.
-- **`jm wizard` v1 as a TOML-fragment emitter.** Already retired in
-    [`wizard-design.md`](wizard-design.md) — the new wizard runs
-    commands in-process; this document codifies that.
+- **`jm wizard` entirely.** Cut, not deferred — see
+    [`wizard-design.md`](wizard-design.md). The preset pages plus
+    single-shot CLI cover the same need without a parallel interactive
+    surface to learn, test, and document.
 - **Implicit fall-throughs.** When the user passes a type a slot
     doesn't accept, the CLI errors with the slot's full allowlist (and
     a link to the relevant gallery page). No more "silently compiled,
@@ -91,17 +94,18 @@ Refactors that aren't strictly additive:
 
 - **Shared type-slot validator.** A new helper —
     `_types.validate_slot(slot: str, type_str: str) -> None` — used by
-    every CLI handler, the bind parser, and the wizard prompts. Single
-    error format: `"--state field type 'const char *' is not legal here.   Allowed: float, double, int, ... See docs/types.md#state-variable-types."`
+    every CLI handler and the bind parser. Single error format:
+    `"--state field type 'const char *' is not legal here.   Allowed: float, double, int, ... See docs/types.md#state-variable-types."`
 - **Presets become first-class.** Each gallery shape gets a top-level
     `--preset` flag on `jm object` (and `jm function` is its own verb).
     The existing `--no-step` / `--arg-type void` combos still work;
-    the preset is a labelled bundle. The wizard offers six options
-    (processor, blockwise, generator, consumer, reader, function),
-    period; variable-output is a capability flag, not a preset.
+    the preset is a labelled bundle. Working presets: `processor`
+    (default), `generator`, `consumer`, `reader`. `blockwise` is
+    excluded — array return (`T[] -> T[]`) is unsupported and now
+    errors cleanly. Variable-output is a capability flag, not a preset.
 - **`jm bind` becomes a top-level workflow, not just a debug tool.**
-    Bind goes from "parse for the processor shape" to "parse for all
-    six shapes, with `--check` running in CI on every example."
+    Bind goes from "parse for the processor shape" to "parse for every
+    working shape, with `--check` running in CI on every example."
 
 ______________________________________________________________________
 
@@ -114,49 +118,36 @@ gh-72), added `extra_include_dirs` and `--out-param`, wrote the
 [decision tree](../decision-tree.md). Establishes the type-slot
 conventions the rest of the work consumes.
 
-### Phase 1 — gallery and bind MVP (in flight, `feat/jm-bind-mvp`)
+### Phase 1 — gallery and bind MVP (shipped)
 
-What's in:
+Done:
 
-- [Template gallery](../templates/index.md) — six preset pages with
+- [Template gallery](../templates/index.md) — preset pages with
     Concrete-types tables (`Accepts | Rejects | Default`).
-- [Wizard design](wizard-design.md) and
-    [bind design](bind-design.md).
+- [bind design](bind-design.md).
 - Type-slot docs ([`docs/types.md`](../types.md)) covering all five
     slots with explicit allowlists.
-- `jm bind` MVP for the processor shape — byte-identical round-trip;
-    1619 tests pass.
+- `jm bind` MVP for the processor shape — byte-identical round-trip.
+- `running_stats` uses `jm bind` end-to-end.
 
-What's left in this phase:
+### Phase 2 — CLI parity for every TOML field (shipped, v0.13.23)
 
-- [ ] Open `feat/jm-bind-mvp` as the Phase-1 PR.
-- [ ] Get one bundled example using `jm bind` end-to-end (hand-write
-    `<comp>_core.h` / `<comp>_core.c`, then `jm bind` to materialise
-    the binding). `running_stats` is the obvious target — small,
-    one-state-field, fits the processor shape.
+Every common TOML-only knob got a flag. Each row was one PR.
 
-Success bar: PR merged, the processor row of the bind acceptance
-table below is green.
-
-### Phase 2 — CLI parity for every TOML field
-
-The biggest behaviour change. Every TOML-only knob gets a flag. Each
-bullet is one PR; the order is cheapest first.
-
-| New flag                             | TOML it replaces                                         | Affects                                 |
-| ------------------------------------ | -------------------------------------------------------- | --------------------------------------- |
-| `--init-param name:T[:D]`            | `[[obj.init_params]]`                                    | `jm object`, `jm method`                |
-| `--out-type T`                       | `out_type` (methods + functions)                         | `jm method`, `jm function`              |
-| `--out-divisor N`                    | `out_divisor` (methods)                                  | `jm method`                             |
-| `--variable-output` + `--max-out N`  | `variable_output = true`, sibling `_max_out` declaration | `jm object`, `jm method`                |
-| `--multi-output T,T,...`             | `multi_output`                                           | `jm method`                             |
-| `--result-field name:T` (repeatable) | `result_fields = [...]`                                  | `jm method`, `jm function`              |
-| `--impl SLOT::FN`                    | `create_impl` / `reset_impl` / `destroy_impl` / `impl`   | `jm object`, `jm method`, `jm function` |
-| `--find-package NAME`                | `[project] find_packages`                                | `jm new`                                |
-| `--pkg-module NAME`                  | `[project] pkg_modules`                                  | `jm new`                                |
-| `--c-dep DIR`                        | `[project] c_deps`                                       | `jm new`                                |
-| `--extra-include-dirs DIR`           | per-component / per-module `extra_include_dirs`          | `jm object`, `jm module`                |
-| `--extra-types NAME,NAME`            | `[module] extra_types`                                   | `jm module`                             |
+| New flag                               | TOML it replaces                                         | Affects                                 |
+| -------------------------------------- | -------------------------------------------------------- | --------------------------------------- |
+| `--init-param name:T[:D]`              | `[[obj.init_params]]`                                    | `jm object`, `jm method`                |
+| `--out-type T`                         | `out_type` (methods + functions)                         | `jm method`, `jm function`              |
+| `--out-divisor N`                      | `out_divisor` (methods)                                  | `jm method`                             |
+| `--variable-output` + `--max-out N`    | `variable_output = true`, sibling `_max_out` declaration | `jm object`, `jm method`                |
+| `--multi-output T,T,...`               | `multi_output`                                           | `jm method`                             |
+| `--result-field name:T` (repeatable)   | `result_fields = [...]`                                  | `jm method`, `jm function`              |
+| `--impl SLOT::FN` / `--impl file::N:M` | `create_impl` / `reset_impl` / `destroy_impl` / `impl`   | `jm object`, `jm method`, `jm function` |
+| `--find-package NAME`                  | `[project] find_packages`                                | `jm new`                                |
+| `--pkg-module NAME`                    | `[project] pkg_modules`                                  | `jm new`                                |
+| `--c-dep DIR`                          | `[project] c_deps`                                       | `jm new`                                |
+| `--extra-include-dirs DIR`             | per-component / per-module `extra_include_dirs`          | `jm object`, `jm module`                |
+| `--extra-types NAME,NAME`              | `[module] extra_types`                                   | `jm module`                             |
 
 Also in this phase: the shared `validate_slot()` helper, applied to
 every existing and new flag, with regression tests for every slot's
@@ -165,22 +156,22 @@ rejection cases.
 Success bar: a one-page table in `docs/configuration.md` listing every
 TOML field has a "Reachable via CLI" column, and every row is `✓`.
 
-### Phase 3 — the six presets, bind for all of them, the wizard
+### Phase 3 — the presets, bind for all of them
 
-Three threads run in parallel; each delivers one piece of the
-"interactive picker for the gallery" experience.
+Two threads run in parallel; each delivers one piece of the
+"pick a shape, scaffold it" experience.
 
-Thread 3a: **Presets.**
+Thread 3a: **Presets.** (shipped — see the working presets below)
 
-- [ ] `--preset processor` (alias for current defaults; documented)
-- [ ] `--preset blockwise` — `--arg-type "T[]" --return-type "T[]"`
-    plus a block-shaped `_core.c` skeleton with the `for (i; i<n; i++)`
-    loop pre-written.
-- [ ] `--preset generator` — `--arg-type void`; emits a `steps(n)`
-    generator skeleton.
-- [ ] `--preset consumer` — `--return-type void`; emits an accumulator
+- [x] `--preset processor` (alias for current defaults; documented)
+- [ ] `--preset blockwise` — **excluded.** Array return
+    (`T[] -> T[]`) is unsupported; the CLI errors cleanly on it. Array
+    *input* (`--arg-type "T[]"`) works.
+- [x] `--preset generator` — `--arg-type void`; emits a `steps(n)`
+    generator skeleton (void-arg defaults to a complex return).
+- [x] `--preset consumer` — `--return-type void`; emits an accumulator
     skeleton.
-- [ ] `--preset reader` — `--no-step --init-param filepath:"const char *"`
+- [x] `--preset reader` — `--no-step --init-param filepath:"const char *"`
     plus `read()` / `seek()` / `close()` methods registered with
     `open()`/`stat()` already wired.
 
@@ -225,8 +216,8 @@ becomes "write your DSP in C; we make it Python."
 - [ ] Contract-versioning comment in `_core.h` (`// jm-bind:   contract-1`) so bind can warn cleanly on older shapes.
 
 Success bar: a new user opens `docs/`, picks `--preset reader`, runs
-`jm wizard` *or* the CLI directly, and ships a working Python
-extension in under five minutes without opening any TOML file.
+the CLI directly, and ships a working Python extension in under five
+minutes without opening any TOML file.
 
 ______________________________________________________________________
 
@@ -244,7 +235,7 @@ Living table. A row goes green when:
 | Preset      | Phase 1 (MVP)                            | Phase 3 (full) |
 | ----------- | ---------------------------------------- | -------------- |
 | `processor` | byte-identical ✅ (single + multi-field) | —              |
-| `blockwise` | n/a                                      | pending        |
+| `blockwise` | excluded (array return unsupported)      | excluded       |
 | `generator` | n/a                                      | pending        |
 | `consumer`  | n/a                                      | pending        |
 | `reader`    | n/a                                      | pending        |
@@ -260,16 +251,9 @@ ______________________________________________________________________
     document an *escape hatch* — `--annotate FUNC:OUT:name` on
     `jm bind` to override naming heuristics per call without changing
     the source.
-- **Wizard becomes a different language.** If the wizard accumulates
-    enough conditional follow-ups, the prompt tree itself becomes a
-    new thing to learn. Mitigation: cap each preset's question count
-    in the design — six per preset, no more.
 - **TOML-only features keep accruing.** Easy to add an experimental
     knob to TOML "just for now." Mitigation: every TOML key added
     after Phase 2 requires a parallel CLI flag in the same PR.
-- **Phase 2 surface area.** Twelve new flags across three commands.
-    Mitigation: each flag is one PR, each PR has its regression test
-    - decision-tree update + gallery-page update.
 
 ______________________________________________________________________
 
@@ -277,8 +261,8 @@ ______________________________________________________________________
 
 - **Replacing `jm apply` with bind.** Bind reads C; apply reads
     TOML. Both stay; they're two front-ends to one renderer.
-- **A graphical UI.** Wizard is terminal-interactive; that's the only
-    interactive surface this plan adds.
+- **Any interactive surface.** No wizard, no TUI, no GUI. The CLI
+    plus the inspectable preset pages are the whole interface.
 - **Cross-language bindings.** Rust / C++ wrappers stay future work.
     Bind producing CPython only.
 - **Schema migrations beyond what `jm upgrade` already does.** No
@@ -299,7 +283,7 @@ ______________________________________________________________________
     a parallel CLI flag in the same PR."
 - **Adding a new preset**: it's an extension of Phase 3 thread 3a.
     Add a gallery page first (Concrete types table mandatory), then
-    the CLI flag, then the bind parse rule, then the wizard prompt.
+    the CLI flag, then the bind parse rule.
 - **Marking work done**: tick the relevant checkbox; update the bind
     acceptance matrix.
 

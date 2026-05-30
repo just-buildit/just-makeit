@@ -40,12 +40,17 @@ A shippable app from a component
   ├── Python console script?         ─→  jm app --target console
   └── PEP 723 inline script?         ─→  jm app --target pep723
 
-Delete generated code                 ─→  jm remove <name>
+Delete generated code + TOML wiring   ─→  jm remove <name>
 Materialize TOML edits / fragments    ─→  jm apply [fragment.toml]
+Refresh a component from the manifest  ─→  jm regenerate <name>
+  (keeps TOML, deletes + rebuilds files)
 Build / run tests / run benchmarks    ─→  jm build  |  jm test  |  jm bench
 Reconstruct CLI history from TOML     ─→  jm script
 Upgrade an old project's schema       ─→  jm upgrade
 ```
+
+> `jm apply` and `jm regenerate` are the two halves of the sacred/glue
+> contract — see [Sub-decision D](#sub-decision-d-apply-vs-regenerate-the-sacredglue-contract).
 
 ______________________________________________________________________
 
@@ -54,12 +59,16 @@ ______________________________________________________________________
 ```
 What does step() look like?
   input → output (1:1)  (processor)      defaults: --arg-type "float _Complex"
-  array → array         (blockwise)      --arg-type "T[]"  --return-type "T[]"
-  no input              (generator)      --arg-type void
+  array → 1 sample      (array input)    --arg-type "T[]"  (steps() not gen'd)
+  no input              (generator)      --arg-type void  (defaults to complex
+                                                            return)
   no output             (consumer)       --return-type void
   no step() at all — custom verbs only   --no-step  + jm method ...
                                          (reader pattern: --no-step +
                                           --init-param filepath:"const char *")
+
+  array → array  ("blockwise")  is NOT yet supported. --return-type "T[]"
+  errors cleanly. Array INPUT works; array RETURN does not.
 
 What state does it carry?
   scalar defaults only                   [[state]] entries (default path)
@@ -93,6 +102,39 @@ Then on the module or component that uses it:
   include its headers            extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]
 ```
 
+## Sub-decision D. `apply` vs `regenerate` (the sacred/glue contract)
+
+You edited `just-makeit.toml` by hand. Which command propagates the change?
+
+```
+Glue changed — _ext.c, .pyi, CMakeLists.txt, or a
+  TOML-declared method/field that only needs to reach
+  the public API                              ─→  jm apply
+    (glue files always regenerate; _core.h declarations
+     refresh, but its inline step() body and state struct
+     are PRESERVED; _core.c is SACRED — never overwritten)
+
+You want the whole component rebuilt from the manifest,
+  discarding hand-written _core.c bodies        ─→  jm regenerate <name>
+    (deletes every file the component owns, then re-runs
+     apply; leaves TOML untouched. git stash first.)
+```
+
+Rule of thumb: `apply` is the safe, additive refresh. `regenerate` is the
+deliberate, destructive one — use it when a signature change in TOML must also
+reach the sacred `_core.c` body.
+
+## Sub-decision E. Preset (for `jm object --preset NAME`)
+
+```
+input → output (1:1)        processor   (default)
+no input, produces samples  generator   (void arg → complex return)
+consumes input, no output   consumer
+no step(), custom verbs     reader
+
+blockwise is intentionally excluded — array return is unsupported.
+```
+
 ______________________________________________________________________
 
 ## "I want…" lookup
@@ -112,9 +154,10 @@ ______________________________________________________________________
 | Standalone C executable           | `jm app --target c`                                     |
 | Python CLI from your obj          | `jm app --target console`                               |
 | PEP 723 single-file script        | `jm app --target pep723`                                |
-| Drop everything generated for X   | `jm remove <name>`                                      |
-| Materialize TOML changes          | `jm apply`                                              |
+| Drop generated files **and** TOML | `jm remove <name>`                                      |
+| Materialize TOML changes (glue)   | `jm apply`                                              |
 | Compose a fragment file           | `jm apply <fragment.toml>`                              |
+| Refresh a component, keep TOML    | `jm regenerate <name>`                                  |
 | Run benchmarks                    | `jm bench`                                              |
 | Reconstruct the CLI history       | `jm script`                                             |
 | Upgrade an old project            | `jm upgrade`                                            |
@@ -126,7 +169,7 @@ ______________________________________________________________________
 This list shrank dramatically when Phase 2 of the implementation plan
 shipped: every common TOML knob now has a CLI flag. See the field-by-field
 inventory at
-[Configuration → Complete CLI ↔ TOML mapping](configuration.md#complete-cli--toml-mapping)
+[Configuration → Complete CLI ↔ TOML mapping](configuration.md#complete-cli-toml-mapping)
 for the authoritative status of every key.
 
 Remaining TOML-only by design (≤5% of use cases):

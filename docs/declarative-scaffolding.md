@@ -119,8 +119,12 @@ Known placeholders:
 
 Two more keys are honoured on object and method sections:
 
-- `impl_file = "path::funcname"` — lift the body from an existing C file
-    (same `--impl` semantics as the CLI; relative to the project root).
+- `impl_file = "path::funcname"` — lift a named function's body from an
+    existing C file (same `--impl` semantics as the CLI; relative to the
+    project root).
+- `impl_file = "path::N:M"` — lift lines `N..M` (inclusive, 1-based) from a
+    file instead of a named function. Out-of-bounds or inverted ranges error
+    cleanly before any side effects.
 - `replace = { "old" = "new" }` — string substitutions applied *after*
     placeholder interpolation.
 
@@ -577,23 +581,38 @@ flowchart TD
     AGG --> MODFILES["src/&lt;pkg&gt;/&lt;mod&gt;/__init__.py<br/>(merge; user wrappers survive)"]
 ```
 
-Key properties:
+### The sacred/glue contract
 
-- **Add only.** `apply` never deletes anything — removing a component is
-    `jm remove`'s job.
+`apply` is the half of the contract that **reconciles the manifest with
+the tree**. Each file the manifest describes falls into one of three
+classes:
+
+| File                                                           | Class      | On re-apply                                                                                                                                 |
+| -------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, every `CMakeLists.txt` | **glue**   | regenerated from the manifest every time                                                                                                    |
+| `<comp>_core.h`                                                | **hybrid** | declarations refresh (a TOML-declared method/field reaches the public API); the inline `step()` body and the state struct are **preserved** |
+| `<comp>_core.c`                                                | **sacred** | never overwritten once it exists — `steps()` and lifecycle bodies are yours                                                                 |
+
+So editing the manifest always propagates to the glue. If you change a
+**signature** in TOML (a method's return type, a new state field), the glue
+and the public declarations update, but the sacred `_core.c` body is left
+as you wrote it — use the additive verbs (`jm method`, `jm add`) or a
+deliberate `jm regenerate` to also refresh the body.
+
+Other properties:
+
 - **Idempotent.** Re-running on a complete project is a no-op.
-- **Reproducible.** A `just-makeit.toml` + any hand-written `*_core.c` /
-    `*_core.h` bodies fully describe a project; `apply` materializes the
-    rest.
-- **Safe with user edits.** `*_core.c` and `*_core.h` bodies survive
-    re-apply; the top `CMakeLists.txt` preserves content outside the
-    `# ── Components` and `# ── Modules` sentinel regions; module
-    `__init__.py` keeps any wrapper classes you added below the
-    re-exports.
-- **Bench retrofit.** `apply` also checks every component's
-    `native/src/<comp>/CMakeLists.txt` and appends a missing
-    `bench_<comp>_core` CMake target if one isn't already present — so
-    existing projects gain C benchmark targets without a manual edit.
+- **Reproducible.** A `just-makeit.toml` + any hand-written `*_core.c` body
+    fully describe a project; `apply` materializes the rest.
+- **Never deletes.** `apply` only adds or refreshes files; removing a
+    component is `jm remove`'s job, and wiping a component back to its
+    manifest state is `jm regenerate`'s.
+- **Aggregate safety.** The top `CMakeLists.txt` preserves content outside
+    the `# ── Components` and `# ── Modules` sentinel regions; module
+    `__init__.py` keeps any wrapper classes you added below the re-exports.
+- **Bench retrofit.** `apply` also appends a missing `bench_<comp>_core`
+    CMake target to any component's `CMakeLists.txt` — existing projects gain
+    C benchmark targets without a manual edit.
 
 ### `--only=NAME` — single-component reconciliation
 
@@ -605,6 +624,36 @@ Restricts wiring regeneration to the named component: only `fir`'s
 `_ext.c`, `CMakeLists.txt`, `.pyi`, and test file are touched. All
 aggregate files (`__init__.py`, root `CMakeLists.txt`, umbrella header)
 are still updated. Useful on large projects where a full re-apply is slow.
+
+______________________________________________________________________
+
+## `jm regenerate <component>` — the deliberate refresh
+
+`apply` preserves the sacred `_core.c` body, which is exactly what you want
+99% of the time. When you instead want a component rebuilt cleanly from its
+manifest — after a sweeping signature change, or to discard an experiment —
+`jm regenerate` is the other half of the contract:
+
+```sh
+jm regenerate fir
+```
+
+It deletes every file the component owns and re-runs `jm apply` to rebuild
+them from the manifest. The `just-makeit.toml` is left **untouched** (unlike
+`jm remove`, which also strips the component from the manifest). Works for
+both standalone and module objects.
+
+A single confirmation guards the destructive step; `--force` skips it:
+
+```sh
+jm regenerate fir --force
+```
+
+!!! warning "Regenerate discards hand-written `_core.c` bodies"
+
+    Because the sacred file is deleted and re-stubbed, any `steps()` /
+    lifecycle code you wrote is lost. `git stash` (or commit) first if you
+    might want it back.
 
 ______________________________________________________________________
 
@@ -682,5 +731,5 @@ ______________________________________________________________________
 ## See also
 
 - [developers/declarative-scaffolding.md](developers/declarative-scaffolding.md) — the design doc behind this feature
-- [`just-makeit apply` and `jm remove` reference](commands/extend.md)
+- [`jm apply`, `jm regenerate`, and `jm remove` reference](commands/extend.md)
 - [Workflow](workflow.md) — the imperative CLI flow these commands sit alongside

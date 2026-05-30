@@ -23,11 +23,11 @@ ______________________________________________________________________
 
 The end user needs the following tools — **just-makeit itself is not required**:
 
-| Tool           | Minimum version              | Notes                                    |
-| -------------- | ---------------------------- | ---------------------------------------- |
-| CMake          | 3.16                         | Build system; drives configure + install |
-| A C99 compiler | GCC 8 / Clang 10 / MSVC 2019 | `gcc` or `clang` on Linux/macOS          |
-| pkg-config     | any                          | For pkg-config consumers only            |
+| Tool           | Minimum version  | Notes                                                                      |
+| -------------- | ---------------- | -------------------------------------------------------------------------- |
+| CMake          | 3.16             | Build system; drives configure + install                                   |
+| A C99 compiler | GCC 8 / Clang 10 | `gcc` or `clang`; on Windows use MinGW/gcc — MSVC rejects `float _Complex` |
+| pkg-config     | any              | For pkg-config consumers only                                              |
 
 **Linux (Debian/Ubuntu):**
 

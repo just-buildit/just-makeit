@@ -19,8 +19,8 @@ jm app --target console --object engine --name dsp_tool
 jm app --target pep723 --object engine --name dsp_tool
 ```
 
-All three targets write an `[app]` section to `just-makeit.toml` so
-`jm apply` can regenerate the scaffold later.
+All three targets write an `[app]` section to `just-makeit.toml`, so
+`jm apply` recreates the scaffold if the file is missing.
 
 **Arguments**
 
@@ -122,5 +122,5 @@ name    = "dsp_tool"
 object  = "engine"
 ```
 
-`jm apply` reads this section and regenerates the app scaffold alongside
-all other project files.
+`jm apply` reads this section and materializes the app scaffold if its
+file is missing. (Re-running `jm app` overwrites the scaffold directly.)

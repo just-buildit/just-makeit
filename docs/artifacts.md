@@ -128,7 +128,6 @@ mylib/
 │   │   ├── pyex_common.h
 │   │   ├── mylib.h
 │   │   └── filt/
-│   │       ├── filt_core.h         # public C API for Filt
 │   │       └── filt_core.h         # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
@@ -184,10 +183,8 @@ mylib/
 │   │   ├── pyex_common.h
 │   │   ├── mylib.h
 │   │   ├── fir/
-│   │   │   ├── fir_core.h
 │   │   │   └── fir_core.h          # public C API + inline step()
 │   │   └── biquad/
-│   │       ├── biquad_core.h
 │   │       └── biquad_core.h       # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
@@ -247,10 +244,8 @@ mylib/
 │   │   ├── pyex_common.h
 │   │   ├── mylib.h
 │   │   ├── fir/
-│   │   │   ├── fir_core.h
 │   │   │   └── fir_core.h          # public C API + inline step()
 │   │   └── reader/
-│   │       ├── reader_core.h
 │   │       └── reader_core.h       # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
