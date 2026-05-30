@@ -121,16 +121,21 @@ ______________________________________________________________________
 
 ## When the CLI can't reach it (TOML-only features)
 
-These are decisions you can only express by editing `just-makeit.toml` (or
-authoring a fragment and running `jm apply`):
+This list shrank dramatically when Phase 2 of the implementation plan
+shipped: every common TOML knob now has a CLI flag. See the field-by-field
+inventory at
+[Configuration → Complete CLI ↔ TOML mapping](configuration.md#complete-cli--toml-mapping)
+for the authoritative status of every key.
 
-- `create_impl` / `reset_impl` / `destroy_impl` — custom lifecycle bodies
-- `impl` on methods and module functions — inline C bodies
-- `out_type`, `out_divisor`, `variable_output`, `result_fields`, `multi_output`
-- `init_params` with `optional`, `default_raw`, `real_type`, `string_enum:`
-- `array_args`, `opaque` state fields, `no_ctor` per-field
-- `extra_link_libs`, `extra_include_dirs`, `extra_types`, `extra_c` files
-- `find_packages`, `pkg_modules`, `c_deps`
+Remaining TOML-only by design (≤5% of use cases):
+
+- `opaque` state fields, `no_ctor` per-field, `roles = "config"`
+- `init_params` modifiers: `default_raw`, `real_type`, `real_create_fn`, `create_fn`
+- `init_post_parse_impl`, `string_enum:` init-param types
+- `buf_field` / `len_field` / `valid_field` / `expr` property variants
+- `max_results` / `max_results_param` on methods/functions
 - `no_generate` modules (hand-written from scratch)
+- `extra_c` files
+- Per-component `extra_link_libs` (per-module is reachable via CLI)
 
 See `docs/configuration.md` for the full schema.
