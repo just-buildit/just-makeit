@@ -35,7 +35,9 @@ Commands:
     --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
-    --init-param name:type[:default]  Constructor param for --no-state objects; repeatable.
+    --init-param name:type[:default]  User-facing constructor param; repeatable.
+                                      Composes with --state: init params drive the ctor,
+                                      state stays internal (manage via --impl create::...).
                                       Optional array form: name:type[]:optional[:create_fn]
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --impl file::funcname       Lift step() body from funcname in file.
@@ -47,6 +49,8 @@ Commands:
     --arg-type TYPE             Bulk-input array type.
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
+    --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
+                                Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
     --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
     --out-divisor N             Divide input length by N for output array (default: 1).
@@ -541,6 +545,38 @@ def main() -> None:
             do_c=do_c,
             do_python=do_python,
         )
+
+    elif cmd == "bind":
+        from . import _bind
+
+        rest = args[1:]
+        check = False
+        comp: str | None = None
+        for a in rest:
+            if a == "--check":
+                check = True
+            elif a.startswith("-"):
+                print(f"error: unknown flag for bind: {a}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                if comp is not None:
+                    print("error: bind takes one component name", file=sys.stderr)
+                    sys.exit(1)
+                comp = a
+        if comp is None:
+            print("Usage: just-makeit bind <component> [--check]", file=sys.stderr)
+            sys.exit(1)
+        if check:
+            rendered = _bind.run(Path.cwd(), comp, write=False)
+            existing = (
+                Path.cwd() / "native" / "src" / comp / f"{comp}_ext.c"
+            ).read_text(encoding="utf-8")
+            if rendered != existing:
+                print(f"error: {comp}_ext.c is out of date with {comp}_core.h")
+                sys.exit(1)
+            print(f"  ok  {comp}_ext.c matches {comp}_core.h")
+        else:
+            _bind.run(Path.cwd(), comp)
 
     elif cmd == "build":
         from . import _build
