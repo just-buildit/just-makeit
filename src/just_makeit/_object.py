@@ -595,6 +595,7 @@ def run(
     depends_on: list[str] = (),
     extra_link_libs: list[str] = (),
     extra_include_dirs: list[str] = (),
+    max_out: int = 0,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -657,6 +658,7 @@ def run(
                 return_type=_rt,
                 variable_output=True,
                 multi_output=list(multi_output),
+                max_out=max_out,
             )
         return
 
@@ -893,6 +895,7 @@ def run(
             return_type=_rt,
             variable_output=True,
             multi_output=list(multi_output),
+            max_out=max_out,
         )
     else:
         print()
