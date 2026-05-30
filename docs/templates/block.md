@@ -64,6 +64,51 @@ The body of the `for` loop. Common shapes:
 - Block remap — pure data shuffling (deinterleave, complex conjugate,
     swap halves).
 
+### The plan-once-execute-many pattern (FFT, correlator)
+
+DSP libraries with heavy construction (FFTW plans, pre-computed twiddle
+tables, vendor-opaque handles like `pocketfft_plan`) fit the block
+preset cleanly — the heavy work lives in `create_impl`, the hot path
+stays a `steps()` call. The state struct carries the plan as an
+opaque pointer (declared with `opaque = true` in TOML, or with the
+proposed `--opaque` flag in Phase 2).
+
+```c
+typedef struct {
+    fftwf_plan plan;        /* heavyweight; built once in create() */
+    size_t     n;
+    float _Complex *scratch;
+} NAME_state_t;
+
+NAME_state_t *
+NAME_create(size_t n)
+{
+    NAME_state_t *obj = calloc(1, sizeof(*obj));
+    if (!obj) return NULL;
+    obj->n       = n;
+    obj->scratch = fftwf_alloc_complex(n);
+    obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
+                                     FFTW_FORWARD, FFTW_MEASURE);
+    return obj;
+}
+
+void
+NAME_steps(NAME_state_t *state,
+           const float _Complex *in, size_t n,
+           float _Complex       *out)
+{
+    /* TODO: copy in→scratch, execute plan, copy scratch→out.
+       Hot path — no allocations, no plan rebuilding. */
+    memcpy(state->scratch, in, n * sizeof(*in));
+    fftwf_execute(state->plan);
+    memcpy(out, state->scratch, n * sizeof(*out));
+}
+```
+
+This is the same shape doppler's `fft` and `corr` components use —
+opaque vendor plans in state, block-shaped `steps()` calls in the
+hot path. No new preset needed.
+
 ## Python usage
 
 ```python

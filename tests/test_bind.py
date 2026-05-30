@@ -95,6 +95,22 @@ class TestParser:
         assert parsed["arg_type"] == "float _Complex"
         assert parsed["return_type"] == "float _Complex"
 
+    def test_parses_mutable_state_step(self, tmp_path):
+        """Step bodies that mutate state through the pointer drop ``const``;
+        the parser must accept both forms.  The running_stats example
+        patches the Welford accumulator inline and lands in this shape."""
+        h = tmp_path / "foo_core.h"
+        h.write_text(
+            "typedef struct { double sum; } foo_state_t;\n"
+            "static inline double foo_step(foo_state_t *state, double x) {\n"
+            "    state->sum += x;\n"
+            "    return state->sum;\n"
+            "}\n"
+        )
+        parsed = parse_header(h)
+        assert parsed["arg_type"] == "double"
+        assert parsed["return_type"] == "double"
+
     def test_parses_reset_defaults(self, tmp_path):
         root = tmp_path / "proj"
         _scaffold_filter(root)

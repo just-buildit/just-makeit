@@ -44,11 +44,13 @@ _FIELD_RE = re.compile(
     re.MULTILINE,
 )
 
-# Inline step: "static inline RET\n<comp>_step(const <comp>_state_t *state, ARG x)"
+# Inline step: "static inline RET <comp>_step([const] <comp>_state_t *state, ARG x)".
+# ``const`` is optional — a Welford-style step that mutates state through
+# the pointer drops the qualifier.
 _STEP_RE = re.compile(
     r"static\s+inline\s+([\w\s]+?)\s*"
     r"(\w+)_step\s*\(\s*"
-    r"const\s+\w+_state_t\s*\*\s*\w+\s*,?\s*"
+    r"(?:const\s+)?\w+_state_t\s*\*\s*\w+\s*,?\s*"
     r"([^)]*)\)",
     re.MULTILINE,
 )
