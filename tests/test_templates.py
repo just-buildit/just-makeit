@@ -556,3 +556,19 @@ class TestInitParamsWithState:
         )
         assert "hdr" in ctx["init_params_pyi"]
         assert "fd" not in ctx["init_params_pyi"]
+
+    def test_py_create_args_maps_NULL_to_empty_str_for_const_char_star(self):
+        """gh-88: pytest test_create() must emit a valid Python literal
+        for `const char *` init-params with the C `NULL` default. Empty
+        string `""` is the chosen placeholder — it passes the CPython
+        "s" format check (which rejects None) and gives the user a
+        clear hook to swap for a real fixture path in their tests."""
+        ctx = self._ctx(
+            [("fd", "int", "-1")],
+            [("filepath", "const char *", "NULL")],
+        )
+        # py_create_args feeds into the generated pytest test_create():
+        #     obj = Reader(<py_create_args>)
+        # Must be a valid Python expression that the binding accepts.
+        assert "NULL" not in ctx["py_create_args"]
+        assert '""' in ctx["py_create_args"]
