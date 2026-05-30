@@ -277,3 +277,80 @@ class TestCliObject:
     def test_extra_include_dirs_missing_value_exits(self):
         with pytest.raises(SystemExit):
             _run(["fir", "--extra-include-dirs"])
+
+
+class TestPresetFlag:
+    """Phase 3a: --preset NAME expands to the underlying flag bundle
+    before the normal arg parser runs. The expansion is purely
+    additive — passing the flags directly is always equivalent."""
+
+    def test_preset_processor_is_no_op_alias(self):
+        # Default object behaviour: float _Complex arg_type.
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["fir", "--preset", "processor"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["arg_type"] == "float _Complex"
+            # No-op preset must not silently change the return type either.
+            assert kwargs["return_type"] is None  # falls back to arg_type
+
+    def test_preset_generator_strips_input(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["nco", "--preset", "generator"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["arg_type"] == "void"
+
+    def test_preset_consumer_strips_output(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["acc", "--preset", "consumer"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["return_type"] == "void"
+
+    def test_preset_reader_disables_step_and_adds_filepath(self):
+        with patch("just_makeit._object.run") as mock_run:
+            _run(["iq_reader", "--preset", "reader"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["no_step"] is True
+            # init_params is a list of (name, type, default) tuples;
+            # the default for a const char * without an explicit value
+            # is empty string per the parser convention.
+            assert any(
+                p[0] == "filepath" and p[1] == "const char *"
+                for p in kwargs["init_params"]
+            )
+
+    def test_preset_blockwise_not_yet_a_preset(self):
+        # Array IO needs renderer support (gh-86); until then
+        # `--preset blockwise` is unknown and errors at parse time.
+        with pytest.raises(SystemExit):
+            _run(["fft", "--preset", "blockwise"])
+
+    def test_preset_user_flags_compose_after_expansion(self):
+        # `--preset generator` is `--arg-type void`; the user adds
+        # `--state phase:float:0.0f` which the normal parser still picks
+        # up. state_vars is positional arg 3 (root, name, module, state_vars).
+        with patch("just_makeit._object.run") as mock_run:
+            _run(
+                [
+                    "nco",
+                    "--preset",
+                    "generator",
+                    "--state",
+                    "phase:float:0.0f",
+                ]
+            )
+            args, kwargs = mock_run.call_args
+            assert kwargs["arg_type"] == "void"
+            assert ("phase", "float", "0.0f") in args[3]
+
+    def test_preset_unknown_name_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--preset", "wibble"])
+
+    def test_preset_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--preset"])
+
+    def test_preset_not_repeatable(self):
+        # Composing presets isn't supported — they may conflict.
+        with pytest.raises(SystemExit):
+            _run(["fir", "--preset", "generator", "--preset", "consumer"])

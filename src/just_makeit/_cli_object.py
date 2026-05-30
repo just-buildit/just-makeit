@@ -6,6 +6,87 @@ from pathlib import Path
 from ._cli_parse import parse_init_param_flag, parse_state_flag
 
 
+# Phase 3a preset shorthand. Each entry maps a preset name to the flag
+# combination it expands to, applied before the normal arg parser runs.
+# The expansion is purely additive — users can still pass any of these
+# flags directly, and `--preset NAME` is interchangeable with typing
+# them out.
+#
+#   processor: default; no-op alias (documents the canonical shape).
+#   blockwise: array IO; renderer support for array arg/return types
+#              still pending (see gh-86), so the preset will error in
+#              the same place as the equivalent hand-typed flags until
+#              that lands. Documented in the gallery either way.
+#   generator: no input — strips the input side of step().
+#   consumer:  no output — strips the output side of step().
+#   reader:    no auto-step + file path init-param; user adds custom
+#              read/seek/close methods via `jm method`.
+_PRESETS: dict[str, list[str]] = {
+    "processor": [],
+    "generator": ["--arg-type", "void"],
+    "consumer": ["--return-type", "void"],
+    "reader": [
+        "--no-step",
+        "--init-param",
+        "filepath:const char *",
+    ],
+    # blockwise (array IO) is excluded until the renderer supports
+    # array arg_type / return_type — see gh-86. The CLI rejects the
+    # underlying `--return-type "T[]"` flag at parse time today, so
+    # exposing a preset that always errors would be a foot-gun.
+}
+
+
+def _expand_presets(args: list[str]) -> list[str]:
+    """Expand `--preset NAME` tokens into their flag combination.
+
+    Walks the arg list once; each `--preset NAME` it encounters is
+    replaced by the flags from `_PRESETS[NAME]`. Other tokens pass
+    through unchanged. Errors on unknown names with the full allowlist
+    listed alphabetically.
+
+    `--preset` is not repeatable. A second occurrence is a hard error
+    rather than silent "last one wins" — composing presets is
+    intentionally not supported (the underlying flag combinations may
+    conflict; users wanting custom combos should pass flags directly)."""
+    out: list[str] = []
+    saw_preset = False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok != "--preset":
+            out.append(tok)
+            i += 1
+            continue
+        if saw_preset:
+            print(
+                "error: --preset may not be specified more than once. "
+                "To customise further, pass the underlying flags directly.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        i += 1
+        if i >= len(args):
+            allowed = ", ".join(sorted(_PRESETS))
+            print(
+                f"error: --preset requires a name. Allowed: {allowed}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        name = args[i]
+        if name not in _PRESETS:
+            allowed = ", ".join(sorted(_PRESETS))
+            print(
+                f"error: --preset '{name}' is not a known preset. Allowed: {allowed}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        out.extend(_PRESETS[name])
+        saw_preset = True
+        i += 1
+    return out
+
+
 def run(args: list[str]) -> None:
     if len(args) < 1:
         print("error: 'object' requires an object name.", file=sys.stderr)
@@ -36,7 +117,10 @@ def run(args: list[str]) -> None:
     replacements: list[tuple[str, str]] = []
     class_name_obj: str | None = None
 
-    remaining = args[1:]
+    # Expand `--preset NAME` (Phase 3a) into its flag combination before
+    # the normal parser runs, so the rest of this function stays a flat
+    # token loop.
+    remaining = _expand_presets(args[1:])
     i = 0
     while i < len(remaining):
         tok = remaining[i]

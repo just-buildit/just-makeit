@@ -33,6 +33,11 @@ Commands:
     --extra-types NAME          Hand-written Python type to register in PyInit_; repeatable.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
+    --preset NAME               Named shorthand for a common shape:
+                                processor (default), blockwise, generator,
+                                consumer, reader. Expands into the
+                                equivalent flag combination; passing the
+                                flags directly is always equivalent.
     --module name               Place object inside this module's .so.
     --state name:type[:default] State variable; repeatable.
     --arg-type TYPE             step() input type (default: float _Complex).
