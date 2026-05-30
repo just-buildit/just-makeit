@@ -1,10 +1,13 @@
 # `jm bind` — design sketch
 
-Status: **proposal, not implemented.** Sibling to
-[`wizard-design.md`](wizard-design.md) and the
+Status: **design note.** Sibling to the
 [template gallery](../templates/index.md). This note captures a
 "reverse" command — read a hand-written `<comp>_core.h` and synthesise
-`<comp>_ext.c` from it, with no TOML and no prior `jm` history.
+`<comp>_ext.c` from it, with no TOML and no prior `jm` history. The
+sacred/glue contract that `jm apply` now ships (see
+[declarative-scaffolding.md](declarative-scaffolding.md)) makes this
+safe: `_ext.c` is a glue file, regenerated from the source of truth
+without ever clobbering a hand-written `_core.c`.
 
 ______________________________________________________________________
 
@@ -41,11 +44,11 @@ ______________________________________________________________________
 
 ## Phased rollout
 
-| Phase      | Scope                                                                                                                                                                                                                         | Effort            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                   | ~2 days, ~400 LOC |
-| **Real**   | Init_params recognition (ctor args that aren't state fields); output-param detection (`out` / `output` / `dst` / `dest` naming + `_max_out` pairing); opaque state; arbitrary custom verbs. Covers all seven gallery presets. | + ~3 days         |
-| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines. Adds `jm bind --check` for CI parity.                                                                          | + ~1 week         |
+| Phase      | Scope                                                                                                                                                                                                                                                            | Effort            |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                                                      | ~2 days, ~400 LOC |
+| **Real**   | Init_params recognition (ctor args that aren't state fields); output-param detection (`out` / `output` / `dst` / `dest` naming + `_max_out` pairing); opaque state; arbitrary custom verbs. Covers the working presets (processor, generator, consumer, reader). | + ~3 days         |
+| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines. Adds `jm bind --check` for CI parity.                                                                                                             | + ~1 week         |
 
 Each phase is shippable on its own and the surface only ever grows.
 
@@ -97,18 +100,19 @@ Every other `<comp>_*` declaration in the header is treated as a
 custom method on the Python class. Module-level functions (not
 prefixed with `<comp>_`) bind as free functions on the parent module.
 
-The `blockwise`, `generator`, `consumer`, `reader`, and `function`
-template pages each describe the contract above by example — the
-formal version above is just the union of what those pages already
-require. Variable-output components (the event-emitter shape) follow
-the same contract plus a sibling `<comp>_<verb>_max_out()` declaration.
+The `generator`, `consumer`, `reader`, and `function` template pages
+each describe the contract above by example — the formal version above
+is just the union of what those pages already require. Variable-output
+components (the event-emitter shape) follow the same contract plus a
+sibling `<comp>_<verb>_max_out()` declaration. (`blockwise` is
+excluded — array return is unsupported.)
 
 The **type allowlist** the parser enforces per slot is the same one
 documented in [`docs/types.md`](../types.md), referenced from the
-"Concrete types" section of every template page. Parser, CLI, and
-wizard all share that single source of truth — a `const char *` that
-isn't legal as a state field is a parse error in `jm bind`, not just a
-"won't compile" surprise.
+"Concrete types" section of every template page. Parser and CLI share
+that single source of truth — a `const char *` that isn't legal as a
+state field is a parse error in `jm bind`, not just a "won't compile"
+surprise.
 
 ______________________________________________________________________
 
@@ -184,25 +188,21 @@ ______________________________________________________________________
 
 ## Preservation
 
-If `<comp>_ext.c` already exists, two policies:
+`<comp>_ext.c` is a **glue file** under the sacred/glue contract that
+`jm apply` now ships: glue is regenerated from the source of truth on
+every run, never hand-edited. `jm bind` follows the same rule —
+re-running it re-derives `_ext.c` from the header wholesale.
 
-- **`jm bind` (default).** Same body-preserving merge that
-    `jm apply` uses for `_core.c`: function bodies in the existing
-    `_ext.c` whose signatures match the freshly rendered template are
-    preserved; new ones flow through; orphans are dropped.
-- **`jm bind --overwrite`.** Replace the file wholesale. Useful when
-    the header changes and the binding has drifted in ways that body
-    preservation can't reconcile.
+So the workflow is:
 
-The default policy means a user can:
+1. Run `jm bind foo` to derive `foo_ext.c` from `foo_core.h`.
+1. Edit `foo_core.h` to add another method, and `foo_core.c` to
+    implement it. `_core.c` is **sacred** — bind never touches it.
+1. Re-run `jm bind foo` — the new method gets a binding; the
+    hand-written `_core.c` body is untouched.
 
-1. Run `jm bind foo` to scaffold `foo_ext.c` from `foo_core.h`.
-1. Edit `foo_ext.c` to add a custom `__repr__` or post-init hook.
-1. Edit `foo_core.h` to add another method.
-1. Re-run `jm bind foo` — the new method gets a binding, the custom
-    `__repr__` survives.
-
-Same contract as `jm apply` for components.
+This is the same split `jm apply` enforces: glue (`_ext.c`, `.pyi`,
+`CMakeLists.txt`) regenerates; sacred (`_core.c`) is the user's.
 
 ______________________________________________________________________
 
@@ -218,9 +218,9 @@ ______________________________________________________________________
     you have Python access. (Names must follow the template contract;
     pure third-party headers usually don't, but a thin shim of
     convention-named declarations does.)
-- **Wizard interop.** The interactive wizard from
-    [`wizard-design.md`](wizard-design.md) can offer "bind an existing
-    header" as a phase-1 alternative to "scaffold from scratch."
+- **Composes with `--impl`.** A header bound by `jm bind` pairs
+    naturally with `--impl file::funcname` (or `--impl file::N:M` to
+    lift a line range) to fill the `_core.c` bodies from existing C.
 
 ______________________________________________________________________
 
@@ -228,9 +228,9 @@ ______________________________________________________________________
 
 `jm bind` is shippable when:
 
-1. Each of the seven gallery templates' generated `_core.h` can be fed
-    to `jm bind` and produce an `_ext.c` byte-identical to (or
-    semantically equivalent to) what the original scaffold emitted.
+1. Each working preset's generated `_core.h` can be fed to `jm bind`
+    and produce an `_ext.c` byte-identical to (or semantically
+    equivalent to) what the original scaffold emitted.
 1. `jm bind --check` runs in CI for every bundled example and
     passes on every commit.
 1. At least one bundled example uses `jm bind` end-to-end — author
@@ -258,3 +258,8 @@ ______________________________________________________________________
     paragraph to the contract. Versioning the contract (a comment in
     `_core.h` like `// jm-bind: contract-1`) would let `jm bind` warn
     when a header is using older conventions.
+- **`blockwise` is out of scope.** Array RETURN
+    (`T[] -> T[]`) is not yet supported by the renderer — the CLI now
+    errors cleanly on it rather than emitting a broken scaffold — so
+    there is no `blockwise` shape for bind to target. Array INPUT
+    (`arg-type T[]`) works and binds fine.

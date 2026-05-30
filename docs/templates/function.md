@@ -10,9 +10,7 @@ bytes→hex), a lookup-table query, a one-shot format detector, a CRC,
 a string normaliser, or any pure computation where a per-call object
 would be overkill.
 
-`jm function` and its `--out-param` flag shipped in **0.13.22**;
-`--out-type` and `--result-field` ship in **0.13.23**. The example
-below uses real generated output.
+The example below uses real generated output.
 
 ## Command
 
@@ -28,7 +26,15 @@ jm function q15_to_float --module io \
 `--param` declares input arrays (auto `const`-qualified) and scalar
 params; `--out-param` declares writable output arrays (`const`
 dropped). `--impl file::funcname` lifts an existing C body into the
-generated stub if you have one.
+generated stub. The function's `_core.c` is a sacred file — once
+written, `jm apply` never overwrites it — so lifting a real body in is
+safe and has no splice-into-existing-file hazard.
+
+`--impl` also takes a **line range**: `--impl file::N:M` lifts lines
+`N..M` (inclusive, 1-based) verbatim instead of a named body — handy
+when the source isn't a clean standalone function. Out-of-bounds or
+inverted ranges error cleanly. `--replace old::new` applies string
+substitutions to the lifted text before injection.
 
 ## What you get
 
@@ -97,12 +103,10 @@ q15_to_float(inp, out, inp.size)
     body in `_core.h` so the function inlines at every call site. Good
     for short, pure functions.
 - **`out_type` for sized scalar output** — when the output size is
-    derivable from a single scalar param. See
-    [Quick reference](../quick-reference.md) for the TOML form
-    (currently the only path; a CLI flag is on the roadmap).
-- **`result_fields` for record-returning functions** — declared in
-    TOML today. The wizard would expose this via repeatable
-    `--result-field` flags.
+    derivable from a single scalar param. TOML-only today; see
+    [Quick reference](../quick-reference.md) for the form.
+- **`result_fields` for record-returning functions** — emit a list of
+    `{name, type}` records per call. Declared in TOML today.
 
 ## Concrete types
 
@@ -113,6 +117,6 @@ q15_to_float(inp, out, inp.size)
 | `--return-type T`                  | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                       | `const char *`, any `T[]`.                               | `void`           |
 | `--out-type T` *(TOML only today)* | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
 
-The library preset has the **narrowest** slot allowlist of any
+The function preset has the **narrowest** slot allowlist of any
 template — no strings, no string-enums, no 2-D arrays. Need those?
-Wrap the function in an object preset instead.
+Wrap the logic in an object preset instead.

@@ -1,4 +1,4 @@
-# `jm object NAME` — processor (input → output, 1:1)
+# `jm object NAME --preset processor` — processor (input → output, 1:1)
 
 The default `jm object NAME` invocation produces a **processor**: one
 sample in, one sample out, carrying whatever state your algorithm
@@ -11,18 +11,21 @@ binding, a CTest smoke test, and a Python benchmark.
 a byte-to-token transformer for a parser, or any 1:1 transform where
 each output depends on the current input plus accumulated state.
 
-This page shows the exact output of the current CLI on jm 0.13.23,
-using a single-pole low-pass filter as the worked example.
+This page shows the exact output of the current CLI, using a
+single-pole low-pass filter as the worked example.
 
 ## Command
 
 ```sh
 jm new my_dsp \
-    --object my_filter \
+    --object my_filter --preset processor \
     --arg-type "float _Complex" \
     --return-type "float _Complex" \
     --state gain:float:1.0f
 ```
+
+`--preset processor` is the default shape, so the flag is optional —
+it just documents intent.
 
 ## What you get
 
@@ -170,16 +173,19 @@ flt.reset()
 
 ## Concrete types
 
-| Slot                | Accepts                                                                                           | Rejects                                                                                          | Default           |
-| ------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------- |
-| `--arg-type`        | Any [scalar](../types.md#step-input--output-types).                                               | `const char *`, `void` (routes to [source](source.md)), any `T[]` (routes to [block](block.md)). | `float _Complex`  |
-| `--return-type`     | Same as `--arg-type`.                                                                             | Same as `--arg-type`; `void` routes to [sink](sink.md).                                          | `float _Complex`  |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` also legal but skip the ctor. | `const char *`, `T[]` (use a fixed `T[N]` instead).                                              | `gain:float:1.0f` |
+| Slot                | Accepts                                                                                           | Rejects                                                     | Default           |
+| ------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------- |
+| `--arg-type`        | Any [scalar](../types.md#step-input-output-types).                                                | `const char *`; `void` routes to [generator](generator.md). | `float _Complex`  |
+| `--return-type`     | Same as `--arg-type`.                                                                             | `const char *`; `void` routes to [consumer](consumer.md).   | `float _Complex`  |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` also legal but skip the ctor. | `const char *`, `T[]` (use a fixed `T[N]` instead).         | `gain:float:1.0f` |
+
+`bool` is a valid scalar for any of these slots. Array *input*
+(`--arg-type "T[]"`) is accepted, but array *return* is not yet
+supported and errors cleanly.
 
 ## When to use a different preset
 
-- Output count differs from input count → `--block` or `--variable-output`.
-- No input (oscillator, generator) → `--source`.
-- No output (accumulator, sink) → `--sink`.
-- Stateful resource (file, socket) → `--reader`.
-- Detector / event emitter → `--detector`.
+- No input (oscillator, generator) → [`--preset generator`](generator.md).
+- No output (accumulator, sink) → [`--preset consumer`](consumer.md).
+- Stateful resource (file, socket) → [`--preset reader`](reader.md).
+- Variable output count (peak/event detector) → `--variable-output`.

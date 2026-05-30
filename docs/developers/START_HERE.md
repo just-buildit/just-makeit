@@ -31,16 +31,25 @@ ______________________________________________________________________
 just-makeit/
 ├── src/just_makeit/          # the CLI package
 │   ├── _cli.py               # argument parsing and dispatch
+│   ├── _cli_*.py             # per-command argument parsers
 │   ├── _new.py               # `new` command — project scaffold
 │   ├── _object.py            # `object` command — add a type (standalone or in-module)
 │   ├── _init.py              # internal: standalone object file generation
 │   ├── _module.py            # `module` command — scaffold empty extension module
+│   ├── _method.py            # `method` / `property` / `function` commands
 │   ├── _add.py               # `add` command — append state vars to existing object
 │   ├── _perf.py              # `perf` command — add performance annotations
+│   ├── _impl.py              # `--impl` body lifting (funcname or line range)
+│   ├── _apply.py             # `apply` command — sacred/glue materialize from TOML
+│   ├── _regenerate.py        # `regenerate` command — rebuild a component's files
+│   ├── _remove.py            # `remove` command — delete + strip TOML/CMake wiring
+│   ├── _bind.py              # `bind` command — synthesise _ext.c from a _core.h
 │   ├── _build.py             # `build`/`test`/`dry-run` commands
 │   ├── _config.py            # just-makeit.toml read/write
+│   ├── _render.py            # render engine + template constants loaded from templates/
+│   ├── _context/             # make_*_ctx() context builders
+│   ├── templates/            # the real template files (c/, cmake/, py/, make/, toml/, …)
 │   ├── _scripts.py           # entry points for jm-install-deps and jm-docker-e2e
-│   ├── _templates.py         # all file templates (single source of truth)
 │   └── scripts/              # bundled shell utilities (shipped in wheel)
 │       ├── install-deps.sh   # OS-aware dep installer + venv setup
 │       └── docker-e2e.sh     # Docker end-to-end smoke test
@@ -93,22 +102,27 @@ just-makeit <cmd>
             │                  ├── module=None  → _init.run()   (standalone)
             │                  └── module=name  → in-module path
             ├── module    → _module.run()
+            ├── method/property/function → _method.*/_property.*/_function.*
             ├── add       → _add.run()
             ├── perf      → _perf.run()
-            ├── build/test/dry-run → _build.*
-            └── config    → _config.*
+            ├── apply     → _apply.run()        (sacred/glue materialize)
+            ├── regenerate→ _regenerate.run()   (delete + re-apply a component)
+            ├── remove    → _remove.run()
+            ├── bind      → _bind.run()
+            └── build/test/dry-run → _build.*
 ```
 
-### Templates (`_templates.py`)
+### Templates and rendering
 
-All generated file content lives in `_templates.py` as string constants with
-`<<placeholder>>` tokens. `T.render(tmpl, ctx)` does a simple string
-replacement. The context dict is built by `_make_component_ctx()`,
-`make_state_ctx()`, `make_sample_ctx()`, etc.
+Generated file content lives as real files under
+`src/just_makeit/templates/` (`c/`, `cmake/`, `py/`, `make/`, `toml/`,
+`doc/`, `misc/`). `_render.py` loads each at import time and substitutes
+`<<placeholder>>` tokens (C/H templates wrap them as `/*<<token>>*/` so
+clang-format can still parse the file). The context dict is built by the
+`make_*_ctx()` functions in `_context/`.
 
-**To change what generated files look like:** edit `_templates.py`.
-The constants are well-named (`COMPONENT_CORE_H`, `CMAKE_LISTS_COMPONENT`,
-`PYTEST_TEST`, etc.).
+**To change what generated files look like:** edit the relevant file
+under `templates/`, not a Python string constant.
 
 ### Config (`_config.py` + `just-makeit.toml`)
 
@@ -187,8 +201,8 @@ ______________________________________________________________________
 
 ## Adding a new template / feature
 
-1. Add or edit the template constant in `_templates.py`.
-1. Update the context builder if new placeholder keys are needed.
+1. Add or edit the template file under `src/just_makeit/templates/`.
+1. Update the context builder in `_context/` if new placeholder keys are needed.
 1. Wire the new file into the relevant `run()` function (`_new.py`, `_object.py`, `_init.py`).
 1. Add tests in `tests/test_new.py` or `tests/test_init.py`.
 1. Update the relevant page in `docs/commands/` and any relevant workflow docs.

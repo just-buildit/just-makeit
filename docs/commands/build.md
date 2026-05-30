@@ -141,6 +141,56 @@ See [Performance annotations](../perf.md) for the full macro reference and
 
 ______________________________________________________________________
 
+## `just-makeit apply`
+
+Reconcile the generated files with `just-makeit.toml`. Use this after
+hand-editing the manifest, after `git pull`, or to materialize any files
+missing from a checkout. Must be run from the project root.
+
+```sh
+just-makeit apply
+```
+
+`apply` follows the **sacred / glue** contract:
+
+| File                   | On every `apply`                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<comp>_ext.c`         | **Glue** — fully regenerated from the manifest.                                                                                                                          |
+| `src/<pkg>/<comp>.pyi` | **Glue** — fully regenerated.                                                                                                                                            |
+| `CMakeLists.txt`       | **Glue** — fully regenerated.                                                                                                                                            |
+| `<comp>_core.h`        | **Hybrid** — public *declarations* refresh (a new TOML-declared method or field reaches the API), while the inline `step()` body and the state struct are **preserved**. |
+| `<comp>_core.c`        | **Sacred** — never overwritten once it exists. `steps()`/lifecycle bodies are yours.                                                                                     |
+
+So editing the manifest always propagates to the glue. Changing a
+**signature** in TOML updates the glue and the `_core.h` declaration, but the
+sacred `_core.c` body is left alone — use the additive verbs (`jm method`,
+`jm add`) or `jm regenerate` to update the body as well.
+
+______________________________________________________________________
+
+## `just-makeit regenerate <component>`
+
+The deliberate-refresh half of the sacred/glue contract. Deletes every file
+the component owns, then re-runs `jm apply` to rebuild them all from the
+manifest. The manifest itself is left untouched (unlike `jm remove`). Works
+for standalone and module objects. Must be run from the project root.
+
+```sh
+git stash                          # regenerate discards hand-written bodies
+just-makeit regenerate engine
+just-makeit regenerate engine --force   # skip the confirmation
+```
+
+Because the rebuilt `_core.c` comes straight from the manifest, **any
+hand-written body in `<comp>_core.c` is discarded** — `git stash` or commit
+first. A single confirmation guards the deletion; `--force` skips it.
+
+| Flag      | Description                     |
+| --------- | ------------------------------- |
+| `--force` | Skip the deletion confirmation. |
+
+______________________________________________________________________
+
 ## `just-makeit config [key value]`
 
 Show or edit the project configuration stored in `just-makeit.toml`.

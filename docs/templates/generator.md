@@ -1,4 +1,4 @@
-# `jm object NAME --generator` — generator (() → output)
+# `jm object NAME --preset generator` — generator (() → output)
 
 A **generator** produces output without taking input — `step()` takes
 no argument and returns the next value, `steps(n)` produces `n`
@@ -10,15 +10,14 @@ pseudo-random sequence (LFSR), a counter, a UUID generator, a queue
 drainer that yields the next item, or a parser tokenizer that emits
 tokens one at a time from a pre-loaded buffer.
 
-**Status: proposed.** Tracked in
-[`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--generator` flag would bundle `--arg-type void` with a `_core.c`
-skeleton sized for sample-producing algorithms.
+`--preset generator` expands to `--arg-type void`, which strips the
+input side of `step()`. The scaffold builds and tests green straight
+away; with no input, `void` arg-type defaults to a complex return.
 
 ## Command
 
 ```sh
-jm object NAME --generator \
+jm object NAME --preset generator \
     --return-type "float _Complex" \
     --state phase:float:0.0f \
     --state freq:float:0.0f
@@ -26,7 +25,7 @@ jm object NAME --generator \
 
 ## What you get
 
-### `native/inc/NAME/NAME_core.h` (proposed)
+### `native/inc/NAME/NAME_core.h`
 
 ```c
 typedef struct {
@@ -46,7 +45,7 @@ NAME_step(NAME_state_t *state);
 void NAME_steps(NAME_state_t *state, float complex *out, size_t n);
 ```
 
-### `native/src/NAME/NAME_core.c` (proposed)
+### `native/src/NAME/NAME_core.c`
 
 ```c
 static inline float complex
@@ -85,11 +84,11 @@ ys = src.steps(1024)                     # → (1024,) complex64
 
 ## Concrete types
 
-| Slot                | Accepts                                             | Rejects                                                                                         | Default                             |
-| ------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `--arg-type`        | Implicit `void`; sources take no input.             | All explicit values — passing one is an error.                                                  | `void`                              |
-| `--return-type`     | Any [scalar](../types.md#step-input--output-types). | `const char *`, `void` (use [sink](sink.md)), any `T[]` (block-shaped — use [block](block.md)). | `float _Complex`                    |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types).     | `const char *`.                                                                                 | `phase:float:0.0f, freq:float:0.0f` |
+| Slot                | Accepts                                            | Rejects                                                                         | Default                             |
+| ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------- |
+| `--arg-type`        | Implicit `void`; sources take no input.            | All explicit values — passing one is an error.                                  | `void`                              |
+| `--return-type`     | Any [scalar](../types.md#step-input-output-types). | `const char *`, `void` (use [consumer](consumer.md)); array return unsupported. | `float _Complex`                    |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types).    | `const char *`.                                                                 | `phase:float:0.0f, freq:float:0.0f` |
 
-The source preset always emits a `steps(n)` that fills an `n`-sized
+The generator preset always emits a `steps(n)` that fills an `n`-sized
 ndarray; the element type matches `--return-type`.

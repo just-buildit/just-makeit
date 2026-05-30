@@ -10,8 +10,8 @@ ______________________________________________________________________
 
 Each row shows an annotated Python stub, the `just-makeit.toml` fragment that
 produces it, and the CLI command that writes that fragment. *TOML only* means
-the feature is not reachable from the CLI and must be written by hand (or via
-`jm apply <fragment>`).
+the feature is not reachable from the CLI and must be written by hand, then
+applied with `jm apply` (which regenerates the glue files from the manifest).
 
 ______________________________________________________________________
 
@@ -781,6 +781,7 @@ ______________________________________________________________________
 | Feature               | What it does                                                                                                                                                                                   | CLI                               |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | Lift C body           | Inject an existing function body into the generated `<<IMPLEMENT>>` stub                                                                                                                       | `--impl path/to/file.c::funcname` |
+| Lift line range       | Inject lines N..M (inclusive, 1-based) instead of a named function body                                                                                                                        | `--impl path/to/file.c::12:48`    |
 | Rename on lift        | String substitution applied to the extracted body                                                                                                                                              | `--replace old::new`              |
 | Custom create()       | Override generated field assignments in `<comp>_create()` — add `create_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `obj->` for the local pointer)     | TOML only                         |
 | Custom reset()        | Override generated field assignments in `<comp>_reset()` — add `reset_impl = """…"""` to the object section **before any `[[comp.state]]` entries** (uses `state->` for the pointer parameter) | TOML only                         |
@@ -792,7 +793,8 @@ ______________________________________________________________________
 | Perf annotations      | Add `JM_HOT` / `JM_FORCEINLINE` to every `step()`                                                                                                                                              | `just-makeit perf`                |
 | Reconstruct CLI       | Print the full command sequence that reproduces the project                                                                                                                                    | `just-makeit script`              |
 | Split TOML            | Move each object section into `objects/<name>.toml`                                                                                                                                            | `just-makeit split-objects`       |
-| Regenerate files      | Re-emit all files implied by the current TOML (add-only)                                                                                                                                       | `just-makeit apply`               |
+| Apply manifest        | Regenerate glue (`_ext.c`, `.pyi`, `CMakeLists.txt`) and refresh `_core.h` declarations from the TOML; `_core.c` and the inline `step()` body stay yours, untouched                            | `just-makeit apply`               |
+| Regenerate component  | Delete every file a component owns and rebuild from the manifest — the deliberate refresh that *does* overwrite the sacred `_core.c`. Manifest is left intact (`git stash` first)              | `just-makeit regenerate <comp>`   |
 | Dry run               | Show what would be compiled without building                                                                                                                                                   | `just-makeit dry-run`             |
 | Extra link libs       | Link a module against an additional library not owned by jm — add `extra_link_libs = ["mylib", "m"]` under `[module.X]`                                                                        | TOML only                         |
 | Extra types           | Register a hand-written CPython type from a `*_extra.c` file in `PyInit_` — add `extra_types = ["MyType"]` under `[module.X]`                                                                  | TOML only                         |

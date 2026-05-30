@@ -359,6 +359,68 @@ Both workflows produce a `lib<project>.so` C library that supports
 
 ______________________________________________________________________
 
+## The edit lifecycle: author → apply → sacred/glue → regenerate
+
+`just-makeit.toml` is the manifest. Every CLI verb (`object`, `method`,
+`add`, …) writes to it, then materializes files. You can also edit the TOML by
+hand. Two commands propagate manifest edits, and they treat your files
+differently — this is the **sacred/glue contract**:
+
+| File                   | On `jm apply`                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest                                                |
+| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                  |
+| `CMakeLists.txt`       | **Glue** — always regenerated                                                                  |
+| `<comp>_core.h`        | **Hybrid** — declarations refresh; the inline `step()` body and the state struct are preserved |
+| `<comp>_core.c`        | **Sacred** — never overwritten once it exists; your `steps()`/lifecycle bodies are yours       |
+
+So the flow is:
+
+1. **Author** — run a CLI verb or hand-edit `just-makeit.toml`.
+1. **Apply** — `jm apply` regenerates the glue and refreshes `_core.h`
+    declarations. A new TOML-declared method or state field reaches the public
+    API immediately. Your `_core.c` bodies are left alone.
+1. **Implement** — fill in the new `step()`/`steps()` body in the sacred files.
+
+When you change a *signature* in TOML (an arg type, a method's return type),
+`jm apply` updates the glue and the `_core.h` declaration, but the sacred
+`_core.c` body still has the old shape. Use the additive verbs (`jm method`,
+`jm add`) where they apply, or — when you want a clean rebuild from the
+manifest — `jm regenerate`:
+
+```sh
+git stash                    # _core.c bodies are about to be discarded
+just-makeit regenerate gain  # deletes every file 'gain' owns, re-runs apply
+```
+
+`regenerate` deletes every file the component owns and rebuilds it from the
+manifest, then asks for a single confirmation (`--force` skips it). Unlike
+`jm remove`, it leaves the manifest untouched — it is the deliberate-refresh
+half of the contract. It discards hand-written `_core.c` bodies, so stash or
+commit first. Works for standalone and module objects.
+
+### Lifting an existing C body with `--impl`
+
+When the algorithm already exists in another `.c` file, `--impl` lifts it into
+the generated stub instead of having you paste it:
+
+```sh
+just-makeit object gain --arg-type float --return-type float \
+    --state gain:float:1.0 \
+    --impl legacy/dsp.c::apply_gain
+```
+
+`--impl file::funcname` injects the body of `funcname`. `--impl file::N:M`
+lifts source lines `N..M` (inclusive, 1-based) instead — useful when there is
+no clean function to name; out-of-bounds or inverted ranges error cleanly.
+`--replace old::new` applies string substitutions before injection (e.g.
+renaming a struct field). The same keys exist in TOML: `impl`, `impl_file`
+(`"path::funcname"` or `"path::N:M"`), `create_impl`, `reset_impl`,
+`destroy_impl`. Because `_core.c` is sacred, lifting is safe — apply never
+clobbers what you injected.
+
+______________________________________________________________________
+
 ## Project layout (full)
 
 After scaffolding with one object and running `just-makeit perf`:

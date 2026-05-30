@@ -67,11 +67,13 @@ When a state field is opaque, the renderer:
 This is the escape hatch for types just-makeit can't introspect. You
 take over; the renderer steps aside.
 
-> **CLI parity gap.** The `--state name:type:opaque` flag is on the
-> Phase 3 roadmap. Today, marking a state field as opaque requires
-> one line in `just-makeit.toml` (`opaque = true` on the entry).
-> See the [vendor plan pattern](#vendor-plan-in-opaque-state) below
-> for the full recipe.
+> **CLI parity gap.** A `--state name:type:opaque` flag is pending.
+> Today, marking a state field as opaque requires one line in
+> `just-makeit.toml` (`opaque = true` on the entry). Because `_core.c`
+> is sacred — `jm apply` never overwrites it — your hand-written
+> lifecycle bodies survive every later edit. See the
+> [vendor plan pattern](#vendor-plan-in-opaque-state) below for the
+> full recipe.
 
 ### Supported types
 
@@ -124,6 +126,12 @@ Notes:
 - `void` is special — only legal as `--arg-type` or `--return-type`,
     where it strips that side of the step signature
     ([generator](templates/generator.md), [consumer](templates/consumer.md)).
+- `bool` is a usable scalar everywhere a scalar is legal (state, step
+    IO, init-param, function param) — it just isn't an *array element*
+    type (use `uint8_t` for byte arrays).
+- Array **input** (`T[]` as `--arg-type`, `--param`, `--out-param`)
+    works. Array **return** (`--return-type "T[]"`) is not yet
+    supported and errors cleanly at parse time.
 
 ### Patterns
 
@@ -144,10 +152,10 @@ in C as `state->coeffs[i]`.
 
 ```sh
 jm object my_fft \
-    --arg-type "float _Complex[]" --return-type "float _Complex[]" \
+    --arg-type "float _Complex[]" \
     --init-param n:size_t
 # then declare the opaque field — CLI flag pending:
-#   --state plan:fftwf_plan:opaque   (planned, 0.14)
+#   --state plan:fftwf_plan:opaque
 # Until that lands, set `opaque = true` on the [[state]] entry once.
 ```
 
@@ -200,13 +208,13 @@ ______________________________________________________________________
 
 ## Type slots — per-slot detail
 
-| Slot                                                       | CLI flags                                | TOML field                       |
-| ---------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
-| [State variable](#state-variable-types)                    | `--state name:T:D`                       | `[[obj.state]] type = "T"`       |
-| [Step input / output](#step-input--output-types)           | `--arg-type T`, `--return-type T`        | `arg_type`, `return_type`        |
-| [Constructor / init param](#constructor--init-param-types) | `--init-param name:T[:D]`                | `[[obj.init_params]] type = "T"` |
-| [Module function param](#module-function-param-types)      | `--param name:T`, `--out-param name:T[]` | `[[fn.params]] type = "T"`       |
-| [Method param](#method-param-types)                        | *(TOML only today)*                      | `[[method.params]] type = "T"`   |
+| Slot                                                      | CLI flags                                | TOML field                       |
+| --------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
+| [State variable](#state-variable-types)                   | `--state name:T:D`                       | `[[obj.state]] type = "T"`       |
+| [Step input / output](#step-input-output-types)           | `--arg-type T`, `--return-type T`        | `arg_type`, `return_type`        |
+| [Constructor / init param](#constructor-init-param-types) | `--init-param name:T[:D]`                | `[[obj.init_params]] type = "T"` |
+| [Module function param](#module-function-param-types)     | `--param name:T`, `--out-param name:T[]` | `[[fn.params]] type = "T"`       |
+| [Method param](#method-param-types)                       | *(TOML only today)*                      | `[[method.params]] type = "T"`   |
 
 Templates in the [gallery](templates/index.md) list their concrete type
 choices per slot at the bottom of each page, with links back into the
@@ -315,7 +323,7 @@ If you omit the default, the zero literal for the declared type is used:
 ```sh
 --state gain:double        # 0.0
 --state count:uint8_t      # 0U
---state pole:double_Complex  # 0.0 + 0.0 * I
+--state "pole:double _Complex"  # 0.0 + 0.0 * I
 ```
 
 Explicit defaults must be valid C literals for the type:
@@ -467,6 +475,33 @@ extended with three TOML-only knobs that don't yet have CLI flags:
 | `variable_output = true`            | Method returns up to `<comp>_<verb>_max_out()` samples; the binding pre-allocates the buffer once.                                                           |
 | `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                              |
 | `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist. |
+
+______________________________________________________________________
+
+## Sacred vs glue files
+
+The manifest (`just-makeit.toml`) is the source of truth, but not every
+generated file is rewritten the same way when you re-run `jm apply`:
+
+- **Glue — regenerated every apply.** `<comp>_ext.c`,
+    `src/<pkg>/<comp>.pyi`, and `CMakeLists.txt` are derived purely
+    from the manifest. Edit the TOML and they refresh on the next apply.
+- **`<comp>_core.h` — hybrid.** Public *declarations* refresh when a
+    TOML-declared method or field reaches the API, but the inline
+    `step()` body and the state struct are **preserved**.
+- **`<comp>_core.c` — sacred.** Once it exists, `jm apply` never
+    overwrites it; the `steps()` / lifecycle bodies are yours.
+
+So editing the manifest propagates to glue, but a signature change you
+make in TOML may also need an additive verb (`jm method`, `jm add`) — or
+a full regenerate — to reach the sacred body.
+
+`jm regenerate <component>` is the deliberate-refresh half: it deletes
+every file the component owns and re-runs `jm apply`, rebuilding a clean
+scaffold from the manifest (the manifest itself is untouched, unlike
+`jm remove`). It discards hand-written `_core.c` bodies, so `git stash`
+first. `--force` skips the single confirmation. Works for both
+standalone and module objects.
 
 ______________________________________________________________________
 

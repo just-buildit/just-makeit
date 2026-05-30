@@ -29,6 +29,7 @@ Each method appends a C stub to `<obj>_core.c` and regenerates the module
 | `--out-divisor N`       | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes).                                                                                    |
 | `--batch`               | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
 | `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                                                                                                                                                                                                 |
+| `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Out-of-bounds or inverted ranges error cleanly.                                                                                                                                                                                                       |
 | `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
 
 ______________________________________________________________________
@@ -242,6 +243,7 @@ add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 | `--return-type TYPE`    | C return type (default: `void`).                                                                   |
 | `--doc "text"`          | Python docstring for the function.                                                                 |
 | `--impl file::funcname` | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
+| `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.   |
 | `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                            |
 
 **Example — no parameters:**

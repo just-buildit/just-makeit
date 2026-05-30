@@ -37,6 +37,8 @@ any objects — the source of truth for all subsequent commands.
 | `--basic`                      | Deprecated alias for `--build-system make`.                                                                                                                                                                                |
 | `--perf`                       | Generate `jm_perf.h` with `JM_HOT`, `JM_LIKELY`, and `JM_FORCEINLINE` macros and apply them to `step()`. See [Performance annotations](../perf.md).                                                                        |
 | `--mutable`                    | Remove `const` from the state pointer in `step()`. Use for objects whose `step()` must mutate state directly (e.g. an NCO).                                                                                                |
+| `--no-state`                   | Scaffold the first object with no auto-generated state (see `just-makeit object`). Works in this one command. Mutually exclusive with `--state`.                                                                           |
+| `--no-step`                    | Scaffold the first object with no `step()`/`steps()` (see `just-makeit object`). Works in this one command.                                                                                                                |
 | `--pytest`                     | Generate pure pytest tests instead of the default `unittest`-compatible shim.                                                                                                                                              |
 | `--pytest-benchmark`           | Generate `pytest-benchmark` bench files alongside the pytest tests.                                                                                                                                                        |
 
@@ -146,10 +148,33 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `--no-state`                       | Suppress auto-generated state variables, constructor args, and getter/setter scaffolding. Emits `<<IMPLEMENT>>` stubs in the C struct body and lifecycle functions (`create`, `destroy`, `reset`). Mutually exclusive with `--state`. Use when the constructor signature is too domain-specific to express via `--state` (e.g. a filter that takes `const float *taps, size_t num_taps`). |
 | `--no-step`                        | Suppress `step()` and `steps()` from all C and Python output. Lifecycle functions (`create`, `destroy`, `reset`) are still generated. Use for objects whose interface consists entirely of named methods added with `jm method`.                                                                                                                                                          |
 | `--init-param name:type[:default]` | Declare a constructor parameter for `--no-state` objects. Repeatable. Generates a typed constructor argument in both C and Python; not stored as a struct field. Requires `--no-state`.                                                                                                                                                                                                   |
-| `--impl file::funcname`            | Lift the `step()` body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. The function body is extracted verbatim and substitutions from `--replace` are applied before insertion.                                                                                                                                                                               |
+| `--impl file::funcname`            | Lift the `step()` body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. The body is extracted verbatim and `--replace` substitutions are applied before insertion.                                                                                                                                                                                             |
+| `--impl file::N:M`                 | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Out-of-bounds or inverted ranges error cleanly.                                                                                                                                                                                                                                                                |
 | `--replace old::new`               | String substitution applied to the body lifted by `--impl`. Repeatable. Use to rename identifiers from the source file to match the generated struct/param names.                                                                                                                                                                                                                         |
 
-See [State Variable Types](../types.md) for supported types, defaults, and C/Python mappings.
+See [State Variable Types](../types.md) for supported types, defaults, and
+C/Python mappings. `bool` is a usable scalar arg, return, and state type.
+
+### `--preset NAME`
+
+A preset is a shorthand for a common flag combination — nothing more. It
+expands before the normal parser runs, so every preset is equivalent to
+typing its flags out, and you can still pass any of them directly.
+
+| Preset      | Expands to                                     | Shape                                                 |
+| ----------- | ---------------------------------------------- | ----------------------------------------------------- |
+| `processor` | (none)                                         | Default: scalar in → scalar out.                      |
+| `generator` | `--arg-type void`                              | No input; produces output.                            |
+| `consumer`  | `--return-type void`                           | Consumes input; no output.                            |
+| `reader`    | `--no-step --init-param filepath:const char *` | No auto-`step()`; add custom methods via `jm method`. |
+
+```sh
+just-makeit object osc --preset generator
+```
+
+`--preset` is not repeatable. A `blockwise` (array-in, array-out) preset is
+intentionally **not** offered: array *return* types are not yet supported,
+so it would always error (array *input* via `--arg-type "T[]"` does work).
 
 Each `--state name:type[:default]` generates:
 

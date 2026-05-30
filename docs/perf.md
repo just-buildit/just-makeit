@@ -35,7 +35,9 @@ just-makeit perf
 ```
 
 Once `perf = true` is recorded in `just-makeit.toml`, every subsequent
-`init` and `add` inherits it automatically.
+`object` and `add` inherits it automatically — including
+`jm object --module M --perf`, which now writes `jm_perf.h` for module
+objects too.
 
 ______________________________________________________________________
 

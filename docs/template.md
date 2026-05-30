@@ -9,10 +9,10 @@
             clib_common.h               # common C99 types
             pyex_common.h               # common Python extension includes
             <component>/
-                <component>_core.h      # component API (edit this)
+                <component>_core.h      # public API + inline step()
         src/
             <component>/
-                <component>_core.c      # core C implementation
+                <component>_core.c      # your algorithm lives here (sacred)
                 <component>_ext.c       # thin Python binding
         tests/
             test_<component>_core.c     # CTest
