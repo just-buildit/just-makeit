@@ -76,12 +76,8 @@ out = xform.steps(np.ones(1024, dtype=np.complex64))   # → (1024,) complex64
 
 ## Concrete types
 
-| Slot                       | Accepts                                                                                                                                   | Default in this template |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `--elem-type` (per-sample) | Any element type from the [array element table](../types.md#array-element-types). `bool` and `const char *` are not legal array elements. | `float _Complex`         |
-| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                                                                           | `gain:float:1.0f`        |
-
-The block preset doesn't accept a separate `--return-type` — the
-output element type is always the same as `--elem-type`. If you need a
-different output element width (e.g. quantising `float[]` → `int16_t[]`),
-use a [library](library.md) function with an `--out-param` instead.
+| Slot                       | Accepts                                                                         | Rejects                                                                                                                           | Default           |
+| -------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types). | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype.                                 | `float _Complex`  |
+| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                 | `const char *`.                                                                                                                   | `gain:float:1.0f` |
+| `--return-type`            | Not accepted — block always emits the same element type as `--elem-type`.       | All values. For width-changing transforms (e.g. `float[]` → `int16_t[]`) use a [library](library.md) function with `--out-param`. | —                 |

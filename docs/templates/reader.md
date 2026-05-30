@@ -123,14 +123,14 @@ rdr.close()
 
 ## Concrete types
 
-| Slot                        | Accepts                                                                                                                                                                                         | Default in this template                           |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `--init-param name:T:D`     | Path/filename strings use `const char *`. Numeric options accept any [scalar](../types.md#constructor--init-param-types). `string_enum:read,write,rw` is the canonical pattern for a mode flag. | `filepath:"const char *", header_bytes:size_t:0`   |
-| `--state field:T:D`         | Internal bookkeeping. Any [scalar](../types.md#state-variable-types). The file descriptor pattern is `fd:int:-1`.                                                                               | `fd:int:-1, file_size:size_t:0, position:size_t:0` |
-| Method return / output type | The `read()` verb returns a `T[]` ndarray sized via `out_type`; the element type follows the [array element table](../types.md#array-element-types).                                            | `out_type = "float _Complex"`                      |
+| Slot                                      | Accepts                                                                                                                                 | Rejects                                                                                          | Default                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `--init-param name:T:D`                   | Path/filename strings use `const char *`. Any [scalar](../types.md#constructor--init-param-types), `T[]`, `T[][]`, `string_enum:a,b,c`. | `T[N]` (fixed length — that's `--state` territory).                                              | `filepath:"const char *", header_bytes:size_t:0`   |
+| `--state field:T:D`                       | Any [scalar](../types.md#state-variable-types). The file descriptor pattern is `fd:int:-1`.                                             | `const char *` (use an `--init-param` to receive the path, then store the parsed `fd` / `size`). | `fd:int:-1, file_size:size_t:0, position:size_t:0` |
+| Method return / output (`out_type = "T"`) | Any [array element type](../types.md#array-element-types). `read()` returns a `T[]` ndarray sized from the requested sample count.      | `bool`, `int`, `const char *`, `long double _Complex`.                                           | `float _Complex`                                   |
 
-`const char *` is the load-bearing type here: it's a valid
-[init-param](../types.md#constructor--init-param-types) (parsed by
-PyArg as a Python str → C string lifetime managed by Python) but is
-**not** a valid state field. Persist the parsed result (the `fd`, a
-copy of the buffer) instead.
+`const char *` is the load-bearing type here. It is a valid init-param
+(PyArg parses the Python str; lifetime is managed on the Python side)
+but is **not** a valid state field — persist the parsed result (the
+`fd`, a `size_t`) instead. This is the asymmetry the reader preset
+exists to formalise.

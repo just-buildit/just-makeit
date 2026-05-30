@@ -165,15 +165,11 @@ flt.reset()
 
 ## Concrete types
 
-| Slot                | Accepts                                                                                                                             | Default in this template |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `--arg-type`        | Any [scalar](../types.md#step-input--output-types) except `const char *`; passing `void` routes you to [source](source.md) instead. | `float _Complex`         |
-| `--return-type`     | Same as `--arg-type`; `void` routes you to [sink](sink.md).                                                                         | `float _Complex`         |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` are also legal but skip the ctor.                               | `gain:float:1.0f`        |
-
-Strings (`const char *`) are not legal here — not in the step
-signature, not in the state struct. See the [reader](reader.md) preset
-for the path-driven shape.
+| Slot                | Accepts                                                                                           | Rejects                                                                                          | Default           |
+| ------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------- |
+| `--arg-type`        | Any [scalar](../types.md#step-input--output-types).                                               | `const char *`, `void` (routes to [source](source.md)), any `T[]` (routes to [block](block.md)). | `float _Complex`  |
+| `--return-type`     | Same as `--arg-type`.                                                                             | Same as `--arg-type`; `void` routes to [sink](sink.md).                                          | `float _Complex`  |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` also legal but skip the ctor. | `const char *`, `T[]` (use a fixed `T[N]` instead).                                              | `gain:float:1.0f` |
 
 ## When to use a different preset
 

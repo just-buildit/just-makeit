@@ -75,13 +75,11 @@ ys = src.steps(1024)                     # → (1024,) complex64
 
 ## Concrete types
 
-| Slot                | Accepts                                                                       | Default in this template            |
-| ------------------- | ----------------------------------------------------------------------------- | ----------------------------------- |
-| `--arg-type`        | Implicitly `void` — sources take no input. Setting it explicitly is rejected. | `void`                              |
-| `--return-type`     | Any [scalar](../types.md#step-input--output-types) except `const char *`.     | `float _Complex`                    |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types).                               | `phase:float:0.0f, freq:float:0.0f` |
+| Slot                | Accepts                                             | Rejects                                                                                         | Default                             |
+| ------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `--arg-type`        | Implicit `void`; sources take no input.             | All explicit values — passing one is an error.                                                  | `void`                              |
+| `--return-type`     | Any [scalar](../types.md#step-input--output-types). | `const char *`, `void` (use [sink](sink.md)), any `T[]` (block-shaped — use [block](block.md)). | `float _Complex`                    |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types).     | `const char *`.                                                                                 | `phase:float:0.0f, freq:float:0.0f` |
 
 The source preset always emits a `steps(n)` that fills an `n`-sized
-ndarray; the element type matches `--return-type`. For block-shaped
-generators (read N inputs, write N outputs) use [block](block.md)
-instead.
+ndarray; the element type matches `--return-type`.

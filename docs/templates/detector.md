@@ -107,12 +107,12 @@ events = det.detect(np.random.randn(8192).astype(np.complex64) * (1 + 1j))
 
 ## Concrete types
 
-| Slot                               | Accepts                                                                                                                                     | Default in this template               |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `--arg-type` (input stream)        | Any [array element type](../types.md#array-element-types).                                                                                  | `float _Complex`                       |
-| `--max-out N`                      | Any positive integer literal — the worst-case events-per-call upper bound.                                                                  | `1024`                                 |
-| `--state field:T:D`                | Any [scalar](../types.md#state-variable-types). Threshold/parameter state lives here.                                                       | `threshold:float:0.5f`                 |
-| `--result-field name:T` (proposed) | Each field of the event struct is one [scalar](../types.md#state-variable-types). Common shape: `sample_index:size_t` + one numeric metric. | `sample_index:size_t, magnitude:float` |
+| Slot                               | Accepts                                                                                                                                     | Rejects                                                                                                                     | Default                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `--arg-type` (input stream)        | Any [array element type](../types.md#array-element-types).                                                                                  | `bool`, `int`, `const char *`, `long double _Complex`, `void` (use a [source](source.md) preset for self-driven detection). | `float _Complex`                       |
+| `--max-out N`                      | Any positive integer literal — the worst-case events-per-call upper bound.                                                                  | Non-integer values, zero, runtime expressions.                                                                              | `1024`                                 |
+| `--state field:T:D`                | Any [scalar](../types.md#state-variable-types). Threshold/parameter state lives here.                                                       | `const char *`.                                                                                                             | `threshold:float:0.5f`                 |
+| `--result-field name:T` (proposed) | Each field of the event struct is one [scalar](../types.md#state-variable-types). Common shape: `sample_index:size_t` + one numeric metric. | `T[]`, `T[N]`, `const char *`, nested structs. The record is a flat C struct → numpy structured dtype.                      | `sample_index:size_t, magnitude:float` |
 
 **Gap.** The event struct (`NAME_event_t`) is user-defined and has no
 first-class registry support yet — today it lives only inside the

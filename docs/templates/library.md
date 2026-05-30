@@ -100,13 +100,13 @@ q15_to_float(inp, out, inp.size)
 
 ## Concrete types
 
-| Slot                               | Accepts                                                                                                                                                                                                                        | Default in this template |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| `--param name:T`                   | Any [scalar](../types.md#module-function-param-types) except `const char *`, or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                  | `n:size_t`               |
-| `--out-param name:T[]`             | Array shapes **only**. Drops `const`. Rejected for scalars.                                                                                                                                                                    | `output:float[]`         |
-| `--return-type T`                  | Any [scalar](../types.md#module-function-param-types) including `void`. The default is `void`.                                                                                                                                 | `void`                   |
-| `--out-type T` *(TOML only today)* | Any [scalar](../types.md#array-element-types) that can be an array element. Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | —                        |
+| Slot                               | Accepts                                                                                                                                                                                                       | Rejects                                                  | Default          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------- |
+| `--param name:T`                   | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                        | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
+| `--out-param name:T[]`             | Array shapes only. Drops `const`.                                                                                                                                                                             | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
+| `--return-type T`                  | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                       | `const char *`, any `T[]`.                               | `void`           |
+| `--out-type T` *(TOML only today)* | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
 
 The library preset has the **narrowest** slot allowlist of any
-template — no `_Complex` strings, no string-enums, no 2-D arrays. Need
-those? Wrap the function in an object preset instead.
+template — no strings, no string-enums, no 2-D arrays. Need those?
+Wrap the function in an object preset instead.
