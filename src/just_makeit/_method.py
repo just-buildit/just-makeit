@@ -490,6 +490,7 @@ def run(
                 state_vars_list,
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
+                init_params=C.init_params(cfg, object_name),
             )
         )
         ctx_.update(Ctx.make_perf_ctx(perf_))
@@ -556,6 +557,7 @@ def run(
                 state_vars_list,
                 array_args=C.array_args(cfg, object_name),
                 no_state=C.is_no_state(cfg, object_name),
+                init_params=C.init_params(cfg, object_name),
             )
         )
         ctx.update(Ctx.make_perf_ctx(perf))
