@@ -119,6 +119,40 @@ class TestCliFunction:
                 _, kwargs = mock_run.call_args
                 assert kwargs.get("impl_body") == "body"
 
+    def test_result_field_valid(self):
+        """Phase 2 row 4: --result-field name:T forwards to
+        _function.run(result_fields=[...]); brings function to parity
+        with method's TOML-only result_fields key."""
+        with patch("just_makeit._function.run") as mock_run:
+            _run(
+                [
+                    "find_peaks",
+                    "--module",
+                    "dsp",
+                    "--result-field",
+                    "idx:size_t",
+                    "--result-field",
+                    "magnitude:float",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["result_fields"] == [
+                {"name": "idx", "type": "size_t"},
+                {"name": "magnitude", "type": "float"},
+            ]
+
+    def test_result_field_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--result-field"])
+
+    def test_result_field_bad_format_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--result-field", "nocolon"])
+
+    def test_result_field_bad_type_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--result-field", "x:notatype"])
+
     def test_replace_with_impl(self):
         with patch("just_makeit._function.run"):
             with patch("just_makeit._impl.load_impl", return_value="body"):
