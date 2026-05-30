@@ -191,6 +191,30 @@ first. A single confirmation guards the deletion; `--force` skips it.
 
 ______________________________________________________________________
 
+## `just-makeit ci [--provider NAME]`
+
+Generate a continuous-integration workflow that builds the project and runs
+its tests (`make && make test`), so a scaffolded project is CI-green as fast
+as it builds and tests locally. Must be run from the project root.
+
+```sh
+just-makeit ci                         # GitHub Actions: .github/workflows/ci.yml
+just-makeit ci --provider woodpecker  # Woodpecker: .woodpecker.yml
+just-makeit ci --force                 # overwrite an existing workflow file
+```
+
+The generated workflow installs the build dependencies and runs the same
+build-and-test the [`test`](#just-makeit-test) target drives locally. If the
+project enabled `pytest`, the dependency step also installs the Python test
+requirements; otherwise it stays C-only.
+
+| Flag              | Description                                                                            |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| `--provider NAME` | `github` (default → `.github/workflows/ci.yml`) or `woodpecker` (→ `.woodpecker.yml`). |
+| `--force`         | Overwrite the workflow file if it already exists.                                      |
+
+______________________________________________________________________
+
 ## `just-makeit config [key value]`
 
 Show or edit the project configuration stored in `just-makeit.toml`.
