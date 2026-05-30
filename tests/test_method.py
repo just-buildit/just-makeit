@@ -17,6 +17,58 @@ from just_makeit._method import run as method_run
 from just_makeit._config import load, methods
 
 
+class TestMethodPreservesInitParams:
+    """gh-87: when an object is scaffolded with both `--state` and
+    `--init-param` (e.g. a reader), the regenerated `_core.h` after a
+    follow-up `jm method` must still use the init-param-driven ctor
+    signature — not the state-driven one. Otherwise the header diverges
+    from the existing `_core.c` (which still has the init-param ctor)
+    and the build breaks."""
+
+    def test_method_preserves_init_param_ctor(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        object_run(
+            dest,
+            "my_filter",
+            module=None,
+            state_vars=[
+                ("gain", "float", "1.0f"),
+                ("cutoff", "float", "0.5"),
+            ],
+            init_params=[("sample_rate", "float", "48000.0")],
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+
+        header = dest / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        before = header.read_text(encoding="utf-8")
+        # Initial scaffold honours init_params (gh-69 from 0.13.22).
+        assert "my_filter_create(float sample_rate)" in before
+        assert "my_filter_create(float gain, float cutoff)" not in before
+
+        # Add a method — _core.h gets regenerated; pre-gh-87 this drops
+        # init_params and re-emits the state-driven signature.
+        method_run(
+            dest,
+            "my_filter",
+            "analyse",
+            None,
+            "void",
+            "float",
+            False,
+            [],
+        )
+
+        after = header.read_text(encoding="utf-8")
+        # The init-param ctor signature must survive the regeneration.
+        assert "my_filter_create(float sample_rate)" in after, (
+            "jm method dropped init_params during _core.h regeneration; "
+            "header now diverges from _core.c. See gh-87."
+        )
+        assert "my_filter_create(float gain, float cutoff)" not in after
+
+
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
