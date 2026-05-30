@@ -1367,7 +1367,7 @@ class TestFunctionReturnTypeCLI:
         assert "size_t" in core_h
         assert "get_size" in core_h
 
-    def test_return_type_appears_in_core_c_stub(self, tmp_path):
+    def test_return_type_appears_in_fn_c_stub(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
             "function",
@@ -1378,11 +1378,9 @@ class TestFunctionReturnTypeCLI:
             "size_t",
             cwd=dest,
         )
-        core_c = (dest / "native/src/fft/fft_core.c").read_text(
-            encoding="utf-8"
-        )
-        assert "size_t" in core_c
-        assert "get_size" in core_c
+        fn_c = (dest / "native/src/fft/get_size.c").read_text(encoding="utf-8")
+        assert "size_t" in fn_c
+        assert "get_size" in fn_c
 
     def test_bad_return_type_exits_1(self, tmp_path):
         dest = self._setup(tmp_path)

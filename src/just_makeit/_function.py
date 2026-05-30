@@ -6,10 +6,12 @@ Adds a module-level C function to an existing module.
     just-makeit function fft_global_setup --module fft
     just-makeit function window_kaiser    --module fft
 
-The C implementation stub is appended to native/src/{module}/{module}_core.c
-and the declaration is injected into native/inc/{module}/{module}_core.h.
-The Python wrapper (_bind_{fn_name}) is generated into {module}_ext.c the
-next time _regenerate_module runs (called here after updating the config).
+The C implementation stub is written to its own sacred source file at
+native/src/{module}/{fn_name}.c and the declaration is injected into
+native/inc/{module}/{module}_core.h.  The module CMakeLists compiles every
+such per-function .c into the module's OBJECT library.  The Python wrapper
+(_bind_{fn_name}) is generated into {module}_ext.c the next time
+_regenerate_module runs (called here after updating the config).
 """
 
 import sys
@@ -21,15 +23,22 @@ from ._init import _write_compile_commands
 from ._object import _regenerate_module
 
 
-def _append_to_core_c(
+def _write_function_c(
     path: Path,
+    module: str,
     fn_name: str,
     params: list[tuple[str, str]],
     return_type: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    impl_body: str | None = None,
 ) -> None:
+    """Write the standalone <fn_name>.c for a module-level function.
+
+    Each module function lives in its own sacred translation unit that
+    includes the module's public header and carries exactly one definition.
+    """
     stub = T.fn_c_stub(
         fn_name,
         params,
@@ -38,9 +47,20 @@ def _append_to_core_c(
         result_fields=result_fields,
         max_results_param=max_results_param,
     )
-    existing = path.read_text(encoding="utf-8")
-    path.write_text(existing + "\n" + stub, encoding="utf-8")
-    print(f"  update  {path}")
+    if impl_body is not None:
+        from . import _impl as I
+
+        stub = I.inject_body_into_stub(stub, impl_body)
+    text = (
+        f"/*\n"
+        f" * {fn_name}.c — {module} module-level function.\n"
+        f" */\n"
+        f'#include "{module}/{module}_core.h"\n\n'
+        f"{stub}"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(f"  create  {path}")
 
 
 def _inject_into_core_h(
@@ -161,41 +181,27 @@ def run(
 
     params = params or []
 
-    core_c = root / "native" / "src" / module / f"{module}_core.c"
+    fn_c = root / "native" / "src" / module / f"{fn_name}.c"
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
 
     if inline:
-        # Inline functions live entirely in the header — no _core.c entry.
+        # Inline functions live entirely in the header — no .c entry.
         _inject_inline_into_core_h(
             core_h, fn_name, params, return_type, module
         )
     else:
-        # Append C stub to <module>_core.c
-        if impl_body is not None:
-            from . import _impl as I
-
-            stub = T.fn_c_stub(
-                fn_name,
-                params,
-                return_type,
-                out_type=out_type,
-                result_fields=result_fields,
-                max_results_param=max_results_param,
-            )
-            stub = I.inject_body_into_stub(stub, impl_body)
-            existing_c = core_c.read_text(encoding="utf-8")
-            core_c.write_text(existing_c + "\n" + stub, encoding="utf-8")
-            print(f"  update  {core_c}")
-        else:
-            _append_to_core_c(
-                core_c,
-                fn_name,
-                params,
-                return_type,
-                out_type=out_type,
-                result_fields=result_fields,
-                max_results_param=max_results_param,
-            )
+        # Each function gets its own sacred <fn_name>.c translation unit.
+        _write_function_c(
+            fn_c,
+            module,
+            fn_name,
+            params,
+            return_type,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+            impl_body=impl_body,
+        )
 
         # Inject declaration into <module>_core.h
         _inject_into_core_h(
@@ -248,4 +254,4 @@ def run(
     if inline:
         print(f"Done!  Implement {fn_name}() in {core_h.name}")
     else:
-        print(f"Done!  Implement {fn_name}() in {core_c.name}")
+        print(f"Done!  Implement {fn_name}() in {fn_c.name}")

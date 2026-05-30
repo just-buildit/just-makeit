@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Module-level functions now live in their own sacred `.c` file.**
+    `jm function <name> --module <mod>` writes the stub to
+    `native/src/<mod>/<name>.c` (each including `<mod>_core.h` and holding a
+    single definition) instead of appending into the shared `<mod>_core.c`.
+    The module's CMakeLists compiles every such file into the module's OBJECT
+    library. `jm remove function` deletes that file and strips the orphaned
+    declaration from `<mod>_core.h`. `--inline` functions are unchanged (they
+    stay as a `static inline` in the header with no `.c` file). This is a
+    clean break — projects scaffolded by older versions are not auto-migrated.
+
 ## [0.13.23] — 2026-05-30
 
 ### Added

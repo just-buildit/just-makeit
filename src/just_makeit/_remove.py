@@ -11,6 +11,7 @@ inferred side effect of a reconcile. Prompts for confirmation unless
 `--force` is given.
 """
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -554,6 +555,29 @@ def _remove_property(
     print(f"Done!  Property '{name}' removed.{note}")
 
 
+def _strip_decl_from_header(core_h: Path, name: str) -> bool:
+    """Drop the one-line declaration of ``name`` from a module header.
+
+    The declaration was injected as a single ``ret name(params);`` line, so
+    we remove the line whose call to ``name(`` ends in a semicolon and
+    collapse the blank line it leaves behind.  Returns True if the header
+    changed."""
+    if not core_h.exists():
+        return False
+    text = core_h.read_text(encoding="utf-8")
+    decl_re = re.compile(
+        r"^[^\n]*\b" + re.escape(name) + r"\s*\([^\n]*;[ \t]*\n",
+        re.MULTILINE,
+    )
+    new_text, n = decl_re.subn("", text)
+    if not n:
+        return False
+    # Collapse a run of 3+ newlines left where the decl sat back to 2.
+    new_text = re.sub(r"\n{3,}", "\n\n", new_text)
+    core_h.write_text(new_text, encoding="utf-8")
+    return True
+
+
 def _remove_function(
     root: Path, cfg: dict, module: str, name: str, force: bool
 ) -> None:
@@ -562,7 +586,8 @@ def _remove_function(
         print(f"error: module '{module}' not found.", file=sys.stderr)
         sys.exit(1)
     fns = cfg.get("module", {}).get(module, {}).get("functions", [])
-    if not any(f.get("name") == name for f in fns):
+    entry = next((f for f in fns if f.get("name") == name), None)
+    if entry is None:
         print(
             f"error: function '{name}' not found in module '{module}'.",
             file=sys.stderr,
@@ -582,12 +607,29 @@ def _remove_function(
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
+    # A non-inline function owns its own <fn>.c — delete it and strip its
+    # now-orphaned declaration from the shared header.  Inline functions live
+    # entirely in <mod>_core.h as a static-inline body, which we leave (the
+    # user may have written real code there).
+    inline = bool(entry.get("inline"))
+    core_h = root / "native" / "inc" / module / f"{module}_core.h"
+    if not inline:
+        fn_c = root / "native" / "src" / module / f"{name}.c"
+        if fn_c.exists():
+            fn_c.unlink()
+            print(f"  delete  {fn_c}")
+        if _strip_decl_from_header(core_h, name):
+            print(f"  update  {core_h}")
+
     _regenerate_module(root, cfg, module, pkg)
     print()
-    print(
-        f"Done!  Function '{name}' removed."
-        f"\n  note: {name}() remains in {module}_core.c — delete it by hand."
+    note = (
+        f"\n  note: {name}() remains as a static inline in {module}_core.h"
+        " — delete it by hand."
+        if inline
+        else ""
     )
+    print(f"Done!  Function '{name}' removed.{note}")
 
 
 def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:

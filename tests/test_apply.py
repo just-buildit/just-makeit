@@ -1199,10 +1199,11 @@ for (size_t i = 0; i < input_len; i++) {
 
 class TestApplyModuleFunctionImpl:
     """Regression test for gh-68: module-level functions declared with `impl`
-    in the manifest must materialise the body into ``<mod>_core.c`` and the
-    declaration into ``<mod>_core.h`` on ``jm apply``. The bug was that
-    ``_sync_missing`` skipped these files (already created empty by
-    ``jm module``) so the impls were silently dropped."""
+    in the manifest must materialise the body into the function's own sacred
+    ``native/src/<mod>/<fn>.c`` and the declaration into ``<mod>_core.h`` on
+    ``jm apply``. The bug was that ``_sync_missing`` skipped these files
+    (already created empty by ``jm module``) so the impls were silently
+    dropped."""
 
     def _apply(self, proj_root):
         new_run("proj", proj_root)
@@ -1210,18 +1211,18 @@ class TestApplyModuleFunctionImpl:
         frag = proj_root.parent / "fns.toml"
         frag.write_text(_FN_IMPL_FRAGMENT)
         apply_run(proj_root, fragment=frag)
-        core_c = (
-            proj_root / "native" / "src" / "io" / "io_core.c"
+        fn_c = (
+            proj_root / "native" / "src" / "io" / "q15_to_float.c"
         ).read_text()
         core_h = (
             proj_root / "native" / "inc" / "io" / "io_core.h"
         ).read_text()
-        return core_c, core_h
+        return fn_c, core_h
 
-    def test_impl_body_in_core_c(self, tmp_path):
-        core_c, _ = self._apply(tmp_path / "proj")
-        assert "q15_to_float" in core_c
-        assert "(float)input[i] / 32768.0f" in core_c
+    def test_impl_body_in_fn_c(self, tmp_path):
+        fn_c, _ = self._apply(tmp_path / "proj")
+        assert "q15_to_float" in fn_c
+        assert "(float)input[i] / 32768.0f" in fn_c
 
     def test_decl_in_core_h(self, tmp_path):
         _, core_h = self._apply(tmp_path / "proj")
@@ -1230,12 +1231,11 @@ class TestApplyModuleFunctionImpl:
     def test_idempotent(self, tmp_path):
         proj = tmp_path / "proj"
         self._apply(proj)
-        before_c = (proj / "native" / "src" / "io" / "io_core.c").read_text()
+        fn_c_path = proj / "native" / "src" / "io" / "q15_to_float.c"
+        before_c = fn_c_path.read_text()
         before_h = (proj / "native" / "inc" / "io" / "io_core.h").read_text()
         apply_run(proj)
-        assert (
-            proj / "native" / "src" / "io" / "io_core.c"
-        ).read_text() == before_c
+        assert fn_c_path.read_text() == before_c
         assert (
             proj / "native" / "inc" / "io" / "io_core.h"
         ).read_text() == before_h

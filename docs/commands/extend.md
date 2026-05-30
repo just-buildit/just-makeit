@@ -227,10 +227,16 @@ ______________________________________________________________________
 Add a stateless C function to an existing module — no struct, no lifecycle,
 no persistent state.
 
-Appends a C stub to `native/src/<module>/<module>_core.c` (never regenerated
-— your implementation is safe) and injects the declaration into
-`native/inc/<module>/<module>_core.h`. Then regenerates `<module>_ext.c` to
-add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
+Writes a C stub to the function's own sacred source file
+`native/src/<module>/<name>.c` (never regenerated — your implementation is
+safe) and injects the declaration into `native/inc/<module>/<module>_core.h`.
+Each function thus owns one translation unit, which the module's CMakeLists
+compiles into the module's OBJECT library. Then regenerates `<module>_ext.c`
+to add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef`
+array.
+
+With `--inline` the function instead lives entirely as a `static inline` body
+in `<module>_core.h` and gets no `.c` file.
 
 **Arguments**
 
@@ -241,6 +247,7 @@ add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 | `--param name:type`     | Named typed scalar parameter. Repeatable.                                                          |
 | `--param name:type[]`   | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.     |
 | `--return-type TYPE`    | C return type (default: `void`).                                                                   |
+| `--inline`              | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                 |
 | `--doc "text"`          | Python docstring for the function.                                                                 |
 | `--impl file::funcname` | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
 | `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.   |
@@ -252,9 +259,14 @@ add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef` array.
 just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables."
 ```
 
-`fft_core.c` (yours to implement):
+`native/src/fft/fft_global_setup.c` (yours to implement):
 
 ```c
+/*
+ * fft_global_setup.c — fft module-level function.
+ */
+#include "fft/fft_core.h"
+
 /* <<IMPLEMENT: fft_global_setup>> */
 void
 fft_global_setup(void)
@@ -278,9 +290,14 @@ just-makeit function compute_window \
     --return-type float
 ```
 
-`fft_core.c`:
+`native/src/fft/compute_window.c`:
 
 ```c
+/*
+ * compute_window.c — fft module-level function.
+ */
+#include "fft/fft_core.h"
+
 /* <<IMPLEMENT: compute_window>> */
 float
 compute_window(size_t n, float beta)

@@ -2,8 +2,8 @@
 
 Exercises:
   - jm new / jm module / jm object  (project + module + gain object scaffold)
-  - jm function linear_to_db        (regular C function in _core.c)
-  - jm function clamp --inline      (static inline in _core.h, no _core.c entry)
+  - jm function linear_to_db        (regular C function in its own .c file)
+  - jm function clamp --inline      (static inline in _core.h, no .c file)
   - struct assertions on generated files before building
   - .steps/02_patch.py implements all three stubs
   - cmake configure + build + CTest
@@ -62,8 +62,9 @@ def run(root: Path) -> None:
     )
 
     # ── 2. Add module-level functions. ───────────────────────────────────
-    # linear_to_db: regular C function — stub appended to _core.c, declaration
-    # injected into _core.h, Python wrapper generated in utils_ext.c.
+    # linear_to_db: regular C function — stub written to its own sacred
+    # native/src/utils/linear_to_db.c, declaration injected into _core.h,
+    # Python wrapper generated in utils_ext.c.
     jm_function(
         dest,
         "linear_to_db",
@@ -99,15 +100,29 @@ def run(root: Path) -> None:
     )
     assert "clamp" in header, "utils_core.h missing clamp inline body"
 
-    # linear_to_db is a regular function: stub must be in _core.c
+    # linear_to_db is a regular function: stub lives in its own .c file,
+    # which includes the module header and carries the single definition.
+    fn_c = dest / "native/src/utils/linear_to_db.c"
+    assert fn_c.exists(), "native/src/utils/linear_to_db.c was not created"
+    fn_c_text = fn_c.read_text(encoding="utf-8")
+    assert "linear_to_db(float x)" in fn_c_text, (
+        "linear_to_db.c missing the function stub"
+    )
+    assert '#include "utils/utils_core.h"' in fn_c_text, (
+        "linear_to_db.c must include the module header"
+    )
+
+    # The shared _core.c stays the bare scaffold — functions never land there.
     core_c = (dest / "native/src/utils/utils_core.c").read_text(
         encoding="utf-8"
     )
-    assert "linear_to_db" in core_c, "utils_core.c missing linear_to_db stub"
+    assert "linear_to_db" not in core_c, (
+        "utils_core.c must not contain the linear_to_db stub"
+    )
 
-    # clamp is inline: must NOT appear in _core.c (only in _core.h)
-    assert "clamp" not in core_c, (
-        "utils_core.c must not contain inline clamp stub"
+    # clamp is inline: no .c file at all (only the static inline in _core.h).
+    assert not (dest / "native/src/utils/clamp.c").exists(), (
+        "inline clamp must not get its own .c file"
     )
 
     with (dest / "just-makeit.toml").open("rb") as f:
