@@ -49,10 +49,17 @@ def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
 
 
 def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
-    """Merge an included fragment into *cfg*. Top-level object sections
-    are added; only `[[module.X.functions]]` extensions are permitted under
-    `[module]` — the `[module.X]` declaration itself belongs in the
-    manifest."""
+    """Merge an included fragment into *cfg*.
+
+    Top-level object sections are added. Under `[module]`, a fragment may
+    declare a full `[module.X]` (the `modules/X.toml` layout) *or* only
+    extend an existing module with `[[module.X.functions]]` (the
+    `objects/*.toml` layout, where a per-object fragment contributes a
+    module function). Function lists concatenate across fragments; every
+    other module key is set once — a conflicting redefinition is an error,
+    so a module declared in two places is caught rather than silently
+    last-wins.
+    """
     for key, value in fragment.items():
         if key == "project":
             raise ValueError(
@@ -61,23 +68,20 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
             )
         if key == "module":
             for mod, mod_data in (value or {}).items():
+                dest = cfg.setdefault("module", {}).setdefault(mod, {})
                 if not isinstance(mod_data, dict):
                     continue
-                fns = mod_data.get("functions")
-                if fns:
-                    (
-                        cfg.setdefault("module", {})
-                        .setdefault(mod, {})
-                        .setdefault("functions", [])
-                        .extend(fns)
-                    )
-                other = set(mod_data) - {"functions"}
-                if other:
-                    raise ValueError(
-                        f"{source}: only [[module.{mod}.functions]] may be "
-                        f"declared in a fragment; [module.{mod}] belongs in "
-                        f"the manifest."
-                    )
+                for mk, mv in mod_data.items():
+                    if mk == "functions":
+                        dest.setdefault("functions", []).extend(mv)
+                    elif mk in dest and dest[mk] != mv:
+                        raise ValueError(
+                            f"{source}: [module.{mod}].{mk} conflicts with an "
+                            f"earlier definition — a module's config belongs "
+                            f"in exactly one place (modules/{mod}.toml)."
+                        )
+                    else:
+                        dest[mk] = mv
             continue
         if key in cfg:
             raise ValueError(
@@ -121,21 +125,33 @@ def _toml_string_array(items: list[str]) -> str:
     return "[" + ", ".join(json.dumps(s) for s in items) + "]"
 
 
-def _provenance(root: Path) -> tuple[dict[str, Path], list[str]]:
-    """Re-derive which file each top-level object section currently lives in.
+def _provenance(
+    root: Path,
+) -> tuple[dict[str, Path], dict[str, Path], list[str]]:
+    """Re-derive which file each section currently lives in.
 
-    Returns (owners, include_list) where owners[key] is the Path of the
-    file that owns *key* on disk, and include_list is the manifest's
-    `include` list (empty for single-file projects)."""
+    Returns (owners, module_owners, include_list):
+
+    - owners[key]        — file that owns top-level object section *key*.
+    - module_owners[mod] — file that owns the `[module.mod]` declaration.
+      A fragment owns a module only when it declares real config for it
+      (any key beyond ``functions``); a fragment that merely contributes
+      ``[[module.mod.functions]]`` does not claim ownership. Modules
+      declared in the manifest are owned by the manifest.
+    - include_list       — the manifest's `include` list (empty for a
+      single-file project)."""
     owners: dict[str, Path] = {}
+    module_owners: dict[str, Path] = {}
     manifest_path = root / FILENAME
     if not manifest_path.exists():
-        return owners, []
+        return owners, module_owners, []
     with manifest_path.open("rb") as f:
         manifest = tomllib.load(f)
     for k in manifest:
         if k not in ("project", "module", "include"):
             owners[k] = manifest_path
+    for mod in manifest.get("module", {}):
+        module_owners[mod] = manifest_path
     include_list = list(manifest.get("include", []))
     for fragment_path in _resolve_includes(root, include_list):
         with fragment_path.open("rb") as f:
@@ -143,7 +159,10 @@ def _provenance(root: Path) -> tuple[dict[str, Path], list[str]]:
         for k in fragment:
             if k not in ("project", "module", "include"):
                 owners[k] = fragment_path
-    return owners, include_list
+        for mod, data in fragment.get("module", {}).items():
+            if isinstance(data, dict) and (set(data) - {"functions"}):
+                module_owners[mod] = fragment_path
+    return owners, module_owners, include_list
 
 
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
@@ -248,10 +267,14 @@ def save(root: Path, cfg: dict) -> None:
     the project uses the split layout, or to the manifest otherwise.
     A fragment file that ends up with no sections is deleted."""
     manifest_path = root / FILENAME
-    owners, include_list = _provenance(root)
+    owners, module_owners, include_list = _provenance(root)
     split_layout = bool(include_list)
 
-    # Group every top-level object section in cfg by destination file.
+    # Group every section in cfg by destination file. Objects route to
+    # their owning fragment (or objects/<name>.toml when new in a split
+    # project); modules route to their owning fragment (or
+    # modules/<name>.toml when new in a split project) instead of always
+    # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
         if key in ("project", "module", "include"):
@@ -264,20 +287,31 @@ def save(root: Path, cfg: dict) -> None:
             dst = manifest_path
         by_file.setdefault(dst, {})[key] = value
 
-    # Manifest always carries [project] / [module.X] / include + any
-    # object sections that route to it.
+    for mod, data in cfg.get("module", {}).items():
+        if mod in module_owners:
+            dst = module_owners[mod]
+        elif split_layout:
+            dst = root / "modules" / f"{mod}.toml"
+        else:
+            dst = manifest_path
+        by_file.setdefault(dst, {}).setdefault("module", {})[mod] = data
+
+    # Manifest always carries [project] / include + whatever object and
+    # module sections route to it.
     manifest_content: dict = {}
     if "project" in cfg:
         manifest_content["project"] = cfg["project"]
-    if "module" in cfg:
-        manifest_content["module"] = cfg["module"]
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
 
     # Each fragment file gets only its remaining sections; an empty
     # fragment is removed.
-    seen_fragments = {fp for fp in owners.values() if fp != manifest_path}
+    seen_fragments = {
+        fp
+        for fp in list(owners.values()) + list(module_owners.values())
+        if fp != manifest_path
+    }
     for fragment_path in seen_fragments:
         sections = by_file.get(fragment_path, {})
         if sections:
@@ -286,7 +320,7 @@ def save(root: Path, cfg: dict) -> None:
         else:
             fragment_path.unlink(missing_ok=True)
 
-    # Brand-new fragment files (new object in a split project).
+    # Brand-new fragment files (new object/module in a split project).
     for fragment_path, sections in by_file.items():
         if fragment_path == manifest_path:
             continue
