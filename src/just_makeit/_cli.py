@@ -119,8 +119,11 @@ Commands:
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
-  split-objects                 Move each [obj] section out of the manifest into
-                                objects/<name>.toml and add the include glob.
+  migrate-to-fragments          Move every [obj] -> objects/<name>.toml and every
+                                [module.X] -> modules/<name>.toml, leaving the manifest
+                                with [project] + include globs. Idempotent.
+  split-objects                 Objects-only subset of migrate-to-fragments (modules stay
+                                inline). Prefer migrate-to-fragments.
   script                        Print a shell script that fully reconstructs this project via CLI.
   status                        Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
@@ -729,6 +732,12 @@ def main() -> None:
         from . import _split_objects
 
         _split_objects.run(Path.cwd())
+
+    elif cmd == "migrate-to-fragments":
+        _warn_schema()
+        from . import _migrate
+
+        _migrate.run(Path.cwd())
 
     elif cmd == "apply":
         _warn_schema()
