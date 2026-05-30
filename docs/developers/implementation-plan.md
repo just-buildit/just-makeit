@@ -1,11 +1,19 @@
 # Implementation plan — the road to "no TOML for common cases"
 
+> **Partially superseded by [`cli-redesign.md`](cli-redesign.md).**
+> Phases 0-2 (shipped) are as documented. Phase 3 is being reshaped
+> around single-shot CLI + immutable objects + finite preset set
+> (wizard cut). Phase 4 unchanged. The "What stays / what goes" lists
+> and "north-star" prose below predate the redesign and need a
+> rewrite; the per-phase checklists below the supersession line
+> further down are still the canonical task tracker.
+
 Status: **plan locked, partial implementation in flight on
 `feat/jm-bind-mvp`.** This document is the single coordination point
 for the work the four design docs sketch out: the
 [decision tree](../decision-tree.md), the
 [template gallery](../templates/index.md), the
-[wizard design](wizard-design.md), and the
+[CLI redesign](cli-redesign.md), and the
 [bind design](bind-design.md). Read those four for the *why*; this one
 is the *what, in what order, how do we know we're done*.
 
@@ -21,12 +29,15 @@ one CLI command (or run the wizard), open `_core.c`, replace the
 manifest, the binding, the CMakeLists, the tests, the bench, the
 Python wrapper — is generated and stays in sync.
 
-This goal does **not** retire TOML. The manifest stays as the on-disk
-truth and `jm apply` keeps materialising from it; advanced users who
-prefer hand-authoring TOML are first-class. What changes is that the
-CLI becomes a *complete* alternative — every feature reachable through
-TOML is also reachable through a flag, and the templates document the
-type allowlist for each slot so neither path surprises.
+This goal does **not** retire TOML. The CLI and TOML are both
+first-class authoring paths. The CLI is recommended (presets,
+validators, helpful errors); TOML editing is fully supported for
+power users. The CLI becomes a *complete* alternative — every feature
+reachable through TOML is also reachable through a flag — but TOML
+doesn't get hidden in onboarding either. Per the CLI redesign
+([`cli-redesign.md`](cli-redesign.md)), components are stored as
+per-component TOML fragments under `objects/` and `modules/`; the
+central `just-makeit.toml` carries only project-level config.
 
 ______________________________________________________________________
 
@@ -38,50 +49,48 @@ The load-bearing primitives nothing replaces:
     `src/just_makeit/templates/`). Already covers every shape we
     ship; both the TOML flow and `jm bind` feed it the same
     `context: dict[str, str]`.
-- **Context builders** (`_context/_state.py`, `_methods.py`, `_step.py`,
-    `_sample.py`, `_parse.py`). `make_state_ctx`, `make_methods_ctx`,
-    `make_step_ctx`, `make_sample_ctx`, `make_properties_ctx`,
-    `make_perf_ctx`. These are the canonical translation from "what
-    the user wants" into "what the renderer needs."
+- **Context builders** (`_context/_state.py`, `_methods.py`,
+    `_step.py`, `_sample.py`, `_parse.py`).
 - **Type registry** (`_types._CTYPE_META`, `_ARRAY_DTYPE`). The
-    accepted-types vocabulary, now documented per slot in
+    accepted-types vocabulary, documented per slot in
     [`docs/types.md`](../types.md).
-- **TOML as the manifest format.** `just-makeit.toml` is the
-    durable description; `jm apply` materialises from it. Every flag
-    added in this plan still round-trips through TOML.
-- **Existing CLI verbs**: `new`, `object`, `module`, `method`,
-    `property`, `function`, `add`, `perf`, `apply`, `remove`, `build`,
-    `test`, `bench`, `app`, `script`, `upgrade`. Behaviour is preserved
-    for every flag they accept today.
-- **The seven gallery shapes** as the canonical taxonomy of
-    components. Every new CLI flag, every wizard prompt, every
-    `jm bind` parse case routes through one of the seven.
+- **TOML as the manifest format**, now as per-component fragments
+    (`objects/NAME.toml`, `modules/NAME.toml`) plus the central
+    `just-makeit.toml` for project + module collation. Every CLI flag
+    still round-trips through TOML.
+- **Project-level verbs**: `new`, `build`, `test`, `bench`,
+    `dry-run`, `app`, `script`, `config`, `upgrade`, `apply`, `perf`.
+- **Per-component verbs**: `object`, `module`, `function`, `method`,
+    `property`, `add`, `remove`. **Now safe under the sacred-files
+    rule** — additive operations regenerate glue and create new sacred
+    files; existing sacred files (with user `/* TODO */` code) are
+    never overwritten.
+- **The six gallery presets** as the canonical taxonomy of object
+    shapes (processor, blockwise, generator, consumer, reader) plus
+    `jm function` as its own generalist verb.
 
 ______________________________________________________________________
 
 ## What goes
 
-Things we are committing to retire from the user-facing surface. They
-keep working in TOML for as long as the schema needs them; they stop
-being the *recommended* path the moment their CLI counterpart ships.
+Things we are committing to retire because they're foot-guns or
+unnecessary:
 
-- **TOML-only knobs without CLI parity**: `out_type`, `out_divisor`,
-    `variable_output`, `result_fields`, `multi_output`, `init_params`,
-    `create_impl` / `reset_impl` / `destroy_impl`, `extra_link_libs`
-    *(per-component)*, `extra_include_dirs`, `extra_types`,
-    `find_packages`, `pkg_modules`, `c_deps`, `result_fields`. Every
-    one gets a flag in Phase 2.
-- **`just-makeit.toml`-first explanations in onboarding docs.** The
-    decision tree, template gallery, and quick reference become the
-    landing pages; `docs/configuration.md` stays as a reference for
-    advanced users but stops being a prerequisite for getting started.
-- **`jm wizard` v1 as a TOML-fragment emitter.** Already retired in
-    [`wizard-design.md`](wizard-design.md) — the new wizard runs
-    commands in-process; this document codifies that.
+- **`--impl SLOT::file::funcname` (and `--impl file::funcname`).**
+    The lift mechanism silently produces broken scaffolds when
+    signatures don't match (the renderer concatenates default body +
+    lifted body). Bodies live in `_core.c`; users edit them in place.
+    Deprecation in 0.14, removal in 0.15.
+- **`--replace old::new`.** Co-conspirator with `--impl`; same
+    fate.
+- **`jm wizard`** — never shipped; cut for maintenance burden and
+    the small finite pattern set.
+- **`jm split-objects`** — per-component fragments become the default
+    layout; opt-in retires.
+- **The legacy `_impl.py` module** — gone with `--impl`.
 - **Implicit fall-throughs.** When the user passes a type a slot
     doesn't accept, the CLI errors with the slot's full allowlist (and
-    a link to the relevant gallery page). No more "silently compiled,
-    failed at runtime" surprises.
+    a link to the relevant gallery page).
 
 ______________________________________________________________________
 
@@ -89,19 +98,25 @@ ______________________________________________________________________
 
 Refactors that aren't strictly additive:
 
+- **Sacred-files rule + per-function source files in modules.**
+    `jm apply` never overwrites a sacred file (one with user
+    `/* TODO */` content). Each function in a module gets its own
+    sacred `.c` file so growing a module never touches existing
+    sacred files. Module-level glue (`_ext.c`, `_core.h`, `.pyi`,
+    test) regenerates freely.
 - **Shared type-slot validator.** A new helper —
-    `_types.validate_slot(slot: str, type_str: str) -> None` — used by
-    every CLI handler, the bind parser, and the wizard prompts. Single
-    error format: `"--state field type 'const char *' is not legal here.   Allowed: float, double, int, ... See docs/types.md#state-variable-types."`
+    `_types.validate_slot(slot: str, type_str: str) -> None` — used
+    by every CLI handler and the bind parser. Single error format.
 - **Presets become first-class.** Each gallery shape gets a top-level
-    `--preset` flag on `jm object` (and `jm function` is its own verb).
-    The existing `--no-step` / `--arg-type void` combos still work;
-    the preset is a labelled bundle. The wizard offers six options
-    (processor, blockwise, generator, consumer, reader, function),
-    period; variable-output is a capability flag, not a preset.
+    `--preset` flag on `jm object` (and `jm function` stays its own
+    verb). The existing `--no-step` / `--arg-type void` combos still
+    work; the preset is a labelled bundle expanding to a flag
+    combination. Variable-output is a capability flag, not a preset.
 - **`jm bind` becomes a top-level workflow, not just a debug tool.**
     Bind goes from "parse for the processor shape" to "parse for all
-    six shapes, with `--check` running in CI on every example."
+    five object shapes, with `--check` running in CI on every example."
+- **`jm status` ships.** New verb: reports drift between TOML
+    fragments and the materialised files.
 
 ______________________________________________________________________
 
@@ -165,24 +180,47 @@ rejection cases.
 Success bar: a one-page table in `docs/configuration.md` listing every
 TOML field has a "Reachable via CLI" column, and every row is `✓`.
 
-### Phase 3 — the six presets, bind for all of them, the wizard
+### Phase 3 — single-shot CLI redesign + presets + bind expansion
 
-Three threads run in parallel; each delivers one piece of the
-"interactive picker for the gallery" experience.
+Three threads. The CLI redesign ([`cli-redesign.md`](cli-redesign.md))
+is load-bearing — until it lands, the gallery's "one command =
+one component" promise can't be kept. The wizard thread originally
+planned for 3c is **cut**; see [`wizard-design.md`](wizard-design.md)
+for the retirement note.
 
-Thread 3a: **Presets.**
+Thread 3a: **Presets — named flag combinations + a shape-aware render.**
 
-- [ ] `--preset processor` (alias for current defaults; documented)
-- [ ] `--preset blockwise` — `--arg-type "T[]" --return-type "T[]"`
-    plus a block-shaped `_core.c` skeleton with the `for (i; i<n; i++)`
-    loop pre-written.
-- [ ] `--preset generator` — `--arg-type void`; emits a `steps(n)`
-    generator skeleton.
-- [ ] `--preset consumer` — `--return-type void`; emits an accumulator
-    skeleton.
-- [ ] `--preset reader` — `--no-step --init-param filepath:"const char *"`
-    plus `read()` / `seek()` / `close()` methods registered with
-    `open()`/`stat()` already wired.
+Two work items, both driven by CLI state. No separate per-preset
+templates.
+
+**(1) `--preset NAME` flag expansion.** Add a small lookup in
+`_cli_object.py` (~20 lines) that maps each preset name to its flag
+combination and expands it before the normal arg parser runs:
+
+| Preset      | Expands to                                                                                         |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `processor` | (no-op — default)                                                                                  |
+| `blockwise` | `--arg-type "T[]" --return-type "T[]"`                                                             |
+| `generator` | `--arg-type void`                                                                                  |
+| `consumer`  | `--return-type void`                                                                               |
+| `reader`    | `--no-step --init-param filepath:"const char *"` (plus follow-up `jm method NAME read/seek/close`) |
+
+`--preset NAME` is shorthand; passing the underlying flags directly is
+always equivalent.
+
+**(2) Shape-aware body rendering.** Today the generalist body
+template is shape-agnostic — the same `step()` stub regardless of
+arg/return types. Make it shape-aware so each customization produces a
+clean, idiomatic body:
+
+- `--arg-type T[]` + `--return-type T[]` → block-loop body.
+- `--arg-type void` → generator body shape.
+- `--return-type void` → accumulator body shape.
+- `--no-step` → skip the body entirely; let custom methods drive.
+
+All shape selection happens in the existing render pipeline — same
+generalist template, branches on flag state. No `templates/c/src/presets/`
+directory, no parallel renderer.
 
 Variable-output (event-emitter shape) is a capability, not a preset:
 `--variable-output --max-out N` with repeatable `--result-field name:T`
@@ -197,20 +235,26 @@ Thread 3b: **Bind expansion.**
 - [ ] Parse opaque state (forward decl in header, definition in `.c`).
 - [ ] `jm bind --check` runs in CI for every bundled example.
 
-Thread 3c: **Wizard.**
+Thread 3c (formerly **Wizard**): **CUT.** See
+[`wizard-design.md`](wizard-design.md) for the retirement note. The
+pattern set is small enough that "look at a gallery page, run the
+matching command" is the whole experience. An interactive wizard
+would have added a parallel surface to maintain.
 
-- [ ] `_wizard.py` with prompts for each phase (project gate, preset,
-    types/state, optional impl bodies, extras).
-- [ ] Runs commands in-process; never emits TOML or shell scripts.
-- [ ] One end-to-end test per preset: feed canned answers, assert the
-    generated project's tree matches the canonical scaffolded one.
+Thread 3c is replaced by **CLI redesign work** tracked separately in
+[`cli-redesign.md`](cli-redesign.md): single-shot creation,
+immutability, `--replace` overwrite, removal of `jm add` /
+`jm method` / `jm property` / `jm remove <kind>`.
 
-Success bar:
+Success bar (Phase 3 overall):
 
-- Every preset, run with default wizard answers, produces a project
-    where `jm build && jm test` passes immediately.
+- Every preset page in `docs/templates/` produces a green scaffold
+    via a single CLI command — no follow-up `jm method` etc.
+- `--preset NAME` flag ships on `jm object` and matches every preset
+    page's flag combination.
 - `jm bind --check` is green on every bundled example.
-- The wizard prints zero TOML keys.
+- The shape-aware body render produces idiomatic TODO bodies for each
+    shape, all of them no-ops by default (no example math that lurks).
 
 ### Phase 4 — third-party importability, libclang fallback, docs reordering
 

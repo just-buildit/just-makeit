@@ -1,30 +1,68 @@
 # `jm object NAME --blockwise` — blockwise processor (array → array)
 
-A **blockwise processor** is a processor whose unit of work is a block
-of samples rather than one sample at a time: array in, array out, each
-output element typically computed from one or more input elements plus
-state.
+## Customization
+
+```sh
+--arg-type "T[]" --return-type "T[]"
+```
+
+The blockwise preset is the [object generalist](index.md) with array IO
+instead of scalar IO. Every other part of the generated component —
+state struct, lifecycle, getters/setters, CPython binding, CTest,
+bench — is identical to a processor. The only thing the specialization
+changes is the per-sample arg/return types becoming array types, which
+in turn drives `step()` into a block-loop shape.
 
 Concrete examples: an FFT, an overlap-save filter, a CSV row
 transformer that re-encodes a batch, an image kernel applied across a
 row, or any algorithm where the per-element cost is dominated by a
 shared setup that you'd rather do once per block.
 
-**Status: proposed.** Tracked in
+**Status: proposed `--blockwise` shorthand.** Tracked in
 [`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--blockwise` flag would bundle `--arg-type "T[]"` + `--return-type "T[]"`
-with a `_core.c` skeleton that contains the loop pre-written.
+flag bundle works today; the named alias hasn't shipped yet.
 
 ## Command
+
+> **Status: not implemented today.** Array `arg_type` and
+> `return_type` are not yet supported by the renderer (verified
+> 0.13.23: `KeyError` from `make_sample_ctx` when array types are
+> passed even via hand-authored TOML). The flag combination below
+> is the **design intent**; Phase 3a ships both the `--blockwise`
+> shorthand and the renderer support.
 
 ```sh
 jm object NAME --blockwise \
     --elem-type "float _Complex" \
     --state gain:float:1.0f
+
+# Equivalent flag form (also Phase 3a):
+jm object NAME \
+    --arg-type "float _Complex[]" \
+    --return-type "float _Complex[]" \
+    --state gain:float:1.0f
 ```
 
-`--elem-type` is the per-sample type; the array form (`T[]`) is implied
-by `--blockwise`.
+## TOML written (planned)
+
+When the renderer support lands, the command will write this fragment:
+
+```toml
+# objects/NAME.toml — design intent, not yet renderable
+arg_type = "float _Complex[]"
+return_type = "float _Complex[]"
+mutable = "false"
+no_state = "false"
+no_step = "false"
+
+[[state]]
+name = "gain"
+type = "float"
+default = "1.0f"
+```
+
+Until then, this page documents the planned output so the design can
+be reviewed.
 
 ## What you get
 
@@ -74,22 +112,26 @@ The body of the `for` loop. Common shapes:
 - Block remap — pure data shuffling (deinterleave, complex conjugate,
     swap halves).
 
-### The plan-once-execute-many pattern (FFT, correlator)
+### The plan-once-execute-many pattern
 
-DSP libraries with heavy construction (FFTW plans, pre-computed twiddle
-tables, vendor-opaque handles like `pocketfft_plan`) fit the block
-preset cleanly — the heavy work lives in `create_impl`, the hot path
-stays a `steps()` call. The state struct carries the plan as an
-opaque pointer (declared with `opaque = true` in TOML, or with the
-proposed `--opaque` flag in Phase 2).
+Algorithms with heavy per-call setup — pre-built plans, lookup
+tables, vendor handles whose definitions stay in C — fit the
+blockwise preset cleanly. The heavy work lives in `NAME_create()`;
+the hot path stays a `steps()` call. The state struct carries the
+plan as an opaque field (see
+[opaque state fields](../types.md#opaque-state-fields)).
+
+```sh
+jm object NAME \
+    --arg-type "float _Complex[]" --return-type "float _Complex[]" \
+    --init-param n:size_t
+# Declare the opaque field (CLI flag pending — see Phase 3 roadmap):
+#   --state plan:fftwf_plan:opaque   (planned, 0.14)
+```
+
+Once scaffolded, fill in `_core.c` directly:
 
 ```c
-typedef struct {
-    fftwf_plan plan;        /* heavyweight; built once in create() */
-    size_t     n;
-    float _Complex *scratch;
-} NAME_state_t;
-
 NAME_state_t *
 NAME_create(size_t n)
 {
@@ -100,6 +142,15 @@ NAME_create(size_t n)
     obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
                                      FFTW_FORWARD, FFTW_MEASURE);
     return obj;
+}
+
+void
+NAME_destroy(NAME_state_t *state)
+{
+    if (!state) return;
+    fftwf_destroy_plan(state->plan);
+    fftwf_free(state->scratch);
+    free(state);
 }
 
 void
@@ -115,9 +166,9 @@ NAME_steps(NAME_state_t *state,
 }
 ```
 
-This is the same shape doppler's `fft` and `corr` components use —
-opaque vendor plans in state, block-shaped `steps()` calls in the
-hot path. No new preset needed.
+Same shape works for any heavy-construction algorithm: opaque vendor
+handles in state, block-shaped `steps()` calls in the hot path. No
+new preset needed.
 
 ## Python usage
 
@@ -129,10 +180,141 @@ xform = NAME(gain=1.0)
 out = xform.steps(np.ones(1024, dtype=np.complex64))   # → (1024,) complex64
 ```
 
+## Extending the initial command
+
+A component's whole spec lives in the `jm object` command that
+creates it — flags compose. Here's the base above plus four more
+customizations:
+
+Base from the Command section above + three more customizations.
+**NEW** lines are the additions; everything unmarked is the base
+preset. (Both forms remain design intent until Phase 3a — see
+Status callout above.)
+
+=== "Shell"
+
+    ```sh
+    jm object NAME \
+        --arg-type "float _Complex[]" --return-type "float _Complex[]" \
+        --state gain:float:1.0f \
+        --state cutoff:float:0.5 \                  # NEW: extra state field
+        --init-param block_size:size_t:1024 \       # NEW: ctor param distinct from state
+        --perf                                      # NEW: hot-path annotation
+    ```
+
+=== "TOML"
+
+    ```toml
+    # objects/NAME.toml — design intent, not yet renderable
+    arg_type = "float _Complex[]"
+    return_type = "float _Complex[]"
+    mutable = "false"
+    no_state = "false"
+    no_step = "false"
+    perf = "true"                # NEW
+
+    [[state]]
+    name = "gain"
+    type = "float"
+    default = "1.0f"
+
+    # NEW: extra state field
+    [[state]]
+    name = "cutoff"
+    type = "float"
+    default = "0.5"
+
+    # NEW: init_param distinct from state
+    [[init_params]]
+    name = "block_size"
+    type = "size_t"
+    default = "1024"
+    ```
+
+What each addition contributes:
+
+- `--state cutoff:float:0.5` — another state field; struct member,
+    getter, setter, ctor kwarg, and reset assignment, all generated.
+- `--init-param block_size:size_t:1024` — a ctor parameter distinct
+    from state; useful for sizing scratch buffers inside
+    `NAME_create()`.
+- `--perf` — annotates this object's hot-path functions with
+    `JM_HOT` / `JM_FORCEINLINE`. (`jm perf` retrofits the whole project
+    at once.)
+
+Bodies live in `_core.c`. Open the file, replace `/* TODO */` markers
+with your logic. There is no flag for lifting bodies from elsewhere.
+
+### Methods, properties, and variable-output
+
+These are **repeatable structures**. CLI for one-offs; TOML for
+multi-method components.
+
+=== "One-off via CLI"
+
+    ```sh
+    jm property NAME cutoff --type float --writable
+    jm method NAME analyse --return-type float
+    jm method NAME detect \
+        --variable-output --max-out 64 \
+        --result-field idx:size_t \
+        --result-field magnitude:float
+    ```
+
+=== "Many at once via TOML"
+
+    ```toml
+    # objects/NAME.toml — append the blocks below
+    [[properties]]
+    name = "cutoff"
+    type = "float"
+    writable = true
+
+    [[methods]]
+    name = "analyse"
+    arg_type = "void"
+    return_type = "float"
+
+    [[methods]]
+    name = "detect"
+    arg_type = "float _Complex[]"
+    return_type = "size_t"
+    variable_output = true
+    max_out = 64
+
+    [[methods.result_fields]]
+    name = "idx"
+    type = "size_t"
+
+    [[methods.result_fields]]
+    name = "magnitude"
+    type = "float"
+    ```
+
+Either path updates the fragment and regenerates glue. Sacred
+`_core.c` is not touched; add each new method's body yourself
+following the declaration in `_core.h`.
+
+### The resulting Python class
+
+After the composed `jm object` command plus the three follow-ups, the
+same blockwise `NAME` Python class exposes:
+
+```python
+xform = NAME(gain=1.0, cutoff=0.5, block_size=1024)
+xform.cutoff = 0.3                          # property (writable)
+energy = xform.analyse()                    # custom scalar method
+events = xform.detect(np.ones(1024, ...))   # variable-output method
+out = xform.steps(np.ones(1024, ...))       # original blockwise still works
+```
+
+The C surface, the binding, the tests, the bench, and the `.pyi`
+stub all stay in sync.
+
 ## Concrete types
 
-| Slot                       | Accepts                                                                         | Rejects                                                                                                                           | Default           |
-| -------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types). | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype.                                 | `float _Complex`  |
-| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                 | `const char *`.                                                                                                                   | `gain:float:1.0f` |
-| `--return-type`            | Not accepted — block always emits the same element type as `--elem-type`.       | All values. For width-changing transforms (e.g. `float[]` → `int16_t[]`) use a [library](library.md) function with `--out-param`. | —                 |
+| Slot                       | Accepts                                                                         | Rejects                                                                                                                    | Default           |
+| -------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types). | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype.                          | `float _Complex`  |
+| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                 | `const char *`.                                                                                                            | `gain:float:1.0f` |
+| `--return-type`            | Not accepted — blockwise always emits the same element type as `--elem-type`.   | All values. For width-changing transforms (e.g. `float[]` → `int16_t[]`) use a [function](function.md) with `--out-param`. | —                 |

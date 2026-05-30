@@ -1,4 +1,28 @@
-# `jm wizard` — design sketch
+# `jm wizard` — design sketch (**RETIRED**)
+
+> **Status: retired, not implemented, not planned.** This document is
+> kept for historical context only. The wizard was cut in the
+> v0.13.23 retrospective in favour of a smaller surface: a curated
+> set of inspectable preset pages + single-shot CLI. See
+> [`cli-redesign.md`](cli-redesign.md) for the current direction.
+>
+> Reasons for the cut:
+>
+> - **Maintenance burden.** An interactive prompt tree is a new thing
+>     to learn, test, and document; it grows shadow branches every
+>     time a flag is added.
+> - **The pattern set is small.** Five object presets + the function
+>     verb. "Read a page, run the matching command" is fewer steps
+>     than answering a wizard.
+> - **It obscures the canonical surface.** Users learn the wizard
+>     instead of the CLI; the CLI is what scripts use.
+
+The rest of this file describes the wizard that *would have been*.
+Disregard for current design decisions.
+
+______________________________________________________________________
+
+## (historical) Original sketch
 
 Status: **proposal, not implemented.** Companion to the user-facing
 [decision tree](../decision-tree.md), the
@@ -111,13 +135,18 @@ ______________________________________________________________________
 
 ## What "great templates" means concretely
 
-The presets only land if the `_core.c` skeleton the user sees after the
-wizard exits is good enough that they can fill in one `/* TODO */` and
-have a working component. The current templates are close but
-shape-agnostic — they generate the same step() stub regardless of what
-the user said they were building.
+The generalists handle everything around the body. The presets are
+what users *see* and *copy from* — they only land if the worked
+`_core.c` body produced for each shape is good enough that the user
+can fill in one `/* TODO */` and have a working component. The
+current generalist render is close but shape-agnostic. The improvement
+is to make the same render shape-aware: when `--arg-type` is `T[]`,
+emit a block-loop body; when `--arg-type` is `void`, emit a generator
+body; when `--return-type` is `void`, emit an accumulator; when
+`--no-step` is set, emit no body at all. Same renderer, branching on
+flag state.
 
-Per-preset skeletons:
+Example bodies the shape-aware render should produce:
 
 ```c
 /* processor */
@@ -237,12 +266,16 @@ for the prompts + dispatch.
     (`_new.run`, `_object.run`, `_method.run`, etc.) directly. No shell
     invocation. Errors from the handlers bubble up to a graceful "Sorry,
     that failed — here's the error" message and a chance to re-answer.
-- **Preset templates.** The per-preset `_core.c` skeletons live in
-    `src/just_makeit/templates/c/src/presets/` (new directory). Each
-    `<preset>_core.c.template` is rendered with the same `<<...>>`
-    substitution as the existing templates. The CLI flag (`--reader`,
-    `--blockwise`, etc.) selects which template renders, plus its
-    accompanying state/init_param defaults.
+- **Presets = named flag combinations on a shape-aware render.** Two
+    generalists handle everything around the body. Each preset is a
+    documented common flag combination that the CLI expands before the
+    normal arg parser runs — `--blockwise` becomes
+    `--arg-type "T[]" --return-type "T[]"`, `--generator` becomes
+    `--arg-type void`, etc. The body emerges from the renderer being
+    shape-aware: arg/return types and `--no-step` drive whether the
+    body is a scalar step, block loop, generator loop, accumulator, or
+    omitted. No per-preset template directory; the gallery page is the
+    user-facing "template" they inspect or copy from.
 - **CLI flag additions.** Land before the wizard, each in its own PR.
     Each comes with regression tests. Order of effort, cheapest first:
     `--init-param` (mirrors `--state`), `--out-type`, parallel
