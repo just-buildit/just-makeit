@@ -17,6 +17,7 @@ def run(args: list[str]) -> None:
     fn_params: list[tuple] = []
     fn_return_type = "void"
     fn_out_type: str = ""
+    fn_result_fields: list[dict] = []
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
     fn_inline = False
@@ -112,6 +113,28 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             fn_out_type = val
             i += 1
+        elif tok == "--result-field":
+            i += 1
+            if i >= len(remaining):
+                print("error: --result-field requires name:type", file=sys.stderr)
+                sys.exit(1)
+            val = remaining[i]
+            if ":" not in val:
+                print(
+                    f"error: --result-field '{val}' must be name:type",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            rf_name, rf_type = val.split(":", 1)
+            if rf_type not in T._CTYPE_META:
+                print(
+                    f"error: --result-field type '{rf_type}' is not a scalar.\n"
+                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_result_fields.append({"name": rf_name, "type": rf_type})
+            i += 1
         elif tok == "--impl":
             i += 1
             if i >= len(remaining):
@@ -157,4 +180,5 @@ def run(args: list[str]) -> None:
         impl_body=impl_body_f,
         inline=fn_inline,
         out_type=fn_out_type,
+        result_fields=fn_result_fields or None,
     )
