@@ -14,6 +14,16 @@ nav = [
   { "Home"               = "index.md"        },
   { "Workflow"           = "workflow.md"     },
   { "Decision tree"      = "decision-tree.md"},
+  { "Template gallery" = [
+    { "Overview"   = "templates/index.md"    },
+    { "filter"     = "templates/filter.md"   },
+    { "block"      = "templates/block.md"    },
+    { "source"     = "templates/source.md"   },
+    { "sink"       = "templates/sink.md"     },
+    { "reader"     = "templates/reader.md"   },
+    { "detector"   = "templates/detector.md" },
+    { "library"    = "templates/library.md"  },
+  ]},
   { "Feature tour"       = "feature-tour.md" },
   { "Commands" = [
     { "Scaffold"    = "commands/scaffold.md" },

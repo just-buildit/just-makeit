@@ -1,9 +1,15 @@
 # `jm wizard` — design sketch
 
 Status: **proposal, not implemented.** Companion to the user-facing
-[decision tree](../decision-tree.md). This note captures what an
+[decision tree](../decision-tree.md) and the
+[template gallery](../templates/index.md). This note captures what an
 interactive wizard would do, why it's worth building, and what the
 smallest useful version looks like.
+
+The seven shape presets the wizard offers each have their own page in
+the [template gallery](../templates/index.md), titled with the exact
+CLI invocation that materialises them. Users can browse the actual
+generated code before they pick a preset — no pseudocode, no guessing.
 
 ______________________________________________________________________
 
