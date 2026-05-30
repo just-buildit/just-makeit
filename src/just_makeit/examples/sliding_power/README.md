@@ -67,16 +67,18 @@ the recursive O(1) update.  The delay line stores `|x|²` for each past sample;
 `sum_sq` is the running total.
 
 ```c
-JM_FORCEINLINE JM_HOT float power_est_step(power_est_state_t *state, float complex x) {
-    float re = crealf(x), im = cimagf(x);
-    float mag_sq = re * re + im * im;
+JM_FORCEINLINE JM_HOT float
+power_est_step (power_est_state_t *state, float complex x)
+{
+  float re = crealf (x), im = cimagf (x);
+  float mag_sq = re * re + im * im;
 
-    /* O(1) recursive update: subtract the oldest sample, add the new one */
-    state->sum_sq += (double)(mag_sq - state->delay[state->pos]);
-    state->delay[state->pos] = mag_sq;
-    state->pos               = (state->pos + 1) & 63; /* window = 64 = 2^6 */
+  /* O(1) recursive update: subtract the oldest sample, add the new one */
+  state->sum_sq += (double)(mag_sq - state->delay[state->pos]);
+  state->delay[state->pos] = mag_sq;
+  state->pos               = (state->pos + 1) & 63; /* window = 64 = 2^6 */
 
-    return (float)(state->sum_sq * (1.0 / 64.0));
+  return (float)(state->sum_sq * (1.0 / 64.0));
 }
 ```
 
@@ -122,7 +124,9 @@ print(f"sine   power (expect ~0.500): {y.real:.4f}")
 
 # --- white noise: expected power ≈ variance --------------------------------
 rng = np.random.default_rng(42)
-noise = (rng.standard_normal(128) + 1j * rng.standard_normal(128)) / math.sqrt(2)
+noise = (rng.standard_normal(128) + 1j * rng.standard_normal(128)) / math.sqrt(
+    2
+)
 for x in noise:
     y = est.step(complex(x))
 print(f"noise  power (expect ~1.000): {y.real:.4f}")
@@ -169,16 +173,18 @@ Add this function to `native/src/power_est/power_est_core.c` (it needs
  *
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */
-static inline float power_est_recompute(power_est_state_t *state) {
-    JM_VEC_F32 acc = JM_ZERO_F32();
-    JM_UNROLL(4)
-    for (int k = 0; k < 64; k += JM_SIMD_WIDTH_F32)
-        acc = JM_ADD_F32(acc, JM_LOAD_F32(state->delay + k));
-    float power = JM_HSUM_F32(acc) * (1.0f / 64.0f);
+static inline float
+power_est_recompute (power_est_state_t *state)
+{
+  JM_VEC_F32 acc = JM_ZERO_F32 ();
+  JM_UNROLL (4)
+  for (int k = 0; k < 64; k += JM_SIMD_WIDTH_F32)
+    acc = JM_ADD_F32 (acc, JM_LOAD_F32 (state->delay + k));
+  float power = JM_HSUM_F32 (acc) * (1.0f / 64.0f);
 
-    /* Sync the double accumulator so both paths agree */
-    state->sum_sq = (double)power * 64.0;
-    return power;
+  /* Sync the double accumulator so both paths agree */
+  state->sum_sq = (double)power * 64.0;
+  return power;
 }
 ```
 

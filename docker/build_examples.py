@@ -42,7 +42,8 @@ def _run_pytest(proj: Path) -> bool:
     extensions = list(proj.rglob("*.so")) + list(proj.rglob("*.pyd"))
     if not extensions:
         print(
-            f"    (no compiled extension in {proj.name}, skipping pytest)", flush=True
+            f"    (no compiled extension in {proj.name}, skipping pytest)",
+            flush=True,
         )
         return True
     env = os.environ.copy()
@@ -69,7 +70,9 @@ for name in _EXAMPLES:
     if ex_dir is None:
         print(f"  {name}: skipped (not found)", flush=True)
         continue
-    spec = importlib.util.spec_from_file_location(f"jm_ex_{name}", ex_dir / "test.py")
+    spec = importlib.util.spec_from_file_location(
+        f"jm_ex_{name}", ex_dir / "test.py"
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     print(f"  [{name}] building...", flush=True)

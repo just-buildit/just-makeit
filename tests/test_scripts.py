@@ -26,7 +26,9 @@ class TestRunTests:
     def test_passes_argv_to_subprocess(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch.object(sys, "argv", ["jm-run-tests", "-v", "-k", "foo"]):
+            with patch.object(
+                sys, "argv", ["jm-run-tests", "-v", "-k", "foo"]
+            ):
                 with pytest.raises(SystemExit):
                     S.run_tests()
             cmd = mock_run.call_args[0][0]

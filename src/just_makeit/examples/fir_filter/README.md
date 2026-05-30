@@ -61,25 +61,30 @@ The filter must update the delay line, so the signature changes from `const` to 
 
 ```c
 // before
-static inline float complex fir_filter_step(const fir_filter_state_t *state, float complex x) {
-    (void)state; /* TODO: implement DSP using state variables */
-    return x;
+static inline float complex
+fir_filter_step (const fir_filter_state_t *state, float complex x)
+{
+  (void)state; /* TODO: implement DSP using state variables */
+  return x;
 }
 ```
 
 ```c
 // after
-static inline float complex fir_filter_step(fir_filter_state_t *state, float complex x) {
-    /* Shift delay line — oldest sample falls off the end */
-    memmove(&state->delay[1], &state->delay[0], (16 - 1) * sizeof(float complex));
-    state->delay[0] = x;
+static inline float complex
+fir_filter_step (fir_filter_state_t *state, float complex x)
+{
+  /* Shift delay line — oldest sample falls off the end */
+  memmove (&state->delay[1], &state->delay[0],
+           (16 - 1) * sizeof (float complex));
+  state->delay[0] = x;
 
-    /* Convolve: y = sum_k( coeffs[k] * delay[k] ) */
-    float complex y = 0.0f + 0.0f * I;
-    for (int k = 0; k < 16; k++)
-        y += state->coeffs[k] * state->delay[k];
+  /* Convolve: y = sum_k( coeffs[k] * delay[k] ) */
+  float complex y = 0.0f + 0.0f * I;
+  for (int k = 0; k < 16; k++)
+    y += state->coeffs[k] * state->delay[k];
 
-    return (float complex)state->gain * y;
+  return (float complex)state->gain * y;
 }
 ```
 
@@ -151,36 +156,38 @@ After `make`, the combined shared library is at `build/libmy_fir.so`.
 #include <complex.h>
 #include <stdio.h>
 
-int main(void) {
-    fir_filter_state_t *f = fir_filter_create(1.0f);
+int
+main (void)
+{
+  fir_filter_state_t *f = fir_filter_create (1.0f);
 
-    float h[16] = {0};
-    h[0]        = 0.25f;
-    h[1]        = 0.5f;
-    h[2]        = 0.25f;
-    fir_filter_set_coeffs(f, h);
+  float h[16] = { 0 };
+  h[0]        = 0.25f;
+  h[1]        = 0.5f;
+  h[2]        = 0.25f;
+  fir_filter_set_coeffs (f, h);
 
-    /* Read taps without copying — pointer valid until fir_filter_destroy(f) */
-    const float *view = fir_filter_get_coeffs_view(f);
-    printf("h[1] = %.2f\n", view[1]); /* 0.50 */
+  /* Read taps without copying — pointer valid until fir_filter_destroy(f) */
+  const float *view = fir_filter_get_coeffs_view (f);
+  printf ("h[1] = %.2f\n", view[1]); /* 0.50 */
 
-    /* Feed a unit impulse */
-    float complex in[16]  = {0};
-    float complex out[16] = {0};
-    in[0]                 = 1.0f + 0.0f * I;
-    fir_filter_steps(f, in, out, 16);
+  /* Feed a unit impulse */
+  float complex in[16]  = { 0 };
+  float complex out[16] = { 0 };
+  in[0]                 = 1.0f + 0.0f * I;
+  fir_filter_steps (f, in, out, 16);
 
-    printf("out[0]=%.2f  out[1]=%.2f  out[2]=%.2f\n", crealf(out[0]), crealf(out[1]),
-           crealf(out[2])); /* 0.25  0.50  0.25 */
+  printf ("out[0]=%.2f  out[1]=%.2f  out[2]=%.2f\n", crealf (out[0]),
+          crealf (out[1]), crealf (out[2])); /* 0.25  0.50  0.25 */
 
-    /* Snapshot the delay line — independent copy */
-    float _Complex dl[16];
-    fir_filter_get_delay(f, dl);
-    printf("delay[0] = %.3f + %.3fj\n", crealf(dl[0]), cimagf(dl[0]));
+  /* Snapshot the delay line — independent copy */
+  float _Complex dl[16];
+  fir_filter_get_delay (f, dl);
+  printf ("delay[0] = %.3f + %.3fj\n", crealf (dl[0]), cimagf (dl[0]));
 
-    fir_filter_reset(f); /* clears delay and coeffs, restores gain = 1.0f */
-    fir_filter_destroy(f);
-    return 0;
+  fir_filter_reset (f); /* clears delay and coeffs, restores gain = 1.0f */
+  fir_filter_destroy (f);
+  return 0;
 }
 ```
 
@@ -229,7 +236,9 @@ RUNS = 500
 f = FirFilter(gain=1.0)
 h = np.array([0.25, 0.5, 0.25] + [0.0] * 13, dtype=np.float32)
 f.set_coeffs(h)
-signal = (np.random.randn(BLOCK) + 1j * np.random.randn(BLOCK)).astype(np.complex64)
+signal = (np.random.randn(BLOCK) + 1j * np.random.randn(BLOCK)).astype(
+    np.complex64
+)
 
 elapsed = min(timeit.repeat(lambda: f.steps(signal), number=RUNS, repeat=5))
 print(f"{RUNS * BLOCK / elapsed / 1e6:.1f} M complex samples/sec")
@@ -276,19 +285,23 @@ that stamps out the outer dispatch loop so you never write it by hand.
 `native/inc/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
 
 ```c
-#define FIR_TAPS 16               /* algorithm:   number of coefficients       */
-#define FIR_LENGTH (FIR_TAPS - 1) /* history:     samples held in delay[]      */
+#define FIR_TAPS 16 /* algorithm:   number of coefficients       */
+#define FIR_LENGTH                                                            \
+  (FIR_TAPS - 1) /* history:     samples held in delay[]      */
 /* JM_SIMD_WIDTH_F32 floats = JM_SIMD_WIDTH_F32/2 complex samples per batch.
  * On scalar targets (width=1) this is 0; _JM_STEPS_SIMD_ is a no-op there. */
 #define FIR_BATCH (JM_SIMD_WIDTH_F32 / 2)
 
 #if JM_SIMD_WIDTH_F32 > 1
-JM_FORCEINLINE JM_HOT void fir_filter_step_batch(fir_filter_state_t  *state,
-                                                 const float complex *window, float complex *out) {
-    JM_VEC_F32 acc = JM_ZERO_F32();
-    for (int k = 0; k < FIR_TAPS; k++)
-        JM_MAC_F32(acc, (const float *)(window + FIR_LENGTH - k), state->coeffs[k]);
-    JM_STORE_F32((float *)out, JM_MUL_F32(acc, JM_SPLAT_F32(state->gain)));
+JM_FORCEINLINE JM_HOT void
+fir_filter_step_batch (fir_filter_state_t *state, const float complex *window,
+                       float complex *out)
+{
+  JM_VEC_F32 acc = JM_ZERO_F32 ();
+  for (int k = 0; k < FIR_TAPS; k++)
+    JM_MAC_F32 (acc, (const float *)(window + FIR_LENGTH - k),
+                state->coeffs[k]);
+  JM_STORE_F32 ((float *)out, JM_MUL_F32 (acc, JM_SPLAT_F32 (state->gain)));
 }
 #endif
 ```
@@ -314,7 +327,8 @@ but you never write `steps()`.
 ```c
 #define FIR_CHUNK 256 /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex, FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
+JM_DEFINE_STEPS (fir_filter, fir_filter_state_t, float complex, FIR_LENGTH,
+                 FIR_BATCH, FIR_CHUNK)
 ```
 
 `JM_DEFINE_STEPS` generates `fir_filter_steps()` from the macro in `jm_perf.h`:

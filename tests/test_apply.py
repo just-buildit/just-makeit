@@ -117,19 +117,21 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
         cmake_text = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
         # add_subdirectory must be inside the Components sentinel section.
-        comp_block = cmake_text.split("# ── Components", 1)[1].split("# ── Modules", 1)[
-            0
-        ]
+        comp_block = cmake_text.split("# ── Components", 1)[1].split(
+            "# ── Modules", 1
+        )[0]
         assert "add_subdirectory(native/src/agc)" in comp_block
         assert (
-            "target_sources(proj_lib PRIVATE $<TARGET_OBJECTS:agc_core>)" in comp_block
+            "target_sources(proj_lib PRIVATE $<TARGET_OBJECTS:agc_core>)"
+            in comp_block
         )
 
     def test_umbrella_header_gets_include(self, tmp_path):
@@ -146,12 +148,15 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
-        umbrella = (proj / "native" / "inc" / "proj.h").read_text(encoding="utf-8")
+        umbrella = (proj / "native" / "inc" / "proj.h").read_text(
+            encoding="utf-8"
+        )
         assert '#include "agc/agc_core.h"' in umbrella
 
     def test_package_init_py_gets_import(self, tmp_path):
@@ -168,12 +173,15 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
 
-        init = (proj / "src" / "proj" / "__init__.py").read_text(encoding="utf-8")
+        init = (proj / "src" / "proj" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
         assert "from .agc import Agc" in init
         assert '"Agc"' in init  # __all__
 
@@ -189,9 +197,7 @@ class TestApplyReconcilesAggregates:
         # section (i.e., between Modules sentinel and # ── Install).
         cmake = proj / "CMakeLists.txt"
         text = cmake.read_text(encoding="utf-8")
-        marker = (
-            "# ── Vendored libfoo (user content) ───\nadd_library(foo INTERFACE)\n\n"
-        )
+        marker = "# ── Vendored libfoo (user content) ───\nadd_library(foo INTERFACE)\n\n"
         text = text.replace("# ── Install", marker + "# ── Install")
         cmake.write_text(text, encoding="utf-8")
 
@@ -203,7 +209,8 @@ class TestApplyReconcilesAggregates:
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
 
         apply_run(proj)
@@ -287,9 +294,13 @@ class TestApplyModuleDirective:
         apply_run(proj, fragment=frag)
 
         # Module object: core files exist in own subdir (normal)
-        assert (proj / "native" / "src" / "counter" / "counter_core.c").exists()
+        assert (
+            proj / "native" / "src" / "counter" / "counter_core.c"
+        ).exists()
         # Module object: no standalone ext.c (would exist for standalone objects)
-        assert not (proj / "native" / "src" / "counter" / "counter_ext.c").exists()
+        assert not (
+            proj / "native" / "src" / "counter" / "counter_ext.c"
+        ).exists()
         # Module's ext.c was updated to include counter
         dsp_ext = (proj / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
@@ -346,7 +357,8 @@ class TestApplyModuleDirective:
         # who skipped jm apply the first time would do).
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
         from just_makeit._apply import _wire_module_object
 
@@ -356,7 +368,9 @@ class TestApplyModuleDirective:
         apply_run(proj, fragment=dest)
 
         # Materialization actually ran.
-        assert (proj / "native" / "src" / "counter" / "counter_core.c").exists()
+        assert (
+            proj / "native" / "src" / "counter" / "counter_core.c"
+        ).exists()
 
     def test_fragment_already_in_objects_dir_no_duplicate_copy(self, tmp_path):
         """When the fragment is already in objects/, no second copy is made."""
@@ -371,7 +385,8 @@ class TestApplyModuleDirective:
 
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
-            'include = ["objects/*.toml"]\n\n' + manifest.read_text(encoding="utf-8")
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
         )
         from just_makeit._apply import _wire_module_object
 
@@ -470,7 +485,9 @@ class TestApplyExtraC:
         apply_run(proj)
 
         assert extra.exists(), "extra.c deleted by apply"
-        assert extra.read_text(encoding="utf-8") == "/* hand-written extra */\n"
+        assert (
+            extra.read_text(encoding="utf-8") == "/* hand-written extra */\n"
+        )
 
     def test_extra_c_included_in_aggregator_after_apply(self, tmp_path):
         proj = tmp_path / "proj"
@@ -600,24 +617,30 @@ class TestMethodReplayArgType:
         frag = proj.parent / "frag.toml"
         frag.write_text(frag_text)
         apply_run(proj, fragment=frag)
-        return (proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h").read_text(
-            encoding="utf-8"
-        )
+        return (
+            proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h"
+        ).read_text(encoding="utf-8")
 
     def test_variable_output_params_used_not_float_complex(self, tmp_path):
         """drain() should use uint32_t n, not const float complex *in."""
-        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        header = self._apply_fragment(
+            tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT
+        )
         assert "uint32_t n" in header
         assert "float complex" not in header
 
     def test_variable_output_correct_return_type(self, tmp_path):
         """drain() output array is uint64_t *, not float complex *."""
-        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        header = self._apply_fragment(
+            tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT
+        )
         assert "uint64_t *out" in header
 
     def test_reset_with_params_no_duplicate(self, tmp_path):
         """User reset(start) suppresses the builtin no-arg reset declaration."""
-        header = self._apply_fragment(tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT)
+        header = self._apply_fragment(
+            tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT
+        )
         # User's parameterised reset should be present
         assert "uint32_t start" in header
         # Builtin no-arg reset declaration should be absent (suppressed)
@@ -651,12 +674,12 @@ class TestVariableOutputOutType:
         frag = proj.parent / "frag.toml"
         frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
         apply_run(proj, fragment=frag)
-        header = (proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h").read_text(
-            encoding="utf-8"
-        )
-        core_c = (proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c").read_text(
-            encoding="utf-8"
-        )
+        header = (
+            proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h"
+        ).read_text(encoding="utf-8")
+        core_c = (
+            proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c"
+        ).read_text(encoding="utf-8")
         return header, core_c
 
     def test_header_uses_out_type_not_return_type(self, tmp_path):
@@ -885,7 +908,9 @@ class TestOpaqueRequiresCreateImpl:
         fragment = {
             "fft": {
                 "no_state": "true",
-                "state": [{"name": "scratch", "type": "float *", "opaque": True}],
+                "state": [
+                    {"name": "scratch", "type": "float *", "opaque": True}
+                ],
             },
         }
         with pytest.raises(ValueError, match="opaque state field"):
@@ -897,7 +922,9 @@ class TestOpaqueRequiresCreateImpl:
         fragment = {
             "fft": {
                 "create_impl_file": "legacy.c::fft_create",
-                "state": [{"name": "scratch", "type": "float *", "opaque": True}],
+                "state": [
+                    {"name": "scratch", "type": "float *", "opaque": True}
+                ],
             },
         }
         _validate_fragment_impl_keys(fragment, "test.toml")
@@ -977,7 +1004,9 @@ class TestNoCtorState:
         """no_ctor fields must NOT appear in the Python __init__ kwlist."""
         _, _, ext_c = self._apply(tmp_path / "proj")
         kwlist_line = next(
-            line for line in ext_c.splitlines() if "kwlist" in line and "char" in line
+            line
+            for line in ext_c.splitlines()
+            if "kwlist" in line and "char" in line
         )
         assert '"idx"' not in kwlist_line
         assert '"sum"' not in kwlist_line
@@ -1023,7 +1052,9 @@ default = "0.0f"
 no_ctor = true
 """)
         apply_run(proj, fragment=frag)
-        core_c = (proj / "native" / "src" / "ring2" / "ring2_core.c").read_text()
+        core_c = (
+            proj / "native" / "src" / "ring2" / "ring2_core.c"
+        ).read_text()
         # gain is a ctor param — assigned from param
         assert "obj->gain = gain;" in core_c
         # phase is no_ctor — assigned from TOML default, not a param
@@ -1179,8 +1210,12 @@ class TestApplyModuleFunctionImpl:
         frag = proj_root.parent / "fns.toml"
         frag.write_text(_FN_IMPL_FRAGMENT)
         apply_run(proj_root, fragment=frag)
-        core_c = (proj_root / "native" / "src" / "io" / "io_core.c").read_text()
-        core_h = (proj_root / "native" / "inc" / "io" / "io_core.h").read_text()
+        core_c = (
+            proj_root / "native" / "src" / "io" / "io_core.c"
+        ).read_text()
+        core_h = (
+            proj_root / "native" / "inc" / "io" / "io_core.h"
+        ).read_text()
         return core_c, core_h
 
     def test_impl_body_in_core_c(self, tmp_path):
@@ -1198,5 +1233,9 @@ class TestApplyModuleFunctionImpl:
         before_c = (proj / "native" / "src" / "io" / "io_core.c").read_text()
         before_h = (proj / "native" / "inc" / "io" / "io_core.h").read_text()
         apply_run(proj)
-        assert (proj / "native" / "src" / "io" / "io_core.c").read_text() == before_c
-        assert (proj / "native" / "inc" / "io" / "io_core.h").read_text() == before_h
+        assert (
+            proj / "native" / "src" / "io" / "io_core.c"
+        ).read_text() == before_c
+        assert (
+            proj / "native" / "inc" / "io" / "io_core.h"
+        ).read_text() == before_h

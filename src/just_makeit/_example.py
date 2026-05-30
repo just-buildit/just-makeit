@@ -30,7 +30,9 @@ def _discover() -> list[str]:
     if root is None:
         return []
     return sorted(
-        d.name for d in root.iterdir() if d.is_dir() and (d / "test.py").exists()
+        d.name
+        for d in root.iterdir()
+        if d.is_dir() and (d / "test.py").exists()
     )
 
 
@@ -45,7 +47,9 @@ def _find(name: str) -> Path | None:
         return None
     candidate = root / name
     return (
-        candidate if candidate.is_dir() and (candidate / "test.py").exists() else None
+        candidate
+        if candidate.is_dir() and (candidate / "test.py").exists()
+        else None
     )
 
 

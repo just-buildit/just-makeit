@@ -255,7 +255,8 @@ guard = "#endif /* Q15_TO_CF32_CORE_H */"
 assert guard in text, "header guard not found"
 text = text.replace(
     guard,
-    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n" + guard,
+    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n"
+    + guard,
     1,
 )
 core_h.write_text(text, encoding="utf-8")
@@ -314,12 +315,14 @@ the two `int16_t` values, the step packs both into one `int32_t`
 (I in the low 16 bits, Q in the high 16 bits):
 
 ```c
-static inline int32_t cf32_to_q15_step(const cf32_to_q15_state_t *state, float complex x) {
-    float   scale   = state->scale;
-    int16_t i       = (int16_t)(crealf(x) * scale);
-    int16_t q       = (int16_t)(cimagf(x) * scale);
-    int16_t pair[2] = {i, q};
-    return (int32_t)sizeof(pair);
+static inline int32_t
+cf32_to_q15_step (const cf32_to_q15_state_t *state, float complex x)
+{
+  float   scale   = state->scale;
+  int16_t i       = (int16_t)(crealf (x) * scale);
+  int16_t q       = (int16_t)(cimagf (x) * scale);
+  int16_t pair[2] = { i, q };
+  return (int32_t)sizeof (pair);
 }
 ```
 
@@ -339,11 +342,14 @@ input never wraps around silently.
 Reads four bytes (two `int16_t`) from `state->fd` on every call:
 
 ```c
-static inline float complex q15_to_cf32_step(const q15_to_cf32_state_t *state) {
-    int16_t pair[2] = {0, 0};
-    ssize_t n       = read((int)state->fd, pair, sizeof(pair));
-    (void)n;
-    return (crealf(0.0f) + cimagf(0.0f) * I) + ((float)pair[0] + (float)pair[1] * I) / state->scale;
+static inline float complex
+q15_to_cf32_step (const q15_to_cf32_state_t *state)
+{
+  int16_t pair[2] = { 0, 0 };
+  ssize_t n       = read ((int)state->fd, pair, sizeof (pair));
+  (void)n;
+  return (crealf (0.0f) + cimagf (0.0f) * I)
+         + ((float)pair[0] + (float)pair[1] * I) / state->scale;
 }
 ```
 
@@ -428,7 +434,9 @@ N = 4096
 rng = np.random.default_rng(42)
 
 # ── Generate test signal (normalised to [-0.9, 0.9] to avoid clipping) ────
-signal = (rng.standard_normal(N) + 1j * rng.standard_normal(N)).astype(np.complex64)
+signal = (rng.standard_normal(N) + 1j * rng.standard_normal(N)).astype(
+    np.complex64
+)
 signal *= 0.9 / np.max(np.abs(signal))
 
 # ── Write cf32 -> q15 ─────────────────────────────────────────────────────

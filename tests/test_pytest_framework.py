@@ -40,7 +40,12 @@ SRC = Path(__file__).parent.parent / "src"
 
 def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()", *args],
+        [
+            sys.executable,
+            "-c",
+            "from just_makeit._cli import main; main()",
+            *args,
+        ],
         cwd=cwd or Path.cwd(),
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
@@ -229,7 +234,11 @@ class TestDefaultUnchanged:
 
     def test_bench_still_uses_perf_counter(self, default_project):
         bench = (
-            default_project / "src" / "myproj" / "benchmarks" / "bench_engine.py"
+            default_project
+            / "src"
+            / "myproj"
+            / "benchmarks"
+            / "bench_engine.py"
         ).read_text(encoding="utf-8")
         assert "perf_counter" in bench
         assert "def main()" in bench
@@ -242,7 +251,9 @@ class TestPytestArgTypes:
     def test_void_arg_generator(self, tmp_path):
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_=True)
-        init_run(dest, "nco", [], arg_type="void", return_type="float _Complex")
+        init_run(
+            dest, "nco", [], arg_type="void", return_type="float _Complex"
+        )
         test = (dest / "src" / "proj" / "tests" / "test_nco.py").read_text(
             encoding="utf-8"
         )
@@ -254,11 +265,15 @@ class TestPytestArgTypes:
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_benchmark_=True)
         init_run(
-            dest, "fir", [], arg_type="float _Complex[]", return_type="float _Complex"
+            dest,
+            "fir",
+            [],
+            arg_type="float _Complex[]",
+            return_type="float _Complex",
         )
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_fir.py").read_text(
-            encoding="utf-8"
-        )
+        bench = (
+            dest / "src" / "proj" / "benchmarks" / "bench_fir.py"
+        ).read_text(encoding="utf-8")
         assert "@pytest.fixture" in bench
         # array arg: step_1k/64k instead of steps_1k/64k
         assert "def test_bench_step_1k(benchmark, obj):" in bench
@@ -275,9 +290,9 @@ class TestPytestArgTypes:
             arg_type="float",
             return_type="float",
         )
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_gain.py").read_text(
-            encoding="utf-8"
-        )
+        bench = (
+            dest / "src" / "proj" / "benchmarks" / "bench_gain.py"
+        ).read_text(encoding="utf-8")
         assert "def test_bench_step(benchmark, obj):" in bench
         assert "def test_bench_steps_1k(benchmark, obj):" in bench
         assert "def test_bench_steps_64k(benchmark, obj):" in bench
@@ -301,7 +316,12 @@ def module_pytest_project(tmp_path):
 class TestModuleInheritance:
     def test_module_test_pure_pytest(self, module_pytest_project):
         test = (
-            module_pytest_project / "src" / "myproj" / "dsp" / "tests" / "test_fir.py"
+            module_pytest_project
+            / "src"
+            / "myproj"
+            / "dsp"
+            / "tests"
+            / "test_fir.py"
         ).read_text(encoding="utf-8")
         assert "import unittest" not in test
         assert "import pytest" in test
@@ -354,9 +374,9 @@ class TestAddPreservesFramework:
         new_run("proj", dest, pytest_benchmark_=True)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
         add_run(dest, "filt", [("order", "int", "4")])
-        bench = (dest / "src" / "proj" / "benchmarks" / "bench_filt.py").read_text(
-            encoding="utf-8"
-        )
+        bench = (
+            dest / "src" / "proj" / "benchmarks" / "bench_filt.py"
+        ).read_text(encoding="utf-8")
         assert "perf_counter" not in bench
         assert "@pytest.fixture" in bench
 

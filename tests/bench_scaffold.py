@@ -48,7 +48,10 @@ def test_bench_init(benchmark, tmp_path):
         counter[0] += 1
         root = tmp_path / f"init_{counter[0]}"
         _new.run("my_proj", dest=root)
-        return (root,), {"state_vars": [("gain", "double", "1.0")], "_hint": False}
+        return (root,), {
+            "state_vars": [("gain", "double", "1.0")],
+            "_hint": False,
+        }
 
     benchmark.pedantic(
         lambda root, **kw: _init.run(root, "engine", **kw),

@@ -88,7 +88,9 @@ class TestCmdBuild:
     def test_calls_build_wheel(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch.object(B, "_ensure_built"):
-            with patch("just_buildit.build_wheel", return_value="pkg.whl") as mock:
+            with patch(
+                "just_buildit.build_wheel", return_value="pkg.whl"
+            ) as mock:
                 B.cmd_build([])
                 mock.assert_called_once()
 
@@ -129,7 +131,9 @@ class TestCmdTest:
         monkeypatch.chdir(tmp_path)
         with patch.object(B, "_ensure_built"):
             with patch.object(B, "_require", return_value="ctest"):
-                with patch.object(B, "_run_python_tests", return_value=True) as mock_py:
+                with patch.object(
+                    B, "_run_python_tests", return_value=True
+                ) as mock_py:
                     with patch("subprocess.run") as mock_run:
                         mock_run.return_value = MagicMock(returncode=0)
                         B.cmd_test(["-k", "myfunc"])

@@ -59,7 +59,10 @@ class TestCliMethod:
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--variable-output"])
             _, kwargs = mock_run.call_args
-            assert kwargs.get("variable_output") is True or mock_run.call_args[0][5]
+            assert (
+                kwargs.get("variable_output") is True
+                or mock_run.call_args[0][5]
+            )
 
     def test_no_bench_flag(self):
         with patch("just_makeit._method.run") as mock_run:
@@ -239,7 +242,9 @@ class TestCliMethod:
 
     def test_impl_loading(self):
         with patch("just_makeit._method.run") as mock_run:
-            with patch("just_makeit._impl.load_impl", return_value="body") as mock_load:
+            with patch(
+                "just_makeit._impl.load_impl", return_value="body"
+            ) as mock_load:
                 _run(["fir", "execute", "--impl", "src.c::fir_step"])
                 mock_load.assert_called_once_with("src.c::fir_step", [])
                 _, kwargs = mock_run.call_args
@@ -248,7 +253,9 @@ class TestCliMethod:
     def test_replace_with_impl(self):
         with patch("just_makeit._method.run"):
             with patch("just_makeit._impl.load_impl", return_value="body"):
-                with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
+                with patch(
+                    "just_makeit._impl.parse_replace", return_value=("a", "b")
+                ):
                     _run(
                         [
                             "fir",

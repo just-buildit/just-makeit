@@ -67,9 +67,9 @@ uv add --dev pytest-cov
 **What it does:**
 
 1. Compiles a separate `build/cov/` tree with `-DCMAKE_C_FLAGS="--coverage -O0"` — the Release build in `build/` is untouched.
-2. Runs CTest against the coverage binary.
-3. Collects `.gcda` files with `lcov --capture`, strips system and test paths, and renders `docs/coverage/c/index.html` via `genhtml`.
-4. Runs `pytest --cov=<package> --cov-report=html:docs/coverage/python`.
+1. Runs CTest against the coverage binary.
+1. Collects `.gcda` files with `lcov --capture`, strips system and test paths, and renders `docs/coverage/c/index.html` via `genhtml`.
+1. Runs `pytest --cov=<package> --cov-report=html:docs/coverage/python`.
 
 Both reports land under `docs/` (already in `.gitignore`).
 

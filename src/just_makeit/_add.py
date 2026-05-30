@@ -186,7 +186,9 @@ def run(
 
     paths = [root / _expand(pat, component, pkg) for pat, _ in templates]
 
-    print(f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'")
+    print(
+        f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'"
+    )
     print()
 
     # Bump mtime by 2 s so GNU Make (1-s timestamp resolution on Windows)

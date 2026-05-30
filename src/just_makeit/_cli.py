@@ -622,11 +622,16 @@ def main() -> None:
                 sys.exit(1)
             else:
                 if comp is not None:
-                    print("error: bind takes one component name", file=sys.stderr)
+                    print(
+                        "error: bind takes one component name", file=sys.stderr
+                    )
                     sys.exit(1)
                 comp = a
         if comp is None:
-            print("Usage: just-makeit bind <component> [--check]", file=sys.stderr)
+            print(
+                "Usage: just-makeit bind <component> [--check]",
+                file=sys.stderr,
+            )
             sys.exit(1)
         if check:
             rendered = _bind.run(Path.cwd(), comp, write=False)

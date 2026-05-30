@@ -212,9 +212,12 @@ For **1:1-rate batch work** (output count equals input count), write the
  * the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
  */
-void ema_quantize_steps(ema_state_t *state, const float *in, uint32_t *out, size_t n) {
-    for (size_t i = 0; i < n; i++)
-        out[i] = ema_quantize(state, in[i]);
+void
+ema_quantize_steps (ema_state_t *state, const float *in, uint32_t *out,
+                    size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+    out[i] = ema_quantize (state, in[i]);
 }
 ```
 
@@ -299,22 +302,27 @@ Implement both:
  * Must be positive.  Returning 0 causes malloc(0), which is implementation-
  * defined and will likely produce a silent bug.
  */
-size_t hbdecim_execute_max_out(hbdecim_state_t *state) {
-    /* state->block_size is a constructor parameter (add with just-makeit add) */
-    return (state->block_size + 1) / 2;
+size_t
+hbdecim_execute_max_out (hbdecim_state_t *state)
+{
+  /* state->block_size is a constructor parameter (add with just-makeit add) */
+  return (state->block_size + 1) / 2;
 }
 
 /* Process n_in samples; write actual output count to *out; return n_out.
  * The caller (Python ext) supplies the pre-allocated output buffer.
  */
-size_t hbdecim_execute(hbdecim_state_t *state, const float complex *in, size_t n_in,
-                       float complex *out) {
-    size_t n_out = 0;
-    for (size_t i = 0; i + 1 < n_in; i += 2) {
-        /* TODO: polyphase half-band implementation */
-        out[n_out++] = (in[i] + in[i + 1]) * 0.5f;
+size_t
+hbdecim_execute (hbdecim_state_t *state, const float complex *in, size_t n_in,
+                 float complex *out)
+{
+  size_t n_out = 0;
+  for (size_t i = 0; i + 1 < n_in; i += 2)
+    {
+      /* TODO: polyphase half-band implementation */
+      out[n_out++] = (in[i] + in[i + 1]) * 0.5f;
     }
-    return n_out;
+  return n_out;
 }
 ```
 
@@ -405,24 +413,30 @@ the object.  Your implementation fills both and returns the count:
 ```c
 /* Implement in native/src/hbdecim/hbdecim_core.c.
  *
- * Two output arrays: primary (filtered samples) and secondary (overflow flags).
- * Both are pre-allocated by the ext to execute_ovf_max_out() elements.
+ * Two output arrays: primary (filtered samples) and secondary (overflow
+ * flags). Both are pre-allocated by the ext to execute_ovf_max_out() elements.
  * Return the actual count written to both arrays.
  */
-size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state) { return (state->block_size + 1) / 2; }
-
-size_t hbdecim_execute_ovf(hbdecim_state_t *state, const float complex *in, size_t n_in,
-                           float complex *out, /* primary */
-                           uint8_t       *ovf)       /* secondary */
+size_t
+hbdecim_execute_ovf_max_out (hbdecim_state_t *state)
 {
-    size_t n_out = 0;
-    for (size_t i = 0; i + 1 < n_in; i += 2) {
-        float complex y = (in[i] + in[i + 1]) * 0.5f;
-        out[n_out]      = y;
-        ovf[n_out]      = (cabsf(y) > 1.0f) ? 1 : 0;
-        n_out++;
+  return (state->block_size + 1) / 2;
+}
+
+size_t
+hbdecim_execute_ovf (hbdecim_state_t *state, const float complex *in,
+                     size_t n_in, float complex *out, /* primary */
+                     uint8_t *ovf)                    /* secondary */
+{
+  size_t n_out = 0;
+  for (size_t i = 0; i + 1 < n_in; i += 2)
+    {
+      float complex y = (in[i] + in[i + 1]) * 0.5f;
+      out[n_out]      = y;
+      ovf[n_out]      = (cabsf (y) > 1.0f) ? 1 : 0;
+      n_out++;
     }
-    return n_out;
+  return n_out;
 }
 ```
 

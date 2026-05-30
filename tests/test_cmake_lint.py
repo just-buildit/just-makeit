@@ -31,8 +31,10 @@ _DISABLED = ["C0301", "C0307"]
 def _cmake_lint(cmake_files: list[Path]) -> subprocess.CompletedProcess:
     """Run cmake-lint on *cmake_files*, returning the CompletedProcess."""
     return subprocess.run(
-        ["cmake-lint", "--disabled-codes"] + _DISABLED
-        + ["--"] + [str(f) for f in cmake_files],
+        ["cmake-lint", "--disabled-codes"]
+        + _DISABLED
+        + ["--"]
+        + [str(f) for f in cmake_files],
         capture_output=True,
         text=True,
     )

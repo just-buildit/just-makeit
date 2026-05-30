@@ -46,7 +46,9 @@ class TestAddStateVar:
 
     def test_add_single_var_pyi(self, project):
         add_run(project, None, [("order", "int", "4")])
-        pyi = (project / "src" / "comp" / "comp.pyi").read_text(encoding="utf-8")
+        pyi = (project / "src" / "comp" / "comp.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "gain: np.float64 = 1.0" in pyi
         assert "order: np.int32 = 4" in pyi
 
@@ -115,9 +117,9 @@ class TestAddPreservesInitParams:
 
     def test_ctor_keeps_init_param_after_add(self, init_param_project):
         add_run(init_param_project, "obj", [("y", "float", "1")])
-        core = (init_param_project / "native" / "inc" / "obj" / "obj_core.h").read_text(
-            encoding="utf-8"
-        )
+        core = (
+            init_param_project / "native" / "inc" / "obj" / "obj_core.h"
+        ).read_text(encoding="utf-8")
         # Constructor stays init-param-driven: obj_create(int n), NOT
         # obj_create(float x, float y).
         assert "obj_create(int n)" in core
@@ -168,9 +170,9 @@ class TestAddValidation:
 
 class TestAddBackupRestore:
     def test_backup_restores_on_write_failure(self, project):
-        original_h = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
-            encoding="utf-8"
-        )
+        original_h = (
+            project / "native" / "inc" / "comp" / "comp_core.h"
+        ).read_text(encoding="utf-8")
 
         # Make the .pyi path a directory so write_text fails there
         pyi = project / "src" / "comp" / "comp.pyi"
@@ -180,9 +182,9 @@ class TestAddBackupRestore:
         with pytest.raises((IsADirectoryError, OSError)):
             add_run(project, None, [("order", "int", "4")])
 
-        restored = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
-            encoding="utf-8"
-        )
+        restored = (
+            project / "native" / "inc" / "comp" / "comp_core.h"
+        ).read_text(encoding="utf-8")
         assert restored == original_h
 
     def test_config_not_written_on_failure(self, project):

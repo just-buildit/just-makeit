@@ -48,7 +48,9 @@ for size in bursts:
     total_in += size
 
 total_out = sum(len(v) for v in collected)
-assert total_out == 4 * CHUNK, f"expected {4 * CHUNK} output samples, got {total_out}"
+assert total_out == 4 * CHUNK, (
+    f"expected {4 * CHUNK} output samples, got {total_out}"
+)
 
 # Verify that the first burst (7 samples) produced no output
 assert len(collected[0]) >= CHUNK, "first non-empty view should be ≥ one chunk"
@@ -65,4 +67,6 @@ print(
     f"{CHUNK}-sample chunks)"
 )
 print(f"  {total_in - total_out} samples remain buffered (flushed on reset)")
-print(f"  {len(collected)} non-empty push() calls (some bursts produced 0 output)")
+print(
+    f"  {len(collected)} non-empty push() calls (some bursts produced 0 output)"
+)

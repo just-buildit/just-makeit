@@ -255,7 +255,9 @@ class TestCliNew:
             pkg_modules=["fftw3"],
             c_deps=["vendored_lib"],
         )
-        toml_text = (tmp_path / "demo" / "just-makeit.toml").read_text(encoding="utf-8")
+        toml_text = (tmp_path / "demo" / "just-makeit.toml").read_text(
+            encoding="utf-8"
+        )
         assert 'find_packages = ["Doppler"]' in toml_text
         assert 'pkg_modules = ["fftw3"]' in toml_text
         assert 'c_deps = ["vendored_lib"]' in toml_text

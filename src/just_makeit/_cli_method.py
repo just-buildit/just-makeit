@@ -73,7 +73,10 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --param '{val}' must be name:type", file=sys.stderr)
+                print(
+                    f"error: --param '{val}' must be name:type",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
             if T.is_array_param_type(ptype):
@@ -100,7 +103,9 @@ def run(args: list[str]) -> None:
         elif tok == "--out-divisor":
             i += 1
             if i >= len(remaining):
-                print("error: --out-divisor requires an integer", file=sys.stderr)
+                print(
+                    "error: --out-divisor requires an integer", file=sys.stderr
+                )
                 sys.exit(1)
             try:
                 out_divisor = int(remaining[i])
@@ -108,7 +113,8 @@ def run(args: list[str]) -> None:
                     raise ValueError
             except ValueError:
                 print(
-                    "error: --out-divisor must be a positive integer", file=sys.stderr
+                    "error: --out-divisor must be a positive integer",
+                    file=sys.stderr,
                 )
                 sys.exit(1)
             i += 1
@@ -122,7 +128,10 @@ def run(args: list[str]) -> None:
                 if max_out < 1:
                     raise ValueError
             except ValueError:
-                print("error: --max-out must be a positive integer", file=sys.stderr)
+                print(
+                    "error: --max-out must be a positive integer",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             i += 1
         elif tok == "--out-type":
@@ -143,7 +152,9 @@ def run(args: list[str]) -> None:
         elif tok == "--result-field":
             i += 1
             if i >= len(remaining):
-                print("error: --result-field requires name:type", file=sys.stderr)
+                print(
+                    "error: --result-field requires name:type", file=sys.stderr
+                )
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:

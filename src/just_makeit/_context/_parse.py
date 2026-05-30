@@ -109,7 +109,9 @@ def _build_params_parse(
                     f"    {meta['parse_type']} {raw} = {meta['parse_zero']};"
                 )
                 addr_exprs.append(f"&{raw}")
-                conv_lines.append(f"    {disp} {pname} = {meta['to_c'](pname)};")
+                conv_lines.append(
+                    f"    {disp} {pname} = {meta['to_c'](pname)};"
+                )
             else:
                 decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
                 addr_exprs.append(f"&{pname}")

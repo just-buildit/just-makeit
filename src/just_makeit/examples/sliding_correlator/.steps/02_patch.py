@@ -7,7 +7,9 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/sliding_correlator/sliding_correlator_core.h")
+header = pathlib.Path(
+    "native/inc/sliding_correlator/sliding_correlator_core.h"
+)
 impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
@@ -19,7 +21,10 @@ stub_re = re.compile(
 text = header.read_text()
 m = stub_re.search(text)
 if not m:
-    print("ERROR: stub not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stub not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 qualifier = m.group(1)

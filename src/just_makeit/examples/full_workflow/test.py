@@ -231,7 +231,11 @@ def run(root: Path) -> None:
     gain_bench = (
         proj / "src" / "my_dsp" / "benchmarks" / "bench_gain.py"
     ).read_text()
-    assert "perf_counter" in gain_bench or "timeit" in gain_bench or "_bench" in gain_bench
+    assert (
+        "perf_counter" in gain_bench
+        or "timeit" in gain_bench
+        or "_bench" in gain_bench
+    )
     assert 'if __name__ == "__main__"' in gain_bench
 
     # ema uses pytest-benchmark (benchmark fixture, no standalone main)
@@ -248,9 +252,7 @@ def run(root: Path) -> None:
     ).read_text()
     assert "import unittest" in gain_test
 
-    ema_test = (
-        proj / "src" / "my_dsp" / "tests" / "test_ema.py"
-    ).read_text()
+    ema_test = (proj / "src" / "my_dsp" / "tests" / "test_ema.py").read_text()
     assert "import pytest" in ema_test
     assert "import unittest" not in ema_test
 
@@ -288,10 +290,13 @@ p.write_text(src)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
     # 7. pytest (ema tests) — exit code 5 means no tests collected, also OK
-    _has_pytest = subprocess.run(
-        [sys.executable, "-c", "import pytest"],
-        capture_output=True,
-    ).returncode == 0
+    _has_pytest = (
+        subprocess.run(
+            [sys.executable, "-c", "import pytest"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
     if _has_pytest:
         r = subprocess.run(
             [sys.executable, "-m", "pytest", "src/", "-q"],

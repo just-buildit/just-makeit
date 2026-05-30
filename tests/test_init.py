@@ -47,7 +47,11 @@ class TestInitAddsFiles:
 
     def test_component_cmake(self, project_with_engine):
         assert (
-            project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt"
+            project_with_engine
+            / "native"
+            / "src"
+            / "engine"
+            / "CMakeLists.txt"
         ).exists()
 
     def test_c_test(self, project_with_engine):
@@ -69,12 +73,18 @@ class TestInitAddsFiles:
 
 class TestInitUpdatesCMake:
     def test_cmake_top_has_add_subdirectory(self, project_with_engine):
-        cmake = (project_with_engine / "CMakeLists.txt").read_text(encoding="utf-8")
+        cmake = (project_with_engine / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_subdirectory(native/src/engine)" in cmake
 
     def test_component_cmake_has_targets(self, project_with_engine):
         cmake = (
-            project_with_engine / "native" / "src" / "engine" / "CMakeLists.txt"
+            project_with_engine
+            / "native"
+            / "src"
+            / "engine"
+            / "CMakeLists.txt"
         ).read_text(encoding="utf-8")
         assert "Python3_add_library(engine" in cmake
         assert "engine_core" in cmake
@@ -107,7 +117,13 @@ class TestInitUpdatesConfig:
 class TestInitContent:
     def test_no_unreplaced_placeholders(self, project_with_engine):
         for path in project_with_engine.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 
@@ -138,7 +154,13 @@ class TestInitContent:
         init_run(project, "engine")
         init_run(project, "parser", [("depth", "int", "8")])
         for path in project.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 assert "<<" not in text, f"Unreplaced placeholder in {path}"
 

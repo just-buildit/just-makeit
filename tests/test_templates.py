@@ -93,7 +93,9 @@ class TestMakeStateCtx:
         assert "double gain;" in ctx["state_struct_fields"]
 
     def test_multi_var_struct_fields(self):
-        ctx = self._ctx([("gain", "double", "0.0"), ("offset", "float", "0.0f")])
+        ctx = self._ctx(
+            [("gain", "double", "0.0"), ("offset", "float", "0.0f")]
+        )
         assert "double gain;" in ctx["state_struct_fields"]
         assert "float offset;" in ctx["state_struct_fields"]
 
@@ -147,7 +149,9 @@ class TestMakeStateCtx:
 
     def test_init_params_pyi_multi(self):
         ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
-        assert ctx["init_params_pyi"] == "gain: np.float64 = 1.0, n: np.int32 = 4"
+        assert (
+            ctx["init_params_pyi"] == "gain: np.float64 = 1.0, n: np.int32 = 4"
+        )
 
     def test_init_params_pyi_float_strips_suffix(self):
         ctx = self._ctx([("x", "float", "0.5f")])
@@ -155,7 +159,10 @@ class TestMakeStateCtx:
 
     def test_getter_setter_stubs_pyi(self):
         ctx = self._ctx([("gain", "double", "0.0")])
-        assert "def get_gain(self) -> np.float64:" in ctx["getter_setter_stubs_pyi"]
+        assert (
+            "def get_gain(self) -> np.float64:"
+            in ctx["getter_setter_stubs_pyi"]
+        )
         assert (
             "def set_gain(self, value: np.float64) -> None:"
             in ctx["getter_setter_stubs_pyi"]
@@ -275,14 +282,18 @@ class TestMakeStateCtxArrays:
         assert "float coeffs[16];" in ctx["state_struct_fields"]
 
     def test_mixed_struct_preserves_order(self):
-        ctx = self._ctx([("gain", "double", "1.0"), ("coeffs", "float[16]", None)])
+        ctx = self._ctx(
+            [("gain", "double", "1.0"), ("coeffs", "float[16]", None)]
+        )
         fields = ctx["state_struct_fields"]
         assert "double gain;" in fields
         assert "float coeffs[16];" in fields
         assert fields.index("double gain;") < fields.index("float coeffs[16];")
 
     def test_array_excluded_from_create_params(self):
-        ctx = self._ctx([("gain", "double", "1.0"), ("coeffs", "float[16]", None)])
+        ctx = self._ctx(
+            [("gain", "double", "1.0"), ("coeffs", "float[16]", None)]
+        )
         assert "coeffs" not in ctx["create_params"]
         assert "double gain" in ctx["create_params"]
 
@@ -293,7 +304,8 @@ class TestMakeStateCtxArrays:
     def test_array_create_assignment_uses_memset(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
         assert (
-            "memset(obj->coeffs, 0, sizeof(obj->coeffs))" in ctx["create_assignments"]
+            "memset(obj->coeffs, 0, sizeof(obj->coeffs))"
+            in ctx["create_assignments"]
         )
 
     def test_array_reset_uses_memset(self):
@@ -344,7 +356,10 @@ class TestMakeStateCtxArrays:
 
     def test_array_copy_getter_method_c(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
-        assert "PyArray_SimpleNew(1, dims, NPY_FLOAT)" in ctx["getter_setter_methods_c"]
+        assert (
+            "PyArray_SimpleNew(1, dims, NPY_FLOAT)"
+            in ctx["getter_setter_methods_c"]
+        )
         assert "fir_get_coeffs(self->handle," in ctx["getter_setter_methods_c"]
 
     def test_array_view_getter_method_c(self):
@@ -364,7 +379,9 @@ class TestMakeStateCtxArrays:
         assert '"set_coeffs"' in pmd
 
     def test_array_excluded_from_init_params_pyi(self):
-        ctx = self._ctx([("gain", "double", "1.0"), ("coeffs", "float[16]", None)])
+        ctx = self._ctx(
+            [("gain", "double", "1.0"), ("coeffs", "float[16]", None)]
+        )
         assert "coeffs" not in ctx["init_params_pyi"]
         assert "gain" in ctx["init_params_pyi"]
 
@@ -373,14 +390,19 @@ class TestMakeStateCtxArrays:
         stubs = ctx["getter_setter_stubs_pyi"]
         assert "def get_coeffs(self) -> NDArray[np.float32]:" in stubs
         assert "def get_coeffs_view(self) -> NDArray[np.float32]:" in stubs
-        assert "def set_coeffs(self, value: NDArray[np.float32]) -> None:" in stubs
+        assert (
+            "def set_coeffs(self, value: NDArray[np.float32]) -> None:"
+            in stubs
+        )
 
     def test_array_pyi_view_docstring_warns(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
         assert "Do not use after destroy()" in ctx["getter_setter_stubs_pyi"]
 
     def test_array_excluded_from_create_args(self):
-        ctx = self._ctx([("gain", "double", "1.0"), ("coeffs", "float[16]", None)])
+        ctx = self._ctx(
+            [("gain", "double", "1.0"), ("coeffs", "float[16]", None)]
+        )
         assert ctx["py_create_args"] == "1.0"
         assert ctx["c_create_args"] == "1.0"
 
@@ -442,32 +464,46 @@ class TestNoStateWrapperNames:
 
     def test_no_state_extra_methods_use_obj_prefix(self):
         # gh#9: extra method wrappers must also use the Obj prefix.
-        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
-        ctx = make_methods_ctx("Resampler", "Resampler", methods, no_state=True)
+        methods = [
+            {"name": "process", "arg_type": "float", "return_type": "float"}
+        ]
+        ctx = make_methods_ctx(
+            "Resampler", "Resampler", methods, no_state=True
+        )
         assert "ResamplerObj_process" in ctx["extra_methods_c"]
         assert "ResamplerObj_process" in ctx["extra_methods_pymethoddef"]
 
     def test_normal_extra_methods_use_component_prefix(self):
-        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
+        methods = [
+            {"name": "process", "arg_type": "float", "return_type": "float"}
+        ]
         ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
         assert "Fir_process" in ctx["extra_methods_c"]
 
     def test_user_reset_suppresses_builtin_reset(self):
         # gh#10: if user defines reset in methods, the builtin must be cleared.
-        methods = [{"name": "reset", "arg_type": "void", "return_type": "void"}]
-        ctx = make_methods_ctx("Resampler", "Resampler", methods, no_state=True)
+        methods = [
+            {"name": "reset", "arg_type": "void", "return_type": "void"}
+        ]
+        ctx = make_methods_ctx(
+            "Resampler", "Resampler", methods, no_state=True
+        )
         assert ctx["builtin_reset_c"] == ""
         assert ctx["builtin_reset_pmd"] == ""
 
     def test_user_reset_suppresses_builtin_normal_object(self):
         # Suppression also applies to stateful objects.
-        methods = [{"name": "reset", "arg_type": "void", "return_type": "void"}]
+        methods = [
+            {"name": "reset", "arg_type": "void", "return_type": "void"}
+        ]
         ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
         assert ctx["builtin_reset_c"] == ""
         assert ctx["builtin_reset_pmd"] == ""
 
     def test_no_user_reset_does_not_suppress_builtin(self):
-        methods = [{"name": "process", "arg_type": "float", "return_type": "float"}]
+        methods = [
+            {"name": "process", "arg_type": "float", "return_type": "float"}
+        ]
         ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
         assert "builtin_reset_c" not in ctx or ctx.get("builtin_reset_c") != ""
 
@@ -506,7 +542,9 @@ class TestVariableOutputComplexParam:
         ctx = make_methods_ctx("filt", "Filt", methods)
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
-        assert "float complex x = (float)x_raw.real + (float)x_raw.imag * I" in c
+        assert (
+            "float complex x = (float)x_raw.real + (float)x_raw.imag * I" in c
+        )
 
 
 class TestInitParamsWithState:

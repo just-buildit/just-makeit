@@ -39,7 +39,9 @@ def _resolve(md: str, step_dir: Path) -> str:
 def assemble() -> str:
     parts: list[str] = []
     for md_file in sorted(STEPS.glob("*.md")):
-        parts.append(_resolve(md_file.read_text(encoding="utf-8").rstrip(), STEPS))
+        parts.append(
+            _resolve(md_file.read_text(encoding="utf-8").rstrip(), STEPS)
+        )
     return "\n\n---\n\n".join(parts) + "\n"
 
 
@@ -49,7 +51,10 @@ def main() -> None:
     if check:
         current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
         if current != result:
-            print("README.md is stale — run: python3 assemble.py", file=sys.stderr)
+            print(
+                "README.md is stale — run: python3 assemble.py",
+                file=sys.stderr,
+            )
             sys.exit(1)
         print("README.md is up to date.")
     else:

@@ -14,7 +14,9 @@ N = 4096
 rng = np.random.default_rng(42)
 
 # ── Generate test signal (normalised to [-0.9, 0.9] to avoid clipping) ────
-signal = (rng.standard_normal(N) + 1j * rng.standard_normal(N)).astype(np.complex64)
+signal = (rng.standard_normal(N) + 1j * rng.standard_normal(N)).astype(
+    np.complex64
+)
 signal *= 0.9 / np.max(np.abs(signal))
 
 # ── Write cf32 -> q15 ─────────────────────────────────────────────────────

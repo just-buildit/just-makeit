@@ -179,11 +179,16 @@ def run(args: list[str]) -> None:
         elif tok == "--array-arg":
             i += 1
             if i >= len(remaining):
-                print("error: --array-arg requires name:dtype", file=sys.stderr)
+                print(
+                    "error: --array-arg requires name:dtype", file=sys.stderr
+                )
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
-                print(f"error: --array-arg '{val}' must be name:dtype", file=sys.stderr)
+                print(
+                    f"error: --array-arg '{val}' must be name:dtype",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             aa_name, aa_dtype = val.split(":", 1)
             canonical = T.normalize_array_dtype(aa_dtype)
@@ -219,13 +224,18 @@ def run(args: list[str]) -> None:
                 if max_out_obj < 1:
                     raise ValueError
             except ValueError:
-                print("error: --max-out must be a positive integer", file=sys.stderr)
+                print(
+                    "error: --max-out must be a positive integer",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             i += 1
         elif tok == "--multi-output":
             i += 1
             if i >= len(remaining):
-                print("error: --multi-output requires a C type", file=sys.stderr)
+                print(
+                    "error: --multi-output requires a C type", file=sys.stderr
+                )
                 sys.exit(1)
             mo_val = remaining[i]
             if mo_val not in T._CTYPE_META:
@@ -303,7 +313,10 @@ def run(args: list[str]) -> None:
         no_step = True
 
     if no_state and state_vars:
-        print("error: --no-state and --state are mutually exclusive.", file=sys.stderr)
+        print(
+            "error: --no-state and --state are mutually exclusive.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     impl_body_obj: str | None = None
@@ -325,7 +338,9 @@ def run(args: list[str]) -> None:
         if reset_impl_spec is not None:
             reset_impl_body_obj = _I.load_impl(reset_impl_spec, replacements)
         if destroy_impl_spec is not None:
-            destroy_impl_body_obj = _I.load_impl(destroy_impl_spec, replacements)
+            destroy_impl_body_obj = _I.load_impl(
+                destroy_impl_spec, replacements
+            )
     _object.run(
         Path.cwd(),
         object_name,

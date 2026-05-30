@@ -100,7 +100,9 @@ def _bench_py_blocks(
     elif arg_type.endswith("[]"):
         # No steps(); bench buffer-arg step() with larger arrays instead
         _msa1 = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
-        _msa64 = "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        _msa64 = (
+            "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        )
         steps_py = (
             f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
             '    dt = _bench("step 1k buf", obj.step, x1k,'
@@ -115,7 +117,9 @@ def _bench_py_blocks(
         )
     else:
         _msa1 = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
-        _msa64 = "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        _msa64 = (
+            "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
+        )
         steps_py = (
             f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
             '    dt = _bench("steps 1k", obj.steps, x1k,'
@@ -143,7 +147,9 @@ def _pytest_bm_blocks(
     bm_steps_py — benchmark function(s) for steps() or larger buffers
     """
     if arg_type == "void":
-        bm_step = "\ndef test_bench_step(benchmark, obj):\n    benchmark(obj.step)\n"
+        bm_step = (
+            "\ndef test_bench_step(benchmark, obj):\n    benchmark(obj.step)\n"
+        )
         bm_steps = (
             "\n"
             "def test_bench_steps_1k(benchmark, obj):\n"
@@ -275,7 +281,9 @@ def make_sample_ctx(
     # Bench inner-loop key: the indented for-loop that wraps the step() call.
     # Scalar/void: iterate BENCH_N times per outer iteration.
     # Array: no inner loop — one step() call processes the whole buffer.
-    _bench_inner_loop_scalar = "        for (int i = 0; i < BENCH_N; i++)\n            "
+    _bench_inner_loop_scalar = (
+        "        for (int i = 0; i < BENCH_N; i++)\n            "
+    )
 
     if arg_type == "void":
         # Generator (or void-in/void-out) object.
@@ -336,7 +344,9 @@ def make_sample_ctx(
             **dict(
                 zip(
                     ("bench_step_py", "bench_steps_py"),
-                    _bench_py_blocks("void", "1", out_np_dtype, is_void_return),
+                    _bench_py_blocks(
+                        "void", "1", out_np_dtype, is_void_return
+                    ),
                 )
             ),
             **dict(
@@ -449,7 +459,9 @@ def make_sample_ctx(
     # pure_x_* keys: used inside pure-scalar fn() to parse the x argument.
     samp_disp = _ctype_display(arg_type)
     if "parse_type" in samp:
-        pure_x_local = f"    {samp['parse_type']} x_raw = {samp['parse_zero']};"
+        pure_x_local = (
+            f"    {samp['parse_type']} x_raw = {samp['parse_zero']};"
+        )
         pure_x_parse_arg = "&x_raw"
         pure_x_to_c = f"    {samp_disp} x = {samp['to_c']('x')};\n"
     else:
@@ -468,13 +480,17 @@ def make_sample_ctx(
         "in_np_enum": _NP_ENUM[in_np_dtype],
         "out_np_enum": _NP_ENUM[out_np_dtype],
         "in_py_hint": _KIND_PY_ISINSTANCE[samp["kind"]],
-        "out_py_hint": ("None" if is_void_return else _KIND_PY_ISINSTANCE[ret["kind"]]),
+        "out_py_hint": (
+            "None" if is_void_return else _KIND_PY_ISINSTANCE[ret["kind"]]
+        ),
         "out_py_isinstance": (
             "None" if is_void_return else _KIND_PY_ISINSTANCE[ret["kind"]]
         ),
         "in_py_test_val": _KIND_PY_TEST_VAL[samp["kind"]],
         "step_parse_block": _step_parse_block(arg_type, samp),
-        "step_return_expr": ("Py_RETURN_NONE" if is_void_return else ret["to_py"]("y")),
+        "step_return_expr": (
+            "Py_RETURN_NONE" if is_void_return else ret["to_py"]("y")
+        ),
         "bench_in_init": _bench_in_init(arg_type, samp),
         "bench_warmup": _bench_warmup(samp),
         "bench_in_decl": (

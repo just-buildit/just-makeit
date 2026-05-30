@@ -101,7 +101,9 @@ def run(root: Path) -> None:
         ("acc_cf64", "double _Complex[]", "double _Complex"),
     ]:
         method_run(
-            dest, obj, "get",
+            dest,
+            obj,
+            "get",
             module="accumulator",
             arg_type="void",
             return_type=scalar_rt,
@@ -109,7 +111,9 @@ def run(root: Path) -> None:
             multi_output=[],
         )
         method_run(
-            dest, obj, "dump",
+            dest,
+            obj,
+            "dump",
             module="accumulator",
             arg_type="void",
             return_type=scalar_rt,
@@ -117,7 +121,9 @@ def run(root: Path) -> None:
             multi_output=[],
         )
         method_run(
-            dest, obj, "madd",
+            dest,
+            obj,
+            "madd",
             module="accumulator",
             arg_type="void",
             return_type="void",
@@ -126,7 +132,9 @@ def run(root: Path) -> None:
             params=[("x", elem_type), ("h", "float[]")],
         )
         method_run(
-            dest, obj, "add2d",
+            dest,
+            obj,
+            "add2d",
             module="accumulator",
             arg_type="void",
             return_type="void",
@@ -135,7 +143,9 @@ def run(root: Path) -> None:
             params=[("x", elem_type)],
         )
         method_run(
-            dest, obj, "madd2d",
+            dest,
+            obj,
+            "madd2d",
             module="accumulator",
             arg_type="void",
             return_type="void",

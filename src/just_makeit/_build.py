@@ -21,7 +21,9 @@ def _require(exe: str) -> str:
     return path
 
 
-def _cmake_configure(root: Path, build_dir: Path, build_type: str = "Release") -> None:
+def _cmake_configure(
+    root: Path, build_dir: Path, build_type: str = "Release"
+) -> None:
     cmake = _require("cmake")
     python = sys.executable
     cmd = [
@@ -91,7 +93,15 @@ def _run_python_tests(root: Path, extra: list[str]) -> bool:
         cmd = [sys.executable, "-m", "pytest", "src/", "-v", *extra]
         label = "pytest"
     else:
-        cmd = [sys.executable, "-m", "unittest", "discover", "-s", "src/", "-v"]
+        cmd = [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "src/",
+            "-v",
+        ]
         label = "unittest discover"
 
     print(f"just-makeit: {label}: {shlex.join(cmd)}", flush=True)
@@ -123,7 +133,10 @@ def cmd_dry_run() -> None:
 
     pyproject = root / "pyproject.toml"
     if not pyproject.exists():
-        print("error: no pyproject.toml found in current directory.", file=sys.stderr)
+        print(
+            "error: no pyproject.toml found in current directory.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     print(f"just-makeit dry-run  {root}")

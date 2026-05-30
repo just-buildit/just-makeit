@@ -67,7 +67,9 @@ def run(root: Path) -> None:
     app_c_text = app_c.read_text(encoding="utf-8")
     # The generated stub must include the component header so it can call
     # the create/destroy lifecycle functions.
-    assert "ema/ema_core.h" in app_c_text, "C stub must include <ema/ema_core.h>"
+    assert "ema/ema_core.h" in app_c_text, (
+        "C stub must include <ema/ema_core.h>"
+    )
     assert "ema_create" in app_c_text, "C stub must call ema_create"
     assert "ema_destroy" in app_c_text, "C stub must call ema_destroy"
 
@@ -75,7 +77,9 @@ def run(root: Path) -> None:
     assert "add_executable(ema_filter" in cmake_text, (
         "CMakeLists.txt must contain add_executable(ema_filter"
     )
-    assert "ema_core" in cmake_text, "CMakeLists.txt must link against ema_core"
+    assert "ema_core" in cmake_text, (
+        "CMakeLists.txt must link against ema_core"
+    )
 
     # ── 3. Second --target c call must be idempotent. ────────────────────
     # _splice_cmake replaces the existing sentinel block rather than
@@ -123,7 +127,9 @@ def run(root: Path) -> None:
     assert "# /// script" in pep723_text, (
         "PEP 723 script must contain the # /// script block"
     )
-    assert "my_ema" in pep723_text, "PEP 723 script must reference the my_ema package"
+    assert "my_ema" in pep723_text, (
+        "PEP 723 script must reference the my_ema package"
+    )
 
     # ── 6. TOML reflects the last run (pep723 wins). ─────────────────────
     # Each call to jm_app overwrites [app] in the TOML; the last one wins.

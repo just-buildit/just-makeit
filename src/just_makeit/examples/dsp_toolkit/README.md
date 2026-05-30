@@ -62,7 +62,11 @@ before you write a single line of logic.
 Open `native/inc/gain/gain_core.h` and replace the `gain_step` stub — it's a one-liner:
 
 ```c
-static inline float gain_step(const gain_state_t *state, float x) { return state->gain * x; }
+static inline float
+gain_step (const gain_state_t *state, float x)
+{
+  return state->gain * x;
+}
 ```
 
 `gain_steps()` in `gain_core.c` loops over this automatically — no changes needed there.
@@ -100,10 +104,13 @@ State:
 `ema_step` must write back to `state->prev`, so the signature drops `const`:
 
 ```c
-static inline float ema_step(ema_state_t *state, float x) {
-    float y     = (float)state->alpha * x + (float)(1.0 - state->alpha) * state->prev;
-    state->prev = y;
-    return y;
+static inline float
+ema_step (ema_state_t *state, float x)
+{
+  float y
+      = (float)state->alpha * x + (float)(1.0 - state->alpha) * state->prev;
+  state->prev = y;
+  return y;
 }
 ```
 
@@ -134,7 +141,10 @@ stub_re = re.compile(
 text = header.read_text()
 m = stub_re.search(text)
 if not m:
-    print("ERROR: stub not found — already patched or file changed", file=sys.stderr)
+    print(
+        "ERROR: stub not found — already patched or file changed",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 qualifier = m.group(1)

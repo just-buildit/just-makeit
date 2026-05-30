@@ -163,10 +163,10 @@ Python call:
 out = decim.execute(block)   # zero-copy view; valid until next call
 ```
 
-| Use case                                   | `_max_out` at init | Use `--variable-output`? |
-| ------------------------------------------ | ------------------ | ------------------------ |
-| Decimator, fixed ratio `R`, block size `B` | `ceil(B / R)`      | Yes                      |
-| Buffer / FIFO with fixed capacity `C`      | `C`                | Yes                      |
+| Use case                                   | `_max_out` at init | Use `--variable-output`?  |
+| ------------------------------------------ | ------------------ | ------------------------- |
+| Decimator, fixed ratio `R`, block size `B` | `ceil(B / R)`      | Yes                       |
+| Buffer / FIFO with fixed capacity `C`      | `C`                | Yes                       |
 | FIR filter, output ≤ input length          | 0 (unknown)        | Yes — lazy-alloc kicks in |
 | NCO extended outputs, 1:1 rate             | 0 (unknown)        | Yes — lazy-alloc kicks in |
 

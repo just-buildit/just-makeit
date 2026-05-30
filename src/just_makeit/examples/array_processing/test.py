@@ -134,7 +134,9 @@ def run(root: Path) -> None:
         cwd=proj_decim,
     )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj_decim)
-    _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_decim)
+    _cmd(
+        ["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_decim
+    )
 
     # ── Pattern 5: --arg-type type[] (array-buffer primary arg) ───────────────
     # Objects whose primary operation processes a whole buffer in one call —
@@ -151,11 +153,15 @@ def run(root: Path) -> None:
     proj_buf = root / "my_buf"
 
     # step() takes a numpy array, returns int — no steps() generated
-    core_h = (proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h").read_text()
+    core_h = (
+        proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
+    ).read_text()
     assert "const float complex *x, size_t x_len" in core_h, (
         "array arg not in step signature"
     )
-    assert "buf_proc_steps" not in core_h, "steps() must not be generated for array arg"
+    assert "buf_proc_steps" not in core_h, (
+        "steps() must not be generated for array arg"
+    )
 
     _cmd(
         [
@@ -178,7 +184,9 @@ def run(root: Path) -> None:
     assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi, (
         f"array-arg step stub missing or wrong:\n{pyi}"
     )
-    assert "def steps" not in pyi, "steps() stub must be absent for array-arg object"
+    assert "def steps" not in pyi, (
+        "steps() stub must be absent for array-arg object"
+    )
 
     # Also verify ema's pyi from pattern 1
     ema_pyi = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()

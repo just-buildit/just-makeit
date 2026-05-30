@@ -77,24 +77,34 @@ class TestCoreUpdated:
     """just-makeit function appends stubs to _core.c and _core.h."""
 
     def test_core_c_has_stub(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (fft_module / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "fft_global_setup(void)" in text
 
     def test_core_c_has_implement_marker(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (fft_module / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "<<IMPLEMENT: fft_global_setup>>" in text
 
     def test_core_c_has_return_none_equivalent(self, fft_module):
         # void function: no return statement, just empty body
-        text = (fft_module / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (fft_module / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "fft_global_setup(void)" in text
 
     def test_core_h_has_declaration(self, fft_module):
-        text = (fft_module / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (fft_module / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "void fft_global_setup(void);" in text
 
     def test_core_h_declaration_before_endif(self, fft_module):
-        text = (fft_module / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (fft_module / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         decl_pos = text.index("void fft_global_setup(void);")
         endif_pos = text.index("#endif /* FFT_CORE_H */")
         assert decl_pos < endif_pos
@@ -102,11 +112,15 @@ class TestCoreUpdated:
 
 class TestExtCHeader:
     def test_core_h_included_in_ext_c(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '#include "fft/fft_core.h"' in ext
 
     def test_core_h_included_after_numpy(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         numpy_pos = ext.index("#include <numpy/arrayobject.h>")
         include_pos = ext.index('#include "fft/fft_core.h"')
         assert numpy_pos < include_pos
@@ -122,19 +136,27 @@ class TestExtCHeader:
 
 class TestExtCFooter:
     def test_pymethoddef_array_present(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "static PyMethodDef Fft_methods[]" in ext
 
     def test_pymethoddef_has_bind_wrapper(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"fft_global_setup", _bind_fft_global_setup' in ext
 
     def test_pymethoddef_has_sentinel(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "{NULL, NULL, 0, NULL}" in ext
 
     def test_m_methods_not_null(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert ".m_methods = Fft_methods," in ext
 
     def test_m_methods_null_without_functions(self, tmp_path):
@@ -144,11 +166,15 @@ class TestExtCFooter:
         assert ".m_methods = NULL," in ext
 
     def test_doc_string_in_methoddef(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"Initialize FFT."' in ext
 
     def test_bind_wrapper_present_in_ext_c(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "_bind_fft_global_setup(PyObject *self" in ext
 
     def test_noarg_bind_does_not_reference_unused_args(self, fft_module):
@@ -158,7 +184,9 @@ class TestExtCFooter:
         identifier — `(void)args;` would be an undeclared-identifier
         compile error.
         """
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         body = ext.split("_bind_fft_global_setup(PyObject *self", 1)[1]
         body = body.split("}", 1)[0]
         assert "Py_UNUSED(args)" in body
@@ -167,30 +195,42 @@ class TestExtCFooter:
 
 class TestTwoFunctions:
     def test_both_stubs_in_core_c(self, two_functions):
-        text = (two_functions / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (two_functions / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "fft_global_setup(void)" in text
         assert "fft1d_execute(void)" in text
 
     def test_both_declarations_in_core_h(self, two_functions):
-        text = (two_functions / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (two_functions / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "void fft_global_setup(void);" in text
         assert "void fft1d_execute(void);" in text
 
     def test_both_bind_wrappers_in_ext_c(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"fft_global_setup", _bind_fft_global_setup' in ext
         assert '"fft1d_execute", _bind_fft1d_execute' in ext
 
     def test_first_entry_before_second(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert ext.index("fft_global_setup") < ext.index("fft1d_execute")
 
     def test_second_doc_in_methoddef(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"Execute 1-D FFT."' in ext
 
     def test_default_doc_when_no_doc(self, two_functions):
-        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"fft_global_setup."' in ext
 
 
@@ -209,7 +249,10 @@ class TestConfig:
     def test_config_records_two_functions(self, two_functions):
         cfg = load(two_functions)
         fns = cfg_module_functions(cfg, "fft")
-        assert [f["name"] for f in fns] == ["fft_global_setup", "fft1d_execute"]
+        assert [f["name"] for f in fns] == [
+            "fft_global_setup",
+            "fft1d_execute",
+        ]
 
     def test_config_empty_when_no_functions(self, tmp_path):
         root = tmp_path / "dsp"
@@ -218,7 +261,9 @@ class TestConfig:
         assert cfg_module_functions(cfg, "fft") == []
 
     def test_toml_serializes_functions_section(self, fft_module):
-        toml_text = (fft_module / "just-makeit.toml").read_text(encoding="utf-8")
+        toml_text = (fft_module / "just-makeit.toml").read_text(
+            encoding="utf-8"
+        )
         assert "[[module.fft.functions]]" in toml_text
         assert 'name = "fft_global_setup"' in toml_text
         assert 'doc = "Initialize FFT."' in toml_text
@@ -234,7 +279,9 @@ class TestCoexistenceWithObjects:
         assert "static PyMethodDef Dsp_methods[]" in ext
         assert '"global_setup", _bind_global_setup' in ext
 
-    def test_core_h_included_with_objects(self, module_with_objects_and_functions):
+    def test_core_h_included_with_objects(
+        self, module_with_objects_and_functions
+    ):
         root = module_with_objects_and_functions
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert '#include "dsp/dsp_core.h"' in ext
@@ -293,38 +340,54 @@ class TestFunctionTyped:
         return root
 
     def test_core_c_has_stub(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "compute_window" in text
 
     def test_core_c_has_named_params(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "size_t n" in text
         assert "float beta" in text
 
     def test_core_c_suppresses_params(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "(void)n;" in text
         assert "(void)beta;" in text
 
     def test_core_c_has_placeholder_return(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "return (float)" in text
 
     def test_core_h_has_declaration(self, typed_fn):
-        text = (typed_fn / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (typed_fn / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "float compute_window(size_t n, float beta);" in text
 
     def test_ext_c_wrapper_has_parse_tuple(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         # size_t -> "K", float -> "f"
         assert '"Kf"' in text
 
     def test_ext_c_wrapper_calls_fn(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "compute_window(n, beta)" in text
 
     def test_ext_c_wrapper_returns_float(self, typed_fn):
-        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (typed_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyFloat_FromDouble" in text
 
     def test_complex_param_uses_raw_var(self, tmp_path):
@@ -345,7 +408,11 @@ class TestFunctionTyped:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         function_run(
-            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+            root,
+            "reset_fft",
+            "fft",
+            params=[("n", "size_t")],
+            return_type="void",
         )
         text = (root / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
         assert "return (void)" not in text
@@ -354,17 +421,25 @@ class TestFunctionTyped:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         function_run(
-            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+            root,
+            "reset_fft",
+            "fft",
+            params=[("n", "size_t")],
+            return_type="void",
         )
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert "Py_RETURN_NONE" in ext
 
     def test_no_params_generates_void_stub(self, fft_module):
-        text = (fft_module / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (fft_module / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "fft_global_setup(void)" in text
 
     def test_no_params_wrapper_uses_noargs(self, fft_module):
-        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "METH_NOARGS" in ext
 
     def test_config_stores_params_and_return_type(self, typed_fn):
@@ -381,7 +456,11 @@ class TestFunctionTyped:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         function_run(
-            root, "reset_fft", "fft", params=[("n", "size_t")], return_type="void"
+            root,
+            "reset_fft",
+            "fft",
+            params=[("n", "size_t")],
+            return_type="void",
         )
         cfg = load(root)
         fns = cfg_module_functions(cfg, "fft")
@@ -390,7 +469,13 @@ class TestFunctionTyped:
 
     def test_no_stray_placeholders_typed(self, typed_fn):
         for path in typed_fn.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
 
@@ -425,59 +510,87 @@ class TestFunctionWithArrayParam:
         return root
 
     def test_core_c_has_const_ptr_param(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "const float complex *data" in text
 
     def test_core_c_has_len_param(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "size_t data_len" in text
 
     def test_core_c_suppresses_ptr_and_len(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "(void)data;" in text
         assert "(void)data_len;" in text
 
     def test_core_h_declaration(self, arr_fn):
-        text = (arr_fn / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (arr_fn / "native/inc/fft/fft_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "apply_window" in text
         assert "const float complex *data" in text
 
     def test_ext_c_has_pyarray_from_otf(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_FROM_OTF" in text
         assert "NPY_COMPLEX64" in text
 
     def test_ext_c_format_has_O(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"O"' in text
 
     def test_ext_c_passes_ptr_and_len(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "data_len" in text
 
     def test_ext_c_has_decref(self, arr_fn):
-        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (arr_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_DECREF(data_arr)" in text
 
     def test_mixed_scalar_and_array_in_core(self, mixed_fn):
-        text = (mixed_fn / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
+        text = (mixed_fn / "native/src/fft/fft_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "float gain" in text
         assert "const float *buf" in text
         assert "size_t buf_len" in text
 
     def test_mixed_format_string_in_ext(self, mixed_fn):
-        text = (mixed_fn / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
+        text = (mixed_fn / "native/src/fft/fft_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert '"fO"' in text
 
     def test_config_stores_array_type(self, arr_fn):
         cfg = load(arr_fn)
         fns = cfg_module_functions(cfg, "fft")
         fn = next(f for f in fns if f["name"] == "apply_window")
-        assert fn.get("params") == [{"name": "data", "type": "float _Complex[]"}]
+        assert fn.get("params") == [
+            {"name": "data", "type": "float _Complex[]"}
+        ]
 
     def test_no_stray_placeholders(self, arr_fn):
         for path in arr_fn.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
 
@@ -485,7 +598,13 @@ class TestFunctionWithArrayParam:
 class TestNoStrayPlaceholders:
     def _check(self, root: Path) -> None:
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 text = path.read_text(encoding="utf-8")
                 m = _STRAY_PLACEHOLDER.search(text)
                 assert m is None, f"Stray placeholder in {path}: {m.group()!r}"
@@ -525,31 +644,43 @@ class TestInlineFunction:
         return root
 
     def test_core_h_has_static_inline(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "static inline" in h
         assert "f32_to_i16" in h
 
     def test_core_h_has_implement_comment(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "<<IMPLEMENT: f32_to_i16>>" in h
 
     def test_core_h_has_placeholder_return(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "return" in h and "placeholder" in h
 
     def test_core_c_has_no_entry(self, inline_fn):
-        c = (inline_fn / "native/src/cvt/cvt_core.c").read_text(encoding="utf-8")
+        c = (inline_fn / "native/src/cvt/cvt_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "f32_to_i16" not in c
 
     def test_core_h_has_no_bare_declaration(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(encoding="utf-8")
+        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+            encoding="utf-8"
+        )
         # A bare forward declaration would have a semicolon-terminated signature
         # with no body.  The inline stub must NOT produce such a line.
         assert "int16_t f32_to_i16(float x, float scale);" not in h
 
     def test_ext_c_wrapper_present(self, inline_fn):
         # The Python binding calls the inline function just like any other.
-        agg = (inline_fn / "native/src/cvt/cvt_ext.c").read_text(encoding="utf-8")
+        agg = (inline_fn / "native/src/cvt/cvt_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "_bind_f32_to_i16" in agg
 
     def test_config_stores_inline_true(self, inline_fn):
@@ -656,7 +787,9 @@ class TestOutArrayParamNotConst:
         return root
 
     def test_decl_output_not_const(self, out_param_fn):
-        h = (out_param_fn / "native/inc/io/io_core.h").read_text(encoding="utf-8")
+        h = (out_param_fn / "native/inc/io/io_core.h").read_text(
+            encoding="utf-8"
+        )
         # Output must be `float *output`, not `const float *output`.
         assert "float *output" in h
         assert "const float *output" not in h
@@ -664,7 +797,9 @@ class TestOutArrayParamNotConst:
         assert "const float *input" in h
 
     def test_impl_output_not_const(self, out_param_fn):
-        c = (out_param_fn / "native/src/io/io_core.c").read_text(encoding="utf-8")
+        c = (out_param_fn / "native/src/io/io_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "float *output" in c
         assert "const float *output" not in c
         assert "const float *input" in c

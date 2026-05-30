@@ -17,7 +17,9 @@ print(f"sine   power (expect ~0.500): {y.real:.4f}")
 
 # --- white noise: expected power ≈ variance --------------------------------
 rng = np.random.default_rng(42)
-noise = (rng.standard_normal(128) + 1j * rng.standard_normal(128)) / math.sqrt(2)
+noise = (rng.standard_normal(128) + 1j * rng.standard_normal(128)) / math.sqrt(
+    2
+)
 for x in noise:
     y = est.step(complex(x))
 print(f"noise  power (expect ~1.000): {y.real:.4f}")

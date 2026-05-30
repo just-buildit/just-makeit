@@ -155,9 +155,7 @@ def _bench_method_block(component: str, m: dict) -> str:
             "        }",
         ]
 
-    add_line = (
-        f'        jm_bench_add(&_bench, "{name}", _times_{name}, ITERATIONS, BENCH_N);'
-    )
+    add_line = f'        jm_bench_add(&_bench, "{name}", _times_{name}, ITERATIONS, BENCH_N);'
     lines += [
         add_line,
         "        {",
@@ -262,17 +260,23 @@ def make_methods_ctx(
         none_on_empty: bool = m.get("none_on_empty", False)
 
         ret_disp = _ctype_display(return_type)
-        _ret_elem = return_type[:-2] if return_type.endswith("[]") else return_type
+        _ret_elem = (
+            return_type[:-2] if return_type.endswith("[]") else return_type
+        )
         ret_meta = _CTYPE_META.get(_ret_elem)
         ret_np = _NP_ENUM.get(ret_meta["py_type"]) if ret_meta else "NPY_FLOAT"
 
         out_type: str | None = m.get("out_type")
         out_divisor: int = int(m.get("out_divisor", 1))
-        _vo_out_elem = out_type if (variable_output and out_type) else return_type
+        _vo_out_elem = (
+            out_type if (variable_output and out_type) else return_type
+        )
         _vo_out_disp = _ctype_display(_vo_out_elem)
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
         _vo_out_np = (
-            _NP_ENUM.get(_vo_out_meta["py_type"]) if _vo_out_meta else "NPY_FLOAT"
+            _NP_ENUM.get(_vo_out_meta["py_type"])
+            if _vo_out_meta
+            else "NPY_FLOAT"
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
@@ -284,13 +288,17 @@ def make_methods_ctx(
 
         _param_docs = " * @param state  Must be non-NULL.\n"
         if has_arg:
-            _param_docs += f" * @param x      Input ({_ctype_display(arg_type)}).\n"
+            _param_docs += (
+                f" * @param x      Input ({_ctype_display(arg_type)}).\n"
+            )
         for _p in params:
             _pdisp = _ctype_display(_p["type"])
             _param_docs += f" * @param {_p['name']}  {_pdisp} parameter.\n"
         _doc_ret_disp = _vo_out_disp if variable_output else ret_disp
         _ret_doc = (
-            f" * @return Result ({_doc_ret_disp}).\n" if return_type != "void" else ""
+            f" * @return Result ({_doc_ret_disp}).\n"
+            if return_type != "void"
+            else ""
         )
         _method_doc = f"/**\n * @brief {name}.\n *\n{_param_docs}{_ret_doc} */"
         _ndecl = len(decl_lines)
@@ -301,7 +309,9 @@ def make_methods_ctx(
         elif arg_type.endswith("[]"):
             _elem = arg_type[:-2]
             _in_dtype_str = (
-                _CTYPE_META[_elem]["py_type"] if _elem in _CTYPE_META else "np.float32"
+                _CTYPE_META[_elem]["py_type"]
+                if _elem in _CTYPE_META
+                else "np.float32"
             )
             _in_example = f"np.zeros(4, dtype={_in_dtype_str})"
         elif arg_type in _CTYPE_META:
@@ -374,7 +384,9 @@ def make_methods_ctx(
                     f"}}"
                 )
             method_c_parts.append(wrapper)
-            _ret_np_str = _CTYPE_META[return_type]["py_type"].replace("np.", "")
+            _ret_np_str = _CTYPE_META[return_type]["py_type"].replace(
+                "np.", ""
+            )
             _batch_sig = f"{name}({'x' if has_arg else 'n'}) -> ndarray"
             _batch_doc_lines = [
                 _batch_sig,
@@ -444,7 +456,9 @@ def make_methods_ctx(
                         _vp_parts.append(f"const {_e} *{_p['name']}")
                         _vp_parts.append(f"size_t {_p['name']}_len")
                     else:
-                        _vp_parts.append(f"{_ctype_display(_p['type'])} {_p['name']}")
+                        _vp_parts.append(
+                            f"{_ctype_display(_p['type'])} {_p['name']}"
+                        )
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out"
                     f"({component}_state_t *state);\n"
@@ -466,7 +480,9 @@ def make_methods_ctx(
                 f", {_ctype_display(rt)} *out{i + 1}"
                 for i, rt in enumerate(multi_output)
             )
-            out_type_param = f", {_ctype_display(out_type)} *out" if out_type else ""
+            out_type_param = (
+                f", {_ctype_display(out_type)} *out" if out_type else ""
+            )
             if has_params:
                 p_parts: list[str] = []
                 if has_arg:
@@ -482,7 +498,9 @@ def make_methods_ctx(
                         p_parts.append(f"const {e_disp} *{p['name']}")
                         p_parts.append(f"size_t {p['name']}_len")
                     else:
-                        p_parts.append(f"{_ctype_display(p['type'])} {p['name']}")
+                        p_parts.append(
+                            f"{_ctype_display(p['type'])} {p['name']}"
+                        )
                 c_param_str = ", ".join(p_parts)
                 decl_lines.append(
                     f"{ret_disp} {component}_{name}"
@@ -590,7 +608,9 @@ def make_methods_ctx(
                         _pb_lines += [
                             f"    PyArrayObject *{_pn}_arr = NULL;",
                         ]
-                        _cd_parts.append(f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)")
+                        _cd_parts.append(
+                            f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)"
+                        )
                         _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
                         _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
                         if _first_arr is None:
@@ -599,15 +619,21 @@ def make_methods_ctx(
                         _pt_meta = _CTYPE_META.get(_pt, {})
                         _fmt_char = _pt_meta.get("fmt", "d")
                         _has_parse = "parse_type" in _pt_meta
-                        _parse_t = _pt_meta.get("parse_type", _ctype_display(_pt))
+                        _parse_t = _pt_meta.get(
+                            "parse_type", _ctype_display(_pt)
+                        )
                         _parse_zero = _pt_meta.get("parse_zero", "0")
                         if _has_parse:
                             _raw = f"{_pn}_raw"
-                            _pb_lines.append(f"    {_parse_t} {_raw} = {_parse_zero};")
+                            _pb_lines.append(
+                                f"    {_parse_t} {_raw} = {_parse_zero};"
+                            )
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_raw}")
                         else:
-                            _pb_lines.append(f"    {_parse_t} {_pn} = {_parse_zero};")
+                            _pb_lines.append(
+                                f"    {_parse_t} {_pn} = {_parse_zero};"
+                            )
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
@@ -639,7 +665,9 @@ def make_methods_ctx(
                         _conv_lines.append(
                             f"    {_pt_disp} {_pn} = {_pm['to_c'](_pn)};"
                         )
-                parse_block += "\n".join(_conv_lines) + "\n" if _conv_lines else ""
+                parse_block += (
+                    "\n".join(_conv_lines) + "\n" if _conv_lines else ""
+                )
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
                 _lazy_fallback = (
@@ -666,7 +694,9 @@ def make_methods_ctx(
                 )
                 np_enums = [
                     _NP_ENUM[
-                        _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"]
+                        _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt][
+                            "py_type"
+                        ]
                     ]
                     for rt in all_rts
                 ]
@@ -684,7 +714,9 @@ def make_methods_ctx(
                     f" (PyObject *)self); Py_INCREF(self);"
                     for i in range(len(all_rts))
                 )
-                null_checks = " || ".join(f"!arr{i}" for i in range(len(all_rts)))
+                null_checks = " || ".join(
+                    f"!arr{i}" for i in range(len(all_rts))
+                )
                 decref_cleanup = " ".join(
                     f"Py_XDECREF(arr{i});" for i in range(len(all_rts))
                 )
@@ -716,11 +748,15 @@ def make_methods_ctx(
                 )
             else:
                 _none_on_empty_line = (
-                    "    if (!n_out) Py_RETURN_NONE;\n" if none_on_empty else ""
+                    "    if (!n_out) Py_RETURN_NONE;\n"
+                    if none_on_empty
+                    else ""
                 )
                 _decref_early_vo = (
                     " ".join(
-                        line.strip() for line in decref_in.splitlines() if line.strip()
+                        line.strip()
+                        for line in decref_in.splitlines()
+                        if line.strip()
                     )
                     + " "
                     if decref_in.strip()
@@ -768,9 +804,9 @@ def make_methods_ctx(
                 )
             _all_rts_vo = [_vo_out_elem] + list(multi_output)
             _dtype_strs_vo = [
-                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt]["py_type"].replace(
-                    "np.", ""
-                )
+                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt][
+                    "py_type"
+                ].replace("np.", "")
                 for rt in _all_rts_vo
             ]
             _ret_hint_vo = (
@@ -877,7 +913,9 @@ def make_methods_ctx(
                 f"}}"
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
-            _rf_call_arg = f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
+            _rf_call_arg = (
+                f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
+            )
             _rf_doc_lines = [
                 f"{name}({'x' if has_arg else ''}) -> list[tuple]",
                 "",
@@ -901,7 +939,9 @@ def make_methods_ctx(
             if has_params and has_arg:
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
-                parse_block, _p_call, _p_cleanup = _build_params_parse(_combined)
+                parse_block, _p_call, _p_cleanup = _build_params_parse(
+                    _combined
+                )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
@@ -912,7 +952,9 @@ def make_methods_ctx(
                 meth_flags = "METH_VARARGS"
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
-                parse_block, _p_call, _p_cleanup = _build_params_parse([_x_param])
+                parse_block, _p_call, _p_cleanup = _build_params_parse(
+                    [_x_param]
+                )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = f"{Component}Object *self, PyObject *args"
                 meth_flags = "METH_VARARGS"
@@ -924,7 +966,9 @@ def make_methods_ctx(
             else:
                 parse_block = ""
                 call_args_c = "self->handle"
-                fn_sig = f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
+                fn_sig = (
+                    f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
+                )
                 meth_flags = "METH_NOARGS"
 
             if multi_output:
@@ -933,7 +977,9 @@ def make_methods_ctx(
                     f" = {_CTYPE_META[rt]['zero']};\n"
                     for i, rt in enumerate(multi_output)
                 )
-                extra_call = "".join(f", &out{i + 1}" for i in range(len(multi_output)))
+                extra_call = "".join(
+                    f", &out{i + 1}" for i in range(len(multi_output))
+                )
                 if ret_meta:
                     call_line = (
                         f"    {ret_disp} y ="
@@ -942,7 +988,9 @@ def make_methods_ctx(
                     )
                     py_primary = ret_meta["to_py"]("y")
                 else:
-                    call_line = f"    {component}_{name}({call_args_c}{extra_call});\n"
+                    call_line = (
+                        f"    {component}_{name}({call_args_c}{extra_call});\n"
+                    )
                     py_primary = "Py_None"
                 pack_parts = [py_primary] + [
                     _CTYPE_META[rt]["to_py"](f"out{i + 1}")
@@ -962,7 +1010,11 @@ def make_methods_ctx(
                 out_disp = _ctype_display(out_type)
                 out_npy = _CTYPE_TO_NPY[out_type]
                 first_arr = next(
-                    (p["name"] for p in params if is_array_param_type(p["type"])),
+                    (
+                        p["name"]
+                        for p in params
+                        if is_array_param_type(p["type"])
+                    ),
                     None,
                 )
                 # Buffer size: prefer the length of the first array param.
@@ -978,7 +1030,8 @@ def make_methods_ctx(
                             p["name"]
                             for p in params
                             if not is_array_param_type(p["type"])
-                            and _CTYPE_META.get(p["type"], {}).get("kind") == "int"
+                            and _CTYPE_META.get(p["type"], {}).get("kind")
+                            == "int"
                         ),
                         None,
                     )
@@ -1030,7 +1083,9 @@ def make_methods_ctx(
                 + ", ".join(p["name"] for p in params)
             )
             _fix_ret_hint = (
-                "ndarray" if out_type or multi_output else _pyi_scalar(return_type)
+                "ndarray"
+                if out_type or multi_output
+                else _pyi_scalar(return_type)
             )
             _fix_doc_lines = [
                 f"{name}({_fix_sig_in}) -> {_fix_ret_hint}".rstrip(),
@@ -1100,7 +1155,9 @@ def make_methods_ctx(
             all_rts = [return_type] + list(m_multi)
             ndarrays = [_pyi_ndarray(rt) for rt in all_rts]
             ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]" if len(ndarrays) > 1 else ndarrays[0]
+                f"tuple[{', '.join(ndarrays)}]"
+                if len(ndarrays) > 1
+                else ndarrays[0]
             )
         else:
             ret_ann = _pyi_scalar(return_type)
@@ -1215,7 +1272,9 @@ def make_properties_ctx(
 
         if buf_field:
             _elem_ct = ctype[:-2] if ctype.endswith("[]") else ctype
-            _elem_meta = _CTYPE_META.get(_elem_ct, _CTYPE_META["float _Complex"])
+            _elem_meta = _CTYPE_META.get(
+                _elem_ct, _CTYPE_META["float _Complex"]
+            )
             _np_enum = _NP_ENUM.get(_elem_meta["py_type"], "NPY_CFLOAT")
             _valid_check = (
                 f"    if (!self->handle->{valid_field}) Py_RETURN_NONE;\n"
@@ -1324,7 +1383,9 @@ def make_properties_ctx(
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"
             else:
-                assign_line = f"    {component}_set_{pname}(self->handle, v);\n"
+                assign_line = (
+                    f"    {component}_set_{pname}(self->handle, v);\n"
+                )
                 if pname not in state_var_names:
                     decl_lines.append(
                         f"/**\n"

@@ -69,7 +69,9 @@ def run(root: Path) -> None:
     perf_h = inc / "jm_perf.h"
     if not perf_h.exists():
         perf_h.parent.mkdir(parents=True, exist_ok=True)
-        perf_h.write_text(T.render(T.JM_PERF_H, {"package": pkg}), encoding="utf-8")
+        perf_h.write_text(
+            T.render(T.JM_PERF_H, {"package": pkg}), encoding="utf-8"
+        )
         print(f"  create  {perf_h}")
 
     simd_h = inc / "jm_simd.h"

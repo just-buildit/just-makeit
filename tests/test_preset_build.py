@@ -62,6 +62,6 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
         f"build failed for --preset {preset} "
         f"(foot-gun #1 regression):\n{bld.stdout}\n{bld.stderr}"
     )
-    assert list(Path(build).rglob("comp*.so")) or list(Path(build).rglob("*.so")), (
-        "no extension module produced"
-    )
+    assert list(Path(build).rglob("comp*.so")) or list(
+        Path(build).rglob("*.so")
+    ), "no extension module produced"

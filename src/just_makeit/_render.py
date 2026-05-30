@@ -412,7 +412,11 @@ def fn_c_stub(
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
             f"size_t\n"
             f"{fn_name}({c_param_str}{extra_params})\n"
-            f"{{\n" + suppress_line + "\n" + "    return 0; /* placeholder */\n" + "}\n"
+            f"{{\n"
+            + suppress_line
+            + "\n"
+            + "    return 0; /* placeholder */\n"
+            + "}\n"
         )
     if out_type:
         arr_p = [p for p in params if is_array_param_type(p[1])]
@@ -533,7 +537,9 @@ def _build_params_parse(
                     f"    {meta['parse_type']} {raw} = {meta['parse_zero']};"
                 )
                 addr_exprs.append(f"&{raw}")
-                conv_lines.append(f"    {disp} {pname} = {meta['to_c'](pname)};")
+                conv_lines.append(
+                    f"    {disp} {pname} = {meta['to_c'](pname)};"
+                )
             else:
                 decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
                 addr_exprs.append(f"&{pname}")
@@ -632,7 +638,9 @@ def _py_wrapper_for_function(
         if _scalar_len_param:
             len_expr = _scalar_len_param
         else:
-            first_arr = next((n for n, t in params if is_array_param_type(t)), None)
+            first_arr = next(
+                (n for n, t in params if is_array_param_type(t)), None
+            )
             len_expr = f"{first_arr}_len" if first_arr else "1"
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
@@ -663,7 +671,9 @@ def _py_wrapper_for_function(
         ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
         ret_line = f"{cleanup}    return {ret_expr};"
     else:
-        call_line = f"    {fn_name}({call_args});" if params else f"    {fn_name}();"
+        call_line = (
+            f"    {fn_name}({call_args});" if params else f"    {fn_name}();"
+        )
         ret_line = call_line + f"\n{cleanup}    Py_RETURN_NONE;"
 
     return (
@@ -674,7 +684,9 @@ def _py_wrapper_for_function(
     )
 
 
-def make_functions_ctx(module: str, Module: str, functions: list[dict]) -> dict:
+def make_functions_ctx(
+    module: str, Module: str, functions: list[dict]
+) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
     Returns keys consumed by render_module_ext_c:
@@ -709,7 +721,9 @@ def make_functions_ctx(module: str, Module: str, functions: list[dict]) -> dict:
         entries.append(f'    {{"{name}", _bind_{name}, {flags}, "{doc}"}},')
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)
-    methods_def = f"static PyMethodDef {Module}_methods[] = {{\n{array_body}\n}};\n\n"
+    methods_def = (
+        f"static PyMethodDef {Module}_methods[] = {{\n{array_body}\n}};\n\n"
+    )
     return {
         "function_wrappers": "\n".join(wrappers),
         "module_methods_def": methods_def,
@@ -874,7 +888,10 @@ def render_module_ext_aggregator(
     type_ready_lines = [
         f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
         for ctx in comp_ctxs
-    ] + [f"    if (PyType_Ready(&{et}Type) < 0) return NULL;" for et in _extra_types]
+    ] + [
+        f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
+        for et in _extra_types
+    ]
     type_ready_checks = "\n".join(type_ready_lines)
     add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:

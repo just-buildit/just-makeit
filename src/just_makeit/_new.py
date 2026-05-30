@@ -20,9 +20,7 @@ def _make_project_ctx(
     pytest_: bool = False,
 ) -> dict[str, str]:
     if pytest_:
-        ensure_win = (
-            '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
-        )
+        ensure_win = '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
         ensure_unix = '\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest\n'
         cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
         cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
@@ -120,7 +118,9 @@ def run(
             root / "cmake" / f"{project.replace('_', '-')}.pc.in",
             r(T.CMAKE_PC_IN),
         )
-        _write(root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN))
+        _write(
+            root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN)
+        )
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
     cfg = C.from_new(

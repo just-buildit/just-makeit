@@ -55,7 +55,9 @@ def _matching_brace(source: str, open_idx: int) -> int:
     return len(source)
 
 
-def _func_span_before_brace(source: str, brace_idx: int) -> tuple[str, int] | None:
+def _func_span_before_brace(
+    source: str, brace_idx: int
+) -> tuple[str, int] | None:
     """``(function_name, name_start)`` for the function whose body opens at
     brace_idx.
 
@@ -136,7 +138,9 @@ def _restore_core_c_funcs(new_source: str, preserved: dict[str, str]) -> str:
     return "".join(out)
 
 
-_STRUCT_RE = re.compile(r"(typedef struct \{\n)(.*?)(\n\} \w+_state_t;)", re.DOTALL)
+_STRUCT_RE = re.compile(
+    r"(typedef struct \{\n)(.*?)(\n\} \w+_state_t;)", re.DOTALL
+)
 _FIELD_RE = re.compile(r"^\s+.*?(\w+)\s*(?:\[[^\]]*\])?\s*;", re.MULTILINE)
 
 
@@ -223,9 +227,13 @@ def _preserve_core_bodies(
         old_struct = _STRUCT_RE.search(old)
         new_struct = _STRUCT_RE.search(new_text)
         if old_struct and new_struct:
-            merged = _merge_struct_fields(new_struct.group(2), old_struct.group(2))
+            merged = _merge_struct_fields(
+                new_struct.group(2), old_struct.group(2)
+            )
             new_text = (
-                new_text[: new_struct.start(2)] + merged + new_text[new_struct.end(2) :]
+                new_text[: new_struct.start(2)]
+                + merged
+                + new_text[new_struct.end(2) :]
             )
     old_step = _step_func_span(old, comp)
     new_step = _step_func_span(new_text, comp)
@@ -330,7 +338,9 @@ def _write_compile_commands(
         # (they share <module>_ext.c, added below in the modules loop).
         ext_c = r / "native" / "src" / comp / f"{comp}_ext.c"
         if ext_c.exists():
-            entries.append(_entry(f"native/src/{comp}/{comp}_ext.c", comp_flags))
+            entries.append(
+                _entry(f"native/src/{comp}/{comp}_ext.c", comp_flags)
+            )
         entries += [
             _entry(f"native/tests/test_{comp}_core.c", test_flags),
             _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
@@ -403,14 +413,18 @@ def run(
     vars_ = (
         []
         if no_state
-        else (state_vars or ([] if _has_opaque else [("gain", "float", "0.0f")]))
+        else (
+            state_vars or ([] if _has_opaque else [("gain", "float", "0.0f")])
+        )
     )
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:
         perf = C.is_perf(cfg)
     if pytest_ is not None:
-        cfg.setdefault("project", {})["pytest"] = "true" if pytest_ else "false"
+        cfg.setdefault("project", {})["pytest"] = (
+            "true" if pytest_ else "false"
+        )
     if pytest_benchmark_ is not None:
         cfg.setdefault("project", {})["pytest_benchmark"] = (
             "true" if pytest_benchmark_ else "false"
@@ -446,7 +460,9 @@ def run(
     )
     ctx.update(Ctx.make_perf_ctx(perf))
     _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
-    ctx.update(Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable))
+    ctx.update(
+        Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
+    )
     ctx.update(
         Ctx.make_methods_ctx(
             ctx["component"],
@@ -459,7 +475,11 @@ def run(
     )
     # Re-generate pyi_examples with the actual package name (not placeholder).
     scalar_state = (
-        [(n, ct, dflt) for n, ct, dflt in (vars_ or []) if not T.parse_array_type(ct)]
+        [
+            (n, ct, dflt)
+            for n, ct, dflt in (vars_ or [])
+            if not T.parse_array_type(ct)
+        ]
         if not no_state
         else []
     )
@@ -498,7 +518,9 @@ def run(
     # target_include_directories(...) blocks; leading "\n    " puts the first
     # entry on a new line so the closing ')' stays clean.
     extra_include_dirs_block = (
-        "\n    " + "\n    ".join(extra_include_dirs) if extra_include_dirs else ""
+        "\n    " + "\n    ".join(extra_include_dirs)
+        if extra_include_dirs
+        else ""
     )
     ctx["extra_include_dirs_block"] = extra_include_dirs_block
 
@@ -669,7 +691,9 @@ def run(
                 if sentinel in cmake_text:
                     idx = cmake_text.index(sentinel)
                     idx = cmake_text.index("\n", idx) + 1
-                    cmake_text = cmake_text[:idx] + sub + obj_lines + cmake_text[idx:]
+                    cmake_text = (
+                        cmake_text[:idx] + sub + obj_lines + cmake_text[idx:]
+                    )
                 else:
                     cmake_text += sub + obj_lines
                 cmake_path.write_text(cmake_text, encoding="utf-8")

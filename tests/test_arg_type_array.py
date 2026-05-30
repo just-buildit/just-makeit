@@ -63,7 +63,9 @@ class TestCoreHeader:
         assert re.search(r"\bvoid\b.*proc_step", h, re.DOTALL)
 
     def test_step_returns_scalar_when_explicit(self, standalone_scalar_return):
-        h = (standalone_scalar_return / "native/inc/peak/peak_core.h").read_text()
+        h = (
+            standalone_scalar_return / "native/inc/peak/peak_core.h"
+        ).read_text()
         assert "const float *x, size_t x_len" in h
         assert re.search(r"\bfloat\b.*peak_step", h, re.DOTALL)
 
@@ -107,7 +109,9 @@ class TestExtC:
 
     def test_complex_elem_npy_enum(self, in_module_void):
         # NPY enum lives in the per-object fragment, not the aggregator.
-        ext = (in_module_void / "native/src/filter/filter_ext_sink.c").read_text()
+        ext = (
+            in_module_void / "native/src/filter/filter_ext_sink.c"
+        ).read_text()
         assert "NPY_CFLOAT" in ext or "NPY_COMPLEX64" in ext
 
 
@@ -120,7 +124,9 @@ class TestPytestFile:
         assert "np.zeros" in t or "np.array" in t or "dtype=np.float32" in t
 
     def test_uses_np_array_scalar_return(self, standalone_scalar_return):
-        t = (standalone_scalar_return / "src/dsp/tests/test_peak.py").read_text()
+        t = (
+            standalone_scalar_return / "src/dsp/tests/test_peak.py"
+        ).read_text()
         assert "np.zeros" in t or "dtype=np.float32" in t
 
 

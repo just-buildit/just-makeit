@@ -10,11 +10,11 @@ ______________________________________________________________________
 
 A `signal` module inside a `dsp_demo` package containing:
 
-| Component | Kind | Demonstrates |
-|-----------|------|--------------|
-| `NCO` | stateful generator | state vars, `--mutable`, `--class-name`, void input, perf annotations |
-| `Fir` | pure/no-state filter | `--no-state`, scalar + array + optional-array init-params, step, property, variable-output method |
-| `magnitude_db` | module function | `--inline`, `--out-type`, array param |
+| Component      | Kind                 | Demonstrates                                                                                      |
+| -------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `NCO`          | stateful generator   | state vars, `--mutable`, `--class-name`, void input, perf annotations                             |
+| `Fir`          | pure/no-state filter | `--no-state`, scalar + array + optional-array init-params, step, property, variable-output method |
+| `magnitude_db` | module function      | `--inline`, `--out-type`, array param                                                             |
 
 At the end you'll have a building, tested Python package with full C and Python
 test coverage, ready to fill in with your algorithm.
@@ -67,7 +67,7 @@ ______________________________________________________________________
 ## Step 2 — Stateful generator: NCO
 
 A numerically controlled oscillator has persistent state (a phase accumulator)
-and *mutates* it on every call, so it uses `--mutable`.  Its step() takes no
+and *mutates* it on every call, so it uses `--mutable`. Its step() takes no
 input and produces one complex sample, so `--arg-type void`.
 
 ```sh
@@ -89,13 +89,13 @@ just-makeit property nco freq --module signal --type double --writable
 
 **What was created:**
 
-| File | Purpose |
-|------|---------|
-| `native/inc/signal/nco_core.h` | Struct + `static inline nco_step()` — implement here |
-| `native/src/signal/nco_core.c` | `nco_steps()` + lifecycle stubs |
-| `native/src/signal/signal_ext_nco.c` | CPython binding (auto-generated) |
-| `native/tests/test_nco_core.c` | C lifecycle smoke test |
-| `src/dsp_demo/signal/tests/test_nco.py` | pytest integration test |
+| File                                    | Purpose                                              |
+| --------------------------------------- | ---------------------------------------------------- |
+| `native/inc/signal/nco_core.h`          | Struct + `static inline nco_step()` — implement here |
+| `native/src/signal/nco_core.c`          | `nco_steps()` + lifecycle stubs                      |
+| `native/src/signal/signal_ext_nco.c`    | CPython binding (auto-generated)                     |
+| `native/tests/test_nco_core.c`          | C lifecycle smoke test                               |
+| `src/dsp_demo/signal/tests/test_nco.py` | pytest integration test                              |
 
 ______________________________________________________________________
 
@@ -103,7 +103,7 @@ ______________________________________________________________________
 
 A FIR filter owns its own state (coefficients + delay line), but that struct
 is defined and allocated in C — you write `fir_create()` yourself rather than
-having jm generate struct fields from TOML declarations.  That is what
+having jm generate struct fields from TOML declarations. That is what
 `--no-state` means: jm skips the auto-generated struct and just wires the
 Python constructor to call your `fir_create()` with the init-params you
 declare.
@@ -119,11 +119,11 @@ just-makeit object fir --module signal \
 
 The three init-params demonstrate the three kinds:
 
-| Param | Form | Python annotation |
-|-------|------|-------------------|
-| `n_taps:int:64` | scalar with default | `n_taps: int = 64` |
-| `coeff:float _Complex[]` | required array | `coeff: NDArray[np.complex64]` |
-| `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array | `bank: NDArray[np.complex64] \| None = None` |
+| Param                                              | Form                | Python annotation                            |
+| -------------------------------------------------- | ------------------- | -------------------------------------------- |
+| `n_taps:int:64`                                    | scalar with default | `n_taps: int = 64`                           |
+| `coeff:float _Complex[]`                           | required array      | `coeff: NDArray[np.complex64]`               |
+| `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array  | `bank: NDArray[np.complex64] \| None = None` |
 
 When `bank` is provided, `fir_create_poly(dim0, dim1, ptr, n_taps)` is called
 instead of the default `fir_create(coeff_ptr, coeff_len, n_taps)`.
@@ -138,7 +138,7 @@ just-makeit method fir taps --module signal \
 ```
 
 `--variable-output` means the output length is determined at runtime by a C
-helper `fir_taps_max_out(state)`.  The Python binding pre-allocates a buffer
+helper `fir_taps_max_out(state)`. The Python binding pre-allocates a buffer
 and returns a zero-copy NumPy view of the live data.
 
 !!! note "String-enum params (TOML-only)"
@@ -153,7 +153,7 @@ and returns a zero-copy NumPy view of the live data.
     default = "full"
     ```
 
-    Then run `just-makeit apply` to regenerate the binding.  The stub emits
+    Then run `just-makeit apply` to regenerate the binding. The stub emits
     `mode: Literal["full", "polyphase"] = "full"` and adds
     `from typing import Literal` automatically.
 
@@ -161,7 +161,7 @@ ______________________________________________________________________
 
 ## Step 4 — Module function: magnitude_db
 
-A stateless utility that converts a complex buffer to dB magnitude.  It
+A stateless utility that converts a complex buffer to dB magnitude. It
 allocates a new `float` output array on each call (`--out-type float`) and
 lives entirely in the header (`--inline`) so the compiler can inline it at
 every call site.

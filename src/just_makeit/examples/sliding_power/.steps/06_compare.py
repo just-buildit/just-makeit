@@ -123,7 +123,9 @@ def demo_burst():
         n += length
 
     print()
-    print("  → Recursive and standard MA produce identical output (same window sum).")
+    print(
+        "  → Recursive and standard MA produce identical output (same window sum)."
+    )
     print()
 
 
@@ -161,7 +163,9 @@ def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
             )
 
     print()
-    print("  → Float32 accumulator drifts measurably. Calibration corrects it.")
+    print(
+        "  → Float32 accumulator drifts measurably. Calibration corrects it."
+    )
     print()
 
 
@@ -190,11 +194,17 @@ def demo_drift_f64(n_samples=5_000_000, print_every=500_000):
         m = ma.step(msq)
 
         if n % print_every == (print_every - 1):
-            print(f"  {n + 1:>10,d}  {r:>10.4f}  {m:>10.4f}  {abs(r - m):>12.2e}")
+            print(
+                f"  {n + 1:>10,d}  {r:>10.4f}  {m:>10.4f}  {abs(r - m):>12.2e}"
+            )
 
     print()
-    print("  → Double accumulator: error stays at float32 quantization noise floor.")
-    print("    Calibration is still useful as insurance, not a necessity here.")
+    print(
+        "  → Double accumulator: error stays at float32 quantization noise floor."
+    )
+    print(
+        "    Calibration is still useful as insurance, not a necessity here."
+    )
     print()
 
 

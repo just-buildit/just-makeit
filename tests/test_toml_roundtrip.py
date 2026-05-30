@@ -26,7 +26,12 @@ SRC = Path(__file__).parent.parent / "src"
 
 def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()", *args],
+        [
+            sys.executable,
+            "-c",
+            "from just_makeit._cli import main; main()",
+            *args,
+        ],
         cwd=cwd or Path.cwd(),
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
@@ -34,7 +39,9 @@ def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
     )
 
 
-def _run_script_and_replay(source_dir: Path, replay_base: Path) -> tuple[str, str]:
+def _run_script_and_replay(
+    source_dir: Path, replay_base: Path
+) -> tuple[str, str]:
     """
     Run `jm script` in source_dir, replay every command into replay_base,
     and return (original_toml_text, replayed_toml_text).
@@ -79,7 +86,9 @@ def _run_script_and_replay(source_dir: Path, replay_base: Path) -> tuple[str, st
         )
 
     orig_toml = (source_dir / "just-makeit.toml").read_text(encoding="utf-8")
-    replay_toml = (replay_root / "just-makeit.toml").read_text(encoding="utf-8")
+    replay_toml = (replay_root / "just-makeit.toml").read_text(
+        encoding="utf-8"
+    )
     return orig_toml, replay_toml
 
 
@@ -105,7 +114,15 @@ class TestObjectFlagsRoundTrip:
     def test_return_type_void_sink(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "sink", "--arg-type", "float", "--return-type", "void", cwd=dest)
+        _cli(
+            "object",
+            "sink",
+            "--arg-type",
+            "float",
+            "--return-type",
+            "void",
+            cwd=dest,
+        )
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
         assert orig == replay
 
@@ -113,7 +130,13 @@ class TestObjectFlagsRoundTrip:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli(
-            "object", "gain", "--arg-type", "float", "--return-type", "float", cwd=dest
+            "object",
+            "gain",
+            "--arg-type",
+            "float",
+            "--return-type",
+            "float",
+            cwd=dest,
         )
         r = _cli("script", cwd=dest)
         # same as arg-type so --return-type should be omitted
@@ -170,7 +193,9 @@ class TestObjectFlagsRoundTrip:
     def test_init_param_single(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
+        _cli(
+            "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
+        )
         r = _cli("script", cwd=dest)
         assert "--init-param n:int:16" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
@@ -457,7 +482,15 @@ class TestPropertyFlagsRoundTrip:
 
     def test_type_and_writable(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "nco", "phase", "--type", "uint32_t", "--writable", cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "phase",
+            "--type",
+            "uint32_t",
+            "--writable",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--type uint32_t" in r.stdout
         assert "--writable" in r.stdout
@@ -474,7 +507,15 @@ class TestPropertyFlagsRoundTrip:
 
     def test_field(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("property", "nco", "counter", "--type", "uint32_t", "--field", cwd=dest)
+        _cli(
+            "property",
+            "nco",
+            "counter",
+            "--type",
+            "uint32_t",
+            "--field",
+            cwd=dest,
+        )
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
         orig, replay = _run_script_and_replay(dest, tmp_path / "replay")

@@ -45,7 +45,9 @@ class TestInitPyPreservation:
         user_block = "\n\nclass NcoHelper:\n    '''User-written wrapper.'''\n"
         init.write_text(original + user_block, encoding="utf-8")
 
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         content = init.read_text(encoding="utf-8")
         assert "NcoHelper" in content, "__init__.py user class was wiped"
@@ -55,7 +57,9 @@ class TestInitPyPreservation:
         root = tmp_path / "pkg"
         new_run("pkg", root, modules=["dsp"])
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         init = (root / "src" / "pkg" / "dsp" / "__init__.py").read_text(
             encoding="utf-8"
@@ -218,10 +222,14 @@ class TestCBodyPreservation:
         ext_path.write_text(patched, encoding="utf-8")
 
         # Adding a second object triggers _regenerate_module.
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         after = ext_path.read_text(encoding="utf-8")
-        assert sentinel in after, "static PyObject * body was overwritten on regen"
+        assert sentinel in after, (
+            "static PyObject * body was overwritten on regen"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -239,12 +247,12 @@ class TestNoStepInModule:
         # No-step object.
         object_run(root, "util", "dsp", state_vars=[], no_step=True)
 
-        nco_ext = (root / "native" / "src" / "dsp" / "dsp_ext_nco.c").read_text(
-            encoding="utf-8"
-        )
-        util_ext = (root / "native" / "src" / "dsp" / "dsp_ext_util.c").read_text(
-            encoding="utf-8"
-        )
+        nco_ext = (
+            root / "native" / "src" / "dsp" / "dsp_ext_nco.c"
+        ).read_text(encoding="utf-8")
+        util_ext = (
+            root / "native" / "src" / "dsp" / "dsp_ext_util.c"
+        ).read_text(encoding="utf-8")
         # The nco wrappers should be present.
         assert "Nco_step" in nco_ext
         # No step wrapper should be emitted for util.
@@ -320,13 +328,17 @@ class TestCMakeExternalLibBlocks:
         )
 
         # Add a sibling object — _copy_external_cmake_blocks should fire.
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
-
-        mixer_cmake = (root / "native" / "src" / "mixer" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
         )
+
+        mixer_cmake = (
+            root / "native" / "src" / "mixer" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
         assert "DOPPLER_C_LIB" in mixer_cmake
-        assert "mixer" in mixer_cmake  # placeholder replaced with new comp name
+        assert (
+            "mixer" in mixer_cmake
+        )  # placeholder replaced with new comp name
         assert "nco" not in mixer_cmake  # old comp name not left behind
 
 
@@ -348,7 +360,9 @@ class TestExtraFiles:
         extra.write_text("/* hand-written nco extras */\n", encoding="utf-8")
 
         # Trigger aggregator regen by adding a second object.
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         agg = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
@@ -364,9 +378,13 @@ class TestExtraFiles:
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
 
         extra = root / "native" / "src" / "dsp" / "dsp_ext_extra.c"
-        extra.write_text("/* hand-written module extras */\n", encoding="utf-8")
+        extra.write_text(
+            "/* hand-written module extras */\n", encoding="utf-8"
+        )
 
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         agg = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
@@ -385,7 +403,9 @@ class TestExtraFiles:
         extra = root / "native" / "src" / "dsp" / "dsp_ext_nco_extra.c"
         extra.write_text(sentinel, encoding="utf-8")
 
-        object_run(root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")])
+        object_run(
+            root, "mixer", "dsp", state_vars=[("gain", "float", "1.0f")]
+        )
 
         assert extra.read_text(encoding="utf-8") == sentinel
 
@@ -443,7 +463,9 @@ class TestExtraLinkLibs:
         cmake = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
-        libs_line = [ln for ln in cmake.splitlines() if "target_link_libraries" in ln]
+        libs_line = [
+            ln for ln in cmake.splitlines() if "target_link_libraries" in ln
+        ]
         assert libs_line
         assert "Python3::NumPy" in cmake
 
@@ -528,9 +550,13 @@ class TestExtraIncludeDirs:
         from just_makeit._apply import run as apply_run
 
         apply_run(root)
-        cmake_before = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text()
+        cmake_before = (
+            root / "native" / "src" / "dsp" / "CMakeLists.txt"
+        ).read_text()
         apply_run(root)
-        cmake_after = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text()
+        cmake_after = (
+            root / "native" / "src" / "dsp" / "CMakeLists.txt"
+        ).read_text()
         assert cmake_before == cmake_after
 
     def test_standalone_component_extra_include_dirs(self, tmp_path):

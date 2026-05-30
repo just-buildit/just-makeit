@@ -29,7 +29,9 @@ STEPS = (
 
 
 def _run(cmd, cwd=None, env=None):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
+    return subprocess.run(
+        cmd, cwd=cwd, capture_output=True, text=True, env=env
+    )
 
 
 def _require(tool: str) -> None:

@@ -69,7 +69,7 @@ def run(root: Path) -> None:
     old_bench = re.sub(
         r"\n\s*/\* bench:.*",  # strip any method block remnants (none yet, but safe)
         "",
-        "#include \"fir/fir_core.h\"\n/* old bench — no method blocks */\nint main(void) { return 0; }\n",
+        '#include "fir/fir_core.h"\n/* old bench — no method blocks */\nint main(void) { return 0; }\n',
     )
     bench_c.write_text(old_bench, encoding="utf-8")
 
@@ -114,7 +114,7 @@ def run(root: Path) -> None:
     )
 
     # 10. Verify the regenerated bench includes jm_bench.h.
-    assert "#include \"jm_bench.h\"" in upgraded, (
+    assert '#include "jm_bench.h"' in upgraded, (
         "schema 3→4 regen must add jm_bench.h include to bench file"
     )
 

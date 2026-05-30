@@ -66,10 +66,11 @@ the real part and sample variance into the imaginary part:
 
 ```c
 // before
-static inline float complex running_stats_step(const running_stats_state_t *state,
-                                               float complex                x) {
-    (void)state; /* TODO: implement using state variables */
-    return x;
+static inline float complex
+running_stats_step (const running_stats_state_t *state, float complex x)
+{
+  (void)state; /* TODO: implement using state variables */
+  return x;
 }
 ```
 
@@ -77,15 +78,17 @@ static inline float complex running_stats_step(const running_stats_state_t *stat
 // after — Welford's online algorithm
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
-static inline float complex running_stats_step(running_stats_state_t *state, float complex x) {
-    double sample = (double)crealf(x);
-    state->n++;
-    double delta = sample - state->mean;
-    state->mean += delta / (double)state->n;
-    double delta2 = sample - state->mean;
-    state->m2 += delta * delta2;
-    double var = (state->n > 0) ? state->m2 / (double)state->n : 0.0;
-    return (float)state->mean + (float)var * I;
+static inline float complex
+running_stats_step (running_stats_state_t *state, float complex x)
+{
+  double sample = (double)crealf (x);
+  state->n++;
+  double delta = sample - state->mean;
+  state->mean += delta / (double)state->n;
+  double delta2 = sample - state->mean;
+  state->m2 += delta * delta2;
+  double var = (state->n > 0) ? state->m2 / (double)state->n : 0.0;
+  return (float)state->mean + (float)var * I;
 }
 ```
 
@@ -141,24 +144,26 @@ After `make`, the combined shared library is at `build/libmy_stats.so`.
 #include <complex.h>
 #include <stdio.h>
 
-int main(void) {
-    running_stats_state_t *s = running_stats_create(0, 0.0, 0.0);
+int
+main (void)
+{
+  running_stats_state_t *s = running_stats_create (0, 0.0, 0.0);
 
-    float         data[] = {2, 4, 4, 4, 5, 5, 7, 9};
-    float complex y;
-    for (int i = 0; i < 8; i++)
-        y = running_stats_step(s, data[i] + 0.0f * I);
+  float         data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
+  float complex y;
+  for (int i = 0; i < 8; i++)
+    y = running_stats_step (s, data[i] + 0.0f * I);
 
-    printf("n:        %d\n", running_stats_get_n(s));      /* 8     */
-    printf("mean:     %.4f\n", running_stats_get_mean(s)); /* 5.0000 */
-    printf("variance: %.4f\n", (double)cimagf(y));         /* 4.0000 */
+  printf ("n:        %d\n", running_stats_get_n (s));      /* 8     */
+  printf ("mean:     %.4f\n", running_stats_get_mean (s)); /* 5.0000 */
+  printf ("variance: %.4f\n", (double)cimagf (y));         /* 4.0000 */
 
-    running_stats_reset(s);
-    printf("after reset: n=%d mean=%.1f\n", running_stats_get_n(s),
-           running_stats_get_mean(s)); /* n=0 mean=0.0 */
+  running_stats_reset (s);
+  printf ("after reset: n=%d mean=%.1f\n", running_stats_get_n (s),
+          running_stats_get_mean (s)); /* n=0 mean=0.0 */
 
-    running_stats_destroy(s);
-    return 0;
+  running_stats_destroy (s);
+  return 0;
 }
 ```
 

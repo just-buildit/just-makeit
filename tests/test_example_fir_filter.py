@@ -148,7 +148,10 @@ class TestStep5C:
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
         if sys.platform == "win32":
             exe = str(project / "demo.exe")
-            env = {**os.environ, "PATH": f"{build_dir};{os.environ.get('PATH', '')}"}
+            env = {
+                **os.environ,
+                "PATH": f"{build_dir};{os.environ.get('PATH', '')}",
+            }
         else:
             exe = "./demo"
             env = None
@@ -299,7 +302,9 @@ def _scaffold_perf(tmp_path_factory):
 
 def _has_avx512() -> bool:
     cpuinfo = Path("/proc/cpuinfo")
-    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text(encoding="utf-8")
+    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text(
+        encoding="utf-8"
+    )
 
 
 class TestStep7PerfScalar:
@@ -364,7 +369,9 @@ class TestStep7PerfSIMD:
         r = _run(["cmake", "--build", "build", "--parallel"], cwd=root)
         assert r.returncode == 0, f"simd build failed:\n{r.stderr}"
 
-        r = _run(["uv", "pip", "install", "-e", ".", "--force-reinstall"], cwd=root)
+        r = _run(
+            ["uv", "pip", "install", "-e", ".", "--force-reinstall"], cwd=root
+        )
         assert r.returncode == 0, f"pip install failed:\n{r.stderr}"
 
         return root

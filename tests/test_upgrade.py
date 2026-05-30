@@ -13,6 +13,7 @@ from just_makeit import _upgrade as U
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _write_toml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
@@ -32,6 +33,7 @@ def _minimal_toml(name: str = "myproj", schema: int | None = None) -> str:
 
 
 # ── _config schema helpers ────────────────────────────────────────────────────
+
 
 class TestSchemaVersion:
     def test_defaults_to_1_when_absent(self, tmp_path):
@@ -86,6 +88,7 @@ class TestCurrentSchemaConstant:
 
 # ── migration step types ──────────────────────────────────────────────────────
 
+
 class TestAddFileStep:
     def test_creates_file_when_absent(self, tmp_path):
         _write_toml(tmp_path / C.FILENAME, _minimal_toml("mypkg", schema=1))
@@ -104,7 +107,9 @@ class TestAddFileStep:
         step = U.AddFile("zensical.toml", "ZENSICAL_TOML")
         U._apply_step(tmp_path, step, ctx)
         # Original content must be preserved.
-        assert (tmp_path / "zensical.toml").read_text(encoding="utf-8") == sentinel
+        assert (tmp_path / "zensical.toml").read_text(
+            encoding="utf-8"
+        ) == sentinel
 
     def test_creates_parent_directories(self, tmp_path):
         _write_toml(tmp_path / C.FILENAME, _minimal_toml("mypkg", schema=1))
@@ -154,6 +159,7 @@ class TestAddTomlKeyStep:
 
 # ── full migration run ────────────────────────────────────────────────────────
 
+
 class TestUpgradeRun:
     def test_upgrades_schema_1_to_current(self, tmp_path):
         _write_toml(tmp_path / C.FILENAME, _minimal_toml("mypkg", schema=1))
@@ -200,7 +206,9 @@ class TestUpgradeRun:
         sentinel = "# user edited\n"
         (tmp_path / "zensical.toml").write_text(sentinel, encoding="utf-8")
         U.run(tmp_path)
-        assert (tmp_path / "zensical.toml").read_text(encoding="utf-8") == sentinel
+        assert (tmp_path / "zensical.toml").read_text(
+            encoding="utf-8"
+        ) == sentinel
 
     def test_exits_without_toml(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -214,7 +222,9 @@ class TestUpgradeRun:
         assert C.schema_version(cfg) == C.CURRENT_SCHEMA
 
     def test_docs_content_has_project_name(self, tmp_path):
-        _write_toml(tmp_path / C.FILENAME, _minimal_toml("awesomelib", schema=1))
+        _write_toml(
+            tmp_path / C.FILENAME, _minimal_toml("awesomelib", schema=1)
+        )
         U.run(tmp_path)
         content = (tmp_path / "docs" / "index.md").read_text(encoding="utf-8")
         assert "awesomelib" in content
@@ -228,10 +238,13 @@ class TestUpgradeRun:
             tmp_path / "docs" / "api.md",
         ]:
             content = path.read_text(encoding="utf-8")
-            assert "<<" not in content, f"unresolved placeholder in {path.name}"
+            assert "<<" not in content, (
+                f"unresolved placeholder in {path.name}"
+            )
 
 
 # ── RegenBench step ──────────────────────────────────────────────────────────
+
 
 class TestRegenBenchStep:
     def _toml_with_method(self, name: str = "myproj") -> str:
@@ -267,7 +280,9 @@ class TestRegenBenchStep:
         _write_toml(tmp_path / C.FILENAME, self._toml_with_method())
         bench = tmp_path / "native" / "benchmarks" / "bench_engine_core.c"
         bench.parent.mkdir(parents=True)
-        bench.write_text("/* old bench, no method blocks */\n", encoding="utf-8")
+        bench.write_text(
+            "/* old bench, no method blocks */\n", encoding="utf-8"
+        )
 
         cfg = C.load(tmp_path)
         ctx = U._build_ctx(cfg)
@@ -304,6 +319,7 @@ class TestRegenBenchStep:
 
 
 # ── _build_ctx ────────────────────────────────────────────────────────────────
+
 
 class TestBuildCtx:
     def test_package_key(self, tmp_path):

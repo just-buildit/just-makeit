@@ -66,7 +66,9 @@ class TestSave:
 
     def test_round_trip_with_component(self, tmp_path):
         cfg = from_new("p")
-        add_component(cfg, "engine", [("rate", "double", "1.0"), ("order", "int", "4")])
+        add_component(
+            cfg, "engine", [("rate", "double", "1.0"), ("order", "int", "4")]
+        )
         save(tmp_path, cfg)
         loaded = load(tmp_path)
         assert loaded["engine"]["state"][0]["name"] == "rate"
@@ -113,7 +115,9 @@ class TestStateVars:
 
     def test_single_var(self):
         cfg = {
-            "engine": {"state": [{"name": "gain", "type": "double", "default": "1.0"}]}
+            "engine": {
+                "state": [{"name": "gain", "type": "double", "default": "1.0"}]
+            }
         }
         assert state_vars(cfg, "engine") == [("gain", "double", "1.0")]
 
@@ -126,7 +130,10 @@ class TestStateVars:
                 ]
             }
         }
-        assert state_vars(cfg, "engine") == [("a", "double", "0.0"), ("b", "int", "4")]
+        assert state_vars(cfg, "engine") == [
+            ("a", "double", "0.0"),
+            ("b", "int", "4"),
+        ]
 
 
 class TestProjectHelpers:
@@ -297,7 +304,9 @@ class TestDumpFlagFields:
 
     def test_dump_init_params_section(self):
         cfg = from_new("p")
-        add_component(cfg, "gen", [], no_state_=True, init_params_=[("n", "int", "16")])
+        add_component(
+            cfg, "gen", [], no_state_=True, init_params_=[("n", "int", "16")]
+        )
         text = _dump(cfg)
         assert "[[gen.init_params]]" in text
         assert 'name = "n"' in text
@@ -337,7 +346,9 @@ class TestDumpFlagFields:
     def test_dump_property_field(self):
         cfg = from_new("p")
         add_component(cfg, "nco", [])
-        add_property(cfg, "nco", {"name": "phase", "type": "uint32_t", "field": True})
+        add_property(
+            cfg, "nco", {"name": "phase", "type": "uint32_t", "field": True}
+        )
         assert "field = true" in _dump(cfg)
 
     def test_dump_property_writable(self):

@@ -157,7 +157,9 @@ def _build_ctx(
         )
     ]
     c_args = _ctor_c_args(ctor_scalars)
-    create_call = f"{component}_create({c_args})" if c_args else f"{component}_create()"
+    create_call = (
+        f"{component}_create({c_args})" if c_args else f"{component}_create()"
+    )
     return {
         "name": name,
         "project": pkg,
@@ -168,7 +170,9 @@ def _build_ctx(
         "argparse_state_args": _argparse_block(ctor_scalars),
         "py_create_args": _py_create_args(ctor_scalars),
         "ctor_c_args": c_args,
-        "app_create_line": (f"    {component}_state_t *state = {create_call};"),
+        "app_create_line": (
+            f"    {component}_state_t *state = {create_call};"
+        ),
     }
 
 
@@ -193,7 +197,10 @@ def run(
 
     pkg = C.project_name(cfg)
     if not pkg:
-        print("error: [project].name missing from just-makeit.toml.", file=sys.stderr)
+        print(
+            "error: [project].name missing from just-makeit.toml.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     comps = C.components(cfg)
@@ -238,7 +245,9 @@ def run(
     _print_summary(target, root, name, pkg)
 
 
-def _run_c(root: Path, cfg: dict, ctx: dict, name: str, component: str) -> None:
+def _run_c(
+    root: Path, cfg: dict, ctx: dict, name: str, component: str
+) -> None:
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     main_c = app_dir / f"{name}.c"
@@ -258,7 +267,9 @@ def _run_c(root: Path, cfg: dict, ctx: dict, name: str, component: str) -> None:
         )
 
 
-def _run_console(root: Path, cfg: dict, ctx: dict, name: str, pkg: str) -> None:
+def _run_console(
+    root: Path, cfg: dict, ctx: dict, name: str, pkg: str
+) -> None:
     cli_py = root / "src" / pkg / "cli.py"
     cli_py.parent.mkdir(parents=True, exist_ok=True)
     cli_py.write_text(R.render(R.APP_CONSOLE_CLI, ctx), encoding="utf-8")

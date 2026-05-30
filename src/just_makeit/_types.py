@@ -82,7 +82,9 @@ _CTYPE_META: dict[str, dict] = {
     "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
     "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
     "int32_t": _fwint("int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG),
-    "int64_t": _fwint("int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG),
+    "int64_t": _fwint(
+        "int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG
+    ),
     # Fixed-width unsigned
     "uint8_t": _fwint(
         "uint8_t", "I", "unsigned int", "0U", "np.uint8", _TO_PY_ULONG, "0U"
@@ -153,7 +155,9 @@ _CTYPE_META: dict[str, dict] = {
         "py_type": "np.clongdouble",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
-        "to_c": lambda n: f"(long double){n}_raw.real + (long double){n}_raw.imag * I",
+        "to_c": lambda n: (
+            f"(long double){n}_raw.real + (long double){n}_raw.imag * I"
+        ),
         "to_py": lambda v: (
             f"PyComplex_FromDoubles((double)creall({v}), (double)cimagl({v}))"
         ),

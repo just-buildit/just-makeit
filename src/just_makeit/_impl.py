@@ -158,7 +158,9 @@ def _normalise_indent(inner: str) -> str:
     if not non_empty:
         return ""
     min_indent = min(len(ln) - len(ln.lstrip()) for ln in non_empty)
-    return "\n".join(ln[min_indent:] if len(ln) >= min_indent else ln for ln in lines)
+    return "\n".join(
+        ln[min_indent:] if len(ln) >= min_indent else ln for ln in lines
+    )
 
 
 # ── transformation ────────────────────────────────────────────────────────────
