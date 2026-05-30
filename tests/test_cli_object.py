@@ -209,3 +209,48 @@ class TestCliObject:
             _, kwargs = mock_run.call_args
             assert kwargs["no_step"] is True
             assert kwargs["variable_output"] is True
+
+    def test_impl_create_lifecycle_slot(self):
+        """Phase 2 row final: --impl create::file::fn loads body into
+        create_impl_body instead of impl_body. Step shorthand
+        (file::fn, 2 parts) keeps working alongside."""
+        with patch("just_makeit._object.run") as mock_run:
+            with patch(
+                "just_makeit._impl.load_impl",
+                side_effect=lambda spec, _: f"body_for_{spec}",
+            ):
+                _run(
+                    [
+                        "iq_reader",
+                        "--impl",
+                        "create::src/io.c::iq_reader_create",
+                        "--impl",
+                        "src/io.c::iq_reader_step",
+                    ]
+                )
+            _, kwargs = mock_run.call_args
+            # Step body lifted by the bare 2-part spec lands in impl_body.
+            assert kwargs["impl_body"] == "body_for_src/io.c::iq_reader_step"
+            # Lifecycle body lifted by the SLOT prefix lands in create_impl_body.
+            assert kwargs["create_impl_body"] == "body_for_src/io.c::iq_reader_create"
+            # Other lifecycle slots remain None when not set.
+            assert kwargs["reset_impl_body"] is None
+            assert kwargs["destroy_impl_body"] is None
+
+    def test_impl_reset_and_destroy_lifecycle_slots(self):
+        with patch("just_makeit._object.run") as mock_run:
+            with patch("just_makeit._impl.load_impl", return_value="body"):
+                _run(
+                    [
+                        "reader",
+                        "--impl",
+                        "reset::src/io.c::reader_reset",
+                        "--impl",
+                        "destroy::src/io.c::reader_destroy",
+                    ]
+                )
+            _, kwargs = mock_run.call_args
+            assert kwargs["reset_impl_body"] == "body"
+            assert kwargs["destroy_impl_body"] == "body"
+            assert kwargs["impl_body"] is None
+            assert kwargs["create_impl_body"] is None
