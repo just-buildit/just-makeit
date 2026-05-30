@@ -1,7 +1,7 @@
 # Template gallery
 
 Every `jm object` or `jm function` invocation produces a project shaped
-to one of seven patterns — a *preset*. This gallery shows what each
+to one of six patterns — a *preset*. This gallery shows what each
 preset generates *before* you run it, so you can browse, find the shape
 that matches your work, and run the exact command shown at the top of
 the page.
@@ -10,17 +10,28 @@ Each page is titled with the CLI line that materialises it. Run it
 verbatim, then open `<comp>_core.c` and replace the `/* TODO */`
 markers with your algorithm.
 
+Preset names describe **what the component does to data**, not what
+domain you're working in. A "processor" is any 1:1 input→output
+transform — a DSP filter, a Q15→float converter, and a CSV row
+re-encoder all fit. Each preset page lists concrete examples across
+domains so you can recognise your shape.
+
 ## Presets
 
-| Preset       | What it produces                                                                                                 | Page                                        |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **filter**   | Sample → sample. One state struct, an inline `step()`, an array `steps()`, getters/setters, full Python binding. | [`jm object NAME`](filter.md)               |
-| **block**    | Array → array. Generates the block loop and a `steps()` that drives it.                                          | [`jm object NAME --block`](block.md)        |
-| **source**   | No input; produces samples on demand. Good for NCOs, generators, decoded streams.                                | [`jm object NAME --source`](source.md)      |
-| **sink**     | Consumes samples; no output. Good for accumulators, file writers, integrators.                                   | [`jm object NAME --sink`](sink.md)          |
-| **reader**   | Opens a file or socket; exposes `read()` / `seek()` / `close()` instead of `step()`.                             | [`jm object NAME --reader`](reader.md)      |
-| **detector** | Variable-output method that emits events on demand.                                                              | [`jm object NAME --detector`](detector.md)  |
-| **library**  | No class; just module-level C functions with explicit input / output arrays.                                     | [`jm function FN --module MOD`](library.md) |
+| Preset        | Data-flow shape            | Concrete examples                                                | Page                                         |
+| ------------- | -------------------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| **processor** | input → output (1:1)       | DSP filter, Q15→float, running-average smoother, byte-to-token   | [`jm object NAME`](processor.md)             |
+| **blockwise** | array input → array output | FFT, overlap-save filter, CSV batch transformer, image kernel    | [`jm object NAME --blockwise`](blockwise.md) |
+| **generator** | () → output                | NCO, LFSR, counter, UUID, queue drainer, tokenizer               | [`jm object NAME --generator`](generator.md) |
+| **consumer**  | input → ()                 | running mean, integrator, checksum, log writer, metric reporter  | [`jm object NAME --consumer`](consumer.md)   |
+| **reader**    | external source → output   | file reader, CSV row reader, WAV/PNG loader, TCP socket consumer | [`jm object NAME --reader`](reader.md)       |
+| **function**  | free C function (no class) | unit conversion, lookup, CRC, format detector, pure transform    | [`jm function FN --module MOD`](function.md) |
+
+Need *variable-output* (zero or more outputs per call — peak detector,
+event finder, syllable boundary detector)? That's a capability flag,
+not its own preset — add `--variable-output --max-out N` to any
+preset that has output and declare per-event fields with
+repeatable `--result-field name:T`.
 
 ## How to read each page
 
@@ -43,9 +54,9 @@ Every preset page has the same five sections:
 
 ## Status
 
-- **Today (shipped)**: `filter` and `library` are reachable from the
-    current CLI. Their pages show real generated output.
-- **Proposed**: `block`, `source`, `sink`, `reader`, `detector` are
+- **Today (shipped)**: `processor` and `function` are reachable from
+    the current CLI. Their pages show real generated output.
+- **Proposed**: `blockwise`, `generator`, `consumer`, `reader` are
     flag additions tracked in
     [`developers/wizard-design.md`](../developers/wizard-design.md).
     Their pages show the *intended* skeletons so the design can be

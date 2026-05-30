@@ -1,14 +1,24 @@
-# `jm object NAME --source` — source (no input; produces samples)
+# `jm object NAME --generator` — generator (() → output)
+
+A **generator** produces output without taking input — `step()` takes
+no argument and returns the next value, `steps(n)` produces `n`
+values. State carries whatever the algorithm needs to advance from one
+call to the next.
+
+Concrete examples: a numerically-controlled oscillator (NCO), a
+pseudo-random sequence (LFSR), a counter, a UUID generator, a queue
+drainer that yields the next item, or a parser tokenizer that emits
+tokens one at a time from a pre-loaded buffer.
 
 **Status: proposed.** Tracked in
 [`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--source` flag would bundle `--arg-type void` with a `_core.c`
-skeleton sized for generators — NCOs, LFSRs, decoded streams.
+`--generator` flag would bundle `--arg-type void` with a `_core.c`
+skeleton sized for sample-producing algorithms.
 
 ## Command
 
 ```sh
-jm object NAME --source \
+jm object NAME --generator \
     --return-type "float _Complex" \
     --state phase:float:0.0f \
     --state freq:float:0.0f

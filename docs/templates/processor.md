@@ -1,13 +1,18 @@
-# `jm object NAME` — filter (sample → sample)
+# `jm object NAME` — processor (input → output, 1:1)
 
-The default `jm object NAME` invocation produces a sample-by-sample
-filter: one complex sample in, one complex sample out, with a single
-`gain` state field as a starting point. Inline `step()` for the hot
-path, `steps()` for batch processing, getters/setters on every state
-field, a full CPython binding, a CTest smoke test, and a Python
-benchmark.
+The default `jm object NAME` invocation produces a **processor**: one
+sample in, one sample out, carrying whatever state your algorithm
+needs. Inline `step()` for the hot path, `steps()` for batch
+processing, getters/setters on every state field, a full CPython
+binding, a CTest smoke test, and a Python benchmark.
 
-This page shows the exact output of the current CLI on jm 0.13.22.
+"Processor" is the category — concrete examples include a DSP filter
+(FIR/IIR/biquad), a Q15→float converter, a running-average smoother,
+a byte-to-token transformer for a parser, or any 1:1 transform where
+each output depends on the current input plus accumulated state.
+
+This page shows the exact output of the current CLI on jm 0.13.23,
+using a single-pole low-pass filter as the worked example.
 
 ## Command
 

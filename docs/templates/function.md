@@ -1,12 +1,18 @@
-# `jm function FN --module MOD` — library (free C functions, no class)
+# `jm function FN --module MOD` — function (free C function, no class)
 
-Module-level C functions exposed to Python. No state, no class — just a
-named function that takes inputs and (optionally) writes to output
-buffers. Good for pure conversions, format detection, lookup tables,
-and any algorithm that doesn't carry per-instance state.
+A **function** is a free, module-level C function exposed to Python.
+No state, no class — just a named function that takes inputs and
+(optionally) writes to output buffers. Multiple `jm function` calls
+into the same module compose into a library of utilities.
 
-`jm function` and its `--out-param` flag shipped in **0.13.22**; the
-example below uses real generated output.
+Concrete examples: a pure unit conversion (Q15→float, Celsius→Kelvin,
+bytes→hex), a lookup-table query, a one-shot format detector, a CRC,
+a string normaliser, or any pure computation where a per-call object
+would be overkill.
+
+`jm function` and its `--out-param` flag shipped in **0.13.22**;
+`--out-type` and `--result-field` ship in **0.13.23**. The example
+below uses real generated output.
 
 ## Command
 

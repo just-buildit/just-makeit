@@ -1,14 +1,24 @@
-# `jm object NAME --sink` — sink (consumes samples; no output)
+# `jm object NAME --consumer` — consumer (input → ())
+
+A **consumer** takes input but produces no output — `step()` accepts a
+sample and returns nothing; state carries whatever the algorithm
+accumulates. The user reads the result by inspecting state via
+getters or a dedicated method.
+
+Concrete examples: a running mean / variance accumulator, an integrator,
+a checksum, a histogram bin counter, a log-line writer that flushes to
+disk, a metric reporter that ships samples to a stats system, or any
+"fold" over an incoming stream.
 
 **Status: proposed.** Tracked in
 [`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--sink` flag would bundle `--return-type void` with a `_core.c`
+`--consumer` flag would bundle `--return-type void` with a `_core.c`
 skeleton sized for accumulators, integrators, and writers.
 
 ## Command
 
 ```sh
-jm object NAME --sink \
+jm object NAME --consumer \
     --arg-type "float _Complex" \
     --state count:uint64_t:0 \
     --state sum:double:0.0

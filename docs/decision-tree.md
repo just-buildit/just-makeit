@@ -53,11 +53,13 @@ ______________________________________________________________________
 
 ```
 What does step() look like?
-  sample → sample (filter, NCO mix)      defaults: --arg-type "float _Complex"
-  batch → batch  (FFT, block transform)  --arg-type "float[]"
-  no input (generator, source)           --arg-type void
-  no output (sink, accumulator)          --return-type void
+  input → output (1:1)  (processor)      defaults: --arg-type "float _Complex"
+  array → array         (blockwise)      --arg-type "T[]"  --return-type "T[]"
+  no input              (generator)      --arg-type void
+  no output             (consumer)       --return-type void
   no step() at all — custom verbs only   --no-step  + jm method ...
+                                         (reader pattern: --no-step +
+                                          --init-param filepath:"const char *")
 
 What state does it carry?
   scalar defaults only                   [[state]] entries (default path)
@@ -72,7 +74,7 @@ What state does it carry?
 
 ```
 Fixed N out for N in   (resampler)        out_type="float", out_divisor=2
-Variable count out     (detector)         variable_output=true
+Variable count out     (event emitter)    variable_output=true
                                           (provide <comp>_<name>_max_out())
 List of records out    (events)           result_fields=[{name, type}, ...]
 Multiple parallel buffers                 multi_output=["float _Complex", ...]

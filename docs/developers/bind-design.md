@@ -97,10 +97,11 @@ Every other `<comp>_*` declaration in the header is treated as a
 custom method on the Python class. Module-level functions (not
 prefixed with `<comp>_`) bind as free functions on the parent module.
 
-The `block`, `source`, `sink`, `reader`, `detector`, and `library`
+The `blockwise`, `generator`, `consumer`, `reader`, and `function`
 template pages each describe the contract above by example — the
 formal version above is just the union of what those pages already
-require.
+require. Variable-output components (the event-emitter shape) follow
+the same contract plus a sibling `<comp>_<verb>_max_out()` declaration.
 
 The **type allowlist** the parser enforces per slot is the same one
 documented in [`docs/types.md`](../types.md), referenced from the

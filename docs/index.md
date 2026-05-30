@@ -207,7 +207,7 @@ void engine_steps(
     float complex       *output,
     size_t               n);
 
-// Generator / source object (--arg-type void): no input parameter
+// Generator object (--arg-type void): no input parameter
 static inline float
 nco_step(const nco_state_t *state);
 
