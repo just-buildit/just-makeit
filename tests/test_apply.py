@@ -1239,3 +1239,85 @@ class TestApplyModuleFunctionImpl:
         assert (
             proj / "native" / "inc" / "io" / "io_core.h"
         ).read_text() == before_h
+
+
+class TestApplySacredGlueSplit:
+    """jm apply's sacred/glue contract for standalone objects:
+
+    - Glue (binding, stub, header declarations) regenerates from the
+      manifest on every apply, so a TOML edit reaches the public API.
+    - Sacred _core.c (steps()/lifecycle bodies) is never touched once it
+      exists; the inline step() body and struct fields in _core.h survive
+      the declaration refresh. User algorithm code is never clobbered.
+    """
+
+    def _project(self, root: Path) -> None:
+        new_run("proj", root, ["eng"], [("gain", "double", "1.0")])
+
+    def test_core_c_is_sacred_byte_identical(self, tmp_path):
+        root = tmp_path / "proj"
+        self._project(root)
+        core_c = root / "native" / "src" / "eng" / "eng_core.c"
+        # Plant a user sentinel inside the steps() body.
+        text = core_c.read_text(encoding="utf-8")
+        text = text.replace(
+            "eng_steps(", "/* USER_SENTINEL */\nvoid eng_steps(", 1
+        )
+        core_c.write_text(text, encoding="utf-8")
+        before = core_c.read_bytes()
+        # Edit the manifest (add a method) and re-apply.
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[[eng.methods]]\nname = "reset_gain"\n'
+            'arg_type = "void"\nreturn_type = "void"\n',
+            encoding="utf-8",
+        )
+        apply_run(root)
+        # Sacred file is byte-for-byte unchanged.
+        assert core_c.read_bytes() == before
+        assert "USER_SENTINEL" in core_c.read_text(encoding="utf-8")
+
+    def test_glue_refreshes_from_manifest(self, tmp_path):
+        root = tmp_path / "proj"
+        self._project(root)
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[[eng.methods]]\nname = "reset_gain"\n'
+            'arg_type = "void"\nreturn_type = "void"\n',
+            encoding="utf-8",
+        )
+        apply_run(root)
+        # Header declares the method; binding exposes it; stub lists it.
+        core_h = (root / "native" / "inc" / "eng" / "eng_core.h").read_text(
+            encoding="utf-8"
+        )
+        ext_c = (root / "native" / "src" / "eng" / "eng_ext.c").read_text(
+            encoding="utf-8"
+        )
+        pyi = (root / "src" / "proj" / "eng.pyi").read_text(encoding="utf-8")
+        assert "eng_reset_gain" in core_h
+        assert "reset_gain" in ext_c
+        assert "reset_gain" in pyi
+
+    def test_inline_step_body_preserved_on_header_refresh(self, tmp_path):
+        root = tmp_path / "proj"
+        self._project(root)
+        core_h = root / "native" / "inc" / "eng" / "eng_core.h"
+        # Plant a sentinel inside the inline step() body.
+        text = core_h.read_text(encoding="utf-8")
+        text = text.replace("/* TODO", "/* USER_STEP_SENTINEL */ /* TODO", 1)
+        core_h.write_text(text, encoding="utf-8")
+        # Force a header refresh by adding a method to the manifest.
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[[eng.methods]]\nname = "reset_gain"\n'
+            'arg_type = "void"\nreturn_type = "void"\n',
+            encoding="utf-8",
+        )
+        apply_run(root)
+        refreshed = core_h.read_text(encoding="utf-8")
+        assert "eng_reset_gain" in refreshed  # declarations refreshed
+        assert "USER_STEP_SENTINEL" in refreshed  # step() body preserved

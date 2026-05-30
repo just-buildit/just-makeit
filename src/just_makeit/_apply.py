@@ -752,8 +752,16 @@ def _sync_aggregates(
                 if root / rel not in updated:
                     updated.append(root / rel)
 
-    # Regenerate standalone component CMakeLists so extra_link_libs changes
-    # in the TOML are reflected without a full re-scaffold.
+    # Standalone components: the sacred/glue split. Glue files (binding,
+    # CMake, type stub) regenerate from the manifest on every apply, so a
+    # TOML edit — a new state field, method, init param, extra_link_libs —
+    # propagates without a full re-scaffold. Core sources are *merged*:
+    # _core.h carries the inline step() body, _core.c the steps()/lifecycle
+    # bodies, and _preserve_core_bodies keeps the user's hand-written code
+    # while letting refreshed declarations/structure flow through. This
+    # mirrors the module loop above; before it, standalone glue was
+    # create-only (_sync_missing) so manifest edits silently never reached
+    # the binding and apply reported "already matches" while it didn't.
     module_owned = {
         o for m in C.modules(cfg) for o in C.module_objects(cfg, m)
     }
@@ -762,8 +770,28 @@ def _sync_aggregates(
             continue
         if only_comp is not None and comp != only_comp:
             continue
-        rel = f"native/src/{comp}/CMakeLists.txt"
-        if _overwrite_if_changed(root / rel, temp_root / rel):
+        # Glue — pure boilerplate, no user content. Overwrite from the
+        # freshly-rendered scaffold so manifest edits reach the binding,
+        # stub, and build wiring.
+        for rel in (
+            f"native/src/{comp}/{comp}_ext.c",
+            f"native/src/{comp}/CMakeLists.txt",
+            f"src/{pkg}/{comp}.pyi",
+        ):
+            if _overwrite_if_changed(root / rel, temp_root / rel):
+                updated.append(root / rel)
+        # _core.h is a hybrid: declarations (glue) plus the inline step()
+        # body and state struct (sacred). The merge refreshes declarations
+        # — so a TOML-declared method/field shows up in the public API —
+        # while _preserve_core_bodies keeps the user's step() body and any
+        # hand-added struct fields. _core.c is fully sacred: it holds the
+        # steps()/lifecycle bodies, so apply never touches it once it
+        # exists. Adding a method via TOML therefore declares it in the
+        # header but leaves the body to the user (a clean link error until
+        # written), and never clobbers existing algorithm code. Use the
+        # additive verbs (jm method / jm add) to stub the body too.
+        rel = f"native/inc/{comp}/{comp}_core.h"
+        if _merge_module_core(root / rel, temp_root / rel, comp):
             updated.append(root / rel)
 
     return updated
