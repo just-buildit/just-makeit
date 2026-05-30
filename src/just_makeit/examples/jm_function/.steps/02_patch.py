@@ -3,9 +3,9 @@
 Run from the project root: python3 .steps/02_patch.py
 
 Patches three stubs:
-  1. linear_to_db() in utils_core.c — replaces placeholder with log10f body.
-  2. clamp() in utils_core.h       — replaces placeholder with ternary body.
-  3. gain_step() in gain_core.h    — replaces unused-state placeholder with
+  1. linear_to_db() in linear_to_db.c — replaces placeholder with log10f body.
+  2. clamp() in utils_core.h        — replaces placeholder with ternary body.
+  3. gain_step() in gain_core.h     — replaces unused-state placeholder with
                                       the multiplication that exercises state.
 
 All three use str.replace() on the exact text that jm_function / jm_object
@@ -16,9 +16,9 @@ keeps the patch readable.
 import pathlib
 import sys
 
-# ── 1. linear_to_db in utils_core.c ─────────────────────────────────────────
+# ── 1. linear_to_db in linear_to_db.c ───────────────────────────────────────
 
-core_c = pathlib.Path("native/src/utils/utils_core.c")
+core_c = pathlib.Path("native/src/utils/linear_to_db.c")
 text = core_c.read_text(encoding="utf-8")
 
 # Add <math.h> if not already included.  The generated file only has

@@ -493,10 +493,16 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     # Module CMakeLists
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
+    # Each non-inline module-level function lives in its own sacred
+    # <fn>.c (inline ones live entirely in the header).  Those sources are
+    # compiled into the module's OBJECT library alongside <mod>_core.c.
+    fn_srcs = [f"{fn['name']}.c" for fn in functions if not fn.get("inline")]
+    core_srcs = " ".join([f"{module}_core.c", *fn_srcs])
     # Collocated case: when an object shares the module name (e.g. module="fft",
     # object="fft"), CMAKE_LISTS_OBJECT_CORE is prepended and already defines
-    # <mod>_core.  Non-collocated: we define <mod>_core separately so that
-    # module-level functions in <mod>_core.c are compiled and linked in.
+    # <mod>_core; the function sources are appended to that library below.
+    # Non-collocated: we define <mod>_core separately so that module-level
+    # functions are compiled and linked in.
     has_collocated = module in object_names
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
     inc_dirs_extra = (
@@ -512,7 +518,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         # include dirs so any extra include dirs propagate transitively to
         # the Python extension when it links against {module}_core.
         module_core_lib_block = (
-            f"add_library({module}_core OBJECT {module}_core.c)\n"
+            f"add_library({module}_core OBJECT {core_srcs})\n"
             f"target_include_directories({module}_core PUBLIC"
             f" ${{CMAKE_SOURCE_DIR}}/native/inc{inc_dirs_extra})\n\n"
         )
@@ -542,10 +548,20 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     for obj, ctx_ in zip(object_names, comp_ctxs):
         if obj == module:
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_)
+            # Append the collocated object's extra sources: a legacy
+            # _methods.c (migration) plus every module-level function .c.
+            extra_srcs = []
             methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
             if methods_c.exists():
+                extra_srcs.append(f"{obj}_methods.c")
+            extra_srcs.extend(fn_srcs)
+            if extra_srcs:
                 old_lib = f"add_library({obj}_core OBJECT {obj}_core.c)"
-                new_lib = f"add_library({obj}_core OBJECT {obj}_core.c {obj}_methods.c)"
+                new_lib = (
+                    f"add_library({obj}_core OBJECT "
+                    + " ".join([f"{obj}_core.c", *extra_srcs])
+                    + ")"
+                )
                 obj_cmake = obj_cmake.replace(old_lib, new_lib)
             collocated_cmake += obj_cmake
     _write(
