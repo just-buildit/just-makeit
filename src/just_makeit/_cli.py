@@ -55,6 +55,7 @@ Commands:
     --multi-output TYPE         Emit a second output array of this type.
     --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
     --out-divisor N             Divide input length by N for output array (default: 1).
+    --result-field name:type    Append a field to a returned record list; repeatable.
     --batch                     Generate 1:1-rate array transform (allocates output per call).
     --no-bench                  Exclude this method from the C benchmark.
     --impl file::funcname       Lift method body from funcname in file.
@@ -73,6 +74,7 @@ Commands:
     --return-type TYPE          Return type (default: void).
     --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
                                 param's length, or the first integer scalar param.
+    --result-field name:type    Append a field to a returned record list; repeatable.
     --doc "text"                Docstring shown in Python help().
     --inline                    Emit static inline body in _core.h (no _core.c entry).
     --impl file::funcname       Lift function body from funcname in file.

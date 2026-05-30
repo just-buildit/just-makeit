@@ -28,6 +28,7 @@ def run(args: list[str]) -> None:
     max_out: int = 0
     no_bench = False
     py_return_type: str = ""
+    result_fields: list[dict] = []
     impl_spec_m: str | None = None
     replacements_m: list[tuple[str, str]] = []
 
@@ -139,6 +140,28 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             out_type = val
             i += 1
+        elif tok == "--result-field":
+            i += 1
+            if i >= len(remaining):
+                print("error: --result-field requires name:type", file=sys.stderr)
+                sys.exit(1)
+            val = remaining[i]
+            if ":" not in val:
+                print(
+                    f"error: --result-field '{val}' must be name:type",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            rf_name, rf_type = val.split(":", 1)
+            if rf_type not in T._CTYPE_META:
+                print(
+                    f"error: --result-field type '{rf_type}' is not a scalar.\n"
+                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result_fields.append({"name": rf_name, "type": rf_type})
+            i += 1
         elif tok in ("--arg-type", "--return-type"):
             i += 1
             if i >= len(remaining):
@@ -235,4 +258,5 @@ def run(args: list[str]) -> None:
         no_bench=no_bench,
         py_return_type=py_return_type,
         max_out=max_out,
+        result_fields=result_fields or None,
     )
