@@ -1873,12 +1873,32 @@ class TestInitParamCLI:
         r = _cli("object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest)
         assert r.returncode == 0
 
-    def test_init_param_without_no_state_exits_1(self, tmp_path):
+    def test_init_param_composes_with_state(self, tmp_path):
+        """Phase 2 / gh-69: --init-param + --state together produce a ctor
+        driven by init_params, with state staying internal and accessible
+        through the generated getters/setters."""
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
-        r = _cli("object", "gen", "--init-param", "n:int:16", cwd=dest)
-        assert r.returncode == 1
-        assert "--init-param requires --no-state" in r.stderr
+        r = _cli(
+            "object",
+            "iq_reader",
+            "--state",
+            "fd:int:-1",
+            "--init-param",
+            "filepath:const char *",
+            cwd=dest,
+        )
+        assert r.returncode == 0, r.stderr
+        # Header declares the ctor taking the init param, not the state field.
+        core_h = (dest / "native/inc/iq_reader/iq_reader_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert "iq_reader_create(const char * filepath)" in core_h
+        assert "iq_reader_create(int fd)" not in core_h
+        # State field is in the struct with a generated getter/setter pair.
+        assert "int fd;" in core_h
+        assert "iq_reader_get_fd" in core_h
+        assert "iq_reader_set_fd" in core_h
 
     def test_init_param_constructor_arg_in_core_c(self, tmp_path):
         dest = tmp_path / "proj"

@@ -35,8 +35,15 @@ def _methods_c_stub_variable(
     multi_output: list[str],
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
+    max_out: int = 0,
 ) -> str:
-    """Generate _core-level C stubs for a variable-output method."""
+    """Generate _core-level C stubs for a variable-output method.
+
+    ``max_out`` (when > 0) makes the generated ``<comp>_<name>_max_out``
+    return that integer literal instead of the ``return 0; /* placeholder */``
+    stub.  Saves the user from hand-writing the obvious upper bound for
+    detector / event-emitter shapes (gh-65 follow-up; Phase 2 row).
+    """
     buf_type = out_type if out_type else return_type
     ret_disp = T._ctype_display(buf_type)
     has_arg = arg_type != "void"
@@ -69,14 +76,24 @@ def _methods_c_stub_variable(
         f", {T._ctype_display(rt)} *out{i + 1}" for i, rt in enumerate(all_extra)
     )
 
+    if max_out > 0:
+        _max_out_head = (
+            f"/* Worst-case output count for {name}() — set via --max-out {max_out}. */"
+        )
+        _max_out_body = f"    return {max_out};"
+    else:
+        _max_out_head = (
+            f"/* <<IMPLEMENT: return maximum possible output samples for {name}"
+            f" given current state >> */"
+        )
+        _max_out_body = "    return 0; /* placeholder */"
     lines = [
-        f"/* <<IMPLEMENT: return maximum possible output samples for {name}"
-        f" given current state >> */",
+        _max_out_head,
         "size_t",
         f"{component}_{name}_max_out({component}_state_t *state)",
         "{",
         "    (void)state;",
-        "    return 0; /* placeholder */",
+        _max_out_body,
         "}",
         "",
         f"/* <<IMPLEMENT: process{' input and' if has_arg else ''} write results"
@@ -112,7 +129,7 @@ def _methods_c_stub_result_fields(
         step_param = ""
         suppress = ""
     lines = [
-        f"/* <<IMPLEMENT: push input, fill result[], return count >> */",
+        "/* <<IMPLEMENT: push input, fill result[], return count >> */",
         "size_t",
         f"{component}_{name}({component}_state_t *state"
         f"{step_param}, {ret_disp} *result, size_t max_results)",
@@ -155,12 +172,12 @@ def _methods_c_stub_fixed(
             if T.is_array_param_type(arg_type):
                 elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
                 param_parts.append(f"const {elem_disp} *x")
-                param_parts.append(f"size_t x_len")
-                suppress_parts.append(f"(void)x;")
-                suppress_parts.append(f"(void)x_len;")
+                param_parts.append("size_t x_len")
+                suppress_parts.append("(void)x;")
+                suppress_parts.append("(void)x_len;")
             else:
                 param_parts.append(f"{T._ctype_display(arg_type)} x")
-                suppress_parts.append(f"(void)x;")
+                suppress_parts.append("(void)x;")
         for n, t in params:
             if T.is_array_param_type(t):
                 elem_disp = T._ctype_display(T.array_elem_ctype(t))
@@ -182,10 +199,14 @@ def _methods_c_stub_fixed(
                 f"{component}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
             )
-            suppress = f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
+            suppress = (
+                f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
+            )
         else:
             arg_disp = T._ctype_display(arg_type)
-            c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            c_params = (
+                f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            )
             suppress = f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
@@ -263,7 +284,7 @@ def _build_method_prototype(
             if T.is_array_param_type(arg_type):
                 elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
                 parts.append(f"const {elem_disp} *x")
-                parts.append(f"size_t x_len")
+                parts.append("size_t x_len")
             else:
                 parts.append(f"{T._ctype_display(arg_type)} x")
         for n, t in params:
@@ -313,6 +334,7 @@ def run(
     result_fields: list[dict] | None = None,
     max_results: int = 64,
     py_return_type: str = "",
+    max_out: int = 0,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -366,13 +388,22 @@ def run(
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
     if result_fields:
         stub = _methods_c_stub_result_fields(
-            object_name, method_name, arg_type, return_type, max_results,
+            object_name,
+            method_name,
+            arg_type,
+            return_type,
+            max_results,
         )
     elif variable_output:
         stub = _methods_c_stub_variable(
-            object_name, method_name, arg_type, return_type, multi_output,
+            object_name,
+            method_name,
+            arg_type,
+            return_type,
+            multi_output,
             params=[(p[0], p[1]) for p in params],
             out_type=out_type,
+            max_out=max_out,
         )
     else:
         stub = _methods_c_stub_fixed(
@@ -422,6 +453,8 @@ def run(
         method_entry["max_results"] = max_results
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
+    if max_out > 0:
+        method_entry["max_out"] = max_out
 
     C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)
@@ -487,9 +520,7 @@ def run(
                 frozenset(n for n, _, _ in state_vars_list),
             )
         )
-        core_h_ = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
+        core_h_ = root / "native" / "inc" / object_name / f"{object_name}_core.h"
         if core_h_.exists():
             core_h_.write_text(
                 _preserve_core_bodies(
@@ -569,10 +600,7 @@ def run(
         if ext_c.exists():
             ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
             print(f"  update  {ext_c}")
-        bench_c = (
-            root / "native" / "benchmarks"
-            / f"bench_{object_name}_core.c"
-        )
+        bench_c = root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
         if bench_c.exists():
             bench_c.write_text(r(bench_c_tmpl), encoding="utf-8")
             print(f"  update  {bench_c}")
