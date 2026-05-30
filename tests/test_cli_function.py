@@ -134,3 +134,30 @@ class TestCliFunction:
                             "src.c::fn",
                         ]
                     )
+
+    def test_out_type_valid(self):
+        """Phase 2 row 3: --out-type T forwards to _function.run(out_type=T).
+        Brings jm function to parity with jm method, which already supports it."""
+        with patch("just_makeit._function.run") as mock_run:
+            _run(
+                [
+                    "magnitude_db",
+                    "--module",
+                    "dsp",
+                    "--param",
+                    "x:float[]",
+                    "--out-type",
+                    "float",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("out_type") == "float"
+
+    def test_out_type_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--out-type"])
+
+    def test_out_type_bad_type_exits(self):
+        # const char * has no canonical numpy dtype — rejected.
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--out-type", "const char *"])
