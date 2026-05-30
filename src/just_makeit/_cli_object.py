@@ -28,6 +28,9 @@ def run(args: list[str]) -> None:
     multi_output_obj: list[str] = []
     method_name_obj = "run"
     impl_spec: str | None = None
+    create_impl_spec: str | None = None
+    reset_impl_spec: str | None = None
+    destroy_impl_spec: str | None = None
     replacements: list[tuple[str, str]] = []
     class_name_obj: str | None = None
 
@@ -145,9 +148,27 @@ def run(args: list[str]) -> None:
         elif tok == "--impl":
             i += 1
             if i >= len(remaining):
-                print("error: --impl requires file::funcname", file=sys.stderr)
+                print(
+                    "error: --impl requires file::funcname"
+                    " or SLOT::file::funcname where SLOT is"
+                    " create / reset / destroy",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
-            impl_spec = remaining[i]
+            spec = remaining[i]
+            # Recognize the SLOT::file::funcname form for lifecycle bodies.
+            # Step-body shorthand (file::funcname, 2 parts) keeps working.
+            parts = spec.split("::", 2)
+            if len(parts) == 3 and parts[0] in ("create", "reset", "destroy"):
+                slot, rest = parts[0], "::".join(parts[1:])
+                if slot == "create":
+                    create_impl_spec = rest
+                elif slot == "reset":
+                    reset_impl_spec = rest
+                else:
+                    destroy_impl_spec = rest
+            else:
+                impl_spec = spec
             i += 1
         elif tok == "--replace":
             i += 1
@@ -180,10 +201,25 @@ def run(args: list[str]) -> None:
         sys.exit(1)
 
     impl_body_obj: str | None = None
-    if impl_spec is not None:
+    create_impl_body_obj: str | None = None
+    reset_impl_body_obj: str | None = None
+    destroy_impl_body_obj: str | None = None
+    if (
+        impl_spec is not None
+        or create_impl_spec is not None
+        or reset_impl_spec is not None
+        or destroy_impl_spec is not None
+    ):
         from . import _impl as _I
 
-        impl_body_obj = _I.load_impl(impl_spec, replacements)
+        if impl_spec is not None:
+            impl_body_obj = _I.load_impl(impl_spec, replacements)
+        if create_impl_spec is not None:
+            create_impl_body_obj = _I.load_impl(create_impl_spec, replacements)
+        if reset_impl_spec is not None:
+            reset_impl_body_obj = _I.load_impl(reset_impl_spec, replacements)
+        if destroy_impl_spec is not None:
+            destroy_impl_body_obj = _I.load_impl(destroy_impl_spec, replacements)
     _object.run(
         Path.cwd(),
         object_name,
@@ -197,6 +233,9 @@ def run(args: list[str]) -> None:
         no_step=no_step,
         mutable=mutable,
         impl_body=impl_body_obj,
+        create_impl_body=create_impl_body_obj,
+        reset_impl_body=reset_impl_body_obj,
+        destroy_impl_body=destroy_impl_body_obj,
         init_params=init_params_obj,
         variable_output=variable_output_obj,
         multi_output=multi_output_obj,
