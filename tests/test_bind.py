@@ -71,10 +71,13 @@ class TestBindByteIdenticalToScaffold:
         root = tmp_path / "proj"
         _scaffold_filter(root)
         # write=False mode: render and compare against on-disk version.
+        # Explicit utf-8 is required: the rendered string is utf-8 (it
+        # carries em-dashes from the template) but on Windows ``read_text``
+        # without an encoding defaults to cp1252 and mis-decodes them.
         rendered = bind_run(root, "my_filter", write=False)
         existing = (
             root / "native" / "src" / "my_filter" / "my_filter_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert rendered == existing
 
 
