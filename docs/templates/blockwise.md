@@ -1,20 +1,30 @@
-# `jm object NAME --block` — block transform (array → array)
+# `jm object NAME --blockwise` — blockwise processor (array → array)
+
+A **blockwise processor** is a processor whose unit of work is a block
+of samples rather than one sample at a time: array in, array out, each
+output element typically computed from one or more input elements plus
+state.
+
+Concrete examples: an FFT, an overlap-save filter, a CSV row
+transformer that re-encodes a batch, an image kernel applied across a
+row, or any algorithm where the per-element cost is dominated by a
+shared setup that you'd rather do once per block.
 
 **Status: proposed.** Tracked in
 [`developers/wizard-design.md`](../developers/wizard-design.md). The
-`--block` flag would bundle `--arg-type "T[]"` + `--return-type "T[]"`
+`--blockwise` flag would bundle `--arg-type "T[]"` + `--return-type "T[]"`
 with a `_core.c` skeleton that contains the loop pre-written.
 
 ## Command
 
 ```sh
-jm object NAME --block \
+jm object NAME --blockwise \
     --elem-type "float _Complex" \
     --state gain:float:1.0f
 ```
 
 `--elem-type` is the per-sample type; the array form (`T[]`) is implied
-by `--block`.
+by `--blockwise`.
 
 ## What you get
 

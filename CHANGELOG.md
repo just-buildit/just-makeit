@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+## [0.13.23] — 2026-05-30
+
+### Added
+
+CLI parity for every common TOML field — Phase 2 of the
+[implementation plan](docs/developers/implementation-plan.md). Eleven
+new flags across `jm new`, `jm object`, `jm module`, `jm method`, and
+`jm function`. Every flag round-trips through TOML; existing TOML
+authors are unaffected.
+
+- **`jm object` / `jm method`**
+
+    - **`--init-param name:type[:default]`** (gh PR #74) — composes
+        with `--state` so a user-facing constructor signature is
+        distinct from internal state. The old gate that rejected the
+        pair is gone; `init_params` drive the ctor, `state` stays
+        internal (manage with `--impl create::...`).
+    - **`--max-out N`** (gh PR #75) — sibling stub
+        `<comp>_<verb>_max_out()`; composes with `--variable-output`
+        for variable-rate output (event-emitter shape).
+    - **`--extra-include-dirs DIR`** (per-component, repeatable;
+        gh PR #78) — CMake include path mirroring the existing
+        per-module flag.
+    - **`--impl SLOT::file::funcname`** (gh PR #80) — `SLOT` is
+        `create`, `reset`, or `destroy`; lifts the body into the
+        corresponding lifecycle slot. The bare two-part form
+        (`file::funcname`) still lifts the step body.
+
+- **`jm method` / `jm function`**
+
+    - **`--result-field name:T`** (repeatable; gh PR #79) — appends a
+        scalar field to a returned record list. Mirrors TOML
+        `result_fields = [{name, type}, ...]`.
+    - **`--out-type T`** on `jm function` (gh PR #76) — return a fresh
+        ndarray of `T`; size from the first array param's length, or
+        the first integer scalar param when there's no array param.
+        (Already shipped on `jm method`.)
+
+- **`jm new`**
+
+    - **`--find-package NAME`** (repeatable; gh PR #77) — CMake
+        `find_package(NAME REQUIRED)`; persisted to `[project] find_packages`.
+    - **`--pkg-module NAME`** (repeatable; gh PR #77) — pkg-config
+        module via `pkg_check_modules`; persisted to `[project] pkg_modules`.
+    - **`--c-dep DIR`** (repeatable; gh PR #77) — vendored C
+        subdirectory under `native/src/DIR` (no Python wrapper);
+        persisted to `[project] c_deps`.
+
+- **`jm module`**
+
+    - **`--extra-include-dirs DIR`** (repeatable; gh PR #78)
+    - **`--extra-link-libs TARGET`** (repeatable; gh PR #78)
+    - **`--extra-types NAME`** (repeatable; gh PR #78) — hand-written
+        Python type registered in `PyInit_<mod>` alongside generated types.
+
+### Docs
+
+- **Complete CLI ↔ TOML mapping** — every TOML key the schema accepts
+    is listed in [`docs/configuration.md`](docs/configuration.md) with
+    its CLI flag, status, and notes. ~66 keys are reachable through the
+    CLI; ~15 stay TOML-only by design (`opaque`, `no_ctor`, `roles`,
+    `buf_field`/`expr`, `init_post_parse_impl`, `default_raw` /
+    `real_type`, `no_generate`, `max_results` / `max_results_param`).
+- **Template gallery reframed around generic data-flow shapes.**
+    Preset names are now domain-agnostic — `processor`, `blockwise`,
+    `generator`, `consumer`, `reader`, `function`. The previous names
+    (`filter`, `block`, `source`, `sink`, `library`) leaned DSP-y;
+    each new name describes *what the component does to data* without
+    importing domain vocabulary. The `detector` preset is gone — the
+    variable-output / event-emitter shape is a capability flag
+    (`--variable-output --max-out N` with repeatable `--result-field`)
+    on any output-producing preset, not its own preset. Each gallery
+    page now leads with cross-domain examples; the worked algorithm in
+    each page stays as one concrete instance (a filter on
+    `processor.md`, an FFT on `blockwise.md`, etc.).
+
 ## [0.13.22] — 2026-05-29
 
 ### Added

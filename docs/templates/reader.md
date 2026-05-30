@@ -1,4 +1,14 @@
-# `jm object NAME --reader` — reader (file / socket, custom verbs)
+# `jm object NAME --reader` — reader (external source → output)
+
+A **reader** opens an external source — file, socket, pipe, mmap'd
+region — and yields data on demand. Unlike a generator (which
+produces from internal state), a reader has a side input it must
+acquire, position within, and release.
+
+Concrete examples: a binary file reader for a custom format, a CSV
+row reader, a WAV / PNG / Parquet loader, a TCP socket consumer, a
+mmap'd shared-memory channel reader, or any source where the data
+lives outside the process.
 
 **Status: proposed.** Tracked in
 [`developers/wizard-design.md`](../developers/wizard-design.md). The

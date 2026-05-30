@@ -56,27 +56,30 @@ Phase 2: **shape preset.** One question with one answer:
 
 ```
 What does your component do?
-  1) filter         sample in → sample out                     (defaults)
-  2) block          array in → array out                       (--block)
-  3) source         no input; produces samples on demand       (--source)
-  4) sink           consumes samples; no output                (--sink)
-  5) reader         opens a file/socket; custom verbs          (--reader)
-  6) detector       finds events in a stream; variable output  (--variable-output --max-out N)
-  7) library        no class; just module-level functions      (--no-object)
+  1) processor      input in → output out (1:1)               (defaults)
+  2) blockwise      array in → array out                      (--blockwise)
+  3) generator      no input; produces output on demand       (--generator)
+  4) consumer       takes input; no output                    (--consumer)
+  5) reader         opens a file/socket; custom verbs         (--reader)
+  6) function       no class; just module-level function(s)   (jm function)
 ```
 
-Each preset is a CLI flag the wizard passes to `jm object` (or `jm function` for option 7). The presets bundle the right combination of
+Variable-output shapes (event finder, peak detector) are a capability
+flag on any output-producing preset, not their own preset:
+`--variable-output --max-out N` with repeatable `--result-field name:T`.
+
+Each preset is a CLI flag the wizard passes to `jm object` (or `jm function` for option 6). The presets bundle the right combination of
 existing flags + a hand-tuned `_core.c` skeleton with concrete `/* TODO */` markers (see below).
 
 Phase 3: **types and state.** Only the questions the preset needs:
 
-- filter / block — `arg_type`, `return_type`, state vars
-- source — `return_type`, state vars
-- sink — `arg_type`, state vars
+- processor / blockwise — `arg_type`, `return_type`, state vars
+- generator — `return_type`, state vars
+- consumer — `arg_type`, state vars
 - reader — init_params (filepath, mode, format), state vars (fd,
     file_size, position), custom method names (read, seek, close)
-- detector — `max_out`, threshold params, state vars
-- library — function names, in/out param shapes
+- function — function names, in/out param shapes (variable-output is
+    `--variable-output --max-out N` + repeatable `--result-field`)
 
 Phase 4: **implementations (optional).** For each generated `/* TODO */`
 the wizard offers a "paste your C body (or skip)" prompt. Pasted bodies
@@ -117,34 +120,34 @@ the user said they were building.
 Per-preset skeletons:
 
 ```c
-/* filter */
+/* processor */
 JM_FORCEINLINE JM_HOT float _Complex
-my_filter_step(my_filter_state_t *state, float _Complex x)
+my_proc_step(my_proc_state_t *state, float _Complex x)
 {
     /* TODO: replace this body with your per-sample math.
-       state-> fields are declared in my_filter_core.h. */
+       state-> fields are declared in my_proc_core.h. */
     return state->gain * x;
 }
 
-/* block */
+/* blockwise */
 void
 my_xform_steps(my_xform_state_t *state,
                const float _Complex *in, size_t n,
                float _Complex *out)
 {
-    /* TODO: process n samples from in[] into out[]. */
+    /* TODO: process n elements from in[] into out[]. */
     for (size_t i = 0; i < n; i++) {
         out[i] = state->gain * in[i];
     }
 }
 
-/* source */
+/* generator */
 void
-my_nco_steps(my_nco_state_t *state, float _Complex *out, size_t n)
+my_gen_steps(my_gen_state_t *state, float _Complex *out, size_t n)
 {
-    /* TODO: produce n samples into out[]. */
+    /* TODO: produce n values into out[]. */
     for (size_t i = 0; i < n; i++) {
-        out[i] = /* advance state, emit sample */ 0.0f + 0.0f * I;
+        out[i] = /* advance state, emit value */ 0.0f + 0.0f * I;
     }
 }
 
@@ -166,25 +169,25 @@ my_reader_create(const char *filepath)
 size_t
 my_reader_read(my_reader_state_t *state, float _Complex *out, size_t n)
 {
-    /* TODO: read up to n samples from state->fd into out[]; return count. */
+    /* TODO: read up to n values from state->fd into out[]; return count. */
     return 0;
 }
 
-/* detector */
+/* variable-output capability (on any output-producing preset) */
 size_t
-my_det_detect_max_out(my_det_state_t *state)
+my_obj_detect_max_out(my_obj_state_t *state)
 {
     (void)state;
     return 1024;  /* TODO: tune to your worst-case event count per call. */
 }
 
 size_t
-my_det_detect(my_det_state_t *state,
+my_obj_detect(my_obj_state_t *state,
               const float _Complex *in, size_t n_in,
-              detection_t *out)
+              record_t *out)
 {
-    /* TODO: scan in[0..n_in-1], emit event records into out[],
-       return count (<= my_det_detect_max_out(state)). */
+    /* TODO: scan in[0..n_in-1], emit records into out[],
+       return count (<= my_obj_detect_max_out(state)). */
     return 0;
 }
 ```
@@ -212,9 +215,9 @@ same expressiveness from the command line.
 | `[project] find_packages`             | `--find-package NAME` on `jm new` (repeatable) — already partially supported                                             |
 | `[module.X] extra_include_dirs`       | `--extra-include-dirs '${X_INCLUDE_DIR}'` on `jm module` and `jm object`                                                 |
 | Reader preset                         | `--reader` on `jm object` — implies `--no-step --init-param filepath:"const char *"` and emits a reader-shaped `_core.c` |
-| Source preset                         | `--source` on `jm object` — implies `--arg-type void` and emits a generator-shaped step()                                |
-| Sink preset                           | `--sink` on `jm object` — implies `--return-type void` and emits a sink-shaped step()                                    |
-| Block preset                          | `--block` on `jm object` — implies array `arg_type`/`return_type` and emits the loop                                     |
+| Generator preset                      | `--generator` on `jm object` — implies `--arg-type void` and emits a generator-shaped step()                             |
+| Consumer preset                       | `--consumer` on `jm object` — implies `--return-type void` and emits a consumer-shaped step()                            |
+| Blockwise preset                      | `--blockwise` on `jm object` — implies array `arg_type`/`return_type` and emits the loop                                 |
 
 None of these break existing flag syntax. None require schema changes
 to the TOML — every flag still rounds-trips into the same keys. Power
@@ -238,7 +241,7 @@ for the prompts + dispatch.
     `src/just_makeit/templates/c/src/presets/` (new directory). Each
     `<preset>_core.c.template` is rendered with the same `<<...>>`
     substitution as the existing templates. The CLI flag (`--reader`,
-    `--block`, etc.) selects which template renders, plus its
+    `--blockwise`, etc.) selects which template renders, plus its
     accompanying state/init_param defaults.
 - **CLI flag additions.** Land before the wizard, each in its own PR.
     Each comes with regression tests. Order of effort, cheapest first:

@@ -94,13 +94,14 @@ Refactors that aren't strictly additive:
     every CLI handler, the bind parser, and the wizard prompts. Single
     error format: `"--state field type 'const char *' is not legal here.   Allowed: float, double, int, ... See docs/types.md#state-variable-types."`
 - **Presets become first-class.** Each gallery shape gets a top-level
-    `--preset` flag on `jm object` (and `jm function` for the library
-    shape). The existing `--no-step` / `--arg-type void` combos still
-    work; the preset is a labelled bundle. The wizard offers seven
-    options, period.
+    `--preset` flag on `jm object` (and `jm function` is its own verb).
+    The existing `--no-step` / `--arg-type void` combos still work;
+    the preset is a labelled bundle. The wizard offers six options
+    (processor, blockwise, generator, consumer, reader, function),
+    period; variable-output is a capability flag, not a preset.
 - **`jm bind` becomes a top-level workflow, not just a debug tool.**
-    Bind goes from "parse for the filter shape" to "parse for all
-    seven shapes, with `--check` running in CI on every example."
+    Bind goes from "parse for the processor shape" to "parse for all
+    six shapes, with `--check` running in CI on every example."
 
 ______________________________________________________________________
 
@@ -117,13 +118,13 @@ conventions the rest of the work consumes.
 
 What's in:
 
-- [Template gallery](../templates/index.md) — eight pages with
+- [Template gallery](../templates/index.md) — six preset pages with
     Concrete-types tables (`Accepts | Rejects | Default`).
 - [Wizard design](wizard-design.md) and
     [bind design](bind-design.md).
 - Type-slot docs ([`docs/types.md`](../types.md)) covering all five
     slots with explicit allowlists.
-- `jm bind` MVP for the filter shape — byte-identical round-trip;
+- `jm bind` MVP for the processor shape — byte-identical round-trip;
     1619 tests pass.
 
 What's left in this phase:
@@ -132,10 +133,10 @@ What's left in this phase:
 - [ ] Get one bundled example using `jm bind` end-to-end (hand-write
     `<comp>_core.h` / `<comp>_core.c`, then `jm bind` to materialise
     the binding). `running_stats` is the obvious target — small,
-    one-state-field, fits the filter shape.
+    one-state-field, fits the processor shape.
 
-Success bar: PR merged, the filter row of the bind acceptance table
-below is green.
+Success bar: PR merged, the processor row of the bind acceptance
+table below is green.
 
 ### Phase 2 — CLI parity for every TOML field
 
@@ -164,26 +165,28 @@ rejection cases.
 Success bar: a one-page table in `docs/configuration.md` listing every
 TOML field has a "Reachable via CLI" column, and every row is `✓`.
 
-### Phase 3 — the seven presets, bind for all of them, the wizard
+### Phase 3 — the six presets, bind for all of them, the wizard
 
 Three threads run in parallel; each delivers one piece of the
 "interactive picker for the gallery" experience.
 
 Thread 3a: **Presets.**
 
-- [ ] `--preset filter` (alias for current defaults; documented)
-- [ ] `--preset block` — `--arg-type "T[]" --return-type "T[]"` plus
-    a block-shaped `_core.c` skeleton with the `for (i; i<n; i++)` loop
-    pre-written.
-- [ ] `--preset source` — `--arg-type void`; emits a `steps(n)`
+- [ ] `--preset processor` (alias for current defaults; documented)
+- [ ] `--preset blockwise` — `--arg-type "T[]" --return-type "T[]"`
+    plus a block-shaped `_core.c` skeleton with the `for (i; i<n; i++)`
+    loop pre-written.
+- [ ] `--preset generator` — `--arg-type void`; emits a `steps(n)`
     generator skeleton.
-- [ ] `--preset sink` — `--return-type void`; emits an accumulator
+- [ ] `--preset consumer` — `--return-type void`; emits an accumulator
     skeleton.
 - [ ] `--preset reader` — `--no-step --init-param filepath:"const char *"`
     plus `read()` / `seek()` / `close()` methods registered with
     `open()`/`stat()` already wired.
-- [ ] `--preset detector` — `--variable-output --max-out N` plus
-    repeatable `--result-field`; emits a scan-and-emit skeleton.
+
+Variable-output (event-emitter shape) is a capability, not a preset:
+`--variable-output --max-out N` with repeatable `--result-field name:T`
+on any output-producing preset.
 
 Thread 3b: **Bind expansion.**
 
@@ -241,15 +244,14 @@ Living table. A row goes green when:
 1. `jm test` passes against the bound binding.
 1. `jm bind --check` is wired into the bundled example's CI.
 
-| Preset     | Phase 1 (filter MVP)                     | Phase 3 (full) |
-| ---------- | ---------------------------------------- | -------------- |
-| `filter`   | byte-identical ✅ (single + multi-field) | —              |
-| `block`    | n/a                                      | pending        |
-| `source`   | n/a                                      | pending        |
-| `sink`     | n/a                                      | pending        |
-| `reader`   | n/a                                      | pending        |
-| `detector` | n/a                                      | pending        |
-| `library`  | n/a                                      | pending        |
+| Preset      | Phase 1 (MVP)                            | Phase 3 (full) |
+| ----------- | ---------------------------------------- | -------------- |
+| `processor` | byte-identical ✅ (single + multi-field) | —              |
+| `blockwise` | n/a                                      | pending        |
+| `generator` | n/a                                      | pending        |
+| `consumer`  | n/a                                      | pending        |
+| `reader`    | n/a                                      | pending        |
+| `function`  | n/a                                      | pending        |
 
 ______________________________________________________________________
 

@@ -189,11 +189,11 @@ jm object xform --arg-type "float[]" --return-type "float[]"
 
 Pass `void` to either flag to omit that side of the signature:
 
-| Combination                       | What it produces                     | Preset                                                           |
-| --------------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
-| `--arg-type void --return-type T` | Generator. `step()` takes no input.  | [source](templates/source.md)                                    |
-| `--arg-type T --return-type void` | Sink. `step()` returns nothing.      | [sink](templates/sink.md)                                        |
-| `--arg-type void` + `--no-step`   | Custom verbs only; no auto `step()`. | [reader](templates/reader.md), [detector](templates/detector.md) |
+| Combination                       | What it produces                     | Preset                              |
+| --------------------------------- | ------------------------------------ | ----------------------------------- |
+| `--arg-type void --return-type T` | Generator: `step()` takes no input.  | [generator](templates/generator.md) |
+| `--arg-type T --return-type void` | Consumer: `step()` returns nothing.  | [consumer](templates/consumer.md)   |
+| `--arg-type void` + `--no-step`   | Custom verbs only; no auto `step()`. | [reader](templates/reader.md)       |
 
 ### Element types accepted in the array form { #array-element-types }
 
