@@ -459,7 +459,13 @@ def run(
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
-    _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
+    # gh-92: route through the canonical resolver so this matches the
+    # default already applied inside make_sample_ctx. Inline string
+    # defaults here used to disagree on the void-arg case, causing the
+    # bench to be rendered against a (non-void) sample_ctx return type
+    # while step_ctx received "void" — the resulting bench would assign
+    # the void step() return into a typed _sink, failing the build.
+    _rt = Ctx.resolve_return_type(arg_type, return_type)
     ctx.update(
         Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
     )

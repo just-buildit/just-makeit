@@ -93,7 +93,9 @@ def _make_object_ctx(
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
-    _rt = return_type or ("void" if arg_type.endswith("[]") else arg_type)
+    # gh-92: keep this default in lockstep with make_sample_ctx via the
+    # shared resolver — see Ctx.resolve_return_type's docstring.
+    _rt = Ctx.resolve_return_type(arg_type, return_type)
     ctx.update(
         Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
     )
