@@ -224,3 +224,44 @@ class TestArrayReturnRejected:
             _apply.run(root)
         err = capsys.readouterr().err
         assert "array return type" in err
+
+
+# ── bool scalar type ─────────────────────────────────────────────────────────
+
+
+class TestBoolScalarType:
+    """`bool` is a registered scalar type but `np.bool_` was missing from
+    _NP_ENUM, so make_sample_ctx KeyError'd on a bool arg/return. And the
+    generated C used `bool` without <stdbool.h>, so even past the KeyError
+    the scaffold didn't compile. Both are now fixed."""
+
+    def test_make_sample_ctx_bool_no_keyerror(self):
+        from just_makeit._context._sample import make_sample_ctx
+
+        ctx = make_sample_ctx("bool", "bool")
+        assert ctx["in_np_enum"] == "NPY_BOOL"
+        assert ctx["out_np_enum"] == "NPY_BOOL"
+
+    def test_np_enum_has_bool(self):
+        from just_makeit._types import _CTYPE_META, _NP_ENUM
+
+        # Every registered scalar's py_type must have an _NP_ENUM entry.
+        for key, meta in _CTYPE_META.items():
+            assert meta["py_type"] in _NP_ENUM, (
+                f"_CTYPE_META[{key!r}].py_type={meta['py_type']!r} "
+                f"is missing from _NP_ENUM"
+            )
+
+    def test_common_header_includes_stdbool(self):
+        from just_makeit import _render as R
+
+        assert "#include <stdbool.h>" in R.CLIB_COMMON_H
+
+    def test_bool_object_scaffolds(self, tmp_path):
+        from just_makeit._object import run as object_run
+
+        root = tmp_path / "bp"
+        new_run("bp", root)
+        object_run(root, "flg", None, arg_type="bool", return_type="bool")
+        core = (root / "native" / "inc" / "flg" / "flg_core.h").read_text()
+        assert "bool" in core
