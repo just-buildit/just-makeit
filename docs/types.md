@@ -1,4 +1,25 @@
-# State Variable Types
+# Type slots
+
+Every `jm` flag that takes a C type goes through one of five **slots**.
+Each slot has its own allowlist — different flags accept different
+subsets of the registry. This page is the single source of truth: if a
+type isn't listed under a slot, that flag will reject it.
+
+| Slot                                                       | CLI flags                                | TOML field                       |
+| ---------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
+| [State variable](#state-variable-types)                    | `--state name:T:D`                       | `[[obj.state]] type = "T"`       |
+| [Step input / output](#step-input--output-types)           | `--arg-type T`, `--return-type T`        | `arg_type`, `return_type`        |
+| [Constructor / init param](#constructor--init-param-types) | `--init-param name:T[:D]` *(proposed)*   | `[[obj.init_params]] type = "T"` |
+| [Module function param](#module-function-param-types)      | `--param name:T`, `--out-param name:T[]` | `[[fn.params]] type = "T"`       |
+| [Method param](#method-param-types)                        | *(TOML only today)*                      | `[[method.params]] type = "T"`   |
+
+Templates in the [gallery](templates/index.md) list their concrete type
+choices per slot at the bottom of each page, with links back into the
+sections below.
+
+______________________________________________________________________
+
+## State variable types
 
 State variables are declared with `--state name:type[:default]`.
 
@@ -142,8 +163,121 @@ def set_channel(self, value: np.uint8) -> None: ...
 
 ______________________________________________________________________
 
+______________________________________________________________________
+
+## Step input / output types
+
+The `--arg-type` and `--return-type` flags set the C signature of `<comp>_step`
+and `<comp>_steps`. Both accept the same allowlist plus a few shape forms.
+
+### Scalar shapes
+
+Every type in [State variable types](#state-variable-types) except
+`const char *` is also a legal `--arg-type` / `--return-type` value.
+Strings can't flow through a sample-by-sample DSP step.
+
+### Array shape — `T[]`
+
+Append `[]` to any element type from the
+[array dtypes](#array-element-types) table to declare an input array
+parameter that arrives as a numpy ndarray and expands to
+`(const T *name, size_t name_len)` in C.
+
+```sh
+jm object xform --arg-type "float[]" --return-type "float[]"
+```
+
+### The `void` shape
+
+Pass `void` to either flag to omit that side of the signature:
+
+| Combination                       | What it produces                     | Preset                                                           |
+| --------------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
+| `--arg-type void --return-type T` | Generator. `step()` takes no input.  | [source](templates/source.md)                                    |
+| `--arg-type T --return-type void` | Sink. `step()` returns nothing.      | [sink](templates/sink.md)                                        |
+| `--arg-type void` + `--no-step`   | Custom verbs only; no auto `step()`. | [reader](templates/reader.md), [detector](templates/detector.md) |
+
+### Element types accepted in the array form { #array-element-types }
+
+The element-type set is a strict subset of `_CTYPE_META` — `bool`,
+`int`, `const char *`, and `long double _Complex` are not legal array
+elements (no canonical numpy dtype).
+
+| `T[]` form          | C element         | NumPy dtype     |
+| ------------------- | ----------------- | --------------- |
+| `float[]`           | `float`           | `np.float32`    |
+| `double[]`          | `double`          | `np.float64`    |
+| `float _Complex[]`  | `float _Complex`  | `np.complex64`  |
+| `double _Complex[]` | `double _Complex` | `np.complex128` |
+| `int8_t[]`          | `int8_t`          | `np.int8`       |
+| `int16_t[]`         | `int16_t`         | `np.int16`      |
+| `int32_t[]`         | `int32_t`         | `np.int32`      |
+| `int64_t[]`         | `int64_t`         | `np.int64`      |
+| `uint8_t[]`         | `uint8_t`         | `np.uint8`      |
+| `uint16_t[]`        | `uint16_t`        | `np.uint16`     |
+| `uint32_t[]`        | `uint32_t`        | `np.uint32`     |
+| `uint64_t[]`        | `uint64_t`        | `np.uint64`     |
+| `size_t[]`          | `size_t`          | `np.uintp`      |
+| `ptrdiff_t[]`       | `ptrdiff_t`       | `np.intp`       |
+
+______________________________________________________________________
+
+## Constructor / init-param types
+
+Constructor parameters are the broadest slot. They feed `<comp>_create`
+and the Python `__init__`, and they need to accept things the DSP hot
+path doesn't — filepaths, format names, optional buffers.
+
+| Type form                                                    | Use case                                    | Example                                         |
+| ------------------------------------------------------------ | ------------------------------------------- | ----------------------------------------------- |
+| Any [scalar](#state-variable-types) including `const char *` | flags, options, paths                       | `--init-param filepath:"const char *"`          |
+| Any [array shape](#array-element-types) `T[]`                | required positional ndarray                 | `--init-param coeffs:"float _Complex[]"`        |
+| `T[][]` (2-D array)                                          | required 2-D ndarray (e.g. polyphase banks) | `--init-param bank:"float _Complex[][]"`        |
+| `string_enum:a,b,c`                                          | optional string mapped to a C enum index    | `--init-param mode:"string_enum:read,write,rw"` |
+| `T[N]` (fixed length)                                        | not accepted here — use `--state` for that  | —                                               |
+
+`const char *` is legal as an init-param but **not** as a state field —
+strings live in Python land or the caller's memory; the state struct
+holds the parsed/converted result. The reader template carries
+`filepath:"const char *"` in its init-params and `fd:int` in its state.
+
+______________________________________________________________________
+
+## Module-function param types
+
+Module-level functions (`jm function FN --module MOD`) accept the
+narrowest slot — no string enums, no 2-D arrays.
+
+| Param flag             | Legal types                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--param name:T`       | Any [scalar](#state-variable-types) except `const char *`, or any `T[]` [array shape](#array-element-types). Arrays are `const`-qualified. |
+| `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                        |
+
+The whole-function `--out-type T` flag (currently TOML only) makes the
+function return a fresh ndarray sized from the first array param's
+length, or — when no array param is present — from the first integer
+scalar param (gh-65).
+
+______________________________________________________________________
+
+## Method param types
+
+Methods on stateful objects (`jm method OBJ METHOD`) accept the same
+set as module-function params (`--param` plus `--out-param` semantics),
+extended with three TOML-only knobs that don't yet have CLI flags:
+
+| TOML field                          | Effect                                                                                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `variable_output = true`            | Method returns up to `<comp>_<verb>_max_out()` samples; the binding pre-allocates the buffer once.                                                           |
+| `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                              |
+| `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist. |
+
+______________________________________________________________________
+
 ## See also
 
+- [Template gallery](templates/index.md) — each preset declares its
+    slot allowlist concretely at the bottom of its page.
 - [doppler — Type System](https://doppler-dsp.github.io/doppler/types/) —
     how doppler uses these C types in its DSP APIs (CF32, CF64, integer IQ
     pairs, `dp_sample_type_t`).

@@ -163,6 +163,18 @@ ys = flt.steps(np.ones(8, dtype=np.complex64))
 flt.reset()
 ```
 
+## Concrete types
+
+| Slot                | Accepts                                                                                                                             | Default in this template |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `--arg-type`        | Any [scalar](../types.md#step-input--output-types) except `const char *`; passing `void` routes you to [source](source.md) instead. | `float _Complex`         |
+| `--return-type`     | Same as `--arg-type`; `void` routes you to [sink](sink.md).                                                                         | `float _Complex`         |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` are also legal but skip the ctor.                               | `gain:float:1.0f`        |
+
+Strings (`const char *`) are not legal here — not in the step
+signature, not in the state struct. See the [reader](reader.md) preset
+for the path-driven shape.
+
 ## When to use a different preset
 
 - Output count differs from input count → `--block` or `--variable-output`.

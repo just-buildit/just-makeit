@@ -78,3 +78,14 @@ acc = NAME(count=0, sum=0.0)
 acc.steps(np.ones(1024, dtype=np.complex64))
 print(acc.get_sum(), acc.get_count())
 ```
+
+## Concrete types
+
+| Slot                | Accepts                                                                                                                                     | Default in this template           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `--arg-type`        | Any [scalar](../types.md#step-input--output-types) except `const char *`.                                                                   | `float _Complex`                   |
+| `--return-type`     | Implicitly `void` — sinks produce no output. Setting it explicitly is rejected.                                                             | `void`                             |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). State carries the running aggregate, so `uint64_t`, `double`, and complex types are common. | `count:uint64_t:0, sum:double:0.0` |
+
+Generated accessors (`get_sum`, `get_count`, etc.) follow the standard
+[State variable types](../types.md#state-variable-types) NumPy mapping.

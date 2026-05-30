@@ -102,6 +102,13 @@ template pages each describe the contract above by example — the
 formal version above is just the union of what those pages already
 require.
 
+The **type allowlist** the parser enforces per slot is the same one
+documented in [`docs/types.md`](../types.md), referenced from the
+"Concrete types" section of every template page. Parser, CLI, and
+wizard all share that single source of truth — a `const char *` that
+isn't legal as a state field is a parse error in `jm bind`, not just a
+"won't compile" surprise.
+
 ______________________________________________________________________
 
 ## Parser strategy

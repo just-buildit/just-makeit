@@ -97,3 +97,16 @@ q15_to_float(inp, out, inp.size)
 - **`result_fields` for record-returning functions** — declared in
     TOML today. The wizard would expose this via repeatable
     `--result-field` flags.
+
+## Concrete types
+
+| Slot                               | Accepts                                                                                                                                                                                                                        | Default in this template |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| `--param name:T`                   | Any [scalar](../types.md#module-function-param-types) except `const char *`, or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                  | `n:size_t`               |
+| `--out-param name:T[]`             | Array shapes **only**. Drops `const`. Rejected for scalars.                                                                                                                                                                    | `output:float[]`         |
+| `--return-type T`                  | Any [scalar](../types.md#module-function-param-types) including `void`. The default is `void`.                                                                                                                                 | `void`                   |
+| `--out-type T` *(TOML only today)* | Any [scalar](../types.md#array-element-types) that can be an array element. Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | —                        |
+
+The library preset has the **narrowest** slot allowlist of any
+template — no `_Complex` strings, no string-enums, no 2-D arrays. Need
+those? Wrap the function in an object preset instead.

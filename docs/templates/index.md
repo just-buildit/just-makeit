@@ -24,7 +24,7 @@ markers with your algorithm.
 
 ## How to read each page
 
-Every preset page has the same four sections:
+Every preset page has the same five sections:
 
 1. **Command** — the exact `jm` invocation. Copy, paste, run.
 1. **What you get** — the generated files (`_core.h`, `_core.c`,
@@ -35,6 +35,11 @@ Every preset page has the same four sections:
     shape.
 1. **Python usage** — what `import` + call sites look like once
     `jm build` is done.
+1. **Concrete types** — the allowlist for each slot the preset exposes
+    (`--arg-type`, `--state`, `--init-param`, etc.). Rows link back to
+    the master [Type slots](../types.md) page so you can cross-reference.
+    A type that isn't in a slot's row is rejected by the CLI and by
+    `jm bind`.
 
 ## Status
 

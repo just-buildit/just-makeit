@@ -72,3 +72,16 @@ src = NAME(phase=0.0, freq=0.01)
 y = src.step()                           # → one complex sample
 ys = src.steps(1024)                     # → (1024,) complex64
 ```
+
+## Concrete types
+
+| Slot                | Accepts                                                                       | Default in this template            |
+| ------------------- | ----------------------------------------------------------------------------- | ----------------------------------- |
+| `--arg-type`        | Implicitly `void` — sources take no input. Setting it explicitly is rejected. | `void`                              |
+| `--return-type`     | Any [scalar](../types.md#step-input--output-types) except `const char *`.     | `float _Complex`                    |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types).                               | `phase:float:0.0f, freq:float:0.0f` |
+
+The source preset always emits a `steps(n)` that fills an `n`-sized
+ndarray; the element type matches `--return-type`. For block-shaped
+generators (read N inputs, write N outputs) use [block](block.md)
+instead.
