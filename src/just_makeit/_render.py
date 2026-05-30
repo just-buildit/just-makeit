@@ -49,6 +49,9 @@ CMAKE_LISTS_OBJECT_CORE = _load("cmake/CMakeLists_object_core.cmake")
 CMAKE_LISTS_COMPONENT = _load("cmake/CMakeLists_component.cmake")
 CMAKE_PC_IN = _load("cmake/package.pc.in")
 CMAKE_CONFIG_IN = _load("cmake/packageConfig.cmake.in")
+# ── CI workflows ───────────────────────────────────────────────────────────────
+CI_GITHUB = _load("ci/github.yml")
+CI_WOODPECKER = _load("ci/woodpecker.yml")
 # ── Make ─────────────────────────────────────────────────────────────────────
 MAKEFILE = _load("make/Makefile")
 MAKEFILE_SIMPLE = _load("make/Makefile_simple")

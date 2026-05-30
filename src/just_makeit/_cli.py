@@ -116,6 +116,9 @@ Commands:
   regenerate <component>        Delete a component's generated files and rebuild them
                                 from just-makeit.toml (discards _core.c edits — stash
                                 first). --force skips the confirmation.
+  ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
+                                github (default, .github/workflows/ci.yml) or woodpecker
+                                (.woodpecker.yml). --force overwrites an existing file.
   split-objects                 Move each [obj] section out of the manifest into
                                 objects/<name>.toml and add the include glob.
   script                        Print a shell script that fully reconstructs this project via CLI.
@@ -772,6 +775,32 @@ def main() -> None:
             )
             sys.exit(1)
         _regenerate.run(Path.cwd(), names[0], force=force)
+
+    elif cmd == "ci":
+        from . import _ci
+
+        provider = "github"
+        force = False
+        i = 1
+        while i < len(args):
+            a = args[i]
+            if a == "--provider":
+                i += 1
+                if i >= len(args):
+                    print(
+                        "error: --provider requires a value "
+                        "(github, woodpecker).",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                provider = args[i]
+            elif a == "--force":
+                force = True
+            else:
+                print(f"error: unexpected argument '{a}'", file=sys.stderr)
+                sys.exit(1)
+            i += 1
+        _ci.run(Path.cwd(), provider=provider, force=force)
 
     elif cmd == "version":
         from . import __version__

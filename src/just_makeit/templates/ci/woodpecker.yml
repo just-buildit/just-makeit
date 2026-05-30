@@ -1,0 +1,12 @@
+when:
+  - event: [push, pull_request]
+
+steps:
+  test:
+    image: python:3.12-bookworm
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends cmake build-essential
+      - python -m pip install --upgrade pip <<pip_deps>>
+      - make
+      - make test
