@@ -27,6 +27,7 @@ def run(args: list[str]) -> None:
     variable_output_obj = False
     max_out_obj: int = 0
     multi_output_obj: list[str] = []
+    extra_include_dirs_obj: list[str] = []
     method_name_obj = "run"
     impl_spec: str | None = None
     create_impl_spec: str | None = None
@@ -200,6 +201,16 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             class_name_obj = remaining[i]
             i += 1
+        elif tok == "--extra-include-dirs":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --extra-include-dirs requires a path or ${VAR}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            extra_include_dirs_obj.append(remaining[i])
+            i += 1
         else:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
@@ -253,4 +264,5 @@ def run(args: list[str]) -> None:
         method_name=method_name_obj,
         class_name=class_name_obj,
         max_out=max_out_obj,
+        extra_include_dirs=extra_include_dirs_obj,
     )
