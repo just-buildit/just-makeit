@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from just_makeit._config import load as _load_cfg
+
 
 SRC = Path(__file__).parent.parent / "src"
 
@@ -562,13 +564,10 @@ class TestAddCLI:
         assert "int order;" in core
 
     def test_add_updates_config(self, tmp_path):
-        import tomllib
-
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
         _cli("add", "--state", "order:int:4", cwd=dest)
-        with (dest / "just-makeit.toml").open("rb") as f:
-            cfg = tomllib.load(f)
+        cfg = _load_cfg(dest)
         names = [s["name"] for s in cfg["comp"]["state"]]
         assert "order" in names
 
@@ -916,8 +915,8 @@ class TestObjectNoStateCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "gen", "--no-state", cwd=dest)
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert 'no_state = "true"' in toml
+        cfg = _load_cfg(dest)
+        assert cfg["gen"]["no_state"] == "true"
 
 
 class TestObjectNoStepCLI:
@@ -952,8 +951,8 @@ class TestObjectNoStepCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "sink", "--no-step", cwd=dest)
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert 'no_step = "true"' in toml
+        cfg = _load_cfg(dest)
+        assert cfg["sink"]["no_step"] == "true"
 
 
 class TestObjectMutableCLI:
@@ -1042,8 +1041,8 @@ class TestObjectMutableCLI:
             "float _Complex",
             cwd=dest,
         )
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert 'mutable = "true"' in toml
+        cfg = _load_cfg(dest)
+        assert cfg["nco"]["mutable"] == "true"
 
 
 class TestObjectPerfCLI:
@@ -1460,12 +1459,9 @@ class TestAddParamCLI:
         assert "double offset" in core_h or "offset" in core_h
 
     def test_add_param_recorded_in_config(self, tmp_path):
-        import tomllib
-
         dest = self._setup(tmp_path)
         _cli("add", "--param", "offset:double:0.0", cwd=dest)
-        with (dest / "just-makeit.toml").open("rb") as f:
-            cfg = tomllib.load(f)
+        cfg = _load_cfg(dest)
         names = [s["name"] for s in cfg["norm"].get("state", [])]
         assert "offset" in names
 
@@ -1675,8 +1671,11 @@ class TestMethodOutTypeCLI:
             "void",
             cwd=dest,
         )
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert 'out_type = "float"' in toml
+        cfg = _load_cfg(dest)
+        method = next(
+            m for m in cfg["conv"]["methods"] if m["name"] == "process"
+        )
+        assert method["out_type"] == "float"
 
     def test_out_divisor_persisted_in_toml(self, tmp_path):
         dest = self._setup(tmp_path)
@@ -1696,8 +1695,11 @@ class TestMethodOutTypeCLI:
             "void",
             cwd=dest,
         )
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert "out_divisor = 4" in toml
+        cfg = _load_cfg(dest)
+        method = next(
+            m for m in cfg["conv"]["methods"] if m["name"] == "decimate"
+        )
+        assert method["out_divisor"] == 4
 
 
 class TestNewModuleRepeatableCLI:
@@ -1729,9 +1731,9 @@ class TestNewModuleRepeatableCLI:
             "--module",
             "source",
         )
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert "[module.filter]" in toml
-        assert "[module.source]" in toml
+        cfg = _load_cfg(dest)
+        assert "filter" in cfg["module"]
+        assert "source" in cfg["module"]
 
 
 class TestScriptCLI:
@@ -2128,9 +2130,9 @@ class TestInitParamCLI:
         _cli(
             "object", "gen", "--no-state", "--init-param", "n:int:16", cwd=dest
         )
-        toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
-        assert "[[gen.init_params]]" in toml
-        assert 'name = "n"' in toml
+        cfg = _load_cfg(dest)
+        ip = cfg["gen"]["init_params"]
+        assert any(p["name"] == "n" for p in ip)
 
     def test_init_param_default_optional_in_python(self, tmp_path):
         dest = tmp_path / "proj"
