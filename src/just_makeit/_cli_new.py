@@ -22,6 +22,7 @@ def run(args: list[str]) -> None:
     pytest_ = False
     pytest_benchmark_ = False
     mutable = False
+    fragments = False
     no_step = False
     no_state = False
     arg_type = "float _Complex"
@@ -119,6 +120,9 @@ def run(args: list[str]) -> None:
         elif tok == "--mutable":
             mutable = True
             i += 1
+        elif tok == "--fragments":
+            fragments = True
+            i += 1
         elif tok == "--no-step":
             no_step = True
             i += 1
@@ -193,4 +197,5 @@ def run(args: list[str]) -> None:
         find_packages=find_packages or None,
         pkg_modules=pkg_modules or None,
         c_deps=c_deps or None,
+        fragments=fragments,
     )
