@@ -69,7 +69,10 @@ Commands:
   function <name> [OPTIONS]     Add a module-level C function.
     --module name               Module to add the function to (required).
     --param name:type           Input parameter; repeatable.
+    --out-param name:type[]     Writable output array param (drops const); repeatable.
     --return-type TYPE          Return type (default: void).
+    --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
+                                param's length, or the first integer scalar param.
     --doc "text"                Docstring shown in Python help().
     --inline                    Emit static inline body in _core.h (no _core.c entry).
     --impl file::funcname       Lift function body from funcname in file.

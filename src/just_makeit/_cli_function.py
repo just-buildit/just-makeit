@@ -16,6 +16,7 @@ def run(args: list[str]) -> None:
     doc = ""
     fn_params: list[tuple] = []
     fn_return_type = "void"
+    fn_out_type: str = ""
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
     fn_inline = False
@@ -94,6 +95,23 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             fn_return_type = val
             i += 1
+        elif tok == "--out-type":
+            i += 1
+            if i >= len(remaining):
+                print("error: --out-type requires a type", file=sys.stderr)
+                sys.exit(1)
+            val = remaining[i]
+            # Same allowlist as the function param scalar slot — must be a
+            # type we can return as a numpy array element.
+            if val not in T._CTYPE_TO_NPY:
+                print(
+                    f"error: --out-type '{val}' must be an array-element type.\n"
+                    f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_out_type = val
+            i += 1
         elif tok == "--impl":
             i += 1
             if i >= len(remaining):
@@ -138,4 +156,5 @@ def run(args: list[str]) -> None:
         return_type=fn_return_type,
         impl_body=impl_body_f,
         inline=fn_inline,
+        out_type=fn_out_type,
     )
