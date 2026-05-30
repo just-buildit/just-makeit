@@ -737,6 +737,22 @@ def run(
     )
     print()
 
+    # Perf headers (the JM_DEFINE_STEPS macro + SIMD helpers) live once at the
+    # project-root include dir, shared by every component. The standalone path
+    # writes them in _init.run; the module path must do the same, else a
+    # --perf object added to a non-perf project emits `#include "jm_perf.h"`
+    # in its core.h against a file that was never created -> fatal build
+    # error. Persist project.perf too so jm apply reproduces the perf build.
+    if perf:
+        if not C.is_perf(cfg):
+            cfg.setdefault("project", {})["perf"] = "true"
+        perf_h = root / "native" / "inc" / "jm_perf.h"
+        if not perf_h.exists():
+            _write(perf_h, r(R.JM_PERF_H), "create")
+        simd_h = root / "native" / "inc" / "jm_simd.h"
+        if not simd_h.exists():
+            _write(simd_h, R.JM_SIMD_H, "create")
+
     # C library files (OBJECT lib only — no standalone Python module).
     # Hand-written bodies in an existing core.h/core.c are spliced into the
     # freshly rendered templates so re-running `just-makeit object` does not

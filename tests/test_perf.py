@@ -37,6 +37,22 @@ class TestPerfFilePresence:
     def test_jm_perf_h_absent_without_flag(self, plain_project):
         assert not (plain_project / "native" / "inc" / "jm_perf.h").exists()
 
+    def test_module_object_perf_writes_jm_perf_h(self, tmp_path):
+        """A --perf object added to a (non-perf) module project must still
+        write jm_perf.h / jm_simd.h. Previously only the standalone path and
+        `jm new` wrote them, so the module object's core.h `#include
+        "jm_perf.h"` pointed at a file that never existed -> fatal build
+        error. The flag must also flip project.perf so jm apply reproduces it.
+        """
+        from just_makeit._object import run as object_run
+
+        dest = tmp_path / "pm"
+        new_run("pm", dest, modules=["dsp"])
+        object_run(dest, "fir", "dsp", perf=True)
+        assert (dest / "native" / "inc" / "jm_perf.h").exists()
+        assert (dest / "native" / "inc" / "jm_simd.h").exists()
+        assert is_perf(load(dest))
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -325,7 +341,12 @@ class TestJmSimdHContent:
             assert macro in simd_h, f"{macro} missing"
 
     def test_has_mac_and_hsum(self, simd_h):
-        for macro in ("JM_MAC_F32", "JM_MAC_F64", "JM_HSUM_F32", "JM_HSUM_F64"):
+        for macro in (
+            "JM_MAC_F32",
+            "JM_MAC_F64",
+            "JM_HSUM_F32",
+            "JM_HSUM_F64",
+        ):
             assert macro in simd_h, f"{macro} missing"
 
     def test_has_dot_product_helpers(self, simd_h):
