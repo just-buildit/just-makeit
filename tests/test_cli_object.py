@@ -254,3 +254,26 @@ class TestCliObject:
             assert kwargs["destroy_impl_body"] == "body"
             assert kwargs["impl_body"] is None
             assert kwargs["create_impl_body"] is None
+
+    def test_extra_include_dirs_forwarded(self):
+        """Phase 2 row 8: --extra-include-dirs (repeatable) forwards to
+        _object.run(extra_include_dirs=[...])."""
+        with patch("just_makeit._object.run") as mock_run:
+            _run(
+                [
+                    "tone",
+                    "--extra-include-dirs",
+                    "${DOPPLER_INCLUDE_DIR}",
+                    "--extra-include-dirs",
+                    "/usr/local/include/foo",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["extra_include_dirs"] == [
+                "${DOPPLER_INCLUDE_DIR}",
+                "/usr/local/include/foo",
+            ]
+
+    def test_extra_include_dirs_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "--extra-include-dirs"])

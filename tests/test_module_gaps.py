@@ -558,3 +558,42 @@ class TestExtraIncludeDirs:
         )
         assert "target_include_directories(nco_core PUBLIC" in cmake
         assert "${DOPPLER_INCLUDE_DIR}" in cmake
+
+
+class TestExtraIncludeDirsViaCLI:
+    """Phase 2 row 8: `--extra-include-dirs DIR` on jm object and jm module
+    persists the entry to [component]/[module.X] without hand-editing TOML.
+    The renderer side (gh-66 / v0.13.22) already handles the keys; this
+    suite covers the CLI surface."""
+
+    def test_object_flag_lands_in_toml(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, [], [])
+        object_run(
+            root,
+            "tone",
+            None,
+            state_vars=[("freq", "float", "0.0f")],
+            extra_include_dirs=["${DOPPLER_INCLUDE_DIR}"],
+        )
+        toml_text = (root / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]' in toml_text
+
+    def test_module_flag_lands_in_toml(self, tmp_path):
+        from just_makeit._module import run as module_run
+
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        # _module.run is idempotent-protected — the new() above already
+        # scaffolded the module, so use a fresh module name here.
+        module_run(
+            root,
+            "io",
+            extra_include_dirs=["${DOPPLER_INCLUDE_DIR}"],
+            extra_link_libs=["PkgConfig::DOPPLER"],
+            extra_types=["HalfbandDp"],
+        )
+        toml_text = (root / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]' in toml_text
+        assert 'extra_link_libs = ["PkgConfig::DOPPLER"]' in toml_text
+        assert 'extra_types = ["HalfbandDp"]' in toml_text

@@ -21,7 +21,13 @@ from . import _render as T
 from ._init import _to_title, _write, _write_compile_commands
 
 
-def run(root: Path, module: str) -> None:
+def run(
+    root: Path,
+    module: str,
+    extra_include_dirs: list[str] | None = None,
+    extra_link_libs: list[str] | None = None,
+    extra_types: list[str] | None = None,
+) -> None:
     if not module.replace("_", "").isalnum() or module[0].isdigit():
         print(
             f"error: '{module}' is not a valid module name.\n"
@@ -127,6 +133,22 @@ def run(root: Path, module: str) -> None:
 
     # Config
     C.scaffold_module(cfg, module)
+    # Optional Phase-2 metadata persisted into the [module.X] section so
+    # jm apply's renderer picks them up. The renderer + dump already
+    # handle these keys (gh-66 / v0.13.22 for include_dirs and link_libs;
+    # extra_types from the earlier gh-28 extras work).
+    if extra_include_dirs:
+        cfg.setdefault("module", {}).setdefault(module, {})["extra_include_dirs"] = (
+            list(extra_include_dirs)
+        )
+    if extra_link_libs:
+        cfg.setdefault("module", {}).setdefault(module, {})["extra_link_libs"] = list(
+            extra_link_libs
+        )
+    if extra_types:
+        cfg.setdefault("module", {}).setdefault(module, {})["extra_types"] = list(
+            extra_types
+        )
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
