@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.13.24] — 2026-05-30
+
 ### Changed
 
 - **Module-level functions now live in their own sacred `.c` file.**
@@ -19,6 +21,12 @@
     `--no-fragments` for the legacy single-manifest layout. `--fragments` is
     kept as a deprecated no-op. The merged config every consumer sees is
     identical between layouts, so this only changes on-disk file shape.
+
+### Docs
+
+- Documented `jm ci`, `jm migrate-to-fragments`, and `jm new --fragments` in
+    the command reference, quick-reference, and declarative-scaffolding pages
+    (they shipped earlier but predated the v0.14 docs overhaul).
 
 ## [0.13.23] — 2026-05-30
 
