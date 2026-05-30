@@ -25,6 +25,7 @@ def run(args: list[str]) -> None:
     method_params: list[tuple[str, str]] = []
     out_type: str | None = None
     out_divisor: int = 1
+    max_out: int = 0
     no_bench = False
     py_return_type: str = ""
     impl_spec_m: str | None = None
@@ -108,6 +109,19 @@ def run(args: list[str]) -> None:
                 print(
                     "error: --out-divisor must be a positive integer", file=sys.stderr
                 )
+                sys.exit(1)
+            i += 1
+        elif tok == "--max-out":
+            i += 1
+            if i >= len(remaining):
+                print("error: --max-out requires an integer", file=sys.stderr)
+                sys.exit(1)
+            try:
+                max_out = int(remaining[i])
+                if max_out < 1:
+                    raise ValueError
+            except ValueError:
+                print("error: --max-out must be a positive integer", file=sys.stderr)
                 sys.exit(1)
             i += 1
         elif tok == "--out-type":
@@ -220,4 +234,5 @@ def run(args: list[str]) -> None:
         batch=batch_method,
         no_bench=no_bench,
         py_return_type=py_return_type,
+        max_out=max_out,
     )
