@@ -19,7 +19,9 @@ from just_makeit._property import run as property_run
 
 
 def _pyi(root: Path, module: str, pkg: str) -> str:
-    return (root / "src" / pkg / module / f"{module}.pyi").read_text(encoding="utf-8")
+    return (root / "src" / pkg / module / f"{module}.pyi").read_text(
+        encoding="utf-8"
+    )
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -44,7 +46,9 @@ def basic_project(tmp_path):
     method_run(root, "filt", "reset", "dsp", "void", "void", False, [])
     property_run(root, "filt", "gain", "dsp", "float", True)
     property_run(root, "filt", "order", "dsp", "int", False)
-    function_run(root, "apply", "dsp", params=[("x", "float")], return_type="float")
+    function_run(
+        root, "apply", "dsp", params=[("x", "float")], return_type="float"
+    )
     return root
 
 
@@ -191,7 +195,10 @@ class TestMethodStubs:
 
     def test_array_param_method(self, array_param_project):
         pyi = _pyi(array_param_project, "dsp", "myproj")
-        assert "def execute_ctrl(self, ctrl: NDArray[np.complex64]) -> int:" in pyi
+        assert (
+            "def execute_ctrl(self, ctrl: NDArray[np.complex64]) -> int:"
+            in pyi
+        )
 
 
 # ── properties ────────────────────────────────────────────────────────────────
@@ -251,7 +258,11 @@ class TestTypeAnnotations:
         root = tmp_path / "p"
         new_run("p", root, modules=["dsp"])
         object_run(
-            root, "osc", "dsp", arg_type="float _Complex", return_type="float _Complex"
+            root,
+            "osc",
+            "dsp",
+            arg_type="float _Complex",
+            return_type="float _Complex",
         )
         pyi = _pyi(root, "dsp", "p")
         assert "def step(self, x: complex) -> complex:" in pyi
@@ -259,7 +270,9 @@ class TestTypeAnnotations:
     def test_double_maps_to_float(self, tmp_path):
         root = tmp_path / "p"
         new_run("p", root, modules=["dsp"])
-        object_run(root, "filt", "dsp", arg_type="double", return_type="double")
+        object_run(
+            root, "filt", "dsp", arg_type="double", return_type="double"
+        )
         pyi = _pyi(root, "dsp", "p")
         assert "def step(self, x: float) -> float:" in pyi
 
@@ -278,7 +291,9 @@ class TestTypeAnnotations:
 class TestStubHeader:
     def test_header_comment(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
-        assert pyi.startswith("# dsp/dsp.pyi — type stubs for the dsp C extension.")
+        assert pyi.startswith(
+            "# dsp/dsp.pyi — type stubs for the dsp C extension."
+        )
 
 
 class TestArrayArgTypeStubs:
@@ -287,7 +302,11 @@ class TestArrayArgTypeStubs:
         root = tmp_path / "myproj"
         new_run("myproj", root, modules=["dsp"])
         object_run(
-            root, "resamp", "dsp", arg_type="float _Complex[]", return_type="int"
+            root,
+            "resamp",
+            "dsp",
+            arg_type="float _Complex[]",
+            return_type="int",
         )
         return root
 
@@ -409,7 +428,16 @@ class TestStringEnumStub:
             return_type="float",
             init_params=[
                 ("rate", "double", "1.0", "", "", "", False, ""),
-                ("mode", "string_enum:mean,median,min", "mean", "", "", "", False, ""),
+                (
+                    "mode",
+                    "string_enum:mean,median,min",
+                    "mean",
+                    "",
+                    "",
+                    "",
+                    False,
+                    "",
+                ),
             ],
         )
         return root
@@ -425,8 +453,14 @@ class TestStringEnumStub:
     def test_literal_before_numpy(self, enum_project):
         pyi = _pyi(enum_project, "dsp", "myproj")
         lines = pyi.splitlines()
-        lit_idx = next(i for i, l in enumerate(lines) if "from typing import Literal" in l)
-        np_idx = next(i for i, l in enumerate(lines) if "import numpy" in l)
+        lit_idx = next(
+            i
+            for i, line in enumerate(lines)
+            if "from typing import Literal" in line
+        )
+        np_idx = next(
+            i for i, line in enumerate(lines) if "import numpy" in line
+        )
         assert lit_idx < np_idx
 
     def test_default_quoted_in_init(self, enum_project):
@@ -547,7 +581,10 @@ class TestPyReturnTypeStub:
 
     def test_py_return_type_used_in_stub(self, py_ret_project):
         pyi = _pyi(py_ret_project, "dsp", "myproj")
-        assert "def push(self, x: NDArray[np.complex64]) -> list[tuple[int, float, float]]:" in pyi
+        assert (
+            "def push(self, x: NDArray[np.complex64]) -> list[tuple[int, float, float]]:"
+            in pyi
+        )
 
     def test_no_any_with_py_return_type(self, py_ret_project):
         pyi = _pyi(py_ret_project, "dsp", "myproj")
@@ -557,6 +594,7 @@ class TestPyReturnTypeStub:
 
     def test_py_return_type_persisted_in_toml(self, py_ret_project):
         import just_makeit._config as C
+
         cfg = C.load(py_ret_project)
         methods = cfg.get("det", {}).get("methods", [])
         push = next(m for m in methods if m["name"] == "push")
@@ -578,7 +616,16 @@ class TestStringEnumDocstring:
             return_type="float",
             init_params=[
                 ("rate", "double", "1.0", "", "", "", False, ""),
-                ("mode", "string_enum:mean,median,min", "mean", "", "", "", False, ""),
+                (
+                    "mode",
+                    "string_enum:mean,median,min",
+                    "mean",
+                    "",
+                    "",
+                    "",
+                    False,
+                    "",
+                ),
             ],
         )
         return root

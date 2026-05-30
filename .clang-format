@@ -1,6 +1,5 @@
-BasedOnStyle: LLVM
-IndentWidth: 4
-ColumnLimit: 100
+BasedOnStyle: GNU
+ColumnLimit: 79
 AlignConsecutiveDeclarations: Consecutive
 AlignConsecutiveAssignments: Consecutive
 AlignTrailingComments:
