@@ -6,11 +6,17 @@ arg-count mismatch in ``tp_dealloc`` and failed to compile. The fix landed
 on main; this test compiles both preset scaffolds end-to-end so the mismatch
 cannot silently come back.
 
-Skipped when the C toolchain is unavailable (matches test_examples.py).
+Skipped when the C toolchain is unavailable (matches test_examples.py),
+and on Windows: this drives cmake directly with the default generator,
+which picks MSVC there — and MSVC rejects the project's C99 `float
+_Complex`. The project requires MinGW on Windows (its Makefile passes
+`-G "MinGW Makefiles"`), so the foot-gun #1 compile regression is covered
+on Linux/macOS rather than reproduced through MinGW here.
 """
 
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -19,6 +25,8 @@ from just_makeit._new import run as new_run
 
 
 def _skip_reason():
+    if sys.platform == "win32":
+        return "raw cmake selects MSVC on Windows; project requires MinGW"
     if not shutil.which("cmake"):
         return "cmake not found"
     if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
