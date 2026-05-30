@@ -54,13 +54,37 @@ Every preset page has the same five sections:
 
 ## Status
 
-- **Today (shipped)**: `processor` and `function` are reachable from
-    the current CLI. Their pages show real generated output.
-- **Proposed**: `blockwise`, `generator`, `consumer`, `reader` are
-    flag additions tracked in
-    [`developers/wizard-design.md`](../developers/wizard-design.md).
-    Their pages show the *intended* skeletons so the design can be
-    reviewed before any code is written.
+**Goal**: every preset's command produces a scaffold that compiles
+and passes `jm build && jm test` immediately. Fill in the
+`/* TODO */` body with your logic; everything around it stays green.
+
+Honest state as of 0.13.23 (verified by running each command in a
+clean temp dir, building, and testing):
+
+| Preset      | CLI today                                                  | Green today                    | Phase 3a goal                                              |
+| ----------- | ---------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| `processor` | `jm new --object NAME ...`                                 | ✅ build + 8 pytest pass       | `--preset processor` (no-op alias)                         |
+| `blockwise` | (not implementable today)                                  | ❌ renderer rejects `T[]` IO   | `--preset blockwise` + renderer support for `T[]` IO       |
+| `generator` | `jm new --object NAME --arg-type void ...`                 | ✅ build + tests pass          | `--preset generator`                                       |
+| `consumer`  | `jm new --object NAME --return-type void ...`              | ❌ `_ext.c` arg-count mismatch | `--preset consumer` + fix `NAME_destroy` codegen           |
+| `reader`    | two-step: `jm new` then `jm object NAME --no-step ...`     | ❌ `_ext.c` arg-count mismatch | `--preset reader` (single-step; auto-adds read/seek/close) |
+| `function`  | `jm new` + `jm module` + `jm function FN --module MOD ...` | ✅ build + ctest pass          | (already shipped; no preset needed)                        |
+
+**Known foot-guns blocking "green from day one" on 0.13.23** (verified
+2026-05-30):
+
+- **`consumer` and `reader`**: generated `_ext.c` declares
+    `NAME_destroy(NAMEObject *self, PyObject *)` (2 args) but calls
+    `NAME_destroy(self->handle)` (1 arg). Affects every component
+    with `--return-type void` or `--no-step`. Build fails.
+- **`blockwise`**: renderer's `_CTYPE_META[return_type]` lookup
+    throws `KeyError` on array types like `float _Complex[]`, so the
+    preset is unreachable via CLI *or* hand-authored TOML. The
+    preset page documents the design intent for review.
+- **`reader`**: `--no-step` isn't accepted by `jm new --object`,
+    only by the separate `jm object` verb — so the reader preset
+    needs the two-step form today. Phase 3a's `--preset reader`
+    consolidates this.
 
 A preset only ships when its page is fully worked, its CLI flag has a
 regression test, and the bundled example confirms the skeleton compiles
