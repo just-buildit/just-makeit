@@ -163,8 +163,6 @@ def set_channel(self, value: np.uint8) -> None: ...
 
 ______________________________________________________________________
 
-______________________________________________________________________
-
 ## Step input / output types
 
 The `--arg-type` and `--return-type` flags set the C signature of `<comp>_step`
