@@ -44,6 +44,11 @@ def _find_doppler_prefix() -> str | None:
     candidates = [
         Path("/usr/local"),
         Path("/usr"),
+        # Rootless installs (e.g. unpacking the prebuilt
+        # doppler-<ver>-<plat>.tar.gz into a user prefix) are listed before
+        # the local source build tree, which may be stale or incomplete.
+        Path.home() / ".local" / "doppler",
+        Path.home() / ".local",
         Path.home() / "doppler" / "build",
     ]
     for prefix in candidates:
