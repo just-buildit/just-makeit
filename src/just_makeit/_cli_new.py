@@ -25,6 +25,9 @@ def run(args: list[str]) -> None:
     arg_type = "float _Complex"
     return_type = None
     state_vars: list[tuple[str, str, str]] = []
+    find_packages: list[str] = []
+    pkg_modules: list[str] = []
+    c_deps: list[str] = []
 
     remaining = args[1:]
     i = 0
@@ -80,6 +83,36 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--pytest-benchmark":
             pytest_benchmark_ = True
+            i += 1
+        elif tok == "--find-package":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --find-package requires a CMake package name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            find_packages.append(remaining[i])
+            i += 1
+        elif tok == "--pkg-module":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --pkg-module requires a pkg-config module name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            pkg_modules.append(remaining[i])
+            i += 1
+        elif tok == "--c-dep":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --c-dep requires a vendored subdirectory name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            c_deps.append(remaining[i])
             i += 1
         elif tok == "--mutable":
             mutable = True
@@ -140,4 +173,7 @@ def run(args: list[str]) -> None:
         return_type=return_type,
         pytest_=pytest_,
         pytest_benchmark_=pytest_benchmark_,
+        find_packages=find_packages or None,
+        pkg_modules=pkg_modules or None,
+        c_deps=c_deps or None,
     )
