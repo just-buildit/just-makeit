@@ -65,6 +65,9 @@ def run(
     return_type: str | None = None,
     pytest_: bool = False,
     pytest_benchmark_: bool = False,
+    find_packages: list[str] | None = None,
+    pkg_modules: list[str] | None = None,
+    c_deps: list[str] | None = None,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -122,6 +125,15 @@ def run(
         pytest_=pytest_,
         pytest_benchmark_=pytest_benchmark_,
     )
+    # External-dep declarations land in [project] so jm apply's
+    # _splice_cmake_external_deps picks them up and writes the
+    # `# ── External deps` sentinel block in the top CMakeLists.txt.
+    if find_packages:
+        cfg.setdefault("project", {})["find_packages"] = list(find_packages)
+    if pkg_modules:
+        cfg.setdefault("project", {})["pkg_modules"] = list(pkg_modules)
+    if c_deps:
+        cfg.setdefault("project", {})["c_deps"] = list(c_deps)
     C.save(root, cfg)
     print(f"  create  {root / C.FILENAME}")
     _write(root / "jb.toml", r(T.JB_TOML))
