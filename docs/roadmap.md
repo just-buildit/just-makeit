@@ -57,23 +57,23 @@ hit, we'd like to hear about it.
 The fastest value is the work that's nearly done and the promises already
 made out loud.
 
-- **Land what's already built.** `jm status` (a read-only report of where the
-    files have drifted from the manifest) and auto-fetching a prebuilt
-    external dependency for the example tests are done — they just need to
-    ship.
-- **`jm ci`.** Generate the GitHub Actions / Woodpecker workflow, so a
-    scaffolded project is CI-green as fast as it builds and tests locally.
-    This is the last gap between "works on my machine in a minute" and "works
-    in CI."
+- **Shipped this cycle.** `jm status` (a read-only report of where the files
+    have drifted from the manifest), auto-fetching a prebuilt external
+    dependency for the example tests, and [`jm ci`](commands/build.md#just-makeit-ci-provider-name)
+    (generate a GitHub Actions / Woodpecker workflow so a scaffolded project is
+    CI-green as fast as it builds and tests locally) are all done and merged.
 - **Keep the no-foot-guns net tight.** Every valid command stays green on day
     one; every new shape gets a regression test before it ships. This is a
     standing promise, not a milestone.
 - **Make "your code is sacred" whole.** The sacred/glue lifecycle protects
-    your algorithm in place; the next step makes a whole *component* portable
-    — its spec as a per-component `objects/NAME.toml` / `modules/NAME.toml`
-    fragment, per-function `.c` files in modules, and `jm migrate-to-fragments`
-    for existing projects. Copying a component becomes "copy its fragment and
-    source dirs, run `jm apply`."
+    your algorithm in place; the next step makes a whole *component* portable.
+    The per-component fragment layout
+    ([`objects/NAME.toml` / `modules/NAME.toml`](declarative-scaffolding.md#three-layouts)),
+    `jm migrate-to-fragments` for existing projects, and `jm new --fragments`
+    for new ones have all shipped. The remaining piece is **per-function `.c`
+    files in modules**, so each module function is sacred in its own file.
+    Then copying a component becomes "copy its fragment and source dirs, run
+    `jm apply`."
 
 ### Next — write it in C, get Python (`jm bind`)
 

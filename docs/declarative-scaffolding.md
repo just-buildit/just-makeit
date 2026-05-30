@@ -43,11 +43,11 @@ flowchart LR
     subgraph A["Monolith (default)"]
       A1["just-makeit.toml<br/>[project] [module.X]<br/>[agc] [ema] [fir]"]
     end
-    subgraph B["Split per object"]
-      B1["just-makeit.toml<br/>[project] [module.X]<br/>include = ['objects/*.toml']"]
+    subgraph B["Split into fragments"]
+      B1["just-makeit.toml<br/>[project]<br/>include = ['objects/*.toml',<br/>'modules/*.toml']"]
       B2["objects/agc.toml<br/>[agc]"]
       B3["objects/ema.toml<br/>[ema]"]
-      B4["objects/fir.toml<br/>[fir]"]
+      B4["modules/filter.toml<br/>[module.filter]"]
       B1 --- B2 & B3 & B4
     end
     subgraph C["Fragment + jm apply"]
@@ -55,7 +55,7 @@ flowchart LR
       C2["(external) agc.toml<br/>[agc]<br/>impl = '''…'''"]
       C2 -.->|jm apply| C1
     end
-    A -.->|jm split-objects| B
+    A -.->|jm migrate-to-fragments| B
     C -.->|materializes into| B
 ```
 
@@ -65,7 +65,12 @@ flowchart LR
 | **Split**            | many components, multi-author / multi-machine, less merge churn                            |
 | **Fragment + apply** | composing a new project from a manifest you (or a generator) wrote elsewhere; CI templates |
 
-`jm split-objects` migrates Monolith → Split in one command; `jm apply <fragment>` composes a Fragment into either layout.
+`jm migrate-to-fragments` migrates Monolith → Split in one command — every
+`[obj]` moves to `objects/<name>.toml` and every `[module.X]` to
+`modules/<name>.toml`. (`jm split-objects` is the objects-only subset, kept
+for projects that want modules to stay inline.) `jm new --fragments` seeds a
+fresh project directly on the Split layout. `jm apply <fragment>` composes a
+Fragment into either layout.
 
 ______________________________________________________________________
 
@@ -700,14 +705,22 @@ ______________________________________________________________________
 > Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
 
 ```sh
-just-makeit split-objects
+just-makeit migrate-to-fragments
 ```
 
 That's it. Every `[obj]` section moves out of `just-makeit.toml` into
-`objects/<obj>.toml`; `[project]` and `[module.X]` stay; the manifest
-gains `include = ["objects/*.toml"]`. The merged cfg every just-makeit
-consumer sees is **byte-identical** before and after. Idempotent —
-running on an already-split project is a no-op.
+`objects/<obj>.toml` and every `[module.X]` into `modules/<name>.toml`;
+`[project]` stays; the manifest gains
+`include = ["objects/*.toml", "modules/*.toml"]`. The merged cfg every
+just-makeit consumer sees is **byte-identical** before and after. Idempotent
+— running on an already-migrated project is a no-op. Mutations afterwards
+(`jm add`, `jm method`, …) save back into the owning fragment, not the
+manifest.
+
+> `jm split-objects` is the objects-only subset — it leaves `[module.X]`
+> sections inline in the manifest. Prefer `migrate-to-fragments` unless you
+> specifically want modules to stay put. To start a new project already on
+> this layout, pass [`jm new --fragments`](commands/scaffold.md).
 
 ______________________________________________________________________
 
