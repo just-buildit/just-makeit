@@ -8,7 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._render import render
-from just_makeit._context import make_state_ctx, make_methods_ctx
+from just_makeit._context import (
+    make_state_ctx,
+    make_methods_ctx,
+    resolve_return_type,
+)
 from just_makeit._types import SUPPORTED_TYPES
 from just_makeit._init import _make_component_ctx
 from just_makeit._new import _make_project_ctx
@@ -610,3 +614,37 @@ class TestInitParamsWithState:
         # Must be a valid Python expression that the binding accepts.
         assert "NULL" not in ctx["py_create_args"]
         assert '""' in ctx["py_create_args"]
+
+
+class TestResolveReturnType:
+    """gh-92: the return-type default applied when --return-type is
+    omitted lives in exactly one place (`resolve_return_type`). Three
+    renderer callsites (`make_sample_ctx`, `_init._make_component_ctx`,
+    `_object.run`) route through it so they can't silently disagree —
+    the gh-92 bug was bench rendered as if step() returned a value
+    while step_ctx received `void`, because two of those sites used
+    inline `return_type or arg_type` and the third used the right
+    default."""
+
+    def test_explicit_return_type_wins(self):
+        assert resolve_return_type("float", "double") == "double"
+
+    def test_explicit_void_return_wins(self):
+        # Even when the implied default would differ, an explicit void
+        # request must be honoured (consumer preset).
+        assert resolve_return_type("float", "void") == "void"
+
+    def test_array_arg_defaults_to_void(self):
+        # Block transforms write into a caller-provided buffer.
+        assert resolve_return_type("float _Complex[]", None) == "void"
+
+    def test_void_arg_defaults_to_float_complex(self):
+        # Generator default: emit complex samples. The gh-92 bug was
+        # that this site fell back to ``arg_type`` (void), leaving
+        # bench step assignment broken on the rendered output.
+        assert resolve_return_type("void", None) == "float _Complex"
+
+    def test_scalar_arg_defaults_to_same(self):
+        # Processor: scalar in, same scalar out.
+        assert resolve_return_type("float", None) == "float"
+        assert resolve_return_type("double _Complex", None) == "double _Complex"

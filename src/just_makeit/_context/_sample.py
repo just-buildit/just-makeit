@@ -190,6 +190,39 @@ def _pytest_bm_blocks(
 
 
 # ---------------------------------------------------------------------------
+# resolve_return_type — single source of truth for the return-type default
+# ---------------------------------------------------------------------------
+
+
+def resolve_return_type(arg_type: str, return_type: str | None) -> str:
+    """Apply the canonical default when ``return_type`` is None.
+
+    The renderer has three callsites that need to know what the step()
+    return type is when the user didn't pass --return-type — this
+    function (plus its single import) is the only place where that
+    default lives. Keeping the rule in one spot avoids the gh-92 class
+    of bug where ``make_sample_ctx`` and ``make_step_ctx`` would
+    silently disagree on the default.
+
+    Rules (matching the existing per-shape conventions):
+
+    - Array-input (``T[]``)  → ``void`` return (block transforms write
+      into a caller-provided buffer).
+    - Void-input (``void``)  → ``float _Complex`` return (generators
+      emit complex samples by default; user can override).
+    - Otherwise              → same as ``arg_type`` (processor: scalar
+      in, scalar out, same width).
+    """
+    if return_type is not None:
+        return return_type
+    if arg_type.endswith("[]"):
+        return "void"
+    if arg_type == "void":
+        return "float _Complex"
+    return arg_type
+
+
+# ---------------------------------------------------------------------------
 # make_sample_ctx
 # ---------------------------------------------------------------------------
 
@@ -208,14 +241,7 @@ def make_sample_ctx(
                   Pass "void" for sink/processor objects whose step()
                   performs side effects only.
     """
-    if return_type is None:
-        if arg_type.endswith("[]"):
-            return_type = "void"  # array-input step() is void by default
-        elif arg_type == "void":
-            return_type = "float _Complex"
-        else:
-            return_type = arg_type
-
+    return_type = resolve_return_type(arg_type, return_type)
     is_void_return = return_type == "void"
 
     # Array *return* types — the T[] -> T[] "blockwise" shape — are not yet
