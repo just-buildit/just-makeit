@@ -61,6 +61,8 @@ def run(
     build_system: str = "cmake",
     perf: bool = False,
     mutable: bool = False,
+    no_step: bool = False,
+    no_state: bool = False,
     arg_type: str = "float _Complex",
     return_type: str | None = None,
     pytest_: bool = False,
@@ -114,7 +116,10 @@ def run(
         _write(root / "native" / "inc" / "jm_simd.h", T.JM_SIMD_H)
 
     if build_system == "cmake":
-        _write(root / "cmake" / f"{project.replace('_', '-')}.pc.in", r(T.CMAKE_PC_IN))
+        _write(
+            root / "cmake" / f"{project.replace('_', '-')}.pc.in",
+            r(T.CMAKE_PC_IN),
+        )
         _write(root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN))
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 
@@ -147,9 +152,11 @@ def run(
                 root,
                 obj,
                 None,
-                state_vars,
+                None if (no_state or not state_vars) else state_vars,
                 perf=perf,
                 mutable=mutable,
+                no_step=no_step,
+                no_state=no_state,
                 arg_type=arg_type,
                 return_type=return_type,
                 _hint=False,
@@ -162,7 +169,8 @@ def run(
         from . import _module
 
         _write(
-            root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
+            root / "src" / ctx["package"] / "__init__.py",
+            r(T.PACKAGE_INIT_PY_MINIMAL),
         )
         _write(root / "benchmarks" / "history" / ".gitkeep", "")
         print()
@@ -174,7 +182,8 @@ def run(
         )
     else:
         _write(
-            root / "src" / ctx["package"] / "__init__.py", r(T.PACKAGE_INIT_PY_MINIMAL)
+            root / "src" / ctx["package"] / "__init__.py",
+            r(T.PACKAGE_INIT_PY_MINIMAL),
         )
         _write(root / "benchmarks" / "history" / ".gitkeep", "")
         print()

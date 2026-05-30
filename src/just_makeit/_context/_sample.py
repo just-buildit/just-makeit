@@ -212,6 +212,20 @@ def make_sample_ctx(
 
     is_void_return = return_type == "void"
 
+    # Array *return* types — the T[] -> T[] "blockwise" shape — are not yet
+    # supported. step() returns a scalar, void, or (for an array argument) a
+    # scalar reduction; an array output needs a second output buffer in the
+    # step() signature plus ext.c buffer allocation, tracked as the blockwise
+    # preset (Phase 3a). Without this guard the array element below resolves
+    # `_CTYPE_META[return_type]` directly and dies with a raw KeyError deep in
+    # the context builder; fail early with an actionable message instead.
+    if return_type.endswith("[]"):
+        raise ValueError(
+            f"array return type '{return_type}' is not yet supported "
+            f"(the array-in / array-out 'blockwise' shape). Use a scalar "
+            f"return type or 'void'. Tracked as the blockwise preset."
+        )
+
     # Skip scalar validation for array arg — the [] path handles return type
     # separately below; the only invalid case is a non-scalar, non-void
     # return type on a scalar-input object.

@@ -147,7 +147,13 @@ class TestPyi:
 class TestNoPlaceholders:
     def _check(self, root):
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix in (".py", ".c", ".h", ".toml", ".txt"):
+            if path.is_file() and path.suffix in (
+                ".py",
+                ".c",
+                ".h",
+                ".toml",
+                ".txt",
+            ):
                 m = _STRAY_PLACEHOLDER.search(path.read_text(encoding="utf-8"))
                 assert m is None, f"Stray placeholder in {path}"
 
@@ -176,3 +182,45 @@ class TestConfig:
 
         cfg = load(standalone_scalar_return)
         assert cfg_return_type(cfg, "peak") == "float"
+
+
+# ── Array return type is rejected cleanly ────────────────────────────────────
+
+
+class TestArrayReturnRejected:
+    """v0.14 foot-gun #2: a hand-authored array return type (the T[] -> T[]
+    'blockwise' shape) used to die with a raw `KeyError: 'float _Complex[]'`
+    deep in make_sample_ctx. It now raises a clean, actionable ValueError
+    until the blockwise preset lands."""
+
+    def test_make_sample_ctx_raises_valueerror(self):
+        from just_makeit._context._sample import make_sample_ctx
+
+        with pytest.raises(ValueError, match="array return type"):
+            make_sample_ctx("float _Complex[]", "float _Complex[]")
+
+    def test_scalar_array_arg_still_ok(self):
+        """Array input with scalar/void return is unaffected."""
+        from just_makeit._context._sample import make_sample_ctx
+
+        ctx = make_sample_ctx("float[]", "float")
+        assert ctx["return_ctype"] == "float"
+
+    def test_apply_reports_clean_error(self, tmp_path, capsys):
+        """End-to-end: array return type in hand-authored TOML surfaces a
+        clean `error:` line through jm apply, not a traceback."""
+        root = tmp_path / "blk"
+        new_run("blk", root)
+        manifest = root / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[filt]\narg_type = "float _Complex[]"\n'
+            'return_type = "float _Complex[]"\n',
+            encoding="utf-8",
+        )
+        from just_makeit import _apply
+
+        with pytest.raises(SystemExit):
+            _apply.run(root)
+        err = capsys.readouterr().err
+        assert "array return type" in err

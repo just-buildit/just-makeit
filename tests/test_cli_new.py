@@ -107,6 +107,34 @@ class TestCliNew:
             assert kwargs["build_system"] == "make"
         assert "deprecated" in capsys.readouterr().err
 
+    def test_no_step_flag(self):
+        """v0.14 foot-gun #3: `jm new --object X --no-step` used to error
+        with 'unexpected argument'; the flag now threads through to the
+        object scaffold so reader-shaped objects scaffold in one command."""
+        with patch("just_makeit._new.run") as mock_run:
+            _run(["myproj", "--object", "src", "--no-step"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["no_step"] is True
+
+    def test_no_state_flag(self):
+        with patch("just_makeit._new.run") as mock_run:
+            _run(["myproj", "--object", "src", "--no-state"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["no_state"] is True
+
+    def test_no_state_and_state_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            _run(
+                [
+                    "myproj",
+                    "--object",
+                    "x",
+                    "--no-state",
+                    "--state",
+                    "z:float:0",
+                ]
+            )
+
     def test_perf_flag(self):
         with patch("just_makeit._new.run") as mock_run:
             _run(["myproj", "--perf"])
