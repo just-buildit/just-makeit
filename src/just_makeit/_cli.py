@@ -41,6 +41,7 @@ Commands:
                                       Optional array form: name:type[]:optional[:create_fn]
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --impl file::funcname       Lift step() body from funcname in file.
+    --impl SLOT::file::funcname Lift body into SLOT = create / reset / destroy.
     --replace old::new          String substitution on --impl body; repeatable.
 
   method <obj> <name> [OPTIONS] Add a named execute variant to an object.
