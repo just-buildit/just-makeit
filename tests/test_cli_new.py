@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 def _run(args):
     from just_makeit import _cli_new
+
     _cli_new.run(args)
 
 
@@ -159,6 +160,7 @@ class TestCliNew:
             _run(["myproj", "/tmp/dest"])
             args, _ = mock_run.call_args
             from pathlib import Path
+
             assert args[1] == Path("/tmp/dest")
 
     def test_no_objects_passes_none(self):
@@ -172,3 +174,60 @@ class TestCliNew:
             _run(["myproj"])
             args, _ = mock_run.call_args
             assert args[3] is None
+
+    def test_find_package_forwarded(self):
+        """Phase 2: --find-package NAME (repeatable) lands in [project]
+        find_packages and is picked up by jm apply's _splice_cmake_external_deps."""
+        with patch("just_makeit._new.run") as mock_run:
+            _run(
+                [
+                    "myproj",
+                    "--find-package",
+                    "Doppler",
+                    "--find-package",
+                    "Threads",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["find_packages"] == ["Doppler", "Threads"]
+
+    def test_pkg_module_forwarded(self):
+        with patch("just_makeit._new.run") as mock_run:
+            _run(["myproj", "--pkg-module", "doppler"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["pkg_modules"] == ["doppler"]
+
+    def test_c_dep_forwarded(self):
+        with patch("just_makeit._new.run") as mock_run:
+            _run(["myproj", "--c-dep", "libfoo"])
+            _, kwargs = mock_run.call_args
+            assert kwargs["c_deps"] == ["libfoo"]
+
+    def test_find_package_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["myproj", "--find-package"])
+
+    def test_pkg_module_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["myproj", "--pkg-module"])
+
+    def test_c_dep_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["myproj", "--c-dep"])
+
+    def test_external_deps_persisted_in_toml(self, tmp_path):
+        """End-to-end: --find-package / --pkg-module / --c-dep land in
+        the just-makeit.toml [project] section."""
+        from just_makeit._new import run as new_run
+
+        new_run(
+            "demo",
+            tmp_path / "demo",
+            find_packages=["Doppler"],
+            pkg_modules=["fftw3"],
+            c_deps=["vendored_lib"],
+        )
+        toml_text = (tmp_path / "demo" / "just-makeit.toml").read_text(encoding="utf-8")
+        assert 'find_packages = ["Doppler"]' in toml_text
+        assert 'pkg_modules = ["fftw3"]' in toml_text
+        assert 'c_deps = ["vendored_lib"]' in toml_text

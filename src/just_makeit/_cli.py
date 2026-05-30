@@ -23,6 +23,9 @@ Commands:
     --basic                     Deprecated alias for --build-system make.
     --pytest                    Generate pure pytest tests (no unittest shim).
     --pytest-benchmark          Generate pytest-benchmark bench files.
+    --find-package NAME         CMake `find_package(NAME REQUIRED)` (repeatable; e.g. Doppler).
+    --pkg-module NAME           pkg-config module via `pkg_check_modules` (repeatable).
+    --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
 
   module <name>                 Add an extension module subpackage to a project.
 
