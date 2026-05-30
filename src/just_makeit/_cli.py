@@ -539,6 +539,38 @@ def main() -> None:
             do_python=do_python,
         )
 
+    elif cmd == "bind":
+        from . import _bind
+
+        rest = args[1:]
+        check = False
+        comp: str | None = None
+        for a in rest:
+            if a == "--check":
+                check = True
+            elif a.startswith("-"):
+                print(f"error: unknown flag for bind: {a}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                if comp is not None:
+                    print("error: bind takes one component name", file=sys.stderr)
+                    sys.exit(1)
+                comp = a
+        if comp is None:
+            print("Usage: just-makeit bind <component> [--check]", file=sys.stderr)
+            sys.exit(1)
+        if check:
+            rendered = _bind.run(Path.cwd(), comp, write=False)
+            existing = (
+                Path.cwd() / "native" / "src" / comp / f"{comp}_ext.c"
+            ).read_text(encoding="utf-8")
+            if rendered != existing:
+                print(f"error: {comp}_ext.c is out of date with {comp}_core.h")
+                sys.exit(1)
+            print(f"  ok  {comp}_ext.c matches {comp}_core.h")
+        else:
+            _bind.run(Path.cwd(), comp)
+
     elif cmd == "build":
         from . import _build
 
