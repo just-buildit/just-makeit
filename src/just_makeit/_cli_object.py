@@ -25,6 +25,7 @@ def run(args: list[str]) -> None:
     no_step = False
     mutable = False
     variable_output_obj = False
+    max_out_obj: int = 0
     multi_output_obj: list[str] = []
     method_name_obj = "run"
     impl_spec: str | None = None
@@ -123,6 +124,19 @@ def run(args: list[str]) -> None:
         elif tok == "--variable-output":
             variable_output_obj = True
             i += 1
+        elif tok == "--max-out":
+            i += 1
+            if i >= len(remaining):
+                print("error: --max-out requires an integer", file=sys.stderr)
+                sys.exit(1)
+            try:
+                max_out_obj = int(remaining[i])
+                if max_out_obj < 1:
+                    raise ValueError
+            except ValueError:
+                print("error: --max-out must be a positive integer", file=sys.stderr)
+                sys.exit(1)
+            i += 1
         elif tok == "--multi-output":
             i += 1
             if i >= len(remaining):
@@ -196,9 +210,6 @@ def run(args: list[str]) -> None:
     if no_state and state_vars:
         print("error: --no-state and --state are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
-    if init_params_obj and not no_state:
-        print("error: --init-param requires --no-state.", file=sys.stderr)
-        sys.exit(1)
 
     impl_body_obj: str | None = None
     create_impl_body_obj: str | None = None
@@ -241,4 +252,5 @@ def run(args: list[str]) -> None:
         multi_output=multi_output_obj,
         method_name=method_name_obj,
         class_name=class_name_obj,
+        max_out=max_out_obj,
     )

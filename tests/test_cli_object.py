@@ -43,9 +43,36 @@ class TestCliObject:
         with pytest.raises(SystemExit):
             _run(["fir", "--no-state", "--state", "x:float:0.0"])
 
-    def test_init_param_requires_no_state(self):
-        with pytest.raises(SystemExit):
+    def test_init_param_composes_with_state(self):
+        """gh-69 (Phase 2): --init-param + --state used to be rejected by
+        the CLI gate even though the renderer was fixed in v0.13.22.
+        Both forms now compose — init params drive the ctor signature;
+        state stays internal and is managed via --impl create::..."""
+        with patch("just_makeit._object.run") as mock_run:
+            _run(
+                [
+                    "iq_reader",
+                    "--state",
+                    "fd:int:-1",
+                    "--init-param",
+                    "filepath:const char *",
+                ]
+            )
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            # state_vars is positional arg 3 (root, name, module, state_vars).
+            assert args[3] == [("fd", "int", "-1")]
+            assert any(
+                p[0] == "filepath" and p[1] == "const char *"
+                for p in kwargs["init_params"]
+            )
+
+    def test_init_param_alone_still_works(self):
+        """--init-param without --state remains a valid pattern (no_state
+        is implicit in this case but no longer required)."""
+        with patch("just_makeit._object.run") as mock_run:
             _run(["fir", "--init-param", "n:int:4"])
+            mock_run.assert_called_once()
 
     def test_class_name_missing_value_exits(self):
         with pytest.raises(SystemExit):

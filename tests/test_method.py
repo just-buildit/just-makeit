@@ -1252,3 +1252,70 @@ class TestOutTypeScalarLength:
         # The buggy output is `{(npy_intp)0}` — the fix sizes from `n`.
         assert "(npy_intp)n" in ext
         assert "(npy_intp)0" not in ext
+
+
+class TestMaxOutFlag:
+    """Phase 2 row 2: --max-out N makes the generated
+    ``<comp>_<name>_max_out`` return the literal N, no IMPLEMENT
+    placeholder.  Users still hand-write the actual processing
+    function — only the upper-bound stub is filled in."""
+
+    def test_max_out_literal_in_core_c(self, project):
+        method_run(
+            project,
+            "nco",
+            "detect",
+            None,
+            "float _Complex",
+            "float _Complex",
+            True,
+            [],
+            max_out=1024,
+        )
+        core_c = (project / "native" / "src" / "nco" / "nco_core.c").read_text(
+            encoding="utf-8"
+        )
+        # Isolate the _max_out function body so we only assert about it,
+        # not the rest of the file (which carries the step/detect IMPLEMENT
+        # placeholders the user fills in).
+        start = core_c.index("nco_detect_max_out(")
+        end = core_c.index("}", start)
+        body = core_c[start:end]
+        assert "return 1024;" in body
+        assert "<<IMPLEMENT" not in body
+        assert "placeholder" not in body
+
+    def test_max_out_persisted_in_config(self, project):
+        method_run(
+            project,
+            "nco",
+            "detect",
+            None,
+            "float _Complex",
+            "float _Complex",
+            True,
+            [],
+            max_out=512,
+        )
+        cfg = load(project)
+        m = next(m for m in methods(cfg, "nco") if m["name"] == "detect")
+        assert m["max_out"] == 512
+
+    def test_default_max_out_keeps_placeholder(self, project):
+        """Without --max-out, the IMPLEMENT placeholder + `return 0;`
+        stub stay intact (existing behaviour)."""
+        method_run(
+            project,
+            "nco",
+            "detect",
+            None,
+            "float _Complex",
+            "float _Complex",
+            True,
+            [],
+        )
+        core_c = (project / "native" / "src" / "nco" / "nco_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "<<IMPLEMENT" in core_c
+        assert "return 0; /* placeholder */" in core_c

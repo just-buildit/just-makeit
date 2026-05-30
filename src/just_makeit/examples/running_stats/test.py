@@ -47,6 +47,7 @@ def run(root: Path) -> None:
 
     # Verify jb.toml was generated with expected structure
     import tomllib
+
     with (proj / "jb.toml").open("rb") as f:
         jbt = tomllib.load(f)
     assert jbt["project"]["name"] == "my_stats"
@@ -90,6 +91,30 @@ def run(root: Path) -> None:
     assert "class RunningStats:" in pyi
     assert "min_val" in pyi
     assert "max_val" in pyi
+
+    # 6. `jm bind` round-trip — proves the binding can be regenerated from
+    # the header alone (no TOML consulted). This validates the Phase 1
+    # bind MVP against a real, multi-field, mid-sized scaffolded project.
+    from just_makeit._bind import run as jm_bind
+
+    ext_c = proj / "native" / "src" / "running_stats" / "running_stats_ext.c"
+    original = ext_c.read_text(encoding="utf-8")
+
+    # Wipe the generated binding; the header + reset() defaults are all
+    # `jm bind` has to work with.
+    ext_c.unlink()
+    jm_bind(proj, "running_stats")
+
+    rebound = ext_c.read_text(encoding="utf-8")
+    assert rebound == original, (
+        "jm bind round-trip diverged from canonical scaffold:\n"
+        f"diff len: original={len(original)} rebound={len(rebound)}"
+    )
+
+    # Rebuild + retest to prove the bound binding still compiles, links,
+    # and passes the same CTest suite the original did.
+    _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
+    _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
 
 if __name__ == "__main__":

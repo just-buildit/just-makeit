@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 def _run(args):
     from just_makeit import _cli_method
+
     _cli_method.run(args)
 
 
@@ -123,6 +124,33 @@ class TestCliMethod:
         with pytest.raises(SystemExit):
             _run(["fir", "execute", "--out-divisor", "-1"])
 
+    def test_max_out_valid(self):
+        """Phase 2 row 2: --max-out N forwards to _method.run(max_out=N)."""
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "fir",
+                    "execute",
+                    "--variable-output",
+                    "--max-out",
+                    "1024",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("max_out") == 1024
+
+    def test_max_out_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--max-out"])
+
+    def test_max_out_zero_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--max-out", "0"])
+
+    def test_max_out_non_integer_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--max-out", "lots"])
+
     def test_out_divisor_non_int_exits(self):
         with pytest.raises(SystemExit):
             _run(["fir", "execute", "--out-divisor", "abc"])
@@ -189,6 +217,13 @@ class TestCliMethod:
         with patch("just_makeit._method.run"):
             with patch("just_makeit._impl.load_impl", return_value="body"):
                 with patch("just_makeit._impl.parse_replace", return_value=("a", "b")):
-                    _run(["fir", "execute",
-                          "--replace", "a::b",
-                          "--impl", "src.c::fir_step"])
+                    _run(
+                        [
+                            "fir",
+                            "execute",
+                            "--replace",
+                            "a::b",
+                            "--impl",
+                            "src.c::fir_step",
+                        ]
+                    )
