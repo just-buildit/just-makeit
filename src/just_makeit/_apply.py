@@ -67,12 +67,13 @@ def _resolve_impl(
     if file_ref:
         from . import _impl as I
 
-        path_part, _, func = file_ref.partition("::")
-        if not func:
+        path_part, _, ref = file_ref.partition("::")
+        if not ref:
             raise ValueError(
-                f"{label}: {impl_file_key} must be 'path::funcname', got {file_ref!r}."
+                f"{label}: {impl_file_key} must be 'path::funcname' or "
+                f"'path::N:M', got {file_ref!r}."
             )
-        body = I.extract_body(root / path_part, func)
+        body = I.extract(root / path_part, ref)
     else:
         body = inline
 

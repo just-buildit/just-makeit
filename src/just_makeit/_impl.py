@@ -5,14 +5,24 @@ _impl.py — utilities for --impl and --replace.
                        inject it into the generated stub, replacing the
                        /* <<IMPLEMENT>> */ placeholder.
 
+--impl file::N:M       Instead of a function body, lift lines N through M
+                       (inclusive, 1-based) verbatim from the file. Useful
+                       when the source you are lifting from isn't a single
+                       named function (a macro block, a snippet, a loop).
+
 --replace old::new     Apply a string replacement to the extracted body
                        before injection.  Repeatable; applied in order.
 
+Both forms compose with the SLOT::file::ref lifecycle syntax
+(e.g. create::ref.c::40:55) and with TOML `impl_file`.
+
 Public API
 ----------
-parse_impl(spec)           -> (Path, func_name)
+parse_impl(spec)           -> (Path, ref)   ref = funcname or "N:M"
 parse_replace(spec)        -> (old, new)
 extract_body(path, name)   -> str        (inner lines between { and })
+extract_lines(path, n, m)  -> str        (lines n..m inclusive)
+extract(path, ref)         -> str        (dispatch on funcname vs "N:M")
 apply_replacements(text, [(old, new)])  -> str
 load_impl(spec, replacements)           -> str  (full pipeline)
 inject_body_into_stub(stub, body)       -> str  (last fn in stub)
@@ -27,23 +37,33 @@ from pathlib import Path
 # ── parsing ───────────────────────────────────────────────────────────────────
 
 
+_LINE_RANGE_RE = re.compile(r"^(\d+):(\d+)$")
+
+
 def parse_impl(spec: str) -> tuple[Path, str]:
-    """Parse 'file::funcname' into (Path(file), funcname)."""
+    """Parse 'file::ref' into (Path(file), ref).
+
+    *ref* is either a function name or an ``N:M`` line range; the caller
+    (``extract``) decides which.
+    """
     if "::" not in spec:
         print(
-            f"error: --impl must be 'file::funcname', got: {spec!r}\n"
-            "Example: --impl ../c/src/resamp_core.c::dp_resamp_execute",
+            f"error: --impl must be 'file::funcname' or 'file::N:M', "
+            f"got: {spec!r}\n"
+            "Examples:\n"
+            "  --impl ../c/src/resamp_core.c::dp_resamp_execute\n"
+            "  --impl ../c/src/resamp_core.c::40:55",
             file=sys.stderr,
         )
         sys.exit(1)
-    file_part, func_name = spec.split("::", 1)
-    if not func_name:
+    file_part, ref = spec.split("::", 1)
+    if not ref:
         print(
-            f"error: --impl funcname is empty in: {spec!r}",
+            f"error: --impl funcname / line range is empty in: {spec!r}",
             file=sys.stderr,
         )
         sys.exit(1)
-    return Path(file_part), func_name
+    return Path(file_part), ref
 
 
 def parse_replace(spec: str) -> tuple[str, str]:
@@ -143,6 +163,56 @@ def extract_body(filepath: Path, func_name: str) -> str:
     sys.exit(1)
 
 
+def extract_lines(filepath: Path, start: int, end: int) -> str:
+    """Lift lines *start*..*end* inclusive (1-based) from a source file.
+
+    Indentation is normalised the same way ``extract_body`` normalises a
+    function body, so the lifted block drops into a generated stub cleanly.
+    Errors and exits on an out-of-bounds or inverted range.
+
+    Example::
+
+        # Reference file lines 40-42 are:
+        #   40: for (size_t i = 0; i < n; i++)
+        #   41:     out[i] = in[i] * g;
+        #   42: return n;
+        body = extract_lines(Path("ref.c"), 40, 42)
+    """
+    try:
+        text = filepath.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(
+            f"error: --impl file not found: {filepath}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    lines = text.split("\n")
+    if start < 1 or end < start or end > len(lines):
+        print(
+            f"error: --impl line range {start}:{end} is out of bounds for "
+            f"{filepath} (has {len(lines)} lines); expected 1 <= N <= M <= "
+            f"{len(lines)}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return _normalise_indent("\n".join(lines[start - 1 : end]))
+
+
+def extract(filepath: Path, ref: str) -> str:
+    """Lift a body by function name, or by ``N:M`` line range (inclusive).
+
+    ``ref`` of the form ``<digits>:<digits>`` is a line range; anything
+    else is treated as a function name. C identifiers can neither start
+    with a digit nor contain ``:``, so the two forms never collide.
+    """
+    m = _LINE_RANGE_RE.match(ref)
+    if m:
+        return extract_lines(filepath, int(m.group(1)), int(m.group(2)))
+    return extract_body(filepath, ref)
+
+
 def _normalise_indent(inner: str) -> str:
     """Strip one level of leading indentation from extracted body lines."""
     lines = inner.split("\n")
@@ -193,9 +263,9 @@ def load_impl(
     impl_spec: str,
     replacements: list[tuple[str, str]],
 ) -> str:
-    """Full pipeline: parse spec → extract body → apply replacements."""
-    filepath, func_name = parse_impl(impl_spec)
-    body = extract_body(filepath, func_name)
+    """Full pipeline: parse spec → extract body/lines → apply replacements."""
+    filepath, ref = parse_impl(impl_spec)
+    body = extract(filepath, ref)
     return apply_replacements(body, replacements)
 
 

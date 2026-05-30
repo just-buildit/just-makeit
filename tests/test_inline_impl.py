@@ -88,6 +88,71 @@ class TestResolveImpl:
         with pytest.raises(ValueError, match="path::funcname"):
             _resolve_impl(section, {}, tmp_path, "agc")
 
+    def test_impl_file_line_range(self, tmp_path):
+        ref = tmp_path / "ref.c"
+        ref.write_text(
+            "ignored line 1\n"
+            "    acc = x * s->gain;\n"
+            "    return acc;\n"
+            "ignored line 4\n"
+        )
+        section = {"impl_file": "ref.c::2:3"}
+        body = _resolve_impl(section, {}, tmp_path, "agc")
+        assert "acc = x * s->gain;" in body
+        assert "return acc;" in body
+        assert "ignored" not in body
+
+
+class TestLineRangeExtraction:
+    """`--impl file::N:M` lifts lines N..M inclusive instead of a function."""
+
+    def _ref(self, tmp_path: Path) -> Path:
+        ref = tmp_path / "snippet.c"
+        ref.write_text(
+            "line one\nline two\nline three\nline four\nline five\n"
+        )
+        return ref
+
+    def test_extract_lines_inclusive(self, tmp_path):
+        from just_makeit._impl import extract_lines
+
+        body = extract_lines(self._ref(tmp_path), 2, 4)
+        assert body == "line two\nline three\nline four"
+
+    def test_extract_single_line(self, tmp_path):
+        from just_makeit._impl import extract_lines
+
+        assert extract_lines(self._ref(tmp_path), 3, 3) == "line three"
+
+    def test_extract_dispatches_range_vs_name(self, tmp_path):
+        from just_makeit._impl import extract
+
+        ref = tmp_path / "f.c"
+        ref.write_text("int f(void) {\n    return 7;\n}\nTRAILING\n")
+        # Range form.
+        assert "TRAILING" in extract(ref, "3:4")
+        # Function-name form still works.
+        assert extract(ref, "f").strip() == "return 7;"
+
+    def test_load_impl_range(self, tmp_path):
+        from just_makeit._impl import load_impl
+
+        ref = self._ref(tmp_path)
+        body = load_impl(f"{ref}::1:2", [])
+        assert body == "line one\nline two"
+
+    def test_out_of_bounds_exits(self, tmp_path):
+        from just_makeit._impl import extract_lines
+
+        with pytest.raises(SystemExit):
+            extract_lines(self._ref(tmp_path), 1, 999)
+
+    def test_inverted_range_exits(self, tmp_path):
+        from just_makeit._impl import extract_lines
+
+        with pytest.raises(SystemExit):
+            extract_lines(self._ref(tmp_path), 4, 2)
+
 
 class TestValidateFragmentImplKeys:
     def test_clean_fragment_passes(self):

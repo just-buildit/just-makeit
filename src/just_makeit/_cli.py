@@ -53,6 +53,7 @@ Commands:
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --extra-include-dirs DIR    CMake include path for this component; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
+    --impl file::N:M            Lift lines N..M (inclusive) instead of a function.
     --impl SLOT::file::funcname Lift body into SLOT = create / reset / destroy.
     --replace old::new          String substitution on --impl body; repeatable.
 
