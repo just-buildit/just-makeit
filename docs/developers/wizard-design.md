@@ -1,8 +1,9 @@
 # `jm wizard` — design sketch
 
 Status: **proposal, not implemented.** Companion to the user-facing
-[decision tree](../decision-tree.md) and the
-[template gallery](../templates/index.md). This note captures what an
+[decision tree](../decision-tree.md), the
+[template gallery](../templates/index.md), and the sibling
+[`bind-design.md`](bind-design.md). This note captures what an
 interactive wizard would do, why it's worth building, and what the
 smallest useful version looks like.
 
@@ -10,6 +11,12 @@ The seven shape presets the wizard offers each have their own page in
 the [template gallery](../templates/index.md), titled with the exact
 CLI invocation that materialises them. Users can browse the actual
 generated code before they pick a preset — no pseudocode, no guessing.
+
+If a user prefers to hand-write `<comp>_core.h` and `<comp>_core.c`
+directly — matching one of the gallery template shapes by convention
+— [`jm bind`](bind-design.md) goes the other direction: reads the
+header and synthesises the binding, no TOML and no prior `jm` history
+required. Bind and wizard are the two ends of the same axis.
 
 ______________________________________________________________________
 

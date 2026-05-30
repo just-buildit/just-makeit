@@ -65,6 +65,7 @@ nav = [
     { "pkg-config & CMake" = "developers/pkg-config.md"       },
     { "Declarative scaffolding design" = "developers/declarative-scaffolding.md" },
     { "Wizard design (proposal)" = "developers/wizard-design.md" },
+    { "Bind design (proposal)"   = "developers/bind-design.md"   },
     { "Release checklist"  = "developers/release-checklist.md"},
   ]},
 ]
