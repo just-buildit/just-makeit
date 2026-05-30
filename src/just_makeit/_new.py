@@ -68,6 +68,7 @@ def run(
     find_packages: list[str] | None = None,
     pkg_modules: list[str] | None = None,
     c_deps: list[str] | None = None,
+    fragments: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -140,6 +141,18 @@ def run(
     if c_deps:
         cfg.setdefault("project", {})["c_deps"] = list(c_deps)
     C.save(root, cfg)
+    # Opt into the per-component fragment layout up front: with the include
+    # globs already in the manifest, every object/module scaffolded below
+    # (and later) routes to its own objects/<name>.toml / modules/<name>.toml
+    # fragment instead of the central manifest. Empty globs resolve to
+    # nothing, so this is safe before any fragment exists.
+    if fragments:
+        globs = C._toml_string_array(["objects/*.toml", "modules/*.toml"])
+        mpath = root / C.FILENAME
+        mpath.write_text(
+            f"include = {globs}\n\n" + mpath.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     print(f"  create  {root / C.FILENAME}")
     _write(root / "jb.toml", r(T.JB_TOML))
     print()

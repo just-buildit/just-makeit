@@ -26,6 +26,8 @@ Commands:
     --find-package NAME         CMake `find_package(NAME REQUIRED)` (repeatable; e.g. Doppler).
     --pkg-module NAME           pkg-config module via `pkg_check_modules` (repeatable).
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
+    --fragments                 Use the per-component fragment layout: objects -> objects/
+                                <name>.toml, modules -> modules/<name>.toml (vs one manifest).
 
   module <name> [OPTIONS]       Add an extension module subpackage to a project.
     --extra-include-dirs DIR    CMake include path; repeatable (e.g. ${DOPPLER_INCLUDE_DIR}).
