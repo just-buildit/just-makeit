@@ -68,7 +68,17 @@ class TestNewFragments:
 
 
 class TestCliFragmentsFlag:
-    def test_flag_forwarded(self):
+    def test_default_true(self):
+        # `jm new` now defaults to the per-component fragment layout.
+        from unittest.mock import patch
+        from just_makeit import _cli_new
+
+        with patch("just_makeit._new.run") as mock_run:
+            _cli_new.run(["proj"])
+            assert mock_run.call_args.kwargs["fragments"] is True
+
+    def test_fragments_flag_is_noop(self):
+        # `--fragments` is kept as a deprecated no-op (the default already).
         from unittest.mock import patch
         from just_makeit import _cli_new
 
@@ -76,10 +86,11 @@ class TestCliFragmentsFlag:
             _cli_new.run(["proj", "--fragments"])
             assert mock_run.call_args.kwargs["fragments"] is True
 
-    def test_default_false(self):
+    def test_no_fragments_opts_out(self):
+        # `--no-fragments` selects the legacy single-manifest layout.
         from unittest.mock import patch
         from just_makeit import _cli_new
 
         with patch("just_makeit._new.run") as mock_run:
-            _cli_new.run(["proj"])
+            _cli_new.run(["proj", "--no-fragments"])
             assert mock_run.call_args.kwargs["fragments"] is False

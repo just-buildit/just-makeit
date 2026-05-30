@@ -13,6 +13,12 @@
     declaration from `<mod>_core.h`. `--inline` functions are unchanged (they
     stay as a `static inline` in the header with no `.c` file). This is a
     clean break — projects scaffolded by older versions are not auto-migrated.
+- **`jm new` now defaults to the per-component fragment layout.** A new
+    project's manifest carries only `[project]` plus `include` globs; objects
+    route to `objects/<name>.toml` and modules to `modules/<name>.toml`. Pass
+    `--no-fragments` for the legacy single-manifest layout. `--fragments` is
+    kept as a deprecated no-op. The merged config every consumer sees is
+    identical between layouts, so this only changes on-disk file shape.
 
 ## [0.13.23] — 2026-05-30
 

@@ -22,7 +22,11 @@ def run(args: list[str]) -> None:
     pytest_ = False
     pytest_benchmark_ = False
     mutable = False
-    fragments = False
+    # Per-component fragment layout is the default for `jm new` (objects ->
+    # objects/<name>.toml, modules -> modules/<name>.toml). `--no-fragments`
+    # opts back into the single-manifest (monolith) layout; `--fragments` is
+    # kept as a deprecated no-op for back-compat.
+    fragments = True
     no_step = False
     no_state = False
     arg_type = "float _Complex"
@@ -121,7 +125,10 @@ def run(args: list[str]) -> None:
             mutable = True
             i += 1
         elif tok == "--fragments":
-            fragments = True
+            # Deprecated no-op: fragments is the default layout now.
+            i += 1
+        elif tok == "--no-fragments":
+            fragments = False
             i += 1
         elif tok == "--no-step":
             no_step = True
