@@ -28,36 +28,51 @@ def project(tmp_path: Path) -> Path:
 
 
 class TestStatus:
-    def test_returns_drift_count_for_clean_project(self, project, capsys):
-        # Fresh scaffold can show benign drift in package __init__.py
-        # (apply-add-only produced the minimal form; the replay produces
-        # the bootstrapped one). The count is what callers gate on.
-        drift = status_run(project)
+    def test_clean_project_is_up_to_date(self, project, capsys):
+        # A freshly scaffolded project is exactly what `apply` would
+        # produce, so status must report zero work — no false positive on
+        # merged files like the package __init__.py (the v0.14 fix).
+        count = status_run(project)
         out = capsys.readouterr().out
-        # Either fully clean (0 drift) or a small benign drift (1–2 files).
-        assert drift >= 0
-        # Output should mention either OK or the summary line.
-        assert "OK" in out or "drift" in out or "missing" in out
+        assert count == 0
+        assert "up to date" in out
 
     def test_reports_missing_after_deletion(self, project, capsys):
         header = project / "native" / "inc" / "my_filter" / "my_filter_core.h"
         assert header.exists()
         header.unlink()
-        drift = status_run(project)
+        count = status_run(project)
         out = capsys.readouterr().out
         assert "MISSING" in out
         assert "my_filter_core.h" in out
-        assert drift >= 1
+        assert count >= 1
 
-    def test_reports_drift_after_hand_edit(self, project, capsys):
+    def test_sacred_core_c_edit_not_flagged(self, project, capsys):
+        # _core.c is sacred — `apply` never rewrites it, so a hand-edited
+        # algorithm body must NOT show up as actionable drift.
         core_c = project / "native" / "src" / "my_filter" / "my_filter_core.c"
-        original = core_c.read_text(encoding="utf-8")
-        core_c.write_text(original + "\n/* user edit */\n", encoding="utf-8")
-        drift = status_run(project)
+        core_c.write_text(
+            core_c.read_text(encoding="utf-8") + "\n/* my algorithm */\n",
+            encoding="utf-8",
+        )
+        count = status_run(project)
         out = capsys.readouterr().out
-        assert "DRIFT" in out
-        assert "my_filter_core.c" in out
-        assert drift >= 1
+        assert count == 0
+        assert "up to date" in out
+
+    def test_glue_edit_is_stale(self, project, capsys):
+        # A hand-edited glue file (the binding) IS something `apply` would
+        # regenerate, so status flags it STALE.
+        ext_c = project / "native" / "src" / "my_filter" / "my_filter_ext.c"
+        ext_c.write_text(
+            ext_c.read_text(encoding="utf-8") + "\n/* stray edit */\n",
+            encoding="utf-8",
+        )
+        count = status_run(project)
+        out = capsys.readouterr().out
+        assert "STALE" in out
+        assert "my_filter_ext.c" in out
+        assert count >= 1
 
     def test_errors_outside_a_project(self, tmp_path, capsys):
         with pytest.raises(SystemExit):

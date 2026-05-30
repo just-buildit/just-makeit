@@ -119,9 +119,10 @@ Commands:
   split-objects                 Move each [obj] section out of the manifest into
                                 objects/<name>.toml and add the include glob.
   script                        Print a shell script that fully reconstructs this project via CLI.
-  status                        Report drift between just-makeit.toml and the
-                                materialised files. Read-only. Exits 1 if any
-                                manifest-owned file is missing or out of sync.
+  status                        Show what `jm apply` would change (read-only):
+                                files it would create (missing) or rewrite from
+                                the manifest (stale). Your _core.c is never
+                                touched. Exits 1 if anything is missing or stale.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
