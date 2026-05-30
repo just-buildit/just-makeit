@@ -27,7 +27,10 @@ Commands:
     --pkg-module NAME           pkg-config module via `pkg_check_modules` (repeatable).
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
 
-  module <name>                 Add an extension module subpackage to a project.
+  module <name> [OPTIONS]       Add an extension module subpackage to a project.
+    --extra-include-dirs DIR    CMake include path; repeatable (e.g. ${DOPPLER_INCLUDE_DIR}).
+    --extra-link-libs TARGET    CMake link target; repeatable (e.g. PkgConfig::DOPPLER).
+    --extra-types NAME          Hand-written Python type to register in PyInit_; repeatable.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --module name               Place object inside this module's .so.
@@ -43,6 +46,7 @@ Commands:
                                       state stays internal (manage via --impl create::...).
                                       Optional array form: name:type[]:optional[:create_fn]
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
+    --extra-include-dirs DIR    CMake include path for this component; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
     --impl SLOT::file::funcname Lift body into SLOT = create / reset / destroy.
     --replace old::new          String substitution on --impl body; repeatable.
@@ -357,7 +361,54 @@ def main() -> None:
             sys.exit(1)
         from . import _module
 
-        _module.run(Path.cwd(), args[1])
+        mod_name = args[1]
+        mod_extra_inc: list[str] = []
+        mod_extra_libs: list[str] = []
+        mod_extra_types: list[str] = []
+        rest = args[2:]
+        j = 0
+        while j < len(rest):
+            tok = rest[j]
+            if tok == "--extra-include-dirs":
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --extra-include-dirs requires a path or ${VAR}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_extra_inc.append(rest[j])
+                j += 1
+            elif tok == "--extra-link-libs":
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --extra-link-libs requires a target name",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_extra_libs.append(rest[j])
+                j += 1
+            elif tok == "--extra-types":
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --extra-types requires a Python type name",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_extra_types.append(rest[j])
+                j += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+        _module.run(
+            Path.cwd(),
+            mod_name,
+            extra_include_dirs=mod_extra_inc or None,
+            extra_link_libs=mod_extra_libs or None,
+            extra_types=mod_extra_types or None,
+        )
 
     elif cmd == "object":
         _warn_schema()
