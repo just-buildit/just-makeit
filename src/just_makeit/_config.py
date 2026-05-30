@@ -932,6 +932,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"result_fields = [{rf_parts}]")
             if m.get("py_return_type"):
                 lines.append(f'py_return_type = "{m["py_return_type"]}"')
+            if m.get("max_out"):
+                lines.append(f"max_out = {m['max_out']}")
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
