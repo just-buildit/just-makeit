@@ -155,6 +155,38 @@ class TestCliMethod:
         with pytest.raises(SystemExit):
             _run(["fir", "execute", "--out-divisor", "abc"])
 
+    def test_result_field_valid(self):
+        """Phase 2 row 4: --result-field name:T (repeatable) forwards to
+        _method.run(result_fields=[{name, type}, ...])."""
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "det",
+                    "detect",
+                    "--result-field",
+                    "sample_index:size_t",
+                    "--result-field",
+                    "magnitude:float",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["result_fields"] == [
+                {"name": "sample_index", "type": "size_t"},
+                {"name": "magnitude", "type": "float"},
+            ]
+
+    def test_result_field_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["det", "detect", "--result-field"])
+
+    def test_result_field_bad_format_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["det", "detect", "--result-field", "nocolon"])
+
+    def test_result_field_bad_type_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["det", "detect", "--result-field", "x:notatype"])
+
     def test_out_type_missing_value_exits(self):
         with pytest.raises(SystemExit):
             _run(["fir", "execute", "--out-type"])
