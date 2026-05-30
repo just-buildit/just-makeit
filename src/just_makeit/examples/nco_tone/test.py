@@ -6,18 +6,35 @@ Demonstrates:
   - opaque state (nco_state_t*) with create_impl / destroy_impl
   - jm apply keeping the find_package() call alive across re-runs
 
-doppler must be installed (or its build tree discoverable).  If it is not
-found, the test exits 0 with a clear skip message so CI machines without
-doppler installed do not fail.
+doppler can be supplied three ways, tried in order:
+  1. --doppler-prefix PATH on the command line (or argument to run()).
+  2. A local install / build tree discoverable by _find_doppler_prefix().
+  3. Auto-download of the prebuilt release tarball into a cache dir
+     (~/.cache/jm-tests/doppler/v<version>/). Skips if the download
+     fails (no network, asset name mismatch on this platform, etc.).
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/nco_tone/test.py [--doppler-prefix PATH]
 """
 
+import os
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
+
+# Pinned doppler version for the auto-download path. Bump when doppler
+# cuts a new release; eventually replace with a GitHub API lookup of the
+# latest release.
+_DOPPLER_VERSION = "0.4.6"
+_DOPPLER_RELEASE_URL = (
+    "https://github.com/doppler-dsp/doppler/releases/download/"
+    "v{version}/doppler-{version}-{platform}.tar.gz"
+)
 
 
 def _cmake_gen():
@@ -35,12 +52,106 @@ def _cmd(args, cwd, env=None):
     return r
 
 
+def _platform_tag() -> str | None:
+    """Return the doppler release-asset platform tag for this host.
+
+    The release naming convention is doppler-<version>-<platform>.tar.gz.
+    Returns None when the current platform doesn't match a known tag."""
+    import platform as _platform
+
+    system = sys.platform
+    machine = _platform.machine().lower()
+    if system == "linux":
+        if machine in ("x86_64", "amd64"):
+            return "linux-x86_64"
+        if machine in ("aarch64", "arm64"):
+            return "linux-aarch64"
+    if system == "darwin":
+        if machine in ("x86_64", "amd64"):
+            return "darwin-x86_64"
+        if machine in ("arm64", "aarch64"):
+            return "darwin-arm64"
+    if system == "win32":
+        return "windows-x86_64"
+    return None
+
+
+def _cache_dir() -> Path:
+    """The per-user cache directory for jm-test downloads."""
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "jm-tests" / "doppler"
+
+
+def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
+    """Download + extract the doppler prebuilt tarball into the cache.
+
+    Returns the prefix path (the directory containing lib/cmake/doppler/)
+    on success, or None if the download couldn't be completed (no
+    network, no matching asset for this platform, extraction failed)."""
+    platform = _platform_tag()
+    if platform is None:
+        return None
+
+    extract_dir = _cache_dir() / f"v{version}" / platform
+    # If a previous run already extracted here and the cmake config is
+    # present, reuse it without re-downloading.
+    if extract_dir.exists():
+        for rel in (
+            "lib/cmake/doppler/doppler-config.cmake",
+            "lib64/cmake/doppler/doppler-config.cmake",
+        ):
+            if (extract_dir / rel).exists():
+                return str(extract_dir)
+
+    url = _DOPPLER_RELEASE_URL.format(version=version, platform=platform)
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    tarball = extract_dir.parent / f"doppler-{version}-{platform}.tar.gz"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, open(tarball, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        print(
+            f"nco_tone: doppler auto-download failed ({exc}); "
+            f"the test will skip unless --doppler-prefix is passed.",
+            file=sys.stderr,
+        )
+        return None
+
+    try:
+        with tarfile.open(tarball, "r:gz") as tar:
+            tar.extractall(extract_dir)
+    except (tarfile.TarError, OSError) as exc:
+        print(
+            f"nco_tone: doppler tarball extraction failed ({exc}); skipping.",
+            file=sys.stderr,
+        )
+        return None
+
+    # Some tarballs unpack into a top-level subdirectory (e.g.
+    # doppler-0.4.6/) and others extract their lib/include directly.
+    # Locate the cmake config and return the prefix containing it.
+    for cfg in extract_dir.rglob("doppler-config.cmake"):
+        # The prefix is two directories up from lib/cmake/doppler/.
+        parts = cfg.parts
+        try:
+            i = parts.index("cmake")
+            prefix = Path(*parts[: i - 1])  # strip lib/cmake/doppler
+            return str(prefix)
+        except ValueError:
+            return str(cfg.parent)
+    return None
+
+
 def _find_doppler_prefix() -> str | None:
     """Return the doppler prefix to pass to --doppler-prefix.
 
-    Searches for doppler-config.cmake in common install locations and the
-    local doppler build tree.  Returns the prefix (i.e. the directory one
-    level above lib/cmake/doppler/) or None when not found."""
+    Tries in order:
+      1. A locally-installed doppler (system paths, ~/doppler/build).
+      2. The auto-downloaded prebuilt release in the cache dir.
+
+    Returns the prefix (i.e. the directory one level above
+    lib/cmake/doppler/) or None when neither path produces a usable
+    cmake config."""
     candidates = [
         Path("/usr/local"),
         Path("/usr"),
@@ -59,7 +170,8 @@ def _find_doppler_prefix() -> str | None:
         ):
             if (prefix / rel).exists():
                 return str(prefix)
-    return None
+    # Local search came up empty; fall back to the auto-download.
+    return _download_doppler()
 
 
 # ── TOML fragment ─────────────────────────────────────────────────────────────
