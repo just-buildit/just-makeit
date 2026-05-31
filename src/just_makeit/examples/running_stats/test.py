@@ -151,6 +151,14 @@ def run(root: Path) -> None:
         f"diff len: original={len(original)} rebound={len(rebound)}"
     )
 
+    # `jm bind --check` — the CI gate: renders the binding from the header
+    # and asserts it is byte-identical to the file on disk.  A non-zero
+    # return would mean the header and the committed binding have drifted.
+    rendered = jm_bind(proj, "running_stats", write=False)
+    assert rendered == ext_c.read_text(encoding="utf-8"), (
+        "jm bind --check: binding on disk has drifted from the header"
+    )
+
     # Rebuild + retest to prove the bound binding still compiles, links,
     # and passes the same CTest suite the original did.
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)

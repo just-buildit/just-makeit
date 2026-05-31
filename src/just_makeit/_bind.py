@@ -1,23 +1,31 @@
 """
-_bind.py — ``just-makeit bind`` command (MVP / proof-of-concept).
+_bind.py — ``just-makeit bind`` command.
 
-Reads ``<comp>_core.h``, recognises the *filter* template shape, and
-synthesises ``<comp>_ext.c`` (plus the matching ``.pyi``) without
-consulting ``just-makeit.toml``.  Designed as the front-end demo for the
-larger ``jm bind`` design captured in
+Reads ``<comp>_core.h`` and synthesises ``<comp>_ext.c`` (plus the
+matching ``.pyi``) without consulting ``just-makeit.toml``.  Designed
+as the header-driven path described in
 ``docs/developers/bind-design.md``.
 
-Scope of this prototype
------------------------
-- Filter shape only: state struct with scalar fields, ``<comp>_create``
-  taking those fields in order, an inline ``<comp>_step`` with one
-  scalar arg returning one scalar.
-- No methods, no properties, no init_params, no opaque state,
-  no out_type, no variable_output.
-- Package name comes from ``pyproject.toml`` in the project root.
+Supported shapes (Phase 3b)
+---------------------------
+- State struct with scalar fields and/or opaque pointer fields.
+- Constructor taking state fields in order; ctor params not matching
+  a state field become init_params.
+- Inline ``<comp>_step()`` with one scalar arg and scalar return.
+- Getter/setter pairs (``<comp>_get_<field>`` /
+  ``<comp>_set_<field>``) → Python properties.
+- Custom verbs: any other ``<comp>_<verb>(state, ...)`` declaration
+  whose return type and (optionally) single scalar arg can be parsed.
+- Variable-output methods: ``<comp>_<verb>`` paired with a
+  ``<comp>_<verb>_max_out`` sibling declaration.
+- Opaque state: forward-declared struct (no ``{ ... }`` body in the
+  header); skip field discovery.
 
-If any of the above doesn't hold, the parser raises ``ValueError`` and
-the caller falls back to the usual TOML-driven flow.
+When a declaration is found but cannot be parsed (unknown type, complex
+multi-param signature), it is skipped with a warning rather than a hard
+error — the user can add those methods via TOML.
+
+Package name comes from ``pyproject.toml`` in the project root.
 """
 
 from __future__ import annotations
@@ -66,6 +74,59 @@ _RESET_ASSIGN_RE = re.compile(
     r"state->(\w+)\s*=\s*([^;]+);",
 )
 
+# ── Phase 3b patterns ─────────────────────────────────────────────────────────
+
+# Forward-declared struct (opaque state — no body in header):
+#   typedef struct <comp>_state_t <comp>_state_t;
+_OPAQUE_FWD_RE = re.compile(
+    r"typedef\s+struct\s+(\w+)_state_t\s+\1_state_t\s*;",
+)
+
+# Getter declaration:
+#   <ctype>  <comp>_get_<field>(const <comp>_state_t *state);
+_GETTER_DECL_RE = re.compile(
+    r"^\s*([\w\s]+?)\s+(\w+)_get_(\w+)\s*\(\s*(?:const\s+)?\w+_state_t\s*\*[^)]*\)\s*;",
+    re.MULTILINE,
+)
+
+# Setter declaration:
+#   void  <comp>_set_<field>(<comp>_state_t *state, <ctype> val);
+_SETTER_DECL_RE = re.compile(
+    r"^\s*void\s+(\w+)_set_(\w+)\s*\(\s*\w+_state_t\s*\*[^,)]+,\s*([\w\s]+?)\s+\w+\s*\)\s*;",
+    re.MULTILINE,
+)
+
+# Variable-output max_out sibling:
+#   size_t  <comp>_<verb>_max_out(<comp>_state_t *state);
+_MAX_OUT_DECL_RE = re.compile(
+    r"size_t\s+(\w+)_(\w+)_max_out\s*\(\s*(?:const\s+)?\w+_state_t\s*\*[^)]*\)\s*;",
+    re.MULTILINE,
+)
+
+# General method declaration — everything of the form:
+#   <RET>  <comp>_<verb>(<comp>_state_t *state[, <single-scalar-arg>]);
+# We only try to parse methods whose arg list (after the state pointer) is
+# either empty or a single simple scalar.  Anything more complex is skipped.
+_SIMPLE_METHOD_RE = re.compile(
+    r"^\s*([\w\s\*]+?)\s+(\w+)_(\w+)\s*\(\s*(?:const\s+)?\w+_state_t\s*\*\s*\w+"
+    r"(?:\s*,\s*([\w\s]+?)\s+\w+)?\s*\)\s*;",
+    re.MULTILINE,
+)
+
+# Variable-output method: size_t <comp>_<verb>(state *s[, in_t in], out_t *out);
+# Captures comp, verb, and optionally the scalar input type.
+_VAR_OUT_DECL_RE = re.compile(
+    r"size_t\s+(\w+)_(\w+)\s*\(\s*(?:const\s+)?\w+_state_t\s*\*\s*\w+"
+    r"(?:\s*,\s*([\w\s]+?)\s+\w+)?"  # optional scalar input arg
+    r"\s*,\s*[\w\s]+?\*\s*\w+\s*\)\s*;",  # mandatory output pointer (any ptr)
+    re.MULTILINE,
+)
+
+# ── Lifecycle verbs that the parser skips when collecting custom methods ──────
+_LIFECYCLE_VERBS: frozenset[str] = frozenset(
+    {"create", "destroy", "reset", "step", "steps", "step_batch"}
+)
+
 
 def _normalize_ctype(s: str) -> str:
     """Collapse internal whitespace; map ``float complex`` back to
@@ -78,41 +139,61 @@ def _normalize_ctype(s: str) -> str:
 
 
 def parse_header(path: Path) -> dict:
-    """Extract component, state fields, and step signature from a header.
+    """Extract component shape from a header following the jm template contract.
 
     Returns a dict with keys::
 
         component   str
-        fields      list of (name, ctype) — order as declared in the struct
+        fields      list of (name, ctype) — scalar fields in struct order
         arg_type    str   (scalar C type, e.g. "float _Complex")
         return_type str
+        properties  list of {"name", "type", "writable"} dicts
+        methods     list of {"name", "arg_type", "return_type", "variable_output"} dicts
+        init_params list of (name, ctype, default) triples — ctor params not
+                    matching a state field (best-effort; empty if not parseable)
+        is_opaque   bool — True when state is forward-declared (no struct body)
 
-    Raises ``ValueError`` when the file doesn't match the filter shape.
+    Raises ``ValueError`` when the header cannot be parsed at all (e.g. no
+    state struct, missing step()).  Skips individual methods it cannot parse
+    without raising.
     """
+    import warnings
+
     text = path.read_text(encoding="utf-8")
 
+    # ── Detect opaque (forward-decl only, no struct body) ─────────────────
+    m_opaque = _OPAQUE_FWD_RE.search(text)
     m_state = _STATE_STRUCT_RE.search(text)
-    if not m_state:
-        raise ValueError(
-            f"{path}: no `typedef struct {{ ... }} <comp>_state_t;` block"
-        )
-    struct_body, comp = m_state.group(1), m_state.group(2)
+    is_opaque = bool(m_opaque) and not bool(m_state)
 
-    field_pairs = _FIELD_RE.findall(struct_body)
-    if not field_pairs:
-        raise ValueError(
-            f"{path}: state struct has no parseable scalar fields"
-        )
-    fields: list[tuple[str, str]] = []
-    for raw_ct, name in field_pairs:
-        ct = _normalize_ctype(raw_ct)
-        if ct not in T._CTYPE_META:
+    if is_opaque:
+        comp = m_opaque.group(1)
+        fields: list[tuple[str, str]] = []
+    else:
+        if not m_state:
             raise ValueError(
-                f"{path}: field '{name}': unsupported type '{ct}'"
-                f" (prototype only handles scalar types in _CTYPE_META)"
+                f"{path}: no `typedef struct {{ ... }} <comp>_state_t;` block"
             )
-        fields.append((name, ct))
+        struct_body, comp = m_state.group(1), m_state.group(2)
 
+        field_pairs = _FIELD_RE.findall(struct_body)
+        if not field_pairs:
+            raise ValueError(
+                f"{path}: state struct has no parseable scalar fields"
+            )
+        fields = []
+        for raw_ct, name in field_pairs:
+            ct = _normalize_ctype(raw_ct)
+            if ct not in T._CTYPE_META:
+                raise ValueError(
+                    f"{path}: field '{name}': unsupported type '{ct}'"
+                    f" — use TOML for opaque/pointer fields"
+                )
+            fields.append((name, ct))
+
+    field_names: frozenset[str] = frozenset(n for n, _ in fields)
+
+    # ── Step signature ─────────────────────────────────────────────────────
     m_step = _STEP_RE.search(text)
     if not m_step:
         raise ValueError(
@@ -133,9 +214,7 @@ def parse_header(path: Path) -> dict:
             f"{path}: step return type '{return_type}' not supported"
         )
 
-    # arg_decl is e.g. "float _Complex x"; we only need the type half.
     arg_decl_norm = " ".join(arg_decl.strip().split())
-    # Drop the final identifier (the arg name).
     arg_parts = arg_decl_norm.rsplit(" ", 1)
     if len(arg_parts) != 2:
         raise ValueError(f"{path}: cannot parse step arg from '{arg_decl}'")
@@ -143,11 +222,155 @@ def parse_header(path: Path) -> dict:
     if arg_type not in T._CTYPE_META:
         raise ValueError(f"{path}: step arg type '{arg_type}' not supported")
 
+    # ── Init_params: ctor params not matching a state field name ──────────
+    init_params: list[tuple[str, str, str]] = []
+    m_create = _CREATE_RE.search(text)
+    if m_create and m_create.group(1) == comp:
+        raw_params = m_create.group(2).strip()
+        if raw_params and raw_params != "void":
+            for raw_param in raw_params.split(","):
+                raw_param = raw_param.strip()
+                parts = raw_param.rsplit(None, 1)
+                if len(parts) == 2:
+                    ptype = _normalize_ctype(parts[0])
+                    pname = parts[1].lstrip("*").strip()
+                    if pname not in field_names and ptype in T._CTYPE_META:
+                        zero = T._CTYPE_META[ptype]["zero"]
+                        init_params.append((pname, ptype, zero))
+
+    # ── Properties: getter/setter declaration pairs ────────────────────────
+    getters: dict[str, str] = {}  # field_name -> ctype
+    for m in _GETTER_DECL_RE.finditer(text):
+        ret, gcomp, field = m.group(1), m.group(2), m.group(3)
+        if gcomp != comp:
+            continue
+        ct = _normalize_ctype(ret)
+        if ct in T._CTYPE_META:
+            getters[field] = ct
+
+    setters: set[str] = set()  # field names with a setter
+    for m in _SETTER_DECL_RE.finditer(text):
+        scomp, field = m.group(1), m.group(2)
+        if scomp == comp:
+            setters.add(field)
+
+    # State-field getters/setters are generated by make_state_ctx; only
+    # include getters for fields that are NOT in the state struct.
+    properties: list[dict] = [
+        {"name": field, "type": ct, "writable": field in setters}
+        for field, ct in getters.items()
+        if field not in field_names
+    ]
+
+    # ── Variable-output: _max_out sibling declarations ─────────────────────
+    var_output_verbs: set[str] = set()
+    for m in _MAX_OUT_DECL_RE.finditer(text):
+        if m.group(1) == comp:
+            var_output_verbs.add(m.group(2))
+
+    # ── Custom methods: remaining <comp>_<verb> declarations ──────────────
+    # Collect verbs already claimed (lifecycle, getters, setters, max_out
+    # siblings, and any variant of "steps" the template generates).
+    claimed: set[str] = set(
+        _LIFECYCLE_VERBS
+        | {f"get_{f}" for f in getters}
+        | {f"set_{f}" for f in setters}
+        | {f"{v}_max_out" for v in var_output_verbs}
+        | {"steps", "step_batch", "max_out"}
+    )
+
+    methods: list[dict] = []
+    for m in _SIMPLE_METHOD_RE.finditer(text):
+        ret_raw_m, mcomp, verb, arg_raw = (
+            m.group(1),
+            m.group(2),
+            m.group(3),
+            m.group(4),
+        )
+        if mcomp != comp or verb in claimed:
+            continue
+        claimed.add(verb)
+
+        ret_ct = _normalize_ctype(ret_raw_m)
+        if ret_ct not in T._CTYPE_META and ret_ct != "void":
+            warnings.warn(
+                f"jm bind: skipping method '{comp}_{verb}' — "
+                f"return type '{ret_ct}' not in type allowlist",
+                stacklevel=2,
+            )
+            continue
+
+        # Arg type: group(4) captures only the type token (the identifier
+        # is consumed by \s+\w+ in the regex and not captured).
+        if arg_raw is None:
+            marg = "void"
+        else:
+            marg = _normalize_ctype(arg_raw.strip())
+            if marg not in T._CTYPE_META and marg != "void":
+                warnings.warn(
+                    f"jm bind: skipping method '{comp}_{verb}' — "
+                    f"arg type '{marg}' not in type allowlist "
+                    f"(use TOML for array or multi-param methods)",
+                    stacklevel=2,
+                )
+                continue
+
+        entry: dict = {
+            "name": verb,
+            "arg_type": marg,
+            "return_type": ret_ct,
+        }
+        if verb in var_output_verbs:
+            entry["variable_output"] = True
+        methods.append(entry)
+
+    # ── Second pass: variable-output methods with output-pointer signatures ──
+    # Pick up verbs detected by _MAX_OUT_DECL_RE that _SIMPLE_METHOD_RE
+    # missed (e.g. comp_verb(state, in_t x, out_t *out) — two args after
+    # state exceeds the simple pattern).
+    already_emitted: set[str] = {m["name"] for m in methods}
+    for verb in sorted(var_output_verbs):
+        if verb in already_emitted or verb in claimed:
+            continue
+        # Try the variable-output-specific pattern.
+        decl_re = re.compile(
+            rf"size_t\s+{re.escape(comp)}_{re.escape(verb)}\s*"
+            rf"\(\s*(?:const\s+)?\w+_state_t\s*\*\s*\w+"
+            rf"(?:\s*,\s*([\w\s]+?)\s+\w+)?"  # optional scalar in
+            rf"\s*,\s*[\w\s]+?\*\s*\w+\s*\)\s*;",
+            re.MULTILINE,
+        )
+        m_vo = decl_re.search(text)
+        if m_vo is None:
+            continue
+        in_raw = m_vo.group(1)
+        if in_raw is None:
+            vo_arg = "void"
+        else:
+            vo_arg = _normalize_ctype(in_raw.strip())
+            if vo_arg not in T._CTYPE_META:
+                vo_arg = "void"  # fall back; renderer will use void-arg shape
+        methods.append(
+            {
+                "name": verb,
+                "arg_type": vo_arg,
+                "return_type": "void",  # variable-output: actual element type
+                # comes from the out pointer, which we don't parse here;
+                # the renderer uses the `variable_output` flag to allocate
+                # the buffer and return a numpy view.
+                "variable_output": True,
+            }
+        )
+
     return {
         "component": comp,
         "fields": fields,
         "arg_type": arg_type,
         "return_type": return_type,
+        "properties": properties,
+        "methods": methods,
+        "init_params": init_params,
+        "is_opaque": is_opaque,
     }
 
 
@@ -199,7 +422,7 @@ def _build_ctx(
     pkg: str,
     defaults: dict[str, str] | None = None,
 ) -> dict:
-    """Build the same context dict ``_init.run`` produces for a filter."""
+    """Build the same context dict ``_init.run`` produces for a component."""
     ctx = _make_component_ctx(comp)
     ctx.update(
         {
@@ -213,6 +436,8 @@ def _build_ctx(
 
     arg_type = parsed["arg_type"]
     return_type = parsed["return_type"]
+    is_opaque = parsed.get("is_opaque", False)
+    init_params = parsed.get("init_params", [])
 
     # State vars: (name, ctype, default).  Prefer the literal extracted
     # from <comp>_core.c's reset() body; fall back to the type's zero
@@ -229,6 +454,8 @@ def _build_ctx(
             ctx["component"],
             ctx["Component"],
             state_vars,
+            no_state=is_opaque,
+            init_params=init_params,
         )
     )
     ctx.update(Ctx.make_perf_ctx(False))
@@ -237,16 +464,17 @@ def _build_ctx(
         Ctx.make_methods_ctx(
             ctx["component"],
             ctx["Component"],
-            [],
+            parsed.get("methods", []),
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
+            no_state=is_opaque,
         )
     )
     ctx.update(
         Ctx.make_properties_ctx(
             ctx["component"],
             ctx["Component"],
-            [],
+            parsed.get("properties", []),
             frozenset(n for n, _, _ in state_vars),
         )
     )
@@ -269,8 +497,10 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         print(
-            "hint: this prototype only handles the default filter shape."
-            " Use `jm object` or a TOML manifest for other shapes.",
+            "hint: jm bind handles scalar-state and opaque-state components"
+            " following the template contract. For array args, multi-param"
+            " methods, or non-standard naming, add those entries to TOML and"
+            " use `jm apply`. See docs/developers/bind-design.md.",
             file=sys.stderr,
         )
         sys.exit(1)
