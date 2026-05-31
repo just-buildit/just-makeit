@@ -185,6 +185,33 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
     return None
 
 
+def _inject_decls_into_core_h(
+    path: Path, comp: str, decls: "list[str]"
+) -> bool:
+    """Surgically insert C declarations into an object's ``<comp>_core.h``.
+
+    Additive and splice-free: each declaration is placed just before the
+    ``extern "C"`` close (falling back to the header guard), and any decl
+    whose text is already present is skipped (idempotent).  Never re-renders
+    the file, so the sacred state struct and inline ``step()`` body are
+    untouched.  Returns True if the header changed."""
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    fresh = [d for d in decls if d.strip() and d.strip() not in text]
+    if not fresh:
+        return False
+    block = "\n".join(fresh) + "\n"
+    cpp_end = "#ifdef __cplusplus\n}\n#endif"
+    if cpp_end in text:
+        text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
+    else:
+        guard = f"#endif /* {comp.upper()}_CORE_H */"
+        text = text.replace(guard, f"{block}{guard}", 1)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def _preserve_core_bodies(
     path: Path,
     new_text: str,

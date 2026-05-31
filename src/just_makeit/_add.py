@@ -1,93 +1,45 @@
 """
 _add.py — `just-makeit add` command.
 
-Adds state variables to an existing component:
-  1. Read just-makeit.toml
-  2. Resolve which component to modify
-  3. Validate no duplicate names
-  4. Back up the six state-sensitive generated files
-  5. Regenerate them from the merged state list
-  6. Update just-makeit.toml
-  On any error during steps 5-6, restore from backup before re-raising.
+Author one or more state variables into an existing object's manifest entry,
+then rebuild the object from the manifest.
+
+State is *structural*: a new field changes the sacred ``<obj>_state_t`` struct
+and the ``create()`` / ``reset()`` lifecycle.  Under the sacred/glue contract
+those are never spliced into your files — the object is rebuilt from the
+manifest instead, exactly like ``jm regenerate``.  Keep your algorithm in the
+TOML (``impl`` / ``create_impl``) or ``git stash`` first so the rebuild
+re-asserts it.  ``--force`` skips the confirmation.
 """
 
-import os
-import shutil
 import sys
-import tempfile
-import time
-from contextlib import contextmanager
 from pathlib import Path
 
 from . import _config as C
-from . import _init
-from . import _context as Ctx
-from . import _render as R
-
-
-def _stateful_templates(cfg: dict) -> list:
-    test_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
-    bench_tmpl = (
-        R.COMPONENT_BENCH_PYTEST_BM
-        if C.is_pytest_benchmark(cfg)
-        else R.COMPONENT_BENCH_PY
-    )
-    return [
-        ("native/inc/{c}/{c}_core.h", R.COMPONENT_CORE_H),
-        ("native/src/{c}/{c}_core.c", R.COMPONENT_CORE_C),
-        ("native/src/{c}/{c}_ext.c", R.COMPONENT_EXT_C),
-        ("native/tests/test_{c}_core.c", R.COMPONENT_TEST_C),
-        ("native/benchmarks/bench_{c}_core.c", R.COMPONENT_BENCH_C),
-        ("src/{p}/{c}.pyi", R.COMPONENT_PYI),
-        ("src/{p}/tests/test_{c}.py", test_tmpl),
-        ("src/{p}/benchmarks/bench_{c}.py", bench_tmpl),
-    ]
-
-
-def _expand(pattern: str, comp: str, pkg: str) -> str:
-    return pattern.replace("{c}", comp).replace("{p}", pkg)
-
-
-@contextmanager
-def _backup(files: list[Path]):
-    backed: dict[Path, Path] = {}
-    try:
-        for p in files:
-            if p.exists():
-                fd, tmp = tempfile.mkstemp(suffix=".bak")
-                os.close(fd)
-                shutil.copy2(p, tmp)
-                backed[p] = Path(tmp)
-        yield
-    except Exception:
-        for p, tmp in backed.items():
-            shutil.copy2(tmp, p)
-            print(f"  restored  {p}", file=sys.stderr)
-        raise
-    finally:
-        for tmp in backed.values():
-            tmp.unlink(missing_ok=True)
+from . import _regenerate
 
 
 def run(
     root: Path,
     component: str | None,
     new_vars: list[tuple[str, str, str]],
+    force: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
-            f"error: no {C.FILENAME} found in {root}.\nRun 'just-makeit new' first.",
+            f"error: no {C.FILENAME} found in {root}.\n"
+            "Run 'just-makeit new' first.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     cfg = C.load(root)
     comps = C.components(cfg)
-
     if not comps:
         print(
-            "error: project has no standalone objects yet. Run 'just-makeit object <name>' first.",
+            "error: project has no standalone objects yet. "
+            "Run 'just-makeit object <name>' first.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -97,7 +49,8 @@ def run(
             component = comps[0]
         else:
             print(
-                f"error: project has multiple objects {comps}. Use --object to specify one.",
+                f"error: project has multiple objects {comps}. "
+                "Use --object to specify one.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -108,12 +61,9 @@ def run(
         )
         sys.exit(1)
 
-    pkg = C.project_name(cfg)
-    version = C.project_version(cfg)
     existing = C.state_vars(cfg, component)
-
-    existing_names = {n for n, _, __ in existing}
-    for name, _, __ in new_vars:
+    existing_names = {n for n, _, _ in existing}
+    for name, _, _ in new_vars:
         if name in existing_names:
             print(
                 f"error: state variable '{name}' already exists.",
@@ -121,102 +71,20 @@ def run(
             )
             sys.exit(1)
 
+    # Author: append the new field(s) to the object's manifest entry.  The
+    # struct/lifecycle change is materialized by the regenerate below — never
+    # by splicing into the sacred source.
     all_vars = existing + new_vars
-
-    ctx = _init._make_component_ctx(component)
-    ctx.update(
-        {
-            "package": pkg,
-            "project": pkg.replace("_", "-"),
-            "project_underscore": pkg,
-            "version": version,
-        }
-    )
-
-    arg_type_ = C.arg_type(cfg, component)
-    return_type_ = C.return_type(cfg, component)
-    ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
-    ctx.update(
-        Ctx.make_state_ctx(
-            ctx["component"],
-            ctx["Component"],
-            all_vars,
-            array_args=C.array_args(cfg, component),
-            no_state=C.is_no_state(cfg, component),
-            # gh-87 class of bug: a component with both --state and
-            # --init-param has an init-param-driven ctor; regenerating the
-            # state ctx without these keys silently rebuilds a state-driven
-            # ctor, dropping the init params from _core.h / _core.c / _ext.c
-            # while they remain in the manifest. Pass the full ctor metadata
-            # so `jm add` preserves the existing constructor signature.
-            init_params=C.init_params(cfg, component),
-            init_post_parse_impl=C.init_post_parse(cfg, component),
-            opaque_fields=C.opaque_fields(cfg, component),
-            no_ctor_names=C.no_ctor_names(cfg, component),
-        )
-    )
-    templates = _stateful_templates(cfg)
-
-    ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
-    ctx.update(
-        Ctx.make_step_ctx(
-            ctx, arg_type_, return_type_, mutable=C.is_mutable(cfg, component)
-        )
-    )
-    ctx.update(
-        Ctx.make_methods_ctx(
-            component,
-            ctx["Component"],
-            C.methods(cfg, component),
-            pkg=ctx.get("package", ""),
-            py_create_args=ctx.get("py_create_args", ""),
-        )
-    )
-    ctx.update(
-        Ctx.make_properties_ctx(
-            component,
-            ctx["Component"],
-            C.properties(cfg, component),
-            frozenset(n for n, _, _ in all_vars),
-        )
-    )
-
-    def r(tmpl):
-        return R.render(tmpl, ctx)
-
-    paths = [root / _expand(pat, component, pkg) for pat, _ in templates]
-
-    print(
-        f"just-makeit: adding {len(new_vars)} state variable(s) to '{component}'"
-    )
-    print()
-
-    # Bump mtime by 2 s so GNU Make (1-s timestamp resolution on Windows)
-    # always considers these source files newer than cached object files.
-    _future = time.time() + 2
-    with _backup(paths):
-        for pat, tmpl in templates:
-            path = root / _expand(pat, component, pkg)
-            text = r(tmpl)
-            # Splice hand-written algorithm code back into the regenerated
-            # core files; the struct merge keeps the freshly added state var.
-            # create/reset are excluded so the new variable is wired into the
-            # constructor and reset paths rather than left uninitialised.
-            if tmpl in (R.COMPONENT_CORE_H, R.COMPONENT_CORE_C):
-                text = _init._preserve_core_bodies(
-                    path,
-                    text,
-                    component,
-                    exclude=(f"{component}_create", f"{component}_reset"),
-                )
-            path.write_text(text, encoding="utf-8")
-            os.utime(path, times=(_future, _future))
-            print(f"  update  {path}")
-
     cfg[component]["state"] = [
         {"name": n, "type": t, "default": d} for n, t, d in all_vars
     ]
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
     print()
-    print(f"Done!  {len(new_vars)} variable(s) added.")
+    names = ", ".join(n for n, _, _ in new_vars)
+    print(
+        f"just-makeit: added state ({names}) to '{component}'. State is "
+        f"structural, so '{component}' is rebuilt from the manifest:"
+    )
+    print()
+    _regenerate.run(root, component, force=force)

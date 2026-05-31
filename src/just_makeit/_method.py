@@ -23,7 +23,11 @@ from . import _config as C
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
-from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
+from ._init import (
+    _inject_decls_into_core_h,
+    _make_component_ctx,
+    _to_title,
+)
 from ._object import _regenerate_module
 
 
@@ -435,6 +439,19 @@ def run(
         stub = I.inject_body_into_stub(stub, body)
     _append_to_core_c(core_c, stub)
 
+    # The method's public prototype, injected surgically into _core.h below
+    # (one or two lines; variable-output methods declare a sibling _max_out).
+    proto_lines = _build_method_prototype(
+        object_name,
+        method_name,
+        arg_type,
+        return_type,
+        variable_output,
+        multi_output,
+        [(p[0], p[1]) for p in params],
+        out_type,
+    ).split("\n")
+
     # 2. Update config  (was step 3)
     method_entry: dict = {
         "name": method_name,
@@ -472,74 +489,13 @@ def run(
     # 3. Regenerate ext.c (with updated method wrappers)
     if module:
         _regenerate_module(root, cfg, module, pkg)
-        # Also regenerate the per-object _core.h so that the new method
-        # declaration is present for the module ext.c's #include.
-        state_vars_list = C.state_vars(cfg, object_name)
-        arg_type_ = C.arg_type(cfg, object_name)
-        return_type_ = C.return_type(cfg, object_name)
-        perf_ = C.is_perf(cfg)
-        version_ = C.project_version(cfg)
-        ctx_ = _make_component_ctx(object_name)
-        ctx_.update(
-            {
-                "module": module,
-                "Module": _to_title(module),
-                "package": pkg,
-                "PACKAGE": pkg.upper(),
-                "project": pkg.replace("_", "-"),
-                "project_underscore": pkg,
-                "version": version_,
-            }
-        )
-        ctx_.update(Ctx.make_sample_ctx(arg_type_, return_type_))
-        ctx_.update(
-            Ctx.make_state_ctx(
-                object_name,
-                _to_title(object_name),
-                state_vars_list,
-                array_args=C.array_args(cfg, object_name),
-                no_state=C.is_no_state(cfg, object_name),
-                init_params=C.init_params(cfg, object_name),
-            )
-        )
-        ctx_.update(Ctx.make_perf_ctx(perf_))
-        ctx_.update(
-            Ctx.make_step_ctx(
-                ctx_,
-                arg_type_,
-                return_type_,
-                no_step=C.is_no_step(cfg, object_name),
-                mutable=C.is_mutable(cfg, object_name),
-            )
-        )
-        ctx_.update(
-            Ctx.make_methods_ctx(
-                object_name,
-                _to_title(object_name),
-                C.methods(cfg, object_name),
-                pkg=pkg,
-                py_create_args=ctx_.get("py_create_args", ""),
-                no_state=C.is_no_state(cfg, object_name),
-            )
-        )
-        ctx_.update(
-            Ctx.make_properties_ctx(
-                object_name,
-                _to_title(object_name),
-                C.properties(cfg, object_name),
-                frozenset(n for n, _, _ in state_vars_list),
-            )
-        )
+        # Surgically add the new method's declaration to the per-object
+        # _core.h (needed for the module ext.c's #include) — no re-render,
+        # no body splice.
         core_h_ = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )
-        if core_h_.exists():
-            core_h_.write_text(
-                _preserve_core_bodies(
-                    core_h_, R.render(R.COMPONENT_CORE_H, ctx_), object_name
-                ),
-                encoding="utf-8",
-            )
+        if _inject_decls_into_core_h(core_h_, object_name, proto_lines):
             print(f"  update  {core_h_}")
     else:
         # Standalone: regenerate _core.h (adds method_decls) + _ext.c
@@ -602,20 +558,16 @@ def run(
         def r(tmpl):
             return R.render(tmpl, ctx)
 
-        # Re-render _core.h (to update method_decls) and _ext.c
+        # Surgically inject the new method's declaration into _core.h (sacred
+        # struct + inline step() untouched); regenerate the glue (_ext.c, the
+        # benchmark, the stub) from the manifest.
         core_h = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
-        if core_h.exists():
-            core_h.write_text(
-                _preserve_core_bodies(
-                    core_h, r(R.COMPONENT_CORE_H), object_name
-                ),
-                encoding="utf-8",
-            )
+        if _inject_decls_into_core_h(core_h, object_name, proto_lines):
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
