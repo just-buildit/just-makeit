@@ -45,14 +45,18 @@ over this automatically. You do not edit the Python binding (`gain_ext.c`).
 
 ```sh
 make        # cmake configure + build (Release)
-make test   # CTest (C lifecycle) + pytest (Python API)
+make test   # CTest (C lifecycle) + unittest (Python API)
 ```
 
 ### 4. Install
 
+> **Note:** Run inside an activated virtual environment. Use
+> `jm-install-deps path/to/venv && source path/to/venv/bin/activate`
+> to create one with all build deps included.
+
 ```sh
-pip install .          # build wheel + install
-pip install -e .       # editable install (Python-only edits take effect immediately)
+python3 -m pip install .          # build wheel + install
+python3 -m pip install -e .       # editable install (Python-only edits take effect immediately)
 ```
 
 ### 5. Use from Python
@@ -382,7 +386,8 @@ The verbs are **splice-free**. They never re-render an existing body:
     `jm property --field` injects one struct member directly.
 - `jm add` (adding state) is **structural** — it writes `[[obj.state]]` to the
     manifest, then rebuilds the object via the regenerate path. It discards
-    hand-written `_core.c` bodies (see below).
+    hand-written `_core.c` bodies and the inline `step()` body in `_core.h`
+    (see below).
 - `jm apply` injects any TOML-declared declaration missing from `_core.h` and
     keeps the struct + `step()` sacred. A state-field change or a signature
     change is structural → `jm regenerate`.
@@ -411,9 +416,10 @@ just-makeit regenerate gain  # deletes every file 'gain' owns, re-runs apply
 `regenerate` deletes every file the component owns and rebuilds it from the
 manifest, then asks for a single confirmation (`--force` skips it). Unlike
 `jm remove`, it leaves the manifest untouched — it is the deliberate-rebuild
-half of the contract. It discards hand-written `_core.c` bodies, so keep your
-algorithm in the TOML `impl`/`create_impl` (which the rebuild re-asserts) or
-stash/commit first. Works for standalone and module objects.
+half of the contract. It discards hand-written `_core.c` bodies and the inline
+`step()` body in `_core.h`, so keep your algorithm in the TOML
+`impl`/`create_impl` (which the rebuild re-asserts) or stash/commit first.
+Works for standalone and module objects.
 
 ### Lifting an existing C body with `--impl`
 
@@ -491,10 +497,11 @@ Adding state is **structural**. `add` writes the new `[[gain.state]]` entry to
 `just-makeit.toml`, then rebuilds the object from the manifest via the
 regenerate path (delete + apply) — the new field reaches the struct, the
 constructor, the getter/setter, and reset in one shot. The rebuild **discards
-hand-written `_core.c` bodies**, so keep your algorithm in the TOML
-`impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first. `add`
-prompts for one confirmation before rebuilding; `--force` skips it. When the
-project has a single standalone object, `--object` may be omitted.
+hand-written `_core.c` bodies and the inline `step()` body in `_core.h`**,
+so keep your algorithm in the TOML `impl`/`create_impl` (the rebuild
+re-asserts it) or `git stash` first. `add` prompts for one confirmation before
+rebuilding; `--force` skips it. When the project has a single standalone
+object, `--object` may be omitted.
 
 ______________________________________________________________________
 
