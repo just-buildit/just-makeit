@@ -17,10 +17,12 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 
 import contextlib
 import io
+import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 import tomllib
 from pathlib import Path
 
@@ -364,6 +366,10 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
     """Copy every file present in *temp_root* but missing from *root*.
 
     Returns the created paths, relative to *root*."""
+    # Stamp newly-created source files 2 s in the future so GNU Make
+    # (1-second timestamp resolution on macOS/Windows) always considers them
+    # newer than any pre-existing object files in the build directory.
+    _future = time.time() + 2.0
     created: list[Path] = []
     for src in sorted(temp_root.rglob("*")):
         if not src.is_file():
@@ -378,6 +384,7 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(src.read_bytes())
+        os.utime(dst, times=(_future, _future))
         created.append(rel)
     return created
 
