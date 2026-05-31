@@ -25,7 +25,7 @@ jobs:
     name: Linux image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: docker/setup-buildx-action@v3
 
@@ -105,7 +105,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       # GitHub's windows-latest runner ships Docker Desktop; switch it to
       # Windows containers mode so we can build a windowsservercore image.
