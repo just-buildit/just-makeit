@@ -312,7 +312,10 @@ def make_step_ctx(
             "step_ext_fn": "",
             "steps_ext_fn": steps_ext_fn_bw,
             "step_py_flags": "METH_VARARGS",
-            "bench_step_timing_block": _bw_bench_timing,
+            # Warmup and bench: blockwise only has steps(); bench_step_timing_block
+            # is intentionally empty to avoid declaring _times_steps twice.
+            "bench_warmup_fn": f"{component}_steps",
+            "bench_step_timing_block": "",
             "bench_steps_timing_block": _bw_bench_timing,
             "steps_def_entry": steps_def_entry_bw,
             "step_pymethoddef_entry": "",
@@ -1186,6 +1189,7 @@ def make_step_ctx(
         "step_ext_fn": step_ext_fn,
         "steps_ext_fn": steps_ext_fn,
         "step_py_flags": step_py_flags,
+        "bench_warmup_fn": f"{component}_step",
         "bench_step_timing_block": bench_step_timing_block,
         "bench_steps_timing_block": bench_steps_timing_block,
         "steps_def_entry": steps_def_entry,
