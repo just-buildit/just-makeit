@@ -570,24 +570,24 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
-def _merge_module_core(real: Path, temp: Path, module: str) -> bool:
-    """Merge module-level ``<mod>_core.c`` / ``<mod>_core.h`` from temp into real.
+def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
+    """Bring the real ``_core.h`` up to date with the manifest, splice-free.
 
-    Temp carries TOML-declared function impls; real may hold hand-written
-    bodies (or be a fresh scaffold with no impls). ``_preserve_core_bodies``
-    keeps user bodies whenever they exist and lets the temp impls flow
-    through for any function the user did not write."""
+    The temp header is freshly rendered from the manifest and carries every
+    declaration the spec implies.  We extract those prototypes and inject any
+    the user's header is *missing* — the sacred state struct and inline
+    ``step()`` body are never touched.  Apply only *adds* decls; a signature
+    change is a structural edit reached through ``jm regenerate`` (so it never
+    duplicates a prototype).  Returns True if the real header changed."""
     if not temp.exists():
         return False
-    from ._init import _preserve_core_bodies
+    from ._init import _core_h_decl_lines, _inject_decls_into_core_h
 
-    new_text = temp.read_text(encoding="utf-8")
-    merged = _preserve_core_bodies(real, new_text, module)
-    if real.exists() and real.read_text(encoding="utf-8") == merged:
+    if not real.exists():
+        # Nothing to merge into — _sync_missing copies the temp header.
         return False
-    real.parent.mkdir(parents=True, exist_ok=True)
-    real.write_text(merged, encoding="utf-8")
-    return True
+    decls = _core_h_decl_lines(temp.read_text(encoding="utf-8"))
+    return _inject_decls_into_core_h(real, comp, decls)
 
 
 def _add_cmake_block_for(
@@ -742,27 +742,23 @@ def _sync_aggregates(
         ):
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
-        # Module-level core sources carry user-written function bodies and
-        # any TOML-declared `impl` for `[[module.X.functions]]`. The header
-        # also accumulates declarations as functions are added.
-        for rel in (
-            f"native/src/{mod}/{mod}_core.c",
-            f"native/inc/{mod}/{mod}_core.h",
-        ):
-            if _merge_module_core(root / rel, temp_root / rel, mod):
-                if root / rel not in updated:
-                    updated.append(root / rel)
+        # Module function bodies live in their own sacred <fn>.c (create-only
+        # via _sync_missing), so <mod>_core.c is just the include scaffold —
+        # also create-only. The module header accumulates function
+        # declarations: inject any the manifest implies that are missing,
+        # splice-free.
+        rel = f"native/inc/{mod}/{mod}_core.h"
+        if _refresh_core_h_decls(root / rel, temp_root / rel, mod):
+            if root / rel not in updated:
+                updated.append(root / rel)
 
     # Standalone components: the sacred/glue split. Glue files (binding,
     # CMake, type stub) regenerate from the manifest on every apply, so a
-    # TOML edit — a new state field, method, init param, extra_link_libs —
-    # propagates without a full re-scaffold. Core sources are *merged*:
-    # _core.h carries the inline step() body, _core.c the steps()/lifecycle
-    # bodies, and _preserve_core_bodies keeps the user's hand-written code
-    # while letting refreshed declarations/structure flow through. This
-    # mirrors the module loop above; before it, standalone glue was
-    # create-only (_sync_missing) so manifest edits silently never reached
-    # the binding and apply reported "already matches" while it didn't.
+    # TOML edit — a new method, init param, extra_link_libs — propagates
+    # without a re-scaffold. The sacred sources are never re-rendered: _core.c
+    # is create-only (_sync_missing), and _core.h only gains missing
+    # declarations (struct + step left alone). A new *state field* is
+    # structural and reaches the struct via jm regenerate, not apply.
     module_owned = {
         o for m in C.modules(cfg) for o in C.module_objects(cfg, m)
     }
@@ -781,18 +777,15 @@ def _sync_aggregates(
         ):
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
-        # _core.h is a hybrid: declarations (glue) plus the inline step()
-        # body and state struct (sacred). The merge refreshes declarations
-        # — so a TOML-declared method/field shows up in the public API —
-        # while _preserve_core_bodies keeps the user's step() body and any
-        # hand-added struct fields. _core.c is fully sacred: it holds the
-        # steps()/lifecycle bodies, so apply never touches it once it
-        # exists. Adding a method via TOML therefore declares it in the
-        # header but leaves the body to the user (a clean link error until
-        # written), and never clobbers existing algorithm code. Use the
-        # additive verbs (jm method / jm add) to stub the body too.
+        # _core.h is a hybrid: the inline step() body and the state struct
+        # are sacred; the function declarations are glue. Apply injects any
+        # TOML-declared prototype the header is missing (a new method/property
+        # reaches the public API) without ever re-rendering the struct/step.
+        # The body is left to the user — a clean link error until written, or
+        # `jm regenerate` for a structural change. _core.c is fully sacred:
+        # never in any merge loop, created once by _sync_missing.
         rel = f"native/inc/{comp}/{comp}_core.h"
-        if _merge_module_core(root / rel, temp_root / rel, comp):
+        if _refresh_core_h_decls(root / rel, temp_root / rel, comp):
             updated.append(root / rel)
 
     return updated
