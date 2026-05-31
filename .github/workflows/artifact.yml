@@ -486,11 +486,14 @@ jobs:
           # Replay: script must execute without errors
           mkdir /tmp/rt_replay && cd /tmp/rt_replay
           sh /tmp/rt_proj_script.sh
-          # Replayed TOML must contain the same key entries
-          grep -q 'mutable = "true"'  rt_proj/just-makeit.toml
-          grep -q 'no_state = "true"' rt_proj/just-makeit.toml
-          grep -q 'no_step'           rt_proj/just-makeit.toml || true
-          grep -q '[[gen.init_params]]' rt_proj/just-makeit.toml
+          # Replayed project must carry the same key entries.  jm new
+          # defaults to the per-component fragment layout, so each object's
+          # settings live in objects/<name>.toml (nco is a module object, buf
+          # is standalone) rather than the central manifest — grep the
+          # project's TOML layout-agnostically.
+          grep -rq --include='*.toml' 'mutable = "true"'  rt_proj
+          grep -rq --include='*.toml' 'no_state = "true"' rt_proj
+          grep -rqF '[[buf.init_params]]' rt_proj
 
       # ── --mutable + --no-state + --no-step flags ──────────────────────────────
 
@@ -513,9 +516,11 @@ jobs:
           cd flags_test
           just-makeit object gen --no-state --init-param n:int:16
           just-makeit object sink --no-step
-          grep 'no_state = "true"' just-makeit.toml
-          grep 'no_step = "true"' just-makeit.toml
-          grep '[[gen.init_params]]' just-makeit.toml
+          # Standalone objects route to objects/<name>.toml under the default
+          # fragment layout — grep the project's TOML layout-agnostically.
+          grep -rq --include='*.toml' 'no_state = "true"' .
+          grep -rq --include='*.toml' 'no_step = "true"' .
+          grep -rqF '[[gen.init_params]]' .
 
       # ── doctest verification ─────────────────────────────────────────────────
 
