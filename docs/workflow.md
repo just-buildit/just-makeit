@@ -256,7 +256,7 @@ cd my_filters
 just-makeit module filter
 ```
 
-### 3. Add types
+### 2. Add types
 
 ```sh
 just-makeit object fir \
@@ -295,12 +295,12 @@ __all__ = ["Fir", "Biquad"]
 Types within a module may have different `--arg-type`/`--return-type`. Here
 `Fir` processes `float complex` and `Biquad` processes `float`.
 
-### 4. Implement
+### 3. Implement
 
 Edit `native/inc/fir/fir_core.h` and `native/inc/biquad/biquad_core.h` to
 fill in the `_step` stubs, exactly as in Scenarios 1 and 2.
 
-### 5. Build and test
+### 4. Build and test
 
 ```sh
 make && make test
@@ -310,7 +310,7 @@ CMake builds one `.so` (`filter.cpython-*.so`) inside
 `src/my_filters/filter/`, linking both `fir_core` and `biquad_core` OBJECT
 libraries. CTest runs `test_fir_core` and `test_biquad_core`.
 
-### 6. Install
+### 5. Install
 
 ```sh
 pip install .
@@ -319,7 +319,7 @@ pip install .
 The wheel contains one `.so` for the `filter` subpackage rather than one `.so`
 per type.
 
-### 7. Use from Python
+### 6. Use from Python
 
 ```python
 import numpy as np
@@ -332,7 +332,7 @@ bq  = Biquad(b0=1.0)
 Both types are fully independent — separate `create`/`destroy` lifecycles,
 each with its own `step`, `steps`, `reset`, and context manager support.
 
-### 8. Add a third type later
+### 7. Add a third type later
 
 ```sh
 just-makeit object iir --module filter --state "gain:float:1.0"
@@ -341,7 +341,7 @@ just-makeit object iir --module filter --state "gain:float:1.0"
 `filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are all regenerated from
 the complete object list. `Fir` and `Biquad` are unaffected.
 
-### 9. Install
+### 8. Install
 
 ```sh
 pip install .
