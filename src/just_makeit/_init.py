@@ -188,37 +188,51 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
 def _inject_decls_into_core_h(
     path: Path, comp: str, decls: "list[str]"
 ) -> bool:
-    """Surgically insert C declarations into an object's ``<comp>_core.h``.
+    """Surgically refresh C declarations in an object's ``<comp>_core.h``.
 
-    Additive and splice-free: each declaration is placed just before the
-    ``extern "C"`` close (falling back to the header guard).  A declaration is
-    skipped when a prototype for the same function *name* is already present —
-    so this is idempotent, and it never duplicates a decl when a manifest
-    signature changed (that is a structural change, reached via ``jm
-    regenerate``).  Never re-renders the file, so the sacred state struct and
-    inline ``step()`` body are untouched.  Returns True if the header changed."""
+    Splice-free: a declaration whose exact text is already present is left
+    alone (idempotent).  A prototype that shares its function *name* with an
+    existing single-line decl **replaces** it in place — so a method that
+    overrides a builtin (e.g. a parameterised ``reset``) or a refreshed
+    signature never produces a duplicate.  Anything genuinely new is inserted
+    just before the ``extern "C"`` close (falling back to the header guard).
+    The sacred state struct and inline ``step()`` body are never touched.
+    Returns True if the header changed."""
     if not path.exists():
         return False
-    text = path.read_text(encoding="utf-8")
-    fresh: list[str] = []
+    text = original = path.read_text(encoding="utf-8")
+    to_insert: list[str] = []
     for d in decls:
         d = d.strip()
-        if not d:
+        if not d or d in text:  # genuinely-new decls only; exact = idempotent
             continue
         m = re.search(r"(\w+)\s*\(", d)
-        name = m.group(1) if m else d
-        if f"{name}(" in text:  # already declared (same name) — skip
-            continue
-        fresh.append(d)
-    if not fresh:
+        if m:
+            # Replace an existing single-line prototype of the same name (a
+            # builtin override or a refreshed signature). The pattern requires
+            # the line to end in ');' so it never matches the inline step()
+            # definition (which ends in '{').
+            pat = re.compile(
+                r"^[ \t]*[A-Za-z_][^\n{]*\b"
+                + re.escape(m.group(1))
+                + r"\s*\([^\n{]*\);[ \t]*$",
+                re.MULTILINE,
+            )
+            new_text, n = pat.subn(d, text, count=1)
+            if n:
+                text = new_text
+                continue
+        to_insert.append(d)
+    if to_insert:
+        block = "\n".join(to_insert) + "\n"
+        cpp_end = "#ifdef __cplusplus\n}\n#endif"
+        if cpp_end in text:
+            text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
+        else:
+            guard = f"#endif /* {comp.upper()}_CORE_H */"
+            text = text.replace(guard, f"{block}{guard}", 1)
+    if text == original:
         return False
-    block = "\n".join(fresh) + "\n"
-    cpp_end = "#ifdef __cplusplus\n}\n#endif"
-    if cpp_end in text:
-        text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
-    else:
-        guard = f"#endif /* {comp.upper()}_CORE_H */"
-        text = text.replace(guard, f"{block}{guard}", 1)
     path.write_text(text, encoding="utf-8")
     return True
 

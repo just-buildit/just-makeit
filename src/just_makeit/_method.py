@@ -285,11 +285,12 @@ def _build_method_prototype(
             step_param = ", " + ", ".join(p_parts)
         else:
             step_param = ", size_t n"
+        out_disp = T._ctype_display(out_type) if out_type else ret_disp
         return "\n".join(
             [
                 f"size_t {component}_{name}_max_out({component}_state_t *state);",
                 f"size_t {component}_{name}({component}_state_t *state"
-                f"{step_param}, {ret_disp} *out{extra_params});",
+                f"{step_param}, {out_disp} *out{extra_params});",
             ]
         )
 
