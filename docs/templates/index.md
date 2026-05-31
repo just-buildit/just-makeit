@@ -18,23 +18,24 @@ domains so you can recognise your shape.
 
 ## Presets
 
-| Preset        | Data-flow shape            | Concrete examples                                                | Page                                                 |
-| ------------- | -------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
-| **processor** | input → output (1:1)       | DSP filter, Q15→float, running-average smoother, byte-to-token   | [`jm object NAME --preset processor`](processor.md)  |
-| **generator** | () → output                | NCO, LFSR, counter, UUID, queue drainer, tokenizer               | [`jm object NAME --preset generator`](generator.md)  |
-| **consumer**  | input → ()                 | running mean, integrator, checksum, log writer, metric reporter  | [`jm object NAME --preset consumer`](consumer.md)    |
-| **reader**    | external source → output   | file reader, CSV row reader, WAV/PNG loader, TCP socket consumer | [`jm object NAME --preset reader`](reader.md)        |
-| **function**  | free C function (no class) | unit conversion, lookup, CRC, format detector, pure transform    | [`jm function FN --module MOD`](function.md)         |
-| **blockwise** | array input → array output | FFT, overlap-save filter, CSV batch transformer, image kernel    | [`jm object NAME --blockwise`](blockwise.md) *(n/a)* |
+| Preset        | Data-flow shape            | Concrete examples                                                | Page                                                |
+| ------------- | -------------------------- | ---------------------------------------------------------------- | --------------------------------------------------- |
+| **processor** | input → output (1:1)       | DSP filter, Q15→float, running-average smoother, byte-to-token   | [`jm object NAME --preset processor`](processor.md) |
+| **generator** | () → output                | NCO, LFSR, counter, UUID, queue drainer, tokenizer               | [`jm object NAME --preset generator`](generator.md) |
+| **consumer**  | input → ()                 | running mean, integrator, checksum, log writer, metric reporter  | [`jm object NAME --preset consumer`](consumer.md)   |
+| **reader**    | external source → output   | file reader, CSV row reader, WAV/PNG loader, TCP socket consumer | [`jm object NAME --preset reader`](reader.md)       |
+| **function**  | free C function (no class) | unit conversion, lookup, CRC, format detector, pure transform    | [`jm function FN --module MOD`](function.md)        |
+| **blockwise** | array input → array output | FFT, overlap-save filter, CSV batch transformer, image kernel    | [`jm object NAME --preset blockwise`](blockwise.md) |
 
 `--preset NAME` is shorthand for the underlying flag bundle (e.g.
 `--preset generator` expands to `--arg-type void`); you can always pass
 those flags directly instead.
 
-`blockwise` (array-in → array-out) is **not yet available** — array
-*return* types aren't supported, so there is no `--preset blockwise`.
-Array *input* (`--arg-type "T[]"`) works fine. See the
-[blockwise page](blockwise.md) for the workaround and current status.
+`blockwise` (array-in → array-out) uses `--preset blockwise`. The
+default element type is `float _Complex`; override with explicit
+`--arg-type` and `--return-type` flags. See the
+[blockwise page](blockwise.md) for the generated C/Python shapes and the
+plan-once/execute-many FFTW pattern.
 
 Need *variable-output* (zero or more outputs per call — peak detector,
 event finder, syllable boundary detector)? That's a capability flag,
@@ -67,13 +68,12 @@ Every preset page has the same five sections:
 and passes `jm build && jm test` immediately. Fill in the
 `/* TODO */` body with your logic; everything around it stays green.
 
-As of v0.14, `processor`, `generator`, `consumer`, and `reader` build
-and test green straight from scaffold, as does the `function` preset.
-`blockwise` is the one exception — array *return* types aren't
-implemented yet, so it has no `--preset` and the equivalent
-`--return-type "T[]"` flag errors cleanly at parse time. Use a real
-snake_case component name (`my_filter`, `iq_reader`) when you run these;
-the examples use `NAME` only as a placeholder.
+All six presets — `processor`, `generator`, `consumer`, `reader`,
+`blockwise`, and `function` — build and test green straight from
+scaffold. Fill in the `/* TODO */` body with your logic; everything
+around it stays green. Use a real snake_case component name
+(`my_filter`, `iq_reader`) when you run these; the examples use `NAME`
+only as a placeholder.
 
 ## Refreshing a scaffold
 

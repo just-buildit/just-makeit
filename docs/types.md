@@ -130,8 +130,9 @@ Notes:
     IO, init-param, function param) — it just isn't an *array element*
     type (use `uint8_t` for byte arrays).
 - Array **input** (`T[]` as `--arg-type`, `--param`, `--out-param`)
-    works. Array **return** (`--return-type "T[]"`) is not yet
-    supported and errors cleanly at parse time.
+    works. Array **return** (`--return-type "T[]"`) is supported via
+    `--preset blockwise` (array-in / array-out; see
+    [blockwise](templates/blockwise.md)).
 
 ### Patterns
 
