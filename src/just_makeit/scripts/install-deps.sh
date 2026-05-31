@@ -17,7 +17,7 @@ Options:
   -h, --help Show this message and exit.
 
 What it installs:
-  System:  cmake + C compiler
+  System:  cmake + C compiler + patchelf (Linux only)
              Linux:   apt · dnf · pacman · zypper · apk (auto-detected)
              macOS:   Homebrew
   Python:  numpy + just-makeit  (inside the venv)
@@ -111,11 +111,11 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
-_install_apt()    { info "apt"; $SUDO apt-get update -qq && $SUDO apt-get install -y cmake gcc pkg-config; }
-_install_dnf()    { info "${MGR}"; $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config; }
-_install_pacman() { info "pacman"; $SUDO pacman -Sy --noconfirm cmake gcc pkgconf; }
-_install_zypper() { info "zypper"; $SUDO zypper install -y cmake gcc pkgconfig; }
-_install_apk()    { info "apk"; $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig; }
+_install_apt()    { info "apt"; $SUDO apt-get update -qq && $SUDO apt-get install -y cmake gcc pkg-config patchelf; }
+_install_dnf()    { info "${MGR}"; $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config patchelf; }
+_install_pacman() { info "pacman"; $SUDO pacman -Sy --noconfirm cmake gcc pkgconf patchelf; }
+_install_zypper() { info "zypper"; $SUDO zypper install -y cmake gcc pkgconfig patchelf; }
+_install_apk()    { info "apk"; $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig patchelf; }
 _install_brew() {
     if command -v brew >/dev/null 2>&1; then
         [[ $NEED_CMAKE -eq 1 ]] && brew install cmake

@@ -109,3 +109,15 @@ A generated file that apply never overwrites once it exists — `<comp>_core.c`
 (your `steps()` and lifecycle bodies) and the generated tests. To intentionally
 rebuild a sacred file from the manifest, use `just-makeit regenerate <comp>`
 (`git stash` first, since it discards hand-written bodies).
+
+______________________________________________________________________
+
+**bind**
+The `jm bind` command reads a hand-written `<comp>_core.h` and synthesises the
+CPython binding (`<comp>_ext.c` and `<comp>.pyi`) from it — the "point at your
+C, get Python" path. The current MVP handles the simple processor shape (scalar
+state struct, scalar-in/scalar-out `step()`). See
+[`just-makeit bind`](commands/build.md#just-makeit-bind-component) for usage
+and `--check` (CI gate). Expansion to methods, init_params, opaque state, and
+variable-output is the active work on the
+[roadmap](roadmap.md#now--write-it-in-c-get-python-jm-bind).

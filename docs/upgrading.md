@@ -88,6 +88,35 @@ build targets that use them.
 
 ______________________________________________________________________
 
+## Behavioral changes (no schema bump required)
+
+These changes affect how the CLI tools behave but do not change
+`just-makeit.toml` or require running `jm upgrade`.
+
+### v0.14 — additive verbs are now splice-free
+
+Before v0.14, `jm method`, `jm property`, and `jm function` re-rendered
+`<comp>_core.c` and `<comp>_core.h` from the manifest and grafted your
+hand-written bodies back using a brace-matching splicer. As of v0.14 they
+are **additive and splice-free**: they inject a declaration into
+`<comp>_core.h` and append a fresh stub to `<comp>_core.c` — the existing
+bodies are never touched.
+
+**What this means for existing projects:**
+
+- Running `jm method`, `jm property`, or `jm function` on a v0.14 project
+    is safer than before — no risk of the splicer mis-merging your code.
+- **`jm add` and structural changes** (adding/removing state fields, changing
+    `arg_type`) now route through `jm regenerate` instead of the old splicer.
+    `jm regenerate` deletes every file the component owns and rebuilds from
+    the manifest — `git stash` your `_core.c` first.
+- The sacred/glue contract (see [Declarative scaffolding](declarative-scaffolding.md#the-sacredglue-contract))
+    is now enforced mechanically, not by a fragile regex pass.
+
+No TOML changes, no `jm upgrade` required.
+
+______________________________________________________________________
+
 ## For project maintainers
 
 If you ship a library built on `just-makeit` and your users upgrade jm

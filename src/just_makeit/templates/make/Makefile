@@ -90,7 +90,13 @@ coverage:
 		--cov-report=term-missing
 	@echo "Python coverage: docs/coverage/python/index.html"
 
-just-build: build
+just-build:
+	cmake -B $(BUILD_DIR) -S . \
+		$(CMAKE_GEN_FLAG) \
+		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
+		-DPython3_EXECUTABLE=$(JUST_BUILDIT_PYTHON) \
+		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	cmake --build $(BUILD_DIR) --parallel $(NPROC)
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 	cp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
 

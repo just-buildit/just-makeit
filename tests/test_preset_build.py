@@ -39,7 +39,7 @@ _SKIP = _skip_reason()
 
 @pytest.mark.parametrize(
     "preset",
-    ["consumer", "reader"],
+    ["consumer", "reader", "blockwise"],
 )
 def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
     if _SKIP:

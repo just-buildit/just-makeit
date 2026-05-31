@@ -67,8 +67,9 @@ What does step() look like?
                                          (reader pattern: --no-step +
                                           --init-param filepath:"const char *")
 
-  array → array  ("blockwise")  is NOT yet supported. --return-type "T[]"
-  errors cleanly. Array INPUT works; array RETURN does not.
+  array → array  ("blockwise")           --preset blockwise
+                                         (default: float _Complex[] → float _Complex[];
+                                          override with --arg-type / --return-type)
 
 What state does it carry?
   scalar defaults only                   [[state]] entries (default path)
@@ -136,7 +137,7 @@ no input, produces samples  generator   (void arg → complex return)
 consumes input, no output   consumer
 no step(), custom verbs     reader
 
-blockwise is intentionally excluded — array return is unsupported.
+array in → array out        blockwise
 ```
 
 ______________________________________________________________________

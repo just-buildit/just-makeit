@@ -30,10 +30,15 @@ _PRESETS: dict[str, list[str]] = {
         "--init-param",
         "filepath:const char *",
     ],
-    # blockwise (array IO) is excluded until the renderer supports
-    # array arg_type / return_type — see gh-86. The CLI rejects the
-    # underlying `--return-type "T[]"` flag at parse time today, so
-    # exposing a preset that always errors would be a foot-gun.
+    # blockwise: array-in / array-out.  Default element type is float _Complex
+    # (complex64 — the most common array-transform type).  Override element
+    # types with explicit --arg-type / --return-type flags after --preset.
+    "blockwise": [
+        "--arg-type",
+        "float _Complex[]",
+        "--return-type",
+        "float _Complex[]",
+    ],
 }
 
 
@@ -147,17 +152,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             if val.endswith("[]"):
-                if tok == "--return-type":
-                    print(
-                        "error: --return-type cannot be an array type.\n"
-                        "Use a scalar type or void.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
                 elem = val[:-2]
                 if elem not in T._CTYPE_META:
+                    which = (
+                        "--arg-type"
+                        if tok == "--arg-type"
+                        else "--return-type"
+                    )
                     print(
-                        f"error: --arg-type array element type '{elem}' "
+                        f"error: {which} array element type '{elem}' "
                         "is not supported.\n"
                         f"Supported element types: "
                         f"{', '.join(sorted(T._CTYPE_META))}",

@@ -27,7 +27,7 @@ main(void)
 /*<<bench_volatile_sink>>*/
 
     /* warmup */
-    for (int i = 0; i < 16; i++) /*<<bench_sink_assign>>*//*<<component>>*/_step(obj/*<<bench_step_input_sep>>*//*<<bench_step_input_arg>>*/);
+    for (int i = 0; i < 16; i++) /*<<bench_sink_assign>>*//*<<bench_warmup_fn>>*/(obj/*<<bench_step_input_sep>>*//*<<bench_step_input_arg>>*/);
 
     struct timespec t0, t1;
     jm_bench_t _bench = {0};

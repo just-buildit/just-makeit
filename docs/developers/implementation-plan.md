@@ -5,8 +5,8 @@ the `--impl` line-range form landed in v0.14.** This document is the
 coordination point for the work the design docs sketch out: the
 [decision tree](../decision-tree.md), the
 [template gallery](../templates/index.md), and the
-[bind design](bind-design.md). The interactive wizard was **cut** (see
-[wizard-design.md](wizard-design.md) for the retirement note). Read the
+[bind design](bind-design.md). The interactive wizard was **cut** (retired
+before shipping; the design doc lives in git history). Read the
 design docs for the *why*; this one is the *what, in what order, how do
 we know we're done*.
 
@@ -77,8 +77,7 @@ being the *recommended* path the moment their CLI counterpart ships.
     decision tree, template gallery, and quick reference become the
     landing pages; `docs/configuration.md` stays as a reference for
     advanced users but stops being a prerequisite for getting started.
-- **`jm wizard` entirely.** Cut, not deferred — see
-    [`wizard-design.md`](wizard-design.md). The preset pages plus
+- **`jm wizard` entirely.** Cut, not deferred. The preset pages plus
     single-shot CLI cover the same need without a parallel interactive
     surface to learn, test, and document.
 - **Implicit fall-throughs.** When the user passes a type a slot
@@ -179,6 +178,8 @@ Variable-output (event-emitter shape) is a capability, not a preset:
 `--variable-output --max-out N` with repeatable `--result-field name:T`
 on any output-producing preset.
 
+**→ Current focus.**
+
 Thread 3b: **Bind expansion.**
 
 - [ ] Parse methods (`<comp>_<verb>(...)` declarations).
@@ -191,8 +192,7 @@ Thread 3b: **Bind expansion.**
 Thread 3c (Wizard) was **cut** in the v0.13.23 retrospective for
 maintenance burden and the small finite pattern set. The gallery's
 preset pages + CLI commands cover the same need without a parallel
-interactive surface. See [`wizard-design.md`](wizard-design.md) for
-the retirement note.
+interactive surface.
 
 Success bar:
 

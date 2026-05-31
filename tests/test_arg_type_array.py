@@ -190,31 +190,38 @@ class TestConfig:
         assert cfg_return_type(cfg, "peak") == "float"
 
 
-# ── Array return type is rejected cleanly ────────────────────────────────────
+# ── Blockwise: array-in / array-out (T[] → U[]) ──────────────────────────────
 
 
-class TestArrayReturnRejected:
-    """v0.14 foot-gun #2: a hand-authored array return type (the T[] -> T[]
-    'blockwise' shape) used to die with a raw `KeyError: 'float _Complex[]'`
-    deep in make_sample_ctx. It now raises a clean, actionable ValueError
-    until the blockwise preset lands."""
+class TestBlockwise:
+    """Blockwise (T[] → U[]) shape produces a steps()-only interface with an
+    output array allocated per call. Array input + scalar/void return is the
+    existing reduction path and is unaffected."""
 
-    def test_make_sample_ctx_raises_valueerror(self):
+    def test_make_sample_ctx_returns_blockwise_dict(self):
         from just_makeit._context._sample import make_sample_ctx
 
-        with pytest.raises(ValueError, match="array return type"):
-            make_sample_ctx("float _Complex[]", "float _Complex[]")
+        ctx = make_sample_ctx("float _Complex[]", "float _Complex[]")
+        # steps() stub should be present; step() stub should be absent
+        assert "NDArray" in ctx["pyi_steps_stub"]
+        assert "steps" in ctx["pyi_steps_stub"]
 
     def test_scalar_array_arg_still_ok(self):
-        """Array input with scalar/void return is unaffected."""
+        """Array input with scalar/void return (reduction shape) is unaffected."""
         from just_makeit._context._sample import make_sample_ctx
 
         ctx = make_sample_ctx("float[]", "float")
         assert ctx["return_ctype"] == "float"
 
-    def test_apply_reports_clean_error(self, tmp_path, capsys):
-        """End-to-end: array return type in hand-authored TOML surfaces a
-        clean `error:` line through jm apply, not a traceback."""
+    def test_scalar_arg_array_return_rejected(self):
+        """Scalar input + array return is invalid and raises cleanly."""
+        from just_makeit._context._sample import make_sample_ctx
+
+        with pytest.raises(ValueError, match="requires an array arg type"):
+            make_sample_ctx("float", "float[]")
+
+    def test_blockwise_apply_materialises_files(self, tmp_path):
+        """End-to-end: blockwise TOML via jm apply produces a valid scaffold."""
         root = tmp_path / "blk"
         new_run("blk", root)
         manifest = root / "just-makeit.toml"
@@ -226,10 +233,68 @@ class TestArrayReturnRejected:
         )
         from just_makeit import _apply
 
-        with pytest.raises(SystemExit):
-            _apply.run(root)
-        err = capsys.readouterr().err
-        assert "array return type" in err
+        _apply.run(root)  # must not raise
+        core_h = root / "native/inc/filt/filt_core.h"
+        core_c = root / "native/src/filt/filt_core.c"
+        assert core_h.exists() and core_c.exists()
+        # steps() signature in header; no inline step()
+        h = core_h.read_text()
+        assert "filt_steps" in h
+        assert "static inline" not in h  # no inline step() body for blockwise
+
+    def test_blockwise_different_element_types(self, tmp_path):
+        """float[] in → double[] out is accepted (heterogeneous blockwise)."""
+        from just_makeit._context._sample import make_sample_ctx
+
+        ctx = make_sample_ctx("float[]", "double[]")
+        assert ctx["in_np_dtype"] == "np.float32"
+        assert ctx["out_np_dtype"] == "np.float64"
+
+    def test_blockwise_pyi_has_ndarray_return(self, tmp_path):
+        """Generated .pyi stub has NDArray return for steps()."""
+        root = tmp_path / "bw"
+        new_run(
+            "bw",
+            root,
+            object_names=["xform"],
+            arg_type="float _Complex[]",
+            return_type="float _Complex[]",
+        )
+        pyi = (root / "src/bw/xform.pyi").read_text()
+        assert "NDArray" in pyi
+        assert "steps" in pyi
+        # No scalar step() in the pyi
+        assert "def step(" not in pyi
+
+    def test_blockwise_no_step_in_core_h(self, tmp_path):
+        """Generated _core.h has steps() declaration but no inline step()."""
+        root = tmp_path / "bw"
+        new_run(
+            "bw",
+            root,
+            object_names=["xform"],
+            arg_type="float _Complex[]",
+            return_type="float _Complex[]",
+        )
+        h = (root / "native/inc/xform/xform_core.h").read_text()
+        assert "xform_steps" in h
+        # No inline step() function body (the @code comment may reference step
+        # but there must be no static inline definition)
+        assert "static inline" not in h
+
+    def test_blockwise_steps_in_ext_c(self, tmp_path):
+        """Generated _ext.c has a steps() binding that allocates an output."""
+        root = tmp_path / "bw"
+        new_run(
+            "bw",
+            root,
+            object_names=["xform"],
+            arg_type="float _Complex[]",
+            return_type="float _Complex[]",
+        )
+        ext = (root / "native/src/xform/xform_ext.c").read_text()
+        assert "PyArray_SimpleNew" in ext
+        assert "Xform_steps" in ext
 
 
 # ── bool scalar type ─────────────────────────────────────────────────────────
