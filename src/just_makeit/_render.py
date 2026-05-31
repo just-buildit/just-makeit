@@ -695,7 +695,14 @@ def make_functions_ctx(
     Returns keys consumed by render_module_ext_c:
       function_wrappers  — static _bind_<fn> functions (inserted after header)
       module_methods_def — static PyMethodDef array block, or ''
-      module_m_methods   — '{Module}_methods' or 'NULL'
+      module_m_methods   — '{module}_module_methods' or 'NULL'
+
+    The module-level table is named ``{module}_module_methods`` (not
+    ``{Module}_methods``) so it never collides with an object's own
+    ``{Component}_methods`` table when the module shares a name with one of
+    its objects (the collocated case, e.g. ``jm module fft`` +
+    ``jm object fft --module fft``): both end up in the same translation unit
+    via the aggregator's ``#include``.
     """
     if not functions:
         return {
@@ -725,12 +732,13 @@ def make_functions_ctx(
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)
     methods_def = (
-        f"static PyMethodDef {Module}_methods[] = {{\n{array_body}\n}};\n\n"
+        f"static PyMethodDef {module}_module_methods[] = "
+        f"{{\n{array_body}\n}};\n\n"
     )
     return {
         "function_wrappers": "\n".join(wrappers),
         "module_methods_def": methods_def,
-        "module_m_methods": f"{Module}_methods",
+        "module_m_methods": f"{module}_module_methods",
     }
 
 
