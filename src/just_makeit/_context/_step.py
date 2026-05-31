@@ -97,6 +97,233 @@ def make_step_ctx(
             "lifecycle_pytest_methods_pure": _lifecycle_pure,
         }
 
+    # ── Blockwise: array-in / array-out (T[] → U[]) ───────────────────────
+    # No inline step(); the user writes steps() directly in _core.c.
+    # Python steps() allocates an output array of the same length as input.
+    if arg_type.endswith("[]") and return_type.endswith("[]"):
+        in_elem = arg_type[:-2]
+        out_elem = return_type[:-2]
+        in_disp = _ctype_display(in_elem)
+        out_disp = _ctype_display(out_elem)
+        in_np_enum = ctx.get("in_np_enum", "NPY_COMPLEX64")
+        out_np_enum_bw = ctx.get("out_np_enum", "NPY_COMPLEX64")
+        in_zero = _CTYPE_META[in_elem]["zero"]
+        out_zero = _CTYPE_META[out_elem]["zero"]
+        py_create_args = ctx.get("py_create_args", "")
+        in_np_dtype = ctx.get("in_np_dtype", "np.complex64")
+        out_np_dtype = ctx.get("out_np_dtype", "np.complex64")
+        pyi_steps = ctx.get("pyi_steps_stub", "")
+
+        steps_c_decl_bw = (
+            f"void\n"
+            f"{component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    const {in_disp}     *in, size_t n,\n"
+            f"    {out_disp}          *out);"
+        )
+        steps_c_impl_bw = (
+            f"void\n"
+            f"{component}_steps(\n"
+            f"    {component}_state_t *state,\n"
+            f"    const {in_disp}     *in, size_t n,\n"
+            f"    {out_disp}          *out)\n"
+            f"{{\n"
+            f"    /* <<IMPLEMENT: blockwise transform"
+            f" — replace this pass-through>> */\n"
+            f"    (void)state;\n"
+            f"    for (size_t i = 0; i < n; i++)\n"
+            f"        out[i] = ({out_disp})in[i];\n"
+            f"}}"
+        )
+        steps_ext_fn_bw = (
+            f"static PyObject *\n"
+            f"{Component}_steps"
+            f"({Component}Object *self, PyObject *args)\n"
+            f"{{\n"
+            f"    if (!self->handle) {{\n"
+            f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    PyObject *x_obj = NULL, *out_obj = NULL;\n"
+            f'    if (!PyArg_ParseTuple(args, "O|O", &x_obj, &out_obj))\n'
+            f"        return NULL;\n"
+            f"    PyArrayObject *x_arr = (PyArrayObject *)\n"
+            f"    PyArray_FROM_OTF(\n"
+            f"        x_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
+            f"    if (!x_arr)\n"
+            f"        return NULL;\n"
+            f"    Py_ssize_t n = PyArray_SIZE(x_arr);\n"
+            f"    if (out_obj && out_obj != Py_None) {{\n"
+            f"        PyArrayObject *out_arr = (PyArrayObject *)\n"
+            f"        PyArray_FROM_OTF(\n"
+            f"            out_obj, {out_np_enum_bw},\n"
+            f"            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);\n"
+            f"        if (!out_arr) {{ Py_DECREF(x_arr); return NULL; }}\n"
+            f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+            f"            PyErr_Format(PyExc_ValueError,\n"
+            f'                "out length %zd != input length %zd",\n'
+            f"                (Py_ssize_t)PyArray_SIZE(out_arr),\n"
+            f"                (Py_ssize_t)n);\n"
+            f"            Py_DECREF(x_arr);\n"
+            f"            Py_DECREF(out_arr);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"        {component}_steps(\n"
+            f"            self->handle,\n"
+            f"            (const {in_disp} *)PyArray_DATA(x_arr),\n"
+            f"            (size_t)n,\n"
+            f"            ({out_disp} *)PyArray_DATA(out_arr));\n"
+            f"        Py_DECREF(x_arr);\n"
+            f"        return (PyObject *)out_arr;\n"
+            f"    }}\n"
+            f"    npy_intp dims[] = {{ n }};\n"
+            f"    PyObject *out = PyArray_SimpleNew(1, dims,"
+            f" {out_np_enum_bw});\n"
+            f"    if (!out) {{ Py_DECREF(x_arr); return NULL; }}\n"
+            f"    {component}_steps(\n"
+            f"        self->handle,\n"
+            f"        (const {in_disp} *)PyArray_DATA(x_arr),\n"
+            f"        (size_t)n,\n"
+            f"        ({out_disp} *)PyArray_DATA((PyArrayObject *)out));\n"
+            f"    Py_DECREF(x_arr);\n"
+            f"    return out;\n"
+            f"}}"
+        )
+        _bw_steps_doc = [
+            f"steps(x[, out]) -> NDArray[{out_np_dtype}]",
+            "",
+            "Apply the blockwise transform to the input array.",
+            "x   — input NDArray; shape (n,).",
+            "out — optional pre-allocated output array of the same length.",
+            "Returns a newly allocated output array, or `out` if supplied.",
+            "",
+            "    >>> import numpy as np",
+            *(
+                [f"    >>> from {ctx.get('package', '')} import {Component}"]
+                if ctx.get("package")
+                else []
+            ),
+            f"    >>> obj = {Component}({py_create_args})",
+            f"    >>> x = np.zeros(4, dtype={in_np_dtype})",
+            "    >>> y = obj.steps(x)",
+            "    >>> y.shape",
+            "    (4,)",
+            "    >>> y.dtype",
+            f"    dtype('{out_np_dtype.replace('np.', '')}')",
+        ]
+        steps_def_entry_bw = (
+            f'    {{"steps",    (PyCFunction){Component}_steps,'
+            f"    METH_VARARGS,\n"
+            f"     {_build_ml_doc(_bw_steps_doc)}}},\n"
+        )
+        _bw_bench_timing = (
+            f"    double _times_steps[ITERATIONS];\n"
+            f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        {component}_steps(obj, in, BENCH_N, out);\n"
+            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+            f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
+            f"    }}\n"
+            f'    jm_bench_add(&_bench, "steps",'
+            f" _times_steps, ITERATIONS, BENCH_N);\n"
+            f"    {{\n"
+            f"        double _s = 0.0;\n"
+            f"        for (int r = 0; r < ITERATIONS; r++)"
+            f" _s += _times_steps[r];\n"
+            f'        printf("  steps()  %8.1f MSa/s\\n",\n'
+            f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
+            f"    }}"
+        )
+        _bw_smoke = (
+            f"    /* steps: verify it runs without crashing */\n"
+            f"    {{\n"
+            f"        {in_disp} _bw_in[1]  = {{{in_zero}}};\n"
+            f"        {out_disp} _bw_out[1] = {{{out_zero}}};\n"
+            f"        {component}_steps(obj, _bw_in, 1, _bw_out);\n"
+            f"    }}"
+        )
+        _bw_pytest = (
+            f"\n"
+            f"    def test_steps_runs(self):\n"
+            f"        obj = {Component}({py_create_args})\n"
+            f"        x = np.zeros(4, dtype={in_np_dtype})\n"
+            f"        out = obj.steps(x)\n"
+            f"        assert out.shape == (4,)\n"
+            f"        assert out.dtype == {in_np_dtype}\n"
+            f"\n"
+            f"    def test_steps_out_param(self):\n"
+            f"        obj = {Component}({py_create_args})\n"
+            f"        x   = np.zeros(4, dtype={in_np_dtype})\n"
+            f"        buf = np.zeros(4, dtype={out_np_dtype})\n"
+            f"        ret = obj.steps(x, buf)\n"
+            f"        assert ret is buf\n"
+        )
+        _bw_pytest_pure = (
+            f"\n"
+            f"def test_steps_runs():\n"
+            f"    obj = {Component}({py_create_args})\n"
+            f"    x = np.zeros(4, dtype={in_np_dtype})\n"
+            f"    out = obj.steps(x)\n"
+            f"    assert out.shape == (4,)\n"
+            f"\n"
+            f"def test_steps_out_param():\n"
+            f"    obj = {Component}({py_create_args})\n"
+            f"    x   = np.zeros(4, dtype={in_np_dtype})\n"
+            f"    buf = np.zeros(4, dtype={out_np_dtype})\n"
+            f"    ret = obj.steps(x, buf)\n"
+            f"    assert ret is buf\n"
+        )
+        _bw_lifecycle = (
+            f"\n"
+            f"    def test_context_manager(self):\n"
+            f"        with {Component}({py_create_args}) as obj:\n"
+            f"            x = np.zeros(4, dtype={in_np_dtype})\n"
+            f"            obj.steps(x)\n"
+            f"\n"
+            f"    def test_destroy(self):\n"
+            f"        obj = {Component}({py_create_args})\n"
+            f"        obj.destroy()\n"
+            f"        import pytest\n"
+            f'        with pytest.raises(RuntimeError, match="destroyed"):\n'
+            f"            obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
+        )
+        _bw_lifecycle_pure = (
+            f"\n"
+            f"def test_context_manager():\n"
+            f"    with {Component}({py_create_args}) as obj:\n"
+            f"        x = np.zeros(4, dtype={in_np_dtype})\n"
+            f"        obj.steps(x)\n"
+            f"\n"
+            f"def test_destroy():\n"
+            f"    obj = {Component}({py_create_args})\n"
+            f"    obj.destroy()\n"
+            f"    import pytest\n"
+            f'    with pytest.raises(RuntimeError, match="destroyed"):\n'
+            f"        obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
+        )
+        return {
+            "step_header_decl": (
+                f"/* No inline step() for blockwise objects.\n"
+                f" * Implement {component}_steps() in {component}_core.c. */"
+            ),
+            "step_impl_def": "",
+            "steps_c_decl": steps_c_decl_bw,
+            "steps_c_impl": steps_c_impl_bw,
+            "step_ext_fn": "",
+            "steps_ext_fn": steps_ext_fn_bw,
+            "step_py_flags": "METH_VARARGS",
+            "bench_step_timing_block": _bw_bench_timing,
+            "bench_steps_timing_block": _bw_bench_timing,
+            "steps_def_entry": steps_def_entry_bw,
+            "step_pymethoddef_entry": "",
+            "step_c_smoke_test": _bw_smoke,
+            "pyi_step_methods": pyi_steps,
+            "step_pytest_methods": _bw_pytest,
+            "lifecycle_pytest_methods": _bw_lifecycle,
+            "step_pytest_methods_pure": _bw_pytest_pure,
+            "lifecycle_pytest_methods_pure": _bw_lifecycle_pure,
+        }
+
     if arg_type == "void":
         step_header_decl = (
             f"/* step() is a static inline defined below (after the struct).\n"

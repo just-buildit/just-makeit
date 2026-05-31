@@ -1,143 +1,195 @@
-# `jm object NAME --blockwise` — blockwise processor (array → array)
+# `jm object NAME --preset blockwise` — blockwise processor (array → array)
 
-A **blockwise processor** is a processor whose unit of work is a block
-of samples rather than one sample at a time: array in, array out, each
-output element typically computed from one or more input elements plus
-state.
+A **blockwise processor** is a processor whose unit of work is a block of
+samples rather than one sample at a time: array in, array out, each output
+element typically computed from one or more input elements plus state.
 
-Concrete examples: an FFT, an overlap-save filter, a CSV row
-transformer that re-encodes a batch, an image kernel applied across a
-row, or any algorithm where the per-element cost is dominated by a
-shared setup that you'd rather do once per block.
+Concrete examples: an FFT, an overlap-save filter, a CSV row transformer
+that re-encodes a batch, an image kernel applied across a row, or any
+algorithm where the per-element cost is dominated by a shared setup that
+you'd rather do once per block.
 
-**Status: not yet available.** A blockwise scaffold needs an array
-*return* type (`--return-type "T[]"`), which just-makeit does not
-support yet. There is no `--preset blockwise`, and passing
-`--return-type "T[]"` errors cleanly at parse time rather than
-generating a broken project. Array *input* (`--arg-type "T[]"`) works
-today — only the array-out half is missing.
+The blockwise preset is distinct from the [processor](processor.md) preset in
+one important way: **there is no inline `step()` function**. Block transforms
+operate on whole buffers; the public C and Python surface is `steps()` alone.
+You implement one function and get Python, type stubs, tests, and benchmarks
+for free.
 
-This page documents the intended shape and shows the workaround that
-already covers the most common case (plan-once / execute-many).
+## Command
 
-## The workaround that works today
+```sh
+jm new my_dsp --object my_xform --preset blockwise --state gain:float:1.0f
+cd my_dsp
+```
 
-The block pattern that matters most — heavy setup once, fast `steps()`
-per block — needs no array *return* type. Declare the algorithm with a
-sized output param and a scalar `steps()` over an input array; the
-plan-once-execute-many recipe below is the production shape and builds
-today.
+The default element type is `float _Complex` (complex64). Override with
+explicit `--arg-type` and `--return-type` flags:
 
-## What a blockwise preset would generate (proposed)
+```sh
+# real-valued blockwise transform: float[] → float[]
+jm new my_dsp --object my_filter --preset blockwise \
+    --arg-type "float[]" --return-type "float[]"
 
-### `native/inc/NAME/NAME_core.h`
+# heterogeneous: raw int16 in, normalised float out
+jm new my_dsp --object my_conv --preset blockwise \
+    --arg-type "int16_t[]" --return-type "float[]"
+```
+
+## What you get
+
+### `native/inc/my_xform/my_xform_core.h`
 
 ```c
 typedef struct {
     float gain;
-} NAME_state_t;
+} my_xform_state_t;
 
-NAME_state_t *NAME_create(float gain);
-void          NAME_destroy(NAME_state_t *state);
-void          NAME_reset(NAME_state_t *state);
+my_xform_state_t *my_xform_create(float gain);
+void              my_xform_destroy(my_xform_state_t *state);
+void              my_xform_reset(my_xform_state_t *state);
 
-void NAME_steps(NAME_state_t       *state,
-                const float complex *in, size_t n,
-                float complex      *out);
+void
+my_xform_steps(
+    my_xform_state_t *state,
+    const float complex     *in, size_t n,
+    float complex          *out);
+
+float my_xform_get_gain(const my_xform_state_t *state);
+void  my_xform_set_gain(my_xform_state_t *state, float val);
 ```
 
-There is no inline `step()` — block transforms operate on whole
-buffers, so the public surface is `steps()` alone.
-
-### `native/src/NAME/NAME_core.c`
+### `native/src/my_xform/my_xform_core.c`
 
 ```c
 void
-NAME_steps(NAME_state_t       *state,
-           const float complex *in, size_t n,
-           float complex      *out)
+my_xform_steps(
+    my_xform_state_t *state,
+    const float complex     *in, size_t n,
+    float complex          *out)
 {
-    /* TODO: process n samples from in[] into out[].
-       The default body below is a unity-gain pass-through with
-       a state->gain multiplier. Replace with your block algorithm. */
-    for (size_t i = 0; i < n; i++) {
-        out[i] = state->gain * in[i];
-    }
+    /* <<IMPLEMENT: blockwise transform — replace this pass-through>> */
+    (void)state;
+    for (size_t i = 0; i < n; i++)
+        out[i] = (float complex)in[i];
 }
 ```
+
+Replace the `for` loop body with your algorithm. The stub compiles and passes
+all generated CTest and pytest checks immediately — fill it in at your pace.
+
+### `src/my_dsp/my_xform.pyi`
+
+```python
+class MyXform:
+    def __init__(self, gain: np.float32 = 1.0) -> None: ...
+    def reset(self) -> None: ...
+    def steps(
+        self,
+        x: NDArray[np.complex64],
+        out: NDArray[np.complex64] | None = None,
+    ) -> NDArray[np.complex64]: ...
+    def get_gain(self) -> np.float32: ...
+    def set_gain(self, value: np.float32) -> None: ...
+    def destroy(self) -> None: ...
+```
+
+## Python usage
+
+```python
+import numpy as np
+from my_dsp import MyXform
+
+xform = MyXform(gain=1.0)
+
+# Allocates and returns a fresh output array
+out = xform.steps(np.ones(1024, dtype=np.complex64))
+# out.shape == (1024,), out.dtype == complex64
+
+# Caller-supplied buffer (zero-copy on the Python side)
+buf = np.empty(1024, dtype=np.complex64)
+ret = xform.steps(np.ones(1024, dtype=np.complex64), buf)
+assert ret is buf
+```
+
+## Concrete types
+
+| Slot              | Accepts                                                                                                                                                         | Rejects                                                                                                  | Default            |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------ |
+| `--arg-type`      | Any `T[]` where `T` is in the [array element table](../types.md#array-element-types): `float`, `double`, `int16_t`, `float _Complex`, etc.                      | Scalar types without `[]`; `void`; unsupported element types.                                            | `float _Complex[]` |
+| `--return-type`   | Any `U[]` where `U` is in the [array element table](../types.md#array-element-types). Input and output element types may differ (e.g. `int16_t[]` → `float[]`). | Scalar types without `[]`; `void`; unsupported element types; `T[]` without a matching `--arg-type T[]`. | `float _Complex[]` |
+| `--state field:T` | Any [scalar state type](../types.md#state-variable-types). For opaque heap buffers (plans, scratch arrays) use `opaque = true` in TOML.                         | `const char *`.                                                                                          | (no state vars)    |
 
 ## What you fill in
 
-The body of the `for` loop. Common shapes:
+The body of the `for` loop in `steps()`. Common shapes:
 
-- FIR filter — accumulate into a tap-delay buffer in state, multiply by
-    coefficients.
-- FFT — call `fftwf_execute` on a pre-planned plan stored in state.
-- Block remap — pure data shuffling (deinterleave, complex conjugate,
-    swap halves).
+- **FIR filter** — accumulate into a tap-delay buffer held in state, dot-product with coefficients.
+- **Gain / scale** — multiply each input sample by `state->gain`.
+- **FFT** — call `fftwf_execute` on a pre-computed plan stored in state.
+- **Block remap** — deinterleave, complex-conjugate, swap halves — pure data shuffling.
 
-### The plan-once-execute-many pattern (FFT, correlator)
+### Plan-once / execute-many pattern (FFT, correlator)
 
-DSP libraries with heavy construction (FFTW plans, pre-computed twiddle
-tables, vendor-opaque handles like `pocketfft_plan`) fit the block
-preset cleanly — the heavy work lives in `create_impl`, the hot path
-stays a `steps()` call. The state struct carries the plan as an
-[opaque pointer](../types.md#opaque-state-fields-pointers-handles)
-(declared with `opaque = true` in TOML).
+DSP libraries with heavy construction (FFTW plans, pocketfft plans, vendor
+opaque handles) fit blockwise cleanly — heavy work in `create_impl`, hot path
+stays a `steps()` call. The plan is an
+[opaque pointer](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
+in the state struct.
+
+```toml
+# objects/fft.toml
+[fft]
+arg_type     = "float _Complex[]"
+return_type  = "float _Complex[]"
+create_impl  = """
+obj->n       = n;
+obj->scratch = fftwf_alloc_complex(n);
+obj->plan    = fftwf_plan_dft_1d((int)n, obj->scratch, obj->scratch,
+                                 FFTW_FORWARD, FFTW_MEASURE);
+if (!obj->scratch || !obj->plan) { free(obj); return NULL; }
+"""
+destroy_impl = """
+if (state->plan)    fftwf_destroy_plan(state->plan);
+if (state->scratch) fftwf_free(state->scratch);
+"""
+
+[[fft.init_params]]
+name = "n"
+type = "size_t"
+
+[[fft.state]]
+name   = "plan"
+type   = "fftwf_plan"
+opaque = true
+
+[[fft.state]]
+name   = "scratch"
+type   = "float _Complex *"
+opaque = true
+
+[[fft.state]]
+name    = "n"
+type    = "size_t"
+default = "0"
+```
+
+Then implement `steps()` in `fft_core.c`:
 
 ```c
-typedef struct {
-    fftwf_plan plan;        /* heavyweight; built once in create() */
-    size_t     n;
-    float _Complex *scratch;
-} NAME_state_t;
-
-NAME_state_t *
-NAME_create(size_t n)
-{
-    NAME_state_t *obj = calloc(1, sizeof(*obj));
-    if (!obj) return NULL;
-    obj->n       = n;
-    obj->scratch = fftwf_alloc_complex(n);
-    obj->plan    = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
-                                     FFTW_FORWARD, FFTW_MEASURE);
-    return obj;
-}
-
 void
-NAME_steps(NAME_state_t *state,
-           const float _Complex *in, size_t n,
-           float _Complex       *out)
+fft_steps(fft_state_t        *state,
+          const float complex *in, size_t n,
+          float complex       *out)
 {
-    /* TODO: copy in→scratch, execute plan, copy scratch→out.
-       Hot path — no allocations, no plan rebuilding. */
     memcpy(state->scratch, in, n * sizeof(*in));
     fftwf_execute(state->plan);
     memcpy(out, state->scratch, n * sizeof(*out));
 }
 ```
 
-This is the same shape doppler's `fft` and `corr` components use —
-opaque vendor plans in state, block-shaped `steps()` calls in the
-hot path. No new preset needed.
+## See also
 
-## Python usage
-
-```python
-import numpy as np
-from <pkg> import NAME
-
-xform = NAME(gain=1.0)
-out = xform.steps(np.ones(1024, dtype=np.complex64))   # → (1024,) complex64
-```
-
-## Concrete types (proposed)
-
-These slots describe the future `--preset blockwise` shape; `--elem-type`
-is not a real flag yet.
-
-| Slot                       | Accepts                                                                                                                                   | Rejects                                                                                           | Default           |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------- |
-| `--elem-type` (per-sample) | Any element type in the [array element table](../types.md#array-element-types).                                                           | `bool`, `int` (use `int32_t`), `const char *`, `long double _Complex` — no canonical numpy dtype. | `float _Complex`  |
-| `--state field:T:D`        | Any [scalar](../types.md#state-variable-types).                                                                                           | `const char *`.                                                                                   | `gain:float:1.0f` |
-| `--return-type`            | Array return unsupported. For width-changing transforms (`float[]` → `int16_t[]`) use a [function](function.md) with `--out-param` today. | All values.                                                                                       | —                 |
+- [Types reference — array element types](../types.md#array-element-types)
+- [Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
+- [array_processing example](../examples/array_processing.md) — array input with scalar output (reduction shape)
+- [Template gallery index](index.md)

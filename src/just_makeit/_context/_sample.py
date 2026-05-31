@@ -244,19 +244,124 @@ def make_sample_ctx(
     return_type = resolve_return_type(arg_type, return_type)
     is_void_return = return_type == "void"
 
-    # Array *return* types — the T[] -> T[] "blockwise" shape — are not yet
-    # supported. step() returns a scalar, void, or (for an array argument) a
-    # scalar reduction; an array output needs a second output buffer in the
-    # step() signature plus ext.c buffer allocation, tracked as the blockwise
-    # preset (Phase 3a). Without this guard the array element below resolves
-    # `_CTYPE_META[return_type]` directly and dies with a raw KeyError deep in
-    # the context builder; fail early with an actionable message instead.
+    # Blockwise: array-in / array-out  (T[] → U[])
+    # Both arg_type and return_type are array types. Build and return a
+    # blockwise-specific context dict that populates the steps() interface
+    # (no inline step(); the user writes steps() directly in _core.c).
     if return_type.endswith("[]"):
-        raise ValueError(
-            f"array return type '{return_type}' is not yet supported "
-            f"(the array-in / array-out 'blockwise' shape). Use a scalar "
-            f"return type or 'void'. Tracked as the blockwise preset."
+        if not arg_type.endswith("[]"):
+            raise ValueError(
+                f"array return type '{return_type}' requires an array "
+                f"arg type (--arg-type 'T[]'). Blockwise transforms take "
+                f"an input array and write to an output array of the same "
+                f"length. Use a scalar return type for reductions."
+            )
+        in_elem = arg_type[:-2]
+        out_elem = return_type[:-2]
+        if in_elem not in _CTYPE_META:
+            raise ValueError(
+                f"unsupported array element type '{in_elem}' in "
+                f"--arg-type '{arg_type}'."
+            )
+        if out_elem not in _CTYPE_META:
+            raise ValueError(
+                f"unsupported array element type '{out_elem}' in "
+                f"--return-type '{return_type}'."
+            )
+        in_samp = _CTYPE_META[in_elem]
+        out_samp = _CTYPE_META[out_elem]
+        in_disp = _ctype_display(in_elem)
+        out_disp = _ctype_display(out_elem)
+        in_np_dtype = in_samp["py_type"]
+        out_np_dtype = out_samp["py_type"]
+        in_np_enum = _NP_ENUM[in_np_dtype]
+        out_np_enum = _NP_ENUM[out_np_dtype]
+        # Python bench blocks (steps(x) — same API as scalar steps())
+        _bw_steps_py = (
+            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+            '    dt = _bench("steps 1k", obj.steps, x1k,'
+            " reps=max(1, REPS // 10))\n"
+            "    print(f\"  {'steps 1k':<22} {dt * 1e6:9.3f} µs"
+            '  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)")\n'
+            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
+            '    dt = _bench("steps 64k", obj.steps, x64k,'
+            " reps=max(1, REPS // 100))\n"
+            "    print(f\"  {'steps 64k':<22} {dt * 1e3:9.3f} ms"
+            '  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)")\n'
         )
+        _bw_step_py = (
+            f"    x_step = np.zeros(4, dtype={in_np_dtype})\n"
+            '    dt = _bench("steps (4)", obj.steps, x_step)\n'
+            "    print(f\"  {'steps (4)':<22} {dt * 1e9:9.1f} ns/call\")\n"
+        )
+        # pytest-benchmark blocks
+        _bw_bm_steps = (
+            f"\ndef test_bm_steps(benchmark, obj_fixture):\n"
+            f"    obj = obj_fixture\n"
+            f"    x = np.ones(1024, dtype={in_np_dtype})\n"
+            f"    benchmark(obj.steps, x)\n"
+        )
+        return {
+            "arg_ctype": in_disp,
+            "return_ctype": out_disp,
+            "arg_zero": "",
+            "step_example_suffix": ", NULL, 0, NULL",
+            "step_example_lhs": "",
+            "in_np_dtype": in_np_dtype,
+            "out_np_dtype": out_np_dtype,
+            "in_np_enum": in_np_enum,
+            "out_np_enum": out_np_enum,
+            "in_py_hint": f"NDArray[{in_np_dtype}]",
+            "out_py_hint": f"NDArray[{out_np_dtype}]",
+            "out_py_isinstance": f"NDArray[{out_np_dtype}]",
+            "in_py_test_val": f"np.zeros(4, dtype={in_np_dtype})",
+            "step_parse_block": "",
+            "step_return_expr": "Py_RETURN_NONE",
+            # C bench: allocate both in and out
+            "bench_in_init": _bench_in_init(in_elem, in_samp),
+            "bench_warmup": _bench_warmup(in_samp),
+            "bench_in_decl": (
+                f"    {in_disp} *in  = "
+                f"malloc(BENCH_N * sizeof({in_disp}));\n"
+                f'    if (!in) {{ fprintf(stderr, "OOM\\n"); return 1; }}'
+            ),
+            "bench_in_loop": (
+                f"    for (int i = 0; i < BENCH_N; i++) "
+                f"in[i] = {_bench_in_init(in_elem, in_samp)};"
+            ),
+            # For blockwise, step() IS steps(); bench passes in, n, out.
+            "bench_step_input_arg": "in, BENCH_N, out",
+            "bench_step_input_sep": ", ",
+            "bench_step_inner_loop": "        ",  # no per-element inner loop
+            "bench_steps_in_arg": " in, BENCH_N,",
+            "bench_free_in": "    free(in);",
+            "bench_out_decl": (
+                f"    {out_disp} *out = "
+                f"malloc(BENCH_N * sizeof({out_disp}));\n"
+                f'    if (!out) {{ fprintf(stderr, "OOM\\n"); return 1; }}'
+            ),
+            "bench_volatile_sink": "",
+            "bench_sink_assign": "",
+            "bench_steps_out_arg": " out",
+            "bench_free_out": "    free(out);",
+            "test_arr_4_init": "{0}",
+            "pure_x_local": "",
+            "pure_x_fmt_char": "",
+            "pure_x_parse_arg": "",
+            "pure_x_to_c": "",
+            # steps() returns NDArray — proper type stub
+            "pyi_steps_stub": (
+                f"\n    def steps(\n"
+                f"        self,\n"
+                f"        x: NDArray[{in_np_dtype}],\n"
+                f"        out: NDArray[{out_np_dtype}] | None = None,\n"
+                f"    ) -> NDArray[{out_np_dtype}]: ...\n"
+            ),
+            "bench_step_py": _bw_step_py,
+            "bench_steps_py": _bw_steps_py,
+            "bm_step_py": "",
+            "bm_steps_py": _bw_bm_steps,
+        }
 
     # Skip scalar validation for array arg — the [] path handles return type
     # separately below; the only invalid case is a non-scalar, non-void
