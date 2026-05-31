@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-05-31
+
+### Added
+
+- **Blockwise preset (`--preset blockwise`).** Scaffolds a void,
+    array-in/array-out processor: `void comp_steps(state, const T *in, n,   U *out)` in C and `NDArray → NDArray` with an optional `out=` buffer in
+    Python. Removes the three previous blockers (CLI rejection of
+    `--return-type "T[]"`, `ValueError` in `_sample.py`, and exclusion from
+    `_PRESETS`). Pass-through stub compiles and passes CTest on day one
+    (gh-86).
+
+- **`jm bind` Phase 3b — full shape coverage.** The parser now handles all
+    working API shapes in addition to scalar-in/scalar-out processors:
+    getter/setter pairs become Python properties; custom scalar methods become
+    Python methods; functions declared alongside a `_max_out` sibling become
+    variable-output methods; opaque forward-declared state and
+    constructor-inferred `init_params` are parsed and reflected into the
+    binding.
+
+### Docs
+
+- Seven new example pages: `opaque_counter`, `delay_line`,
+    `declarative_scaffold`, `accumulator`, `jm_function`, `jm_app`,
+    `nco_tone`; `examples/index.md` reorganised into four section tables.
+- Roadmap trimmed to current reality; dead developer docs removed; `jm   bind`, `jm status`, `--fragments`/`--no-fragments`, and v0.14 upgrade
+    notes documented accurately.
+
 ## [0.14.0] — 2026-05-31
 
 ### Changed
