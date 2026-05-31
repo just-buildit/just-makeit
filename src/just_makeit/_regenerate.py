@@ -15,11 +15,33 @@ Always ``git stash`` (or commit) first — regeneration discards hand-written
 bodies in ``_core.c`` and any edits to the regenerated files.
 """
 
+import sysconfig
 import sys
 from pathlib import Path
 
 from . import _config as C
 from ._remove import _confirm, _object_paths, _rm
+
+
+def _stale_ext_modules(
+    root: Path, pkg: str, component: str, module: str | None
+) -> list[Path]:
+    """Return pre-built extension-module files for *component*.
+
+    When the source is rebuilt from the manifest the compiled .so/.pyd is
+    stale.  Deleting it guarantees cmake relinks unconditionally — avoiding
+    platform-specific mtime-comparison edge cases (e.g. macOS APFS + GNU Make
+    1-second resolution on the build artefact that was produced by an earlier
+    cmake run and may be seen as 'newer' than the freshly-regenerated sources
+    on some runners).
+    """
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    if module:
+        # Module objects share a single .so named after the module.
+        so = root / "src" / pkg / module / f"{module}{suffix}"
+    else:
+        so = root / "src" / pkg / f"{component}{suffix}"
+    return [so] if so.exists() else []
 
 
 def run(root: Path, component: str, force: bool = False) -> None:
@@ -75,3 +97,8 @@ def run(root: Path, component: str, force: bool = False) -> None:
     from . import _apply
 
     _apply.run(root)
+
+    # Delete any pre-built extension module so cmake is forced to relink.
+    for so in _stale_ext_modules(root, pkg, component, module):
+        so.unlink()
+        print(f"  remove  {so}  (stale build artefact; cmake will rebuild)")
