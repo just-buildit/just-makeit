@@ -8,14 +8,14 @@ ______________________________________________________________________
 ## What regenerates vs what's yours
 
 just-makeit follows a **sacred/glue contract**: glue files are rebuilt from
-the manifest on every mutating command (`add`, `method`, `property`, `apply`),
-while sacred files — your algorithm — are never overwritten once they exist.
-One file, `_core.h`, is a hybrid.
+the manifest on every mutating command (`method`, `property`, `function`,
+`apply`), while sacred files — your algorithm — are never spliced or
+re-rendered once they exist.
 
 | File                                 | Class      | Notes                                                                        |
 | ------------------------------------ | ---------- | ---------------------------------------------------------------------------- |
-| `native/inc/<obj>/<obj>_core.h`      | **hybrid** | declarations refresh from the manifest; inline `step()` body and struct kept |
-| `native/src/<obj>/<obj>_core.c`      | **sacred** | implement `step()` / `steps()` / lifecycle here; never overwritten           |
+| `native/src/<obj>/<obj>_core.c`      | **sacred** | implement `step()` / `steps()` / lifecycle here; never spliced, only rebuilt |
+| `native/inc/<obj>/<obj>_core.h`      | **mixed**  | the state struct + inline `step()` are sacred; method/property decls refresh |
 | `native/src/<obj>/<obj>_ext.c`       | **glue**   | Python binding — regenerated, don't edit                                     |
 | `native/src/<module>/<module>_ext.c` | **glue**   | module binding — fully rewritten on each `object --module`                   |
 | `native/src/<obj>/CMakeLists.txt`    | **glue**   | OBJECT library + test + bench targets                                        |
@@ -24,16 +24,17 @@ One file, `_core.h`, is a hybrid.
 | `src/<pkg>/tests/test_<obj>.py`      | **yours**  | add pytest cases here; not overwritten                                       |
 
 **Rule of thumb:** `_ext.c`, `.pyi`, and `CMakeLists.txt` are glue (owned by
-the generator). `_core.c` and the test files are yours. `_core.h` is shared:
-its public declarations follow the manifest, but your inline `step()` body
-and the state struct stay put.
+the generator). `_core.c` and the test files are yours. In `_core.h` the
+state struct and inline `step()` are sacred; only the method/property
+*declarations* follow the manifest.
 
-When you run a mutating command, all files are backed up before regeneration
-and restored if anything fails. `just-makeit.toml` is updated only after the
-files are written successfully.
-
-To rebuild a component cleanly from its manifest — discarding the sacred
-`_core.c` body — use `jm regenerate <obj>` (`git stash` first; see
+The additive verbs (`jm method`, computed `jm property`, `jm function`) are
+splice-free — they inject one declaration into `_core.h` and append a fresh
+stub to `_core.c`; they never re-render an existing body. Adding state with
+`jm add` is **structural**: it rebuilds the object from the manifest (see
+below). The two commands that rebuild the sacred `_core.c` are `jm add` and
+`jm regenerate <obj>` — `git stash` first, or keep your body in the TOML
+`impl`/`create_impl` so the rebuild re-asserts it (see
 [Declarative scaffolding](declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh)).
 
 ______________________________________________________________________
@@ -43,8 +44,8 @@ ______________________________________________________________________
 1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
 1. Open `native/src/fir/fir_core.c` — implement `fir_step()`.
 1. Build and test: `make && make test`.
-1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → refreshes the header declarations and the binding; your `fir_core.c` and your inline `step()` body are untouched.
-1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to the struct in `native/inc/fir/fir_core.h` — the hybrid header preserves the struct body across re-apply, so your extra fields survive.
+1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → **rebuilds** the object from the manifest, so keep your algorithm in the TOML `impl`/`create_impl` (or `git stash` first); the new field lands in the struct, constructor, getter/setter, and reset.
+1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to the struct in `native/inc/fir/fir_core.h` — the struct is sacred, so `jm apply` never re-renders it and your extra fields survive (a `jm add`/`jm regenerate` rebuild does re-stub the struct from the manifest, so re-add them after).
 
 ______________________________________________________________________
 
@@ -70,9 +71,13 @@ ______________________________________________________________________
 just-makeit add --object my_filter --state drive:float:1.0f
 ```
 
-Regenerates the six state-sensitive files from the updated state list.
-All files are backed up first and restored if anything fails —
-`just-makeit.toml` is updated only after the files are written successfully.
+Adding state is **structural**: `add` writes the new `[[my_filter.state]]`
+entry to `just-makeit.toml`, then rebuilds the object from the manifest (a
+delete-then-apply). The new field reaches the struct, constructor,
+getter/setter, reset, and Python stub in one shot. Because the rebuild
+re-stubs the sacred `_core.c`, keep your algorithm in the TOML
+`impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first. `add`
+prompts once before rebuilding; `--force` skips it.
 
 Use this for any scalar state variable that follows the standard lifecycle
 (constructor parameter, getter/setter, reset target). For non-scalar fields
@@ -118,8 +123,10 @@ ______________________________________________________________________
 
 For fields that don't fit the scalar pattern (fixed-size arrays, heap
 allocations, nested structs), add them directly to the struct in
-`<component>/inc/<component>/<component>_core.h` — the hybrid header
-preserves the struct body, so manual fields survive re-apply:
+`<component>/inc/<component>/<component>_core.h` — the struct is sacred, so
+`jm apply` never re-renders it and your manual fields survive (a `jm add` /
+`jm regenerate` rebuild re-stubs the struct from the manifest, so re-add them
+after one):
 
 ```c
 typedef struct {

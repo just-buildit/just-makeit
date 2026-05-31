@@ -223,18 +223,18 @@ just-makeit add --param n_taps:int:16
 
 When the project has a single standalone object `--object` may be omitted.
 
-`add` accepts `--state` and `--param` (repeatable, mixable in one call) and
-regenerates the six state-sensitive files from the merged state list:
+`add` accepts `--state` and `--param` (repeatable, mixable in one call).
+Adding state is **structural**: `add` authors the new `[[obj.state]]` entries
+into `just-makeit.toml`, then rebuilds the object from the manifest via the
+regenerate path (delete + apply). The new fields reach the struct, the
+constructor, the getter/setter, the reset target, and the Python stub in one
+shot.
 
-- `native/inc/<obj>/<obj>_core.h`
-- `native/src/<obj>/<obj>_core.c`
-- `native/src/<obj>/<obj>_ext.c`
-- `native/tests/test_<obj>_core.c`
-- `src/<project>/<obj>.pyi`
-- `src/<project>/tests/test_<obj>.py`
-
-All six files are backed up before regeneration. If any write fails, they
-are restored and `just-makeit.toml` is left unchanged.
+Because the rebuild deletes and re-stubs the sacred `_core.c`, any
+hand-written `steps()`/lifecycle body is **discarded** unless it lives in the
+TOML `impl`/`create_impl` (which the rebuild re-asserts) — keep your algorithm
+there, or `git stash` first. `add` prompts for one confirmation before
+rebuilding; `--force` skips it.
 
 **Constraints**
 

@@ -108,21 +108,25 @@ You edited `just-makeit.toml` by hand. Which command propagates the change?
 
 ```
 Glue changed — _ext.c, .pyi, CMakeLists.txt, or a
-  TOML-declared method/field that only needs to reach
-  the public API                              ─→  jm apply
-    (glue files always regenerate; _core.h declarations
-     refresh, but its inline step() body and state struct
-     are PRESERVED; _core.c is SACRED — never overwritten)
+  TOML-declared METHOD/PROPERTY declaration that
+  only needs to reach the public API            ─→  jm apply
+    (glue regenerates; missing method/property decls are
+     injected into _core.h; the state struct + inline
+     step() are SACRED; _core.c is never spliced)
 
-You want the whole component rebuilt from the manifest,
-  discarding hand-written _core.c bodies        ─→  jm regenerate <name>
+Structural change — a new state FIELD or a changed
+  signature; rebuild from the manifest, discarding
+  hand-written _core.c bodies                    ─→  jm regenerate <name>
+                                                     (or jm add, for state)
     (deletes every file the component owns, then re-runs
-     apply; leaves TOML untouched. git stash first.)
+     apply; leaves TOML untouched. git stash first, or
+     keep the body in TOML impl/create_impl.)
 ```
 
-Rule of thumb: `apply` is the safe, additive refresh. `regenerate` is the
-deliberate, destructive one — use it when a signature change in TOML must also
-reach the sacred `_core.c` body.
+Rule of thumb: `apply` is the safe, additive refresh (glue + missing
+declarations). `regenerate` is the deliberate rebuild — use it when a
+signature change or a new state field must re-stub the sacred `_core.c` body.
+`jm add` is `regenerate` specialized for adding state.
 
 ## Sub-decision E. Preset (for `jm object --preset NAME`)
 

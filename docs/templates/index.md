@@ -77,10 +77,12 @@ the examples use `NAME` only as a placeholder.
 
 ## Refreshing a scaffold
 
-The `_core.c` you edit is **sacred** — `jm apply` never overwrites it,
-and adding state or methods via the additive verbs (`jm add`,
-`jm method`) leaves your bodies intact. To deliberately throw the
-scaffold away and rebuild it from the manifest, run
+The `_core.c` you edit is **sacred** — `jm apply` never overwrites it, and
+the additive verbs (`jm method`, computed `jm property`) only *inject* a new
+declaration and *append* a fresh stub, leaving your existing bodies intact.
+Adding state with `jm add` is the exception: it rebuilds the object from the
+manifest, so keep your body in `impl`/`create_impl` so it survives. To
+deliberately throw the scaffold away and rebuild it from the manifest, run
 `jm regenerate <component>` (`git stash` first — it discards your
 hand-written `_core.c`). See [Type slots](../types.md) for the full
 sacred/glue contract.

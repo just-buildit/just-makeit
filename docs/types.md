@@ -486,15 +486,18 @@ generated file is rewritten the same way when you re-run `jm apply`:
 - **Glue — regenerated every apply.** `<comp>_ext.c`,
     `src/<pkg>/<comp>.pyi`, and `CMakeLists.txt` are derived purely
     from the manifest. Edit the TOML and they refresh on the next apply.
-- **`<comp>_core.h` — hybrid.** Public *declarations* refresh when a
-    TOML-declared method or field reaches the API, but the inline
-    `step()` body and the state struct are **preserved**.
-- **`<comp>_core.c` — sacred.** Once it exists, `jm apply` never
-    overwrites it; the `steps()` / lifecycle bodies are yours.
+- **`<comp>_core.h` — mixed.** `apply` injects a missing method/property
+    *declaration*, but the inline `step()` body and the state struct are
+    **sacred** — never re-rendered. A new state field reaches the struct via a
+    rebuild, not `apply`.
+- **`<comp>_core.c` — sacred.** Once it exists, `jm apply` never splices
+    or re-renders it; the `steps()` / lifecycle bodies are yours.
 
-So editing the manifest propagates to glue, but a signature change you
-make in TOML may also need an additive verb (`jm method`, `jm add`) — or
-a full regenerate — to reach the sacred body.
+So editing the manifest propagates to glue and injects missing declarations,
+but a signature change or a new state field is *structural* — use
+`jm regenerate` (or `jm add` for state) to rebuild the sacred body. A new
+method or computed property is additive: `jm method` / `jm property` inject a
+declaration and append a fresh stub.
 
 `jm regenerate <component>` is the deliberate-refresh half: it deletes
 every file the component owns and re-runs `jm apply`, rebuilding a clean

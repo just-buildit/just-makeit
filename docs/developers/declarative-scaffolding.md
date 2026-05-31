@@ -191,21 +191,22 @@ jm apply objects/dsp.toml # merge a fragment in, then materialize
 `apply` shipped a precise per-file policy. Every file an object owns
 falls into one of three buckets:
 
-| File                   | Class      | What `apply` does                                                                 |
-| ---------------------- | ---------- | --------------------------------------------------------------------------------- |
-| `<comp>_ext.c`         | **glue**   | Regenerated from the manifest on every apply.                                     |
-| `src/<pkg>/<comp>.pyi` | **glue**   | Regenerated from the manifest on every apply.                                     |
-| `CMakeLists.txt`       | **glue**   | Regenerated from the manifest on every apply.                                     |
-| `<comp>_core.h`        | **hybrid** | Public declarations refresh; the inline `step()` body and state struct preserved. |
-| `<comp>_core.c`        | **sacred** | Never overwritten once it exists. `steps()` / lifecycle bodies are the user's.    |
+| File                   | Class      | What `apply` does                                                                                        |
+| ---------------------- | ---------- | -------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **glue**   | Regenerated from the manifest on every apply.                                                            |
+| `src/<pkg>/<comp>.pyi` | **glue**   | Regenerated from the manifest on every apply.                                                            |
+| `CMakeLists.txt`       | **glue**   | Regenerated from the manifest on every apply.                                                            |
+| `<comp>_core.h`        | **mixed**  | A missing method/property declaration is injected; the inline `step()` body and state struct are sacred. |
+| `<comp>_core.c`        | **sacred** | Never spliced or re-rendered once it exists. `steps()` / lifecycle bodies are the user's.                |
 
-So editing the manifest always propagates to the glue. The **hybrid**
-header means a TOML-declared method or field reaches the public API on
-the next apply, while the hand-written inline `step()` body and the
-state struct definition survive. The **sacred** `.c` is the one file
-`apply` will not touch — a signature change you make in TOML may need
-an additive verb (`jm method`, `jm add`) or a `jm regenerate` to also
-update the sacred body.
+So editing the manifest always propagates to the glue, and `apply` injects any
+missing method/property *declaration* into `_core.h`, while the hand-written
+inline `step()` body and the state struct definition stay sacred. The
+**sacred** `.c` is the one file `apply` will never touch. A signature change in
+TOML, or a new state field, is *structural* — rebuild the body from the
+manifest with `jm regenerate` (or `jm add`, which is `regenerate` specialized
+for state). A new method or computed property is additive: `jm method` /
+`jm property` inject a declaration and append a fresh stub.
 
 When a target declares `impl` / `impl_file` (see
 [Implementation bodies](#implementation-bodies)), the TOML *owns* that

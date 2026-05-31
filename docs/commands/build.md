@@ -153,18 +153,21 @@ just-makeit apply
 
 `apply` follows the **sacred / glue** contract:
 
-| File                   | On every `apply`                                                                                                                                                         |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<comp>_ext.c`         | **Glue** — fully regenerated from the manifest.                                                                                                                          |
-| `src/<pkg>/<comp>.pyi` | **Glue** — fully regenerated.                                                                                                                                            |
-| `CMakeLists.txt`       | **Glue** — fully regenerated.                                                                                                                                            |
-| `<comp>_core.h`        | **Hybrid** — public *declarations* refresh (a new TOML-declared method or field reaches the API), while the inline `step()` body and the state struct are **preserved**. |
-| `<comp>_core.c`        | **Sacred** — never overwritten once it exists. `steps()`/lifecycle bodies are yours.                                                                                     |
+| File                   | On every `apply`                                                                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **Glue** — fully regenerated from the manifest.                                                                                                      |
+| `src/<pkg>/<comp>.pyi` | **Glue** — fully regenerated.                                                                                                                        |
+| `CMakeLists.txt`       | **Glue** — fully regenerated.                                                                                                                        |
+| `<comp>_core.h`        | **Mixed** — a missing method/property *declaration* is injected; the inline `step()` body and the state struct are **sacred** and never re-rendered. |
+| `<comp>_core.c`        | **Sacred** — never spliced or re-rendered once it exists. `steps()`/lifecycle bodies are yours.                                                      |
 
-So editing the manifest always propagates to the glue. Changing a
-**signature** in TOML updates the glue and the `_core.h` declaration, but the
-sacred `_core.c` body is left alone — use the additive verbs (`jm method`,
-`jm add`) or `jm regenerate` to update the body as well.
+So editing the manifest always propagates to the glue, and `apply` injects any
+missing method/property declaration into `_core.h`. The struct and inline
+`step()` stay sacred. Changing a **signature** in TOML — or adding a **state
+field** — is *structural*: rebuild the body from the manifest with
+`jm regenerate` (or `jm add`, which is `regenerate` specialized for state). A
+new method or computed property is additive instead — `jm method` /
+`jm property` inject a declaration and append a fresh stub.
 
 ______________________________________________________________________
 

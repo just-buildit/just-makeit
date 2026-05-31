@@ -722,7 +722,15 @@ def run(
     if perf is None:
         perf = C.is_perf(cfg)
 
-    vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
+    # state_vars is None only when the CLI got no --state (use the starter
+    # `gain` so a fresh `jm object` isn't empty); an explicit [] (e.g. apply
+    # replaying an object whose last field was removed) stays empty.
+    if no_state:
+        vars_ = []
+    elif state_vars is None:
+        vars_ = [("gain", "double", "0.0")]
+    else:
+        vars_ = list(state_vars)
     ctx = _make_object_ctx(
         object_name,
         module,

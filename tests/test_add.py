@@ -21,7 +21,7 @@ def project(tmp_path):
 
 class TestAddStateVar:
     def test_add_single_var_header(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
@@ -29,7 +29,7 @@ class TestAddStateVar:
         assert "int order;" in core
 
     def test_add_single_var_core_c(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         c = (project / "native" / "src" / "comp" / "comp_core.c").read_text(
             encoding="utf-8"
         )
@@ -37,7 +37,7 @@ class TestAddStateVar:
         assert "comp_get_order" in c
 
     def test_add_single_var_ext_c(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         ext = (project / "native" / "src" / "comp" / "comp_ext.c").read_text(
             encoding="utf-8"
         )
@@ -45,7 +45,7 @@ class TestAddStateVar:
         assert '"order"' in ext
 
     def test_add_single_var_pyi(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         pyi = (project / "src" / "comp" / "comp.pyi").read_text(
             encoding="utf-8"
         )
@@ -53,14 +53,14 @@ class TestAddStateVar:
         assert "order: np.int32 = 4" in pyi
 
     def test_add_single_var_pytest(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         test = (project / "src" / "comp" / "tests" / "test_comp.py").read_text(
             encoding="utf-8"
         )
         assert "get_order" in test
 
     def test_add_single_var_ctest(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         ct = (project / "native" / "tests" / "test_comp_core.c").read_text(
             encoding="utf-8"
         )
@@ -71,6 +71,7 @@ class TestAddStateVar:
             project,
             None,
             [("bandwidth", "double", "200.0"), ("poles", "int", "2")],
+            force=True,
         )
         core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
@@ -79,7 +80,7 @@ class TestAddStateVar:
         assert "int poles;" in core
 
     def test_no_unreplaced_placeholders(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         for path in project.rglob("*"):
             if path.is_file() and path.suffix in (
                 ".py",
@@ -116,7 +117,7 @@ class TestAddPreservesInitParams:
         return dest
 
     def test_ctor_keeps_init_param_after_add(self, init_param_project):
-        add_run(init_param_project, "obj", [("y", "float", "1")])
+        add_run(init_param_project, "obj", [("y", "float", "1")], force=True)
         core = (
             init_param_project / "native" / "inc" / "obj" / "obj_core.h"
         ).read_text(encoding="utf-8")
@@ -130,20 +131,25 @@ class TestAddPreservesInitParams:
 
 class TestAddUpdatesConfig:
     def test_config_has_new_var(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         cfg = load(project)
         names = [n for n, _, __ in state_vars(cfg, "comp")]
         assert "gain" in names
         assert "order" in names
 
     def test_config_preserves_original_var(self, project):
-        add_run(project, None, [("order", "int", "4")])
+        add_run(project, None, [("order", "int", "4")], force=True)
         cfg = load(project)
         vars_ = {n: (t, d) for n, t, d in state_vars(cfg, "comp")}
         assert vars_["gain"] == ("double", "1.0")
 
     def test_config_state_count(self, project):
-        add_run(project, None, [("a", "double", "0.0"), ("b", "int", "0")])
+        add_run(
+            project,
+            None,
+            [("a", "double", "0.0"), ("b", "int", "0")],
+            force=True,
+        )
         cfg = load(project)
         assert len(state_vars(cfg, "comp")) == 3  # gain + a + b
 
@@ -158,7 +164,7 @@ class TestAddValidation:
             add_run(project, None, [("gain", "double", "2.0")])
 
     def test_explicit_component_works(self, project):
-        add_run(project, "comp", [("order", "int", "4")])
+        add_run(project, "comp", [("order", "int", "4")], force=True)
         cfg = load(project)
         names = [n for n, _, __ in state_vars(cfg, "comp")]
         assert "order" in names
@@ -168,35 +174,25 @@ class TestAddValidation:
             add_run(project, "nonexistent", [("x", "double", "0.0")])
 
 
-class TestAddBackupRestore:
-    def test_backup_restores_on_write_failure(self, project):
-        original_h = (
-            project / "native" / "inc" / "comp" / "comp_core.h"
-        ).read_text(encoding="utf-8")
+class TestAddManifestGuarantee:
+    """The old _backup/restore-on-write-failure mechanism is gone: state is
+    now structural and rebuilt from the manifest via the regenerate path, so
+    there are no in-place splices into sacred source to roll back. What still
+    holds is the manifest-level guarantee: an invalid add (duplicate name) is
+    rejected before the manifest is touched, leaving it unchanged.
 
-        # Make the .pyi path a directory so write_text fails there
-        pyi = project / "src" / "comp" / "comp.pyi"
-        pyi.unlink()
-        pyi.mkdir()
+    (test_backup_restores_on_write_failure and the old
+    test_config_not_written_on_failure were deleted: they only probed the
+    removed _backup internals via a forced .pyi write failure, which no
+    longer exists.)
+    """
 
-        with pytest.raises((IsADirectoryError, OSError)):
-            add_run(project, None, [("order", "int", "4")])
-
-        restored = (
-            project / "native" / "inc" / "comp" / "comp_core.h"
-        ).read_text(encoding="utf-8")
-        assert restored == original_h
-
-    def test_config_not_written_on_failure(self, project):
+    def test_duplicate_add_leaves_manifest_unchanged(self, project):
         cfg_before = load(project)
-        before_count = len(state_vars(cfg_before, "comp"))
+        before = state_vars(cfg_before, "comp")
 
-        pyi = project / "src" / "comp" / "comp.pyi"
-        pyi.unlink()
-        pyi.mkdir()
-
-        with pytest.raises((IsADirectoryError, OSError)):
-            add_run(project, None, [("order", "int", "4")])
+        with pytest.raises(SystemExit):
+            add_run(project, None, [("gain", "double", "2.0")], force=True)
 
         cfg_after = load(project)
-        assert len(state_vars(cfg_after, "comp")) == before_count
+        assert state_vars(cfg_after, "comp") == before

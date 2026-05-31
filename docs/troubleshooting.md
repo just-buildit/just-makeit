@@ -182,13 +182,17 @@ ______________________________________________________________________
 ran `jm apply`, but `<comp>_core.c` still has the old body.
 
 **Cause:** this is by design. `_core.c` is **sacred** — `jm apply` never
-overwrites it. Apply regenerates the glue (`_ext.c`, `.pyi`, `CMakeLists.txt`)
-and refreshes the `_core.h` declarations, but your hand-written `steps()` and
-lifecycle bodies are yours to keep.
+splices or re-renders it. Apply regenerates the glue (`_ext.c`, `.pyi`,
+`CMakeLists.txt`) and injects any missing method/property *declaration* into
+`_core.h`, but your hand-written `steps()` and lifecycle bodies are yours to
+keep.
 
-**Fix:** for an additive change use the matching verb (`jm method`, `jm add`).
-For a full rebuild from the manifest, regenerate — but it discards your
-`_core.c` bodies, so stash first:
+**Fix:** for a new method or computed property, the additive verb (`jm method`,
+`jm property`) injects a declaration and appends a fresh stub for you to fill
+in. A signature change or a new state field is structural — rebuild from the
+manifest with `jm regenerate` (or `jm add` for state). The rebuild discards
+hand-written `_core.c` bodies, so stash first (or keep them in the TOML
+`impl`/`create_impl`):
 
 ```sh
 git stash

@@ -438,16 +438,17 @@ def run(
         )
         sys.exit(1)
 
-    # Only inject the default "gain" field when there are no regular state
-    # vars AND no opaque fields — opaque-only structs are fully user-managed.
+    # Inject the starter "gain" field only when the CLI got no --state
+    # (state_vars is None) and the struct isn't opaque-managed. An explicit
+    # [] — e.g. apply replaying an object whose last field was removed —
+    # stays empty rather than resurrecting `gain`.
     _has_opaque = bool(opaque_fields)
-    vars_ = (
-        []
-        if no_state
-        else (
-            state_vars or ([] if _has_opaque else [("gain", "float", "0.0f")])
-        )
-    )
+    if no_state:
+        vars_ = []
+    elif state_vars is None:
+        vars_ = [] if _has_opaque else [("gain", "float", "0.0f")]
+    else:
+        vars_ = list(state_vars)
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:
