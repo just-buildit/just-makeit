@@ -185,65 +185,96 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
     return None
 
 
-def _preserve_core_bodies(
-    path: Path,
-    new_text: str,
-    comp: str,
-    exclude: tuple[str, ...] = (),
-    skip_struct_merge: bool = False,
-) -> str:
-    """Splice hand-written bodies from an existing core file into *new_text*.
+def _inject_decls_into_core_h(
+    path: Path, comp: str, decls: "list[str]"
+) -> bool:
+    """Surgically refresh C declarations in an object's ``<comp>_core.h``.
 
-    For ``<comp>_core.c`` every function body is preserved; for
-    ``<comp>_core.h`` the state-struct fields and the inline ``<comp>_step``
-    body are preserved.  Returns *new_text* unchanged when *path* does not yet
-    exist (first scaffold) or no preservable region is found.
-
-    *exclude* names functions whose freshly rendered body must win over the
-    old one — used by ``just-makeit add``, which has to rewrite ``create`` /
-    ``reset`` so the newly added state variable is actually initialised.
-
-    *skip_struct_merge* suppresses the struct-field merge for header files.
-    Use this when the caller deliberately removed a state field and the new
-    template already has the correct struct — merging would re-add the field.
-    """
+    Splice-free: a declaration whose exact text is already present is left
+    alone (idempotent).  A prototype that shares its function *name* with an
+    existing single-line decl **replaces** it in place — so a method that
+    overrides a builtin (e.g. a parameterised ``reset``) or a refreshed
+    signature never produces a duplicate.  Anything genuinely new is inserted
+    just before the ``extern "C"`` close (falling back to the header guard).
+    The sacred state struct and inline ``step()`` body are never touched.
+    Returns True if the header changed."""
     if not path.exists():
-        return new_text
-    old = path.read_text(encoding="utf-8")
-    if path.suffix == ".c":
-        funcs = _extract_core_c_funcs(old)
-        for name in exclude:
-            funcs.pop(name, None)
-        # Getter/setter impls are trivial auto-generated one-liners that
-        # users never hand-edit — always re-emit the freshly generated version
-        # so parameter/signature changes (e.g. val rename) take effect.
-        gs_prefix = (f"{comp}_get_", f"{comp}_set_")
-        for fn in list(funcs):
-            if fn.startswith(gs_prefix):
-                funcs.pop(fn)
-        return _restore_core_c_funcs(new_text, funcs)
-    # header: optionally merge struct fields, then restore the inline step()
-    if not skip_struct_merge:
-        old_struct = _STRUCT_RE.search(old)
-        new_struct = _STRUCT_RE.search(new_text)
-        if old_struct and new_struct:
-            merged = _merge_struct_fields(
-                new_struct.group(2), old_struct.group(2)
+        return False
+    text = original = path.read_text(encoding="utf-8")
+    to_insert: list[str] = []
+    for d in decls:
+        d = d.strip()
+        if not d or d in text:  # genuinely-new decls only; exact = idempotent
+            continue
+        m = re.search(r"(\w+)\s*\(", d)
+        if m:
+            # Replace an existing single-line prototype of the same name (a
+            # builtin override or a refreshed signature). The pattern requires
+            # the line to end in ');' so it never matches the inline step()
+            # definition (which ends in '{').
+            pat = re.compile(
+                r"^[ \t]*[A-Za-z_][^\n{]*\b"
+                + re.escape(m.group(1))
+                + r"\s*\([^\n{]*\);[ \t]*$",
+                re.MULTILINE,
             )
-            new_text = (
-                new_text[: new_struct.start(2)]
-                + merged
-                + new_text[new_struct.end(2) :]
-            )
-    old_step = _step_func_span(old, comp)
-    new_step = _step_func_span(new_text, comp)
-    if old_step and new_step:
-        new_text = (
-            new_text[: new_step[0]]
-            + old[old_step[0] : old_step[1]]
-            + new_text[new_step[1] :]
-        )
-    return new_text
+            new_text, n = pat.subn(d, text, count=1)
+            if n:
+                text = new_text
+                continue
+        to_insert.append(d)
+    if to_insert:
+        block = "\n".join(to_insert) + "\n"
+        cpp_end = "#ifdef __cplusplus\n}\n#endif"
+        if cpp_end in text:
+            text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
+        else:
+            guard = f"#endif /* {comp.upper()}_CORE_H */"
+            text = text.replace(guard, f"{block}{guard}", 1)
+    if text == original:
+        return False
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
+    """Surgically insert a member into the ``<comp>_state_t`` struct.
+
+    Additive and splice-free: the field is placed just before the struct's
+    closing ``} <comp>_state_t;`` and skipped if already present (idempotent).
+    Used for field-backed properties, whose member needs no ``create``/
+    ``reset`` wiring (it is set via the property setter, not the constructor),
+    so it can be added without rebuilding the sacred lifecycle.  Returns True
+    if the header changed."""
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if field_decl.strip() in text:
+        return False
+    close = f"}} {comp}_state_t;"
+    if close not in text:
+        return False
+    text = text.replace(close, f"    {field_decl.strip()}\n{close}", 1)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+_DECL_RE = re.compile(r"^[A-Za-z_][^{}]*\([^{}]*\);$")
+
+
+def _core_h_decl_lines(text: str) -> "list[str]":
+    """Extract single-line C function prototypes from a rendered header.
+
+    A prototype contains ``(`` and ends in ``);`` on one line; struct fields
+    (no ``(``), the closing ``} <comp>_state_t;``, and inline definitions
+    (which carry ``{``) are excluded.  Used by ``jm apply`` to inject any
+    declaration the manifest implies that the user's header is missing —
+    additively, never re-rendering the sacred struct/``step()``."""
+    return [
+        line
+        for raw in text.splitlines()
+        if _DECL_RE.match(line := raw.strip())
+    ]
 
 
 def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
@@ -407,16 +438,17 @@ def run(
         )
         sys.exit(1)
 
-    # Only inject the default "gain" field when there are no regular state
-    # vars AND no opaque fields — opaque-only structs are fully user-managed.
+    # Inject the starter "gain" field only when the CLI got no --state
+    # (state_vars is None) and the struct isn't opaque-managed. An explicit
+    # [] — e.g. apply replaying an object whose last field was removed —
+    # stays empty rather than resurrecting `gain`.
     _has_opaque = bool(opaque_fields)
-    vars_ = (
-        []
-        if no_state
-        else (
-            state_vars or ([] if _has_opaque else [("gain", "float", "0.0f")])
-        )
-    )
+    if no_state:
+        vars_ = []
+    elif state_vars is None:
+        vars_ = [] if _has_opaque else [("gain", "float", "0.0f")]
+    else:
+        vars_ = list(state_vars)
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     if perf is None:
@@ -582,11 +614,12 @@ def run(
     )
     init_py_tmpl = R.PACKAGE_INIT_PY
 
-    # C headers
+    # C headers. Object creation is create-only (the verb errors on a
+    # duplicate name), so the sacred files are written fresh — never spliced.
     core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
     _write(
         core_h_path,
-        _preserve_core_bodies(core_h_path, r(core_h_tmpl), comp),
+        r(core_h_tmpl),
         "update" if core_h_path.exists() else "create",
     )
     if impl_body is not None and not no_step:
@@ -597,11 +630,11 @@ def run(
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
         h_path.write_text(h_text, encoding="utf-8")
 
-    # C sources
+    # C sources (create-only — see above).
     core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
     _write(
         core_c_path,
-        _preserve_core_bodies(core_c_path, r(core_c_tmpl), comp),
+        r(core_c_tmpl),
         "update" if core_c_path.exists() else "create",
     )
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))

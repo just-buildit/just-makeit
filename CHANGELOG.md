@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-05-31
+
+### Changed
+
+- **The mutating verbs no longer splice your sacred files — "your code is
+    sacred", honestly.** The old verbs re-rendered `<obj>_core.c` /
+    `<obj>_core.h` from templates and grafted your hand-written bodies back
+    with a fragile brace/regex splicer that could silently drop user code.
+    That splicer (`_preserve_core_bodies`) is retired. The contract is now
+    enforced mechanically:
+
+    - **Additive** verbs (`jm method`, `jm property` for a computed or
+        field-backed property, `jm function`) inject a declaration into
+        `_core.h` and append a stub to `_core.c` — existing bodies, the state
+        struct, and the inline `step()` are never re-rendered.
+    - **Structural** changes (`jm add`, `jm remove state`) author the manifest
+        then rebuild the object via the `jm regenerate` path (delete + apply).
+        This discards hand-written `_core.c` bodies, so keep your algorithm in
+        the TOML `impl` / `create_impl` (or `git stash`) and it is re-asserted
+        on the rebuild. `jm add` / `jm remove state` take `--force` to skip the
+        rebuild confirmation.
+    - `jm remove <method|property>` regenerates the glue and leaves the
+        orphaned `_core.c` body / `_core.h` declaration for you with a
+        "delete by hand" note (the `jm remove function` pattern).
+    - `jm apply` injects any missing TOML-declared declaration into `_core.h`
+        and keeps the struct + `step()` sacred; a state-field or signature
+        change is structural and reaches the body via `jm regenerate`.
+
+    The merged behaviour is the same lifecycle the docs already teach —
+    **author → apply/regenerate → implement → test → iterate** — you just can
+    no longer lose code to a mis-fired splice. This changes the on-disk
+    side effects of `jm add` / `jm remove state` (they now rebuild), hence the
+    minor version bump.
+
 ### Fixed
 
 - **Collocated module + module function no longer fails to compile.** When a

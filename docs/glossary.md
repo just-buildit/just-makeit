@@ -97,9 +97,10 @@ ______________________________________________________________________
 **glue file**
 A generated file that is rebuilt from the manifest on every `just-makeit apply`:
 `<comp>_ext.c` (CPython binding), `<comp>.pyi` (type stub), and `CMakeLists.txt`.
-Editing the TOML propagates straight into the glue. `<comp>_core.h` is a
-*hybrid*: its public declarations refresh, but the inline `step()` body and the
-state struct are preserved.
+Editing the TOML propagates straight into the glue. `<comp>_core.h` is
+*mixed*: `apply` injects a missing method/property declaration, but the inline
+`step()` body and the state struct are sacred — never re-rendered (a new state
+field reaches the struct via a rebuild: `jm add` / `jm regenerate`).
 
 ______________________________________________________________________
 

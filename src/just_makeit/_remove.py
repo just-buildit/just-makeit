@@ -21,7 +21,6 @@ from . import _context as Ctx
 from . import _render as R
 from ._init import (
     _make_component_ctx,
-    _preserve_core_bodies,
     _to_title,
     _write_compile_commands,
 )
@@ -385,69 +384,9 @@ def _warn_if_state_ref(core_h: Path, core_c: Path, name: str) -> None:
             )
 
 
-def _regenerate_after_state_change(
-    root: Path, cfg: dict, obj: str, pkg: str
-) -> None:
-    """Re-render all generated files after the state list changes.
-
-    Preserves the user's step() body in core.h and non-lifecycle functions
-    in core.c, but regenerates create() and reset() so they reflect the
-    updated state fields — same pattern used by `jm add`."""
-    module = C.component_module(cfg, obj)
-    ctx = _object_ctx(cfg, obj, pkg, module)
-    excl = (f"{obj}_create", f"{obj}_reset")
-
-    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
-    if core_h.exists():
-        core_h.write_text(
-            _preserve_core_bodies(
-                core_h,
-                R.render(R.COMPONENT_CORE_H, ctx),
-                obj,
-                exclude=excl,
-                skip_struct_merge=True,
-            ),
-            encoding="utf-8",
-        )
-        print(f"  update  {core_h}")
-
-    core_c = root / "native" / "src" / obj / f"{obj}_core.c"
-    if core_c.exists():
-        core_c.write_text(
-            _preserve_core_bodies(
-                core_c, R.render(R.COMPONENT_CORE_C, ctx), obj, exclude=excl
-            ),
-            encoding="utf-8",
-        )
-        print(f"  update  {core_c}")
-
-    if module:
-        _regenerate_module(root, cfg, module, pkg)
-        return
-
-    for path, tmpl in [
-        (root / "native" / "src" / obj / f"{obj}_ext.c", R.COMPONENT_EXT_C),
-        (root / "src" / pkg / f"{obj}.pyi", R.COMPONENT_PYI),
-    ]:
-        if path.exists():
-            path.write_text(R.render(tmpl, ctx), encoding="utf-8")
-            print(f"  update  {path}")
-
-    bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
-    if bench_c.exists():
-        tmpl = (
-            R.NO_STEP_BENCH_C
-            if C.is_no_step(cfg, obj)
-            else R.COMPONENT_BENCH_C
-        )
-        bench_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
-        print(f"  update  {bench_c}")
-
-
 def _remove_state(
     root: Path, cfg: dict, obj: str, name: str, force: bool
 ) -> None:
-    pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
@@ -464,7 +403,10 @@ def _remove_state(
     _warn_if_state_ref(core_h, core_c, name)
 
     if not _confirm(
-        f"Remove state field '{name}' from object '{obj}'?", force
+        f"Remove state field '{name}' from '{obj}'? This rebuilds '{obj}' "
+        "from the manifest and discards hand-written _core.c bodies "
+        "(git stash or keep them in impl/create_impl first).",
+        force,
     ):
         print("Aborted.")
         return
@@ -476,8 +418,14 @@ def _remove_state(
         cfg[obj].pop("state", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
+    print()
+    # Removing a field is structural (struct + create/reset change): rebuild
+    # from the manifest rather than splicing.  The remove was already
+    # confirmed above, so skip the regenerate prompt.  (Imported lazily —
+    # _regenerate imports helpers from this module.)
+    from . import _regenerate
 
-    _regenerate_after_state_change(root, cfg, obj, pkg)
+    _regenerate.run(root, obj, force=True)
     print()
     print(f"Done!  State field '{name}' removed.")
 
@@ -547,7 +495,8 @@ def _remove_property(
     _regenerate_object_bindings(root, cfg, obj, pkg)
     print()
     note = (
-        ""
+        f"\n  note: the '{name}' field remains in {obj}_state_t "
+        f"({obj}_core.h) — delete it by hand."
         if is_field
         else f"\n  note: {obj}_get_{name}()/{obj}_set_{name}() remain in "
         f"{obj}_core.c — delete them by hand."
@@ -695,26 +644,19 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
 def _regenerate_object_bindings(
     root: Path, cfg: dict, obj: str, pkg: str
 ) -> None:
-    """Re-render core.h / ext.c / .pyi / bench after a method or property
-    entry was dropped from the TOML."""
+    """Regenerate the glue (ext.c / .pyi / bench) after a method or property
+    entry was dropped from the TOML.
+
+    The orphaned `_core.c` body and its `_core.h` declaration are left in
+    place for the user to delete — they are sacred, so removal never splices
+    or re-renders them (the caller prints a 'delete by hand' note)."""
     module = C.component_module(cfg, obj)
-    ctx = _object_ctx(cfg, obj, pkg, module)
-
-    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
-    if core_h.exists():
-        core_h.write_text(
-            _preserve_core_bodies(
-                core_h, R.render(R.COMPONENT_CORE_H, ctx), obj
-            ),
-            encoding="utf-8",
-        )
-        print(f"  update  {core_h}")
-
     if module:
         # The module's shared ext.c / CMakeLists / __init__ / .pyi.
         _regenerate_module(root, cfg, module, pkg)
         return
 
+    ctx = _object_ctx(cfg, obj, pkg, module)
     ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
     if ext_c.exists():
         ext_c.write_text(R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8")

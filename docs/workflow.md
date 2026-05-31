@@ -359,34 +359,49 @@ Both workflows produce a `lib<project>.so` C library that supports
 
 ______________________________________________________________________
 
-## The edit lifecycle: author → apply → sacred/glue → regenerate
+## The edit lifecycle: author → apply/regenerate → implement → test → iterate
 
 `just-makeit.toml` is the manifest. Every CLI verb (`object`, `method`,
 `add`, …) writes to it, then materializes files. You can also edit the TOML by
-hand. Two commands propagate manifest edits, and they treat your files
-differently — this is the **sacred/glue contract**:
+hand. The verbs treat your files differently — this is the
+**sacred/glue contract**:
 
-| File                   | On `jm apply`                                                                                  |
-| ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest                                                |
-| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                  |
-| `CMakeLists.txt`       | **Glue** — always regenerated                                                                  |
-| `<comp>_core.h`        | **Hybrid** — declarations refresh; the inline `step()` body and the state struct are preserved |
-| `<comp>_core.c`        | **Sacred** — never overwritten once it exists; your `steps()`/lifecycle bodies are yours       |
+| File                   | Class                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest; never hand-edited                                      |
+| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                           |
+| `CMakeLists.txt`       | **Glue** — always regenerated                                                                           |
+| `<comp>_core.c`        | **Sacred** — never spliced or re-rendered; created once, rebuilt only by `jm regenerate`                |
+| `<comp>_core.h`        | The state struct + inline `step()` are **sacred**; method/property *declarations* refresh from the TOML |
+
+The verbs are **splice-free**. They never re-render an existing body:
+
+- `jm method`, computed `jm property`, and `jm function` are **additive** —
+    they inject one declaration into `_core.h` and append a fresh stub to
+    `_core.c`. Existing bodies are never touched. A field-backed
+    `jm property --field` injects one struct member directly.
+- `jm add` (adding state) is **structural** — it writes `[[obj.state]]` to the
+    manifest, then rebuilds the object via the regenerate path. It discards
+    hand-written `_core.c` bodies (see below).
+- `jm apply` injects any TOML-declared declaration missing from `_core.h` and
+    keeps the struct + `step()` sacred. A state-field change or a signature
+    change is structural → `jm regenerate`.
 
 So the flow is:
 
-1. **Author** — run a CLI verb or hand-edit `just-makeit.toml`.
-1. **Apply** — `jm apply` regenerates the glue and refreshes `_core.h`
-    declarations. A new TOML-declared method or state field reaches the public
-    API immediately. Your `_core.c` bodies are left alone.
-1. **Implement** — fill in the new `step()`/`steps()` body in the sacred files.
+1. **Author** — run a CLI verb, or hand-edit `just-makeit.toml`.
+1. **Apply / regenerate** — `jm apply` refreshes the glue and injects missing
+    declarations; a structural change (new state field, changed signature)
+    needs `jm regenerate` to rebuild the object.
+1. **Implement** — fill in the new `step()`/`steps()`/method body in `_core.c`.
+1. **Test** — `make test`.
+1. **Iterate** — back to step 1.
+
+You only ever own `_core.c` and the TOML.
 
 When you change a *signature* in TOML (an arg type, a method's return type),
-`jm apply` updates the glue and the `_core.h` declaration, but the sacred
-`_core.c` body still has the old shape. Use the additive verbs (`jm method`,
-`jm add`) where they apply, or — when you want a clean rebuild from the
-manifest — `jm regenerate`:
+or add a state field, the structure of the object changed — rebuild it from
+the manifest with `jm regenerate`:
 
 ```sh
 git stash                    # _core.c bodies are about to be discarded
@@ -395,9 +410,10 @@ just-makeit regenerate gain  # deletes every file 'gain' owns, re-runs apply
 
 `regenerate` deletes every file the component owns and rebuilds it from the
 manifest, then asks for a single confirmation (`--force` skips it). Unlike
-`jm remove`, it leaves the manifest untouched — it is the deliberate-refresh
-half of the contract. It discards hand-written `_core.c` bodies, so stash or
-commit first. Works for standalone and module objects.
+`jm remove`, it leaves the manifest untouched — it is the deliberate-rebuild
+half of the contract. It discards hand-written `_core.c` bodies, so keep your
+algorithm in the TOML `impl`/`create_impl` (which the rebuild re-asserts) or
+stash/commit first. Works for standalone and module objects.
 
 ### Lifting an existing C body with `--impl`
 
@@ -471,10 +487,14 @@ ______________________________________________________________________
 just-makeit add --object gain --state drive:double:1.0
 ```
 
-Regenerates the six state-sensitive files for `gain` from the updated state
-list. `just-makeit.toml` is updated only after the files are written
-successfully. When the project has a single standalone object, `--object` may be
-omitted.
+Adding state is **structural**. `add` writes the new `[[gain.state]]` entry to
+`just-makeit.toml`, then rebuilds the object from the manifest via the
+regenerate path (delete + apply) — the new field reaches the struct, the
+constructor, the getter/setter, and reset in one shot. The rebuild **discards
+hand-written `_core.c` bodies**, so keep your algorithm in the TOML
+`impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first. `add`
+prompts for one confirmation before rebuilding; `--force` skips it. When the
+project has a single standalone object, `--object` may be omitted.
 
 ______________________________________________________________________
 

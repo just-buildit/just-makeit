@@ -361,7 +361,7 @@ class TestAddPreservesFramework:
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_=True)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
-        add_run(dest, "filt", [("order", "int", "4")])
+        add_run(dest, "filt", [("order", "int", "4")], force=True)
         test = (dest / "src" / "proj" / "tests" / "test_filt.py").read_text(
             encoding="utf-8"
         )
@@ -373,7 +373,7 @@ class TestAddPreservesFramework:
         dest = tmp_path / "proj"
         new_run("proj", dest, pytest_benchmark_=True)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
-        add_run(dest, "filt", [("order", "int", "4")])
+        add_run(dest, "filt", [("order", "int", "4")], force=True)
         bench = (
             dest / "src" / "proj" / "benchmarks" / "bench_filt.py"
         ).read_text(encoding="utf-8")
@@ -384,7 +384,7 @@ class TestAddPreservesFramework:
         dest = tmp_path / "proj"
         new_run("proj", dest)
         init_run(dest, "filt", [("gain", "float", "1.0f")])
-        add_run(dest, "filt", [("order", "int", "4")])
+        add_run(dest, "filt", [("order", "int", "4")], force=True)
         test = (dest / "src" / "proj" / "tests" / "test_filt.py").read_text(
             encoding="utf-8"
         )

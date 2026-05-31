@@ -89,27 +89,36 @@ getter/setter pair, and reset target. If you just need a field in the struct
 — a scratch buffer, a lookup table, something initialised in `_create` — add
 it manually to `native/inc/<obj>/<obj>_core.h` inside the struct body.
 
-The state struct (and the inline `step()` body) in `<obj>_core.h` is
-preserved across `just-makeit add` and `just-makeit apply` — only the public
-*declarations* refresh from the manifest. Your hand-added fields stay put.
+The state struct (and the inline `step()` body) in `<obj>_core.h` is sacred —
+`just-makeit apply` never re-renders it; it only injects missing method/property
+*declarations* from the manifest. Your hand-added fields stay put across
+`apply`. The exception is a **rebuild** (`just-makeit add` or
+`just-makeit regenerate`): it re-stubs the struct from the manifest, so re-add
+any manual fields after one — or declare them in TOML so they come back
+automatically.
 
 ______________________________________________________________________
 
 ## Does `jm add` / `jm apply` overwrite my hand-edited files?
 
-No — they follow a sacred/glue contract. See the
+It depends on the verb — they follow a sacred/glue contract. See the
 [Customization](customization.md#what-regenerates-vs-whats-yours) page for the
 complete table. In short:
 
-- **Glue** (`*_ext.c`, `.pyi`, `CMakeLists.txt`): regenerated from the
-    manifest on every apply.
-- **Hybrid** (`*_core.h`): public *declarations* refresh, but the inline
-    `step()` body and the state struct are preserved.
-- **Sacred** (`*_core.c`, tests): yours, never overwritten once they exist.
+- **`jm apply`** never touches `_core.c`. It regenerates the glue (`*_ext.c`,
+    `.pyi`, `CMakeLists.txt`) and injects any missing method/property
+    *declaration* into `*_core.h`; the state struct and inline `step()` body
+    stay sacred.
+- **`jm method` / computed `jm property` / `jm function`** are additive: they
+    inject one declaration and append a fresh stub, leaving your existing
+    bodies intact.
+- **`jm add`** is structural — it rebuilds the object from the manifest, which
+    re-stubs the sacred `_core.c`. Keep your algorithm in the TOML
+    `impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first.
 
-So editing the TOML propagates to the glue. A signature change you make in the
-manifest may also need an additive verb (`jm method` / `jm add`) — or a
-`jm regenerate` — to update the sacred `_core.c` body.
+So editing the TOML propagates to the glue. A signature change or a new state
+field is structural — use `jm regenerate` (or `jm add` for state) to rebuild
+the sacred `_core.c` body from the manifest.
 
 ______________________________________________________________________
 

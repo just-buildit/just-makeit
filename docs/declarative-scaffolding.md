@@ -592,17 +592,20 @@ flowchart TD
 the tree**. Each file the manifest describes falls into one of three
 classes:
 
-| File                                                           | Class      | On re-apply                                                                                                                                 |
-| -------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, every `CMakeLists.txt` | **glue**   | regenerated from the manifest every time                                                                                                    |
-| `<comp>_core.h`                                                | **hybrid** | declarations refresh (a TOML-declared method/field reaches the public API); the inline `step()` body and the state struct are **preserved** |
-| `<comp>_core.c`                                                | **sacred** | never overwritten once it exists — `steps()` and lifecycle bodies are yours                                                                 |
+| File                                                           | Class      | On re-apply                                                                                                                                   |
+| -------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, every `CMakeLists.txt` | **glue**   | regenerated from the manifest every time                                                                                                      |
+| `<comp>_core.h`                                                | **mixed**  | a TOML-declared method/property **declaration** is injected; the inline `step()` body and the state struct are **sacred** — never re-rendered |
+| `<comp>_core.c`                                                | **sacred** | never spliced or re-rendered once it exists — `steps()` and lifecycle bodies are yours                                                        |
 
-So editing the manifest always propagates to the glue. If you change a
-**signature** in TOML (a method's return type, a new state field), the glue
-and the public declarations update, but the sacred `_core.c` body is left
-as you wrote it — use the additive verbs (`jm method`, `jm add`) or a
-deliberate `jm regenerate` to also refresh the body.
+So editing the manifest always propagates to the glue, and `apply` injects any
+missing method/property declaration into `_core.h`. But the struct and inline
+`step()` stay sacred. If you change a **signature** in TOML or add a **state
+field**, that's *structural* — the glue and declarations update on `apply`, but
+the sacred `_core.c` body is left as you wrote it. Rebuild it from the manifest
+with `jm regenerate` (or `jm add`, which is `regenerate` specialized for state).
+A new method or computed property is additive instead: `jm method` /
+`jm property` inject a declaration and append a fresh stub.
 
 Other properties:
 

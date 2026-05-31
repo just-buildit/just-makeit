@@ -24,7 +24,6 @@ from . import _stubs as S
 from . import _types as T
 from ._init import (
     _make_component_ctx,
-    _preserve_core_bodies,
     _to_title,
     _write,
     _write_compile_commands,
@@ -723,7 +722,15 @@ def run(
     if perf is None:
         perf = C.is_perf(cfg)
 
-    vars_ = [] if no_state else (state_vars or [("gain", "double", "0.0")])
+    # state_vars is None only when the CLI got no --state (use the starter
+    # `gain` so a fresh `jm object` isn't empty); an explicit [] (e.g. apply
+    # replaying an object whose last field was removed) stays empty.
+    if no_state:
+        vars_ = []
+    elif state_vars is None:
+        vars_ = [("gain", "double", "0.0")]
+    else:
+        vars_ = list(state_vars)
     ctx = _make_object_ctx(
         object_name,
         module,
@@ -787,13 +794,12 @@ def run(
             _write(simd_h, R.JM_SIMD_H, "create")
 
     # C library files (OBJECT lib only — no standalone Python module).
-    # Hand-written bodies in an existing core.h/core.c are spliced into the
-    # freshly rendered templates so re-running `just-makeit object` does not
-    # wipe the user's algorithm code.
+    # Object creation is create-only (the verb errors on a duplicate name),
+    # so the sacred files are written fresh — never spliced.
     core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
     _write(
         core_h_path,
-        _preserve_core_bodies(core_h_path, r(R.COMPONENT_CORE_H), comp),
+        r(R.COMPONENT_CORE_H),
         "update" if core_h_path.exists() else "create",
     )
     if impl_body is not None and not no_step:
@@ -805,7 +811,7 @@ def run(
     core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
     _write(
         core_c_path,
-        _preserve_core_bodies(core_c_path, r(R.COMPONENT_CORE_C), comp),
+        r(R.COMPONENT_CORE_C),
         "update" if core_c_path.exists() else "create",
     )
     obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"

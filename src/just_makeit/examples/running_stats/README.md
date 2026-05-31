@@ -75,7 +75,7 @@ running_stats_step (const running_stats_state_t *state, float complex x)
 ```
 
 ```c
-// after — Welford's online algorithm
+// base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
 static inline float complex
@@ -184,5 +184,31 @@ just-makeit add --state "min_val:double:0.0" --state "max_val:double:0.0"
 make test
 ```
 
-`add` regenerates only the state-sensitive files — your `running_stats_step`
-implementation is untouched.
+State is *structural*: `add` rewrites the `running_stats_state_t` struct and
+the `create()` / `reset()` lifecycle, so it rebuilds the object from the
+manifest rather than splicing into your sources. That rebuild resets
+`running_stats_step()` back to a fresh stub, so re-run the implement step to
+restore the algorithm — now on top of the new `min_val` / `max_val` fields:
+
+```c
+// after — Welford's online algorithm + running min/max
+// Input:  real part = new sample (imaginary part ignored)
+// Output: real = current mean, imag = sample variance (0 until n > 1)
+// State:  min_val / max_val track the smallest / largest sample seen so far.
+static inline float complex
+running_stats_step (running_stats_state_t *state, float complex x)
+{
+  double sample = (double)crealf (x);
+  state->n++;
+  double delta = sample - state->mean;
+  state->mean += delta / (double)state->n;
+  double delta2 = sample - state->mean;
+  state->m2 += delta * delta2;
+  if (state->n == 1 || sample < state->min_val)
+    state->min_val = sample;
+  if (state->n == 1 || sample > state->max_val)
+    state->max_val = sample;
+  double var = (state->n > 0) ? state->m2 / (double)state->n : 0.0;
+  return (float)state->mean + (float)var * I;
+}
+```

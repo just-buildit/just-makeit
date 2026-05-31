@@ -97,9 +97,14 @@ Commands:
     --impl file::funcname       Lift function body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 
-  add [OPTIONS]                 Append variables to the current object.
+  add [OPTIONS]                 Add state to an object, then rebuild it from
+                                the manifest. State is structural, so this
+                                discards the sacred _core.c (keep your body in
+                                impl/create_impl, or git stash, first).
     --state name:type[:default] Add a state variable.
     --param name:type[:default] Add a constructor parameter.
+    --object name               Object to modify (default: the only object).
+    --force, -f                 Skip the rebuild confirmation.
 
   remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
     kind is object|module|method|property|function.
@@ -522,6 +527,7 @@ def main() -> None:
         from ._cli_parse import parse_state_flag
 
         component = None
+        force = False
         state_vars: list[tuple[str, str, str]] = []
         remaining = args[1:]
         i = 0
@@ -533,6 +539,9 @@ def main() -> None:
                     print("error: --object requires a name", file=sys.stderr)
                     sys.exit(1)
                 component = remaining[i]
+                i += 1
+            elif tok in ("--force", "-f"):
+                force = True
                 i += 1
             elif tok in ("--state", "--param"):
                 var, i = parse_state_flag(remaining, i)
@@ -548,7 +557,7 @@ def main() -> None:
             )
             sys.exit(1)
 
-        _add.run(Path.cwd(), component, state_vars)
+        _add.run(Path.cwd(), component, state_vars, force=force)
 
     elif cmd == "perf":
         from . import _perf

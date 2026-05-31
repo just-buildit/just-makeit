@@ -319,7 +319,7 @@ class TestPropertyField:
         property_run(
             project, "buf", "phase", None, "uint32_t", True, field=True
         )
-        add_run(project, "buf", [("gain", "float", "1.0f")])
+        add_run(project, "buf", [("gain", "float", "1.0f")], force=True)
         h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )

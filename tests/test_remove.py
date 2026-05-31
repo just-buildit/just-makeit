@@ -445,7 +445,7 @@ class TestRemoveStateField:
         """Removing one field leaves other state fields intact."""
         from just_makeit._add import run as add_run
 
-        add_run(project, "widget", [("level", "float", "0.5f")])
+        add_run(project, "widget", [("level", "float", "0.5f")], force=True)
         remove_run(project, "state", "gain", object_name="widget", force=True)
         cfg = load(project)
         names = [s["name"] for s in cfg.get("widget", {}).get("state", [])]

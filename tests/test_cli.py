@@ -556,7 +556,7 @@ class TestAddCLI:
     def test_add_creates_state_var_in_header(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        r = _cli("add", "--state", "order:int:4", cwd=dest)
+        r = _cli("add", "--state", "order:int:4", "--force", cwd=dest)
         assert r.returncode == 0
         core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
@@ -566,7 +566,7 @@ class TestAddCLI:
     def test_add_updates_config(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        _cli("add", "--state", "order:int:4", cwd=dest)
+        _cli("add", "--state", "order:int:4", "--force", cwd=dest)
         cfg = _load_cfg(dest)
         names = [s["name"] for s in cfg["comp"]["state"]]
         assert "order" in names
@@ -594,9 +594,15 @@ class TestAddCLI:
     def test_add_done_message(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        r = _cli("add", "--state", "order:int", cwd=dest)
+        r = _cli("add", "--state", "order:int", "--force", cwd=dest)
         assert r.returncode == 0
-        assert "Done!" in r.stdout
+        # State is structural: the new flow authors the field, then rebuilds
+        # the object from the manifest. Assert the stable parts of that
+        # message: the state name, the object name, and that it is rebuilt
+        # from the manifest.
+        assert "order" in r.stdout
+        assert "comp" in r.stdout
+        assert "rebuilt from the manifest" in r.stdout
 
 
 class TestConfigCLI:
@@ -1447,12 +1453,12 @@ class TestAddParamCLI:
 
     def test_add_param_exits_0(self, tmp_path):
         dest = self._setup(tmp_path)
-        r = _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        r = _cli("add", "--param", "offset:double:0.0", "--force", cwd=dest)
         assert r.returncode == 0
 
     def test_add_param_appears_in_header(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        _cli("add", "--param", "offset:double:0.0", "--force", cwd=dest)
         core_h = (dest / "native/inc/norm/norm_core.h").read_text(
             encoding="utf-8"
         )
@@ -1460,7 +1466,7 @@ class TestAddParamCLI:
 
     def test_add_param_recorded_in_config(self, tmp_path):
         dest = self._setup(tmp_path)
-        _cli("add", "--param", "offset:double:0.0", cwd=dest)
+        _cli("add", "--param", "offset:double:0.0", "--force", cwd=dest)
         cfg = _load_cfg(dest)
         names = [s["name"] for s in cfg["norm"].get("state", [])]
         assert "offset" in names

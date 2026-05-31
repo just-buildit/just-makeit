@@ -11,9 +11,10 @@ ______________________________________________________________________
     the acceptance record.
 - **v0.14 landed the sacred/glue contract.** `jm apply` regenerates
     glue (`<comp>_ext.c`, `<comp>.pyi`, `CMakeLists.txt`) from the
-    manifest, refreshes the hybrid `<comp>_core.h` declarations while
-    preserving the inline `step()` body and state struct, and never
-    overwrites the sacred `<comp>_core.c`. See
+    manifest, injects any missing `<comp>_core.h` method/property
+    declaration while keeping the inline `step()` body and state struct
+    sacred, and never splices the sacred `<comp>_core.c` (a new state field
+    or signature change rebuilds via `jm add` / `jm regenerate`). See
     [`declarative-scaffolding.md`](declarative-scaffolding.md).
 - **`jm regenerate <component>`** is the deliberate-refresh half:
     deletes the component's files and re-applies from the manifest

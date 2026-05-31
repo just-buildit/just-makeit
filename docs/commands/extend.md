@@ -9,8 +9,11 @@ ______________________________________________________________________
 
 Add a named execute method to an existing object.
 
-Each method appends a C stub to `<obj>_core.c` and regenerates the module
-`_ext.c` with the new Python glue.
+`jm method` is **additive and splice-free**: it injects the method's
+declaration into `<obj>_core.h` and appends a fresh C stub to `<obj>_core.c`,
+then regenerates the glue (`_ext.c`, `.pyi`) with the new Python binding.
+Existing bodies in `_core.c` are never re-rendered — only the new stub is
+appended, ready for you to implement.
 
 **Arguments**
 
@@ -205,9 +208,13 @@ just-makeit property buffer capacity --type size_t --writable
 just-makeit property reader samples_read --module conv --type uint32_t --field
 ```
 
-Generates a `get_<prop>()` C function stub (and `set_<prop>()` if `--writable`)
-that you implement in `<obj>_core.c`, plus the Python getter (and setter) glue
-in the module `_ext.c`.
+Like `jm method`, a computed property is **additive and splice-free**: it
+injects a `get_<prop>()` declaration into `<obj>_core.h` and appends a fresh
+stub to `<obj>_core.c` (plus `set_<prop>()` if `--writable`) for you to
+implement, then regenerates the Python getter/setter glue in `_ext.c`. With
+`--field` no stub is generated — it injects one `TYPE prop_name;` member
+directly into the state struct and auto-implements the getter as
+`return state->prop_name`. Existing `_core.c` bodies are never re-rendered.
 
 **Arguments**
 
@@ -219,6 +226,16 @@ in the module `_ext.c`.
 | `--type TYPE`   | C type of the property value.                                                                                                                                                                                                                           |
 | `--writable`    | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
 | `--field`       | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
+
+### Removing a method or property
+
+`just-makeit remove <object> <method|property>` regenerates the glue
+(`_ext.c`, `.pyi`) without the entry, so the binding stops exposing it. It is
+splice-free, so it **leaves the orphaned `_core.c` body** (and the
+`_core.h` declaration, or the field-backed struct member) in place with a
+"delete by hand" note — your code is never silently rewritten. Remove the
+stub yourself once you're sure. (Removing *state* is structural and rebuilds
+the object via the regenerate path instead.)
 
 ______________________________________________________________________
 
