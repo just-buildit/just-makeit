@@ -36,7 +36,12 @@ just-makeit scaffolds, builds, tests, benchmarks, and distributes a Python C
 extension today — and the same C compiles once into a standalone library for
 C, C++, and Rust. The full I/O matrix (scalar, array, void, real, complex),
 multi-type modules, shape presets, performance scaffolding (portable SIMD
-macros), and the sacred/glue edit lifecycle are all shipped.
+macros), and the sacred/glue edit lifecycle are all shipped. Also shipped:
+`jm status` (drift report), `jm ci` (CI workflow generation), the
+per-component fragment layout
+([`objects/NAME.toml` / `modules/NAME.toml`](declarative-scaffolding.md#three-layouts)),
+`jm migrate-to-fragments`, and per-function `.c` files in modules so each
+module function lives in its own sacred translation unit.
 
 The version-by-version history lives in
 [CHANGELOG.md](../CHANGELOG.md). This page is only about what's ahead.
@@ -48,34 +53,11 @@ ______________________________________________________________________
 
 ## Where we're headed
 
-Three horizons. The near-term work is concrete and close; the later it gets,
+Two horizons. The near-term work is concrete and close; the later it gets,
 the more a line is a direction than a date. If one of these is something you
 hit, we'd like to hear about it.
 
-### Now — bank the easy wins and make good on the promises
-
-The fastest value is the work that's nearly done and the promises already
-made out loud.
-
-- **Shipped this cycle.** `jm status` (a read-only report of where the files
-    have drifted from the manifest), auto-fetching a prebuilt external
-    dependency for the example tests, and [`jm ci`](commands/build.md#just-makeit-ci-provider-name)
-    (generate a GitHub Actions / Woodpecker workflow so a scaffolded project is
-    CI-green as fast as it builds and tests locally) are all done and merged.
-- **Keep the no-foot-guns net tight.** Every valid command stays green on day
-    one; every new shape gets a regression test before it ships. This is a
-    standing promise, not a milestone.
-- **Make "your code is sacred" whole.** The sacred/glue lifecycle protects
-    your algorithm in place; the next step makes a whole *component* portable.
-    The per-component fragment layout
-    ([`objects/NAME.toml` / `modules/NAME.toml`](declarative-scaffolding.md#three-layouts)),
-    `jm migrate-to-fragments` for existing projects, and `jm new --fragments`
-    for new ones have all shipped. The remaining piece is **per-function `.c`
-    files in modules**, so each module function is sacred in its own file.
-    Then copying a component becomes "copy its fragment and source dirs, run
-    `jm apply`."
-
-### Next — write it in C, get Python (`jm bind`)
+### Now — write it in C, get Python (`jm bind`)
 
 Many people already have the C. For them the fastest path isn't a manifest at
 all — it's "point at my header and give me the Python." `jm bind` reads a

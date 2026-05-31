@@ -251,6 +251,64 @@ parser:
 
 ______________________________________________________________________
 
+## `just-makeit bind <component>`
+
+Synthesise `<comp>_ext.c` and `<comp>.pyi` by reading `<comp>_core.h` directly,
+without consulting `just-makeit.toml`. This is the "point at your C and get
+Python" path. Must be run from the project root.
+
+```sh
+just-makeit bind engine          # synthesise engine_ext.c from engine_core.h
+just-makeit bind engine --check  # exit 1 if the generated binding differs from the file on disk
+```
+
+`jm bind` parses the header for the standard just-makeit naming conventions
+(`<comp>_state_t`, `<comp>_create`, `<comp>_step`, scalar field defaults from
+the reset body) and renders the binding from the same context builders the
+manifest-driven flow uses — so a bound `_ext.c` is byte-identical to a
+scaffolded one.
+
+**Current scope:** the simple processor shape — a state struct with scalar
+fields, a `<comp>_create()` taking those fields in order, and a scalar-in /
+scalar-out inline `step()`. If the header doesn't match that shape the parser
+raises an error before touching any files.
+
+**`--check` as a CI gate:** run `jm bind <comp> --check` in CI to ensure
+the committed `_ext.c` never silently drifts from the header it was generated
+from. Green means byte-identical; non-zero exit means regenerate and commit.
+
+Shapes not yet supported (see [roadmap](../roadmap.md#now--write-it-in-c-get-python-jm-bind)):
+methods, init_params, opaque state, variable-output, result-structs.
+
+| Flag      | Description                                                                   |
+| --------- | ----------------------------------------------------------------------------- |
+| `--check` | Diff the synthesised binding against the file on disk; exit 1 if they differ. |
+
+______________________________________________________________________
+
+## `just-makeit status`
+
+Show which files in the project tree have drifted from what `jm apply` would
+generate — a read-only drift report. Must be run from the project root.
+
+```sh
+just-makeit status
+```
+
+Prints a table of files with one of three states:
+
+| Status     | Meaning                                                      |
+| ---------- | ------------------------------------------------------------ |
+| `OK`       | File matches what the manifest would generate.               |
+| `MISSING`  | File is declared in the manifest but does not exist on disk. |
+| `MODIFIED` | File exists but differs from the manifest-generated content. |
+
+`status` never writes anything; it is always safe to run. Use it to confirm
+that `jm apply` is a no-op before a release, or to see what changed after a
+manual edit to `just-makeit.toml`.
+
+______________________________________________________________________
+
 ## `just-makeit script`
 
 Print a shell script to stdout that fully reconstructs the current project
