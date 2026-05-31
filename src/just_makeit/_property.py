@@ -21,8 +21,13 @@ from . import _config as C
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
-from ._init import _make_component_ctx, _preserve_core_bodies, _to_title
-from ._object import _make_object_ctx, _regenerate_module
+from ._init import (
+    _inject_decls_into_core_h,
+    _inject_struct_field,
+    _make_component_ctx,
+    _to_title,
+)
+from ._object import _regenerate_module
 
 
 def run(
@@ -108,68 +113,42 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # Regenerate ext.c and core.h
+    # Every property kind is purely additive to _core.h — no re-render, no
+    # splice:
+    #   field-backed  -> a new <obj>_state_t struct member (set via the setter,
+    #                    so it needs no create/reset wiring; injected directly).
+    #   computed      -> a getter/setter declaration the user implements in the
+    #                    sacred _core.c.
+    #   buf/expr      -> pure glue; their accessors are inlined into _ext.c, so
+    #                    nothing is added to _core.h.
+    core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+    if field:
+        disp = T._ctype_display(ctype)
+        if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
+            print(f"  update  {core_h}")
+    elif not buf_field and not expr:
+        disp = T._ctype_display(ctype)
+        decls = [
+            f"{disp} {object_name}_get_{prop_name}"
+            f"(const {object_name}_state_t *state);"
+        ]
+        if writable:
+            decls.append(
+                f"void {object_name}_set_{prop_name}"
+                f"({object_name}_state_t *state, {disp} val);"
+            )
+        if _inject_decls_into_core_h(core_h, object_name, decls):
+            print(f"  update  {core_h}")
+
+    # Regenerate the glue (Python getset descriptor + binding).  Module objects
+    # share one _ext.c (rebuilt by _regenerate_module); standalone objects own
+    # their _ext.c.
     if module:
         _regenerate_module(root, cfg, module, pkg)
-        # _regenerate_module only writes ext.c.  Always regenerate core.h too:
-        # field-backed properties add a struct field; computed properties add a
-        # getter declaration; both must appear in the header so the C compiler
-        # can see them.
-        state_vars_list = C.state_vars(cfg, object_name)
-        arg_type_ = C.arg_type(cfg, object_name)
-        return_type_ = C.return_type(cfg, object_name)
-        perf = C.is_perf(cfg)
-        Component = _to_title(object_name)
-        ctx = _make_object_ctx(
-            object_name,
-            module,
-            pkg,
-            C.project_version(cfg),
-            state_vars_list,
-            arg_type_,
-            return_type_,
-            perf=perf,
-            array_args=C.array_args(cfg, object_name),
-            no_state=C.is_no_state(cfg, object_name),
-            no_step=C.is_no_step(cfg, object_name),
-            init_params=C.init_params(cfg, object_name),
-        )
-        ctx.update(
-            Ctx.make_methods_ctx(
-                object_name,
-                Component,
-                C.methods(cfg, object_name),
-                pkg=pkg,
-                py_create_args=ctx.get("py_create_args", ""),
-                no_state=C.is_no_state(cfg, object_name),
-            )
-        )
-        ctx.update(
-            Ctx.make_properties_ctx(
-                object_name,
-                Component,
-                C.properties(cfg, object_name),
-                frozenset(n for n, _, _ in state_vars_list),
-            )
-        )
-        core_h = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
-        if core_h.exists():
-            core_h.write_text(
-                _preserve_core_bodies(
-                    core_h, R.render(R.COMPONENT_CORE_H, ctx), object_name
-                ),
-                encoding="utf-8",
-            )
-            print(f"  update  {core_h}")
     else:
         state_vars_list = C.state_vars(cfg, object_name)
         arg_type_ = C.arg_type(cfg, object_name)
         return_type_ = C.return_type(cfg, object_name)
-        perf = C.is_perf(cfg)
-        version = C.project_version(cfg)
-
         ctx = _make_component_ctx(object_name)
         ctx.update(
             {
@@ -177,7 +156,7 @@ def run(
                 "PACKAGE": pkg.upper(),
                 "project": pkg.replace("_", "-"),
                 "project_underscore": pkg,
-                "version": version,
+                "version": C.project_version(cfg),
             }
         )
         ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
@@ -191,7 +170,7 @@ def run(
                 init_params=C.init_params(cfg, object_name),
             )
         )
-        ctx.update(Ctx.make_perf_ctx(perf))
+        ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
         ctx.update(
             Ctx.make_step_ctx(
                 ctx,
@@ -218,24 +197,11 @@ def run(
                 frozenset(n for n, _, _ in state_vars_list),
             )
         )
-
-        def r(tmpl):
-            return R.render(tmpl, ctx)
-
-        core_h = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
-        if core_h.exists():
-            core_h.write_text(
-                _preserve_core_bodies(
-                    core_h, r(R.COMPONENT_CORE_H), object_name
-                ),
-                encoding="utf-8",
-            )
-            print(f"  update  {core_h}")
         if ext_c.exists():
-            ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
+            ext_c.write_text(
+                R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8"
+            )
             print(f"  update  {ext_c}")
 
     print()

@@ -212,6 +212,28 @@ def _inject_decls_into_core_h(
     return True
 
 
+def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
+    """Surgically insert a member into the ``<comp>_state_t`` struct.
+
+    Additive and splice-free: the field is placed just before the struct's
+    closing ``} <comp>_state_t;`` and skipped if already present (idempotent).
+    Used for field-backed properties, whose member needs no ``create``/
+    ``reset`` wiring (it is set via the property setter, not the constructor),
+    so it can be added without rebuilding the sacred lifecycle.  Returns True
+    if the header changed."""
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if field_decl.strip() in text:
+        return False
+    close = f"}} {comp}_state_t;"
+    if close not in text:
+        return False
+    text = text.replace(close, f"    {field_decl.strip()}\n{close}", 1)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def _preserve_core_bodies(
     path: Path,
     new_text: str,
