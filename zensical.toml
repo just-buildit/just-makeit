@@ -35,6 +35,7 @@ nav = [
   { "Quick reference"    = "quick-reference.md" },
   { "Declarative scaffolding" = "declarative-scaffolding.md" },
   { "Upgrading"          = "upgrading.md"    },
+  { "Porting guide"      = "porting-guide.md"},
   { "Stateful vs Pure"   = "pure.md"         },
   { "Performance"        = "perf.md"         },
   { "State Types"        = "types.md"        },
