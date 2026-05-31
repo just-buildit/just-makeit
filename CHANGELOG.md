@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Collocated module + module function no longer fails to compile.** When a
+    module shares its name with one of its objects (e.g. `jm module fft` +
+    `jm object fft --module fft`) and also has a module-level function, the
+    generated `<mod>_ext.c` and the object fragment both defined a
+    `PyMethodDef Fft_methods[]` table — a duplicate symbol once the aggregator
+    `#include`d the fragment. The module-level table is now named
+    `<mod>_module_methods`, so it can never collide with an object's
+    `<Component>_methods`.
+
 ## [0.13.24] — 2026-05-30
 
 ### Changed

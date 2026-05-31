@@ -141,7 +141,7 @@ class TestExtCFooter:
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "static PyMethodDef Fft_methods[]" in ext
+        assert "static PyMethodDef fft_module_methods[]" in ext
 
     def test_pymethoddef_has_bind_wrapper(self, fft_module):
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
@@ -159,7 +159,7 @@ class TestExtCFooter:
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert ".m_methods = Fft_methods," in ext
+        assert ".m_methods = fft_module_methods," in ext
 
     def test_m_methods_null_without_functions(self, tmp_path):
         root = tmp_path / "dsp"
@@ -277,7 +277,7 @@ class TestCoexistenceWithObjects:
         root = module_with_objects_and_functions
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "NcoType" in ext
-        assert "static PyMethodDef Dsp_methods[]" in ext
+        assert "static PyMethodDef dsp_module_methods[]" in ext
         assert '"global_setup", _bind_global_setup' in ext
 
     def test_core_h_included_with_objects(
@@ -304,6 +304,54 @@ class TestCoexistenceWithObjects:
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "_bind_global_setup" in ext
         assert "NcoType" in ext
+
+
+class TestCollocatedModuleFunction:
+    """gh: a module whose name equals one of its objects (the collocated
+    case) plus a module-level function must not emit two PyMethodDef tables
+    with the same name.  The aggregator <mod>_ext.c #includes the object
+    fragment <mod>_ext_<obj>.c into one translation unit, so the module-level
+    table (named ``<mod>_module_methods``) and the object's own
+    ``<Component>_methods`` table would collide as a duplicate symbol if both
+    were title-cased to ``<Module>_methods``."""
+
+    @pytest.fixture()
+    def collocated(self, tmp_path):
+        root = tmp_path / "proj"
+        new_run("proj", root, modules=["fft"])
+        object_run(
+            root,
+            "fft",
+            "fft",
+            state_vars=[("n", "int", "8")],
+            arg_type="float",
+            return_type="float",
+        )
+        function_run(
+            root, "setup", "fft", params=[("k", "int")], return_type="void"
+        )
+        return root
+
+    def test_method_tables_have_distinct_names(self, collocated):
+        src = collocated / "native" / "src" / "fft"
+        agg = (src / "fft_ext.c").read_text(encoding="utf-8")
+        frag = (src / "fft_ext_fft.c").read_text(encoding="utf-8")
+        # The module-level table is module-named; the object's is type-named.
+        assert "static PyMethodDef fft_module_methods[]" in agg
+        assert ".m_methods = fft_module_methods," in agg
+        assert "static PyMethodDef Fft_methods[]" in frag
+
+    def test_no_duplicate_pymethoddef_symbol(self, collocated):
+        # The aggregator includes the fragment into one TU; collect every
+        # PyMethodDef table name from both and ensure none repeats.
+        src = collocated / "native" / "src" / "fft"
+        names: list[str] = []
+        for fname in ("fft_ext.c", "fft_ext_fft.c"):
+            text = (src / fname).read_text(encoding="utf-8")
+            names += re.findall(r"static PyMethodDef (\w+)\[\]", text)
+        assert len(names) == len(set(names)), (
+            f"duplicate PyMethodDef symbol across the module TU: {names}"
+        )
 
 
 class TestValidation:
