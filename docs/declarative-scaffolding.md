@@ -68,9 +68,10 @@ flowchart LR
 `jm migrate-to-fragments` migrates Monolith → Split in one command — every
 `[obj]` moves to `objects/<name>.toml` and every `[module.X]` to
 `modules/<name>.toml`. (`jm split-objects` is the objects-only subset, kept
-for projects that want modules to stay inline.) `jm new --fragments` seeds a
-fresh project directly on the Split layout. `jm apply <fragment>` composes a
-Fragment into either layout.
+for projects that want modules to stay inline.) `jm new` seeds a fresh project
+on the Split layout by default; pass `--no-fragments` to use the legacy
+single-manifest layout. `jm apply <fragment>` composes a Fragment into either
+layout.
 
 ______________________________________________________________________
 
@@ -722,8 +723,9 @@ manifest.
 
 > `jm split-objects` is the objects-only subset — it leaves `[module.X]`
 > sections inline in the manifest. Prefer `migrate-to-fragments` unless you
-> specifically want modules to stay put. To start a new project already on
-> this layout, pass [`jm new --fragments`](commands/scaffold.md).
+> specifically want modules to stay put. New projects use this layout by
+> default; pass `--no-fragments` to use the legacy single-manifest layout
+> instead.
 
 ______________________________________________________________________
 
