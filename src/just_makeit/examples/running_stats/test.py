@@ -1,4 +1,11 @@
-"""End-to-end test: running_stats scaffold → implement → build → add state.
+"""End-to-end test: running_stats scaffold → implement → build → add state
+→ re-implement → build.
+
+`jm add` is structural: adding state rewrites the state struct and rebuilds
+the object from the manifest, resetting the hand-written step() body to a
+fresh stub. The canonical loop is therefore to add the state, then
+re-implement on top of it. This example demonstrates that loop and verifies
+the rebuilt module computes the right statistics (mean, variance, min, max).
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/running_stats/test.py
@@ -54,7 +61,7 @@ def run(root: Path) -> None:
     assert jbt["tools"]["install-deps"]["source"] == "just-bashit:install-deps"
     assert "cmake" in jbt["dev"]["apt"]["packages"]
 
-    # 2. Implement the Welford step
+    # 2. Implement the base Welford step (mean + variance only)
     _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=proj)
 
     # 3. CMake configure + build + CTest
@@ -74,7 +81,10 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
-    # 4. Add min/max state variables, rebuild, retest
+    # 4. Add min/max state variables. `jm add` is structural: it rewrites the
+    #    state struct and rebuilds the object from the manifest, which resets
+    #    the hand-written running_stats_step() body back to a fresh stub.
+    #    This is the canonical loop — add state, then re-implement on top of it.
     jm_add(
         proj,
         "running_stats",
@@ -82,9 +92,39 @@ def run(root: Path) -> None:
             ("min_val", "double", "0.0"),
             ("max_val", "double", "0.0"),
         ],
+        force=True,
+    )
+
+    # 5. Re-implement with the full algorithm that USES the new min/max state,
+    #    then rebuild + retest. The default impl file (02_step_after.c) tracks
+    #    min_val/max_val alongside the Welford mean/variance.
+    _cmd(
+        [sys.executable, str(STEPS / "02_patch.py"), "02_step_after.c"],
+        cwd=proj,
     )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
+
+    # 6. Verify the rebuilt module computes the right statistics, including the
+    #    newly added min/max state. This proves the re-implemented body really
+    #    uses the state that `jm add` introduced.
+    verify = (
+        "import numpy as np\n"
+        "import sys\n"
+        "sys.path.insert(0, 'src')\n"
+        "from my_stats import RunningStats\n"
+        "s = RunningStats()\n"
+        "data = np.array([2, 4, 4, 4, 5, 5, 7, 9], dtype=np.complex64)\n"
+        "for x in data:\n"
+        "    y = s.step(x)\n"
+        "assert abs(s.get_mean() - 5.0) < 1e-4, s.get_mean()\n"
+        "assert abs(y.imag - 4.0) < 1e-4, y.imag\n"
+        "assert abs(s.get_min_val() - 2.0) < 1e-9, s.get_min_val()\n"
+        "assert abs(s.get_max_val() - 9.0) < 1e-9, s.get_max_val()\n"
+        "s.reset()\n"
+        "assert s.get_min_val() == 0.0 and s.get_max_val() == 0.0\n"
+    )
+    _cmd([sys.executable, "-c", verify], cwd=proj)
 
     # 5. Verify type stub reflects all state (including newly added vars)
     pyi = (proj / "src" / "my_stats" / "running_stats.pyi").read_text()

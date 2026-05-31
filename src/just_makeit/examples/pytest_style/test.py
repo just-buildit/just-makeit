@@ -87,7 +87,7 @@ def run(root: Path) -> None:
     assert "@pytest.fixture" in bench2, "inherited: pytest-benchmark"
 
     # 6. jm add regeneration preserves pure-pytest style
-    jm_add(proj, "dsp_algo", [("order", "int", "4")])
+    jm_add(proj, "dsp_algo", [("order", "int", "4")], force=True)
     test_after_add = (
         proj / "src" / "dsp_algo" / "tests" / "test_dsp_algo.py"
     ).read_text(encoding="utf-8")

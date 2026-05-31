@@ -169,8 +169,13 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
-    # 4. Add n_taps scalar state, rebuild, retest
-    jm_add(proj, "fir_filter", [("n_taps", "int32_t", "16")])
+    # 4. Add n_taps scalar state. `jm add` is structural: it rewrites the
+    #    state struct and rebuilds the object from the manifest, which resets
+    #    the hand-written step() body back to a fresh stub. Re-run the
+    #    implement step so the FIR kernel is restored on top of the new state,
+    #    then rebuild + retest.
+    jm_add(proj, "fir_filter", [("n_taps", "int32_t", "16")], force=True)
+    _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=proj)
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
