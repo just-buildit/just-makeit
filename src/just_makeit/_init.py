@@ -186,7 +186,10 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
 
 
 def _inject_decls_into_core_h(
-    path: Path, comp: str, decls: "list[str]"
+    path: Path,
+    comp: str,
+    decls: "list[str]",
+    skip_names: "frozenset[str] | None" = None,
 ) -> bool:
     """Surgically refresh C declarations in an object's ``<comp>_core.h``.
 
@@ -197,6 +200,12 @@ def _inject_decls_into_core_h(
     signature never produces a duplicate.  Anything genuinely new is inserted
     just before the ``extern "C"`` close (falling back to the header guard).
     The sacred state struct and inline ``step()`` body are never touched.
+
+    skip_names — function names that should NOT be replaced even if a
+    declaration with that name already exists.  When the header already
+    declares a name in skip_names (with any signature), the incoming decl is
+    silently dropped so the user's existing declaration is preserved.
+
     Returns True if the header changed."""
     if not path.exists():
         return False
@@ -208,20 +217,25 @@ def _inject_decls_into_core_h(
             continue
         m = re.search(r"(\w+)\s*\(", d)
         if m:
+            fn_name = m.group(1)
             # Replace an existing single-line prototype of the same name (a
             # builtin override or a refreshed signature). The pattern requires
             # the line to end in ');' so it never matches the inline step()
             # definition (which ends in '{').
             pat = re.compile(
                 r"^[ \t]*[A-Za-z_][^\n{]*\b"
-                + re.escape(m.group(1))
+                + re.escape(fn_name)
                 + r"\s*\([^\n{]*\);[ \t]*$",
                 re.MULTILINE,
             )
-            new_text, n = pat.subn(d, text, count=1)
-            if n:
-                text = new_text
-                continue
+            if pat.search(text):
+                if skip_names and fn_name in skip_names:
+                    # Name is in skip_names — preserve the existing decl.
+                    continue
+                new_text, n = pat.subn(d, text, count=1)
+                if n:
+                    text = new_text
+                    continue
         to_insert.append(d)
     if to_insert:
         block = "\n".join(to_insert) + "\n"
@@ -718,9 +732,10 @@ def run(
                 obj_lines = ""
                 if f"{pkg}_lib" in cmake_text:
                     for dep in depends_on:
+                        dep_name = dep[:-5] if dep.endswith("_core") else dep
                         obj_lines += (
                             f"target_sources({pkg}_lib PRIVATE "
-                            f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                            f"$<TARGET_OBJECTS:{dep_name}_core>)\n"
                         )
                     obj_lines += (
                         f"target_sources({pkg}_lib PRIVATE "

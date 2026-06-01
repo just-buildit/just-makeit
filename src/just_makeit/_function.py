@@ -184,6 +184,22 @@ def run(
     fn_c = root / "native" / "src" / module / f"{fn_name}.c"
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
 
+    # Warn if the monolithic _core.c already defines this symbol — both it and
+    # the new per-function stub would be compiled, causing duplicate definitions.
+    core_c = root / "native" / "src" / module / f"{module}_core.c"
+    if core_c.exists():
+        core_text = core_c.read_text(encoding="utf-8")
+        full_name = f"{module}_{fn_name}"
+        if full_name in core_text:
+            print(
+                f"WARNING: '{full_name}' appears to be implemented in "
+                f"{core_c.relative_to(root)}.\n"
+                f"  The new stub {fn_name}.c will define it too — "
+                f"remove the body from {module}_core.c to avoid a\n"
+                f"  duplicate-symbol linker error.",
+                file=sys.stderr,
+            )
+
     if inline:
         # Inline functions live entirely in the header — no .c entry.
         _inject_inline_into_core_h(
