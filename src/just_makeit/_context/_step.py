@@ -95,6 +95,10 @@ def make_step_ctx(
             "lifecycle_pytest_methods": _lifecycle,
             "step_pytest_methods_pure": "",
             "lifecycle_pytest_methods_pure": _lifecycle_pure,
+            "bm_step_py": "",
+            "bm_steps_py": "",
+            "bench_step_py": "",
+            "bench_steps_py": "",
         }
 
     # ── Blockwise: array-in / array-out (T[] → U[]) ───────────────────────

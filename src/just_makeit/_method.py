@@ -452,6 +452,36 @@ def run(
         [(p[0], p[1]) for p in params],
         out_type,
     ).split("\n")
+    # For variable_output methods the generated 4-arg declaration would
+    # clobber a user-written declaration with a different arity (e.g. a
+    # 5-arg version that passes capacity).  Preserve the existing decl and
+    # warn instead.
+    _vo_skip: frozenset[str] = frozenset()
+    if variable_output:
+        _vo_fn = f"{object_name}_{method_name}"
+        _core_h_check = (
+            root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
+        if _core_h_check.exists():
+            _h_text = _core_h_check.read_text(encoding="utf-8")
+            import re as _re
+
+            _pat = _re.compile(
+                r"\b" + _re.escape(_vo_fn) + r"\s*\(", _re.MULTILINE
+            )
+            if _pat.search(_h_text):
+                import sys as _sys
+
+                print(
+                    f"WARNING: '{_vo_fn}' is already declared in "
+                    f"{_core_h_check.relative_to(root)}.\n"
+                    f"  The generated 4-arg declaration will be skipped "
+                    f"to preserve your existing signature.\n"
+                    f"  jm expects: {_vo_fn}(state, in, n_in, out) "
+                    f"— remove the capacity param if present.",
+                    file=_sys.stderr,
+                )
+                _vo_skip = frozenset({_vo_fn})
 
     # 2. Update config  (was step 3)
     method_entry: dict = {
@@ -496,7 +526,9 @@ def run(
         core_h_ = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )
-        if _inject_decls_into_core_h(core_h_, object_name, proto_lines):
+        if _inject_decls_into_core_h(
+            core_h_, object_name, proto_lines, skip_names=_vo_skip
+        ):
             print(f"  update  {core_h_}")
     else:
         # Standalone: regenerate _core.h (adds method_decls) + _ext.c
@@ -568,7 +600,9 @@ def run(
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
-        if _inject_decls_into_core_h(core_h, object_name, proto_lines):
+        if _inject_decls_into_core_h(
+            core_h, object_name, proto_lines, skip_names=_vo_skip
+        ):
             print(f"  update  {core_h}")
         if ext_c.exists():
             ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
