@@ -1656,6 +1656,45 @@ def make_state_ctx(
             list(array_args),
             init_post_parse_impl=init_post_parse_impl,
         )
+        # gh-122: _build_no_state_init_ctx generates empty create-arg strings
+        # when an init_param has no explicit default. Fall back to the matching
+        # state-var default (common pattern: init_param and state_var share a
+        # name).  Only rebuilds the args when any param is missing a default.
+        _sv_dflt = {n: d for n, _, d in state_vars}
+        _ip_missing = any(
+            not (p[2] if len(p) > 2 else "")
+            for p in init_params
+            if p[1] in _CTYPE_META
+        )
+        if _ip_missing:
+            _ip_c, _ip_py = [], []
+            for p in init_params:
+                n, ct = p[0], p[1]
+                if ct not in _CTYPE_META:
+                    continue
+                raw_dflt = p[2] if len(p) > 2 else ""
+                dflt = (
+                    raw_dflt or _sv_dflt.get(n, "") or _CTYPE_META[ct]["zero"]
+                )
+                _ip_c.append(dflt)
+                _ip_py.append(_py_default(ct, dflt))
+            _aa_c = ["NULL, 0" for _ in array_args]
+            _aa_py = [
+                f"np.zeros(1, dtype={_NP_PY_TYPE.get(_CTYPE_TO_DTYPE.get(dt, 'float32'), 'np.float32')})"
+                for _, dt in array_args
+            ]
+            _c_args = ", ".join(_aa_c + _ip_c)
+            _py_args = ", ".join(_aa_py + _ip_py)
+            _init_ctx["c_create_args"] = _c_args
+            _init_ctx["py_create_args"] = _py_args
+            _init_ctx["bench_create_stmt"] = (
+                f"    {component}_state_t *obj = {component}_create({_c_args});"
+                if _c_args
+                else (
+                    f"    /* TODO: {component}_state_t *obj ="
+                    f" {component}_create(...); */"
+                )
+            )
         _CTOR_OVERRIDE_KEYS = (
             "create_params",
             "create_param_docs",

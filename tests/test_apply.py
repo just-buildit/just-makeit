@@ -233,6 +233,57 @@ class TestApplyAddOnly:
         assert core_c.read_text(encoding="utf-8") == marker
 
 
+class TestApplyImplInjection:
+    """gh-121: apply must patch impl into existing headers, not just new ones."""
+
+    def _add_impl_to_toml(
+        self, toml_path: "Path", comp: str, body: str
+    ) -> None:
+        """Append an impl block to the component section in the TOML."""
+        text = toml_path.read_text(encoding="utf-8")
+        # Inject impl = '''...''' right after the [comp] header line.
+        marker = f"[{comp}]\n"
+        assert marker in text, f"[{comp}] section not found"
+        impl_block = f"impl = '''\n{body}\n'''\n"
+        text = text.replace(marker, marker + impl_block, 1)
+        toml_path.write_text(text, encoding="utf-8")
+
+    def test_impl_injected_into_pre_existing_header(self, tmp_path):
+        """impl added to TOML after jm object must appear in the header."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj, ["widget"], [("gain", "float", "0.0f")])
+
+        # Simulate user manually adding impl to the TOML after initial scaffold.
+        toml = proj / "just-makeit.toml"
+        self._add_impl_to_toml(
+            toml, "widget", "state->gain *= 2.0f;\nreturn state->gain;"
+        )
+
+        apply_run(proj)
+
+        h_path = proj / "native" / "inc" / "widget" / "widget_core.h"
+        text = h_path.read_text(encoding="utf-8")
+        assert "state->gain *= 2.0f;" in text
+
+    def test_impl_injected_into_newly_created_header(self, tmp_path):
+        """impl set in TOML before any files exist must appear in the header."""
+        proj = tmp_path / "proj"
+        new_run("proj", proj, ["widget"], [("gain", "float", "0.0f")])
+
+        toml = proj / "just-makeit.toml"
+        self._add_impl_to_toml(toml, "widget", "return state->gain + 1.0f;")
+
+        # Delete sacred files so apply creates them from scratch.
+        import shutil
+
+        shutil.rmtree(proj / "native" / "inc" / "widget")
+        apply_run(proj)
+
+        h_path = proj / "native" / "inc" / "widget" / "widget_core.h"
+        text = h_path.read_text(encoding="utf-8")
+        assert "return state->gain + 1.0f;" in text
+
+
 class TestApplyErrors:
     def test_no_manifest_exits(self, tmp_path):
         with pytest.raises(SystemExit):

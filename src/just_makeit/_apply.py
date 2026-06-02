@@ -362,6 +362,44 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             )
 
 
+def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
+    """Inject ``impl``/``impl_file`` bodies from the manifest into headers.
+
+    ``_sync_missing`` only creates files that are absent in the project tree;
+    existing ``_core.h`` files are left untouched even when the user has since
+    added an ``impl`` key to the TOML.  This function runs afterwards and
+    patches every component that carries an ``impl`` or ``impl_file`` key,
+    using ``patch_function_body()`` which is safe to run on both newly-created
+    and pre-existing headers (it replaces only the matching function body)."""
+    from . import _impl as I
+
+    mods = C.modules(cfg)
+    module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
+    all_comps = [c for c in C.components(cfg) if c not in module_owned]
+    all_comps += [o for m in mods for o in C.module_objects(cfg, m)]
+
+    patched: list[Path] = []
+    for comp in all_comps:
+        if C.is_no_step(cfg, comp):
+            continue
+        sec = cfg.get(comp, {})
+        if not sec.get("impl") and not sec.get("impl_file"):
+            continue
+        octx = _object_ctx(cfg, comp, C.component_module(cfg, comp))
+        impl_body = _resolve_impl(sec, octx, root, f"object {comp}")
+        if impl_body is None:
+            continue
+        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        if not h_path.exists():
+            continue
+        original = h_path.read_text(encoding="utf-8")
+        updated = I.patch_function_body(original, f"{comp}_step", impl_body)
+        if updated != original:
+            h_path.write_text(updated, encoding="utf-8")
+            patched.append(h_path)
+    return patched
+
+
 def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
     """Copy every file present in *temp_root* but missing from *root*.
 
@@ -1065,6 +1103,7 @@ def run(
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
         created = _sync_missing(temp_root, root)
+        impl_patched = _patch_step_impls(root, cfg)
         updated = _sync_aggregates(
             temp_root,
             root,
@@ -1077,14 +1116,19 @@ def run(
 
     for rel in created:
         print(f"  create  {root / rel}")
+    for path in impl_patched:
+        print(f"  update  {path}")
     for path in updated + bench_updated:
         print(f"  update  {path}")
 
     print()
-    total = len(created) + len(updated) + len(bench_updated)
+    total = (
+        len(created) + len(updated) + len(bench_updated) + len(impl_patched)
+    )
     if total:
         print(
-            f"Done!  Materialized {len(created)} new file(s) and "
+            f"Done!  Materialized {len(created)} new file(s), "
+            f"patched {len(impl_patched)} impl(s), and "
             f"reconciled {len(updated) + len(bench_updated)} wiring file(s)"
             f" from {C.FILENAME}."
         )
