@@ -14,6 +14,7 @@ from just_makeit._new import run as new_run
 from just_makeit._module import run as module_run
 from just_makeit._object import run as object_run
 from just_makeit._method import run as method_run
+from just_makeit._apply import run as apply_run
 from just_makeit._config import load, methods
 
 
@@ -1429,3 +1430,99 @@ class TestMaxOutFlag:
         )
         assert "<<IMPLEMENT" in core_c
         assert "return 0; /* placeholder */" in core_c
+
+
+class TestMethodBoolParam:
+    """gh-123: bool scalar param produces correct C stub and Python binding."""
+
+    def test_bool_param_c_signature(self, project):
+        method_run(
+            project,
+            "nco",
+            "step_controlled",
+            None,
+            "float _Complex",
+            "float _Complex",
+            False,
+            [],
+            params=[("dump_now", "bool")],
+        )
+        core_c = (project / "native" / "src" / "nco" / "nco_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "bool dump_now" in core_c
+
+    def test_bool_param_ext_c_parse_block(self, project):
+        method_run(
+            project,
+            "nco",
+            "step_controlled",
+            None,
+            "float _Complex",
+            "float _Complex",
+            False,
+            [],
+            params=[("dump_now", "bool")],
+        )
+        ext_c = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+        # bool uses an int intermediate (parse_type) before cast
+        assert "dump_now_raw" in ext_c
+        assert "bool dump_now" in ext_c
+
+    def test_bool_param_pyi_type_hint(self, project):
+        method_run(
+            project,
+            "nco",
+            "step_controlled",
+            None,
+            "float _Complex",
+            "float _Complex",
+            False,
+            [],
+            params=[("dump_now", "bool")],
+        )
+        pyi = (project / "src" / "dsp" / "nco.pyi").read_text(encoding="utf-8")
+        assert "dump_now: bool" in pyi
+
+
+class TestMethodExtraArgsTomlKey:
+    """gh-123: extra_args in TOML is an alias for params on methods."""
+
+    def test_extra_args_toml_replays_via_apply(self, tmp_path):
+        """A method entry with extra_args survives jm apply unchanged."""
+        proj = tmp_path / "dsp"
+        new_run("dsp", proj, ["nco"], [("freq", "double", "0.0")])
+        method_run(
+            proj,
+            "nco",
+            "step_controlled",
+            None,
+            "float _Complex",
+            "float _Complex",
+            False,
+            [],
+            params=[("dump_now", "bool")],
+        )
+
+        # Rewrite TOML: replace 'params' with 'extra_args' in the method entry.
+        toml_path = proj / "just-makeit.toml"
+        toml_text = toml_path.read_text(encoding="utf-8")
+        toml_text = toml_text.replace(
+            'params = [{name = "dump_now", type = "bool"}]',
+            'extra_args = [{name = "dump_now", type = "bool"}]',
+        )
+        toml_path.write_text(toml_text, encoding="utf-8")
+
+        # Remove generated sacred files so apply must recreate them.
+        import shutil
+
+        shutil.rmtree(proj / "native" / "inc" / "nco")
+        shutil.rmtree(proj / "native" / "src" / "nco")
+        apply_run(proj)
+
+        core_c = (proj / "native" / "src" / "nco" / "nco_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert "bool dump_now" in core_c

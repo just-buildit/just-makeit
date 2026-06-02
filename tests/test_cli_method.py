@@ -117,6 +117,17 @@ class TestCliMethod:
         with pytest.raises(SystemExit):
             _run(["fir", "execute", "--param", "x:notatype"])
 
+    def test_extra_arg_accepted_as_alias_for_param(self):
+        # gh-123: --extra-arg is a synonym for --param
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--extra-arg", "dump_now:bool"])
+            _, kwargs = mock_run.call_args
+            assert ("dump_now", "bool") in kwargs.get("params", [])
+
+    def test_extra_arg_bad_format_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--extra-arg", "nocolon"])
+
     def test_out_divisor_valid(self):
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--out-divisor", "4"])

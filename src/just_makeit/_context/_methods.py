@@ -208,6 +208,8 @@ def make_methods_ctx(
     def _pyi_scalar(ctype: str) -> str:
         if ctype == "void":
             return "None"
+        if ctype == "bool":
+            return "bool"
         meta = _CTYPE_META.get(ctype)
         return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
 

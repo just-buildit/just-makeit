@@ -306,7 +306,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 m.get("return_type", "float _Complex"),
                 bool(m.get("variable_output")),
                 list(m.get("multi_output", [])),
-                params=[(p["name"], p["type"]) for p in m.get("params", [])],
+                params=[
+                    (p["name"], p["type"])
+                    for p in (m.get("extra_args") or m.get("params", []))
+                ],
                 out_type=m.get("out_type"),
                 out_divisor=int(m.get("out_divisor", 1)),
                 batch=bool(m.get("batch")),
