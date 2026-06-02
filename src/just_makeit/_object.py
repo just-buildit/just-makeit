@@ -559,7 +559,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
         if obj == module:
-            obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_)
+            # gh-132: inject the module-level extra_link_libs_block so that
+            # the collocated object's test/bench targets link against the
+            # same extra libraries as the Python extension.
+            ctx_cmake = {
+                **ctx_,
+                "extra_link_libs_block": extra_link_libs_block,
+            }
+            obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
             # Append the collocated object's extra sources: a legacy
             # _methods.c (migration) plus every module-level function .c.
             extra_srcs = []
@@ -781,6 +788,12 @@ def run(
     if destroy_impl_body is not None:
         ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
+    # gh-132: expose extra_link_libs_block so CMakeLists_object_core.cmake
+    # can include the deps in test/bench target_link_libraries.
+    ctx["extra_link_libs_block"] = (
+        "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
+    )
+
     def r(tmpl):
         return R.render(tmpl, ctx)
 
@@ -907,11 +920,17 @@ def run(
             changed = True
         obj_lines = ""
         for dep in depends_on:
-            ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{dep}_core>)\n"
+            # gh-130: strip a trailing _core suffix so callers can write
+            # depends_on = ["lo_core"] without getting lo_core_core.
+            dep_name = dep[:-5] if dep.endswith("_core") else dep
+            ts = (
+                f"target_sources({pkg}_lib PRIVATE "
+                f"$<TARGET_OBJECTS:{dep_name}_core>)\n"
+            )
             if ts not in cmake_text:
                 obj_lines += (
                     ts + f"target_sources({pkg}_lib_static PRIVATE "
-                    f"$<TARGET_OBJECTS:{dep}_core>)\n"
+                    f"$<TARGET_OBJECTS:{dep_name}_core>)\n"
                 )
         ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
         if ts not in cmake_text:

@@ -7,14 +7,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._render import render
+from just_makeit._render import render, fn_c_decl, fn_c_stub
 from just_makeit._context import (
     make_state_ctx,
     make_methods_ctx,
     resolve_return_type,
 )
 from just_makeit._types import SUPPORTED_TYPES
-from just_makeit._init import _make_component_ctx
+from just_makeit._init import (
+    _make_component_ctx,
+    _inject_decls_into_core_h,
+)
 from just_makeit._new import _make_project_ctx
 
 
@@ -541,6 +544,26 @@ class TestNoStateWrapperNames:
         ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
         assert "builtin_reset_c" not in ctx or ctx.get("builtin_reset_c") != ""
 
+    def test_user_reset_suppresses_builtin_reset_pyi(self):
+        # gh-131: when user declares [[methods]] reset, builtin_reset_pyi
+        # must be blanked so the template's default stub is not emitted.
+        methods = [
+            {"name": "reset", "arg_type": "void", "return_type": "void"}
+        ]
+        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        assert ctx["builtin_reset_pyi"] == ""
+
+    def test_no_user_reset_keeps_builtin_reset_pyi(self):
+        # gh-131: normal objects keep the default reset() pyi stub.
+        methods = [
+            {"name": "process", "arg_type": "float", "return_type": "float"}
+        ]
+        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        assert (
+            "builtin_reset_pyi" not in ctx
+            or ctx.get("builtin_reset_pyi", "x") != ""
+        )
+
 
 class TestVariableOutputComplexParam:
     """Regression test for gh#11."""
@@ -680,3 +703,106 @@ class TestResolveReturnType:
         assert (
             resolve_return_type("double _Complex", None) == "double _Complex"
         )
+
+
+class TestFnCDeclOutType:
+    """gh-128: fn_c_decl/fn_c_stub with out_type must resolve numpy dtype
+    annotations to the underlying C type before emitting the declaration."""
+
+    def test_fn_c_decl_float64_bracket_resolves_to_double(self):
+        # out_type="float64[M]" must emit "double *out", not "float64[M] *out".
+        decl = fn_c_decl(
+            "ciccompmf",
+            [("N", "uint32_t"), ("M", "uint32_t")],
+            "void",
+            out_type="float64[M]",
+        )
+        assert "double *out" in decl
+        assert "float64" not in decl
+
+    def test_fn_c_decl_float32_bracket_resolves_to_float(self):
+        decl = fn_c_decl(
+            "foo", [("n", "size_t")], "void", out_type="float32[n]"
+        )
+        assert "float *out" in decl
+        assert "float32" not in decl
+
+    def test_fn_c_decl_bare_c_type_unchanged(self):
+        # Bare C types (no numpy annotation) pass through as-is.
+        decl = fn_c_decl("bar", [], "void", out_type="double")
+        assert "double *out" in decl
+
+    def test_fn_c_stub_float64_bracket_resolves_to_double(self):
+        stub = fn_c_stub(
+            "ciccompmf",
+            [("N", "uint32_t"), ("M", "uint32_t")],
+            "void",
+            out_type="float64[M]",
+        )
+        assert "double *out" in stub
+        assert "float64" not in stub
+
+
+class TestInjectDeclsStaticInline:
+    """gh-133: _inject_decls_into_core_h must not append a bare extern
+    declaration when the function already has a static-inline definition."""
+
+    def _header(self, fn_name: str, body: str = "return 0;") -> str:
+        return (
+            f"#ifndef FOO_H\n#define FOO_H\n"
+            f"static inline int\n"
+            f"{fn_name}(int x)\n"
+            f"{{\n    {body}\n}}\n"
+            f"#endif /* FOO_CORE_H */\n"
+        )
+
+    def test_static_inline_not_redeclared(self, tmp_path):
+        path = tmp_path / "foo_core.h"
+        path.write_text(self._header("square_clip"))
+        decls = ["int square_clip(int x);"]
+        changed = _inject_decls_into_core_h(path, "foo", decls)
+        assert not changed
+        text = path.read_text()
+        assert text.count("square_clip") == 1
+
+    def test_jm_forceinline_not_redeclared(self, tmp_path):
+        header = (
+            "#ifndef B_H\n#define B_H\n"
+            "#define JM_FORCEINLINE __attribute__((always_inline)) inline\n"
+            "static JM_FORCEINLINE float\n"
+            "fast_mul(float a, float b) { return a * b; }\n"
+            "#endif /* B_CORE_H */\n"
+        )
+        path = tmp_path / "b_core.h"
+        path.write_text(header)
+        changed = _inject_decls_into_core_h(
+            path, "b", ["float fast_mul(float a, float b);"]
+        )
+        assert not changed
+        assert path.read_text().count("fast_mul") == 1
+
+    def test_new_extern_decl_still_injected(self, tmp_path):
+        path = tmp_path / "c_core.h"
+        path.write_text(
+            "#ifndef C_H\n#define C_H\n"
+            "static inline int existing(int x) { return x; }\n"
+            "#endif /* C_CORE_H */\n"
+        )
+        changed = _inject_decls_into_core_h(path, "c", ["void new_fn(int x);"])
+        assert changed
+        assert "new_fn" in path.read_text()
+
+
+class TestBuiltinResetPyiInStateCtx:
+    """gh-131: make_state_ctx must supply builtin_reset_pyi so the
+    component.pyi template renders the default reset() stub."""
+
+    def test_builtin_reset_pyi_present_in_stateful_ctx(self):
+        ctx = make_state_ctx("fir", "Fir", [("gain", "double", "1.0")])
+        assert "builtin_reset_pyi" in ctx
+        assert "def reset" in ctx["builtin_reset_pyi"]
+
+    def test_builtin_reset_pyi_present_in_no_state_ctx(self):
+        ctx = make_state_ctx("osc", "Osc", [], no_state=True)
+        assert "builtin_reset_pyi" in ctx
+        assert "def reset" in ctx["builtin_reset_pyi"]

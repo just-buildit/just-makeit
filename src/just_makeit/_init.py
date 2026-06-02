@@ -218,6 +218,18 @@ def _inject_decls_into_core_h(
         m = re.search(r"(\w+)\s*\(", d)
         if m:
             fn_name = m.group(1)
+            # gh-133: if the header already has a static-inline (or
+            # static JM_FORCEINLINE) *definition* of this function, don't
+            # append a bare extern declaration — that would violate C11
+            # §6.7.4¶7 (conflicting linkage on the same TU).
+            static_inline_pat = re.compile(
+                r"\bstatic\b[^;{]*\b(?:inline|JM_FORCEINLINE)\b[^;{]*\b"
+                + re.escape(fn_name)
+                + r"\s*\(",
+                re.MULTILINE,
+            )
+            if static_inline_pat.search(text):
+                continue
             # Replace an existing single-line prototype of the same name (a
             # builtin override or a refreshed signature). The pattern requires
             # the line to end in ');' so it never matches the inline step()

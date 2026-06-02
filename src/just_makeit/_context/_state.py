@@ -911,6 +911,11 @@ def make_state_ctx(
                 f" */\n"
                 f"void {component}_reset({component}_state_t *state);"
             ),
+            "builtin_reset_pyi": (
+                "\n"
+                "    def reset(self) -> None:\n"
+                '        """Reset state to post-create defaults."""\n'
+            ),
         }
         if init_params or array_args:
             base.update(
@@ -1642,6 +1647,11 @@ def make_state_ctx(
             f" * @param state  Must be non-NULL.\n"
             f" */\n"
             f"void {component}_reset({component}_state_t *state);"
+        ),
+        "builtin_reset_pyi": (
+            "\n"
+            "    def reset(self) -> None:\n"
+            '        """Reset state to post-create defaults."""\n'
         ),
     }
     # gh-69: when init_params are present, they replace state-field-driven
