@@ -43,15 +43,17 @@ def run(root: Path) -> None:
     from just_makeit._app import run as jm_app
 
     # ── 1. Scaffold ───────────────────────────────────────────────────────
+    # Use "va_filter" as the project name to avoid colliding with
+    # bench_upgrade, which also creates "my_filter" in the shared dest dir.
     jm_new(
-        "my_filter",
-        root / "my_filter",
+        "va_filter",
+        root / "va_filter",
         object_names=["filter"],
         state_vars=[("gain", "double", "1.0")],
         arg_type="float",
         return_type="float",
     )
-    proj = root / "my_filter"
+    proj = root / "va_filter"
 
     # ── 2. Add configure --varargs ────────────────────────────────────────
     jm_method(
@@ -87,7 +89,7 @@ def run(root: Path) -> None:
     ).read_text()
     assert "filter_configure_core.c" in cmake_t
 
-    pyi_t = (proj / "src" / "my_filter" / "filter.pyi").read_text()
+    pyi_t = (proj / "src" / "va_filter" / "filter.pyi").read_text()
     assert "def configure(self, *args: Any, **kwargs: Any) -> Any" in pyi_t
 
     # ── 4. Implement step and configure ──────────────────────────────────
@@ -114,7 +116,21 @@ def run(root: Path) -> None:
     )
 
     # ── 6. Python smoke test ──────────────────────────────────────────────
-    _cmd([sys.executable, str(STEPS / "05_demo.py")], cwd=proj)
+    # Run inline rather than calling 05_demo.py (which imports "my_filter")
+    # because the test project is named "va_filter" to avoid collisions with
+    # bench_upgrade in the shared Docker dest directory.
+    smoke = (
+        "import sys; sys.path.insert(0, 'src');"
+        "from va_filter import Filter;"
+        "f = Filter(gain=1.0);"
+        "assert f.step(2.0) == 2.0;"
+        "f.configure(gain=0.5);"
+        "assert f.step(2.0) == 1.0;"
+        "f.configure(2.0);"
+        "assert f.step(1.0) == 2.0;"
+        "print('configure: PASSED')"
+    )
+    _cmd([sys.executable, "-c", smoke], cwd=proj)
 
     # ── 7. jm app --argc-argv ────────────────────────────────────────────
     jm_app(
