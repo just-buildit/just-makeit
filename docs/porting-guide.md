@@ -339,6 +339,16 @@ just-makeit property engine gain --type float --writable
 just-makeit function mymod normalize --arg-type float --return-type float
 ```
 
+If a method needs extra scalar control parameters beyond the standard `x`
+input, use `--extra-arg name:type` (or the synonymous `--param`):
+
+```sh
+just-makeit method engine execute_ctrl \
+    --arg-type double --return-type double \
+    --extra-arg bypass:bool \
+    --extra-arg gain:float
+```
+
 Or declare them in TOML and run `jm apply`:
 
 ```toml
@@ -346,6 +356,7 @@ Or declare them in TOML and run `jm apply`:
 name        = "execute_ctrl"
 arg_type    = "double"
 return_type = "double"
+extra_args  = [{name = "bypass", type = "bool"}, {name = "gain", type = "float"}]
 impl_file   = "legacy/dsp.c::engine_ctrl"
 
 [[engine.properties]]
