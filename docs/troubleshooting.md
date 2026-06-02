@@ -203,6 +203,45 @@ just-makeit regenerate <comp>   # deletes the component's files, re-runs apply
 
 ______________________________________________________________________
 
+## Generated header has `const T *` on a parameter that my function writes into
+
+**Symptom:** The generated (or refreshed) `_core.h` declares a function
+parameter as `const float *w` but the implementation writes into `w`, producing
+a clang-tidy / cppcheck warning or a confusing mismatch between header and body.
+
+**Cause:** Every array parameter (`T[]`) is `const T *` by default — jm treats
+it as read-only input. A parameter that the function *writes into* must be
+explicitly marked as an output buffer.
+
+**Fix:** add `out = true` to the parameter in the manifest. For a module
+function:
+
+```toml
+[[spectral.functions]]
+name = "kaiser_window"
+return_type = "void"
+
+[[spectral.functions.params]]
+name = "w"
+type = "float[]"
+out = true        # drops const → float *w in C
+
+[[spectral.functions.params]]
+name = "beta"
+type = "float"
+```
+
+For a method, use `--out-param w:float[]` on the CLI:
+
+```sh
+just-makeit method spectral kaiser_window --out-param w:float[] --param beta:float
+```
+
+After updating the TOML, run `jm apply` to refresh the declaration in
+`_core.h`.
+
+______________________________________________________________________
+
 ## `--return-type "T[]"` is rejected
 
 **Symptom:** `just-makeit object x --return-type "float[]"` exits with an error
