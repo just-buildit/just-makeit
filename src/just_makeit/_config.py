@@ -954,12 +954,14 @@ def _dump(cfg: dict) -> str:
             if m.get("multi_output"):
                 mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
                 lines.append(f"multi_output = [{mo_str}]")
-            if m.get("params"):
+            _ea = m.get("extra_args") or m.get("params")
+            if _ea:
+                _ekey = "extra_args" if "extra_args" in m else "params"
                 parts = ", ".join(
                     f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
-                    for p in m["params"]
+                    for p in _ea
                 )
-                lines.append(f"params = [{parts}]")
+                lines.append(f"{_ekey} = [{parts}]")
             if m.get("out_type"):
                 lines.append(f'out_type = "{m["out_type"]}"')
             if m.get("out_divisor") and m["out_divisor"] != 1:

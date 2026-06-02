@@ -66,15 +66,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             multi_output.append(val)
             i += 1
-        elif tok == "--param":
+        elif tok in ("--param", "--extra-arg"):
             i += 1
             if i >= len(remaining):
-                print("error: --param requires name:type", file=sys.stderr)
+                print(f"error: {tok} requires name:type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
             if ":" not in val:
                 print(
-                    f"error: --param '{val}' must be name:type",
+                    f"error: {tok} '{val}' must be name:type",
                     file=sys.stderr,
                 )
                 sys.exit(1)

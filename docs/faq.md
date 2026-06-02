@@ -68,6 +68,46 @@ just wire the library into the CMake target.
 
 ______________________________________________________________________
 
+## Can I add a method that takes extra scalar arguments beyond x?
+
+Yes. Use `--extra-arg name:type` (or `--param name:type`) on `jm method`, or
+declare `extra_args = [{name, type}]` in TOML:
+
+```sh
+just-makeit method integrator step_controlled \
+    --arg-type "float _Complex" --return-type "float _Complex" \
+    --extra-arg dump_now:bool
+```
+
+Generated C signature:
+
+```c
+float complex integrator_step_controlled(
+    integrator_state_t *state, float complex x, bool dump_now);
+```
+
+Generated Python stub:
+
+```python
+def step_controlled(self, x: complex, dump_now: bool) -> complex: ...
+```
+
+In TOML, `extra_args` and `params` are synonyms — use whichever reads more
+clearly:
+
+```toml
+[[integrator.methods]]
+name        = "step_controlled"
+arg_type    = "float _Complex"
+return_type = "float _Complex"
+extra_args  = [{name = "dump_now", type = "bool"}]
+```
+
+Supported scalar types for extra args are the same as for state fields (see
+the [type mapping table](configuration.md#type-mapping)).
+
+______________________________________________________________________
+
 ## Can I add a method that takes no arguments?
 
 Yes. Use `--param` to declare method parameters; omitting `--param` gives

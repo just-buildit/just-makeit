@@ -231,6 +231,7 @@ those land, hand-editing the manifest is the workaround.
 | --------------------------------- | ------------------------------------------------------- | ------------ |
 | `name`, `arg_type`, `return_type` | `jm method <obj> <method> --arg-type T --return-type T` | ✅           |
 | `params = [{name, type}]`         | `jm method --param name:type` (repeatable)              | ✅           |
+| `extra_args = [{name, type}]`     | `jm method --extra-arg name:type` (alias for `params`)  | ✅ (0.14.2)  |
 | `variable_output = true`          | `jm method --variable-output`                           | ✅           |
 | `max_out = N` (sibling stub)      | `jm method --max-out N`                                 | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`       | `jm method --multi-output T` (repeatable)               | ✅           |
