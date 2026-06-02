@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [0.14.3] — 2026-06-02
+
+### Fixed
+
+- **`jm apply` — `float64[M]` leaked into generated `_core.h`** (gh-128).
+    `fn_c_decl` and `fn_c_stub` now call `parse_out_type()` to resolve numpy
+    dtype+size annotations to their underlying C type before emitting the
+    declaration (`float64[M] *out` → `double *out`).
+
+- **`_core_core` double suffix in root `CMakeLists.txt`** (gh-130). The module
+    object path was missing the `_core`-suffix strip that the standalone path
+    already applied; `depends_on` entries ending in `_core` now get
+    `$<TARGET_OBJECTS:foo_core>`, not `$<TARGET_OBJECTS:foo_core_core>`.
+
+- **Duplicate `reset()` stub in `.pyi`** when user declares
+    `[[methods]] name = "reset"` (gh-131). Added `builtin_reset_pyi` context
+    key: `make_state_ctx` supplies the default stub; `make_methods_ctx` blanks
+    it when `user_has_reset`. The `component.pyi` template uses
+    `<<builtin_reset_pyi>>`; `_stubs._obj_stub` skips the built-in lines when
+    the extra-methods list already contains `reset`.
+
+- **`extra_link_libs` stripped from test/bench `target_link_libraries` on
+    `jm apply`** (gh-132). `CMakeLists_object_core.cmake` test/bench targets now
+    include `<<extra_link_libs_block>>`; module object path sets the block in
+    ctx; collocated objects receive the module-level block.
+
+- **Non-inline `extern` declaration appended after `static inline` definition**
+    (gh-133). `_inject_decls_into_core_h` now skips injecting a bare prototype
+    when the header already contains a `static inline` / `static JM_FORCEINLINE`
+    definition of the same function — preventing the C11 §6.7.4¶7 linkage
+    conflict that caused multiple-definition linker errors.
+
+### Docs
+
+- New troubleshooting entry: *"Generated header has `const T *` on a parameter
+    that my function writes into"* — explains the `out = true` TOML key and
+    `--out-param` CLI flag (gh-129).
+
 ## [0.14.2] — 2026-06-02
 
 ### Added
