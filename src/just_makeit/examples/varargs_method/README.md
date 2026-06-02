@@ -123,9 +123,7 @@ else:
     print("filter_step: already patched or stub changed — skipping")
 
 # -- 2. Replace filter_configure_core.c with the full implementation ----
-configure_c = pathlib.Path(
-    "native/src/filter/filter_configure_core.c"
-)
+configure_c = pathlib.Path("native/src/filter/filter_configure_core.c")
 configure_c.write_text((STEPS / "03_configure.c").read_text())
 print(f"patched {configure_c}")
 ```
@@ -134,9 +132,9 @@ print(f"patched {configure_c}")
 
 ```c
 static inline float
-filter_step(const filter_state_t *state, float x)
+filter_step (const filter_state_t *state, float x)
 {
-    return (float)(state->gain * x);
+  return (float)(state->gain * x);
 }
 ```
 
@@ -152,24 +150,29 @@ filter_step(const filter_state_t *state, float x)
  *   filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
-#include <Python.h>
 #include "filter/filter_core.h"
+#include <Python.h>
 
 PyObject *
-filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
+filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
 {
-    typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
-    filter_state_t *state = ((Obj *)self)->handle;
-    if (!state) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
+  typedef struct
+  {
+    PyObject_HEAD;
+    filter_state_t *handle;
+  } Obj;
+  filter_state_t *state = ((Obj *)self)->handle;
+  if (!state)
+    {
+      PyErr_SetString (PyExc_RuntimeError, "destroyed");
+      return NULL;
     }
-    double gain = state->gain;
-    static char *kwlist[] = {"gain", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|d", kwlist, &gain))
-        return NULL;
-    state->gain = gain;
-    Py_RETURN_NONE;
+  double       gain     = state->gain;
+  static char *kwlist[] = { "gain", NULL };
+  if (!PyArg_ParseTupleAndKeywords (args, kwargs, "|d", kwlist, &gain))
+    return NULL;
+  state->gain = gain;
+  Py_RETURN_NONE;
 }
 ```
 
@@ -199,6 +202,7 @@ library, Python-aware binding compiled directly into the DSO.
 
 ```python
 import sys
+
 sys.path.insert(0, "src")
 from my_filter import Filter
 

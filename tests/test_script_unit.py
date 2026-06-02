@@ -171,6 +171,14 @@ class TestMethodFlags:
         flags = _script._method_flags({"no_bench": True}, None)
         assert not any("--no-bench" in f for f in flags)
 
+    def test_varargs(self):
+        flags = _script._method_flags({"varargs": True}, None)
+        assert any("--varargs" in f for f in flags)
+
+    def test_varargs_false_not_emitted(self):
+        flags = _script._method_flags({"varargs": False}, None)
+        assert not any("--varargs" in f for f in flags)
+
 
 # ── property flags ────────────────────────────────────────────────────────────
 

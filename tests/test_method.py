@@ -1526,3 +1526,154 @@ class TestMethodExtraArgsTomlKey:
             encoding="utf-8"
         )
         assert "bool dump_now" in core_c
+
+
+class TestMethodVarargs:
+    """--varargs generates a sacred per-method binding file compiled into the
+    Python DSO; no typed C prototype is added to _core.h, and no stub is
+    appended to _core.c."""
+
+    @pytest.fixture()
+    def varargs_project(self, project):
+        method_run(
+            project,
+            "nco",
+            "configure",
+            None,
+            "float",
+            "float",
+            False,
+            [],
+            varargs=True,
+        )
+        return project
+
+    def _binding(self, p):
+        return (
+            p / "native" / "src" / "nco" / "nco_configure_core.c"
+        ).read_text(encoding="utf-8")
+
+    def _ext(self, p):
+        return (p / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def _cmake(self, p):
+        return (p / "native" / "src" / "nco" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+
+    def _core_h(self, p):
+        return (p / "native" / "inc" / "nco" / "nco_core.h").read_text(
+            encoding="utf-8"
+        )
+
+    def _core_c(self, p):
+        return (p / "native" / "src" / "nco" / "nco_core.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_binding_file_created(self, varargs_project):
+        assert (
+            varargs_project / "native" / "src" / "nco" / "nco_configure_core.c"
+        ).exists()
+
+    def test_binding_file_has_python_h(self, varargs_project):
+        assert "#include <Python.h>" in self._binding(varargs_project)
+
+    def test_binding_file_has_pyobject_return(self, varargs_project):
+        assert "PyObject *" in self._binding(varargs_project)
+
+    def test_binding_file_has_implement_comment(self, varargs_project):
+        assert "IMPLEMENT" in self._binding(varargs_project)
+
+    def test_binding_file_includes_core_h(self, varargs_project):
+        assert "nco_core.h" in self._binding(varargs_project)
+
+    def test_binding_file_signature_has_args_kwargs(self, varargs_project):
+        bt = self._binding(varargs_project)
+        assert "PyObject *args" in bt
+        assert "PyObject *kwargs" in bt
+
+    def test_core_c_not_modified(self, varargs_project):
+        # No stub appended — varargs lives in its own file.
+        text = self._core_c(varargs_project)
+        assert "nco_configure(" not in text
+
+    def test_core_h_has_no_varargs_prototype(self, varargs_project):
+        # No typed C prototype injected (binding is Python-side only).
+        h = self._core_h(varargs_project)
+        assert "nco_configure(" not in h
+
+    def test_ext_c_has_extern_decl(self, varargs_project):
+        assert "extern PyObject *" in self._ext(varargs_project)
+        assert "nco_configure" in self._ext(varargs_project)
+
+    def test_ext_c_has_meth_varargs_keywords(self, varargs_project):
+        assert "METH_VARARGS | METH_KEYWORDS" in self._ext(varargs_project)
+
+    def test_cmake_spliced_with_binding_file(self, varargs_project):
+        assert "nco_configure_core.c" in self._cmake(varargs_project)
+
+    def test_config_records_varargs_true(self, varargs_project):
+        cfg = load(varargs_project)
+        m = next(m for m in methods(cfg, "nco") if m["name"] == "configure")
+        assert m.get("varargs") is True
+
+    def test_no_placeholders(self, varargs_project):
+        _check_no_placeholders(varargs_project)
+
+    def test_pyi_has_star_args_signature(self, varargs_project):
+        pyi = (varargs_project / "src" / "dsp" / "nco.pyi").read_text(
+            encoding="utf-8"
+        )
+        assert "*args" in pyi
+        assert "**kwargs" in pyi
+
+    def test_bench_skips_varargs_method(self, varargs_project):
+        from just_makeit._context._methods import _bench_method_block
+
+        m = {"name": "configure", "varargs": True}
+        assert _bench_method_block("nco", m) == ""
+
+    def test_cmake_idempotent_second_add(self, varargs_project):
+        """Splicing again when the file is already in CMakeLists is a no-op."""
+        cmake_before = self._cmake(varargs_project)
+        from just_makeit._method import _splice_varargs_source
+
+        cmake_path = (
+            varargs_project / "native" / "src" / "nco" / "CMakeLists.txt"
+        )
+        _splice_varargs_source(cmake_path, "nco", "nco_configure_core.c")
+        assert cmake_path.read_text(encoding="utf-8") == cmake_before
+
+    def test_varargs_replays_via_apply(self, tmp_path):
+        """apply recreates the binding file and wires ext.c from TOML."""
+        import shutil
+
+        proj = tmp_path / "dsp"
+        new_run("dsp", proj, ["nco"], [("freq", "double", "0.0")])
+        method_run(
+            proj,
+            "nco",
+            "configure",
+            None,
+            "float",
+            "float",
+            False,
+            [],
+            varargs=True,
+        )
+
+        # Remove glue files so apply must recreate them from TOML.
+        shutil.rmtree(proj / "native" / "src" / "nco")
+        apply_run(proj)
+
+        binding = proj / "native" / "src" / "nco" / "nco_configure_core.c"
+        assert binding.exists()
+        assert "#include <Python.h>" in binding.read_text(encoding="utf-8")
+        ext = (proj / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert "extern PyObject *" in ext
+        assert "METH_VARARGS | METH_KEYWORDS" in ext
