@@ -347,11 +347,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     else:
         lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")
 
-    lines += [
-        "",
-        "    def reset(self) -> None:",
-        '        """Reset state to post-create defaults."""',
-    ]
+    # gh-131: skip the built-in reset() stub when the user declared a
+    # [[methods]] entry named "reset"; that entry's stub appears below in
+    # the extra-methods loop and must not be duplicated here.
+    _user_has_reset = any(m["name"] == "reset" for m in obj_methods)
+    if not _user_has_reset:
+        lines += [
+            "",
+            "    def reset(self) -> None:",
+            '        """Reset state to post-create defaults."""',
+        ]
 
     # step() / steps()
     if no_step:

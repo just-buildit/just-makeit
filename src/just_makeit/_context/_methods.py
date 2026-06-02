@@ -1242,6 +1242,10 @@ def make_methods_ctx(
                 "builtin_reset_c": "",
                 "builtin_reset_pmd": "",
                 "builtin_reset_decl": "",
+                # gh-131: suppress the template's hardcoded reset() stub
+                # when the user declared a [[methods]] entry named "reset";
+                # pyi_extra_methods will contain the user-defined variant.
+                "builtin_reset_pyi": "",
             }
             if user_has_reset
             else {}

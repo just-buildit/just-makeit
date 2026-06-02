@@ -623,3 +623,69 @@ class TestExtraIncludeDirsViaCLI:
         assert 'extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]' in toml_text
         assert 'extra_link_libs = ["PkgConfig::DOPPLER"]' in toml_text
         assert 'extra_types = ["HalfbandDp"]' in toml_text
+
+
+# ---------------------------------------------------------------------------
+# gh-130 — depends_on with _core suffix produces _core_core in CMakeLists
+# ---------------------------------------------------------------------------
+
+
+class TestDependsOnCoreStrip:
+    """gh-130: a module object whose depends_on entries already carry the
+    _core suffix must not get _core appended a second time in target_sources."""
+
+    def test_module_object_depends_on_no_double_core(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(
+            root,
+            "fir",
+            "dsp",
+            state_vars=[("n", "size_t", "64")],
+            depends_on=["base_core"],  # already carries _core suffix
+        )
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        assert "base_core_core" not in cmake
+        assert "base_core>" in cmake or "base_core)\n" in cmake
+
+
+# ---------------------------------------------------------------------------
+# gh-132 — extra_link_libs stripped from test/bench targets in module cmake
+# ---------------------------------------------------------------------------
+
+
+class TestExtraLinkLibsInTestBench:
+    """gh-132: module-level extra_link_libs must appear in the test and
+    benchmark target_link_libraries blocks of collocated objects, not only in
+    the Python extension target."""
+
+    def test_collocated_extra_libs_in_test_target(self, tmp_path):
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["ddc"])
+        object_run(root, "ddc", "ddc", state_vars=[("gain", "double", "1.0")])
+
+        manifest = root / "just-makeit.toml"
+        toml_text = manifest.read_text(encoding="utf-8")
+        toml_text = toml_text.replace(
+            "[module.ddc]",
+            '[module.ddc]\nextra_link_libs = ["lo_core", "resamp_core"]',
+        )
+        manifest.write_text(toml_text, encoding="utf-8")
+
+        from just_makeit._apply import run as apply_run
+
+        apply_run(root)
+
+        cmake = (root / "native" / "src" / "ddc" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        # The test target's target_link_libraries must include extra libs.
+        assert cmake.count("lo_core") >= 2  # ext + test (or ext + bench)
+        # Both test and bench must have them.
+        test_idx = cmake.find("test_ddc_core")
+        bench_idx = cmake.find("bench_ddc_core")
+        assert test_idx != -1 and bench_idx != -1
+        test_block = cmake[
+            test_idx : bench_idx if bench_idx > test_idx else None
+        ]
+        assert "lo_core" in test_block

@@ -311,7 +311,11 @@ def fn_c_decl(
     if out_type:
         arr_p = [p for p in params if is_array_param_type(p[1])]
         scl_p = [p for p in params if not is_array_param_type(p[1])]
-        out_disp = _ctype_display(out_type)
+        # gh-128: out_type may carry a [param_name] size annotation
+        # (e.g. "float64[M]").  Resolve to the underlying C type so the
+        # declaration emits "double *out", not the invalid "float64[M] *out".
+        _out_ctype, _ = parse_out_type(out_type)
+        out_disp = _ctype_display(_out_ctype)
         c_parts: list[str] = []
         for p in arr_p:
             n, t = p[0], p[1]
@@ -426,7 +430,9 @@ def fn_c_stub(
     if out_type:
         arr_p = [p for p in params if is_array_param_type(p[1])]
         scl_p = [p for p in params if not is_array_param_type(p[1])]
-        out_disp = _ctype_display(out_type)
+        # gh-128: resolve numpy dtype + size annotation → C type.
+        _out_ctype, _ = parse_out_type(out_type)
+        out_disp = _ctype_display(_out_ctype)
         c_parts: list[str] = []
         suppress_parts: list[str] = []
         for p in arr_p:

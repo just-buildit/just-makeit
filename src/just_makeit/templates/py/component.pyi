@@ -12,10 +12,7 @@ class <<Component>>:
 <<pyi_examples>>    """
 
     def __init__(self, <<init_params_pyi>>) -> None: ...
-
-    def reset(self) -> None:
-        """Reset state to post-create defaults."""
-<<pyi_step_methods>><<pyi_extra_methods>><<getter_setter_stubs_pyi>>
+<<builtin_reset_pyi>><<pyi_step_methods>><<pyi_extra_methods>><<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         """Release C resources immediately."""
 
