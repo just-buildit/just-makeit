@@ -10,8 +10,7 @@
 int
 main(int argc, char *argv[])
 {
-    (void)argc;
-    (void)argv;
+    /*<<argc_argv_block>>*/
 
     /* --- create ---------------------------------------------------------- */
     /*<<app_create_line>>*/

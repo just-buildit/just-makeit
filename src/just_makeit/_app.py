@@ -143,6 +143,7 @@ def _build_ctx(
     component: str,
     name: str,
     target: str,
+    argc_argv: bool = False,
 ) -> dict[str, str]:
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
@@ -173,6 +174,11 @@ def _build_ctx(
         "app_create_line": (
             f"    {component}_state_t *state = {create_call};"
         ),
+        "argc_argv_block": (
+            "if (argc > 1) {\n        /* <<IMPLEMENT: parse argv>> */\n    }"
+            if argc_argv
+            else "(void)argc;\n    (void)argv;"
+        ),
     }
 
 
@@ -183,6 +189,7 @@ def run(
     target: str = "c",
     name: str | None = None,
     object_: str | None = None,
+    argc_argv: bool = False,
 ) -> None:
     if cfg is None:
         cfg_path = root / C.FILENAME
@@ -226,7 +233,7 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _build_ctx(cfg, object_, name, target)
+    ctx = _build_ctx(cfg, object_, name, target, argc_argv=argc_argv)
 
     print(f"just-makeit: scaffolding app '{name}' (target={target})")
     print()

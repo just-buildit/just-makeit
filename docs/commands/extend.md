@@ -31,6 +31,7 @@ appended, ready for you to implement.
 | `--out-type TYPE`       | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`.                                                                                 |
 | `--out-divisor N`       | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes).                                                                                    |
 | `--batch`               | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
+| `--varargs`             | Generate a `*args/**kwargs` Python binding. See below. Mutually exclusive with `--arg-type`, `--param`, and `--variable-output`.                                                                                                                                                                                                 |
 | `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                                                                                                                                                                                                 |
 | `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Out-of-bounds or inverted ranges error cleanly.                                                                                                                                                                                                       |
 | `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
@@ -95,6 +96,80 @@ resamp_execute_ctrl(resamp_state_t *state,
 Python call: `resamp.execute_ctrl(np.zeros(64, dtype=np.complex64))`
 
 `--param` and `--arg-type` are mutually exclusive per method.
+
+______________________________________________________________________
+
+### Varargs methods (`--varargs`)
+
+Use `--varargs` when a method needs fully flexible Python argument
+parsing — for example, `configure(rate=48000, mode="fast")` where the
+parameter set is open-ended or includes types that fall outside the
+fixed `_CTYPE_META` table.
+
+```sh
+just-makeit method filter configure --varargs
+```
+
+**What gets generated:**
+
+- **`native/src/<comp>/<comp>_<name>_core.c`** (sacred — never
+    regenerated). A Python-aware C file compiled directly into the Python
+    extension DSO (not the pure-C OBJECT library), so it may include
+    `<Python.h>` freely. Contains a `PyObject *` function with an
+    `<<IMPLEMENT>>` stub:
+
+    ```c
+    PyObject *
+    filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
+    {
+        (void)self; (void)args; (void)kwargs;
+        Py_RETURN_NONE;
+    }
+    ```
+
+- **`<comp>_ext.c`** (regenerated). An `extern PyObject *` declaration
+    pulls the symbol in from the binding file, and the `PyMethodDef` entry
+    uses `METH_VARARGS | METH_KEYWORDS`:
+
+    ```c
+    extern PyObject *
+    filter_configure(PyObject *, PyObject *, PyObject *);
+
+    /* in PyMethodDef array: */
+    {"configure", (PyCFunction)(void *)filter_configure,
+     METH_VARARGS | METH_KEYWORDS, "configure(*args, **kwargs)."},
+    ```
+
+- **`native/src/<comp>/CMakeLists.txt`** (surgically updated).
+    The binding `.c` file is spliced into the `Python3_add_library(...)`
+    source list so cmake compiles it into the same DSO.
+
+- **`.pyi` stub** (regenerated):
+
+    ```python
+    def configure(self, *args: Any, **kwargs: Any) -> Any: ...
+    ```
+
+- **`just-makeit.toml`**: `varargs = true` is recorded under
+    `[[<comp>.methods]]`.
+
+**Accessing the C state inside the binding:**
+
+The `self` pointer is a `<Comp>Object *` (the Python object), not the raw
+state struct. Cast it to reach the handle:
+
+```c
+typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
+filter_state_t *state = ((Obj *)self)->handle;
+```
+
+The comment at the top of the generated sacred file shows this cast
+verbatim.
+
+**Constraint:** `--varargs` is mutually exclusive with `--arg-type`,
+`--param`, and `--variable-output`. Those flags all imply a specific
+typed C signature; `--varargs` bypasses the type system entirely and
+gives you raw Python argument access.
 
 ______________________________________________________________________
 

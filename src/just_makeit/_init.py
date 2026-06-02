@@ -565,6 +565,7 @@ def run(
         "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
+    ctx["extra_ext_sources"] = ""  # populated on jm method --varargs
     # extra_include_dirs is a list of CMake include dirs (literals or ${VAR}
     # references). Each dir lands on its own indented line inside the
     # target_include_directories(...) blocks; leading "\n    " puts the first

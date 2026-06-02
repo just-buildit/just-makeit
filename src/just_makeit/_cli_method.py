@@ -20,6 +20,7 @@ def run(args: list[str]) -> None:
     arg_type = "void"
     return_type = "float _Complex"
     variable_output = False
+    varargs = False
     batch_method = False
     multi_output: list[str] = []
     method_params: list[tuple[str, str]] = []
@@ -48,6 +49,9 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--variable-output":
             variable_output = True
+            i += 1
+        elif tok == "--varargs":
+            varargs = True
             i += 1
         elif tok == "--batch":
             batch_method = True
@@ -270,4 +274,5 @@ def run(args: list[str]) -> None:
         py_return_type=py_return_type,
         max_out=max_out,
         result_fields=result_fields or None,
+        varargs=varargs,
     )

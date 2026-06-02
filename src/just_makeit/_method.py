@@ -246,6 +246,88 @@ def _append_to_core_c(path: Path, stub: str) -> None:
     print(f"  update  {path}")
 
 
+def _splice_varargs_source(
+    cmake_path: Path,
+    component: str,
+    binding_file: str,
+) -> None:
+    """Add *binding_file* to the Python3_add_library line in CMakeLists.txt.
+
+    Idempotent: does nothing if the file is already listed.  The splice
+    targets the first occurrence of ``<component>_ext.c`` on the
+    ``Python3_add_library`` line so it works whether the file was generated
+    with the old template (no placeholder) or the new one.
+    """
+    import re
+
+    text = cmake_path.read_text(encoding="utf-8")
+    if binding_file in text:
+        return  # already present
+    # Match the Python3_add_library() call and append the new source before ')'
+    pattern = re.compile(
+        r"(Python3_add_library\("
+        + re.escape(component)
+        + r" MODULE WITH_SOABI"
+        r"[^)]*?)(\))"
+    )
+    new_text = pattern.sub(
+        lambda m: m.group(1) + f" {binding_file}" + m.group(2),
+        text,
+        count=1,
+    )
+    if new_text == text:
+        return  # pattern not found, nothing to do
+    cmake_path.write_text(new_text, encoding="utf-8")
+    print(f"  update  {cmake_path}")
+
+
+def _write_varargs_core_c(
+    path: Path,
+    component: str,
+    method_name: str,
+) -> None:
+    """Write the sacred *args/**kwargs binding file for a varargs method.
+
+    This file is compiled into the Python extension DSO (not the pure-C
+    OBJECT library) so that it can use Python.h.  The user implements the
+    body in the ``<<IMPLEMENT>>`` block.
+
+    To access the component's C state inside the binding, cast ``self``:
+      typedef struct { PyObject_HEAD; <comp>_state_t *handle; } CompObj;
+      <comp>_state_t *state = ((CompObj *)self)->handle;
+    """
+    text = (
+        f"/*\n"
+        f" * {component}_{method_name}_core.c"
+        f" — varargs Python binding for {component}.{method_name}().\n"
+        f" *\n"
+        f" * Compiled into the Python extension DSO, not the pure-C core.\n"
+        f" * To access the C state inside this function:\n"
+        f" *   typedef struct {{ PyObject_HEAD;"
+        f" {component}_state_t *handle; }} Obj;\n"
+        f" *   {component}_state_t *state = ((Obj *)self)->handle;\n"
+        f" */\n"
+        f"#define PY_SSIZE_T_CLEAN\n"
+        f"#include <Python.h>\n"
+        f'#include "{component}/{component}_core.h"\n'
+        f"\n"
+        f"/* <<IMPLEMENT: {method_name}(*args, **kwargs)\n"
+        f" * Parse args/kwargs and return a PyObject *.\n"
+        f" * Return NULL on error (exception must be set).\n"
+        f" */\n"
+        f"PyObject *\n"
+        f"{component}_{method_name}"
+        f"(PyObject *self, PyObject *args, PyObject *kwargs)\n"
+        f"{{\n"
+        f"    (void)self; (void)args; (void)kwargs;\n"
+        f"    Py_RETURN_NONE;\n"
+        f"}}\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(f"  create  {path}")
+
+
 def _build_method_prototype(
     component: str,
     name: str,
@@ -349,6 +431,7 @@ def run(
     max_results: int = 64,
     py_return_type: str = "",
     max_out: int = 0,
+    varargs: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -398,60 +481,77 @@ def run(
     params = params or []
     result_fields = result_fields or []
 
-    # 1. Append C stub to _core.c
+    # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
-    if result_fields:
-        stub = _methods_c_stub_result_fields(
-            object_name,
-            method_name,
-            arg_type,
-            return_type,
-            max_results,
+    if varargs:
+        # Varargs methods live in a sacred per-method file compiled into the
+        # Python extension DSO (not the pure-C OBJECT lib) so they can use
+        # Python.h.  No _core.c or _core.h changes needed.
+        binding_c = (
+            root
+            / "native"
+            / "src"
+            / object_name
+            / f"{object_name}_{method_name}_core.c"
         )
-    elif variable_output:
-        stub = _methods_c_stub_variable(
-            object_name,
-            method_name,
-            arg_type,
-            return_type,
-            multi_output,
-            params=[(p[0], p[1]) for p in params],
-            out_type=out_type,
-            max_out=max_out,
-        )
+        _write_varargs_core_c(binding_c, object_name, method_name)
     else:
-        stub = _methods_c_stub_fixed(
-            object_name,
-            method_name,
-            arg_type,
-            return_type,
-            multi_output,
-            params,
-            out_type,
-        )
-    if impl_body is not None:
-        import re as _re
+        if result_fields:
+            stub = _methods_c_stub_result_fields(
+                object_name,
+                method_name,
+                arg_type,
+                return_type,
+                max_results,
+            )
+        elif variable_output:
+            stub = _methods_c_stub_variable(
+                object_name,
+                method_name,
+                arg_type,
+                return_type,
+                multi_output,
+                params=[(p[0], p[1]) for p in params],
+                out_type=out_type,
+                max_out=max_out,
+            )
+        else:
+            stub = _methods_c_stub_fixed(
+                object_name,
+                method_name,
+                arg_type,
+                return_type,
+                multi_output,
+                params,
+                out_type,
+            )
+        if impl_body is not None:
+            import re as _re
 
-        from . import _impl as I
+            from . import _impl as I
 
-        body = impl_body
-        if variable_output and not _re.search(r"\breturn\b", body):
-            body = body.rstrip("\n") + "\nreturn n;"
-        stub = I.inject_body_into_stub(stub, body)
-    _append_to_core_c(core_c, stub)
+            body = impl_body
+            if variable_output and not _re.search(r"\breturn\b", body):
+                body = body.rstrip("\n") + "\nreturn n;"
+            stub = I.inject_body_into_stub(stub, body)
+        _append_to_core_c(core_c, stub)
 
     # The method's public prototype, injected surgically into _core.h below
     # (one or two lines; variable-output methods declare a sibling _max_out).
-    proto_lines = _build_method_prototype(
-        object_name,
-        method_name,
-        arg_type,
-        return_type,
-        variable_output,
-        multi_output,
-        [(p[0], p[1]) for p in params],
-        out_type,
-    ).split("\n")
+    # Varargs methods have no typed C prototype — their binding is Python-aware
+    # and lives in the sacred binding .c file, not _core.h.
+    proto_lines: list[str] = []
+    if not varargs:
+        proto_lines = _build_method_prototype(
+            object_name,
+            method_name,
+            arg_type,
+            return_type,
+            variable_output,
+            multi_output,
+            [(p[0], p[1]) for p in params],
+            out_type,
+        ).split("\n")
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
@@ -489,6 +589,8 @@ def run(
         "arg_type": arg_type,
         "return_type": return_type,
     }
+    if varargs:
+        method_entry["varargs"] = True
     if params:
         method_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if variable_output:
@@ -569,15 +671,19 @@ def run(
                 no_step=C.is_no_step(cfg, object_name),
             )
         )
-        ctx.update(
-            Ctx.make_methods_ctx(
-                object_name,
-                Component,
-                C.methods(cfg, object_name),
-                pkg=pkg,
-                py_create_args=ctx.get("py_create_args", ""),
-                no_state=C.is_no_state(cfg, object_name),
-            )
+        methods_ctx = Ctx.make_methods_ctx(
+            object_name,
+            Component,
+            C.methods(cfg, object_name),
+            pkg=pkg,
+            py_create_args=ctx.get("py_create_args", ""),
+            no_state=C.is_no_state(cfg, object_name),
+        )
+        ctx.update(methods_ctx)
+        # extra_ext_sources: space-prefixed list of varargs binding .c files
+        # compiled into the Python DSO target (not the pure-C OBJECT lib).
+        ctx["extra_ext_sources"] = "".join(
+            f" {f}" for f in methods_ctx.get("varargs_binding_files", [])
         )
         ctx.update(
             Ctx.make_properties_ctx(
@@ -593,11 +699,12 @@ def run(
 
         # Surgically inject the new method's declaration into _core.h (sacred
         # struct + inline step() untouched); regenerate the glue (_ext.c, the
-        # benchmark, the stub) from the manifest.
+        # benchmark, the stub, and the component CMakeLists) from the manifest.
         core_h = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
+        obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         if _inject_decls_into_core_h(
@@ -617,6 +724,24 @@ def run(
         if pyi_path.exists():
             pyi_path.write_text(r(R.COMPONENT_PYI), encoding="utf-8")
             print(f"  update  {pyi_path}")
+        # Surgical splice: when a varargs binding file was just added,
+        # insert it into the Python3_add_library line in CMakeLists.txt.
+        # Only varargs methods change the build-system source list; normal
+        # methods have no effect on CMakeLists.
+        if varargs and obj_cmake.exists():
+            _splice_varargs_source(
+                obj_cmake,
+                object_name,
+                f"{object_name}_{method_name}_core.c",
+            )
 
     print()
-    print(f"Done!  Implement {object_name}_{method_name}() in {core_c.name}")
+    if varargs:
+        print(
+            f"Done!  Implement {object_name}_{method_name}()"
+            f" in {object_name}_{method_name}_core.c"
+        )
+    else:
+        print(
+            f"Done!  Implement {object_name}_{method_name}() in {core_c.name}"
+        )

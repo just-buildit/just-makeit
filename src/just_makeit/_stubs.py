@@ -404,6 +404,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # extra methods
     for m in obj_methods:
         m_name = m["name"]
+        if m.get("varargs"):
+            lines += [
+                "",
+                f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
+                f'        """{m_name.replace("_", " ").capitalize()}."""',
+            ]
+            continue
         m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg = m.get("arg_type", "void")
@@ -508,6 +515,15 @@ def _fn_stub(fn: dict) -> str:
 # ── numpy import decision ─────────────────────────────────────────────────────
 
 
+def _uses_any(cfg: dict, module: str) -> bool:
+    """Return True if any object in this module has a varargs method."""
+    for obj in C.module_objects(cfg, module):
+        for m in C.methods(cfg, obj):
+            if m.get("varargs"):
+                return True
+    return False
+
+
 def _uses_literal(cfg: dict, module: str) -> bool:
     """Return True if any object in this module has a string_enum init param."""
     for obj in C.module_objects(cfg, module):
@@ -566,11 +582,20 @@ def make_module_pyi(cfg: dict, module: str) -> str:
     """
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
+    needs_any = _uses_any(cfg, module)
     parts: list[str] = [
         f"# {module}/{module}.pyi — type stubs for the {module} C extension."
     ]
-    if needs_literal:
-        parts.append("from typing import Literal")
+    if needs_literal or needs_any:
+        typing_imports = ", ".join(
+            x
+            for x in [
+                "Any" if needs_any else "",
+                "Literal" if needs_literal else "",
+            ]
+            if x
+        )
+        parts.append(f"from typing import {typing_imports}")
     if needs_numpy:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")

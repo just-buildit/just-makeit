@@ -319,6 +319,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 max_results=int(m.get("max_results", 64)),
                 py_return_type=m.get("py_return_type", ""),
                 max_out=int(m.get("max_out", 0)),
+                varargs=bool(m.get("varargs")),
             )
         for p in C.properties(cfg, comp):
             _property.run(
