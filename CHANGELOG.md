@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-06-02
+
+### Added
+
+- **`jm method --varargs`** — scaffolds an open-ended `(*args, **kwargs)`
+    Python binding for a named method. The binding lives in a sacred
+    `<comp>_<name>_core.c` file compiled directly into the Python DSO (not
+    the pure-C OBJECT library), so it has full access to `<Python.h>` while
+    the C core stays header-clean. `CMakeLists.txt` is patched automatically
+    to include the new source. The `.pyi` stub gets `*args: Any, **kwargs:   Any) -> Any` and benchmarking is skipped for varargs methods. A new
+    `varargs_method` end-to-end example walks through a `configure(**kwargs)`
+    use case backed by `PyArg_ParseTupleAndKeywords`.
+
+- **`jm app --argc-argv`** — generates a C `main()` that exposes `argc` /
+    `argv` via an `if (argc > 1)` block with an `<<IMPLEMENT>>` placeholder,
+    instead of the default `(void)argc; (void)argv;` suppression.
+
 ## [0.14.1] — 2026-05-31
 
 ### Added
