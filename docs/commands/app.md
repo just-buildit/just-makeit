@@ -24,11 +24,12 @@ All three targets write an `[app]` section to `just-makeit.toml`, so
 
 **Arguments**
 
-| Argument                      | Description                                                                                                   |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `--target c\|console\|pep723` | Output target. Default: `c`.                                                                                  |
-| `--object name`               | Component to scaffold from. Must already exist in `just-makeit.toml`. Defaults to the first listed component. |
-| `--name name`                 | Name for the generated app/script. Defaults to the project name.                                              |
+| Argument                      | Description                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--target c\|console\|pep723` | Output target. Default: `c`.                                                                                                                      |
+| `--object name`               | Component to scaffold from. Must already exist in `just-makeit.toml`. Defaults to the first listed component.                                     |
+| `--name name`                 | Name for the generated app/script. Defaults to the project name.                                                                                  |
+| `--argc-argv`                 | (`--target c` only) Replace the `(void)argc; (void)argv;` suppression with an `if (argc > 1)` guard block for manual argument parsing. See below. |
 
 ______________________________________________________________________
 
@@ -58,6 +59,26 @@ I/O loop marked `/* <<IMPLEMENT>> */`. Build with:
 ```sh
 make && ./build/<name>
 ```
+
+**`--argc-argv`:** By default the generated `main()` suppresses the
+command-line arguments with `(void)argc; (void)argv;` to silence compiler
+warnings. Pass `--argc-argv` when you intend to parse them:
+
+```sh
+jm app --target c --object engine --name dsp_tool --argc-argv
+```
+
+The generated stub then contains a guard block instead:
+
+```c
+if (argc > 1) {
+    /* <<IMPLEMENT: parse argv>> */
+}
+```
+
+Fill in the block with `getopt`, a third-party arg parser, or a simple
+positional scan — the choice is yours. The rest of the scaffold
+(`create` → loop → `destroy`) is identical.
 
 ______________________________________________________________________
 

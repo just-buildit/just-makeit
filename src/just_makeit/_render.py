@@ -89,9 +89,11 @@ APP_PEP723 = _load("py/app_pep723.py")
 TESTS_INIT_PY = ""
 
 
-def render(template: str, ctx: dict[str, str]) -> str:
+def render(template: str, ctx: dict) -> str:
     result = template
     for k, v in ctx.items():
+        if not isinstance(v, str):
+            continue
         result = result.replace(f"/*<<{k}>>*/", v)
         result = result.replace(f"<<{k}>>", v)
     return result

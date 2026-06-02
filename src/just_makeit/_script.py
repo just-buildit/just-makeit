@@ -115,6 +115,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     if rt:
         parts.append(_flag("--return-type", rt))
 
+    if m.get("varargs"):
+        parts.append(_bool_flag("--varargs"))
+
     if m.get("batch"):
         parts.append(_bool_flag("--batch"))
 

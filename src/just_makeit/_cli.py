@@ -709,6 +709,7 @@ def main() -> None:
         target = "c"
         name: str | None = None
         object_: str | None = None
+        argc_argv = False
         i = 1
         while i < len(args):
             tok = args[i]
@@ -727,8 +728,16 @@ def main() -> None:
                 name = args[i]
             elif tok.startswith("--name="):
                 name = tok[len("--name=") :]
+            elif tok == "--argc-argv":
+                argc_argv = True
             i += 1
-        _app.run(Path.cwd(), target=target, name=name, object_=object_)
+        _app.run(
+            Path.cwd(),
+            target=target,
+            name=name,
+            object_=object_,
+            argc_argv=argc_argv,
+        )
 
     elif cmd == "example":
         from . import _example

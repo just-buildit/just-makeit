@@ -46,7 +46,7 @@ def _bench_method_block(component: str, m: dict) -> str:
         C source fragment (indented 4 spaces, blank line before/after) ready
         to paste into ``main()`` of the bench executable, or ``""`` to skip.
     """
-    if m.get("bench") is False or m.get("variable_output"):
+    if m.get("bench") is False or m.get("variable_output") or m.get("varargs"):
         return ""
 
     name: str = m["name"]
@@ -218,7 +218,7 @@ def make_methods_ctx(
         meta = _CTYPE_META.get(elem)
         return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
 
-    _EMPTY: dict[str, str] = {
+    _EMPTY: dict = {
         "method_decls": "",
         "extra_buf_fields": "",
         "extra_buf_free": "",
@@ -227,6 +227,7 @@ def make_methods_ctx(
         "extra_methods_pymethoddef": "",
         "pyi_extra_methods": "",
         "bench_methods_timing_block": "",
+        "varargs_binding_files": [],
     }
     if not methods:
         return _EMPTY
@@ -247,10 +248,36 @@ def make_methods_ctx(
     method_c_parts: list[str] = []
     pmd_lines: list[str] = []
     pyi_lines: list[str] = []
+    varargs_binding_files: list[str] = []
     user_has_reset: bool = any(m["name"] == "reset" for m in methods)
 
     for m in methods:
         name: str = m["name"]
+
+        # ── varargs method (*args, **kwargs) ─────────────────────────────
+        if m.get("varargs"):
+            binding_file = f"{component}_{name}_core.c"
+            varargs_binding_files.append(binding_file)
+            extern_decl = (
+                f"/* varargs binding — body in {binding_file} */\n"
+                f"extern PyObject *\n"
+                f"{component}_{name}"
+                f"(PyObject *, PyObject *, PyObject *);\n"
+            )
+            method_c_parts.append(extern_decl)
+            pmd_lines.append(
+                f'    {{"{name}",'
+                f" (PyCFunction)(void *){component}_{name},"
+                f" METH_VARARGS | METH_KEYWORDS,\n"
+                f'     "{name}(*args, **kwargs)."}},\n'
+            )
+            pyi_lines.append(
+                f"    def {name}(self, *args: Any, **kwargs: Any)"
+                f" -> Any:\n"
+                f'        """{name.replace("_", " ").capitalize()}."""\n'
+            )
+            continue
+
         arg_type: str = m.get("arg_type", "void")
         return_type: str = m.get("return_type", "float _Complex")
         variable_output: bool = m.get("variable_output", False)
@@ -1209,6 +1236,7 @@ def make_methods_ctx(
             "\n" + "\n\n".join(pyi_lines) + "\n" if pyi_lines else ""
         ),
         "bench_methods_timing_block": bench_methods_timing_block,
+        "varargs_binding_files": varargs_binding_files,
         **(
             {
                 "builtin_reset_c": "",

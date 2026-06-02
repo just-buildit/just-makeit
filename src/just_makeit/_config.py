@@ -945,6 +945,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'arg_type = "{m["arg_type"]}"')
             if m.get("return_type"):
                 lines.append(f'return_type = "{m["return_type"]}"')
+            if m.get("varargs"):
+                lines.append("varargs = true")
             if m.get("variable_output"):
                 lines.append("variable_output = true")
             if m.get("none_on_empty"):

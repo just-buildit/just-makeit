@@ -529,6 +529,18 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     extra_link_libs_block = (
         "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
     )
+    # Collect varargs binding .c files from all objects in this module.
+    # These compile into the Python DSO (not the OBJECT lib) because they use
+    # Python.h.  Paths are relative to the module CMakeLists location.
+    _varargs_srcs: list[str] = []
+    for _obj, _ctx_ in zip(object_names, comp_ctxs):
+        for _bf in _ctx_.get("varargs_binding_files", []):
+            if _obj == module:
+                _varargs_srcs.append(_bf)
+            else:
+                _varargs_srcs.append(f"../{_obj}/{_bf}")
+    extra_ext_sources = "".join(f" {f}" for f in _varargs_srcs)
+
     cmake_ctx = {
         "module": module,
         "Module": Module,
@@ -537,6 +549,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "module_core_lib_block": module_core_lib_block,
         "extra_link_libs_block": extra_link_libs_block,
         "extra_include_dirs_block": inc_dirs_extra,
+        "extra_ext_sources": extra_ext_sources,
     }
     # Collocated objects share the same CMakeLists file as the module itself;
     # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.

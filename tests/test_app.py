@@ -174,3 +174,47 @@ class TestAppDefaults:
         app_run(project, target="pep723", name="tool", object_="engine")
         cfg = load(project)
         assert app_config(cfg)["target"] == "pep723"
+
+
+class TestAppArgcArgv:
+    """--argc-argv replaces the default (void)argc/(void)argv suppression with
+    an if (argc > 1) block containing an IMPLEMENT placeholder."""
+
+    def test_argc_argv_generates_if_block(self, project):
+        app_run(
+            project,
+            target="c",
+            name="dsp_tool",
+            object_="engine",
+            argc_argv=True,
+        )
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        assert "if (argc > 1)" in text
+
+    def test_argc_argv_has_implement_placeholder(self, project):
+        app_run(
+            project,
+            target="c",
+            name="dsp_tool",
+            object_="engine",
+            argc_argv=True,
+        )
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        assert "IMPLEMENT" in text
+
+    def test_argc_argv_no_void_suppress(self, project):
+        app_run(
+            project,
+            target="c",
+            name="dsp_tool",
+            object_="engine",
+            argc_argv=True,
+        )
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        assert "(void)argc" not in text
+
+    def test_default_suppresses_argc_argv(self, project):
+        app_run(project, target="c", name="dsp_tool", object_="engine")
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        assert "(void)argc" in text
+        assert "if (argc > 1)" not in text

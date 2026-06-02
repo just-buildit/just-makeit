@@ -277,3 +277,15 @@ class TestCliMethod:
                             "src.c::fir_step",
                         ]
                     )
+
+    def test_varargs_flag_forwarded(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "configure", "--varargs"])
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("varargs") is True
+
+    def test_varargs_default_false(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute"])
+            _, kwargs = mock_run.call_args
+            assert not kwargs.get("varargs")
