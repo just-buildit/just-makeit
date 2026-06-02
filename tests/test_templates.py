@@ -222,6 +222,36 @@ class TestMakeStateCtx:
         with pytest.raises(ValueError, match="unsupported type"):
             make_state_ctx("comp", "Comp", [("x", "complex128", "0")])
 
+    def test_c_create_args_with_init_params_uses_ip_default(self):
+        # gh-122: init_params with own default → use it in test stubs
+        ctx = make_state_ctx(
+            "comp",
+            "Comp",
+            [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
+            init_params=[("nsamp", "size_t", "8"), ("avg", "bool", "false")],
+        )
+        assert ctx["c_create_args"] == "8, false"
+
+    def test_c_create_args_with_init_params_falls_back_to_state_default(self):
+        # gh-122: init_param with no default → use matching state-var default
+        ctx = make_state_ctx(
+            "comp",
+            "Comp",
+            [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
+            init_params=[("nsamp", "size_t", ""), ("avg", "bool", "")],
+        )
+        assert ctx["c_create_args"] == "4, true"
+
+    def test_py_create_args_with_init_params_falls_back_to_state_default(self):
+        # gh-122: Python side of the same fix
+        ctx = make_state_ctx(
+            "comp",
+            "Comp",
+            [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
+            init_params=[("nsamp", "size_t", ""), ("avg", "bool", "")],
+        )
+        assert ctx["py_create_args"] == "4, true"
+
 
 class TestParseArrayType:
     def test_float_array(self):
@@ -647,4 +677,6 @@ class TestResolveReturnType:
     def test_scalar_arg_defaults_to_same(self):
         # Processor: scalar in, same scalar out.
         assert resolve_return_type("float", None) == "float"
-        assert resolve_return_type("double _Complex", None) == "double _Complex"
+        assert (
+            resolve_return_type("double _Complex", None) == "double _Complex"
+        )
