@@ -20,6 +20,7 @@ def run(args: list[str]) -> None:
     arg_type = "void"
     return_type = "float _Complex"
     variable_output = False
+    pass_capacity = False
     varargs = False
     batch_method = False
     multi_output: list[str] = []
@@ -49,6 +50,9 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--variable-output":
             variable_output = True
+            i += 1
+        elif tok == "--pass-capacity":
+            pass_capacity = True
             i += 1
         elif tok == "--varargs":
             varargs = True
@@ -275,4 +279,5 @@ def run(args: list[str]) -> None:
         max_out=max_out,
         result_fields=result_fields or None,
         varargs=varargs,
+        pass_capacity=pass_capacity,
     )

@@ -40,6 +40,7 @@ def _methods_c_stub_variable(
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
     max_out: int = 0,
+    pass_capacity: bool = False,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -47,6 +48,9 @@ def _methods_c_stub_variable(
     return that integer literal instead of the ``return 0; /* placeholder */``
     stub.  Saves the user from hand-writing the obvious upper bound for
     detector / event-emitter shapes (gh-65 follow-up; Phase 2 row).
+
+    ``pass_capacity`` (gh-138) appends a trailing ``size_t max_out`` output
+    capacity parameter, for a C API that bounds-checks the caller's buffer.
     """
     buf_type = out_type if out_type else return_type
     ret_disp = T._ctype_display(buf_type)
@@ -80,6 +84,8 @@ def _methods_c_stub_variable(
         f", {T._ctype_display(rt)} *out{i + 1}"
         for i, rt in enumerate(all_extra)
     )
+    cap_param = ", size_t max_out" if pass_capacity else ""
+    cap_suppress = " (void)max_out;" if pass_capacity else ""
 
     if max_out > 0:
         _max_out_head = f"/* Worst-case output count for {name}() — set via --max-out {max_out}. */"
@@ -103,11 +109,11 @@ def _methods_c_stub_variable(
         f" into out[0..n_out-1]; return actual output count >> */",
         "size_t",
         f"{component}_{name}({component}_state_t *state"
-        f"{step_param}, {ret_disp} *out{extra_out_params})",
+        f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
         "    (void)state;",
         suppress_in,
-        "    (void)out;",
+        f"    (void)out;{cap_suppress}",
         "    return 0; /* placeholder */",
         "}",
     ]
@@ -337,6 +343,7 @@ def _build_method_prototype(
     multi_output: list[str],
     params: list[tuple[str, str]],
     out_type: str | None = None,
+    pass_capacity: bool = False,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline)."""
     ret_disp = T._ctype_display(return_type)
@@ -349,6 +356,7 @@ def _build_method_prototype(
         for i, rt in enumerate(multi_output)
     )
     out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
+    cap_param = ", size_t max_out" if pass_capacity else ""
 
     if variable_output:
         if has_arg:
@@ -372,7 +380,7 @@ def _build_method_prototype(
             [
                 f"size_t {component}_{name}_max_out({component}_state_t *state);",
                 f"size_t {component}_{name}({component}_state_t *state"
-                f"{step_param}, {out_disp} *out{extra_params});",
+                f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]
         )
 
@@ -432,6 +440,7 @@ def run(
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
+    pass_capacity: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -514,6 +523,7 @@ def run(
                 params=[(p[0], p[1]) for p in params],
                 out_type=out_type,
                 max_out=max_out,
+                pass_capacity=pass_capacity,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -551,13 +561,14 @@ def run(
             multi_output,
             [(p[0], p[1]) for p in params],
             out_type,
+            pass_capacity=pass_capacity,
         ).split("\n")
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
     # warn instead.
     _vo_skip: frozenset[str] = frozenset()
-    if variable_output:
+    if variable_output and not pass_capacity:
         _vo_fn = f"{object_name}_{method_name}"
         _core_h_check = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
@@ -595,6 +606,8 @@ def run(
         method_entry["params"] = [{"name": n, "type": t} for n, t in params]
     if variable_output:
         method_entry["variable_output"] = True
+    if pass_capacity:
+        method_entry["pass_capacity"] = True
     if none_on_empty:
         method_entry["none_on_empty"] = True
     if batch:

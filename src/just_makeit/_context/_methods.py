@@ -287,6 +287,12 @@ def make_methods_ctx(
         result_fields: list[dict] = m.get("result_fields", [])
         max_results: int = int(m.get("max_results", 64))
         none_on_empty: bool = m.get("none_on_empty", False)
+        # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
+        # variable_output method whose C API forwards an explicit output
+        # capacity (the buffer cap jm already tracks for grow-on-demand).
+        pass_capacity: bool = m.get("pass_capacity", False)
+        _cap_param = ", size_t max_out" if pass_capacity else ""
+        _cap_arg = f", self->_{name}_buf_cap" if pass_capacity else ""
 
         ret_disp = _ctype_display(return_type)
         _ret_elem = (
@@ -475,7 +481,7 @@ def make_methods_ctx(
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
-                    f" {_vo_out_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             elif has_params:
                 _vp_parts: list[str] = []
@@ -494,7 +500,7 @@ def make_methods_ctx(
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
-                    f" {_vo_out_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             else:
                 decl_lines.append(
@@ -502,7 +508,7 @@ def make_methods_ctx(
                     f"({component}_state_t *state);\n"
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state, size_t n,"
-                    f" {_vo_out_disp} *out{extra_params});"
+                    f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
         else:
             extra_params = "".join(
@@ -761,7 +767,7 @@ def make_methods_ctx(
                     f"{guard}"
                     f"{parse_block}"
                     f"    size_t n_out ="
-                    f" {component}_{name}({call_data}{call_extra});\n"
+                    f" {component}_{name}({call_data}{call_extra}{_cap_arg});\n"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"{arr_decls}\n"
                     f"    if ({null_checks}) {{\n"
@@ -817,7 +823,7 @@ def make_methods_ctx(
                     f"{parse_block}"
                     f"{_lazy_alloc_vo}"
                     f"    size_t n_out ="
-                    f" {component}_{name}({call_data});\n"
+                    f" {component}_{name}({call_data}{_cap_arg});\n"
                     f"{_none_on_empty_line}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
