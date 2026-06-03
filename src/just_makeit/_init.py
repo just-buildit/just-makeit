@@ -230,21 +230,33 @@ def _inject_decls_into_core_h(
             )
             if static_inline_pat.search(text):
                 continue
-            # Replace an existing single-line prototype of the same name (a
-            # builtin override or a refreshed signature). The pattern requires
-            # the line to end in ');' so it never matches the inline step()
-            # definition (which ends in '{').
+            # Replace an existing prototype of the same name (a builtin
+            # override or a refreshed signature). Try a single-line match
+            # first; fall back to a multi-line match (gh-137: a prototype
+            # wrapped across lines — e.g. a 5-arg variable_output
+            # `*_execute(..., out, max_out)` — was previously missed and the
+            # generated decl appended as a conflicting/duplicate declaration).
+            # Both forms require the prototype to end in ');' so neither ever
+            # matches the inline step() definition (which ends in '{').
             pat = re.compile(
                 r"^[ \t]*[A-Za-z_][^\n{]*\b"
                 + re.escape(fn_name)
                 + r"\s*\([^\n{]*\);[ \t]*$",
                 re.MULTILINE,
             )
-            if pat.search(text):
+            pat_ml = re.compile(
+                r"^[ \t]*[A-Za-z_][^{;]*?\b"
+                + re.escape(fn_name)
+                + r"\s*\([^{;]*?\)\s*;",
+                re.MULTILINE,
+            )
+            m_sl = pat.search(text)
+            use = pat if m_sl else pat_ml if pat_ml.search(text) else None
+            if use is not None:
                 if skip_names and fn_name in skip_names:
                     # Name is in skip_names — preserve the existing decl.
                     continue
-                new_text, n = pat.subn(d, text, count=1)
+                new_text, n = use.subn(d, text, count=1)
                 if n:
                     text = new_text
                     continue

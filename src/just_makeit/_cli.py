@@ -67,6 +67,10 @@ Commands:
     --arg-type TYPE             Bulk-input array type.
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
+    --pass-capacity             Append a trailing `size_t max_out` to the C
+                                signature and pass the buffer capacity at the
+                                call site (for a bounds-checking C API).
+                                Composes with --variable-output.
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
