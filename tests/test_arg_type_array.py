@@ -336,3 +336,43 @@ class TestBoolScalarType:
         object_run(root, "flg", None, arg_type="bool", return_type="bool")
         core = (root / "native" / "inc" / "flg" / "flg_core.h").read_text()
         assert "bool" in core
+
+
+class TestVariableOutputArrayArg:
+    """gh-139: a variable_output method given an array --arg-type must lower
+    the block input to ``const <elem> *in`` — not the invalid
+    ``const <elem>[] *in`` / ``(const <elem>[] *)`` cast.
+    """
+
+    @pytest.fixture()
+    def proj(self, tmp_path):
+        from just_makeit._method import run as method_run
+
+        root = tmp_path / "dsp"
+        new_run("dsp", root)
+        init_run(root, "widget")
+        method_run(
+            root,
+            "widget",
+            "execute",
+            None,
+            "float _Complex[]",
+            "float _Complex",
+            True,
+            [],
+        )
+        return root
+
+    def test_header_decl_is_valid_c(self, proj):
+        h = (proj / "native/inc/widget/widget_core.h").read_text()
+        assert "const float complex *in, size_t n_in" in h
+        assert "[] *" not in h
+
+    def test_ext_cast_is_valid_c(self, proj):
+        e = (proj / "native/src/widget/widget_ext.c").read_text()
+        assert "(const float complex *)PyArray_DATA" in e
+        assert "[] *" not in e
+
+    def test_bench_buffer_is_valid_c(self, proj):
+        b = (proj / "native/benchmarks/bench_widget_core.c").read_text()
+        assert "[] *" not in b
