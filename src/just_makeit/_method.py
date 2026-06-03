@@ -31,6 +31,20 @@ from ._init import (
 from ._object import _regenerate_module
 
 
+def _block_in_elem_disp(arg_type: str) -> str:
+    """Display ctype of a block-input element for the ``const T *in`` lowering.
+
+    A block method's input is always ``const <elem> *in, size_t n_in``. When
+    ``arg_type`` is given as an array (``"float _Complex[]"``) the ``[]`` must
+    be stripped to the element type, or the rendered prototype/cast becomes the
+    invalid ``const float complex[] *in`` (gh-139). A scalar ``arg_type`` is
+    already its own element type.
+    """
+    if T.is_array_param_type(arg_type):
+        return T._ctype_display(T.array_elem_ctype(arg_type))
+    return T._ctype_display(arg_type)
+
+
 def _methods_c_stub_variable(
     component: str,
     name: str,
@@ -58,7 +72,7 @@ def _methods_c_stub_variable(
     params = params or []
 
     if has_arg:
-        arg_disp = T._ctype_display(arg_type)
+        arg_disp = _block_in_elem_disp(arg_type)
         step_param = f", const {arg_disp} *in, size_t n_in"
         suppress_in = "    (void)in; (void)n_in;"
     elif params:
@@ -131,7 +145,7 @@ def _methods_c_stub_result_fields(
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     if has_arg:
-        arg_disp = T._ctype_display(arg_type)
+        arg_disp = _block_in_elem_disp(arg_type)
         step_param = f", const {arg_disp} *in, size_t n_in"
         suppress = "    (void)in; (void)n_in;"
     else:
@@ -361,7 +375,7 @@ def _build_method_prototype(
     if variable_output:
         if has_arg:
             step_param = (
-                f", const {T._ctype_display(arg_type)} *in, size_t n_in"
+                f", const {_block_in_elem_disp(arg_type)} *in, size_t n_in"
             )
         elif params:
             p_parts: list[str] = []
