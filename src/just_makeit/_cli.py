@@ -138,10 +138,16 @@ Commands:
   split-objects                 Objects-only subset of migrate-to-fragments (modules stay
                                 inline). Prefer migrate-to-fragments.
   script                        Print a shell script that fully reconstructs this project via CLI.
-  status                        Show what `jm apply` would change (read-only):
+  status [OPTIONS]              Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
                                 the manifest (stale). Your _core.c is never
-                                touched. Exits 1 if anything is missing or stale.
+                                touched. Exits 1 on non-allowed drift.
+    --allow PATH                Treat PATH (exact or fnmatch glob) as a known
+                                deviation: reported but not counted. Repeatable;
+                                combines with [project] status_allow.
+    --json                      Emit a structured report ({path, state, allowed}).
+    --diff                      Print a unified diff per stale file.
+    --check                     One-line summary only (exit code still set).
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
@@ -583,10 +589,35 @@ def main() -> None:
     elif cmd == "status":
         from . import _status
 
-        # Exit code = drift count so CI can gate on it (`jm status` in
-        # a pipeline fails when the project is out of sync with the
+        # Exit code = non-allowed drift count so CI can gate on it (`jm status`
+        # in a pipeline fails when the project is out of sync with the
         # manifest). 0 means clean.
-        sys.exit(min(_status.run(Path.cwd()), 1))
+        _args = args[1:]
+        _allow: list[str] = []
+        _as_json = "--json" in _args
+        _show_diff = "--diff" in _args
+        _check = "--check" in _args
+        _i = 0
+        while _i < len(_args):
+            if _args[_i] == "--allow":
+                _i += 1
+                if _i >= len(_args):
+                    print("error: --allow requires a path", file=sys.stderr)
+                    sys.exit(1)
+                _allow.append(_args[_i])
+            _i += 1
+        sys.exit(
+            min(
+                _status.run(
+                    Path.cwd(),
+                    allow=tuple(_allow),
+                    as_json=_as_json,
+                    show_diff=_show_diff,
+                    check=_check,
+                ),
+                1,
+            )
+        )
 
     elif cmd == "config":
         from . import _config as C
