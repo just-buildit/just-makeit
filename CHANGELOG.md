@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.14.5] — 2026-06-03
+
+### Fixed
+
+- **`jm bench --check` matched benchmarks by name, colliding duplicates**
+    (gh-141 follow-up). `_compare_reports` keyed the baseline/current maps by the
+    bare pytest-benchmark `name`, which repeats across modules (e.g. several
+    `test_bench_execute_64k` in different `bench_*.py`). The baseline kept only
+    one entry, so unrelated benchmarks were cross-compared — a 1 µs bench against
+    a 300 µs baseline reported a bogus +34000% regression. Now keyed by the
+    unique `fullname` (`file.py::test[param]`), falling back to `name` for the C
+    side (whose `comp::method` names are already unique). Each result carries an
+    unambiguous `id`.
+- **`jm bench --check` compared `mean` (noisy).** Switched the regression
+    metric to `stats.min` — pytest-benchmark's stable best-case statistic — so a
+    scheduler-jitter spike in `mean` no longer reads as a regression. Falls back
+    to `mean` when `min` is absent.
+
 ## [0.14.4] — 2026-06-03
 
 ### Added
