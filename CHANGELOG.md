@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [0.14.4] — 2026-06-03
+
+### Added
+
+- **`pass_capacity` for `variable_output` methods** (gh-138). A
+    `variable_output` method lowers to the 4-arg C form `size_t fn(state, in,   n_in, out)`. Some C APIs defensively take a trailing `size_t max_out`
+    output capacity (e.g. to forward it to a downstream resampler). Setting
+    `pass_capacity = true` on a `[[obj.methods]]` entry (CLI `--pass-capacity`)
+    emits the 5-arg form consistently across the `_core.h` prototype, the
+    `_core.c` stub, and the ext-binding call (which passes the buffer-capacity
+    field jm already maintains for grow-on-demand).
+
+- **`jm status` CI drift gate — `--allow` / `--json` / `--diff` / `--check`**
+    (gh-140). `status` already builds a throwaway `apply` and diffs it against
+    the tree; these options surface that result. `--allow PATH` (repeatable) and
+    `[project] status_allow` mark known-accepted deviations (exact path or
+    fnmatch glob) that are reported but not counted; `--json` emits a structured
+    report; `--diff` prints a unified diff per stale file; `--check` prints a
+    one-line summary. The exit code now counts only non-allowed drift.
+
+- **`jm bench --check` perf-regression gate** (gh-141). Compares the current
+    run against a baseline snapshot and exits non-zero on regression beyond
+    `--threshold` (default 10%). `--baseline TAG` selects the baseline (default:
+    most recent committed snapshot); `--allow NAME` exempts a benchmark; `--json`
+    emits the comparison. Benchmarks whose baseline mean is below a 500 ns noise
+    floor are reported but never fail; a missing baseline is reported and skipped.
+
+### Fixed
+
+- **`jm apply` re-injected a conflicting prototype for a multi-line
+    declaration** (gh-137; the unresolved `jm apply` half of gh-118/gh-120).
+    `_inject_decls_into_core_h` matched only single-line prototypes when
+    deciding whether to replace an existing declaration, so a declaration
+    wrapped across lines (e.g. a 5-arg `variable_output *_execute(..., out,   max_out)`) was missed and the generated decl appended as a second,
+    conflicting declaration. A multi-line fallback now replaces it in place.
+    The "preserve existing decl" skip-set is also recognised as an *interactive*
+    safety net only: during `jm apply` replay the manifest is authoritative
+    (`from_apply`), so a redefinition is no longer skipped.
+
+- **Array `--arg-type "T[]"` rendered malformed C** (gh-139). A
+    `variable_output` / `batch` method given an array `--arg-type` lowered its
+    block input using the full array display, emitting the invalid
+    `const float complex[] *in` in the prototype, the ext cast, and the bench
+    buffer. The block input now uses the array's element type.
+
 ## [0.14.3] — 2026-06-02
 
 ### Fixed
