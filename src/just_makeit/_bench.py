@@ -372,6 +372,29 @@ def _baseline_snapshot(
         return None
 
 
+def _bench_key(b: dict) -> str:
+    """Stable identity for a benchmark entry, for baseline↔current matching.
+
+    pytest-benchmark entries carry a unique ``fullname``
+    (``file.py::test[param]``); the bare ``name`` repeats across modules
+    (e.g. several ``test_bench_execute_64k`` from different ``bench_*.py``).
+    Keying on ``name`` alone collides them and compares unrelated benchmarks
+    (gh-141 follow-up). The C side has no ``fullname`` and its ``name``
+    (``comp::method``) is already unique, so fall back to it."""
+    return b.get("fullname") or b["name"]
+
+
+def _bench_metric(b: dict) -> float:
+    """Wall-time used for regression comparison: the **min** sample.
+
+    pytest-benchmark's `min` is the most stable cross-run statistic (best-case
+    timing, least perturbed by scheduler jitter / noisy neighbours), so it is
+    the right basis for regression detection — `mean` is far noisier on shared
+    CI runners. Falls back to `mean` when `min` is absent."""
+    s = b["stats"]
+    return s["min"] if "min" in s else s["mean"]
+
+
 def _compare_reports(
     current: "dict | None",
     baseline: "dict | None",
@@ -392,17 +415,19 @@ def _compare_reports(
     """
     allow = allow or set()
     base = {
-        b["name"]: b["stats"]["mean"]
+        _bench_key(b): _bench_metric(b)
         for b in (baseline or {}).get("benchmarks", [])
     }
     out: list[dict] = []
     for b in (current or {}).get("benchmarks", []):
+        key = _bench_key(b)
         name = b["name"]
-        cur = b["stats"]["mean"]
-        if name not in base:
+        cur = _bench_metric(b)
+        if key not in base:
             out.append(
                 {
                     "name": name,
+                    "id": key,
                     "baseline_ns": None,
                     "current_ns": cur * 1e9,
                     "delta_pct": None,
@@ -410,9 +435,9 @@ def _compare_reports(
                 }
             )
             continue
-        bm = base[name]
+        bm = base[key]
         delta = (cur - bm) / bm if bm else 0.0
-        if name in allow:
+        if name in allow or key in allow:
             status = "allowed"
         elif bm < floor_sec:
             status = "below_floor"
@@ -423,6 +448,7 @@ def _compare_reports(
         out.append(
             {
                 "name": name,
+                "id": key,
                 "baseline_ns": bm * 1e9,
                 "current_ns": cur * 1e9,
                 "delta_pct": delta * 100.0,
@@ -704,7 +730,8 @@ def _run_check(
                     if r["delta_pct"] is not None
                     else "new"
                 )
-                print(f"  [{r['status']}] {r['side']}:{r['name']}  {d}")
+                label = r.get("id") or r["name"]
+                print(f"  [{r['status']}] {r['side']}:{label}  {d}")
         n = len(rows)
         if not regressed:
             print(
