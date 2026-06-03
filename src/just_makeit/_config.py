@@ -470,6 +470,16 @@ def c_deps(cfg: dict) -> list[str]:
     return list(cfg.get("project", {}).get("c_deps", []))
 
 
+def status_allow(cfg: dict) -> list[str]:
+    """Return path patterns under [project] that `jm status` treats as
+    known-accepted deviations (reported but not counted as drift).
+
+    Each entry is an exact POSIX relative path or an fnmatch glob, e.g.
+    ``status_allow = ["native/inc/ddc/ddc_core.h", "native/inc/*/legacy_*.h"]``.
+    Pairs with the ``--allow`` CLI flag (gh-140)."""
+    return list(cfg.get("project", {}).get("status_allow", []))
+
+
 def find_packages(cfg: dict) -> list[str]:
     """Return CMake package names declared under [project].
 
