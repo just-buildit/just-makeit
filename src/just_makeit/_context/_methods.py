@@ -62,7 +62,6 @@ def _bench_method_block(component: str, m: dict) -> str:
     if has_arg:
         arg_elem = arg_type[:-2] if is_array_arg else arg_type
         arg_meta = _CTYPE_META[arg_elem]
-        arg_disp = _ctype_display(arg_type)
         arg_elem_disp = _ctype_display(arg_elem)
         arg_zero = arg_meta["zero"]
 
@@ -84,10 +83,12 @@ def _bench_method_block(component: str, m: dict) -> str:
 
     if batch:
         if has_arg:
+            # gh-139: the input buffer holds elements; an array arg_type
+            # (`T[]`) must use the element display, not `T[] *…`.
             lines += [
-                f"        {arg_disp} *{name}_in ="
-                f" ({arg_disp} *)calloc(BENCH_N,"
-                f" sizeof({arg_disp}));",
+                f"        {arg_elem_disp} *{name}_in ="
+                f" ({arg_elem_disp} *)calloc(BENCH_N,"
+                f" sizeof({arg_elem_disp}));",
             ]
         ret_disp_b = _ctype_display(return_type)
         lines += [
@@ -310,8 +311,14 @@ def make_methods_ctx(
         has_params = bool(params)
         has_arg = arg_type != "void"
         if has_arg:
-            arg_disp = _ctype_display(arg_type)
             _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
+            # gh-139: a block method's input is `const <elem> *in`. Use the
+            # element display so an array arg_type (`T[]`) does not render the
+            # invalid `const T[] *in` / `(const T[] *)` cast. Scalar arg types
+            # are their own element type, so this is a no-op for them. (The
+            # scalar `arg_disp x` decls below are only reached when arg_type is
+            # not an array.)
+            arg_disp = _ctype_display(_arg_elem)
             arg_meta = _CTYPE_META[_arg_elem]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
