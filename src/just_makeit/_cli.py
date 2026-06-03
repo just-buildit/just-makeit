@@ -147,6 +147,13 @@ Commands:
                                 snapshot to benchmarks/history/.
     --tag TAG                   Snapshot tag (default: UTC timestamp).
     --c-only / --python-only    Restrict to one benchmark side.
+    --check                     Gate mode: compare against a baseline snapshot
+                                and exit 1 on regression (saves nothing).
+    --threshold N               Fractional slowdown that fails --check
+                                (default 0.10 = 10%).
+    --baseline TAG              Baseline snapshot for --check (default: latest).
+    --allow NAME                Benchmark exempt from --check (repeatable).
+    --json                      With --check, emit the comparison as JSON.
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
@@ -625,6 +632,11 @@ def main() -> None:
         do_c = True
         do_python = True
         comps: list[str] = []
+        bench_check = False
+        bench_threshold = 0.10
+        bench_baseline: str | None = None
+        bench_json = False
+        bench_allow: list[str] = []
         i = 0
         while i < len(rest):
             a = rest[i]
@@ -637,6 +649,29 @@ def main() -> None:
             elif a == "--python-only":
                 do_c = False
                 i += 1
+            elif a == "--check":
+                bench_check = True
+                i += 1
+            elif a == "--json":
+                bench_json = True
+                i += 1
+            elif a == "--threshold" and i + 1 < len(rest):
+                try:
+                    bench_threshold = float(rest[i + 1])
+                except ValueError:
+                    print(
+                        "error: --threshold requires a number "
+                        "(e.g. 0.10 for 10%)",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                i += 2
+            elif a == "--baseline" and i + 1 < len(rest):
+                bench_baseline = rest[i + 1]
+                i += 2
+            elif a == "--allow" and i + 1 < len(rest):
+                bench_allow.append(rest[i + 1])
+                i += 2
             else:
                 comps.append(a)
                 i += 1
@@ -646,6 +681,11 @@ def main() -> None:
             tag=tag,
             do_c=do_c,
             do_python=do_python,
+            check=bench_check,
+            threshold=bench_threshold,
+            baseline=bench_baseline,
+            as_json=bench_json,
+            allow=tuple(bench_allow),
         )
 
     elif cmd == "bind":

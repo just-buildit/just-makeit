@@ -339,6 +339,99 @@ def _save_snapshot(
     print(f"  saved      {path.relative_to(root)}")
 
 
+# ── regression gate (gh-141) ───────────────────────────────────────────────────
+
+# Benchmarks whose baseline mean is below this are too jitter-prone on shared
+# CI runners to gate on; they are compared and reported but never fail.
+_BENCH_NOISE_FLOOR_SEC = 5e-7  # 500 ns
+
+
+def _baseline_snapshot(
+    hdir: Path, is_c: bool, tag: "str | None" = None
+) -> "dict | None":
+    """Load a baseline snapshot for `--check`: the named *tag* if given, else
+    the most recent committed snapshot (latest by sortable timestamp name)."""
+    if not hdir.is_dir():
+        return None
+    if tag is not None:
+        p = _snapshot_path(hdir, tag, is_c)
+        candidates = [p] if p.is_file() else []
+    else:
+        suffix = "-c.json" if is_c else ".json"
+        candidates = [
+            f
+            for f in hdir.glob(f"*{suffix}")
+            if is_c or not f.name.endswith("-c.json")
+        ]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda p: p.name)
+    try:
+        return json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _compare_reports(
+    current: "dict | None",
+    baseline: "dict | None",
+    threshold: float,
+    floor_sec: float = _BENCH_NOISE_FLOOR_SEC,
+    allow: "set[str] | None" = None,
+) -> list[dict]:
+    """Per-benchmark regression comparison (pure; no I/O).
+
+    Compares each benchmark's mean wall-time against the baseline. A higher
+    mean is slower; ``delta_pct`` > ``threshold*100`` is a regression. Returns
+    one record per current benchmark with ``status`` in:
+      - ``regressed``    slower than baseline by more than the threshold
+      - ``ok``           within threshold
+      - ``new``          no baseline entry for this name
+      - ``allowed``      name in *allow* — reported, never fails
+      - ``below_floor``  baseline mean < ``floor_sec`` — too noisy to gate
+    """
+    allow = allow or set()
+    base = {
+        b["name"]: b["stats"]["mean"]
+        for b in (baseline or {}).get("benchmarks", [])
+    }
+    out: list[dict] = []
+    for b in (current or {}).get("benchmarks", []):
+        name = b["name"]
+        cur = b["stats"]["mean"]
+        if name not in base:
+            out.append(
+                {
+                    "name": name,
+                    "baseline_ns": None,
+                    "current_ns": cur * 1e9,
+                    "delta_pct": None,
+                    "status": "new",
+                }
+            )
+            continue
+        bm = base[name]
+        delta = (cur - bm) / bm if bm else 0.0
+        if name in allow:
+            status = "allowed"
+        elif bm < floor_sec:
+            status = "below_floor"
+        elif delta > threshold:
+            status = "regressed"
+        else:
+            status = "ok"
+        out.append(
+            {
+                "name": name,
+                "baseline_ns": bm * 1e9,
+                "current_ns": cur * 1e9,
+                "delta_pct": delta * 100.0,
+                "status": status,
+            }
+        )
+    return out
+
+
 # ── formatting helpers ────────────────────────────────────────────────────────
 
 
@@ -449,6 +542,11 @@ def run(
     tag: str | None = None,
     do_c: bool = True,
     do_python: bool = True,
+    check: bool = False,
+    threshold: float = 0.10,
+    baseline: str | None = None,
+    as_json: bool = False,
+    allow: tuple[str, ...] = (),
 ) -> None:
     """Build, benchmark, and snapshot the project at *root*.
 
@@ -464,6 +562,17 @@ def run(
         Snapshot tag.  None → a UTC timestamp.
     do_c, do_python : bool
         Select which benchmark sides to run.
+    check : bool
+        Regression-gate mode (gh-141): compare against a baseline snapshot and
+        exit non-zero on regression, instead of saving a new snapshot.
+    threshold : float
+        Fractional slowdown that counts as a regression (0.10 = 10%).
+    baseline : str or None
+        Baseline snapshot tag.  None → the most recent committed snapshot.
+    as_json : bool
+        In check mode, emit the comparison as JSON.
+    allow : tuple[str, ...]
+        Benchmark names exempt from the gate (reported, never fail).
     """
     cfg = C.load(root)
     if not cfg:
@@ -492,6 +601,22 @@ def run(
     print("  build      project", flush=True)
     _ensure_built(root, bdir, python)
 
+    if check:
+        _run_check(
+            root,
+            bdir,
+            target_comps,
+            python,
+            do_c,
+            do_python,
+            hdir,
+            threshold,
+            baseline,
+            as_json,
+            set(allow),
+        )
+        return
+
     if do_c:
         creport = _collect_c(root, bdir, target_comps)
         if creport:
@@ -511,3 +636,86 @@ def run(
             _display_table("Python benchmarks", preport, prev)
         else:
             print("  Python benchmarks: none found.")
+
+
+def _run_check(
+    root: Path,
+    bdir: Path,
+    target_comps: list[str],
+    python: str,
+    do_c: bool,
+    do_python: bool,
+    hdir: Path,
+    threshold: float,
+    baseline: str | None,
+    as_json: bool,
+    allow: set[str],
+) -> None:
+    """Compare current benchmarks against a baseline snapshot and exit
+    non-zero on regression. Does not save a snapshot (a gate is not a record).
+    """
+    sides: list[tuple[str, dict | None, dict | None]] = []
+    if do_c:
+        cur = _collect_c(root, bdir, target_comps)
+        if cur:
+            _trim(cur)
+            sides.append(("C", cur, _baseline_snapshot(hdir, True, baseline)))
+    if do_python:
+        cur = _run_python(root, python)
+        if cur and cur.get("benchmarks"):
+            _trim(cur)
+            sides.append(
+                ("Python", cur, _baseline_snapshot(hdir, False, baseline))
+            )
+
+    rows: list[dict] = []
+    missing_baseline: list[str] = []
+    for label, cur, base in sides:
+        if base is None:
+            missing_baseline.append(label)
+            continue
+        for r in _compare_reports(cur, base, threshold, allow=allow):
+            r["side"] = label
+            rows.append(r)
+
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "threshold_pct": threshold * 100.0,
+                    "baseline": baseline or "latest",
+                    "missing_baseline": missing_baseline,
+                    "results": rows,
+                },
+                indent=2,
+            )
+        )
+    else:
+        for label in missing_baseline:
+            print(
+                f"  {label}: no baseline snapshot found — run `jm bench` "
+                "and commit it first; skipping gate."
+            )
+        regressed = [r for r in rows if r["status"] == "regressed"]
+        for r in rows:
+            if r["status"] in ("regressed", "new"):
+                d = (
+                    f"{r['delta_pct']:+.1f}%"
+                    if r["delta_pct"] is not None
+                    else "new"
+                )
+                print(f"  [{r['status']}] {r['side']}:{r['name']}  {d}")
+        n = len(rows)
+        if not regressed:
+            print(
+                f"OK — no regression > {threshold * 100:.0f}% "
+                f"({n} benchmark(s) checked)."
+            )
+        else:
+            print(
+                f"REGRESSION — {len(regressed)} benchmark(s) slower than "
+                f"baseline by > {threshold * 100:.0f}%."
+            )
+
+    if any(r["status"] == "regressed" for r in rows):
+        sys.exit(1)
