@@ -107,3 +107,43 @@ def test_baseline_snapshot_separates_c_and_python(tmp_path):
 
 def test_baseline_snapshot_missing_returns_none(tmp_path):
     assert _baseline_snapshot(tmp_path / "nope", is_c=False) is None
+
+
+def test_fullname_disambiguates_duplicate_names():
+    """gh-141 follow-up: benches with the same `name` in different modules must
+    match by `fullname`, not collide. Here both are unchanged → all OK; with
+    name-only keying the baseline dict would keep one entry and cross-compare,
+    producing a bogus regression."""
+    rep = {
+        "benchmarks": [
+            {
+                "name": "execute_64k",
+                "fullname": "a.py::execute_64k",
+                "stats": {"min": 1e-3},
+            },
+            {
+                "name": "execute_64k",
+                "fullname": "b.py::execute_64k",
+                "stats": {"min": 1e-6},
+            },
+        ]
+    }
+    rows = _compare_reports(rep, rep, threshold=0.10)
+    assert {r["id"] for r in rows} == {
+        "a.py::execute_64k",
+        "b.py::execute_64k",
+    }
+    assert not [r for r in rows if r["status"] == "regressed"]
+
+
+def test_uses_min_metric_when_present():
+    """Comparison uses `min` (stable) over `mean` (noisy) when both exist."""
+    base = {
+        "benchmarks": [{"name": "f", "stats": {"min": 1e-3, "mean": 1e-3}}]
+    }
+    # mean spikes 5x (noise) but min holds → no regression.
+    cur = {
+        "benchmarks": [{"name": "f", "stats": {"min": 1.02e-3, "mean": 5e-3}}]
+    }
+    rows = _by_name(_compare_reports(cur, base, threshold=0.10))
+    assert rows["f"]["status"] == "ok"
