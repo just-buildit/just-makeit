@@ -441,6 +441,7 @@ def run(
     max_out: int = 0,
     varargs: bool = False,
     pass_capacity: bool = False,
+    from_apply: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -567,8 +568,14 @@ def run(
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
     # warn instead.
+    # Preserving an existing declaration is an *interactive* safety net (the
+    # user may have hand-edited the header). During `jm apply` replay the
+    # manifest is authoritative and the object is rebuilt from scratch, so the
+    # pre-existing decl is jm's own scaffolded default — never preserve it, or
+    # a redefinition (e.g. a builtin steps() promoted to a variable_output
+    # method) would be skipped instead of replaced (gh-137).
     _vo_skip: frozenset[str] = frozenset()
-    if variable_output and not pass_capacity:
+    if variable_output and not pass_capacity and not from_apply:
         _vo_fn = f"{object_name}_{method_name}"
         _core_h_check = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
