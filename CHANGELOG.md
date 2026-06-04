@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.14.6] — 2026-06-03
+
+### Added
+
+- **Python docstrings derived from `_core.h` Doxygen.** jm now reads the
+    hand-written Doxygen (`@brief`, `@param`, `@return`) in the sacred
+    `<obj>_core.h` and synthesizes numpy-style docstrings for methods,
+    properties, and the class — in both the generated `.pyi` stubs and the C
+    bindings (`PyMethodDef`, `PyGetSetDef` doc, `tp_doc`). The header is the
+    single source of truth; C-only params (`state`, `x_len`, `out`, `max_out`)
+    are dropped from the Python `Parameters`. Falls back to the prior
+    name-based stub when no Doxygen is present, and jm's own scaffold templates
+    (`Create a <obj> instance.`, `Get current <field>.`, …) are treated as
+    boilerplate (not derived) so a manifest-only rebuild stays idempotent.
+- **`doc` key / `--doc` flag** on `jm method` and `jm property` (mirrors the
+    existing `jm function --doc`). Precedence: TOML `doc` > header `@brief` >
+    name fallback. Params/returns still come from the header; synthesized
+    doctest examples are preserved.
+- **`_docstring.extract_doctests()`** + a doctest well-formedness gate in the
+    test suite: every synthesized doctest must parse and construct its object.
+
 ## [0.14.5] — 2026-06-03
 
 ### Fixed
