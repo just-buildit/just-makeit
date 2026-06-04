@@ -234,6 +234,15 @@ def _build_class_docstring(
             if out is not None:
                 scalar_getters.append((name, out))
 
+    # Only emit a runnable construction example when every constructor
+    # argument has a safe literal. An array/no-default arg renders as `...`
+    # (ellipsis), which is not a valid call — emitting it would produce a
+    # doctest that raises TypeError. In that case, skip the Examples block
+    # entirely rather than ship a broken example.
+    if "..." in py_create_args:
+        lines.append('    """')
+        return lines
+
     ex: list[str] = [
         "    Examples",
         "    --------",

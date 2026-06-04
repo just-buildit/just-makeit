@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.14.7] — 2026-06-03
+
+### Fixed
+
+- **Class docstring no longer emits an unrunnable construction example.** When
+    a constructor argument has no scalar literal (an array/no-default param,
+    rendered `...`), the synthesized `Examples` block used to emit
+    `>>> obj = X(...)`, which raises `TypeError` under `doctest`. jm now omits
+    the `Examples` block for such objects instead of shipping a broken example,
+    so generated `.pyi` doctests run clean. Scalar-constructible objects keep
+    their runnable example.
+
 ## [0.14.6] — 2026-06-03
 
 ### Added
