@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.14.8] — 2026-06-04
+
+### Fixed
+
+- **`jm apply` now refreshes module-object binding docstrings.** Since 0.14.6,
+    derived Doxygen docstrings reached a module's `.pyi` but not its per-object
+    `<mod>_ext_<obj>.c` binding fragments (`_sync_aggregates` reconciles the
+    aggregator/`.pyi`/CMake, not the fragments), so `help(Obj.method)` /
+    `__doc__` / `tp_doc` / property docs showed the stale fallback while the stub
+    was correct. `apply` now re-renders each module's fragments on the real tree
+    after wiring reconciliation, refreshing `PyMethodDef` / `tp_doc` /
+    `PyGetSetDef` docs while **preserving hand-written wrapper bodies** (and never
+    touching `*_extra.c`). Idempotent: a re-apply on an up-to-date tree is a
+    no-op.
+
+    Not preserved across regeneration (unchanged contract — put such code in
+    `*_extra.c` or `_core.c`): edits inside `*_init`/`*_dealloc`, and bespoke
+    helper functions not implied by the manifest.
+
+    Standalone-object bindings are unaffected (already synced via `<comp>_ext.c`);
+    deriving docstrings into a *standalone* binding remains a separate gap.
+
 ## [0.14.7] — 2026-06-03
 
 ### Fixed
