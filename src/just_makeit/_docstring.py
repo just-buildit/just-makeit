@@ -68,10 +68,13 @@ _DECL_NAME_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# A full comment block followed by the next declaration. Non-greedy body so
-# adjacent blocks don't merge.
+# A SINGLE comment block (the inner pattern forbids ``*/`` so it can't bridge
+# across an intervening block — e.g. the file-level ``@file`` header) that is
+# immediately followed by a declaration (whitespace only between, and the decl
+# must not itself start a comment).
 _BLOCK_THEN_DECL_RE = re.compile(
-    r"/\*\*(?P<block>.*?)\*/\s*(?P<decl>[^;{}]*?\([^;{}]*\)\s*;)",
+    r"/\*\*(?P<block>(?:(?!\*/)[\s\S])*?)\*/\s*"
+    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*;)",
     re.DOTALL,
 )
 

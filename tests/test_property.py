@@ -61,8 +61,9 @@ class TestPropertyUpdatesExtC:
             encoding="utf-8"
         )
         assert '"dropped"' in ext
-        # read-only: setter should be NULL
-        assert "NULL, NULL" in ext
+        # read-only: setter is NULL; the 4th field (doc) now carries the
+        # derived (here name-fallback) docstring rather than NULL.
+        assert 'NULL, "Dropped.\\n", NULL }' in ext
 
     def test_ext_c_getset_null_terminator(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)

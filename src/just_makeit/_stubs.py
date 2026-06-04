@@ -178,9 +178,16 @@ def _build_class_docstring(
     init_params: list,
     import_line: str,
     py_create_args: str,
+    brief: str = "",
 ) -> list[str]:
-    """Return lines for a numpy-style class docstring (indented 4 spaces)."""
-    lines: list[str] = [f'    """{Component} component.', ""]
+    """Return lines for a numpy-style class docstring (indented 4 spaces).
+
+    *brief* — when supplied (from the create()'s ``@brief`` in the sacred
+    header) — becomes the summary line in place of the generic
+    ``"<Component> component."``.
+    """
+    summary = brief or f"{Component} component."
+    lines: list[str] = [f'    """{summary}', ""]
 
     # Parameters section
     param_lines: list[str] = []
@@ -351,6 +358,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     )
 
     # Class docstring
+    _create_blk = doc_blocks.get(f"{obj}_create")
+    _class_brief = (
+        _create_blk.brief if (_create_blk and _create_blk.brief) else ""
+    )
     doc_lines = _build_class_docstring(
         Component,
         state_vars,
@@ -358,6 +369,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         list(ip),
         import_line,
         py_create_args,
+        brief=_class_brief,
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
 

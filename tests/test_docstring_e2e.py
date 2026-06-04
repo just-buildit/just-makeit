@@ -16,6 +16,7 @@ from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
+from just_makeit._property import run as property_run  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 
 
@@ -53,18 +54,27 @@ def _scaffold_with_method(dest: Path):
     )
 
 
-def _inject_rich_doxygen(dest: Path):
-    """Replace mix_scale's template Doxygen with a rich hand-written block."""
+def _annotate(dest: Path, c_func: str, block: str):
+    """Replace the Doxygen immediately above the *c_func* declaration."""
     header = dest / "native" / "inc" / "mix" / "mix_core.h"
     text = header.read_text(encoding="utf-8")
-    # Find the declaration and drop any existing /** */ immediately above it.
+    # Strip only a Doxygen block IMMEDIATELY above the decl (the negative
+    # lookahead keeps `.*?` from bridging across another block's `*/`), then
+    # match the real declaration line — not a `@code` example inside a
+    # comment (must not start with ` *`) nor an assignment (no `=`).
     decl_re = re.compile(
-        r"(?:[ \t]*/\*\*.*?\*/\s*)?(^[^\n]*\bmix_scale\s*\([^;]*\);)",
-        re.DOTALL | re.MULTILINE,
+        r"(?:^[ \t]*/\*\*(?:(?!\*/)[\s\S])*?\*/[ \t]*\r?\n)?"
+        r"(^(?![ \t]*[*/])[^\n=]*\b" + c_func + r"\s*\([^;]*\);)",
+        re.MULTILINE,
     )
-    text2 = decl_re.sub(_RICH_DOXYGEN + r"\1", text, count=1)
-    assert text2 != text, "could not locate mix_scale declaration to annotate"
+    text2 = decl_re.sub(block + r"\1", text, count=1)
+    assert text2 != text, f"could not locate {c_func} declaration"
     header.write_text(text2, encoding="utf-8")
+
+
+def _inject_rich_doxygen(dest: Path):
+    """Replace mix_scale's template Doxygen with a rich hand-written block."""
+    _annotate(dest, "mix_scale", _RICH_DOXYGEN)
 
 
 class TestDerivedDocstrings:
@@ -104,6 +114,52 @@ class TestDerivedDocstrings:
         pmd = ctx["extra_methods_pymethoddef"]
         assert "Scale the input sample by the configured gain." in pmd
         assert ">>> " in pmd  # synthesized doctest preserved
+
+    def test_class_and_property_briefs_reach_pyi(self, tmp_path):
+        dest = tmp_path / "dsp"
+        _scaffold_with_method(dest)
+        # explicit read-only property (state-var getters are get_X() methods,
+        # not @property — only `jm property` emits a real property).
+        property_run(dest, "mix", "level", "sig", "float", False)
+        _annotate(
+            dest,
+            "mix_create",
+            "/**\n * @brief A unity-gain sample scaler.\n */\n",
+        )
+        _annotate(
+            dest,
+            "mix_get_level",
+            "  /**\n   * @brief The current output level in dBFS.\n   */\n",
+        )
+        apply_run(dest)
+        pyi = (dest / "src" / "dsp" / "sig" / "sig.pyi").read_text(
+            encoding="utf-8"
+        )
+        # class docstring summary comes from create()'s @brief
+        class_doc = pyi.split("class Mix:")[1].split('"""')[1]
+        assert "A unity-gain sample scaler." in class_doc
+        # property getter @brief becomes the property docstring
+        level_doc = pyi.split("def level")[1].split('"""')[1]
+        assert "The current output level in dBFS." in level_doc
+
+    def test_property_getset_and_tp_doc_carry_brief(self):
+        """C PyGetSetDef doc and tp_doc derive from the header (generator
+        level — the per-object _ext fragment is preserved by apply)."""
+        from just_makeit._docstring import parse_doxygen_block
+        from just_makeit._context._methods import make_properties_ctx
+
+        blk = parse_doxygen_block(
+            "/** @brief The multiplicative gain applied per sample. */"
+        )
+        ctx = make_properties_ctx(
+            "mix",
+            "Mix",
+            [{"name": "gain", "type": "float", "writable": True}],
+            doc_blocks={"mix_get_gain": blk},
+        )
+        assert (
+            "The multiplicative gain applied per sample." in ctx["getset_def"]
+        )
 
     def test_no_doxygen_falls_back_to_name_stub(self, tmp_path):
         dest = tmp_path / "dsp"

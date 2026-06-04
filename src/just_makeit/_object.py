@@ -29,6 +29,7 @@ from ._init import (
     _write_compile_commands,
 )
 from ._docstring import extract_doc_blocks, parse_doxygen_block
+from ._context._parse import _build_ml_doc
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -56,9 +57,41 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         # triviality check (e.g. ddc_execute -> execute).
         verb = cname[len(obj) + 1 :] if cname.startswith(obj + "_") else cname
         parsed = parse_doxygen_block(block_text, name=verb)
-        if parsed is not None:
-            out[cname] = parsed
+        if parsed is None:
+            continue
+        if _is_scaffold_brief(obj, verb, parsed):
+            continue
+        out[cname] = parsed
     return out
+
+
+def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
+    """True if *block* is just jm's own scaffold-template Doxygen.
+
+    Deriving docs from jm's boilerplate (``Create a <obj> instance.``,
+    ``Get current <field>.``, ``Set <field>.``) would (a) be no richer than
+    the name fallback and (b) break idempotence: a manifest-only rebuild has
+    no header to read, so it must produce the same output as a fresh scaffold.
+    Only a non-template brief is derived. jm's lifecycle/accessor scaffolds
+    also emit boilerplate @param/@return, so the brief alone is the signal —
+    matching it means the whole block is boilerplate.
+    """
+    brief = block.brief.strip().rstrip(".").lower()
+    if not brief:
+        return False
+    templates = {
+        f"create a {obj} instance",
+        f"destroy a {obj} instance and release all memory",
+        f"reset {obj} to its post-create state",
+    }
+    if verb.startswith("get_"):
+        templates.add(f"get current {verb[4:]}")
+        templates.add(f"get a read-only pointer to {verb[4:]}")
+        templates.add(f"return a read-only pointer to {verb[4:]}")
+    if verb.startswith("set_"):
+        templates.add(f"set {verb[4:]}")
+        templates.add(f"set {verb[4:]} from src")
+    return brief in templates
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
@@ -467,8 +500,17 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 ctx["Component"],
                 C.properties(cfg, obj),
                 frozenset(n for n, _, _ in state_vars),
+                doc_blocks=_doc_blocks,
             )
         )
+        # Class C __doc__ (tp_doc) from the create()'s @brief, else a default.
+        _cblk = _doc_blocks.get(f"{obj}_create")
+        _cdoc = (
+            _cblk.brief
+            if (_cblk and _cblk.brief)
+            else f"{ctx['Component']} type."
+        )
+        ctx["tp_doc"] = _build_ml_doc([_cdoc])
         comp_ctxs.append(ctx)
 
     # Per-object fragment files (<module>_ext_<comp>.c).

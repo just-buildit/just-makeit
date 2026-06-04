@@ -1292,6 +1292,7 @@ def make_properties_ctx(
     Component: str,
     properties: list[dict],
     state_var_names: frozenset[str] = frozenset(),
+    doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
 
@@ -1476,9 +1477,17 @@ def make_properties_ctx(
             )
             getter_parts.append(setter)
 
+        # Property __doc__ from the getter's Doxygen @brief (sacred header),
+        # else the name-based fallback. PyGetSetDef's 4th field is the doc.
+        _pblk = (doc_blocks or {}).get(f"{component}_get_{pname}")
+        _pdoc = (
+            _pblk.brief
+            if (_pblk and _pblk.brief)
+            else f"{pname.replace('_', ' ').capitalize()}."
+        )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
-            f" {setter_name}, NULL, NULL }},"
+            f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
         )
 
     getset_body = "\n".join(getter_parts)
