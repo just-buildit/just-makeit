@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.14.9] — 2026-06-04
+
+### Fixed
+
+- **The 0.14.8 fragment doc-refresh now preserves hand-written constructors.**
+    0.14.8's `apply` doc-refresh re-rendered module fragments via the usual body
+    preservation, which deliberately regenerates `_init`/`_dealloc` from template
+    — clobbering objects whose constructor was hand-written into the fragment
+    (mismatched `_create` argument counts → broken build). A doc-only refresh is
+    not a structural change, so it now restores `_init`/`_dealloc` bodies too
+    (`_restore_c_function_bodies(..., include_infra=True)`); only the generated
+    `PyMethodDef`/`tp_doc`/`PyGetSetDef` docstrings change. Buffer-structure
+    changes still arrive via `jm method`/`jm regenerate`, which regenerate
+    `_init`/`_dealloc` as before. (0.14.8 is otherwise superseded; upgrade.)
+
 ## [0.14.8] — 2026-06-04
 
 ### Fixed

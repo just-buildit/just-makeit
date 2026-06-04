@@ -1092,7 +1092,22 @@ def _refresh_module_fragments(
         with contextlib.redirect_stdout(io.StringIO()):
             _obj_mod._regenerate_module(root, cfg, mod, pkg)
         for fp, old in before.items():
-            if fp.exists() and fp.read_bytes() != old:
+            if not fp.exists():
+                continue
+            # A doc-only refresh must preserve ALL hand-written C bodies,
+            # including the constructor/destructor (_init/_dealloc) which
+            # _regenerate_module otherwise regenerates from template. Restore
+            # them from the pre-refresh snapshot so only the generated
+            # docstrings (PyMethodDef / tp_doc / PyGetSetDef) change.
+            old_bodies = _obj_mod._extract_c_function_bodies(
+                old.decode("utf-8")
+            )
+            restored = _obj_mod._restore_c_function_bodies(
+                fp.read_text(encoding="utf-8"), old_bodies, include_infra=True
+            )
+            if restored != fp.read_text(encoding="utf-8"):
+                fp.write_text(restored, encoding="utf-8")
+            if fp.read_bytes() != old:
                 changed.append(fp)
     return changed
 

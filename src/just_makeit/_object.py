@@ -397,7 +397,10 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
 
 
 def _restore_c_function_bodies(
-    new_source: str, preserved: dict[str, str]
+    new_source: str,
+    preserved: dict[str, str],
+    *,
+    include_infra: bool = False,
 ) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
@@ -405,13 +408,19 @@ def _restore_c_function_bodies(
     exist in the newly generated source.  New functions (first-time stubs) are
     left unchanged, so fresh scaffolded methods get their TODO stubs.
 
-    Buffer-lifecycle functions (_dealloc, _init) are always regenerated from
-    the template so that newly added variable_output free() and malloc() calls
-    are never silently dropped when the old fragment has no buffers yet.
+    Buffer-lifecycle functions (``_dealloc``, ``_init``) are normally
+    regenerated from the template so that newly added variable_output free()
+    and malloc() calls are never silently dropped when the old fragment has no
+    buffers yet. Set *include_infra* to also restore those (used by the
+    docstring-only refresh in ``jm apply``, which must not disturb a
+    hand-written constructor/destructor — buffer-structure changes arrive via
+    ``jm method`` / ``jm regenerate``, not a doc refresh).
     """
     _INFRA_SUFFIXES = ("_dealloc", "_init")
     for fn_name, old_body in preserved.items():
-        if any(fn_name.endswith(s) for s in _INFRA_SUFFIXES):
+        if not include_infra and any(
+            fn_name.endswith(s) for s in _INFRA_SUFFIXES
+        ):
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
