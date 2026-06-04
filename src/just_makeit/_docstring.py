@@ -28,6 +28,23 @@ import re
 from dataclasses import dataclass, field
 
 
+def extract_doctests(text: str) -> list[str]:
+    """Return every triple-quoted docstring in *text* that contains a doctest.
+
+    Used by the doctest gate to harvest the synthesized ``Examples`` blocks
+    from a generated ``.pyi`` (or any source) so they can be validated and,
+    against a built extension, executed. A "doctest" here is any docstring
+    containing a ``>>>`` prompt.
+    """
+    out: list[str] = []
+    # Triple-double-quoted docstrings (what the stub generator emits).
+    for m in re.finditer(r'"""(.*?)"""', text, re.DOTALL):
+        body = m.group(1)
+        if ">>>" in body:
+            out.append(body)
+    return out
+
+
 @dataclass
 class DoxyBlock:
     """Structured contents of one Doxygen ``/** ... */`` comment.
