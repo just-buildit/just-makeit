@@ -60,6 +60,37 @@ def test_generated_pyi_doctests_are_wellformed(tmp_path):
         ), f"doctest does not set up an object:\n{body}"
 
 
+def test_array_constructor_object_skips_broken_example(tmp_path):
+    """An object whose constructor needs an array (rendered `...`) must NOT
+    emit a `>>> obj = X(...)` example — that would raise TypeError. The
+    Examples block is omitted instead.
+    """
+    dest = tmp_path / "dsp"
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_run("dsp", dest)
+        module_run(dest, "sig")
+        # a fixed-length array state field -> constructor arg has no scalar
+        # literal, so py_create_args renders as `...`.
+        object_run(
+            dest,
+            "fir",
+            module="sig",
+            state_vars=[("taps", "float _Complex[64]", "0.0")],
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+        apply_run(dest)
+    pyi = (dest / "src" / "dsp" / "sig" / "sig.pyi").read_text(
+        encoding="utf-8"
+    )
+    class_doc = pyi.split("class Fir:")[1].split('"""')[1]
+    assert ">>> obj = Fir(...)" not in class_doc
+    # any doctests that DO remain must be well-formed and not pass an ellipsis
+    for body in extract_doctests(pyi):
+        for ex in doctest.DocTestParser().get_examples(body):
+            assert "(...)" not in ex.source
+
+
 def test_class_doctest_present_and_constructs(tmp_path):
     dest = tmp_path / "dsp"
     _build_project(dest)
