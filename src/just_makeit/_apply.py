@@ -321,6 +321,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 max_out=int(m.get("max_out", 0)),
                 varargs=bool(m.get("varargs")),
                 pass_capacity=bool(m.get("pass_capacity")),
+                doc=m.get("doc", ""),
                 from_apply=True,
             )
         for p in C.properties(cfg, comp):
@@ -336,6 +337,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 len_field=p.get("len_field", "n"),
                 valid_field=p.get("valid_field", ""),
                 expr=p.get("expr", ""),
+                doc=p.get("doc", ""),
             )
 
     for mod in mods:

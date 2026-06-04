@@ -503,12 +503,12 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 doc_blocks=_doc_blocks,
             )
         )
-        # Class C __doc__ (tp_doc) from the create()'s @brief, else a default.
+        # Class C __doc__ (tp_doc): TOML `doc` > create()'s @brief > default.
         _cblk = _doc_blocks.get(f"{obj}_create")
         _cdoc = (
-            _cblk.brief
-            if (_cblk and _cblk.brief)
-            else f"{ctx['Component']} type."
+            cfg.get(obj, {}).get("doc")
+            or (_cblk.brief if (_cblk and _cblk.brief) else "")
+            or f"{ctx['Component']} type."
         )
         ctx["tp_doc"] = _build_ml_doc([_cdoc])
         comp_ctxs.append(ctx)

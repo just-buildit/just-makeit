@@ -281,21 +281,29 @@ def _build_class_docstring(
 
 
 def _method_doc_lines(
-    block, m_name: str, py_params: list[tuple[str, str]], ret_ann: str
+    block,
+    m_name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for a method.
 
-    With a Doxygen *block* (from the sacred header), emit a numpy-style
-    docstring — summary from ``@brief``, a Parameters section for the
-    Python-facing args, and a Returns section from ``@return``. Without a
-    block, fall back to the historical one-line name-based stub.
+    Summary precedence: *override* (TOML ``doc``) > the Doxygen *block*'s
+    ``@brief`` > name fallback. With an override or a block, emit a
+    numpy-style docstring (summary + Parameters + Returns); otherwise fall
+    back to the historical one-line name-based stub.
     """
     fallback = f'        """{m_name.replace("_", " ").capitalize()}."""'
-    if block is None:
+    if block is None and not override:
         return [fallback]
     from ._docstring import render_numpy_method_doc
 
-    summary, body, descs, ret = render_numpy_method_doc(block, py_params)
+    if block is not None:
+        summary, body, descs, ret = render_numpy_method_doc(block, py_params)
+    else:
+        summary, body, descs, ret = "", [], {}, ""
+    summary = override or summary
     if not summary:
         summary = m_name.replace("_", " ").capitalize() + "."
     out = [f'        """{summary}']
@@ -359,7 +367,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # Class docstring
     _create_blk = doc_blocks.get(f"{obj}_create")
-    _class_brief = (
+    _class_brief = cfg.get(obj, {}).get("doc") or (
         _create_blk.brief if (_create_blk and _create_blk.brief) else ""
     )
     doc_lines = _build_class_docstring(
@@ -465,9 +473,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         _blk = doc_blocks.get(f"{obj}_{m_name}")
         if m.get("varargs"):
             _va_doc = (
-                _blk.brief
-                if (_blk and _blk.brief)
-                else f"{m_name.replace('_', ' ').capitalize()}."
+                m.get("doc")
+                or (_blk.brief if (_blk and _blk.brief) else "")
+                or f"{m_name.replace('_', ' ').capitalize()}."
             )
             lines += [
                 "",
@@ -512,7 +520,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             _py_params.append(("x", _py(m_arg)))
         for p in m_params:
             _py_params.append((p["name"], _py(p["type"])))
-        _doc = _method_doc_lines(_blk, m_name, _py_params, ret_ann)
+        _doc = _method_doc_lines(
+            _blk, m_name, _py_params, ret_ann, override=m.get("doc", "")
+        )
         header = (
             f"    def {m_name}(self, {sig}) -> {ret_ann}:"
             if sig
@@ -528,9 +538,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         py_t = _py(p_ctype)
         _pblk = doc_blocks.get(f"{obj}_get_{p_name}")
         _pdoc = (
-            _pblk.brief
-            if (_pblk and _pblk.brief)
-            else f"{p_name.replace('_', ' ').capitalize()}."
+            prop.get("doc")
+            or (_pblk.brief if (_pblk and _pblk.brief) else "")
+            or f"{p_name.replace('_', ' ').capitalize()}."
         )
         lines += [
             "",

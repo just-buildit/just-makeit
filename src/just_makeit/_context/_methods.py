@@ -256,11 +256,13 @@ def make_methods_ctx(
     for m in methods:
         name: str = m["name"]
 
-        # Doxygen-derived prose for this method (from the sacred _core.h),
-        # falling back to the name-based defaults when absent. Doctest
-        # examples are always synthesized below regardless of source.
+        # Summary precedence: TOML `doc` override > header @brief > name
+        # fallback. Param/return prose comes from the header; doctest examples
+        # are always synthesized below regardless of source.
         _block = (doc_blocks or {}).get(f"{component}_{name}")
-        _brief = _block.brief if (_block and _block.brief) else ""
+        _brief = m.get("doc") or (
+            _block.brief if (_block and _block.brief) else ""
+        )
 
         def _pdesc(pname: str, _b=_block) -> str:
             d = _b.param_desc(pname) if _b else None
@@ -1477,13 +1479,13 @@ def make_properties_ctx(
             )
             getter_parts.append(setter)
 
-        # Property __doc__ from the getter's Doxygen @brief (sacred header),
-        # else the name-based fallback. PyGetSetDef's 4th field is the doc.
+        # Property __doc__ precedence: TOML `doc` > getter @brief > name.
+        # PyGetSetDef's 4th field is the doc.
         _pblk = (doc_blocks or {}).get(f"{component}_get_{pname}")
         _pdoc = (
-            _pblk.brief
-            if (_pblk and _pblk.brief)
-            else f"{pname.replace('_', ' ').capitalize()}."
+            p.get("doc")
+            or (_pblk.brief if (_pblk and _pblk.brief) else "")
+            or f"{pname.replace('_', ' ').capitalize()}."
         )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'

@@ -172,3 +172,71 @@ class TestDerivedDocstrings:
         # falls back to the name-based stub, no derived prose
         assert "Scale the input sample by the configured gain." not in pyi
         assert "def scale" in pyi
+
+    def test_toml_doc_overrides_header_brief(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        module_run(dest, "sig")
+        object_run(
+            dest,
+            "mix",
+            module="sig",
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        # method created WITH an explicit TOML doc override
+        method_run(
+            dest,
+            "mix",
+            "scale",
+            "sig",
+            "float",
+            "float",
+            False,
+            [],
+            doc="TOML override summary.",
+        )
+        # and a DIFFERENT @brief in the header
+        _inject_rich_doxygen(dest)
+        apply_run(dest)
+        pyi = (dest / "src" / "dsp" / "sig" / "sig.pyi").read_text(
+            encoding="utf-8"
+        )
+        scale_doc = pyi.split("def scale")[1].split('"""')[1]
+        assert "TOML override summary." in scale_doc
+        # header brief is suppressed by the override
+        assert (
+            "Scale the input sample by the configured gain." not in scale_doc
+        )
+        # header @param prose still flows into Parameters
+        assert "Sample to scale." in scale_doc
+
+    def test_doc_round_trips_through_toml(self, tmp_path):
+        from just_makeit._config import load, methods
+
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        module_run(dest, "sig")
+        object_run(
+            dest,
+            "mix",
+            module="sig",
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        method_run(
+            dest,
+            "mix",
+            "scale",
+            "sig",
+            "float",
+            "float",
+            False,
+            [],
+            doc="A persisted summary.",
+        )
+        cfg = load(dest)
+        m = next(m for m in methods(cfg, "mix") if m["name"] == "scale")
+        assert m.get("doc") == "A persisted summary."
