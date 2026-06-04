@@ -1098,8 +1098,14 @@ def run(
     print(f"just-makeit: applying {C.FILENAME}")
     print()
 
+    from . import _object as _obj_mod
+
     with tempfile.TemporaryDirectory(prefix="jm-apply-") as tmp:
         temp_root = Path(tmp) / C.project_name(cfg)
+        # Docstring derivation must read the REAL project's sacred `_core.h`
+        # (with its hand-written Doxygen), not the template headers scaffolded
+        # into the throwaway temp tree by _replay.
+        _obj_mod._DOC_ROOT_OVERRIDE = root
         # The generators print progress for the throwaway temp tree; that
         # output names temp paths and would only confuse the user.
         try:
@@ -1108,6 +1114,8 @@ def run(
         except (ValueError, FileNotFoundError) as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
+        finally:
+            _obj_mod._DOC_ROOT_OVERRIDE = None
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
         updated = _sync_aggregates(

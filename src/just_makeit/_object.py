@@ -28,6 +28,37 @@ from ._init import (
     _write,
     _write_compile_commands,
 )
+from ._docstring import extract_doc_blocks, parse_doxygen_block
+
+# When `jm apply` regenerates glue, it replays the scaffold into a throwaway
+# temp tree whose headers carry only template Doxygen. Docstring derivation
+# must instead read the REAL project's sacred `_core.h`, so apply sets this
+# override to the real project root for the duration of the replay.
+_DOC_ROOT_OVERRIDE: Path | None = None
+
+
+def _load_doc_blocks(root: Path, obj: str) -> dict:
+    """Parse Doxygen comments from the sacred ``<obj>_core.h``.
+
+    Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
+    or ``{}`` when the header is absent or carries no usable comments. The
+    header is the single source of truth for docstrings; generators derive
+    Python docs from these blocks and fall back to name-based stubs otherwise.
+    """
+    doc_root = _DOC_ROOT_OVERRIDE or root
+    header = doc_root / "native" / "inc" / obj / f"{obj}_core.h"
+    if not header.exists():
+        return {}
+    raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
+    out: dict = {}
+    for cname, block_text in raw.items():
+        # strip the comp_ prefix to recover the bare method/verb name for the
+        # triviality check (e.g. ddc_execute -> execute).
+        verb = cname[len(obj) + 1 :] if cname.startswith(obj + "_") else cname
+        parsed = parse_doxygen_block(block_text, name=verb)
+        if parsed is not None:
+            out[cname] = parsed
+    return out
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
@@ -392,6 +423,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     comp_ctxs: list[dict] = []
     for obj in object_names:
+        # Parse the sacred header's Doxygen once; stash transiently on cfg so
+        # the .pyi generator (_stubs, which receives cfg) sees the same blocks
+        # without re-reading. The underscore key is dropped by _config._dump.
+        _doc_blocks = _load_doc_blocks(root, obj)
+        cfg.setdefault(obj, {})["_doc_blocks"] = _doc_blocks
         state_vars = C.state_vars(cfg, obj)
         arg_type_ = C.arg_type(cfg, obj)
         return_type_ = C.return_type(cfg, obj)
@@ -422,6 +458,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
+                doc_blocks=_doc_blocks,
             )
         )
         ctx.update(

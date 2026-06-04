@@ -273,6 +273,44 @@ def _build_class_docstring(
     return lines
 
 
+def _method_doc_lines(
+    block, m_name: str, py_params: list[tuple[str, str]], ret_ann: str
+) -> list[str]:
+    """Return indented `.pyi` docstring lines for a method.
+
+    With a Doxygen *block* (from the sacred header), emit a numpy-style
+    docstring — summary from ``@brief``, a Parameters section for the
+    Python-facing args, and a Returns section from ``@return``. Without a
+    block, fall back to the historical one-line name-based stub.
+    """
+    fallback = f'        """{m_name.replace("_", " ").capitalize()}."""'
+    if block is None:
+        return [fallback]
+    from ._docstring import render_numpy_method_doc
+
+    summary, body, descs, ret = render_numpy_method_doc(block, py_params)
+    if not summary:
+        summary = m_name.replace("_", " ").capitalize() + "."
+    out = [f'        """{summary}']
+    for para in body:
+        out += ["", f"        {para}"] if para else [""]
+    if py_params:
+        out += ["", "        Parameters", "        ----------"]
+        for pname, ann in py_params:
+            out.append(f"        {pname} : {ann}")
+            out.append(f"            {descs.get(pname) or 'Input.'}")
+    if ret_ann != "None":
+        out += [
+            "",
+            "        Returns",
+            "        -------",
+            f"        {ret_ann}",
+            f"            {ret or 'Output.'}",
+        ]
+    out.append('        """')
+    return out
+
+
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     Component = C.class_name(cfg, obj) or _title(obj)
     state_vars = C.state_vars(cfg, obj)
@@ -280,6 +318,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     return_type = C.return_type(cfg, obj)
     obj_methods = C.methods(cfg, obj)
     obj_props = C.properties(cfg, obj)
+    # Doxygen blocks parsed from the sacred header, stashed on cfg by
+    # _object._regenerate_module. Maps C function name -> DoxyBlock.
+    doc_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
     state_names = {n for n, _, _ in state_vars}
     ip = C.init_params(cfg, obj)
     no_step = C.is_no_step(cfg, obj)
@@ -409,11 +450,17 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # extra methods
     for m in obj_methods:
         m_name = m["name"]
+        _blk = doc_blocks.get(f"{obj}_{m_name}")
         if m.get("varargs"):
+            _va_doc = (
+                _blk.brief
+                if (_blk and _blk.brief)
+                else f"{m_name.replace('_', ' ').capitalize()}."
+            )
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
-                f'        """{m_name.replace("_", " ").capitalize()}."""',
+                f'        """{_va_doc}"""',
             ]
             continue
         m_ret = m.get("return_type", "void")
@@ -447,18 +494,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ret_ann = _py(m_ret)
 
         sig = ", ".join(param_parts)
-        if sig:
-            lines += [
-                "",
-                f"    def {m_name}(self, {sig}) -> {ret_ann}:",
-                f'        """{m_name.replace("_", " ").capitalize()}."""',
-            ]
-        else:
-            lines += [
-                "",
-                f"    def {m_name}(self) -> {ret_ann}:",
-                f'        """{m_name.replace("_", " ").capitalize()}."""',
-            ]
+        # (name, annotation) for the Python-facing args, for the doc builder.
+        _py_params: list[tuple[str, str]] = []
+        if m_arg != "void":
+            _py_params.append(("x", _py(m_arg)))
+        for p in m_params:
+            _py_params.append((p["name"], _py(p["type"])))
+        _doc = _method_doc_lines(_blk, m_name, _py_params, ret_ann)
+        header = (
+            f"    def {m_name}(self, {sig}) -> {ret_ann}:"
+            if sig
+            else f"    def {m_name}(self) -> {ret_ann}:"
+        )
+        lines += ["", header, *_doc]
 
     # properties
     for prop in obj_props:
@@ -466,11 +514,17 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         p_ctype = prop.get("type") or prop.get("ctype", "size_t")
         p_write = prop.get("writable", False) or (p_name in state_names)
         py_t = _py(p_ctype)
+        _pblk = doc_blocks.get(f"{obj}_get_{p_name}")
+        _pdoc = (
+            _pblk.brief
+            if (_pblk and _pblk.brief)
+            else f"{p_name.replace('_', ' ').capitalize()}."
+        )
         lines += [
             "",
             "    @property",
             f"    def {p_name}(self) -> {py_t}:",
-            f'        """{p_name.replace("_", " ").capitalize()}."""',
+            f'        """{_pdoc}"""',
         ]
         if p_write:
             lines += [
