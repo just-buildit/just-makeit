@@ -455,6 +455,7 @@ def run(
     max_out: int = 0,
     varargs: bool = False,
     pass_capacity: bool = False,
+    doc: str = "",
     from_apply: bool = False,
 ) -> None:
     cfg_path = root / C.FILENAME
@@ -621,6 +622,8 @@ def run(
         "arg_type": arg_type,
         "return_type": return_type,
     }
+    if doc:
+        method_entry["doc"] = doc
     if varargs:
         method_entry["varargs"] = True
     if params:

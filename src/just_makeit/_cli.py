@@ -491,6 +491,7 @@ def main() -> None:
         ctype = "size_t"
         writable = False
         field = False
+        doc = ""
 
         remaining = args[3:]
         i = 0
@@ -524,12 +525,26 @@ def main() -> None:
             elif tok == "--field":
                 field = True
                 i += 1
+            elif tok == "--doc":
+                i += 1
+                if i >= len(remaining):
+                    print("error: --doc requires a string", file=sys.stderr)
+                    sys.exit(1)
+                doc = remaining[i]
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
 
         _property.run(
-            Path.cwd(), object_name, prop_name, module, ctype, writable, field
+            Path.cwd(),
+            object_name,
+            prop_name,
+            module,
+            ctype,
+            writable,
+            field,
+            doc=doc,
         )
 
     elif cmd == "function":

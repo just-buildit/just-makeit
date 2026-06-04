@@ -42,6 +42,7 @@ def run(
     len_field: str = "n",
     valid_field: str = "",
     expr: str = "",
+    doc: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -98,6 +99,8 @@ def run(
 
     # Update config
     prop_entry: dict = {"name": prop_name, "type": ctype}
+    if doc:
+        prop_entry["doc"] = doc
     if writable:
         prop_entry["writable"] = True
     if field:

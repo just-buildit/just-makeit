@@ -183,6 +183,7 @@ def make_methods_ctx(
     pkg: str = "",
     py_create_args: str = "",
     no_state: bool = False,
+    doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -254,6 +255,22 @@ def make_methods_ctx(
 
     for m in methods:
         name: str = m["name"]
+
+        # Summary precedence: TOML `doc` override > header @brief > name
+        # fallback. Param/return prose comes from the header; doctest examples
+        # are always synthesized below regardless of source.
+        _block = (doc_blocks or {}).get(f"{component}_{name}")
+        _brief = m.get("doc") or (
+            _block.brief if (_block and _block.brief) else ""
+        )
+
+        def _pdesc(pname: str, _b=_block) -> str:
+            d = _b.param_desc(pname) if _b else None
+            return d or "Input."
+
+        _ret_desc_txt = (
+            _block.returns if (_block and _block.returns) else "Output."
+        )
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
         if m.get("varargs"):
@@ -433,7 +450,8 @@ def make_methods_ctx(
             _batch_doc_lines = [
                 _batch_sig,
                 "",
-                f"1:1-rate batch transform. Returns an ndarray of dtype {_ret_np_str}.",
+                _brief
+                or f"1:1-rate batch transform. Returns an ndarray of dtype {_ret_np_str}.",
                 "",
                 "    >>> import numpy as np",
                 *_from_line,
@@ -872,7 +890,7 @@ def make_methods_ctx(
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
-                "Zero-copy view into pre-allocated output buffer.",
+                _brief or "Zero-copy view into pre-allocated output buffer.",
                 "",
                 "    >>> import numpy as np",
                 *_from_line,
@@ -1132,7 +1150,7 @@ def make_methods_ctx(
             _fix_doc_lines = [
                 f"{name}({_fix_sig_in}) -> {_fix_ret_hint}".rstrip(),
                 "",
-                f"{name}.",
+                _brief or f"{name}.",
             ]
             if has_arg or has_params:
                 _fix_doc_lines += ["", "    >>> import numpy as np"]
@@ -1206,20 +1224,20 @@ def make_methods_ctx(
         sig = ", ".join(param_parts)
         _pyi_ret_desc = (
             f"Returns\n        -------\n        {ret_ann}\n"
-            f"            Output.\n        "
+            f"            {_ret_desc_txt}\n        "
             if ret_ann != "None"
             else ""
         )
         _pyi_param_desc = ""
         for _pp in (["x"] if has_arg else []) + [p["name"] for p in params]:
-            _pyi_param_desc += f"        {_pp}\n            Input.\n"
+            _pyi_param_desc += f"        {_pp}\n            {_pdesc(_pp)}\n"
         _pyi_params_section = (
             f"        Parameters\n        ----------\n{_pyi_param_desc}        "
             if _pyi_param_desc
             else "        "
         )
         _pyi_doc = (
-            f'        """{name}.\n\n'
+            f'        """{_brief or f"{name}."}\n\n'
             f"{_pyi_params_section}\n"
             f"        {_pyi_ret_desc}\n"
             f'        """\n'
@@ -1276,6 +1294,7 @@ def make_properties_ctx(
     Component: str,
     properties: list[dict],
     state_var_names: frozenset[str] = frozenset(),
+    doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
 
@@ -1460,9 +1479,17 @@ def make_properties_ctx(
             )
             getter_parts.append(setter)
 
+        # Property __doc__ precedence: TOML `doc` > getter @brief > name.
+        # PyGetSetDef's 4th field is the doc.
+        _pblk = (doc_blocks or {}).get(f"{component}_get_{pname}")
+        _pdoc = (
+            p.get("doc")
+            or (_pblk.brief if (_pblk and _pblk.brief) else "")
+            or f"{pname.replace('_', ' ').capitalize()}."
+        )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
-            f" {setter_name}, NULL, NULL }},"
+            f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
         )
 
     getset_body = "\n".join(getter_parts)

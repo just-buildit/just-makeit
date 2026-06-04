@@ -28,6 +28,70 @@ from ._init import (
     _write,
     _write_compile_commands,
 )
+from ._docstring import extract_doc_blocks, parse_doxygen_block
+from ._context._parse import _build_ml_doc
+
+# When `jm apply` regenerates glue, it replays the scaffold into a throwaway
+# temp tree whose headers carry only template Doxygen. Docstring derivation
+# must instead read the REAL project's sacred `_core.h`, so apply sets this
+# override to the real project root for the duration of the replay.
+_DOC_ROOT_OVERRIDE: Path | None = None
+
+
+def _load_doc_blocks(root: Path, obj: str) -> dict:
+    """Parse Doxygen comments from the sacred ``<obj>_core.h``.
+
+    Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
+    or ``{}`` when the header is absent or carries no usable comments. The
+    header is the single source of truth for docstrings; generators derive
+    Python docs from these blocks and fall back to name-based stubs otherwise.
+    """
+    doc_root = _DOC_ROOT_OVERRIDE or root
+    header = doc_root / "native" / "inc" / obj / f"{obj}_core.h"
+    if not header.exists():
+        return {}
+    raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
+    out: dict = {}
+    for cname, block_text in raw.items():
+        # strip the comp_ prefix to recover the bare method/verb name for the
+        # triviality check (e.g. ddc_execute -> execute).
+        verb = cname[len(obj) + 1 :] if cname.startswith(obj + "_") else cname
+        parsed = parse_doxygen_block(block_text, name=verb)
+        if parsed is None:
+            continue
+        if _is_scaffold_brief(obj, verb, parsed):
+            continue
+        out[cname] = parsed
+    return out
+
+
+def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
+    """True if *block* is just jm's own scaffold-template Doxygen.
+
+    Deriving docs from jm's boilerplate (``Create a <obj> instance.``,
+    ``Get current <field>.``, ``Set <field>.``) would (a) be no richer than
+    the name fallback and (b) break idempotence: a manifest-only rebuild has
+    no header to read, so it must produce the same output as a fresh scaffold.
+    Only a non-template brief is derived. jm's lifecycle/accessor scaffolds
+    also emit boilerplate @param/@return, so the brief alone is the signal —
+    matching it means the whole block is boilerplate.
+    """
+    brief = block.brief.strip().rstrip(".").lower()
+    if not brief:
+        return False
+    templates = {
+        f"create a {obj} instance",
+        f"destroy a {obj} instance and release all memory",
+        f"reset {obj} to its post-create state",
+    }
+    if verb.startswith("get_"):
+        templates.add(f"get current {verb[4:]}")
+        templates.add(f"get a read-only pointer to {verb[4:]}")
+        templates.add(f"return a read-only pointer to {verb[4:]}")
+    if verb.startswith("set_"):
+        templates.add(f"set {verb[4:]}")
+        templates.add(f"set {verb[4:]} from src")
+    return brief in templates
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
@@ -392,6 +456,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     comp_ctxs: list[dict] = []
     for obj in object_names:
+        # Parse the sacred header's Doxygen once; stash transiently on cfg so
+        # the .pyi generator (_stubs, which receives cfg) sees the same blocks
+        # without re-reading. The underscore key is dropped by _config._dump.
+        _doc_blocks = _load_doc_blocks(root, obj)
+        cfg.setdefault(obj, {})["_doc_blocks"] = _doc_blocks
         state_vars = C.state_vars(cfg, obj)
         arg_type_ = C.arg_type(cfg, obj)
         return_type_ = C.return_type(cfg, obj)
@@ -422,6 +491,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
+                doc_blocks=_doc_blocks,
             )
         )
         ctx.update(
@@ -430,8 +500,17 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 ctx["Component"],
                 C.properties(cfg, obj),
                 frozenset(n for n, _, _ in state_vars),
+                doc_blocks=_doc_blocks,
             )
         )
+        # Class C __doc__ (tp_doc): TOML `doc` > create()'s @brief > default.
+        _cblk = _doc_blocks.get(f"{obj}_create")
+        _cdoc = (
+            cfg.get(obj, {}).get("doc")
+            or (_cblk.brief if (_cblk and _cblk.brief) else "")
+            or f"{ctx['Component']} type."
+        )
+        ctx["tp_doc"] = _build_ml_doc([_cdoc])
         comp_ctxs.append(ctx)
 
     # Per-object fragment files (<module>_ext_<comp>.c).

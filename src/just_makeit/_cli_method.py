@@ -23,6 +23,7 @@ def run(args: list[str]) -> None:
     pass_capacity = False
     varargs = False
     batch_method = False
+    doc = ""
     multi_output: list[str] = []
     method_params: list[tuple[str, str]] = []
     out_type: str | None = None
@@ -56,6 +57,13 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--varargs":
             varargs = True
+            i += 1
+        elif tok == "--doc":
+            i += 1
+            if i >= len(remaining):
+                print("error: --doc requires a string", file=sys.stderr)
+                sys.exit(1)
+            doc = remaining[i]
             i += 1
         elif tok == "--batch":
             batch_method = True
@@ -280,4 +288,5 @@ def run(args: list[str]) -> None:
         result_fields=result_fields or None,
         varargs=varargs,
         pass_capacity=pass_capacity,
+        doc=doc,
     )

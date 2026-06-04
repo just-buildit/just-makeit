@@ -816,6 +816,19 @@ def add_component(
     return cfg
 
 
+def _doc_assign(value: str) -> str:
+    """Render ``doc = ...`` for the TOML dump.
+
+    Multi-line docstrings use a TOML basic multi-line string; single-line
+    docs use a basic string with quotes/backslashes escaped.
+    """
+    if "\n" in value:
+        body = value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+        return f'doc = """\n{body}\n"""'
+    body = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'doc = "{body}"'
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -897,6 +910,8 @@ def _dump(cfg: dict) -> str:
         for k in scalar_keys:
             if k in comp_data:
                 lines.append(f'{k} = "{comp_data[k]}"')
+        if comp_data.get("doc"):
+            lines.append(_doc_assign(comp_data["doc"]))
         if comp_data.get("depends_on"):
             deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
             lines.append(f"depends_on = [{deps_str}]")
@@ -951,6 +966,8 @@ def _dump(cfg: dict) -> str:
         for m in comp_data.get("methods", []):
             lines.append(f"[[{comp}.methods]]")
             lines.append(f'name = "{m["name"]}"')
+            if m.get("doc"):
+                lines.append(_doc_assign(m["doc"]))
             if m.get("arg_type"):
                 lines.append(f'arg_type = "{m["arg_type"]}"')
             if m.get("return_type"):
@@ -998,6 +1015,8 @@ def _dump(cfg: dict) -> str:
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")
             lines.append(f'name = "{p["name"]}"')
+            if p.get("doc"):
+                lines.append(_doc_assign(p["doc"]))
             lines.append(
                 f'type = "{p.get("type") or p.get("ctype", "size_t")}"'
             )
