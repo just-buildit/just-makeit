@@ -1044,6 +1044,59 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     return dest
 
 
+def _refresh_module_fragments(
+    root: Path, cfg: dict, *, only_mod: str | None = None
+) -> list[Path]:
+    """Refresh per-object ``<mod>_ext_<obj>.c`` binding-fragment docstrings.
+
+    ``_sync_aggregates`` reconciles a module's aggregator / ``.pyi`` / CMake but
+    not its per-object binding fragments, so a header Doxygen edit reaches the
+    ``.pyi`` while the runtime ``__doc__`` (``PyMethodDef`` / ``tp_doc`` /
+    ``PyGetSetDef`` doc) keeps the stale fallback. Re-render each module's
+    fragments directly on the *real* tree, where the cfg has every method and
+    the existing fragments carry the hand-written C bodies: ``_regenerate_module``
+    then refreshes the generated docstrings while ``_restore_c_function_bodies``
+    splices the hand bodies back in.
+
+    Safe and idempotent:
+
+    - The aggregator / ``.pyi`` / CMake are re-rendered too, but byte-identically
+      to what ``_sync_aggregates`` just wrote (same render fns, same cfg, same
+      real header), so those writes are no-ops; only the previously-skipped
+      fragments change.
+    - Hand-edited wrapper bodies survive (body preservation). ``*_extra.c`` files
+      are only ``#include``d, never written. Edits inside ``*_init`` / ``*_dealloc``
+      and bespoke helpers not implied by the manifest are not preserved — the
+      same contract as ``jm method`` / ``jm object`` regeneration.
+
+    Standalone objects already sync via ``<comp>_ext.c`` and are not touched here.
+    Returns the fragment paths whose bytes actually changed.
+    """
+    from . import _object as _obj_mod
+
+    pkg = C.project_name(cfg)
+    changed: list[Path] = []
+    for mod in C.modules(cfg):
+        if C.is_no_generate_module(cfg, mod):
+            continue
+        if only_mod is not None and mod != only_mod:
+            continue
+        ext_dir = root / "native" / "src" / mod
+        before: dict[Path, bytes] = {}
+        for obj in C.module_objects(cfg, mod):
+            fp = ext_dir / f"{mod}_ext_{obj}.c"
+            if fp.exists():
+                before[fp] = fp.read_bytes()
+        # Re-render on the real tree; suppress the per-file _write chatter (the
+        # aggregator/.pyi/CMake re-writes are byte-identical no-ops).
+        with contextlib.redirect_stdout(io.StringIO()):
+            _obj_mod._regenerate_module(root, cfg, mod, pkg)
+        for fp, old in before.items():
+            if fp.exists() and fp.read_bytes() != old:
+                changed.append(fp)
+    return changed
+
+
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -1130,22 +1183,34 @@ def run(
 
     bench_updated = _reconcile_bench_cmake(root, cfg)
 
+    # Refresh per-object binding fragments (<mod>_ext_<obj>.c) on the real
+    # tree. _sync_aggregates reconciles the module aggregator/.pyi/CMake but
+    # not these fragments, so a header Doxygen edit reaches the .pyi yet leaves
+    # the runtime __doc__ (PyMethodDef / tp_doc / PyGetSetDef) stale. See
+    # _refresh_module_fragments for why this is safe and idempotent.
+    frag_updated = _refresh_module_fragments(root, cfg, only_mod=only_mod)
+
     for rel in created:
         print(f"  create  {root / rel}")
     for path in impl_patched:
         print(f"  update  {path}")
-    for path in updated + bench_updated:
+    for path in updated + bench_updated + frag_updated:
         print(f"  update  {path}")
 
     print()
     total = (
-        len(created) + len(updated) + len(bench_updated) + len(impl_patched)
+        len(created)
+        + len(updated)
+        + len(bench_updated)
+        + len(frag_updated)
+        + len(impl_patched)
     )
     if total:
+        _reconciled = len(updated) + len(bench_updated) + len(frag_updated)
         print(
             f"Done!  Materialized {len(created)} new file(s), "
             f"patched {len(impl_patched)} impl(s), and "
-            f"reconciled {len(updated) + len(bench_updated)} wiring file(s)"
+            f"reconciled {_reconciled} wiring file(s)"
             f" from {C.FILENAME}."
         )
     else:
