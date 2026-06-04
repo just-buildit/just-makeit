@@ -458,7 +458,14 @@ def _restore_c_function_bodies(
     return new_source
 
 
-def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
+def _regenerate_module(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    *,
+    preserve_infra: bool = False,
+) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
     Module = _to_title(module)
@@ -555,7 +562,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            frag = _restore_c_function_bodies(frag, preserved)
+            frag = _restore_c_function_bodies(
+                frag, preserved, include_infra=preserve_infra
+            )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
     # Discover *_extra.c files — jm never creates or modifies them, but
