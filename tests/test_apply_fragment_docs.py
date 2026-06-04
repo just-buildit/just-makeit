@@ -104,6 +104,22 @@ def test_apply_preserves_hand_body_while_refreshing_doc(tmp_path):
     assert "Scale the input sample." in out
 
 
+# ── (b2) hand-edited _init/constructor body survives (doppler regression) ────
+def test_apply_preserves_hand_init_body(tmp_path):
+    # Objects with bespoke constructor logic hand-written into the fragment's
+    # _init must NOT be regenerated to a template by the doc refresh (this
+    # broke doppler's HalfbandDecimator/corr2d/detector2d/hbdecim_q15 builds).
+    dest = tmp_path / "dsp"
+    _scaffold(dest)
+    frag = _frag(dest, "sig", "mix")
+    _mark_body(frag, "Mix_init", "/* HAND-INIT */")
+    _annotate(dest, "mix", "mix_scale", "Scale the input sample.")
+    _silent(apply_run, dest)
+    out = frag.read_text(encoding="utf-8")
+    assert "/* HAND-INIT */" in out  # constructor body preserved
+    assert "Scale the input sample." in out  # doc still refreshed
+
+
 # ── (c) multi-object, multi-method: all bodies preserved, docs land right ────
 def test_apply_multi_object_multi_method(tmp_path):
     dest = tmp_path / "dsp"

@@ -397,7 +397,10 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
 
 
 def _restore_c_function_bodies(
-    new_source: str, preserved: dict[str, str]
+    new_source: str,
+    preserved: dict[str, str],
+    *,
+    include_infra: bool = False,
 ) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
@@ -405,13 +408,19 @@ def _restore_c_function_bodies(
     exist in the newly generated source.  New functions (first-time stubs) are
     left unchanged, so fresh scaffolded methods get their TODO stubs.
 
-    Buffer-lifecycle functions (_dealloc, _init) are always regenerated from
-    the template so that newly added variable_output free() and malloc() calls
-    are never silently dropped when the old fragment has no buffers yet.
+    Buffer-lifecycle functions (``_dealloc``, ``_init``) are normally
+    regenerated from the template so that newly added variable_output free()
+    and malloc() calls are never silently dropped when the old fragment has no
+    buffers yet. Set *include_infra* to also restore those (used by the
+    docstring-only refresh in ``jm apply``, which must not disturb a
+    hand-written constructor/destructor — buffer-structure changes arrive via
+    ``jm method`` / ``jm regenerate``, not a doc refresh).
     """
     _INFRA_SUFFIXES = ("_dealloc", "_init")
     for fn_name, old_body in preserved.items():
-        if any(fn_name.endswith(s) for s in _INFRA_SUFFIXES):
+        if not include_infra and any(
+            fn_name.endswith(s) for s in _INFRA_SUFFIXES
+        ):
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
@@ -449,7 +458,14 @@ def _restore_c_function_bodies(
     return new_source
 
 
-def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
+def _regenerate_module(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    *,
+    preserve_infra: bool = False,
+) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
     Module = _to_title(module)
@@ -546,7 +562,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            frag = _restore_c_function_bodies(frag, preserved)
+            frag = _restore_c_function_bodies(
+                frag, preserved, include_infra=preserve_infra
+            )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
     # Discover *_extra.c files — jm never creates or modifies them, but

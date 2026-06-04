@@ -1089,8 +1089,15 @@ def _refresh_module_fragments(
                 before[fp] = fp.read_bytes()
         # Re-render on the real tree; suppress the per-file _write chatter (the
         # aggregator/.pyi/CMake re-writes are byte-identical no-ops).
+        # preserve_infra=True keeps hand-written _init/_dealloc bodies: a
+        # doc-only refresh is not a structural change, so the constructor /
+        # destructor must not be regenerated from template (that would clobber
+        # a hand-written constructor). Buffer-structure changes arrive via
+        # jm method / jm regenerate, which regenerate them as usual.
         with contextlib.redirect_stdout(io.StringIO()):
-            _obj_mod._regenerate_module(root, cfg, mod, pkg)
+            _obj_mod._regenerate_module(
+                root, cfg, mod, pkg, preserve_infra=True
+            )
         for fp, old in before.items():
             if fp.exists() and fp.read_bytes() != old:
                 changed.append(fp)
