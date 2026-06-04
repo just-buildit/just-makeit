@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.14.10] — 2026-06-04
+
+### Fixed
+
+- **Reverted the 0.14.8/0.14.9 `apply` fragment-doc refresh — it could drop
+    hand-written bindings.** Those releases re-rendered per-object
+    `<mod>_ext_<obj>.c` fragments on every `apply` to push derived docstrings
+    into the runtime bindings. But fragments legitimately hold hand-written
+    bindings that aren't in the manifest (custom property getters/setters,
+    list-returning accessors, bespoke constructors); re-rendering from the
+    manifest **silently dropped** them, breaking the build/behavior. `apply`
+    again leaves per-object fragments untouched (the pre-0.14.8 contract).
+
+    The header-derived docstrings still populate the `.pyi` stubs (0.14.6) — the
+    surface IDEs, type-checkers, and `--doctest-glob` consume. Refreshing the
+    **runtime** `__doc__` for module objects needs a future refresh that
+    preserves non-manifest hand-written bindings; **0.14.8 and 0.14.9 are
+    superseded — upgrade to 0.14.10.**
+
 ## [0.14.9] — 2026-06-04
 
 ### Fixed
