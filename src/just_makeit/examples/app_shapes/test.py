@@ -142,10 +142,21 @@ def run(root: Path) -> None:
     assert r.stdout.strip() == "5"
 
     # ── subcommands: `jm app` with [[app.commands]] → dispatch scaffold ──
+    # A realistic multi-command tool wraps a real component (so it also builds
+    # a Python extension); the command bodies are stubs the user wires up.
     # (project name avoids stdlib module names like `cmd` that a `src/<pkg>/`
-    # package would shadow under pytest).
+    # package would shadow under pytest.)
     multi = root / "multi"
     jm_new("multi", multi)
+    jm_object(
+        multi,
+        "engine",
+        None,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        impl_body="return state->gain * x;",
+    )
     jm_app(
         multi,
         target="c",
