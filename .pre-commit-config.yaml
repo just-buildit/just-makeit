@@ -34,7 +34,7 @@ repos:
         files: ^src/just_makeit/templates/cmake/
         # Templates that lead with ``<<placeholder>>`` tokens are not valid
         # CMake until rendered, so cmake-format's tokenizer rejects them.
-        exclude: CMakeLists_(component|module)\.cmake
+        exclude: CMakeLists_(component|module|object_core)\.cmake
         # cmake-format reads .cmake-format.yaml; its isolated hook env needs
         # PyYAML to parse it, else the hook dies with ModuleNotFoundError.
         additional_dependencies: [pyyaml]

@@ -649,8 +649,19 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         libs_parts = [f"{module}_core"] + [
             f"{obj}_core" for obj in object_names
         ]
-    object_core_libs = "\n    ".join(libs_parts)
     extra_libs = C.extra_link_libs(cfg, module)
+    # gh-160: each aggregated object's own extra_link_libs must be linked
+    # DIRECTLY onto the module's Python extension. CMake does not pull a
+    # PUBLIC-linked OBJECT lib's objects transitively through another OBJECT
+    # lib into the final .so, so a cross-module dep like ["obj_a_core"] on a
+    # member object would otherwise be missing → ImportError: undefined symbol.
+    _seen = set(libs_parts) | set(extra_libs)
+    for _obj in object_names:
+        for _lib in C.component_extra_link_libs(cfg, _obj):
+            if _lib not in _seen:
+                _seen.add(_lib)
+                libs_parts.append(_lib)
+    object_core_libs = "\n    ".join(libs_parts)
     extra_link_libs_block = (
         "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
     )
@@ -918,6 +929,19 @@ def run(
     ctx["extra_link_libs_block"] = (
         "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
     )
+    # gh-160: also link the OBJECT lib itself (PUBLIC) so the deps propagate
+    # transitively to every consumer — the aggregating Python extension as well
+    # as test/bench. Mirrors extra_link_on_core (_init.py) for standalone
+    # components. Without this, a cross-module dep like ["obj_a_core"] reaches
+    # only test/bench and the Python .so fails with undefined symbols.
+    if extra_link_libs:
+        _elibs = "\n    ".join(extra_link_libs)
+        ctx["extra_link_on_object_core"] = (
+            f"target_link_libraries({ctx['component']}_core PUBLIC\n"
+            f"    {_elibs})\n"
+        )
+    else:
+        ctx["extra_link_on_object_core"] = ""
 
     def r(tmpl):
         return R.render(tmpl, ctx)
@@ -1019,6 +1043,12 @@ def run(
         depends_on_=list(depends_on),
         opaque_fields_=list(opaque_fields),
         no_ctor_names_=no_ctor_names,
+        # gh-160: persist extra_link_libs/extra_include_dirs for module objects
+        # too (the standalone path already did). Without this they're dropped
+        # from the manifest, so the module aggregation can't propagate a
+        # cross-module dep to the Python extension and reload/apply lose it.
+        extra_link_libs_=list(extra_link_libs),
+        extra_include_dirs_=list(extra_include_dirs),
     )
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
