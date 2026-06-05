@@ -153,6 +153,71 @@ def test_no_step_console_falls_back_to_stub(tmp_path: Path):
     assert "<<IMPLEMENT" in cli and "sys.exit(0)" in cli
 
 
+def test_blockwise_shape_generates_steps_loop(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "bw",
+        None,
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float[]",
+        return_type="float[]",
+    )
+    jm_app(proj, target="c", name="tool", object_="bw")
+    jm_app(proj, target="console", name="tool", object_="bw")
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    assert "<<IMPLEMENT" not in c
+    assert "bw_steps(state, inbuf, k, outbuf)" in c
+    assert "fread(inbuf" in c and "fwrite(outbuf" in c
+    assert "obj.steps(data)" in cli and "out.tofile" in cli
+
+
+def test_consumer_shape_no_output(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "cons",
+        None,
+        state_vars=[("sum", "float", "0.0f")],
+        arg_type="float",
+        return_type="void",
+        mutable=True,
+    )
+    jm_app(proj, target="c", name="tool", object_="cons")
+    jm_app(proj, target="console", name="tool", object_="cons")
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    assert "cons_steps(state, inbuf, k)" in c
+    assert "fwrite" not in c and '"--output"' not in c  # no output side
+    assert "obj.steps(data)" in cli and "out.tofile" not in cli
+
+
+def test_generator_shape_uses_count(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "gen",
+        None,
+        state_vars=[("inc", "float", "1.0f")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    jm_app(proj, target="c", name="tool", object_="gen")
+    jm_app(proj, target="console", name="tool", object_="gen")
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    assert "gen_steps(state, outbuf, k)" in c
+    assert "produced < count" in c and '"--count"' in c
+    assert "fread" not in c and '"--input"' not in c  # no input side
+    assert "obj.steps(args.count)" in cli
+    assert "--count" in cli
+
+
 def test_no_step_object_falls_back_to_stub(tmp_path: Path):
     proj = tmp_path / "proj"
     jm_new("proj", proj)

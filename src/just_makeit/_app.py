@@ -159,25 +159,69 @@ def _py_create_args(flags: list[dict]) -> str:
     )
 
 
-def _py_io_loop(component: str, Component: str, arg_t: str, ret_t: str) -> str:
-    """4-space-indented Python body: read -> obj.step() -> write."""
-    in_dtype = _np_dtype(arg_t)
-    out_dtype = _np_dtype(ret_t)
+def _np_dtype_of(t: str) -> str:
+    """numpy dtype for a scalar or array (``T[]``) type."""
+    elem = T.array_elem_ctype(t) if T.is_array_param_type(t) else t
+    return _np_dtype(elem)
+
+
+def _py_read(dtype: str) -> str:
     return (
         f"    if args.input:\n"
-        f"        data = np.fromfile(args.input, dtype={in_dtype})\n"
+        f"        data = np.fromfile(args.input, dtype={dtype})\n"
         f"    else:\n"
-        f"        buf = sys.stdin.buffer.read()\n"
-        f"        data = np.frombuffer(buf, dtype={in_dtype})\n"
-        f"    obj = {Component}(<<py_create_args>>)\n"
-        f"    out = np.array(\n"
-        f"        [obj.step(x) for x in data], dtype={out_dtype}\n"
-        f"    )\n"
-        f"    if args.output:\n"
-        f"        out.tofile(args.output)\n"
-        f"    else:\n"
-        f"        sys.stdout.buffer.write(out.tobytes())"
+        f"        data = np.frombuffer(sys.stdin.buffer.read(), dtype={dtype})"
     )
+
+
+_PY_WRITE = (
+    "    if args.output:\n"
+    "        out.tofile(args.output)\n"
+    "    else:\n"
+    "        sys.stdout.buffer.write(out.tobytes())"
+)
+
+
+def _py_io_loop(
+    shape: str, component: str, Component: str, arg_t: str, ret_t: str
+) -> str:
+    """4-space-indented Python body for the given object shape."""
+    create = f"    obj = {Component}(<<py_create_args>>)"
+    if shape == "scalar":
+        return "\n".join(
+            [
+                _py_read(_np_dtype(arg_t)),
+                create,
+                f"    out = np.array(\n"
+                f"        [obj.step(x) for x in data], dtype={_np_dtype(ret_t)}\n"
+                f"    )",
+                _PY_WRITE,
+            ]
+        )
+    if shape == "blockwise":
+        return "\n".join(
+            [
+                _py_read(_np_dtype_of(arg_t)),
+                create,
+                f"    out = np.asarray(obj.steps(data), dtype={_np_dtype_of(ret_t)})",
+                _PY_WRITE,
+            ]
+        )
+    if shape == "consumer":
+        return "\n".join(
+            [_py_read(_np_dtype_of(arg_t)), create, "    obj.steps(data)"]
+        )
+    if shape == "generator":
+        return "\n".join(
+            [
+                create,
+                f"    out = np.asarray(\n"
+                f"        obj.steps(args.count), dtype={_np_dtype(ret_t)}\n"
+                f"    )",
+                _PY_WRITE,
+            ]
+        )
+    return ""
 
 
 # ── C generation ─────────────────────────────────────────────────────────────
@@ -196,11 +240,21 @@ def _ctor_c_args(flags: list[dict], parsed: bool) -> str:
     return ", ".join(parts)
 
 
-def _c_argv_parser(name: str, flags: list[dict]) -> str:
-    """Generate the C argv parsing block: typed decls + a strcmp loop +
-    --input/--output, then open the files. 4-space indented."""
+def _c_argv_parser(
+    name: str,
+    flags: list[dict],
+    *,
+    want_in: bool = True,
+    want_out: bool = True,
+) -> str:
+    """Generate the C argv parsing block: typed decls + a strcmp loop, the
+    requested --input/--output handling, and the file opens. 4-space indented.
+
+    `want_in`/`want_out` follow the object shape: a consumer has no output, a
+    generator has no input.
+    """
     decls = []
-    matches = []
+    clauses = []
     usage_parts = []
     for f in flags:
         ct = f["type"]
@@ -208,64 +262,128 @@ def _c_argv_parser(name: str, flags: list[dict]) -> str:
             continue  # not CLI-parseable; ctor uses its default literal
         decls.append(f"    {ct} {f['name']} = {f['default']};")
         parse = _C_PARSE[ct].format(a="argv[++i]")
-        matches.append(
-            f'        if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
+        clauses.append(
+            f'if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
             f"            {f['name']} = {parse};\n"
-            f"        }} else "
+            f"        }}"
         )
         usage_parts.append(f"[--{f['name']} V]")
 
-    decls.append("    const char *in_path = NULL;")
-    decls.append("    const char *out_path = NULL;")
-    usage_parts += ["[--input FILE]", "[--output FILE]"]
-    usage = f"usage: {name} " + " ".join(usage_parts)
+    if want_in:
+        decls.append("    const char *in_path = NULL;")
+        clauses.append(
+            'if ((!strcmp(argv[i], "--input") || !strcmp(argv[i], "-i"))\n'
+            "                   && i + 1 < argc) {\n"
+            "            in_path = argv[++i];\n"
+            "        }"
+        )
+        usage_parts.append("[--input FILE]")
+    if want_out:
+        decls.append("    const char *out_path = NULL;")
+        clauses.append(
+            'if ((!strcmp(argv[i], "--output") || !strcmp(argv[i], "-o"))\n'
+            "                   && i + 1 < argc) {\n"
+            "            out_path = argv[++i];\n"
+            "        }"
+        )
+        usage_parts.append("[--output FILE]")
 
-    loop = (
-        "    for (int i = 1; i < argc; i++) {\n"
-        + "".join(matches)
-        + 'if ((!strcmp(argv[i], "--input") || !strcmp(argv[i], "-i"))\n'
-        "                   && i + 1 < argc) {\n"
-        "            in_path = argv[++i];\n"
-        '        } else if ((!strcmp(argv[i], "--output")\n'
-        '                    || !strcmp(argv[i], "-o")) && i + 1 < argc) {\n'
-        "            out_path = argv[++i];\n"
-        "        } else {\n"
-        f'            fprintf(stderr, "{usage}\\n");\n'
-        "            return 2;\n"
-        "        }\n"
-        "    }"
-    )
-    # Suppress unused-variable warnings for extra (non-ctor) flags the
-    # generated loop doesn't consume — they're for hand-written custom logic.
+    usage = f"usage: {name} " + " ".join(usage_parts)
+    if clauses:
+        loop = (
+            "    for (int i = 1; i < argc; i++) {\n"
+            "        " + " else ".join(clauses) + " else {\n"
+            f'            fprintf(stderr, "{usage}\\n");\n'
+            "            return 2;\n"
+            "        }\n"
+            "    }"
+        )
+    else:
+        loop = "    (void)argc;\n    (void)argv;"
+
+    # Suppress unused-variable warnings for extra flags the generated loop
+    # doesn't consume (non-ctor, non-"consumed" extras for custom logic).
     voids = [
         f"    (void){f['name']};"
         for f in flags
-        if f["type"] in _C_PARSE and not f["ctor"]
+        if f["type"] in _C_PARSE and not f["ctor"] and not f.get("consumed")
     ]
-    open_files = (
-        '    FILE *in = in_path ? fopen(in_path, "rb") : stdin;\n'
-        '    FILE *out = out_path ? fopen(out_path, "wb") : stdout;\n'
-        "    if (!in || !out) {\n"
-        '        fprintf(stderr, "error: cannot open input/output\\n");\n'
-        "        return 1;\n"
-        "    }"
-    )
+
+    opens = []
+    if want_in:
+        opens.append('    FILE *in = in_path ? fopen(in_path, "rb") : stdin;')
+    if want_out:
+        opens.append(
+            '    FILE *out = out_path ? fopen(out_path, "wb") : stdout;'
+        )
+    if opens:
+        cond = (
+            "!in || !out"
+            if (want_in and want_out)
+            else ("!in" if want_in else "!out")
+        )
+        opens += [
+            f"    if ({cond}) {{",
+            '        fprintf(stderr, "error: cannot open input/output\\n");',
+            "        return 1;",
+            "    }",
+        ]
+
     chunks = [*decls, "", loop]
     if voids:
         chunks += ["", *voids]
-    chunks += ["", open_files]
+    if opens:
+        chunks += ["", "\n".join(opens)]
     return "\n".join(chunks)
 
 
-def _c_io_loop(component: str, arg_t: str, ret_t: str) -> str:
-    """4-space-indented C body: read -> <comp>_step() -> write."""
-    return (
-        f"    {arg_t} x;\n"
-        f"    while (fread(&x, sizeof x, 1, in) == 1) {{\n"
-        f"        {ret_t} y = {component}_step(state, x);\n"
-        f"        fwrite(&y, sizeof y, 1, out);\n"
-        f"    }}"
-    )
+_APP_BLOCK = 4096
+
+
+def _c_io_loop(shape: str, component: str, arg_t: str, ret_t: str) -> str:
+    """4-space-indented C body for the given object shape."""
+    n = _APP_BLOCK
+    if shape == "scalar":
+        return (
+            f"    {arg_t} x;\n"
+            f"    while (fread(&x, sizeof x, 1, in) == 1) {{\n"
+            f"        {ret_t} y = {component}_step(state, x);\n"
+            f"        fwrite(&y, sizeof y, 1, out);\n"
+            f"    }}"
+        )
+    if shape == "blockwise":
+        ie = T.array_elem_ctype(arg_t)
+        oe = T.array_elem_ctype(ret_t)
+        return (
+            f"    {ie} inbuf[{n}];\n"
+            f"    {oe} outbuf[{n}];\n"
+            f"    size_t k;\n"
+            f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
+            f"        {component}_steps(state, inbuf, k, outbuf);\n"
+            f"        fwrite(outbuf, sizeof outbuf[0], k, out);\n"
+            f"    }}"
+        )
+    if shape == "consumer":
+        return (
+            f"    {arg_t} inbuf[{n}];\n"
+            f"    size_t k;\n"
+            f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
+            f"        {component}_steps(state, inbuf, k);\n"
+            f"    }}"
+        )
+    if shape == "generator":
+        return (
+            f"    {ret_t} outbuf[{n}];\n"
+            f"    size_t produced = 0;\n"
+            f"    while (produced < count) {{\n"
+            f"        size_t k = (count - produced) < {n}\n"
+            f"                       ? (count - produced) : (size_t){n};\n"
+            f"        {component}_steps(state, outbuf, k);\n"
+            f"        fwrite(outbuf, sizeof outbuf[0], k, out);\n"
+            f"        produced += k;\n"
+            f"    }}"
+        )
+    return ""
 
 
 def _cmake_app_block(name: str, component: str) -> str:
@@ -319,19 +437,33 @@ def _update_pyproject_scripts(root: Path, name: str, pkg: str) -> bool:
     return True
 
 
-def _generatable(cfg: dict, component: str) -> bool:
-    """True if the object is a scalar step(x)->y over a known sample type —
-    the shape we can generate a complete parser + I/O loop for."""
-    if cfg.get(component, {}).get("no_step") in (True, "true"):
+def _is_scalar(t: str) -> bool:
+    return t in T._CTYPE_META and t != "const char *"
+
+
+def _is_scalar_array(t: str) -> bool:
+    if not T.is_array_param_type(t):
         return False
+    return _is_scalar(T.array_elem_ctype(t))
+
+
+def _app_shape(cfg: dict, component: str) -> str | None:
+    """Classify the object's I/O shape so the right parser + loop can be
+    generated: 'scalar', 'blockwise', 'consumer', 'generator', or None (an
+    unsupported shape that falls back to an <<IMPLEMENT>> stub)."""
+    if cfg.get(component, {}).get("no_step") in (True, "true"):
+        return None
     arg_t = C.arg_type(cfg, component)
     ret_t = C.return_type(cfg, component)
-    return (
-        arg_t in T._CTYPE_META
-        and ret_t in T._CTYPE_META
-        and arg_t != "const char *"
-        and ret_t != "const char *"
-    )
+    if _is_scalar(arg_t) and _is_scalar(ret_t):
+        return "scalar"
+    if _is_scalar_array(arg_t) and _is_scalar_array(ret_t):
+        return "blockwise"
+    if _is_scalar(arg_t) and ret_t == "void":
+        return "consumer"
+    if arg_t == "void" and _is_scalar(ret_t):
+        return "generator"
+    return None
 
 
 def _build_ctx(
@@ -354,22 +486,45 @@ def _build_ctx(
         a = _ctor_c_args(all_flags, parsed)
         return f"{component}_create({a})" if a else f"{component}_create()"
 
-    if _generatable(cfg, component):
-        arg_parse_block = _c_argv_parser(name, all_flags)
+    shape = _app_shape(cfg, component)
+    if shape is not None:
+        # A generator produces N samples from internal state with no input,
+        # driven by a synthetic --count flag; a consumer has no output.
+        want_in = shape != "generator"
+        want_out = shape != "consumer"
+        parse_flags = list(all_flags)
+        if shape == "generator":
+            parse_flags.append(
+                {
+                    "name": "count",
+                    "type": "size_t",
+                    "default": "1024",
+                    "help": "number of samples to generate",
+                    "ctor": False,
+                    "consumed": True,
+                }
+            )
+        argparse_flags = parse_flags
+        arg_parse_block = _c_argv_parser(
+            name, parse_flags, want_in=want_in, want_out=want_out
+        )
         create_call = _create_call(parsed=True)
-        io_loop = _c_io_loop(component, arg_t, ret_t)
+        io_loop = _c_io_loop(shape, component, arg_t, ret_t)
         py_io_loop = R.render(
-            _py_io_loop(component, Component, arg_t, ret_t),
+            _py_io_loop(shape, component, Component, arg_t, ret_t),
             {"py_create_args": _py_create_args(all_flags)},
         )
-        cleanup_tail = (
-            "    if (in != stdin) fclose(in);\n"
-            "    if (out != stdout) fclose(out);"
-        )
+        tail = []
+        if want_in:
+            tail.append("    if (in != stdin) fclose(in);")
+        if want_out:
+            tail.append("    if (out != stdout) fclose(out);")
+        cleanup_tail = "\n".join(tail)
     else:
         # Fall back to a stub for shapes we don't generate a loop for. The
         # --argc-argv opt-in still controls whether an argv-parsing skeleton or
         # a plain (void) suppression is emitted here.
+        argparse_flags = all_flags
         arg_parse_block = (
             "    if (argc > 1) {\n"
             "        /* <<IMPLEMENT: parse argv>> */\n"
@@ -398,7 +553,7 @@ def _build_ctx(
         "version": version,
         "component": component,
         "Component": Component,
-        "argparse_state_args": _argparse_block(all_flags),
+        "argparse_state_args": _argparse_block(argparse_flags),
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,
         "io_loop": io_loop,
