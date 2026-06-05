@@ -93,6 +93,66 @@ def test_cmake_block_is_idempotent(tmp_path: Path):
     assert cmake.count("add_executable(tool") == 1
 
 
+def test_pep723_target_is_generated(tmp_path: Path):
+    proj = _scaffold(tmp_path)
+    jm_app(proj, target="pep723", name="tool", object_="gain")
+    script = (proj / "tool.py").read_text()
+    assert "# /// script" in script
+    assert "from proj import Gain" in script
+    assert "obj.step(x)" in script and "<<IMPLEMENT" not in script
+
+
+def test_int_flag_uses_strtol_and_int_argparse(tmp_path: Path):
+    proj = _scaffold(tmp_path)
+    jm_app(
+        proj,
+        target="c",
+        name="tool",
+        object_="gain",
+        flags=[{"name": "taps", "type": "int32_t", "default": "8"}],
+    )
+    jm_app(proj, target="console", name="tool", object_="gain")
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    assert "int32_t taps = 8;" in c and "strtol(argv[++i]" in c
+    assert "--taps" in cli and "type=int" in cli
+
+
+def test_non_parseable_ctor_uses_default_literal(tmp_path: Path):
+    # A complex ctor state var can't be a CLI flag → C create passes its
+    # default literal inline (commented), not an undeclared variable.
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "mix",
+        None,
+        state_vars=[("g", "float", "1.0f"), ("c0", "float _Complex", "0")],
+        arg_type="float",
+        return_type="float",
+        impl_body="return state->g * x;",
+    )
+    jm_app(proj, target="c", name="tool", object_="mix")
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    assert "/* c0= */0" in c  # complex ctor flag falls back to default literal
+    assert "float g = 1.0f;" in c  # float ctor flag still parsed
+
+
+def test_no_step_console_falls_back_to_stub(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "sink",
+        None,
+        state_vars=[("count", "uint32_t", "0")],
+        no_step=True,
+    )
+    jm_app(proj, target="console", name="tool", object_="sink")
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    assert "<<IMPLEMENT" in cli and "sys.exit(0)" in cli
+
+
 def test_no_step_object_falls_back_to_stub(tmp_path: Path):
     proj = tmp_path / "proj"
     jm_new("proj", proj)
