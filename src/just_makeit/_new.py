@@ -6,6 +6,8 @@ scaffolds the first object in the same step.  With --module (repeatable)
 scaffolds one or more empty extension modules.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

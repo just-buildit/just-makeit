@@ -22,6 +22,8 @@ Usage
     just-makeit upgrade          # advance to CURRENT_SCHEMA
 """
 
+from __future__ import annotations
+
 import re
 import sys
 from dataclasses import dataclass

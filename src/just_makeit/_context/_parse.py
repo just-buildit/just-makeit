@@ -4,6 +4,8 @@ Functions that construct C parse/argument-handling fragments used by
 multiple make_*_ctx() builders.
 """
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,

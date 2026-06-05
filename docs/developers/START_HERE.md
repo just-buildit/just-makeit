@@ -213,7 +213,7 @@ ______________________________________________________________________
 
 | Workflow       | Trigger                | What it does                                                                                                              |
 | -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.11–3.14; separate `coverage` job uploads to Codecov                                 |
+| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.9–3.14; separate `coverage` job uploads to Codecov                                  |
 | `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                |
 | `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification |
 | `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                            |

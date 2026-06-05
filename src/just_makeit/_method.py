@@ -16,6 +16,8 @@ For fixed-output methods:
   - Appends a simple stub for <<component>>_<name>() to _core.c
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

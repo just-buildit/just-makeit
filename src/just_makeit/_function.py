@@ -14,6 +14,8 @@ such per-function .c into the module's OBJECT library.  The Python wrapper
 _regenerate_module runs (called here after updating the config).
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

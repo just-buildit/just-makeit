@@ -26,6 +26,8 @@ The verb is purely read-only — it only ever writes to the throwaway copy,
 never the project. Safe from CI or before a sensitive change.
 """
 
+from __future__ import annotations
+
 import contextlib
 import difflib
 import fnmatch

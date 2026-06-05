@@ -3,6 +3,8 @@
 Contains _bench_method_block, make_methods_ctx, and make_properties_ctx.
 """
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,

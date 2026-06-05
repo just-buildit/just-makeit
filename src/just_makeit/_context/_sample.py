@@ -3,6 +3,8 @@
 Builds the sample-type portion of the template rendering dict.
 """
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,

@@ -8,6 +8,8 @@ Note: --impl / --replace are not stored in TOML (the lifted body is patched
 directly into the generated files), so they are not reproduced here.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

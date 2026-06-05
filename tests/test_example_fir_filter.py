@@ -5,6 +5,8 @@ fails, or expected output is not produced, the test fails — keeping the README
 honest.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess

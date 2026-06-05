@@ -11,6 +11,8 @@ inferred side effect of a reconcile. Prompts for confirmation unless
 `--force` is given.
 """
 
+from __future__ import annotations
+
 import re
 import shutil
 import sys

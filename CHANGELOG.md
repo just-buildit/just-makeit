@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.14.11] — 2026-06-04
+
+### Added
+
+- **`jm apply` refreshes the runtime `__doc__` of module-object binding
+    fragments — the safe successor to the reverted 0.14.8/0.14.9.** Header
+    Doxygen edits already reach the `.pyi` (0.14.6); now they also reach the C
+    runtime docs (`help(Obj.method)`, `Obj.__doc__`) that live in the sacred
+    `<mod>_ext_<obj>.c` fragments. A new post-sync pass (`_docsync`) renders a
+    *reference* fragment in memory and transplants **only the docstring
+    string-literals** — the `PyMethodDef` doc slot, the `PyGetSetDef` doc
+    field, and `.tp_doc` — matched by Python entry name.
+
+    Unlike 0.14.8/0.14.9, which re-rendered the whole fragment from the
+    manifest and silently dropped hand-written bindings the manifest can't
+    express, this transplant touches *only* doc slots whose entry name also
+    appears in the reference. Every function body and every non-manifest
+    binding (custom getters/setters, list-returning accessors, bespoke
+    constructors) is left byte-for-byte identical — preservation is a
+    structural guarantee, not a body-splice. Idempotent: a second `apply`
+    produces no diff. `*_extra.c` and `no_generate` modules are never touched.
+
+    New `tests/test_apply_fragment_docs.py` covers runtime-doc refresh, the
+    non-manifest-binding survival regression, body preservation, idempotence,
+    and unit tests for the `_docsync` splicer.
+
 ## [0.14.10] — 2026-06-04
 
 ### Fixed

@@ -29,6 +29,8 @@ inject_body_into_stub(stub, body)       -> str  (last fn in stub)
 patch_function_body(text, name, body)   -> str  (named fn in C text)
 """
 
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path

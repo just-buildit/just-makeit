@@ -14,6 +14,8 @@ computed or internally-managed values. The getter stub calls:
 which the user implements however they like (read from state, compute, etc.).
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

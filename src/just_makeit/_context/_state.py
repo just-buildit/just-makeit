@@ -4,6 +4,8 @@ Builds the struct-fields, getter/setter, and init-parse portions of the
 rendering dict.
 """
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
     _ARRAY_DTYPE,

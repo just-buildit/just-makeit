@@ -4,6 +4,8 @@ _init.py — standalone object scaffolding (internal).
 Called by `just-makeit object` (no --module) and `just-makeit new --object`.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import sysconfig

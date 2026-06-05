@@ -1,5 +1,7 @@
 """Integration test: run each step of examples/running_stats/README.md in sequence."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess

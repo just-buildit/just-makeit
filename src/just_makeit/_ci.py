@@ -15,6 +15,8 @@ The file is written only if absent; pass --force to overwrite an existing
 one (CI configs are commonly hand-tuned, so we don't clobber by default).
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
