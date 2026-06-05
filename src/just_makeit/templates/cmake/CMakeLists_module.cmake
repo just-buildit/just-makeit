@@ -1,5 +1,5 @@
 <<module_core_lib_block>>if(BUILD_PYTHON)
-# <<module>> Python module — aggregates: <<object_list>>
+# <<module_comment>>
 Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c<<extra_ext_sources>>)
 target_link_libraries(<<module>> PRIVATE
     <<object_core_libs>>

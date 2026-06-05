@@ -137,15 +137,17 @@ def _argparse_block(flags: list[dict]) -> str:
         pytype = _PYTYPE.get(f["type"], "str")
         pydef = _py_default(f["default"]) if f["default"] else None
         helptext = _flag_help(f["name"], f["help"], pydef)
-        if pydef is None:
-            default_repr = "None"
+        if f.get("required"):
+            spec = "required=True"
+        elif pydef is None:
+            spec = "default=None"
         elif pytype in ("float", "int", "complex"):
-            default_repr = pydef  # bare numeric literal
+            spec = f"default={pydef}"  # bare numeric literal
         else:
-            default_repr = repr(pydef)  # quoted string
+            spec = f"default={pydef!r}"  # quoted string
         lines.append(
             f"    p.add_argument(\n"
-            f'        "--{f["name"]}", type={pytype}, default={default_repr},\n'
+            f'        "--{f["name"]}", type={pytype}, {spec},\n'
             f'        help="{helptext}",\n'
             f"    )"
         )
@@ -466,6 +468,94 @@ def _app_shape(cfg: dict, component: str) -> str | None:
     return None
 
 
+# ── module-function apps ─────────────────────────────────────────────────────
+# printf format + cast per scalar return type.
+_C_PRINTF = {
+    "float": ("%g", "(double)"),
+    "double": ("%g", "(double)"),
+    "int": ("%d", ""),
+    "int8_t": ("%d", "(int)"),
+    "int16_t": ("%d", "(int)"),
+    "int32_t": ("%ld", "(long)"),
+    "int64_t": ("%lld", "(long long)"),
+    "uint8_t": ("%u", "(unsigned)"),
+    "uint16_t": ("%u", "(unsigned)"),
+    "uint32_t": ("%lu", "(unsigned long)"),
+    "uint64_t": ("%llu", "(unsigned long long)"),
+    "size_t": ("%zu", ""),
+}
+
+
+def _find_fn(cfg: dict, function: str, module: str | None):
+    """Return (module, fn_dict) for the named function, or (None, None)."""
+    mods = [module] if module else C.modules(cfg)
+    for m in mods:
+        for fn in C.module_functions(cfg, m):
+            if fn["name"] == function:
+                return m, fn
+    return None, None
+
+
+def _fn_generatable(fn: dict) -> bool:
+    """A function app is generatable when every param is a CLI-parseable scalar
+    and the return is a scalar (or void)."""
+    for p in fn.get("params", []):
+        if p["type"] not in _C_PARSE:
+            return False
+    ret = fn.get("return_type", "void")
+    return ret == "void" or ret in _C_PRINTF
+
+
+def _fn_flags(params: list[dict]) -> list[dict]:
+    return [
+        {
+            "name": p["name"],
+            "type": p["type"],
+            "default": T._CTYPE_META.get(p["type"], {}).get("zero", "0"),
+            "help": p["name"],
+            "ctor": False,
+            "consumed": True,
+            "required": True,
+        }
+        for p in params
+    ]
+
+
+def _c_call_print(function: str, ret_t: str, param_names: list[str]) -> str:
+    args = ", ".join(param_names)
+    if ret_t == "void" or ret_t not in _C_PRINTF:
+        return f"    {function}({args});"
+    fmt, cast = _C_PRINTF[ret_t]
+    return (
+        f"    {ret_t} result = {function}({args});\n"
+        f'    printf("{fmt}\\n", {cast}result);'
+    )
+
+
+def _build_fn_ctx(
+    cfg: dict, module: str, function: str, name: str, fn: dict
+) -> dict[str, str]:
+    pkg = C.project_name(cfg)
+    params = fn.get("params", [])
+    ret_t = fn.get("return_type", "void")
+    fn_flags = _fn_flags(params)
+    pnames = [p["name"] for p in params]
+    return {
+        "name": name,
+        "project": pkg,
+        "package": pkg,
+        "version": C.project_version(cfg),
+        "module": module,
+        "function": function,
+        "argparse_state_args": _argparse_block(fn_flags),
+        "arg_parse_block": _c_argv_parser(
+            name, fn_flags, want_in=False, want_out=False
+        ),
+        "call_and_print": _c_call_print(function, ret_t, pnames),
+        "py_call_args": ", ".join(f"args.{n}" for n in pnames),
+    }
+
+
 def _build_ctx(
     cfg: dict,
     component: str,
@@ -569,6 +659,8 @@ def run(
     target: str = "c",
     name: str | None = None,
     object_: str | None = None,
+    function_: str | None = None,
+    module: str | None = None,
     flags: list[dict] | None = None,
     argc_argv: bool = False,
 ) -> None:
@@ -591,22 +683,6 @@ def run(
         )
         sys.exit(1)
 
-    comps = C.components(cfg)
-    if object_ is None:
-        if not comps:
-            print(
-                "error: no components found — run 'just-makeit object' first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        object_ = comps[0]
-    elif object_ not in comps:
-        print(f"error: object '{object_}' not found.", file=sys.stderr)
-        sys.exit(1)
-
-    if name is None:
-        name = pkg
-
     if target not in ("c", "console", "pep723"):
         print(
             f"error: unknown target '{target}'. Use c, console, or pep723.",
@@ -614,26 +690,79 @@ def run(
         )
         sys.exit(1)
 
-    # Persist + merge flags before codegen so stored [[app.flags]] from prior
-    # runs are reflected in the generated parsers (reproducible re-runs).
-    C.set_app(cfg, target, name, object_)
-    for f in flags or []:
-        C.add_app_flag(cfg, f)
-    effective_flags = C.app_flags(cfg)
-
-    ctx = _build_ctx(
-        cfg, object_, name, target, flags=effective_flags, argc_argv=argc_argv
-    )
+    if function_ is not None:
+        # ── module-function app ──────────────────────────────────────────
+        mod, fn = _find_fn(cfg, function_, module)
+        if fn is None:
+            where = f" in module '{module}'" if module else ""
+            print(
+                f"error: function '{function_}' not found{where}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not _fn_generatable(fn):
+            print(
+                f"error: function '{function_}' has non-scalar params or "
+                "return; `jm app --function` supports scalar signatures only.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if name is None:
+            name = function_
+        ctx = _build_fn_ctx(cfg, mod, function_, name, fn)
+        C.set_app(cfg, target, name, function=function_, module=mod)
+        main_tmpl, console_tmpl, pep_tmpl = (
+            R.APP_MAIN_FN_C,
+            R.APP_CONSOLE_CLI_FN,
+            R.APP_PEP723_FN,
+        )
+        link_base = mod
+    else:
+        # ── object app ───────────────────────────────────────────────────
+        comps = C.components(cfg)
+        if object_ is None:
+            if not comps:
+                print(
+                    "error: no components found — run "
+                    "'just-makeit object' first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            object_ = comps[0]
+        elif object_ not in comps:
+            print(f"error: object '{object_}' not found.", file=sys.stderr)
+            sys.exit(1)
+        if name is None:
+            name = pkg
+        # Persist + merge flags before codegen so stored [[app.flags]] from
+        # prior runs are reflected in the generated parsers (reproducible).
+        C.set_app(cfg, target, name, object_=object_)
+        for f in flags or []:
+            C.add_app_flag(cfg, f)
+        ctx = _build_ctx(
+            cfg,
+            object_,
+            name,
+            target,
+            flags=C.app_flags(cfg),
+            argc_argv=argc_argv,
+        )
+        main_tmpl, console_tmpl, pep_tmpl = (
+            R.APP_MAIN_C,
+            R.APP_CONSOLE_CLI,
+            R.APP_PEP723,
+        )
+        link_base = object_
 
     print(f"just-makeit: scaffolding app '{name}' (target={target})")
     print()
 
     if target == "c":
-        _run_c(root, cfg, ctx, name, object_)
+        _run_c(root, ctx, name, link_base, main_tmpl)
     elif target == "console":
-        _run_console(root, cfg, ctx, name, pkg)
+        _run_console(root, ctx, name, pkg, console_tmpl)
     else:
-        _run_pep723(root, ctx, name)
+        _run_pep723(root, ctx, name, pep_tmpl)
 
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
@@ -642,33 +771,37 @@ def run(
 
 
 def _run_c(
-    root: Path, cfg: dict, ctx: dict, name: str, component: str
+    root: Path, ctx: dict, name: str, link_base: str, tmpl: str = R.APP_MAIN_C
 ) -> None:
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     main_c = app_dir / f"{name}.c"
-    main_c.write_text(R.render(R.APP_MAIN_C, ctx), encoding="utf-8")
+    main_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
     verb = "update" if main_c.exists() else "create"
     print(f"  {verb}  {main_c}")
 
     cmake = root / "CMakeLists.txt"
     if cmake.exists():
-        _splice_cmake(cmake, name, component)
+        _splice_cmake(cmake, name, link_base)
         print(f"  update  {cmake}")
     else:
         print(
             f"  note: CMakeLists.txt not found — add this manually:\n"
             f"    add_executable({name} native/src/app/{name}.c)\n"
-            f"    target_link_libraries({name} PRIVATE {component}_core)"
+            f"    target_link_libraries({name} PRIVATE {link_base}_core)"
         )
 
 
 def _run_console(
-    root: Path, cfg: dict, ctx: dict, name: str, pkg: str
+    root: Path,
+    ctx: dict,
+    name: str,
+    pkg: str,
+    tmpl: str = R.APP_CONSOLE_CLI,
 ) -> None:
     cli_py = root / "src" / pkg / "cli.py"
     cli_py.parent.mkdir(parents=True, exist_ok=True)
-    cli_py.write_text(R.render(R.APP_CONSOLE_CLI, ctx), encoding="utf-8")
+    cli_py.write_text(R.render(tmpl, ctx), encoding="utf-8")
     verb = "update" if cli_py.exists() else "create"
     print(f"  {verb}  {cli_py}")
 
@@ -683,9 +816,11 @@ def _run_console(
         )
 
 
-def _run_pep723(root: Path, ctx: dict, name: str) -> None:
+def _run_pep723(
+    root: Path, ctx: dict, name: str, tmpl: str = R.APP_PEP723
+) -> None:
     script = root / f"{name}.py"
-    script.write_text(R.render(R.APP_PEP723, ctx), encoding="utf-8")
+    script.write_text(R.render(tmpl, ctx), encoding="utf-8")
     verb = "update" if script.exists() else "create"
     print(f"  {verb}  {script}")
 

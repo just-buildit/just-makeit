@@ -723,10 +723,26 @@ def app_config(cfg: dict) -> dict:
     return cfg.get("app", {})
 
 
-def set_app(cfg: dict, target: str, name: str, object_: str) -> dict:
-    """Write the [app] target/name/object, preserving any [[app.flags]]."""
+def set_app(
+    cfg: dict,
+    target: str,
+    name: str,
+    object_: str | None = None,
+    function: str | None = None,
+    module: str | None = None,
+) -> dict:
+    """Write the [app] target/name and its source (object, or function+module),
+    preserving any [[app.flags]]."""
     app = cfg.get("app", {})
-    app.update({"target": target, "name": name, "object": object_})
+    app.update({"target": target, "name": name})
+    if function is not None:
+        app["function"] = function
+        app["module"] = module or ""
+        app.pop("object", None)
+    else:
+        app["object"] = object_
+        app.pop("function", None)
+        app.pop("module", None)
     cfg["app"] = app
     return cfg
 
@@ -1065,7 +1081,11 @@ def _dump(cfg: dict) -> str:
         lines.append("[app]")
         lines.append(f'target = "{app["target"]}"')
         lines.append(f'name = "{app["name"]}"')
-        lines.append(f'object = "{app["object"]}"')
+        if app.get("function") is not None:
+            lines.append(f'function = "{app["function"]}"')
+            lines.append(f'module = "{app.get("module", "")}"')
+        else:
+            lines.append(f'object = "{app.get("object", "")}"')
         lines.append("")
         for f in app.get("flags", []):
             lines.append("[[app.flags]]")

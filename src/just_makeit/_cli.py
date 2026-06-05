@@ -803,6 +803,8 @@ def main() -> None:
         target = "c"
         name: str | None = None
         object_: str | None = None
+        function_: str | None = None
+        app_module: str | None = None
         argc_argv = False
         app_flags: list[dict] = []
 
@@ -843,6 +845,16 @@ def main() -> None:
                 object_ = args[i]
             elif tok.startswith("--object="):
                 object_ = tok[len("--object=") :]
+            elif tok == "--function" and i + 1 < len(args):
+                i += 1
+                function_ = args[i]
+            elif tok.startswith("--function="):
+                function_ = tok[len("--function=") :]
+            elif tok == "--module" and i + 1 < len(args):
+                i += 1
+                app_module = args[i]
+            elif tok.startswith("--module="):
+                app_module = tok[len("--module=") :]
             elif tok == "--name" and i + 1 < len(args):
                 i += 1
                 name = args[i]
@@ -861,6 +873,8 @@ def main() -> None:
             target=target,
             name=name,
             object_=object_,
+            function_=function_,
+            module=app_module,
             flags=app_flags,
             argc_argv=argc_argv,
         )
