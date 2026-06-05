@@ -22,10 +22,9 @@
 
     This keeps the glue **hands-off**: the re-exports regenerate from the
     manifest on every `jm apply` instead of being a hand-edit that apply would
-    clobber. Generated imports and `__all__` are emitted in a ruff-stable form
-    (single line when short, ruff's parenthesised multi-line when long) so the
-    result is a fixpoint under `ruff format` and stays clean under
-    `jm status`. Both generation paths (`jm object`/`method` and `jm apply`'s
+    clobber. Imports and `__all__` are single-line canonical — matching jm's
+    existing `__init__.py` glue — so adding the key never reflows a project's
+    other modules. Both generation paths (`jm object`/`method` and `jm apply`'s
     merge) and both manifest writers (tomlkit and the `_dump` fallback) are
     covered. New `tests/test_module_reexports.py`.
 

@@ -9,7 +9,6 @@ manifest instead of being a hand-edit that ``jm apply`` would clobber.
 
 import io
 import contextlib
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -72,8 +71,8 @@ def test_apply_folds_reexports(tmp_path):
     assert text.index('"Mix"') < text.index('"api_create"')
 
 
-# ── (b) idempotent + ruff fixpoint ───────────────────────────────────────────
-def test_reexports_idempotent_and_ruff_stable(tmp_path):
+# ── (b) idempotent; single-line canonical (matches existing glue) ────────────
+def test_reexports_idempotent_and_single_line(tmp_path):
     dest = tmp_path / "dsp"
     _scaffold(dest)
     _declare_reexports(dest, NAMES)
@@ -82,14 +81,10 @@ def test_reexports_idempotent_and_ruff_stable(tmp_path):
     first = init.read_text(encoding="utf-8")
     _silent(apply_run, dest)
     assert init.read_text(encoding="utf-8") == first  # idempotent
-
-    # ruff must leave the generated glue untouched (no jm/ruff ping-pong).
-    r = subprocess.run(
-        ["uvx", "ruff", "format", "--line-length=88", str(init)],
-        capture_output=True,
-    )
-    if r.returncode == 0:  # skip if ruff unavailable offline
-        assert init.read_text(encoding="utf-8") == first
+    # Single-line canonical, like jm's other __init__.py imports — a long
+    # import is NOT pre-wrapped (no churn vs the rest of the package).
+    assert "from .fn_api import " + ", ".join(NAMES) in first
+    assert "\n    api_create," not in first  # not parenthesised multi-line
 
 
 # ── (c) user content below the glue survives ─────────────────────────────────
@@ -130,12 +125,11 @@ def test_merge_adds_reexports_short_single_line():
     assert '__all__ = ["Mix", "a", "b"]' in out
 
 
-def test_merge_reexports_long_wraps_like_ruff():
+def test_fmt_from_import_is_single_line():
     line = _fmt_from_import("fn_api", NAMES + ["api_set_x", "api_get_y"])
-    assert line.startswith("from .fn_api import (\n")
-    assert line.endswith(")  # noqa: E402")
-    # one name per line
-    assert "    api_create,\n" in line
+    assert "\n" not in line  # single-line canonical, even when long
+    assert line.startswith("from .fn_api import api_create, ")
+    assert line.endswith("  # noqa: E402")
 
 
 def test_merge_reexports_merges_existing_line():
@@ -158,9 +152,8 @@ def test_no_reexports_is_unchanged_behaviour():
     assert "fn_api" not in out
 
 
-def test_fmt_all_wraps_when_long():
-    short = _fmt_all(["A", "B"])
-    assert short == '__all__ = ["A", "B"]'
+def test_fmt_all_is_single_line():
+    assert _fmt_all(["A", "B"]) == '__all__ = ["A", "B"]'
     long = _fmt_all([f"name_{i:02d}" for i in range(12)])
-    assert long.startswith("__all__ = [\n") and long.endswith("]")
-    assert '    "name_00",\n' in long
+    assert "\n" not in long  # single-line canonical, even when long
+    assert long.startswith('__all__ = ["name_00", ')

@@ -245,13 +245,6 @@ def _copy_external_cmake_blocks(
                 return  # one source file is enough
 
 
-# ruff's default line length. A from-import or __all__ whose single-line form
-# would exceed this is emitted in ruff's parenthesised multi-line form, so the
-# generated glue is a fixpoint under `ruff format` (no jm/ruff ping-pong, and a
-# `jm status` comparison stays clean against a formatted tree).
-_WRAP_WIDTH = 88
-
-
 def _import_re(module: str) -> "re.Pattern[str]":
     """Match a ``from .<module> import ...`` line, single- or multi-line.
 
@@ -282,21 +275,19 @@ def _parse_import_names(stmt: str) -> list[str]:
 
 
 def _fmt_from_import(module: str, names: list[str]) -> str:
-    """Render a ``from .<module> import ...`` line in ruff-stable form."""
-    single = f"from .{module} import {', '.join(names)}  # noqa: E402"
-    if len(single) <= _WRAP_WIDTH:
-        return single
-    body = "".join(f"    {n},\n" for n in names)
-    return f"from .{module} import (\n{body})  # noqa: E402"
+    """Render a ``from .<module> import ...`` line (single-line canonical).
+
+    jm's ``__init__.py`` glue is single-line by contract — a formatter may
+    wrap a long import, and :func:`_import_re` collapses it back on the next
+    pass (gh#5/#6). Reexport lines follow the same convention, so adding the
+    key never reflows a project's other modules.
+    """
+    return f"from .{module} import {', '.join(names)}  # noqa: E402"
 
 
 def _fmt_all(names: list[str]) -> str:
-    """Render an ``__all__`` assignment in ruff-stable form."""
-    single = "__all__ = [" + ", ".join(f'"{n}"' for n in names) + "]"
-    if len(single) <= _WRAP_WIDTH:
-        return single
-    body = "".join(f'    "{n}",\n' for n in names)
-    return f"__all__ = [\n{body}]"
+    """Render an ``__all__`` assignment (single-line canonical)."""
+    return "__all__ = [" + ", ".join(f'"{n}"' for n in names) + "]"
 
 
 def _merge_module_init(
@@ -315,8 +306,8 @@ def _merge_module_init(
     emits a ``from .<submodule> import ...`` line per sibling and appends those
     names to ``__all__`` — so symbols re-exported from a hand-written
     ``no_generate`` sibling regenerate cleanly instead of being clobbered.
-    Import lines and ``__all__`` are rendered in a ruff-stable form (single
-    line when short, parenthesised multi-line when long).
+    Output is single-line canonical, matching jm's existing ``__init__.py``
+    glue, so adding the key never reflows a project's other modules.
 
     >>> src = ('# dsp/__init__.py\\n'
     ...        'from .dsp import Nco  # noqa: E402\\n'
