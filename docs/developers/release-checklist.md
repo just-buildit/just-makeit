@@ -37,16 +37,23 @@ version = "X.Y.Z"
 - ...
 ```
 
-Commit on a branch and merge via PR:
+Commit on a branch and merge via PR (`main` is protected — no direct pushes):
 
 ```sh
 git checkout -b chore/bump-X.Y.Z
-git add pyproject.toml CHANGELOG.md
+git add pyproject.toml CHANGELOG.md jb.toml uv.lock
 git commit -m "chore: bump to X.Y.Z"
 git push -u origin chore/bump-X.Y.Z
 gh pr create --fill
 # squash-merge once CI is green
 ```
+
+> **Pre-commit will rewrite files and abort the first commit.** The
+> `sync-jb-version` hook regenerates `jb.toml`, `uv-lock` refreshes `uv.lock`,
+> and `mdformat`/`ruff format` may reflow what you touched. This is expected:
+> re-stage everything the hooks changed (`git add -A`) and commit again — the
+> second run passes because the files are already normalized. Make sure the
+> hook-generated `jb.toml` and `uv.lock` land in the commit.
 
 ______________________________________________________________________
 
@@ -59,11 +66,17 @@ ______________________________________________________________________
 
 ## 4. Tag and push the release tag
 
-Tags must be prefixed with `v` — the Release workflow triggers on `v*`:
+Tags must be prefixed with `v` — the Release workflow triggers on `v*`.
+**Tag the merged commit on `origin/main`, not your local branch** — a
+squash/rebase merge gives the bump a new SHA, so a local tag made before
+merging would point at a commit that never lands on `main`:
 
 ```sh
-git tag vX.Y.Z
+git fetch origin
+git tag vX.Y.Z origin/main
 git push origin vX.Y.Z
+# sanity check: the tag and main must have identical trees
+git diff vX.Y.Z origin/main   # expect no output
 ```
 
 This kicks off `release.yml`: test → build wheel → publish to PyPI.
@@ -100,21 +113,27 @@ ______________________________________________________________________
 
 ## Common pitfalls
 
-| Mistake                                                       | Fix                                                                                                                                     |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Pushed tag without `v` prefix                                 | Push `vX.Y.Z` — release workflow ignores bare version tags                                                                              |
-| Tagged before CI green                                        | Delete the tag locally and on remote, fix CI, re-tag                                                                                    |
-| PyPI CDN lag causes `artifact.yml` to fail                    | Wait — retry loop runs for 10 min; if it still fails, check the logs                                                                    |
-| `artifact.yml` uses old CLI flags                             | Keep `artifact.yml` in sync with any CLI renames                                                                                        |
-| Example `test.py` calls a tool not in the release environment | Guard optional tool invocations with an availability check (`import X`) and skip gracefully — see `full_workflow` step 7 as the pattern |
-| GitHub repo still shows old version                           | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest`             |
+| Mistake                                                       | Fix                                                                                                                                              |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pushed tag without `v` prefix                                 | Push `vX.Y.Z` — release workflow ignores bare version tags                                                                                       |
+| Tagged before CI green (and **before** publish ran)           | Safe to fix: delete the tag locally and on remote, fix CI, re-tag — see below                                                                    |
+| Tag points at a local commit not on `main`                    | You tagged before the bump PR merged, or tagged your local SHA. `git fetch && git tag -f vX.Y.Z origin/main` **only if publish has not run yet** |
+| Want to "redo" a release after publish already succeeded      | You can't — PyPI rejects a duplicate version. Bump to the next patch (`X.Y.Z+1`) and release that instead                                        |
+| PyPI CDN lag causes `artifact.yml` to fail                    | Wait — retry loop runs for 10 min; if it still fails, check the logs                                                                             |
+| `artifact.yml` uses old CLI flags                             | Keep `artifact.yml` in sync with any CLI renames                                                                                                 |
+| Example `test.py` calls a tool not in the release environment | Guard optional tool invocations with an availability check (`import X`) and skip gracefully — see `full_workflow` step 7 as the pattern          |
+| GitHub repo still shows old version                           | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest`                      |
 
-To delete a tag and re-tag:
+To delete a tag and re-tag — **only safe if `release.yml` has not yet
+published to PyPI.** Re-pushing a tag re-triggers `release.yml`, and the PyPI
+upload step fails on a duplicate version once `X.Y.Z` exists. If publish has
+already succeeded, do not re-tag; bump to the next patch version instead.
 
 ```sh
 git tag -d vX.Y.Z
 git push origin :refs/tags/vX.Y.Z
-# fix the issue, then:
-git tag vX.Y.Z
+# fix the issue, then re-tag the merged commit on main:
+git fetch origin
+git tag vX.Y.Z origin/main
 git push origin vX.Y.Z
 ```
