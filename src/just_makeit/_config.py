@@ -767,6 +767,26 @@ def add_app_flag(cfg: dict, flag: dict) -> dict:
     return cfg
 
 
+def app_commands(cfg: dict) -> list[dict]:
+    """Return declared [[app.commands]] (empty list if none)."""
+    return list(cfg.get("app", {}).get("commands", []))
+
+
+def add_app_command(cfg: dict, command: dict) -> dict:
+    """Add/replace an [[app.commands]] entry, keyed by name. A command is
+    {name, help, flags: [{name, type, default, help}]}."""
+    app = cfg.setdefault("app", {})
+    cmds = app.setdefault("commands", [])
+    cmds[:] = [c for c in cmds if c.get("name") != command["name"]]
+    entry = {"name": command["name"]}
+    if command.get("help"):
+        entry["help"] = command["help"]
+    if command.get("flags"):
+        entry["flags"] = [dict(f) for f in command["flags"]]
+    cmds.append(entry)
+    return cfg
+
+
 def arg_type(cfg: dict, component: str) -> str:
     return cfg.get(component, {}).get("arg_type", "float _Complex")
 
@@ -1077,15 +1097,15 @@ def _dump(cfg: dict) -> str:
             lines.append("")
 
     app = cfg.get("app", {})
-    if app:
+    if app.get("target"):
         lines.append("[app]")
         lines.append(f'target = "{app["target"]}"')
         lines.append(f'name = "{app["name"]}"')
         if app.get("function") is not None:
             lines.append(f'function = "{app["function"]}"')
             lines.append(f'module = "{app.get("module", "")}"')
-        else:
-            lines.append(f'object = "{app.get("object", "")}"')
+        elif app.get("object"):
+            lines.append(f'object = "{app["object"]}"')
         lines.append("")
         for f in app.get("flags", []):
             lines.append("[[app.flags]]")
@@ -1095,6 +1115,24 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'default = "{f["default"]}"')
             if f.get("help"):
                 lines.append(f'help = "{f["help"]}"')
+            lines.append("")
+        for c in app.get("commands", []):
+            lines.append("[[app.commands]]")
+            lines.append(f'name = "{c["name"]}"')
+            if c.get("help"):
+                lines.append(f'help = "{c["help"]}"')
+            if c.get("flags"):
+                parts = ", ".join(
+                    "{"
+                    + ", ".join(
+                        f'{k} = "{fl[k]}"'
+                        for k in ("name", "type", "default", "help")
+                        if fl.get(k) not in (None, "")
+                    )
+                    + "}"
+                    for fl in c["flags"]
+                )
+                lines.append(f"flags = [{parts}]")
             lines.append("")
 
     return "\n".join(lines)

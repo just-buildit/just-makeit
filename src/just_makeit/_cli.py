@@ -807,6 +807,12 @@ def main() -> None:
         app_module: str | None = None
         argc_argv = False
         app_flags: list[dict] = []
+        app_commands: list[dict] = []
+
+        def _parse_command(spec: str) -> dict:
+            # name[:help]
+            n, _, h = spec.partition(":")
+            return {"name": n, "help": h}
 
         def _parse_flag(spec: str) -> dict:
             # name:type[:default[:help]] — `:` may appear in help, so split 3x.
@@ -865,6 +871,11 @@ def main() -> None:
                 app_flags.append(_parse_flag(args[i]))
             elif tok.startswith("--flag="):
                 app_flags.append(_parse_flag(tok[len("--flag=") :]))
+            elif tok == "--command" and i + 1 < len(args):
+                i += 1
+                app_commands.append(_parse_command(args[i]))
+            elif tok.startswith("--command="):
+                app_commands.append(_parse_command(tok[len("--command=") :]))
             elif tok == "--argc-argv":
                 argc_argv = True
             i += 1
@@ -876,6 +887,7 @@ def main() -> None:
             function_=function_,
             module=app_module,
             flags=app_flags,
+            commands=app_commands,
             argc_argv=argc_argv,
         )
 

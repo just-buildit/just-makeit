@@ -90,6 +90,9 @@ APP_PEP723 = _load("py/app_pep723.py")
 APP_MAIN_FN_C = _load("c/app_main_fn.c")
 APP_CONSOLE_CLI_FN = _load("py/app_console_cli_fn.py")
 APP_PEP723_FN = _load("py/app_pep723_fn.py")
+APP_MAIN_CMD_C = _load("c/app_main_cmd.c")
+APP_CONSOLE_CLI_CMD = _load("py/app_console_cli_cmd.py")
+APP_PEP723_CMD = _load("py/app_pep723_cmd.py")
 # Empty tests package init — written as a blank __init__.py.
 TESTS_INIT_PY = ""
 

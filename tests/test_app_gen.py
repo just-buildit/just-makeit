@@ -250,6 +250,38 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     assert app["function"] == "addn" and app["module"] == "mathx"
 
 
+def test_command_app_generates_dispatch(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    cmds = [
+        {
+            "name": "encode",
+            "help": "encode input",
+            "flags": [{"name": "rate", "type": "int32_t", "default": "48000"}],
+        },
+        {"name": "info", "help": "print info"},
+    ]
+    jm_app(proj, target="c", name="tool", commands=cmds)
+    jm_app(proj, target="console", name="tool", commands=[])  # persist
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    # C: per-command handlers + flag parse + dispatch + usage.
+    assert "static int\ncmd_encode(" in c and "static int\ncmd_info(" in c
+    assert "int32_t rate = 48000;" in c and '"--rate"' in c
+    assert 'if (!strcmp(argv[1], "encode"))' in c
+    assert "commands: encode, info" in c
+    assert "<<IMPLEMENT: encode>>" in c  # body is a stub (user logic)
+    # Python: subparsers + per-command fns + set_defaults dispatch.
+    assert 'add_subparsers(dest="command", required=True)' in cli
+    assert 'sub.add_parser("encode"' in cli
+    assert 'p_encode.add_argument("--rate"' in cli
+    assert "set_defaults(_fn=_cmd_encode)" in cli
+    # Manifest round-trips the commands.
+    got = C.app_commands(C.load(proj))
+    assert [c["name"] for c in got] == ["encode", "info"]
+    assert "[[app.commands]]" in (proj / "just-makeit.toml").read_text()
+
+
 def test_function_app_rejects_unknown_function(tmp_path: Path):
     import pytest
 

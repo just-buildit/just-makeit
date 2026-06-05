@@ -141,6 +141,47 @@ def run(root: Path) -> None:
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "5"
 
+    # ── subcommands: `jm app` with [[app.commands]] → dispatch scaffold ──
+    # A realistic multi-command tool wraps a real component (so it also builds
+    # a Python extension); the command bodies are stubs the user wires up.
+    # (project name avoids stdlib module names like `cmd` that a `src/<pkg>/`
+    # package would shadow under pytest.)
+    multi = root / "multi"
+    jm_new("multi", multi)
+    jm_object(
+        multi,
+        "engine",
+        None,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        impl_body="return state->gain * x;",
+    )
+    jm_app(
+        multi,
+        target="c",
+        name="cmdtool",
+        commands=[
+            {
+                "name": "encode",
+                "help": "encode input",
+                "flags": [
+                    {"name": "rate", "type": "int32_t", "default": "48000"}
+                ],
+            },
+            {"name": "info", "help": "print info"},
+        ],
+    )
+    app_c = (multi / "native" / "src" / "app" / "cmdtool.c").read_text()
+    assert 'if (!strcmp(argv[1], "encode"))' in app_c
+    _build(multi)
+    exe = _exe(multi, "cmdtool")
+    # A declared subcommand exits 0 (stub body); no command prints usage (2).
+    assert (
+        subprocess.run([str(exe), "encode", "--rate", "44100"]).returncode == 0
+    )
+    assert subprocess.run([str(exe)], capture_output=True).returncode == 2
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
