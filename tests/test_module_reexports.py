@@ -10,8 +10,12 @@ manifest instead of being a hand-edit that ``jm apply`` would clobber.
 import io
 import contextlib
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
