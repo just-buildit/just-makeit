@@ -142,10 +142,12 @@ def run(root: Path) -> None:
     assert r.stdout.strip() == "5"
 
     # ── subcommands: `jm app` with [[app.commands]] → dispatch scaffold ──
-    cmd = root / "cmd"
-    jm_new("cmd", cmd)
+    # (project name avoids stdlib module names like `cmd` that a `src/<pkg>/`
+    # package would shadow under pytest).
+    multi = root / "multi"
+    jm_new("multi", multi)
     jm_app(
-        cmd,
+        multi,
         target="c",
         name="cmdtool",
         commands=[
@@ -159,10 +161,10 @@ def run(root: Path) -> None:
             {"name": "info", "help": "print info"},
         ],
     )
-    app_c = (cmd / "native" / "src" / "app" / "cmdtool.c").read_text()
+    app_c = (multi / "native" / "src" / "app" / "cmdtool.c").read_text()
     assert 'if (!strcmp(argv[1], "encode"))' in app_c
-    _build(cmd)
-    exe = _exe(cmd, "cmdtool")
+    _build(multi)
+    exe = _exe(multi, "cmdtool")
     # A declared subcommand exits 0 (stub body); no command prints usage (2).
     assert (
         subprocess.run([str(exe), "encode", "--rate", "44100"]).returncode == 0
