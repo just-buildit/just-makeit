@@ -459,6 +459,37 @@ def extra_include_dirs(cfg: dict, module: str) -> list[str]:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def module_reexports(cfg: dict, module: str) -> dict[str, list[str]]:
+    """Return symbols a module's ``__init__.py`` re-exports from siblings.
+
+    A module subpackage's generated ``__init__.py`` already re-exports its own
+    C-extension types and functions. ``reexports`` additionally pulls names
+    from a *sibling* extension in the same package — typically a
+    ``no_generate`` module whose ``.pyi`` and binding are hand-written (e.g. a
+    PyCapsule functional API) — folding them into both the import block and
+    ``__all__`` so the glue stays hands-off and regenerates cleanly. Declare in
+    TOML as an inline table mapping submodule -> exported names:
+
+    .. code-block:: toml
+
+        [module.ddc]
+        objects = ["ddc", "ddcr"]
+        reexports = { ddc_fn = [
+            "ddcr_create", "ddcr_execute", "ddcr_destroy",
+        ] }
+
+    Returns ``{submodule: [name, ...]}`` in declared order (empty if unset).
+    """
+    raw = cfg.get("module", {}).get(module, {}).get("reexports", {})
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for sub, names in raw.items():
+        if isinstance(names, (list, tuple)):
+            out[str(sub)] = [str(n) for n in names]
+    return out
+
+
 def is_no_generate_module(cfg: dict, module: str) -> bool:
     """Return True if the module's files are entirely hand-written.
 
@@ -926,6 +957,13 @@ def _dump(cfg: dict) -> str:
         if extra_inc:
             inc_str = ", ".join(f'"{d}"' for d in extra_inc)
             lines.append(f"extra_include_dirs = [{inc_str}]")
+        reexp = data.get("reexports", {})
+        if isinstance(reexp, dict) and reexp:
+            parts = []
+            for sub, names in reexp.items():
+                names_str = ", ".join(f'"{n}"' for n in names)
+                parts.append(f"{sub} = [{names_str}]")
+            lines.append(f"reexports = {{ {', '.join(parts)} }}")
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{mod}.functions]]")

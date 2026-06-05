@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-05
+
+### Added
+
+- **`[module.X] reexports` — fold a sibling's symbols into a module's
+    `__init__.py`.** A module subpackage's generated `__init__.py` re-exports
+    its own C-extension types/functions; `reexports` additionally pulls names
+    from a *sibling* extension in the same package — typically a `no_generate`
+    module whose binding and `.pyi` are hand-written (e.g. a PyCapsule
+    functional API) — into both the import block and `__all__`. Declared as an
+    inline table mapping submodule → names:
+
+    ```toml
+    [module.ddc]
+    objects = ["ddc", "ddcr"]
+    reexports = { ddc_fn = ["ddcr_create", "ddcr_execute", "ddcr_destroy"] }
+    ```
+
+    This keeps the glue **hands-off**: the re-exports regenerate from the
+    manifest on every `jm apply` instead of being a hand-edit that apply would
+    clobber. Generated imports and `__all__` are emitted in a ruff-stable form
+    (single line when short, ruff's parenthesised multi-line when long) so the
+    result is a fixpoint under `ruff format` and stays clean under
+    `jm status`. Both generation paths (`jm object`/`method` and `jm apply`'s
+    merge) and both manifest writers (tomlkit and the `_dump` fallback) are
+    covered. New `tests/test_module_reexports.py`.
+
 ## [0.15.0] — 2026-06-05
 
 ### Added
