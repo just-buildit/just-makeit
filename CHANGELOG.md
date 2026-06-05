@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.14.12] — 2026-06-05
+
+### Added
+
+- **Support for Python 3.9 and 3.10** — the minimum supported version is now
+    **3.9**, down from 3.11. `pyproject.toml` and project config are parsed with
+    stdlib `tomllib` on 3.11+ and the `tomli` backport on 3.9/3.10 (added as a
+    conditional dependency `tomli; python_version < "3.11"`). The floor is 3.9
+    rather than 3.8 because the required `tomlkit` dependency needs ≥3.9.
+
+### Changed
+
+- Modules now use `from __future__ import annotations` so `str | None` /
+    `list[str]`-style annotations don't evaluate at runtime on 3.9/3.10.
+- Scaffolding templates emit projects targeting `>=3.9` (generated
+    `pyproject.toml`, README, and CI matrix), so `jm new` / `jm example` output
+    runs across the supported range.
+- CI, release, and artifact matrices now test Python 3.9–3.14. Dev-only docs
+    tooling (`zensical`, `mkdocstrings-python`) is gated to ≥3.10.
+
 ## [0.14.11] — 2026-06-04
 
 ### Added
