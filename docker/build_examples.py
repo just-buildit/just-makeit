@@ -61,7 +61,9 @@ def _run_pytest(proj: Path) -> bool:
         env=env,
         cwd=proj,
     )
-    return r.returncode == 0
+    # 0 = passed; 5 = no tests collected (e.g. a functions-only module that
+    # builds an extension but generates no pytest suite) — not a failure.
+    return r.returncode in (0, 5)
 
 
 failed = []

@@ -56,6 +56,7 @@ def _exe(proj: Path, name: str) -> Path:
 def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
+    from just_makeit._function import run as jm_function
     from just_makeit._app import run as jm_app
 
     # ── blockwise: scale a float32 stream by --g (steps buffer→buffer) ───
@@ -116,6 +117,29 @@ def run(root: Path) -> None:
     )
     assert r.returncode == 0, r.stderr
     assert list(struct.unpack("<5f", r.stdout)) == [0.0, 2.0, 4.0, 6.0, 8.0]
+
+    # ── module function: `jm app --function` → parse flags, call, print ──
+    fn = root / "fn"
+    jm_new("fn", fn, modules=["mathx"])
+    jm_function(
+        fn,
+        "addn",
+        module="mathx",
+        params=[("a", "float"), ("b", "float")],
+        return_type="float",
+        impl_body="return a + b;",
+    )
+    jm_app(fn, target="c", name="addtool", function_="addn")
+    app_c = (fn / "native" / "src" / "app" / "addtool.c").read_text()
+    assert "float result = addn(a, b);" in app_c
+    _build(fn)
+    r = subprocess.run(
+        [str(_exe(fn, "addtool")), "--a", "2", "--b", "3"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "5"
 
 
 if __name__ == "__main__":

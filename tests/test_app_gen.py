@@ -12,6 +12,7 @@ from pathlib import Path
 
 from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
+from just_makeit._function import run as jm_function
 from just_makeit._app import run as jm_app
 from just_makeit import _config as C
 
@@ -216,6 +217,46 @@ def test_generator_shape_uses_count(tmp_path: Path):
     assert "fread" not in c and '"--input"' not in c  # no input side
     assert "obj.steps(args.count)" in cli
     assert "--count" in cli
+
+
+def test_function_app_generates_call_and_print(tmp_path: Path):
+    proj = tmp_path / "proj"
+    jm_new("proj", proj, modules=["mathx"])
+    jm_function(
+        proj,
+        "addn",
+        module="mathx",
+        params=[("a", "float"), ("b", "float")],
+        return_type="float",
+        impl_body="return a + b;",
+    )
+    jm_app(proj, target="c", name="addtool", function_="addn")
+    jm_app(proj, target="console", name="addtool", function_="addn")
+    c = (proj / "native" / "src" / "app" / "addtool.c").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    # C: includes the module core, parses each param, calls + prints result.
+    assert "mathx/mathx_core.h" in c
+    assert "float a = " in c and '"--a"' in c
+    assert "float result = addn(a, b);" in c
+    assert "printf(" in c
+    # Python: imports from the module subpackage, required args, prints result.
+    assert "from .mathx import addn" in cli
+    assert "required=True" in cli
+    assert "print(addn(args.a, args.b))" in cli
+    # CMake links the module core; manifest records the function source.
+    cmake = (proj / "CMakeLists.txt").read_text()
+    assert "add_executable(addtool" in cmake and "mathx_core" in cmake
+    app = C.app_config(C.load(proj))
+    assert app["function"] == "addn" and app["module"] == "mathx"
+
+
+def test_function_app_rejects_unknown_function(tmp_path: Path):
+    import pytest
+
+    proj = tmp_path / "proj"
+    jm_new("proj", proj, modules=["mathx"])
+    with pytest.raises(SystemExit):
+        jm_app(proj, target="c", name="x", function_="nope")
 
 
 def test_no_step_object_falls_back_to_stub(tmp_path: Path):

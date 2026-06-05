@@ -617,6 +617,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     # Module CMakeLists
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
+    # Comment built here so a functions-only module (empty object list) doesn't
+    # render a trailing space (cmake-lint C0303).
+    module_comment = f"{module} Python module" + (
+        f" — aggregates: {object_list}" if object_list else ""
+    )
     # Each non-inline module-level function lives in its own sacred
     # <fn>.c (inline ones live entirely in the header).  Those sources are
     # compiled into the module's OBJECT library alongside <mod>_core.c.
@@ -681,6 +686,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "module": module,
         "Module": Module,
         "object_list": object_list,
+        "module_comment": module_comment,
         "object_core_libs": object_core_libs,
         "module_core_lib_block": module_core_lib_block,
         "extra_link_libs_block": extra_link_libs_block,
