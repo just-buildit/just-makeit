@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-05
+
+### Added
+
+- **`jm app` generates working CLI faces** — the "one C core, three faces"
+    pattern. For a scalar `step(x)->y` object, all three targets (`c`, `console`,
+    `pep723`) emit a real argument parser **and** a read→`step()`→write I/O loop
+    — no hand-editing. The C `strtof`/argv parser and the Python `argparse` are
+    generated from the same object model. Ctor state vars become `--flags` wired
+    into `create()`; extra flags via `--flag name:type[:default[:help]]` persist
+    as `[[app.flags]]` and appear in both parsers.
+- **Full object-shape coverage** for `jm app`: blockwise (`T[]->U[]`, block-
+    streaming `steps`), consumer (`T->void`, no output side), and generator
+    (`void->T`, synthetic `--count`, no input side), in addition to scalar.
+- **`jm app --function <name> [--module m]`** — generate a CLI over a
+    module-level function: flags map to its scalar params, call it once, print
+    the result.
+- **`jm app --command name[:help]`** / manifest `[[app.commands]]` — multi-
+    command CLIs: a C `argv[1]` dispatch with per-command flag-parsing handlers
+    and a Python `argparse` subparsers tree (command bodies are stubs).
+- New bundled examples: **`three_face`** (one core → C binary + Python CLI +
+    module) and **`app_shapes`** (blockwise/consumer/generator/function/
+    subcommand apps, built and run end-to-end).
+
+### Fixed
+
+- Cross-module `extra_link_libs` now propagate to the object's OBJECT library
+    (PUBLIC) and the aggregating Python extension, not just test/bench targets —
+    fixes `ImportError: undefined symbol` for module objects depending on another
+    module's core (gh-160).
+- Functions-only modules no longer emit a trailing space in the generated
+    module `CMakeLists.txt` (cmake-lint C0303).
+
 ## [0.14.12] — 2026-06-05
 
 ### Added
