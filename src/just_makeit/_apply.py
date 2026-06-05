@@ -1130,19 +1130,36 @@ def run(
 
     bench_updated = _reconcile_bench_cmake(root, cfg)
 
+    # Refresh runtime __doc__ in per-object binding fragments
+    # (<mod>_ext_<obj>.c). _sync_aggregates reconciles the module
+    # aggregator/.pyi/CMake but not these sacred fragments, so a header Doxygen
+    # edit reaches the .pyi while the runtime PyMethodDef / tp_doc / PyGetSetDef
+    # docs keep the stale scaffold fallback. _docsync transplants only the
+    # doc-string slots into the existing fragment — every function body and
+    # every hand-written non-manifest binding is left byte-for-byte identical.
+    from . import _docsync
+
+    frag_doc_updated = _docsync.refresh_module_fragment_docs(
+        root, cfg, only_mod=only_mod
+    )
+
     for rel in created:
         print(f"  create  {root / rel}")
     for path in impl_patched:
         print(f"  update  {path}")
-    for path in updated + bench_updated:
+    for path in updated + bench_updated + frag_doc_updated:
         print(f"  update  {path}")
 
     print()
     total = (
-        len(created) + len(updated) + len(bench_updated) + len(impl_patched)
+        len(created)
+        + len(updated)
+        + len(bench_updated)
+        + len(frag_doc_updated)
+        + len(impl_patched)
     )
     if total:
-        _reconciled = len(updated) + len(bench_updated)
+        _reconciled = len(updated) + len(bench_updated) + len(frag_doc_updated)
         print(
             f"Done!  Materialized {len(created)} new file(s), "
             f"patched {len(impl_patched)} impl(s), and "

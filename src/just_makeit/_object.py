@@ -12,6 +12,7 @@ Adds a Python type to an existing project:
     from my_pkg.filter import Fir
 """
 
+import copy
 import re
 import sys
 from pathlib import Path
@@ -449,17 +450,51 @@ def _restore_c_function_bodies(
     return new_source
 
 
-def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
-    """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
-    object_names = C.module_objects(cfg, module)
-    Module = _to_title(module)
+def build_component_ctxs(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    *,
+    force_fallback: bool = False,
+) -> list[dict]:
+    """Build the per-object template contexts for every object in *module*.
+
+    Factored out of :func:`_regenerate_module` so a doc-only refresh can render
+    a *reference* fragment (the form jm would generate, carrying the derived
+    docstrings) without writing anything or touching the aggregator / CMake.
+    Each context is what :func:`_render.render_module_ext_fragment` consumes,
+    including the derived ``extra_methods_pymethoddef`` / ``getset_def`` /
+    ``tp_doc`` doc slots resolved from the sacred header's Doxygen.
+
+    With *force_fallback* both the header Doxygen **and** the authoritative
+    TOML ``doc`` overrides are ignored, so every doc slot renders in its pure
+    name-based *scaffold* form. The doc refresh renders both variants and only
+    overwrites a fragment slot that still holds the scaffold form (or is
+    empty), never a hand-written one.
+    """
+    if force_fallback:
+        # Strip every authoritative `doc` so the render falls all the way back
+        # to the name-based default (e.g. "Zero-copy view…", "<Class> type.").
+        # A deep copy keeps the real cfg (and its transient _doc_blocks stash)
+        # untouched.
+        cfg = copy.deepcopy(cfg)
+        for _obj in C.module_objects(cfg, module):
+            _od = cfg.get(_obj)
+            if not isinstance(_od, dict):
+                continue
+            _od.pop("doc", None)
+            for _key in ("methods", "properties"):
+                for _entry in _od.get(_key, []) or []:
+                    if isinstance(_entry, dict):
+                        _entry.pop("doc", None)
 
     comp_ctxs: list[dict] = []
-    for obj in object_names:
+    for obj in C.module_objects(cfg, module):
         # Parse the sacred header's Doxygen once; stash transiently on cfg so
         # the .pyi generator (_stubs, which receives cfg) sees the same blocks
         # without re-reading. The underscore key is dropped by _config._dump.
-        _doc_blocks = _load_doc_blocks(root, obj)
+        _doc_blocks = {} if force_fallback else _load_doc_blocks(root, obj)
         cfg.setdefault(obj, {})["_doc_blocks"] = _doc_blocks
         state_vars = C.state_vars(cfg, obj)
         arg_type_ = C.arg_type(cfg, obj)
@@ -512,6 +547,15 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         )
         ctx["tp_doc"] = _build_ml_doc([_cdoc])
         comp_ctxs.append(ctx)
+    return comp_ctxs
+
+
+def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
+    """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
+    object_names = C.module_objects(cfg, module)
+    Module = _to_title(module)
+
+    comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
 
     # Per-object fragment files (<module>_ext_<comp>.c).
     # Each fragment is preserved independently: body-preservation reads from
