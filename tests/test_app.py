@@ -31,6 +31,14 @@ def no_state_project(tmp_path):
     return root
 
 
+@pytest.fixture()
+def no_step_project(tmp_path):
+    # A non-generatable shape: no step() means jm app falls back to a stub.
+    root = tmp_path / "proj"
+    new_run("proj", root, ["sink"], [("count", "uint32_t", "0")], no_step=True)
+    return root
+
+
 class TestAppTargetC:
     def test_main_c_created(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
@@ -96,10 +104,13 @@ class TestAppTargetConsole:
         assert "gain=args.gain" in text
         assert "rate=args.rate" in text
 
-    def test_cli_has_implement_placeholder(self, project):
+    def test_cli_is_generated_not_stub(self, project):
+        # engine is a scalar step() object → the CLI body is generated, not a
+        # <<IMPLEMENT>> stub.
         app_run(project, target="console", name="dsp_tool", object_="engine")
         text = (project / "src" / "proj" / "cli.py").read_text()
-        assert "<<IMPLEMENT" in text
+        assert "<<IMPLEMENT" not in text
+        assert "obj.step(x)" in text
 
     def test_toml_app_section_persisted(self, project):
         app_run(project, target="console", name="dsp_tool", object_="engine")
@@ -176,11 +187,14 @@ class TestAppDefaults:
         assert app_config(cfg)["target"] == "pep723"
 
 
-class TestAppArgcArgv:
-    """--argc-argv replaces the default (void)argc/(void)argv suppression with
-    an if (argc > 1) block containing an IMPLEMENT placeholder."""
+class TestAppGenerationVsFallback:
+    """Scalar step() objects get a generated argv parser + I/O loop; --argc-argv
+    is superseded. Non-generatable shapes (e.g. no_step) fall back to a stub,
+    where --argc-argv still toggles the argv skeleton vs (void) suppression."""
 
-    def test_argc_argv_generates_if_block(self, project):
+    def test_scalar_object_supersedes_argc_argv(self, project):
+        # engine is generatable → a full parser is emitted regardless of
+        # --argc-argv; no IMPLEMENT stub, no (void)argc suppression.
         app_run(
             project,
             target="c",
@@ -189,32 +203,26 @@ class TestAppArgcArgv:
             argc_argv=True,
         )
         text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
-        assert "if (argc > 1)" in text
-
-    def test_argc_argv_has_implement_placeholder(self, project):
-        app_run(
-            project,
-            target="c",
-            name="dsp_tool",
-            object_="engine",
-            argc_argv=True,
-        )
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
-        assert "IMPLEMENT" in text
-
-    def test_argc_argv_no_void_suppress(self, project):
-        app_run(
-            project,
-            target="c",
-            name="dsp_tool",
-            object_="engine",
-            argc_argv=True,
-        )
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        assert "<<IMPLEMENT" not in text
         assert "(void)argc" not in text
+        assert "engine_step(state, x)" in text
+        assert '"--gain"' in text
 
-    def test_default_suppresses_argc_argv(self, project):
-        app_run(project, target="c", name="dsp_tool", object_="engine")
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+    def test_no_step_default_suppresses_argc_argv(self, no_step_project):
+        app_run(no_step_project, target="c", name="t", object_="sink")
+        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text()
         assert "(void)argc" in text
         assert "if (argc > 1)" not in text
+
+    def test_no_step_argc_argv_emits_skeleton(self, no_step_project):
+        app_run(
+            no_step_project,
+            target="c",
+            name="t",
+            object_="sink",
+            argc_argv=True,
+        )
+        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text()
+        assert "if (argc > 1)" in text
+        assert "IMPLEMENT" in text
+        assert "(void)argc" not in text
