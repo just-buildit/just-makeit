@@ -388,22 +388,22 @@ def _c_io_loop(shape: str, component: str, arg_t: str, ret_t: str) -> str:
     return ""
 
 
-def _cmake_app_block(name: str, component: str) -> str:
+def _cmake_app_block(name: str, link_target: str) -> str:
     return (
         f"{_APP_CMAKE_SENTINEL}"
         "─────────────────────────────────────────────────────────\n"
         f"add_executable({name} native/src/app/{name}.c)\n"
-        f"target_link_libraries({name} PRIVATE {component}_core)\n"
+        f"target_link_libraries({name} PRIVATE {link_target})\n"
         f"install(TARGETS {name} DESTINATION bin)\n"
         f"{_APP_CMAKE_END}"
         "─────────────────────────────────────────────────────────\n"
     )
 
 
-def _splice_cmake(cmake: Path, name: str, component: str) -> None:
+def _splice_cmake(cmake: Path, name: str, link_target: str) -> None:
     """Insert or replace the App block in CMakeLists.txt."""
     text = cmake.read_text(encoding="utf-8")
-    block = _cmake_app_block(name, component)
+    block = _cmake_app_block(name, link_target)
     start = text.find(_APP_CMAKE_SENTINEL)
     end = text.find(_APP_CMAKE_END)
     if start != -1 and end != -1:
@@ -556,6 +556,103 @@ def _build_fn_ctx(
     }
 
 
+# ── subcommand apps ──────────────────────────────────────────────────────────
+def _cmd_flag_dicts(flags: list[dict]) -> list[dict]:
+    out = []
+    for f in flags:
+        t = f["type"]
+        out.append(
+            {
+                "name": f["name"],
+                "type": t,
+                "default": f.get("default")
+                or T._CTYPE_META.get(t, {}).get("zero", "0"),
+                "help": f.get("help", ""),
+                "ctor": False,
+            }
+        )
+    return out
+
+
+def _c_command_handlers(commands: list[dict]) -> str:
+    parts = []
+    for c in commands:
+        flags = _cmd_flag_dicts(c.get("flags", []))
+        parse = _c_argv_parser(c["name"], flags, want_in=False, want_out=False)
+        parts.append(
+            f"static int\ncmd_{c['name']}(int argc, char *argv[])\n{{\n"
+            f"{parse}\n"
+            f"    /* <<IMPLEMENT: {c['name']}>> */\n"
+            f"    return 0;\n}}"
+        )
+    return "\n\n".join(parts)
+
+
+def _c_dispatch(commands: list[dict]) -> str:
+    return "\n".join(
+        f'    if (!strcmp(argv[1], "{c["name"]}")) {{\n'
+        f"        return cmd_{c['name']}(argc - 1, argv + 1);\n"
+        f"    }}"
+        for c in commands
+    )
+
+
+def _cmd_usage(name: str, commands: list[dict]) -> str:
+    names = ", ".join(c["name"] for c in commands)
+    return f"usage: {name} <command> [options]  (commands: {names})"
+
+
+def _py_command_fns(commands: list[dict]) -> str:
+    return "\n\n".join(
+        f"def _cmd_{c['name']}(args: argparse.Namespace) -> None:\n"
+        f"    # <<IMPLEMENT: {c['name']}>>\n"
+        f"    _ = args"
+        for c in commands
+    )
+
+
+def _py_subparsers(commands: list[dict]) -> str:
+    lines = []
+    for c in commands:
+        var = f"p_{c['name']}"
+        lines.append(
+            f'    {var} = sub.add_parser("{c["name"]}", '
+            f'help="{c.get("help", "")}")'
+        )
+        for f in _cmd_flag_dicts(c.get("flags", [])):
+            pytype = _PYTYPE.get(f["type"], "str")
+            pydef = _py_default(f["default"]) if f["default"] else None
+            if pydef is None:
+                dr = "None"
+            elif pytype in ("float", "int", "complex"):
+                dr = pydef
+            else:
+                dr = repr(pydef)
+            lines.append(
+                f'    {var}.add_argument("--{f["name"]}", type={pytype}, '
+                f'default={dr}, help="{f["help"] or f["name"]}")'
+            )
+        lines.append(f"    {var}.set_defaults(_fn=_cmd_{c['name']})")
+    return "\n".join(lines)
+
+
+def _build_cmd_ctx(
+    cfg: dict, name: str, commands: list[dict]
+) -> dict[str, str]:
+    pkg = C.project_name(cfg)
+    return {
+        "name": name,
+        "project": pkg,
+        "package": pkg,
+        "version": C.project_version(cfg),
+        "command_handlers": _c_command_handlers(commands),
+        "dispatch": _c_dispatch(commands),
+        "usage": _cmd_usage(name, commands),
+        "command_fns": _py_command_fns(commands),
+        "subparsers": _py_subparsers(commands),
+    }
+
+
 def _build_ctx(
     cfg: dict,
     component: str,
@@ -662,6 +759,7 @@ def run(
     function_: str | None = None,
     module: str | None = None,
     flags: list[dict] | None = None,
+    commands: list[dict] | None = None,
     argc_argv: bool = False,
 ) -> None:
     if cfg is None:
@@ -716,7 +814,27 @@ def run(
             R.APP_CONSOLE_CLI_FN,
             R.APP_PEP723_FN,
         )
-        link_base = mod
+        link_target = f"{mod}_core"
+    elif commands or (object_ is None and C.app_commands(cfg)):
+        # ── multi-command app ────────────────────────────────────────────
+        if name is None:
+            name = pkg
+        C.set_app(cfg, target, name)
+        for c in commands or []:
+            C.add_app_command(cfg, c)
+        eff_cmds = C.app_commands(cfg)
+        if not eff_cmds:
+            print("error: no commands declared.", file=sys.stderr)
+            sys.exit(1)
+        ctx = _build_cmd_ctx(cfg, name, eff_cmds)
+        main_tmpl, console_tmpl, pep_tmpl = (
+            R.APP_MAIN_CMD_C,
+            R.APP_CONSOLE_CLI_CMD,
+            R.APP_PEP723_CMD,
+        )
+        # Stub command bodies link the project's aggregate static lib so any
+        # component/function symbol is reachable once the user fills them in.
+        link_target = f"{pkg.replace('-', '_')}_lib_static"
     else:
         # ── object app ───────────────────────────────────────────────────
         comps = C.components(cfg)
@@ -752,13 +870,13 @@ def run(
             R.APP_CONSOLE_CLI,
             R.APP_PEP723,
         )
-        link_base = object_
+        link_target = f"{object_}_core"
 
     print(f"just-makeit: scaffolding app '{name}' (target={target})")
     print()
 
     if target == "c":
-        _run_c(root, ctx, name, link_base, main_tmpl)
+        _run_c(root, ctx, name, link_target, main_tmpl)
     elif target == "console":
         _run_console(root, ctx, name, pkg, console_tmpl)
     else:
@@ -771,7 +889,11 @@ def run(
 
 
 def _run_c(
-    root: Path, ctx: dict, name: str, link_base: str, tmpl: str = R.APP_MAIN_C
+    root: Path,
+    ctx: dict,
+    name: str,
+    link_target: str,
+    tmpl: str = R.APP_MAIN_C,
 ) -> None:
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
@@ -782,13 +904,13 @@ def _run_c(
 
     cmake = root / "CMakeLists.txt"
     if cmake.exists():
-        _splice_cmake(cmake, name, link_base)
+        _splice_cmake(cmake, name, link_target)
         print(f"  update  {cmake}")
     else:
         print(
             f"  note: CMakeLists.txt not found — add this manually:\n"
             f"    add_executable({name} native/src/app/{name}.c)\n"
-            f"    target_link_libraries({name} PRIVATE {link_base}_core)"
+            f"    target_link_libraries({name} PRIVATE {link_target})"
         )
 
 

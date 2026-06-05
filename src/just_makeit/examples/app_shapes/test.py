@@ -141,6 +141,34 @@ def run(root: Path) -> None:
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "5"
 
+    # ── subcommands: `jm app` with [[app.commands]] → dispatch scaffold ──
+    cmd = root / "cmd"
+    jm_new("cmd", cmd)
+    jm_app(
+        cmd,
+        target="c",
+        name="cmdtool",
+        commands=[
+            {
+                "name": "encode",
+                "help": "encode input",
+                "flags": [
+                    {"name": "rate", "type": "int32_t", "default": "48000"}
+                ],
+            },
+            {"name": "info", "help": "print info"},
+        ],
+    )
+    app_c = (cmd / "native" / "src" / "app" / "cmdtool.c").read_text()
+    assert 'if (!strcmp(argv[1], "encode"))' in app_c
+    _build(cmd)
+    exe = _exe(cmd, "cmdtool")
+    # A declared subcommand exits 0 (stub body); no command prints usage (2).
+    assert (
+        subprocess.run([str(exe), "encode", "--rate", "44100"]).returncode == 0
+    )
+    assert subprocess.run([str(exe)], capture_output=True).returncode == 2
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
