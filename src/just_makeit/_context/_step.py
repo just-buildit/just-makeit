@@ -1,5 +1,7 @@
 """_context/_step.py — make_perf_ctx and make_step_ctx."""
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
     _ctype_display,

@@ -8,6 +8,8 @@ test) inside a temporary directory, printing live output.
     just-makeit example              # list available examples
 """
 
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path

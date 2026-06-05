@@ -20,6 +20,8 @@ pep723   PEP 723 inline-script.  Generates <name>.py in the project root
          ``uv run <name>.py`` without a full install.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

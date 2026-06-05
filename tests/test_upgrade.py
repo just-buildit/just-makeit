@@ -1,5 +1,7 @@
 """Tests for _upgrade.py schema migration and _config.py schema helpers."""
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

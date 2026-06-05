@@ -17,7 +17,11 @@ Also runnable directly: python3 examples/jm_function/test.py
 import subprocess
 import sys
 import tempfile
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 from pathlib import Path
 
 HERE = Path(__file__).parent

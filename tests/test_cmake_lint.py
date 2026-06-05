@@ -10,6 +10,8 @@ the check stays focused on naming conventions (C0103) and correctness (C0113)
 Skipped automatically when cmake-lint is not on PATH.
 """
 
+from __future__ import annotations
+
 import shutil
 import subprocess
 import sys

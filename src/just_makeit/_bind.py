@@ -406,7 +406,10 @@ def _read_pkg(root: Path) -> str:
     """
     pp = root / "pyproject.toml"
     if pp.exists():
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         with pp.open("rb") as fh:
             data = tomllib.load(fh)

@@ -12,6 +12,8 @@ After: just-makeit module filter
   CMakeLists.txt                        — add_subdirectory appended
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

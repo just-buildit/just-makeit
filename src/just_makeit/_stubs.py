@@ -20,6 +20,8 @@ All class docstrings use numpy-style format with ``Parameters`` and
 doctests:  ``python -m doctest -v src/<pkg>/<module>/<module>.pyi``
 """
 
+from __future__ import annotations
+
 import re as _re
 
 from . import _config as C

@@ -104,7 +104,7 @@ ema-cli = "my_ema.cli:main"
 
 ```python
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.9"
 # dependencies = ["my-ema"]
 # ///
 """EMA standalone script — run with: uv run app.py"""

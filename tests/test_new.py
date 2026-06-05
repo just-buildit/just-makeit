@@ -153,14 +153,20 @@ class TestNewScaffoldOnly:
 
 class TestNewConfig:
     def test_config_has_project_name(self, project):
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
         assert cfg["project"]["name"] == "my_filter"
 
     def test_config_has_default_state(self, project):
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         with (project / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
@@ -174,7 +180,10 @@ class TestNewConfig:
             ["comp"],
             [("cutoff", "double", "440.0"), ("order", "int", "4")],
         )
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         with (dest / "just-makeit.toml").open("rb") as f:
             cfg = tomllib.load(f)
@@ -184,7 +193,10 @@ class TestNewConfig:
 
 class TestJbToml:
     def _load(self, project):
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         with (project / "jb.toml").open("rb") as f:
             return tomllib.load(f)

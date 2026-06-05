@@ -15,6 +15,8 @@ Always ``git stash`` (or commit) first — regeneration discards hand-written
 bodies in ``_core.c`` and any edits to the regenerated files.
 """
 
+from __future__ import annotations
+
 import sysconfig
 import sys
 from pathlib import Path

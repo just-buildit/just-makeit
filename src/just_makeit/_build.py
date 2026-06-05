@@ -5,6 +5,8 @@ These commands operate on an existing project created by `just-makeit new`
 (or any project using CMake + just-buildit with the same layout).
 """
 
+from __future__ import annotations
+
 import os
 import shlex
 import shutil

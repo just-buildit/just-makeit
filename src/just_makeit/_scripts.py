@@ -1,24 +1,24 @@
 """Console script entry points for bundled shell utilities."""
 
-import importlib.resources
 import os
 import shutil
 import sys
+from importlib.resources import as_file, files
 
 
 def _run_sh(name: str) -> None:
-    pkg = importlib.resources.files("just_makeit.scripts")
-    with importlib.resources.as_file(pkg / name) as path:
+    pkg = files("just_makeit.scripts")
+    with as_file(pkg / name) as path:
         os.execlp("bash", "bash", str(path), *sys.argv[1:])
 
 
 def _run_ps1(name: str) -> None:
-    pkg = importlib.resources.files("just_makeit.scripts")
+    pkg = files("just_makeit.scripts")
     # Prefer pwsh (PowerShell 7+) over powershell (Windows PowerShell 5.x).
     exe = "pwsh" if shutil.which("pwsh") else "powershell"
     # Translate GNU-style --check to PS switch -Check.
     ps_args = ["-Check" if a == "--check" else a for a in sys.argv[1:]]
-    with importlib.resources.as_file(pkg / name) as path:
+    with as_file(pkg / name) as path:
         os.execvp(
             exe,
             [

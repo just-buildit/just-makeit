@@ -17,6 +17,8 @@ Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/nco_tone/test.py [--doppler-prefix PATH]
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
@@ -107,7 +109,10 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
     extract_dir.mkdir(parents=True, exist_ok=True)
     tarball = extract_dir.parent / f"doppler-{version}-{platform}.tar.gz"
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tarball, "wb") as fh:
+        with (
+            urllib.request.urlopen(url, timeout=60) as resp,
+            open(tarball, "wb") as fh,
+        ):
             shutil.copyfileobj(resp, fh)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         print(

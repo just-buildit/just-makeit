@@ -12,6 +12,8 @@ Adds a Python type to an existing project:
     from my_pkg.filter import Fir
 """
 
+from __future__ import annotations
+
 import copy
 import re
 import sys

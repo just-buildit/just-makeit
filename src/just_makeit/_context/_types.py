@@ -4,6 +4,8 @@ Re-exports and extends the outer _types.py with context-local
 lookups needed by the make_*_ctx() builders.
 """
 
+from __future__ import annotations
+
 from .._types import (
     _CTYPE_META,
 )

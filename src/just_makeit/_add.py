@@ -12,6 +12,8 @@ TOML (``impl`` / ``create_impl``) or ``git stash`` first so the rebuild
 re-asserts it.  ``--force`` skips the confirmation.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

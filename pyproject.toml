@@ -7,13 +7,16 @@ name = "just-makeit"
 version = "0.14.11"
 description = "Scaffold and build Python C extensions with CMake and just-buildit."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 authors = [
     { name = "Matthew T. Hunter, Ph.D." },
     { name = "Claude Code", email = "noreply@anthropic.com" },
 ]
 dependencies = [
     "tomlkit>=0.15.0",
+    # tomllib is stdlib only on 3.11+; pull the tomli backport on 3.9/3.10 so
+    # just-makeit stays runnable down to the 3.9 floor (tomlkit needs >=3.9).
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 keywords = [
     "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
@@ -24,6 +27,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -80,11 +85,13 @@ exclude_lines = [
 dev = [
     "cmakelang",
     "just-buildit",
-    "mkdocstrings-python>=2.0.3",
+    "mkdocstrings-python>=2.0.3; python_version >= '3.10'",
     "numpy",
     "pre-commit",
     "pytest",
     "pytest-benchmark",
     "pytest-cov>=7.1.0",
-    "zensical>=0.0.29",
+    # Docs tooling; zensical requires >=3.10, so gate it to keep dev deps
+    # resolvable on the 3.8/3.9 floor.
+    "zensical>=0.0.29; python_version >= '3.10'",
 ]

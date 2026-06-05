@@ -141,7 +141,10 @@ def run(root: Path) -> None:
     proj = root / "my_fir"
 
     # Verify jb.toml was generated with expected structure
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib
 
     with (proj / "jb.toml").open("rb") as f:
         jbt = tomllib.load(f)

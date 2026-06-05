@@ -1,5 +1,7 @@
 """_cli.py — just-makeit command-line interface."""
 
+from __future__ import annotations
+
 import os
 import re
 import sys

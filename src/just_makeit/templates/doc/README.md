@@ -4,7 +4,7 @@ TODO: describe your project.
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.9+
 - CMake ≥ 3.16
 - A C99 compiler (GCC, Clang, or MSVC)
 - NumPy (installed automatically by `make` if missing)

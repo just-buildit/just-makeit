@@ -150,7 +150,7 @@ ______________________________________________________________________
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.9+
 - CMake ≥ 3.16
 - A C99 compiler (GCC, Clang, MSVC/MinGW)
 - NumPy (runtime, for generated projects)

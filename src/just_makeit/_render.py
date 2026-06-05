@@ -6,6 +6,8 @@ loads them at import time and exposes them as module-level constants with
 the same names callers already use (COMPONENT_CORE_H, CMAKE_LISTS_TOP, etc.).
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from ._types import (

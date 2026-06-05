@@ -5,6 +5,8 @@ Defines _CTYPE_META (the canonical type registry), derived lookup tables,
 and all type-query helper functions used throughout the code generator.
 """
 
+from __future__ import annotations
+
 import re as _re
 
 

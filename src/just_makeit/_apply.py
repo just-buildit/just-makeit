@@ -15,6 +15,8 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 `*_core.h`) alone.
 """
 
+from __future__ import annotations
+
 import contextlib
 import io
 import os
@@ -23,7 +25,11 @@ import shutil
 import sys
 import tempfile
 import time
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 from pathlib import Path
 
 from . import _config as C
