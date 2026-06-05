@@ -798,10 +798,38 @@ def main() -> None:
         _warn_schema()
         from . import _app
 
+        from . import _types as _T
+
         target = "c"
         name: str | None = None
         object_: str | None = None
         argc_argv = False
+        app_flags: list[dict] = []
+
+        def _parse_flag(spec: str) -> dict:
+            # name:type[:default[:help]] — `:` may appear in help, so split 3x.
+            parts = spec.split(":", 3)
+            if len(parts) < 2:
+                print(
+                    f"error: --flag '{spec}' must be name:type[:default[:help]]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fname, ftype = parts[0], parts[1]
+            if ftype not in _T._CTYPE_META:
+                print(
+                    f"error: --flag type '{ftype}' is not a supported scalar "
+                    f"type.\nSupported: {', '.join(sorted(_T._CTYPE_META))}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            return {
+                "name": fname,
+                "type": ftype,
+                "default": parts[2] if len(parts) >= 3 else "",
+                "help": parts[3] if len(parts) >= 4 else "",
+            }
+
         i = 1
         while i < len(args):
             tok = args[i]
@@ -820,6 +848,11 @@ def main() -> None:
                 name = args[i]
             elif tok.startswith("--name="):
                 name = tok[len("--name=") :]
+            elif tok == "--flag" and i + 1 < len(args):
+                i += 1
+                app_flags.append(_parse_flag(args[i]))
+            elif tok.startswith("--flag="):
+                app_flags.append(_parse_flag(tok[len("--flag=") :]))
             elif tok == "--argc-argv":
                 argc_argv = True
             i += 1
@@ -828,6 +861,7 @@ def main() -> None:
             target=target,
             name=name,
             object_=object_,
+            flags=app_flags,
             argc_argv=argc_argv,
         )
 

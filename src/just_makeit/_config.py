@@ -724,8 +724,30 @@ def app_config(cfg: dict) -> dict:
 
 
 def set_app(cfg: dict, target: str, name: str, object_: str) -> dict:
-    """Write (or overwrite) the [app] section in cfg and return cfg."""
-    cfg["app"] = {"target": target, "name": name, "object": object_}
+    """Write the [app] target/name/object, preserving any [[app.flags]]."""
+    app = cfg.get("app", {})
+    app.update({"target": target, "name": name, "object": object_})
+    cfg["app"] = app
+    return cfg
+
+
+def app_flags(cfg: dict) -> list[dict]:
+    """Return declared [[app.flags]] (empty list if none)."""
+    return list(cfg.get("app", {}).get("flags", []))
+
+
+def add_app_flag(cfg: dict, flag: dict) -> dict:
+    """Add/replace an [[app.flags]] entry, keyed by name."""
+    app = cfg.setdefault("app", {})
+    flags = app.setdefault("flags", [])
+    flags[:] = [f for f in flags if f.get("name") != flag["name"]]
+    flags.append(
+        {
+            k: flag[k]
+            for k in ("name", "type", "default", "help")
+            if flag.get(k) not in (None, "")
+        }
+    )
     return cfg
 
 
@@ -1045,5 +1067,14 @@ def _dump(cfg: dict) -> str:
         lines.append(f'name = "{app["name"]}"')
         lines.append(f'object = "{app["object"]}"')
         lines.append("")
+        for f in app.get("flags", []):
+            lines.append("[[app.flags]]")
+            lines.append(f'name = "{f["name"]}"')
+            lines.append(f'type = "{f["type"]}"')
+            if f.get("default") not in (None, ""):
+                lines.append(f'default = "{f["default"]}"')
+            if f.get("help"):
+                lines.append(f'help = "{f["help"]}"')
+            lines.append("")
 
     return "\n".join(lines)

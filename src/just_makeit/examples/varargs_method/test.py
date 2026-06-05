@@ -132,17 +132,19 @@ def run(root: Path) -> None:
     )
     _cmd([sys.executable, "-c", smoke], cwd=proj)
 
-    # ── 7. jm app --argc-argv ────────────────────────────────────────────
+    # ── 7. jm app — generated C binary face over the same core ────────────
     jm_app(
         proj,
         target="c",
         name="filter_tool",
         object_="filter",
-        argc_argv=True,
     )
     app_text = (proj / "native" / "src" / "app" / "filter_tool.c").read_text()
-    assert "if (argc > 1)" in app_text
-    assert "(void)argc" not in app_text
+    # filter is a scalar step() object → jm app generates a working tool:
+    # a real argv parser + read→step→write loop, no <<IMPLEMENT>> stub.
+    assert "<<IMPLEMENT" not in app_text
+    assert "filter_step(state, x)" in app_text
+    assert '"--input"' in app_text and "(void)argc" not in app_text
 
 
 if __name__ == "__main__":

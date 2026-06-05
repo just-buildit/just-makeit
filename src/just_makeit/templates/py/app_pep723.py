@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["<<project>>==<<version>>"]
+# dependencies = ["<<project>>==<<version>>", "numpy"]
 # ///
 """<<project>> standalone script (PEP 723).
 
@@ -8,11 +8,13 @@ Distribute this file — recipients run it with:
     uv run <<name>>.py --help
 
 Requires <<project>>==<<version>> on PyPI.
-Scaffolded by just-makeit.  Implement the processing loop below.
+Scaffolded by just-makeit.  Re-running `just-makeit app` overwrites this file.
 """
 
 import argparse
 import sys
+
+import numpy as np
 
 from <<package>> import <<Component>>
 
@@ -20,15 +22,15 @@ from <<package>> import <<Component>>
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="<<name>>",
-        description="<<project>> <<Component>>-powered DSP tool",
+        description="<<project>>: <<Component>>-powered stream tool.",
     )
     p.add_argument(
-        "--input", "-i", metavar="FILE",
-        help="Input file (default: stdin)",
+        "--input", "-i", default=None,
+        help="input file (default: stdin)",
     )
     p.add_argument(
-        "--output", "-o", metavar="FILE",
-        help="Output file (default: stdout)",
+        "--output", "-o", default=None,
+        help="output file (default: stdout)",
     )
 <<argparse_state_args>>
     return p
@@ -36,11 +38,7 @@ def _make_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _make_parser().parse_args()
-    obj = <<Component>>(<<py_create_args>>)
-
-    # <<IMPLEMENT: open input/output, call obj.step() / obj.steps(), write>>
-    _ = obj
-    sys.exit(0)
+<<py_io_loop>>
 
 
 if __name__ == "__main__":

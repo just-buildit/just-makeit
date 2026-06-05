@@ -1,28 +1,32 @@
-// /*<<project>>*/ standalone entry point — scaffolded by just-makeit.
-// Build:  make && ./build//*<<name>>*/
-// Implement the I/O loop marked below.
+// /*<<project>>*/ — /*<<name>>*/: /*<<Component>>*/-powered stream tool.
+// Scaffolded by just-makeit.  Build:  make && ./build//*<<name>>*/
+// Re-running `just-makeit app` overwrites this file; edit for custom logic.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
 
 #include "/*<<component>>*///*<<component>>*/_core.h"
 
 int
 main(int argc, char *argv[])
 {
-    /*<<argc_argv_block>>*/
+    /* --- parse args ------------------------------------------------------ */
+/*<<arg_parse_block>>*/
 
     /* --- create ---------------------------------------------------------- */
-    /*<<app_create_line>>*/
+/*<<app_create_line>>*/
     if (!state) {
         fprintf(stderr, "error: /*<<component>>*/_create() failed\n");
         return 1;
     }
 
     /* --- process --------------------------------------------------------- */
-    /* <<IMPLEMENT: read stdin, call step() or steps(), write stdout>> */
+/*<<io_loop>>*/
 
     /* --- cleanup --------------------------------------------------------- */
     /*<<component>>*/_destroy(state);
+/*<<cleanup_tail>>*/
     return 0;
 }
