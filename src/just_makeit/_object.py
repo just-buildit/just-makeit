@@ -787,9 +787,23 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
+            # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
+            # the deps propagate transitively to the Python extension. The
+            # `jm object` path sets extra_link_on_object_core (run()); apply
+            # rebuilds the collocated CMakeLists here, so it must set it too —
+            # otherwise the `<<extra_link_on_object_core>>` placeholder leaks
+            # into the generated CMakeLists and breaks the build.
+            extra_link_on_object_core = (
+                f"target_link_libraries({obj}_core PUBLIC\n    "
+                + "\n    ".join(extra_libs)
+                + ")\n"
+                if extra_libs
+                else ""
+            )
             ctx_cmake = {
                 **ctx_,
                 "extra_link_libs_block": extra_link_libs_block,
+                "extra_link_on_object_core": extra_link_on_object_core,
             }
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
             # Append the collocated object's extra sources: a legacy

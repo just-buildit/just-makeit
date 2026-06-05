@@ -29,6 +29,15 @@
     merge) and both manifest writers (tomlkit and the `_dump` fallback) are
     covered. New `tests/test_module_reexports.py`.
 
+### Fixed
+
+- **`jm apply` leaked the `<<extra_link_on_object_core>>` placeholder** for a
+    collocated object (object name == module name) with module
+    `extra_link_libs`. The gh-160 OBJECT-core PUBLIC-link slot was filled on the
+    `jm object` path but not when `apply` rebuilds the collocated CMakeLists, so
+    the literal template token reached the generated file and broke the CMake
+    build. `apply` now resolves it (regression: `tests/test_apply_collocated_   cmake.py`).
+
 ## [0.15.0] — 2026-06-05
 
 ### Added
