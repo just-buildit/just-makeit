@@ -546,6 +546,20 @@ target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:fir_core>)
 This ensures that `fir`'s Python extension links the transitive C objects
 it needs, without requiring a separate shared library per dependency.
 
+Since **0.15.3**, `depends_on` also auto-includes each dependency's header in
+the dependent's `<comp>_core.h` — "if jm links it, it includes it":
+
+```c
+/* fir_core.h, generated */
+#include "clib_common.h"
+#include "resamp/resamp_core.h"
+#include "fft/fft_core.h"
+```
+
+So an opaque field of a dependency's type — e.g. `resamp_state_t *resamp;` —
+compiles with no manual `#include`. The include is generated for fresh objects
+and injected idempotently into existing headers on `jm apply`.
+
 ### Full example
 
 ```toml

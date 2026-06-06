@@ -2,34 +2,62 @@
 
 ______________________________________________________________________
 
-## `just-makeit app [--target c|console|pep723] [--object name] [--name name]`
+## `just-makeit app [--target c|console|pep723] [--object name | --function name] [--name name] [--flag ...] [--command ...]`
 
-Scaffold a shippable standalone application from an existing component.
-Run this after `just-makeit object` to turn a C extension into something
-you can hand to an end user.
+Scaffold a shippable, **runnable** application from an existing component —
+the "one C core, three faces" pattern. Run it after `just-makeit object` (or
+`just-makeit function`) to turn a C extension into a CLI you can hand to a
+user.
 
 ```sh
-# C executable — reads from stdin, calls your component per sample
+# C executable
 jm app --target c --object engine --name dsp_tool
 
-# Python console script — argparse boilerplate wired to the Python bindings
+# Python console script (installed via [project.scripts])
 jm app --target console --object engine --name dsp_tool
 
-# PEP 723 inline script — single .py file, no install required
+# PEP 723 inline script (run with `uv run`, no install)
 jm app --target pep723 --object engine --name dsp_tool
 ```
 
-All three targets write an `[app]` section to `just-makeit.toml`, so
-`jm apply` recreates the scaffold if the file is missing.
+As of **0.15.0** the generated app is *complete*, not a stub: each target
+emits a real argument parser **and** a working read → process → write loop,
+generated from the object model. The C `strtof`/`argv` parser and the Python
+`argparse` setup are produced from the same spec, so the C binary and the
+Python CLI accept the same flags and behave the same way. There is nothing to
+hand-edit before it runs.
+
+Every run records an `[app]` section (and any `[[app.flags]]` /
+`[[app.commands]]`) in `just-makeit.toml`, so `jm apply` recreates the scaffold.
 
 **Arguments**
 
-| Argument                      | Description                                                                                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--target c\|console\|pep723` | Output target. Default: `c`.                                                                                                                      |
-| `--object name`               | Component to scaffold from. Must already exist in `just-makeit.toml`. Defaults to the first listed component.                                     |
-| `--name name`                 | Name for the generated app/script. Defaults to the project name.                                                                                  |
-| `--argc-argv`                 | (`--target c` only) Replace the `(void)argc; (void)argv;` suppression with an `if (argc > 1)` guard block for manual argument parsing. See below. |
+| Argument                            | Description                                                                             |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| `--target c\|console\|pep723`       | Output target (repeatable intent via re-runs). Default: `c`.                            |
+| `--object name`                     | Component to wrap. Defaults to the first component.                                     |
+| `--function name`                   | Wrap a module-level function instead of an object (see *Function CLIs*).                |
+| `--name name`                       | Name of the generated app/script. Defaults to the project name.                         |
+| `--flag name:type[:default[:help]]` | Extra control flag, added to both parsers and persisted as `[[app.flags]]`. Repeatable. |
+| `--command name[:help]`             | Declare a subcommand (multi-command CLI). Repeatable. See *Subcommands*.                |
+
+______________________________________________________________________
+
+## Object shapes
+
+`jm app` reads the object's `step`/`steps` signature and generates the I/O
+loop that fits it — no flag needed:
+
+| Shape         | Signature                           | Generated I/O                                                |
+| ------------- | ----------------------------------- | ------------------------------------------------------------ |
+| **scalar**    | `step(x) -> y`                      | read one sample → `step()` → write one, in a loop            |
+| **blockwise** | `T[] -> U[]` (`--preset blockwise`) | read a block → `steps(in, n, out)` → write the block         |
+| **consumer**  | `T -> void`                         | read → `step()`; no output side                              |
+| **generator** | `void -> T`                         | synthetic `--count N` drives `step()` → write; no input side |
+
+Constructor state vars become `--<name>` flags wired into `create()`, each
+defaulting to its `--state` default. Extra `--flag` controls are appended to
+both the C and Python parsers.
 
 ______________________________________________________________________
 
@@ -37,111 +65,95 @@ ______________________________________________________________________
 
 ### `--target c`
 
-Generates `native/src/app/<name>.c` — a `main()` that calls your
-component's full lifecycle: `create` → process loop (`step`) → `destroy`.
-Constructor arguments default to the values declared in `--state`.
-
-Also appends to `CMakeLists.txt`:
-
-```cmake
-add_executable(<name> native/src/app/<name>.c)
-target_link_libraries(<name> PRIVATE <component>_core)
-install(TARGETS <name> DESTINATION bin)
-```
-
-If `CMakeLists.txt` does not exist, the commands are printed for manual
-addition instead. Running `jm app --target c` a second time replaces the
-existing block (idempotent).
-
-**After scaffolding:** open `native/src/app/<name>.c` and implement the
-I/O loop marked `/* <<IMPLEMENT>> */`. Build with:
+Generates `native/src/app/<name>.c` — a `main()` with an `argv` parser
+(`strtof`/`strtol` per flag type) and the shape-appropriate
+`create → loop → destroy`. Appends an `add_executable` / `target_link_libraries`
+/ `install` block to `CMakeLists.txt` (printed for manual addition if there is
+no `CMakeLists.txt`). Re-running replaces the block (idempotent).
 
 ```sh
-make && ./build/<name>
+make && ./build/<name> --help
 ```
-
-**`--argc-argv`:** By default the generated `main()` suppresses the
-command-line arguments with `(void)argc; (void)argv;` to silence compiler
-warnings. Pass `--argc-argv` when you intend to parse them:
-
-```sh
-jm app --target c --object engine --name dsp_tool --argc-argv
-```
-
-The generated stub then contains a guard block instead:
-
-```c
-if (argc > 1) {
-    /* <<IMPLEMENT: parse argv>> */
-}
-```
-
-Fill in the block with `getopt`, a third-party arg parser, or a simple
-positional scan — the choice is yours. The rest of the scaffold
-(`create` → loop → `destroy`) is identical.
-
-______________________________________________________________________
 
 ### `--target console`
 
-Generates `src/<pkg>/cli.py` — a Python script using `argparse` with one
-`--<param>` flag for every constructor scalar, each defaulting to the value
-declared in `--state`. The processing loop and output formatting are left
-as `<<IMPLEMENT>>` stubs.
-
-Also updates `[project.scripts]` in `pyproject.toml` so the script is
-installed as `<name>` when the package is installed:
-
-```toml
-[project.scripts]
-dsp_tool = "my_project.cli:main"
-```
-
-If `tomlkit` is not installed or `pyproject.toml` does not exist, the
-required snippet is printed for manual addition.
-
-**After scaffolding:** implement the processing loop in `src/<pkg>/cli.py`,
-then install and run:
+Generates `src/<pkg>/<name>_cli.py` — an `argparse` CLI over the Python
+bindings, one `--<param>` per constructor scalar plus any `--flag`s, with the
+matching process loop. Adds `<name>` to `[project.scripts]` in `pyproject.toml`
+(snippet printed if `tomlkit`/`pyproject.toml` is unavailable).
 
 ```sh
-pip install -e .
-<name> --help
+pip install -e . && <name> --help
 ```
-
-______________________________________________________________________
 
 ### `--target pep723`
 
-Generates `<name>.py` in the project root — a
-[PEP 723](https://peps.python.org/pep-0723/) inline-metadata script with
-an embedded `# /// script` dependency block referencing your package. It
-can be run without a full install:
+Generates `<name>.py` in the project root — a self-contained
+[PEP 723](https://peps.python.org/pep-0723/) script with an inline
+`# /// script` dependency block, the same parser/loop as `console`.
 
 ```sh
 uv run <name>.py --help
 ```
 
-The script contains the same `argparse` boilerplate as `--target console`
-and is fully self-contained. Distribute the single `.py` file to users who
-have `uv` installed; they do not need to install your package separately as
-long as it is available on PyPI.
+The `# /// script` block names your package as a dependency, so `uv run`
+needs it published (or on a local index). Use `--target console` during
+development.
 
-**Note:** the `# /// script` block names your package as a dependency.
-Until the package is published to PyPI (or a local index), `uv run` will
-fail. Use `--target console` during development and switch to `--target pep723` when the package is public.
+______________________________________________________________________
+
+## Function CLIs (`--function`)
+
+`jm app --function <name> [--module m]` generates a CLI over a **module-level
+function** instead of an object: each scalar parameter becomes a flag, the
+function is called once, and the result is printed.
+
+```sh
+jm app --target console --function kaiser_beta --module resample --name kaiser
+# kaiser --atten 60   ->  prints the computed beta
+```
+
+______________________________________________________________________
+
+## Subcommands (`--command` / `[[app.commands]]`)
+
+Pass `--command name[:help]` (repeatable) to scaffold a multi-command CLI:
+
+```sh
+jm app --target c --object engine --name dsp_tool \
+    --command encode:"encode a stream" --command decode:"decode a stream"
+```
+
+The C target generates an `argv[1]` dispatch with a per-command flag-parsing
+handler; the Python targets generate an `argparse` subparsers tree. Each
+command body is an `<<IMPLEMENT>>` stub — the dispatch, parsing, and help are
+generated; you fill in the per-command logic. Commands persist as
+`[[app.commands]]` and are recreated by `jm apply`.
 
 ______________________________________________________________________
 
 ## TOML record
 
-Every `jm app` run records the scaffolded app in `just-makeit.toml`:
-
 ```toml
 [app]
 target  = "console"
 name    = "dsp_tool"
-object  = "engine"
+object  = "engine"     # or: function = "kaiser_beta"
+
+[[app.flags]]
+name = "gain"
+type = "float"
+default = "1.0"
+help = "output gain"
+
+[[app.commands]]
+name = "encode"
+help = "encode a stream"
 ```
 
-`jm apply` reads this section and materializes the app scaffold if its
-file is missing. (Re-running `jm app` overwrites the scaffold directly.)
+`jm apply` reads `[app]` (+ `[[app.flags]]` / `[[app.commands]]`) and
+materializes the app scaffold if its file is missing. Re-running `jm app`
+overwrites the scaffold directly.
+
+See the bundled `three_face` and `app_shapes` examples
+(`jm example three_face`, `jm example app_shapes`) for end-to-end runs.

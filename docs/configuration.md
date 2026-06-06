@@ -233,6 +233,8 @@ those land, hand-editing the manifest is the workaround.
 | `params = [{name, type}]`         | `jm method --param name:type` (repeatable)              | ✅           |
 | `extra_args = [{name, type}]`     | `jm method --extra-arg name:type` (alias for `params`)  | ✅ (0.14.2)  |
 | `variable_output = true`          | `jm method --variable-output`                           | ✅           |
+| `pass_capacity = true`            | `jm method --pass-capacity`                             | ✅ (0.14.4)  |
+| `nogil = true`                    | `jm method --nogil`                                     | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)      | `jm method --max-out N`                                 | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`       | `jm method --multi-output T` (repeatable)               | ✅           |
 | `out_type = "T"`                  | `jm method --out-type T`                                | ✅           |
@@ -270,14 +272,21 @@ instead of a named function body; it composes with the slot prefixes
 
 ### `[module.<name>]` keys
 
-| TOML key               | CLI flag                                          | Status       |
-| ---------------------- | ------------------------------------------------- | ------------ |
-| `objects` (list)       | (auto-populated by `jm object --module <mod>`)    | ✅           |
-| `extra_link_libs`      | `jm module --extra-link-libs TARGET` (repeatable) | ✅ (0.13.23) |
-| `extra_include_dirs`   | `jm module --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |
-| `extra_types`          | `jm module --extra-types NAME` (repeatable)       | ✅ (0.13.23) |
-| `no_generate = "true"` | (TOML only)                                       | 🟡           |
-| `functions`            | (auto-populated by `jm function --module <mod>`)  | ✅           |
+| TOML key                              | CLI flag                                          | Status       |
+| ------------------------------------- | ------------------------------------------------- | ------------ |
+| `objects` (list)                      | (auto-populated by `jm object --module <mod>`)    | ✅           |
+| `extra_link_libs`                     | `jm module --extra-link-libs TARGET` (repeatable) | ✅ (0.13.23) |
+| `extra_include_dirs`                  | `jm module --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |
+| `extra_types`                         | `jm module --extra-types NAME` (repeatable)       | ✅ (0.13.23) |
+| `no_generate = "true"`                | (TOML only)                                       | 🟡           |
+| `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
+| `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
+
+`reexports` folds names from a *sibling* extension (typically a `no_generate`
+module whose binding/`.pyi` are hand-written) into this module's generated
+`__init__.py` — both the import block and `__all__` — so the re-export glue
+regenerates from the manifest instead of being a hand-edit `jm apply` would
+clobber. Output is single-line, matching the rest of the package.
 
 ### `[[module.<name>.functions]]` entries
 
@@ -285,6 +294,7 @@ instead of a named function body; it composes with the slot prefixes
 | -------------------------------- | ----------------------------------------------------------- | ------------ |
 | `name`, `return_type`, `doc`     | `jm function <fn> --module <mod> --return-type T --doc STR` | ✅           |
 | `params = [{name, type, out?}]`  | `jm function --param name:T` + `--out-param name:T[]`       | ✅ (0.13.22) |
+| `params … {mutable = true}`      | (synonym for `out` — writable array param)                  | ✅ (0.15.3)  |
 | `inline = true`                  | `jm function --inline`                                      | ✅           |
 | `out_type = "T"`                 | `jm function --out-type T`                                  | ✅ (0.13.23) |
 | `result_fields = [{name, type}]` | `jm function --result-field name:type` (repeatable)         | ✅ (0.13.23) |
@@ -361,10 +371,19 @@ One entry per `just-makeit method` call.
 | `return_type`     | string                  | C return type                                             |
 | `params`          | array of `{name, type}` | Named scalar / array parameters                           |
 | `variable_output` | bool                    | `--variable-output`                                       |
+| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)      |
+| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)  |
 | `batch`           | bool                    | `--batch`                                                 |
 | `multi_output`    | array of strings        | `--multi-output` types                                    |
 | `out_type`        | string                  | `--out-type`                                              |
 | `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`) |
+
+`nogil` wraps the pure-C kernel of a `variable_output` execute method in
+`Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy accessors hoisted out
+first), so a thread-per-shard worker — one object + output buffer per thread —
+scales across cores instead of serialising on the GIL. Opt-in: it is sound
+only when the object is not shared across threads concurrently (one object per
+stream).
 
 ### `[[<object>.properties]]`
 
@@ -379,21 +398,24 @@ One entry per `just-makeit property` call.
 
 ### `[module.<name>]`
 
-| Key         | Type             | Notes                              |
-| ----------- | ---------------- | ---------------------------------- |
-| `objects`   | array of strings | Objects in declaration order       |
-| `functions` | array            | Module-level functions (see below) |
+| Key                                                      | Type                    | Notes                                                                   |
+| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
+| `objects`                                                | array of strings        | Objects in declaration order                                            |
+| `functions`                                              | array                   | Module-level functions (see below)                                      |
+| `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                   |
+| `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                      |
+| `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory` |
 
 ### `[[module.<name>.functions]]`
 
 One entry per `just-makeit function` call.
 
-| Key           | Type                    | Notes            |
-| ------------- | ----------------------- | ---------------- |
-| `name`        | string                  | Function name    |
-| `return_type` | string                  | C return type    |
-| `doc`         | string                  | Python docstring |
-| `params`      | array of `{name, type}` | Parameters       |
+| Key           | Type                          | Notes                                                                                                                                 |
+| ------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string                        | Function name                                                                                                                         |
+| `return_type` | string                        | C return type                                                                                                                         |
+| `doc`         | string                        | Python docstring                                                                                                                      |
+| `params`      | array of `{name, type, out?}` | Parameters; an array param with `out = true` (or its synonym `mutable = true`) is writable — generated `T *name`, not `const T *name` |
 
 ______________________________________________________________________
 

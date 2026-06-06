@@ -32,6 +32,8 @@ appended, ready for you to implement.
 | `--out-divisor N`       | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes).                                                                                    |
 | `--batch`               | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time. |
 | `--varargs`             | Generate a `*args/**kwargs` Python binding. See below. Mutually exclusive with `--arg-type`, `--param`, and `--variable-output`.                                                                                                                                                                                                 |
+| `--pass-capacity`       | Emit the 5-arg `(…, out, size_t max_out)` C form for a `--variable-output` method (a bounds-checking C API receives the buffer capacity).                                                                                                                                                                                        |
+| `--nogil`               | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                 |
 | `--impl file::funcname` | Lift the method body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                                                                                                                                                                                                 |
 | `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Out-of-bounds or inverted ranges error cleanly.                                                                                                                                                                                                       |
 | `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
@@ -269,6 +271,37 @@ just-makeit method nco steps_u32_ovf --module resample \
     --arg-type void --return-type uint32_t \
     --variable-output --multi-output uint8_t
 ```
+
+#### `--nogil` — release the GIL for thread-per-shard scaling
+
+For a `--variable-output` execute method, `--nogil` wraps the pure-C kernel
+call in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS`:
+
+```sh
+just-makeit method ddc execute --module ddc \
+    --param x:"float _Complex[]" --variable-output --pass-capacity --nogil
+```
+
+```c
+/* generated binding (abridged) */
+const float complex *_ng0 = (const float complex *)PyArray_DATA(x_arr);
+size_t _ng1 = (size_t)PyArray_SIZE(x_arr);
+size_t n_out;
+Py_BEGIN_ALLOW_THREADS
+n_out = ddc_execute(self->handle, _ng0, _ng1, self->_execute_buf, cap);
+Py_END_ALLOW_THREADS
+```
+
+The numpy accessors are hoisted into locals **before** the block so no Python
+C-API runs while the GIL is dropped; the buffer realloc and any error-raising
+stay above it, under the GIL. A worker that gives each thread its **own**
+object and output buffer then scales across cores instead of serialising on
+the GIL.
+
+It is **opt-in** because releasing the GIL is sound only under that
+one-object-per-stream contract — jm cannot verify it, so you assert it by
+setting the flag. Generated, not hand-patched: the release is declarative and
+regenerates with the binding.
 
 ______________________________________________________________________
 
