@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.15.7] — 2026-06-06
+
+### Fixed
+
+- **`C.save` / `_dump` now round-trips custom C bodies** — `impl`,
+    `create_impl`, `reset_impl`, `destroy_impl`. `_dump` emitted none of them, so
+    re-saving a manifest (e.g. setting a `[project]` key via `C.save` after
+    writing a fragment) **silently dropped hand-written C bodies**, leaving a
+    bare `calloc` constructor (→ NULL opaque fields → crashes). The bodies are
+    now written as heredocs *before* any `[[component.*]]` sub-table, so TOML
+    re-parses them onto the component. Surfaced by the `kitchen_sink` example.
+
 ## [0.15.6] — 2026-06-06
 
 ### Fixed
