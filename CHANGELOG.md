@@ -24,7 +24,18 @@
     object-level `step`/`steps` is a follow-up. New
     `tests/test_method_nogil.py`.
 
-## [0.15.1] — 2026-06-05
+### Fixed
+
+- **`jm apply` no longer fights a hand-tuned function prototype (gh-169).** A
+    module-function decl the user decorated with `JM_RESTRICT` (perf) or where a
+    `const` was dropped on a mutable buffer param was treated as a *different*
+    declaration than the one apply generates, so apply replaced it (clobbering
+    the qualifiers) or — in some header layouts — appended a second,
+    conflicting prototype that failed to compile. `_inject_decls_into_core_h`
+    now compares prototypes modulo those decorative qualifiers
+    (`_normalize_decl`), so an already-present decl is left untouched
+    (idempotent) while a genuine signature change still replaces as before.
+    Regression: `tests/test_apply_decl_qualifiers.py`.
 
 ### Added
 

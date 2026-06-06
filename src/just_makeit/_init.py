@@ -187,6 +187,26 @@ def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
     return None
 
 
+# Qualifiers that decorate a prototype without changing the function it
+# declares. The user may add `JM_RESTRICT` (perf) or drop a `const` on a
+# mutable buffer param to their hand-tuned header decl; `apply` must treat such
+# a decl as the same one it would generate (idempotent) instead of replacing or
+# duplicating it (gh-169).
+_DECL_QUALIFIER_RE = re.compile(
+    r"\b(?:JM_RESTRICT|__restrict__|__restrict|restrict|const)\b"
+)
+
+
+def _normalize_decl(decl: str) -> str:
+    """Canonicalize a prototype for identity comparison.
+
+    Strips the decorative qualifiers above and all whitespace, so e.g.
+    ``void f(const float *JM_RESTRICT x);`` and ``void f(float *x);`` compare
+    equal — same function, differently decorated.
+    """
+    return re.sub(r"\s+", "", _DECL_QUALIFIER_RE.sub("", decl))
+
+
 def _inject_decls_into_core_h(
     path: Path,
     comp: str,
@@ -212,10 +232,17 @@ def _inject_decls_into_core_h(
     if not path.exists():
         return False
     text = original = path.read_text(encoding="utf-8")
+    norm_text = _normalize_decl(text)
     to_insert: list[str] = []
     for d in decls:
         d = d.strip()
         if not d or d in text:  # genuinely-new decls only; exact = idempotent
+            continue
+        # gh-169: a decl already present modulo decorative qualifiers
+        # (JM_RESTRICT / a dropped const on a mutable buffer) is the same
+        # declaration — leave the user's hand-tuned version untouched rather
+        # than replacing or duplicating it.
+        if _normalize_decl(d) in norm_text:
             continue
         m = re.search(r"(\w+)\s*\(", d)
         if m:
