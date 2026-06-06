@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.15.9] — 2026-06-06
+
+### Fixed
+
+- **A `no_step` object's generated bench now declares `obj`** via its void
+    create (gh-181). The bench template always emits `<comp>_destroy(obj)`, but
+    for a `no_step` object with no init params the create was left as a TODO
+    comment → `obj` undeclared → the bench failed to compile. Since
+    `<comp>_create()` (a void create) is callable, the bench now emits it. The
+    `kitchen_sink` example drops its workaround. Surfaced by that example.
+
 ## [0.15.8] — 2026-06-06
 
 ### Fixed
