@@ -457,6 +457,7 @@ def run(
     max_out: int = 0,
     varargs: bool = False,
     pass_capacity: bool = False,
+    nogil: bool = False,
     doc: str = "",
     from_apply: bool = False,
 ) -> None:
@@ -634,6 +635,8 @@ def run(
         method_entry["variable_output"] = True
     if pass_capacity:
         method_entry["pass_capacity"] = True
+    if nogil:
+        method_entry["nogil"] = True
     if none_on_empty:
         method_entry["none_on_empty"] = True
     if batch:

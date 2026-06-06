@@ -5,6 +5,8 @@ Contains _bench_method_block, make_methods_ctx, and make_properties_ctx.
 
 from __future__ import annotations
 
+import re
+
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -16,6 +18,63 @@ from .._types import (
     array_elem_ctype,
 )
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
+
+
+# A cast-prefixed numpy buffer accessor inside a kernel call argument, e.g.
+# ``(const float *)PyArray_DATA(x_arr)`` or ``(size_t)PyArray_SIZE(x_arr)``.
+# The leading cast carries the C type, so it doubles as the hoisted-local type.
+_NOGIL_PYARRAY_RE = re.compile(
+    r"\((?P<cast>[^()]+?)\)\s*PyArray_(?:DATA|SIZE)\(\w+\)"
+)
+
+
+def _hoist_for_nogil(call_expr: str) -> tuple[str, str]:
+    """Hoist every ``PyArray_DATA/SIZE`` out of a kernel-call expression.
+
+    Releasing the GIL around the C kernel is only sound if **no Python C-API**
+    runs while it is dropped — but the generated call inlines
+    ``PyArray_DATA``/``PyArray_SIZE`` directly. This lifts each such (cast)
+    expression into a local declared *before* the ``Py_BEGIN_ALLOW_THREADS``
+    block and rewrites the call to reference it. Everything else
+    (``self->handle``, ``self->_<m>_buf``, scalar params, ``(size_t)n``) is
+    plain memory and is left in place.
+
+    Returns ``(hoist_decls, rewritten_call_expr)``.
+    """
+    decls: list[str] = []
+
+    def _sub(m: "re.Match[str]") -> str:
+        local = f"_ng{len(decls)}"
+        decls.append(f"    {m.group('cast')} {local} = {m.group(0)};\n")
+        return local
+
+    rewritten = _NOGIL_PYARRAY_RE.sub(_sub, call_expr)
+    return "".join(decls), rewritten
+
+
+def _kernel_call_block(call_expr: str, nogil: bool) -> str:
+    """Emit ``size_t n_out = <call>;`` — GIL-released when *nogil*.
+
+    With *nogil*, numpy accessors are hoisted above the
+    ``Py_BEGIN_ALLOW_THREADS`` block (see :func:`_hoist_for_nogil`) so the
+    kernel runs lock-free — valid only when the object is not shared across
+    threads concurrently (one object per stream). The caller's realloc /
+    error-raising stays under the GIL, above this block.
+    """
+    if not nogil:
+        return f"    size_t n_out = {call_expr};\n"
+    hoist, rewritten = _hoist_for_nogil(call_expr)
+    return (
+        "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
+        "     * this object is not shared across threads concurrently (one\n"
+        "     * object per stream); the kernel touches only this object's\n"
+        "     * state/buffers and the caller's input. */\n"
+        f"{hoist}"
+        "    size_t n_out;\n"
+        "    Py_BEGIN_ALLOW_THREADS\n"
+        f"    n_out = {rewritten};\n"
+        "    Py_END_ALLOW_THREADS\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +366,9 @@ def make_methods_ctx(
         result_fields: list[dict] = m.get("result_fields", [])
         max_results: int = int(m.get("max_results", 64))
         none_on_empty: bool = m.get("none_on_empty", False)
+        # Opt-in GIL release around the pure-C kernel (thread-per-shard
+        # scaling). v1 covers the variable_output execute shapes.
+        nogil: bool = m.get("nogil", False)
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -786,6 +848,10 @@ def make_methods_ctx(
                 decref_after = "\n".join(
                     f"    Py_DECREF(arr{i});" for i in range(len(all_rts))
                 )
+                _kernel_mo = _kernel_call_block(
+                    f"{component}_{name}({call_data}{call_extra}{_cap_arg})",
+                    nogil,
+                )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
@@ -793,8 +859,7 @@ def make_methods_ctx(
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
-                    f"    size_t n_out ="
-                    f" {component}_{name}({call_data}{call_extra}{_cap_arg});\n"
+                    f"{_kernel_mo}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"{arr_decls}\n"
                     f"    if ({null_checks}) {{\n"
@@ -841,6 +906,9 @@ def make_methods_ctx(
                     f"        self->_{name}_buf_cap = _max;\n"
                     f"    }}\n"
                 )
+                _kernel_vo = _kernel_call_block(
+                    f"{component}_{name}({call_data}{_cap_arg})", nogil
+                )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
@@ -849,8 +917,7 @@ def make_methods_ctx(
                     f"{guard}"
                     f"{parse_block}"
                     f"{_lazy_alloc_vo}"
-                    f"    size_t n_out ="
-                    f" {component}_{name}({call_data}{_cap_arg});\n"
+                    f"{_kernel_vo}"
                     f"{_none_on_empty_line}"
                     f"    npy_intp dim = (npy_intp)n_out;\n"
                     f"    PyObject *arr = PyArray_SimpleNewFromData(\n"

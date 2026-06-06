@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-06-05
+
+### Added
+
+- **`nogil` method flag — generate a GIL-released kernel call.** A
+    `variable_output` execute method declared with `nogil = true` (or
+    `jm method … --nogil`) generates its binding with the pure-C kernel wrapped
+    in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS`, so a thread-per-shard
+    worker (one object + output buffer per thread) scales across cores instead
+    of serialising on the GIL. The numpy buffer accessors
+    (`PyArray_DATA`/`PyArray_SIZE`) are **hoisted into locals before** the
+    block — no Python C-API runs while the GIL is dropped — and the buffer
+    realloc / error path stays above it, under the GIL.
+
+    Opt-in by design: releasing the GIL is sound only when the object is not
+    shared across threads concurrently (one object per stream), which jm can't
+    verify. Replaces hand-patching `Py_BEGIN_ALLOW_THREADS` into the generated
+    `_ext` binding — the GIL release is now declarative and regenerable. v1
+    covers the `variable_output` execute shapes (single and multi-output);
+    object-level `step`/`steps` is a follow-up. New
+    `tests/test_method_nogil.py`.
+
 ## [0.15.1] — 2026-06-05
 
 ### Added

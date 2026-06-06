@@ -73,6 +73,11 @@ Commands:
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
                                 Composes with --variable-output.
+    --nogil                     Release the GIL across the pure-C kernel so a
+                                thread-per-shard worker scales across cores.
+                                Numpy accessors are hoisted out first. Sound
+                                only when the object is not shared across
+                                threads concurrently (one object per stream).
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
