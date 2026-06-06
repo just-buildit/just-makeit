@@ -366,7 +366,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 mod,
                 doc=fn.get("doc", ""),
                 params=[
-                    (p["name"], p["type"], bool(p.get("out", False)))
+                    # gh-170: `mutable` is accepted as a synonym for `out` —
+                    # both drop the `const` on a writable array param.
+                    (
+                        p["name"],
+                        p["type"],
+                        bool(p.get("out") or p.get("mutable")),
+                    )
                     for p in fn.get("params", [])
                 ],
                 return_type=fn.get("return_type", "void"),
@@ -818,6 +824,17 @@ def _sync_aggregates(
         if _refresh_core_h_decls(root / rel, temp_root / rel, mod):
             if root / rel not in updated:
                 updated.append(root / rel)
+        # gh-170: each module object's own _core.h gains its depends_on
+        # includes (the per-object headers are otherwise sacred / never
+        # refreshed on apply).
+        from ._init import _inject_includes_into_core_h
+
+        for obj in C.module_objects(cfg, mod):
+            obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+            if _inject_includes_into_core_h(
+                obj_h, obj, C.depends_on(cfg, obj)
+            ):
+                updated.append(obj_h)
 
     # Standalone components: the sacred/glue split. Glue files (binding,
     # CMake, type stub) regenerate from the manifest on every apply, so a
@@ -852,7 +869,16 @@ def _sync_aggregates(
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
         rel = f"native/inc/{comp}/{comp}_core.h"
-        if _refresh_core_h_decls(root / rel, temp_root / rel, comp):
+        changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
+        # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each
+        # depends_on entry, so opaque fields of a dependency's types compile.
+        from ._init import _inject_includes_into_core_h
+
+        if _inject_includes_into_core_h(
+            root / rel, comp, C.depends_on(cfg, comp)
+        ):
+            changed = True
+        if changed:
             updated.append(root / rel)
 
     return updated

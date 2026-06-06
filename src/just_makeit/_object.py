@@ -1040,6 +1040,12 @@ def run(
     else:
         ctx["extra_link_on_object_core"] = ""
 
+    # gh-170: include each depends_on component's header so opaque fields of
+    # its types compile (mirrors the standalone path in _init.run).
+    ctx["depends_includes"] = "".join(
+        f'\n#include "{d}/{d}_core.h"' for d in depends_on
+    )
+
     def r(tmpl):
         return R.render(tmpl, ctx)
 

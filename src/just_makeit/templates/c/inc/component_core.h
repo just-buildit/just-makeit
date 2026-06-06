@@ -15,7 +15,7 @@
 #define /*<<COMPONENT>>*/_CORE_H
 
 #include "clib_common.h"
-/*<<perf_include>>*/
+/*<<perf_include>>*//*<<depends_includes>>*/
 #ifdef __cplusplus
 extern "C" {
 #endif

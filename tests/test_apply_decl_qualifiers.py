@@ -58,9 +58,10 @@ _RESTRICT_MULTI = (
 
 def _decorate(hdr: Path, decorated: str):
     text = hdr.read_text(encoding="utf-8")
+    # output is a mutable param, so it is generated non-const (gh-170).
     generated = (
         "void process(const float *input, size_t input_len, "
-        "const float *output, size_t output_len, size_t n);"
+        "float *output, size_t output_len, size_t n);"
     )
     assert generated in text, "generated decl not found to decorate"
     hdr.write_text(text.replace(generated, decorated), encoding="utf-8")
