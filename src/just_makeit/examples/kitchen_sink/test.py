@@ -191,6 +191,65 @@ params = [{name = "key", type = "const char *"}]
 '''
 
 
+# ── a no_generate sibling module re-exported into the dsp package ─────────────
+# Hand-written CPython extension (jm only wires its add_subdirectory); the
+# `reexports` key folds db10 into the dsp package __init__.
+_DSP_FN_C = """\
+/* dsp_fn_ext.c — hand-written functional helpers (a no_generate module). */
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#include <math.h>
+
+static PyObject *py_db10(PyObject *self, PyObject *args)
+{
+    double x;
+    if (!PyArg_ParseTuple(args, "d", &x))
+        return NULL;
+    return PyFloat_FromDouble(10.0 * log10(x));
+}
+
+static PyMethodDef dsp_fn_methods[] = {
+    {"db10", py_db10, METH_VARARGS,
+     "db10(x) -> float\\n\\nPower ratio to decibels: 10*log10(x)."},
+    {NULL, NULL, 0, NULL},
+};
+
+static struct PyModuleDef dsp_fn_module = {
+    PyModuleDef_HEAD_INIT, "dsp_fn",
+    "Functional DSP helpers (hand-written, no_generate).", -1, dsp_fn_methods,
+};
+
+PyMODINIT_FUNC PyInit_dsp_fn(void)
+{
+    return PyModule_Create(&dsp_fn_module);
+}
+"""
+
+_DSP_FN_CMAKE = """\
+# dsp_fn — hand-written functional API (no_generate). Builds into the dsp
+# package dir so `from kitchen_sink.dsp import db10` (reexports) resolves.
+if(BUILD_PYTHON)
+Python3_add_library(dsp_fn MODULE WITH_SOABI dsp_fn_ext.c)
+target_link_libraries(dsp_fn PRIVATE m)
+set_target_properties(dsp_fn PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/dsp"
+    RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/dsp")
+add_custom_command(TARGET dsp_fn POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:dsp_fn>"
+        "${PYTHON_PACKAGE_DIR}/dsp/$<TARGET_FILE_NAME:dsp_fn>"
+    VERBATIM
+    COMMENT "Copy dsp_fn extension module")
+endif()
+"""
+
+_DSP_FN_PYI = '''\
+def db10(x: float) -> float:
+    """Power ratio to decibels: ``10 * log10(x)``."""
+    ...
+'''
+
+
 # ── linking the real doppler C library (opaque nco_state_t*), conditional ─────
 # Reuses nco_tone's provisioning + skip harness rather than duplicating it.
 _TONE_TOML = '''\
@@ -329,6 +388,8 @@ def _implement_c_bodies(proj: Path):
 def run(root: Path) -> None:
     from just_makeit import _config as C
     from just_makeit._apply import run as jm_apply
+    from just_makeit._app import run as jm_app
+    from just_makeit._function import run as jm_function
     from just_makeit._method import run as jm_method
     from just_makeit._module import run as jm_module
     from just_makeit._new import run as jm_new
@@ -406,12 +467,33 @@ def run(root: Path) -> None:
         nogil=True,
     )
 
+    # module-level function (scalar lerp), with its C body inline
+    q(
+        jm_function,
+        proj,
+        "lerp",
+        "dsp",
+        params=[("a", "double"), ("b", "double"), ("t", "double")],
+        return_type="double",
+        impl_body="return a + t * (b - a);",
+    )
+
     # vendor cJSON under native/src/cjson (a [project] c_deps OBJECT lib)
     cjson = proj / "native" / "src" / "cjson"
     cjson.mkdir(parents=True, exist_ok=True)
     (cjson / "cJSON.h").write_text(_CJSON_H, encoding="utf-8")
     (cjson / "cJSON.c").write_text(_CJSON_C, encoding="utf-8")
     (cjson / "CMakeLists.txt").write_text(_CJSON_CMAKE, encoding="utf-8")
+
+    # a no_generate sibling module (hand-written CPython ext), re-exported into
+    # the dsp package via the reexports key below
+    dsp_fn = proj / "native" / "src" / "dsp_fn"
+    dsp_fn.mkdir(parents=True, exist_ok=True)
+    (dsp_fn / "dsp_fn_ext.c").write_text(_DSP_FN_C, encoding="utf-8")
+    (dsp_fn / "CMakeLists.txt").write_text(_DSP_FN_CMAKE, encoding="utf-8")
+    (proj / "src" / "kitchen_sink" / "dsp" / "dsp_fn.pyi").write_text(
+        _DSP_FN_PYI, encoding="utf-8"
+    )
 
     # Optional: link the REAL doppler C library via a standalone `tone` object
     # with an opaque doppler nco_state_t*. Conditional on doppler being
@@ -421,11 +503,17 @@ def run(root: Path) -> None:
     if not doppler_prefix:
         print("kitchen_sink: doppler not found — skipping the `tone` object")
 
-    # All [project] manifest edits go through C.save FIRST, before writing the
-    # raw TOML fragments below — a C.save re-dumps every fragment, and an older
-    # jm drops heredoc bodies (create_impl/…) on the round-trip.
+    # All [project]/[module] manifest edits go through C.save FIRST, before
+    # writing the raw TOML fragments below — a C.save re-dumps every fragment,
+    # and an older jm drops heredoc bodies (create_impl/…) on the round-trip.
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = ["cjson"]
+    # dsp_fn is hand-written: jm only wires its add_subdirectory. reexports
+    # folds its db10 into the dsp package __init__.
+    cfg.setdefault("module", {}).setdefault("dsp_fn", {})["no_generate"] = (
+        "true"
+    )
+    cfg["module"]["dsp"]["reexports"] = {"dsp_fn": ["db10"]}
     if doppler_prefix:
         cfg["project"]["find_packages"] = ["Doppler"]
     C.save(proj, cfg)
@@ -493,6 +581,14 @@ def run(root: Path) -> None:
     assert "cjson_core" in cfg_cmake  # component extra_link_libs
     resamp_ext = (proj / "native/src/dsp/dsp_ext_resamp.c").read_text("utf-8")
     assert "Py_BEGIN_ALLOW_THREADS" in resamp_ext  # nogil
+    dsp_init = (proj / "src/kitchen_sink/dsp/__init__.py").read_text("utf-8")
+    assert "from .dsp_fn import db10" in dsp_init  # reexports
+    assert "add_subdirectory(native/src/dsp_fn)" in top.read_text("utf-8")
+
+    # a jm app face (console script over the gain object)
+    q(jm_app, proj, target="console", object_="gain", name="dsp_cli")
+    pyproject = (proj / "pyproject.toml").read_text("utf-8")
+    assert "dsp_cli" in pyproject  # [project.scripts] entry wired
 
     # build + C tests -------------------------------------------------------
     build = proj / "build"
