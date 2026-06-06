@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.15.8] — 2026-06-06
+
+### Fixed
+
+- **A `--batch` method now generates the 1:1-rate block C signature** —
+    `void <comp>_<name>(<comp>_state_t *state, const <in> *in, size_t n,   <out> *out)` (or `(state, size_t n, <out> *out)` for a void `arg_type`).
+    `_build_method_prototype` / `_methods_c_stub_fixed` had no batch handling, so
+    the stub fell through to the scalar `(state, T x)` shape while the generated
+    binding called the 4-arg form → `too many arguments to function` compile
+    error. Both the prototype and the stub now emit the batch shape (gh-179).
+    Surfaced by the `kitchen_sink` example.
+
+## [0.15.7] — 2026-06-06
+
+### Fixed
+
+- **`C.save` / `_dump` now round-trips custom C bodies** — `impl`,
+    `create_impl`, `reset_impl`, `destroy_impl`. `_dump` emitted none of them, so
+    re-saving a manifest (e.g. setting a `[project]` key via `C.save` after
+    writing a fragment) **silently dropped hand-written C bodies**, leaving a
+    bare `calloc` constructor (→ NULL opaque fields → crashes). The bodies are
+    now written as heredocs *before* any `[[component.*]]` sub-table, so TOML
+    re-parses them onto the component. Surfaced by the `kitchen_sink` example.
+
 ## [0.15.6] — 2026-06-06
 
 ### Fixed

@@ -176,12 +176,29 @@ def _methods_c_stub_fixed(
     multi_output: list[str] | None = None,
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
+    batch: bool = False,
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
     params = params or []
+
+    # gh-179: a batch (1:1-rate) method writes n outputs into `out` and returns
+    # void — its stub must match the (state, const in *in, size_t n, out *out)
+    # prototype, not the scalar fall-through.
+    if batch:
+        if has_arg:
+            in_part = f", const {_block_in_elem_disp(arg_type)} *in, size_t n"
+            sup = "    (void)state; (void)in; (void)n; (void)out;"
+        else:
+            in_part = ", size_t n"
+            sup = "    (void)state; (void)n; (void)out;"
+        c_params = f"{component}_state_t *state{in_part}, {ret_disp} *out"
+        return (
+            f"/* <<IMPLEMENT: {name} (1:1-rate batch) >> */\n"
+            f"void\n{component}_{name}({c_params})\n{{\n{sup}\n}}\n"
+        )
 
     extra_params = "".join(
         f", {T._ctype_display(rt)} *out{i + 1}"
@@ -360,12 +377,29 @@ def _build_method_prototype(
     params: list[tuple[str, str]],
     out_type: str | None = None,
     pass_capacity: bool = False,
+    batch: bool = False,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline)."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
     params = params or []
+
+    # gh-179: a batch (1:1-rate) method is a block transform —
+    # (state, const in *in, size_t n, out *out), or (state, size_t n, out *out)
+    # for a void arg_type. The binding allocates `out` of length n and calls
+    # this 4-arg (or 3-arg) form, so the prototype must match it, not the
+    # scalar (state, T x) shape it would otherwise fall through to.
+    if batch:
+        in_part = (
+            f", const {_block_in_elem_disp(arg_type)} *in, size_t n"
+            if has_arg
+            else ", size_t n"
+        )
+        return (
+            f"void {component}_{name}({component}_state_t *state"
+            f"{in_part}, {ret_disp} *out);"
+        )
 
     extra_params = "".join(
         f", {T._ctype_display(rt)} *out{i + 1}"
@@ -553,6 +587,7 @@ def run(
                 multi_output,
                 params,
                 out_type,
+                batch=batch,
             )
         if impl_body is not None:
             import re as _re
@@ -581,6 +616,7 @@ def run(
             [(p[0], p[1]) for p in params],
             out_type,
             pass_capacity=pass_capacity,
+            batch=batch,
         ).split("\n")
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
