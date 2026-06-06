@@ -1234,4 +1234,18 @@ def run(
     if C.app_config(cfg):
         from . import _app
 
-        _app.run(root, cfg)
+        # gh-184: re-materialise the recorded app, not a default one. Passing
+        # the [app] record's target/name/object keeps `jm apply` from rewriting
+        # it to <project>/<first object>.
+        _app_rec = C.app_config(cfg)
+        _app.run(
+            root,
+            cfg,
+            target=_app_rec.get("target", "c"),
+            name=_app_rec.get("name"),
+            object_=_app_rec.get("object"),
+            function_=_app_rec.get("function"),
+            module=_app_rec.get("module"),
+            flags=_app_rec.get("flags"),
+            commands=_app_rec.get("commands"),
+        )

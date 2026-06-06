@@ -104,6 +104,44 @@ def _flag_help(name: str, supplied: str, default) -> str:
 # feeds the component constructor (derived from a ctor state var); `ctor=False`
 # is an extra [[app.flags]] flag available for custom logic.
 def _ctor_flags(cfg: dict, component: str) -> list[dict]:
+    """Flags that feed the component constructor, in create() order.
+
+    A constructor's arguments come from `init_params` when the object declares
+    them (the awgn/ddc/no_state pattern), and otherwise from the `--state`
+    ctor vars (the simple-object pattern) — mirroring how create() is generated
+    (gh-184). A string-enum init param becomes a `choice` flag (its C arg is the
+    enum index `int`); array init params have no scalar CLI form and are
+    skipped (the body must supply them).
+    """
+    init = C.init_params(cfg, component)
+    if init:
+        out = []
+        for p in init:
+            name, ct, dflt = p[0], p[1], p[2]
+            if T.is_array_param_type(ct):
+                continue  # arrays aren't CLI scalars
+            if T.is_string_enum_type(ct):
+                out.append(
+                    {
+                        "name": name,
+                        "type": "int",
+                        "default": dflt,
+                        "help": "",
+                        "ctor": True,
+                        "choices": T.string_enum_choices(ct),
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "name": name,
+                        "type": ct,
+                        "default": dflt,
+                        "help": "",
+                        "ctor": True,
+                    }
+                )
+        return out
     state = cfg.get(component, {}).get("state", [])
     no_ctor = {s["name"] for s in state if s.get("no_ctor")}
     out = []

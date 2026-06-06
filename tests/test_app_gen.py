@@ -308,3 +308,62 @@ def test_no_step_object_falls_back_to_stub(tmp_path: Path):
     assert "<<IMPLEMENT" in c
     assert "(void)argc;" in c
     assert "sink_step" not in c
+
+
+# ── gh-184: ctor flags from init_params + [app] round-trips through apply ─────
+def test_init_param_ctor_flags(tmp_path: Path):
+    """A generator whose ctor args are init_params (no_state) gets a flag per
+    init param, and create() is called with them — not create() with no args."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("type", "int", "0"), ("fs", "double", "1e6")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="gentool", object_="gen")
+    app_c = (proj / "native/src/app/gentool.c").read_text()
+    assert "gen_create(type, fs)" in app_c
+    assert "--type" in app_c and "--fs" in app_c
+
+
+def test_app_record_survives_apply(tmp_path: Path):
+    """`jm apply` re-materialises the recorded [app], not a default one."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "a",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("type", "int", "0")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="gentool", object_="gen")
+    jm_apply(proj)  # used to clobber [app] -> a/<project>
+    rec = C.app_config(C.load(proj))
+    assert rec.get("name") == "gentool" and rec.get("object") == "gen"
+    assert (proj / "native/src/app/gentool.c").exists()
+    # no stray default app for the first object / project name
+    assert not (proj / "native/src/app/proj.c").exists()
