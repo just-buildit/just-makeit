@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-06
+
 ### Added
 
 - **`jm app` generates real CLI tools** (gh-184). Constructor flags are now
