@@ -23,6 +23,7 @@ def run(args: list[str]) -> None:
     return_type = "float _Complex"
     variable_output = False
     pass_capacity = False
+    nogil = False
     varargs = False
     batch_method = False
     doc = ""
@@ -56,6 +57,9 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--pass-capacity":
             pass_capacity = True
+            i += 1
+        elif tok == "--nogil":
+            nogil = True
             i += 1
         elif tok == "--varargs":
             varargs = True
@@ -290,5 +294,6 @@ def run(args: list[str]) -> None:
         result_fields=result_fields or None,
         varargs=varargs,
         pass_capacity=pass_capacity,
+        nogil=nogil,
         doc=doc,
     )

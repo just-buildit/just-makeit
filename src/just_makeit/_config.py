@@ -1079,6 +1079,8 @@ def _dump(cfg: dict) -> str:
                 lines.append("variable_output = true")
             if m.get("pass_capacity"):
                 lines.append("pass_capacity = true")
+            if m.get("nogil"):
+                lines.append("nogil = true")
             if m.get("none_on_empty"):
                 lines.append("none_on_empty = true")
             if m.get("batch"):

@@ -327,6 +327,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 max_out=int(m.get("max_out", 0)),
                 varargs=bool(m.get("varargs")),
                 pass_capacity=bool(m.get("pass_capacity")),
+                nogil=bool(m.get("nogil")),
                 doc=m.get("doc", ""),
                 from_apply=True,
             )
