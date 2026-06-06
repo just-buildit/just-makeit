@@ -161,28 +161,28 @@ _CONFIG_TOML = '''\
 [config]
 arg_type = "void"
 return_type = "void"
-mutable = "false"
+mutable = "true"
 no_step = "true"
 extra_link_libs = ["cjson_core"]
 extra_include_dirs = ["${CMAKE_SOURCE_DIR}/native/src/cjson"]
 
 create_impl = """
-obj->root = cJSON_Parse(json ? json : "{}");
+obj->root = cJSON_Parse("{}");
 if (!obj->root) { free(obj); return NULL; }
 """
 destroy_impl = """
 cJSON_Delete(state->root);
 """
 
-[[config.init_params]]
-name = "json"
-type = "const char *"
-default = "0"
-
 [[config.state]]
 name = "root"
 type = "cJSON *"
 opaque = true
+
+[[config.methods]]
+name = "parse"
+return_type = "void"
+params = [{name = "json", type = "const char *"}]
 
 [[config.methods]]
 name = "get_number"
@@ -389,6 +389,20 @@ def _implement_c_bodies(proj: Path):
         "    (void)state; (void)key;\n    return (double)0.0;",
         "    cJSON *item = cJSON_GetObjectItem(state->root, key);\n"
         "    return cJSON_GetNumberValue(item);",
+    )
+    # config.parse — reload the document
+    _patch(
+        src / "config" / "config_core.c",
+        "    (void)state; (void)json;",
+        "    cJSON_Delete(state->root);\n    state->root = cJSON_Parse(json);",
+    )
+    # The generated bench for a no_step object leaves create as a TODO comment
+    # but still calls destroy(obj) → undeclared `obj`. config_create() takes no
+    # args, so wire it up. (jm bench-scaffold gap for no_step objects.)
+    _patch(
+        proj / "native" / "benchmarks" / "bench_config_core.c",
+        "    /* TODO: config_state_t *obj = config_create(...); */",
+        "    config_state_t *obj = config_create();",
     )
 
 

@@ -43,7 +43,8 @@ def main() -> None:
     assert w.dtype == np.complex64 and len(w) == 3, w
 
     # vendored cJSON, opaque state, component extra_link_libs
-    c = dsp.Config('{"gain": 2.5, "rate": 4}')
+    c = dsp.Config()
+    c.parse('{"gain": 2.5, "rate": 4}')
     assert c.get_number("gain") == 2.5
     assert c.get_number("rate") == 4.0
 
