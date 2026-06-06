@@ -988,7 +988,8 @@ def _dump(cfg: dict) -> str:
                 _emit = []
                 for p in fn["params"]:
                     base = f'name = "{p["name"]}", type = "{p["type"]}"'
-                    if p.get("out"):
+                    # `mutable` is a synonym for `out`; canonicalise on dump.
+                    if p.get("out") or p.get("mutable"):
                         base += ", out = true"
                     _emit.append("{" + base + "}")
                 lines.append(f"params = [{', '.join(_emit)}]")

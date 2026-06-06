@@ -2,7 +2,26 @@
 
 ## [Unreleased]
 
-## [0.15.2] — 2026-06-05
+## [0.15.3] — 2026-06-06
+
+### Added
+
+- **`depends_on` auto-includes the dependency's header (gh-170).** A component
+    that declares `depends_on = ["lfsr"]` is already linked against
+    `lfsr_core`; now its `<comp>_core.h` also gains `#include   "lfsr/lfsr_core.h"`, so an opaque field of the dependency's type (e.g.
+    `lfsr_state_t *`) compiles without a manual edit — "if jm links it, it
+    includes it". The include is generated for fresh objects (standalone and
+    module) and injected idempotently into existing headers on `jm apply`,
+    placed among the other `#include`s ahead of the state struct.
+
+### Fixed
+
+- **`mutable` is honored as a synonym for `out` on a module-function array
+    param.** `[[module.X.functions.params]]` with `mutable = true` now emits a
+    writable `T *name` (not `const T *name`), matching how the user marks a
+    buffer the function writes through. Threaded through the `jm apply` replay
+    and canonicalised to `out` on a manifest re-dump. New
+    `tests/test_depends_on_includes.py`.
 
 ### Added
 

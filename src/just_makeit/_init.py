@@ -27,6 +27,10 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         "component": component,
         "Component": _to_title(component),
         "COMPONENT": component.upper(),
+        # Default empty; paths with `depends_on` override it (gh-170). Keeps
+        # the `<<depends_includes>>` slot from leaking on paths that have no
+        # dependency info to inject.
+        "depends_includes": "",
     }
 
 
@@ -298,6 +302,42 @@ def _inject_decls_into_core_h(
         else:
             guard = f"#endif /* {comp.upper()}_CORE_H */"
             text = text.replace(guard, f"{block}{guard}", 1)
+    if text == original:
+        return False
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def _inject_includes_into_core_h(
+    path: Path, comp: str, deps: "list[str]"
+) -> bool:
+    """Add a ``#include "<dep>/<dep>_core.h"`` per *deps* entry, idempotently.
+
+    gh-170: ``depends_on`` links a component against another's OBJECT lib, but
+    the dependent's header also *uses* the dependency's types (e.g. an opaque
+    ``lfsr_state_t *`` field), so it must include the dependency's header to
+    compile. The includes are placed after the last existing ``#include`` at
+    the top of the header; one already present is skipped. The sacred struct
+    and inline ``step()`` body are never touched. Returns True if changed."""
+    if not path.exists() or not deps:
+        return False
+    text = original = path.read_text(encoding="utf-8")
+    missing = [
+        inc for d in deps if (inc := f'#include "{d}/{d}_core.h"') not in text
+    ]
+    if not missing:
+        return False
+    block = "\n".join(missing)
+    incs = list(re.finditer(r"^#include\s+[\"<][^\n]*$", text, re.MULTILINE))
+    if incs:
+        pos = incs[-1].end()
+        text = text[:pos] + "\n" + block + text[pos:]
+    else:  # no includes yet — fall back to before the extern "C" / guard
+        anchor = "#ifdef __cplusplus"
+        if anchor in text:
+            text = text.replace(anchor, f"{block}\n\n{anchor}", 1)
+        else:
+            return False
     if text == original:
         return False
     path.write_text(text, encoding="utf-8")
@@ -629,6 +669,13 @@ def run(
         else ""
     )
     ctx["extra_include_dirs_block"] = extra_include_dirs_block
+    # gh-170: a `depends_on` component is linked AND its header is included, so
+    # opaque fields of the dependency's types (e.g. `lfsr_state_t *`) compile
+    # without a manual edit. Each include is prefixed with a newline so it
+    # sits cleanly after the (possibly empty) perf include on the same line.
+    ctx["depends_includes"] = "".join(
+        f'\n#include "{d}/{d}_core.h"' for d in depends_on
+    )
 
     def r(tmpl):
         return R.render(tmpl, ctx)
