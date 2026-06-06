@@ -104,6 +104,44 @@ def _flag_help(name: str, supplied: str, default) -> str:
 # feeds the component constructor (derived from a ctor state var); `ctor=False`
 # is an extra [[app.flags]] flag available for custom logic.
 def _ctor_flags(cfg: dict, component: str) -> list[dict]:
+    """Flags that feed the component constructor, in create() order.
+
+    A constructor's arguments come from `init_params` when the object declares
+    them (the awgn/ddc/no_state pattern), and otherwise from the `--state`
+    ctor vars (the simple-object pattern) — mirroring how create() is generated
+    (gh-184). A string-enum init param becomes a `choice` flag (its C arg is the
+    enum index `int`); array init params have no scalar CLI form and are
+    skipped (the body must supply them).
+    """
+    init = C.init_params(cfg, component)
+    if init:
+        out = []
+        for p in init:
+            name, ct, dflt = p[0], p[1], p[2]
+            if T.is_array_param_type(ct):
+                continue  # arrays aren't CLI scalars
+            if T.is_string_enum_type(ct):
+                out.append(
+                    {
+                        "name": name,
+                        "type": "int",
+                        "default": dflt,
+                        "help": "",
+                        "ctor": True,
+                        "choices": T.string_enum_choices(ct),
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "name": name,
+                        "type": ct,
+                        "default": dflt,
+                        "help": "",
+                        "ctor": True,
+                    }
+                )
+        return out
     state = cfg.get(component, {}).get("state", [])
     no_ctor = {s["name"] for s in state if s.get("no_ctor")}
     out = []
@@ -134,6 +172,20 @@ def _argparse_block(flags: list[dict]) -> str:
     """Build p.add_argument(...) lines for each flag, indented 4 sp."""
     lines = []
     for f in flags:
+        chs = f.get("choices")
+        if chs:
+            # choice flag: argparse choices=[...], string-valued
+            dflt = f["default"] if f["default"] in chs else chs[0]
+            helptext = _flag_help(f["name"], f["help"], dflt)
+            choices_lit = ", ".join(repr(c) for c in chs)
+            lines.append(
+                f"    p.add_argument(\n"
+                f'        "--{f["name"]}", choices=[{choices_lit}],'
+                f" default={dflt!r},\n"
+                f'        help="{helptext}",\n'
+                f"    )"
+            )
+            continue
         pytype = _PYTYPE.get(f["type"], "str")
         pydef = _py_default(f["default"]) if f["default"] else None
         helptext = _flag_help(f["name"], f["help"], pydef)
@@ -184,11 +236,60 @@ _PY_WRITE = (
 )
 
 
+_PY_PACK_WRITE = (
+    "    _st = args.sample_type\n"
+    '    if _st == "cf32":\n'
+    "        _buf = out.astype(np.complex64).tobytes()\n"
+    '    elif _st == "cf64":\n'
+    "        _buf = out.astype(np.complex128).tobytes()\n"
+    "    else:\n"
+    "        _iq = np.empty(out.size * 2, dtype=np.float64)\n"
+    "        _iq[0::2] = out.real\n"
+    "        _iq[1::2] = out.imag\n"
+    "        _iq = np.clip(_iq, -1.0, 1.0)\n"
+    '        _scale = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
+    '                  "ci8": 127.0}[_st]\n'
+    '        _dt = {"ci32": np.int32, "ci16": np.int16,\n'
+    '               "ci8": np.int8}[_st]\n'
+    "        _buf = (_iq * _scale).astype(_dt).tobytes()\n"
+    "    if args.output:\n"
+    '        with open(args.output, "wb") as _f:\n'
+    "            _f.write(_buf)\n"
+    "    else:\n"
+    "        sys.stdout.buffer.write(_buf)"
+)
+
+
 def _py_io_loop(
-    shape: str, component: str, Component: str, arg_t: str, ret_t: str
+    shape: str,
+    component: str,
+    Component: str,
+    arg_t: str,
+    ret_t: str,
+    sample_type: bool = False,
 ) -> str:
     """4-space-indented Python body for the given object shape."""
     create = f"    obj = {Component}(<<py_create_args>>)"
+    if sample_type and shape == "generator":
+        return "\n".join(
+            [
+                create,
+                "    out = np.asarray(\n"
+                f"        obj.steps(args.count), dtype={_np_dtype(ret_t)}\n"
+                "    )",
+                _PY_PACK_WRITE,
+            ]
+        )
+    if sample_type and shape == "blockwise":
+        return "\n".join(
+            [
+                _py_read(_np_dtype_of(arg_t)),
+                create,
+                "    out = np.asarray("
+                f"obj.steps(data), dtype={_np_dtype_of(ret_t)})",
+                _PY_PACK_WRITE,
+            ]
+        )
     if shape == "scalar":
         return "\n".join(
             [
@@ -258,7 +359,26 @@ def _c_argv_parser(
     decls = []
     clauses = []
     usage_parts = []
+    help_rows = []  # (flag display, help text) for the --help screen
     for f in flags:
+        chs = f.get("choices")
+        if chs:
+            # choice flag: parse the string arg to its index via jm_parse_<name>
+            didx = chs.index(f["default"]) if f.get("default") in chs else 0
+            decls.append(f"    int {f['name']} = {didx};")
+            clauses.append(
+                f'if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
+                f"            {f['name']} = jm_parse_{f['name']}(argv[++i]);\n"
+                f"            if ({f['name']} < 0) {{\n"
+                f'                fprintf(stderr, "error: --{f["name"]} must'
+                f' be one of: {" ".join(chs)}\\n");\n'
+                f"                return 2;\n"
+                f"            }}\n"
+                f"        }}"
+            )
+            usage_parts.append(f"[--{f['name']} {'|'.join(chs)}]")
+            help_rows.append((f"--{f['name']} {'|'.join(chs)}", f["help"]))
+            continue
         ct = f["type"]
         if ct not in _C_PARSE:
             continue  # not CLI-parseable; ctor uses its default literal
@@ -270,6 +390,7 @@ def _c_argv_parser(
             f"        }}"
         )
         usage_parts.append(f"[--{f['name']} V]")
+        help_rows.append((f"--{f['name']} V", f["help"]))
 
     if want_in:
         decls.append("    const char *in_path = NULL;")
@@ -280,6 +401,7 @@ def _c_argv_parser(
             "        }"
         )
         usage_parts.append("[--input FILE]")
+        help_rows.append(("--input, -i FILE", "input file (default: stdin)"))
     if want_out:
         decls.append("    const char *out_path = NULL;")
         clauses.append(
@@ -289,8 +411,29 @@ def _c_argv_parser(
             "        }"
         )
         usage_parts.append("[--output FILE]")
+        help_rows.append(
+            ("--output, -o FILE", "output file (default: stdout)")
+        )
 
     usage = f"usage: {name} " + " ".join(usage_parts)
+    # --help/-h: print usage + a per-flag description table, then exit 0.
+    help_lines = [usage]
+    for disp, htext in help_rows:
+        if not htext:
+            help_lines.append(f"  {disp}")
+        elif len(disp) <= 24:
+            help_lines.append(f"  {disp:<26}{htext}")
+        else:
+            help_lines.append(f"  {disp}  {htext}")
+    help_body = "\\n".join(help_lines)
+    if clauses:
+        clauses.insert(
+            0,
+            'if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {\n'
+            f'            fputs("{help_body}\\n", stdout);\n'
+            "            return 0;\n"
+            "        }",
+        )
     if clauses:
         loop = (
             "    for (int i = 1; i < argc; i++) {\n"
@@ -341,10 +484,137 @@ def _c_argv_parser(
 
 _APP_BLOCK = 4096
 
+# ── output sample-type conversion (gh-184, Tier 2.2) ─────────────────────────
+# For a complex-float (cf32) output stream, `jm app` offers a built-in
+# `--sample_type` choice flag that converts each block to the chosen wire type
+# on write. The choice index drives jm_convert_block directly (0=cf32 … 4=ci8),
+# so no separate enum is needed; full-scale for the integer types is ±1.0.
+_SAMPLE_TYPES = ["cf32", "cf64", "ci32", "ci16", "ci8"]
 
-def _c_io_loop(shape: str, component: str, arg_t: str, ret_t: str) -> str:
-    """4-space-indented C body for the given object shape."""
+_SAMPLE_TYPE_C = """\
+#include <complex.h>
+
+/* Clamp v to [-1, 1] and scale to a signed integer of full-scale fs_val. */
+static long
+jm_q(float v, double fs_val)
+{
+    if (v > 1.0f) v = 1.0f;
+    if (v < -1.0f) v = -1.0f;
+    return (long)(v * fs_val);
+}
+
+/* Convert a cf32 block to the selected wire type into `bytes` (interleaved
+   I/Q); returns bytes written.  0=cf32 1=cf64 2=ci32 3=ci16 4=ci8. */
+static size_t
+jm_convert_block(const float _Complex *in, size_t n, int st,
+                 unsigned char *bytes)
+{
+    switch (st) {
+    case 1: {
+        double _Complex *o = (double _Complex *)bytes;
+        for (size_t i = 0; i < n; i++)
+            o[i] = (double)crealf(in[i]) + (double)cimagf(in[i]) * I;
+        return n * sizeof(double _Complex);
+    }
+    case 2: {
+        int32_t *o = (int32_t *)bytes;
+        for (size_t i = 0; i < n; i++) {
+            o[2 * i] = (int32_t)jm_q(crealf(in[i]), 2147483647.0);
+            o[2 * i + 1] = (int32_t)jm_q(cimagf(in[i]), 2147483647.0);
+        }
+        return n * 2 * sizeof(int32_t);
+    }
+    case 3: {
+        int16_t *o = (int16_t *)bytes;
+        for (size_t i = 0; i < n; i++) {
+            o[2 * i] = (int16_t)jm_q(crealf(in[i]), 32767.0);
+            o[2 * i + 1] = (int16_t)jm_q(cimagf(in[i]), 32767.0);
+        }
+        return n * 2 * sizeof(int16_t);
+    }
+    case 4: {
+        int8_t *o = (int8_t *)bytes;
+        for (size_t i = 0; i < n; i++) {
+            o[2 * i] = (int8_t)jm_q(crealf(in[i]), 127.0);
+            o[2 * i + 1] = (int8_t)jm_q(cimagf(in[i]), 127.0);
+        }
+        return n * 2 * sizeof(int8_t);
+    }
+    default: /* 0 = cf32: raw passthrough */
+        memcpy(bytes, in, n * sizeof(float _Complex));
+        return n * sizeof(float _Complex);
+    }
+}
+"""
+
+
+def _is_cf32_out(ret_t: str) -> bool:
+    """True if the output element type is single-precision complex (cf32)."""
+    elem = T.array_elem_ctype(ret_t).replace("complex", "_Complex")
+    return " ".join(elem.split()) == "float _Complex"
+
+
+def _c_choice_parsers(flags: list[dict]) -> str:
+    """Generate a `jm_parse_<name>` string→index helper per choice flag."""
+    out = []
+    for f in flags:
+        chs = f.get("choices")
+        if not chs:
+            continue
+        body = "".join(
+            f'    if (!strcmp(s, "{c}")) return {i};\n'
+            for i, c in enumerate(chs)
+        )
+        out.append(
+            f"static int\njm_parse_{f['name']}(const char *s)\n{{\n"
+            f"{body}    return -1;\n}}"
+        )
+    return "\n\n".join(out)
+
+
+def _c_io_loop(
+    shape: str,
+    component: str,
+    arg_t: str,
+    ret_t: str,
+    sample_type: bool = False,
+) -> str:
+    """4-space-indented C body for the given object shape.
+
+    When `sample_type` is set (a cf32 output stream with `--sample_type`), the
+    block is converted to the chosen wire type via jm_convert_block before the
+    write, sized for the widest type (cf64).
+    """
     n = _APP_BLOCK
+    if shape == "blockwise" and sample_type:
+        ie = T.array_elem_ctype(arg_t)
+        return (
+            f"    {ie} inbuf[{n}];\n"
+            f"    float _Complex outbuf[{n}];\n"
+            f"    unsigned char jm_bytes[{n} * sizeof(double _Complex)];\n"
+            f"    size_t k;\n"
+            f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
+            f"        {component}_steps(state, inbuf, k, outbuf);\n"
+            f"        size_t nb = jm_convert_block(outbuf, k, sample_type,"
+            f" jm_bytes);\n"
+            f"        fwrite(jm_bytes, 1, nb, out);\n"
+            f"    }}"
+        )
+    if shape == "generator" and sample_type:
+        return (
+            f"    float _Complex outbuf[{n}];\n"
+            f"    unsigned char jm_bytes[{n} * sizeof(double _Complex)];\n"
+            f"    size_t produced = 0;\n"
+            f"    while (produced < count) {{\n"
+            f"        size_t k = (count - produced) < {n}\n"
+            f"                       ? (count - produced) : (size_t){n};\n"
+            f"        {component}_steps(state, outbuf, k);\n"
+            f"        size_t nb = jm_convert_block(outbuf, k, sample_type,"
+            f" jm_bytes);\n"
+            f"        fwrite(jm_bytes, 1, nb, out);\n"
+            f"        produced += k;\n"
+            f"    }}"
+        )
     if shape == "scalar":
         return (
             f"    {arg_t} x;\n"
@@ -645,6 +915,7 @@ def _build_cmd_ctx(
         "project": pkg,
         "package": pkg,
         "version": C.project_version(cfg),
+        "helpers": "",
         "command_handlers": _c_command_handlers(commands),
         "dispatch": _c_dispatch(commands),
         "usage": _cmd_usage(name, commands),
@@ -691,14 +962,44 @@ def _build_ctx(
                     "consumed": True,
                 }
             )
-        argparse_flags = parse_flags
+        argparse_flags = list(parse_flags)
+        # gh-184 Tier 2.2: a cf32 output stream gets a built-in --sample_type
+        # choice flag + convert-on-write, in every face.
+        sample_type = _is_cf32_out(ret_t) and shape in (
+            "generator",
+            "blockwise",
+        )
+        if sample_type:
+            st_flag = {
+                "name": "sample_type",
+                "type": "choice",
+                "default": "cf32",
+                "choices": _SAMPLE_TYPES,
+                "help": "output wire sample type",
+                "ctor": False,
+                "consumed": True,
+            }
+            parse_flags.append(st_flag)
+            argparse_flags.append(st_flag)
         arg_parse_block = _c_argv_parser(
             name, parse_flags, want_in=want_in, want_out=want_out
         )
         create_call = _create_call(parsed=True)
-        io_loop = _c_io_loop(shape, component, arg_t, ret_t)
+        io_loop = _c_io_loop(
+            shape, component, arg_t, ret_t, sample_type=sample_type
+        )
+        helpers = _c_choice_parsers(parse_flags)
+        if sample_type:
+            helpers = (helpers + "\n\n" if helpers else "") + _SAMPLE_TYPE_C
         py_io_loop = R.render(
-            _py_io_loop(shape, component, Component, arg_t, ret_t),
+            _py_io_loop(
+                shape,
+                component,
+                Component,
+                arg_t,
+                ret_t,
+                sample_type=sample_type,
+            ),
             {"py_create_args": _py_create_args(all_flags)},
         )
         tail = []
@@ -732,6 +1033,7 @@ def _build_ctx(
             {"py_create_args": _py_create_args(all_flags)},
         )
         cleanup_tail = ""
+        helpers = ""
 
     return {
         "name": name,
@@ -744,6 +1046,7 @@ def _build_ctx(
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,
         "io_loop": io_loop,
+        "helpers": helpers,
         "app_create_line": f"    {component}_state_t *state = {create_call};",
         "cleanup_tail": cleanup_tail,
     }

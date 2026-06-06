@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-06
+
+### Added
+
+- **`jm app` generates real CLI tools** (gh-184). Constructor flags are now
+    derived from `init_params` (the `no_state`/awgn/ddc pattern), mirroring the
+    #69 core contract, instead of only `--state` ctor vars — so a generator like
+    `synth_create(type, fs, freq, snr, seed)` gets a flag per arg and the app
+    calls `create()` correctly. A cf32 generator/blockwise app gains a built-in
+    `--sample_type cf32|cf64|ci32|ci16|ci8` choice flag that converts each block
+    to the chosen interleaved-I/Q wire type on write (byte-identical across the
+    C / console / pep723 faces). Adds a generic choice-flag mechanism
+    (`jm_parse_<name>` in C, `argparse(choices=…)` in Python) and a real
+    `--help`/`-h` on the C face. The `[app]` record now round-trips through
+    `jm apply` (no longer reset to `<project>`/first-object).
+- **jm-version skew warning** (gh-183). `[project].jm_version` records the
+    generating jm version (stamped by `jm new`, and monotonically by `jm apply` —
+    an older CLI never downgrades the record). Every mutating command and
+    `jm status` warn when the running CLI differs, turning the silent
+    "stale CLI emits old-format glue" footgun into an immediate, actionable
+    message.
+
 ## [0.15.9] — 2026-06-06
 
 ### Fixed

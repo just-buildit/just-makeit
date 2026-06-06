@@ -112,6 +112,14 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+    # gh-183: surface jm-version skew on stderr (keeps stdout/JSON clean).
+    _rec, _run = C.jm_version(cfg), C.jm_cli_version()
+    if not as_json and _rec and _run != "unknown" and _rec != _run:
+        print(
+            f"warning: project generated with just-makeit {_rec}, running "
+            f"{_run} (gh-183) — results may not reflect the pinned version.",
+            file=sys.stderr,
+        )
     if not C.components(cfg) and not C.modules(cfg):
         if as_json:
             print(json.dumps({"entries": [], "ok": 0}))

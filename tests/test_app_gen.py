@@ -308,3 +308,186 @@ def test_no_step_object_falls_back_to_stub(tmp_path: Path):
     assert "<<IMPLEMENT" in c
     assert "(void)argc;" in c
     assert "sink_step" not in c
+
+
+# ── gh-184: ctor flags from init_params + [app] round-trips through apply ─────
+def test_init_param_ctor_flags(tmp_path: Path):
+    """A generator whose ctor args are init_params (no_state) gets a flag per
+    init param, and create() is called with them — not create() with no args."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("type", "int", "0"), ("fs", "double", "1e6")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="gentool", object_="gen")
+    app_c = (proj / "native/src/app/gentool.c").read_text()
+    assert "gen_create(type, fs)" in app_c
+    assert "--type" in app_c and "--fs" in app_c
+
+
+def test_app_record_survives_apply(tmp_path: Path):
+    """`jm apply` re-materialises the recorded [app], not a default one."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "a",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("type", "int", "0")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="gentool", object_="gen")
+    jm_apply(proj)  # used to clobber [app] -> a/<project>
+    rec = C.app_config(C.load(proj))
+    assert rec.get("name") == "gentool" and rec.get("object") == "gen"
+    assert (proj / "native/src/app/gentool.c").exists()
+    # no stray default app for the first object / project name
+    assert not (proj / "native/src/app/proj.c").exists()
+
+
+# ── gh-184 Tier 2: dtype output (--sample_type), choice flags, --help ─────────
+def _gen_proj(tmp_path: Path):
+    """A cf32 generator object (the wavegen shape)."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("freq", "double", "0.0")],
+        arg_type="void",
+        return_type="float _Complex",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    return proj
+
+
+def test_sample_type_dtype_output_c(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="c", name="tool", object_="gen")
+    c = (proj / "native/src/app/tool.c").read_text()
+    assert "jm_convert_block(outbuf, k, sample_type" in c
+    assert "jm_parse_sample_type" in c
+    assert "[--sample_type cf32|cf64|ci32|ci16|ci8]" in c
+    # the convert helper + clamp are emitted before main
+    assert "static size_t\njm_convert_block(" in c
+    assert c.index("jm_convert_block(const") < c.index("int\nmain(")
+
+
+def test_sample_type_dtype_output_python(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="pep723", name="tool", object_="gen")
+    cli = (proj / "src/proj/cli.py").read_text()
+    assert "choices=['cf32', 'cf64', 'ci32', 'ci16', 'ci8']" in cli
+    assert "_buf = (_iq * _scale).astype(_dt).tobytes()" in cli
+    import py_compile
+
+    py_compile.compile(str(proj / "src/proj/cli.py"), doraise=True)
+    py_compile.compile(str(proj / "tool.py"), doraise=True)
+
+
+def test_c_app_has_help(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="c", name="tool", object_="gen")
+    c = (proj / "native/src/app/tool.c").read_text()
+    assert '!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")' in c
+    assert "fputs(" in c and "return 0;" in c
+
+
+def test_sample_type_blockwise(tmp_path: Path):
+    """A cf32 block (blockwise) app also gets --sample_type convert-on-write."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "flt",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float _Complex[]",
+        return_type="float _Complex[]",
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="t", object_="flt")
+    c = (proj / "native/src/app/t.c").read_text()
+    assert "jm_convert_block(outbuf, k, sample_type" in c
+
+
+def test_no_sample_type_for_real_output(tmp_path: Path):
+    """A non-cf32 (real float) generator gets no --sample_type machinery."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "g",
+        None,
+        no_state=True,
+        init_params=[("f", "double", "1.0")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="t", object_="g")
+    c = (proj / "native/src/app/t.c").read_text()
+    assert "jm_convert_block" not in c and "sample_type" not in c
+
+
+def test_ctor_flags_string_enum_and_array(tmp_path: Path):
+    """_ctor_flags: string-enum init param → choice flag; array → skipped."""
+    from just_makeit import _app
+
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "se",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        init_params=[
+            ("mode", "string_enum:tone,noise", "tone"),
+            ("taps", "float[]", ""),
+            ("n", "int", "8"),
+        ],
+        arg_type="float",
+        return_type="float",
+    )
+    cfg = C.load(proj)
+    flags = _app._ctor_flags(cfg, "se")
+    names = [f["name"] for f in flags]
+    assert "mode" in names and "n" in names
+    assert "taps" not in names  # array init params have no scalar CLI form
+    mode = next(f for f in flags if f["name"] == "mode")
+    assert mode.get("choices") == ["tone", "noise"]
