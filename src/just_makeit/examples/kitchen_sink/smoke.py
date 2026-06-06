@@ -4,6 +4,8 @@ Run with PYTHONPATH=<proj>/src. Exercises every object flavor through the
 generated Python bindings.
 """
 
+import os
+
 import numpy as np
 
 import kitchen_sink.dsp as dsp
@@ -18,8 +20,8 @@ def main() -> None:
     assert g.gain == 3.0
 
     # generator (void -> complex64), mutable
-    nco = dsp.NCO(0, 2**30)
-    o = nco.steps(4)
+    lfo = dsp.Lfo(0, 2**30)
+    o = lfo.steps(4)
     assert o.dtype == np.complex64 and len(o) == 4, o
 
     # consumer (float -> void) + field property
@@ -42,7 +44,17 @@ def main() -> None:
     assert c.get_number("gain") == 2.5
     assert c.get_number("rate") == 4.0
 
-    print("kitchen_sink smoke: all object flavors OK")
+    # the real-doppler-linked tone (only when doppler was available)
+    if os.environ.get("KITCHEN_SINK_DOPPLER"):
+        import kitchen_sink as ks
+
+        tone = ks.Tone(norm_freq=0.25)  # quarter-circle steps: 1, j, -1, -j
+        got = [tone.step() for _ in range(4)]
+        want = [1 + 0j, 0 + 1j, -1 + 0j, 0 - 1j]
+        assert all(abs(g - w) < 1e-6 for g, w in zip(got, want)), got
+        print("kitchen_sink smoke: all flavors + real doppler link OK")
+    else:
+        print("kitchen_sink smoke: all object flavors OK (doppler skipped)")
 
 
 if __name__ == "__main__":

@@ -140,19 +140,19 @@ _MIXER_TOML = '''\
 arg_type = "float _Complex"
 return_type = "float _Complex"
 mutable = "true"
-depends_on = ["nco"]
+depends_on = ["lfo"]
 
 create_impl = """
-obj->osc = nco_create(0, 858993459u);
+obj->osc = lfo_create(0, 858993459u);
 if (!obj->osc) { free(obj); return NULL; }
 """
 destroy_impl = """
-nco_destroy(state->osc);
+lfo_destroy(state->osc);
 """
 
 [[mixer.state]]
 name = "osc"
-type = "nco_state_t *"
+type = "lfo_state_t *"
 opaque = true
 '''
 
@@ -190,6 +190,63 @@ params = [{name = "key", type = "const char *"}]
 '''
 
 
+# ── linking the real doppler C library (opaque nco_state_t*), conditional ─────
+# Reuses nco_tone's provisioning + skip harness rather than duplicating it.
+_TONE_TOML = '''\
+[tone]
+arg_type     = "void"
+return_type  = "float _Complex"
+mutable      = "true"
+extra_link_libs = ["doppler::doppler_lib"]
+create_impl  = """
+obj->nco = nco_create(norm_freq, 0);
+if (!obj->nco) { free(obj); return NULL; }
+"""
+destroy_impl = """
+nco_destroy(state->nco);
+"""
+
+[[tone.state]]
+name    = "norm_freq"
+type    = "double"
+default = "0.0"
+
+[[tone.state]]
+name   = "nco"
+type   = "nco_state_t *"
+opaque = true
+'''
+
+_TONE_STEP_OLD = (
+    "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+)
+_TONE_STEP_NEW = """\
+    uint32_t phase;
+    nco_steps_u32(state->nco, 1, &phase);
+    float angle = (float)phase
+                  * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
+    return cosf(angle) + I * sinf(angle);"""
+
+
+def _doppler_prefix():
+    """Find/provision the real doppler via nco_tone's harness (or None)."""
+    import importlib.util
+
+    p = HERE.parent / "nco_tone" / "test.py"
+    spec = importlib.util.spec_from_file_location("_nco_tone_dop", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod._find_doppler_prefix()
+
+
+def _doppler_dir(prefix: str) -> str:
+    prefix_path = Path(prefix)
+    for rel in ("lib/cmake/doppler", "lib64/cmake/doppler", "."):
+        if (prefix_path / rel / "doppler-config.cmake").exists():
+            return str(prefix_path / rel)
+    return prefix
+
+
 def _patch(path: Path, old: str, new: str):
     text = path.read_text(encoding="utf-8")
     if new.strip() and new in text:
@@ -209,14 +266,14 @@ def _implement_c_bodies(proj: Path):
         "    return (float)x;",
         "    return state->gain * x;",
     )
-    # nco — mutable generator (needs <math.h>)
+    # lfo — mutable generator (needs <math.h>)
     _patch(
-        inc / "nco" / "nco_core.h",
+        inc / "lfo" / "lfo_core.h",
         '#include "clib_common.h"',
         '#include "clib_common.h"\n#include <math.h>',
     )
     _patch(
-        inc / "nco" / "nco_core.h",
+        inc / "lfo" / "lfo_core.h",
         "    (void)state; /* TODO: implement */\n    return (float complex)0;",
         "    state->phase += state->inc;\n"
         "    float a = (float)state->phase\n"
@@ -236,12 +293,12 @@ def _implement_c_bodies(proj: Path):
         "    float m = fabsf(x);\n    if (m > state->peak)\n"
         "        state->peak = m;",
     )
-    # mixer — uses the sibling nco (via depends_on)
+    # mixer — uses the sibling lfo (via depends_on)
     _patch(
         inc / "mixer" / "mixer_core.h",
         "    (void)state; /* TODO: implement using state variables */\n"
         "    return (float complex)x;",
-        "    return x * nco_step(state->osc);",
+        "    return x * lfo_step(state->osc);",
     )
     # resamp — variable_output + pass_capacity + nogil (decimate by 2)
     _patch(
@@ -299,17 +356,18 @@ def run(root: Path) -> None:
         return_type="float",
     )
     q(jm_property, proj, "gain", "gain", "dsp", "float", True)
-    # generator
+    # generator — named `lfo`, not `nco`, to avoid clashing with the doppler
+    # `nco` header that the optional `tone` object links below.
     q(
         jm_object,
         proj,
-        "nco",
+        "lfo",
         module="dsp",
         state_vars=[("phase", "uint32_t", "0"), ("inc", "uint32_t", "0")],
         arg_type="void",
         return_type="float _Complex",
         mutable=True,
-        class_name="NCO",
+        class_name="Lfo",
     )
     # consumer + field property
     q(
@@ -347,39 +405,73 @@ def run(root: Path) -> None:
         nogil=True,
     )
 
-    # vendor cJSON under native/src/cjson and register as a c_dep
+    # vendor cJSON under native/src/cjson (a [project] c_deps OBJECT lib)
     cjson = proj / "native" / "src" / "cjson"
     cjson.mkdir(parents=True, exist_ok=True)
     (cjson / "cJSON.h").write_text(_CJSON_H, encoding="utf-8")
     (cjson / "cJSON.c").write_text(_CJSON_C, encoding="utf-8")
     (cjson / "CMakeLists.txt").write_text(_CJSON_CMAKE, encoding="utf-8")
+
+    # Optional: link the REAL doppler C library via a standalone `tone` object
+    # with an opaque doppler nco_state_t*. Conditional on doppler being
+    # available (reuses nco_tone's provisioning); skipped cleanly otherwise so
+    # the rest of the example always runs.
+    doppler_prefix = _doppler_prefix()
+    if not doppler_prefix:
+        print("kitchen_sink: doppler not found — skipping the `tone` object")
+
+    # All [project] manifest edits go through C.save FIRST, before writing the
+    # raw TOML fragments below — a C.save re-dumps every fragment, and an older
+    # jm drops heredoc bodies (create_impl/…) on the round-trip.
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = ["cjson"]
+    if doppler_prefix:
+        cfg["project"]["find_packages"] = ["Doppler"]
     C.save(proj, cfg)
 
-    # mixer (depends_on) + config (vendored cJSON) — TOML-only keys
+    # objects needing TOML-only keys (opaque, depends_on, component
+    # extra_link_libs, create_impl) — written as raw fragments, last.
     (proj / "objects" / "mixer.toml").write_text(_MIXER_TOML, encoding="utf-8")
     (proj / "objects" / "config.toml").write_text(
         _CONFIG_TOML, encoding="utf-8"
     )
+    objs = '["gain", "lfo", "meter", "resamp", "mixer", "config"]'
+    if doppler_prefix:
+        (proj / "objects" / "tone.toml").write_text(
+            _TONE_TOML, encoding="utf-8"
+        )
     mod = proj / "modules" / "dsp.toml"
-    text = mod.read_text(encoding="utf-8")
-    text = text.replace(
-        'objects = ["gain", "nco", "meter", "resamp"]',
-        'objects = ["gain", "nco", "meter", "resamp", "mixer", "config"]',
+    mod.write_text(
+        mod.read_text(encoding="utf-8").replace(
+            '["gain", "lfo", "meter", "resamp"]', objs
+        ),
+        encoding="utf-8",
     )
-    mod.write_text(text, encoding="utf-8")
 
     q(jm_apply, proj)
 
     # the only hand step: implement the C algorithm bodies
     _implement_c_bodies(proj)
 
+    if doppler_prefix:
+        tone_h = proj / "native/inc/tone/tone_core.h"
+        _patch(
+            tone_h,
+            '#include "clib_common.h"',
+            '#include "clib_common.h"\n#include "nco/nco_core.h"\n'
+            "#include <math.h>",
+        )
+        _patch(tone_h, _TONE_STEP_OLD, _TONE_STEP_NEW)
+        tone_cmake = (proj / "native/src/tone/CMakeLists.txt").read_text(
+            "utf-8"
+        )
+        assert "doppler::doppler_lib" in tone_cmake  # links the real doppler
+
     # assert the integration wiring jm produced ----------------------------
     mixer_h = (proj / "native/inc/mixer/mixer_core.h").read_text("utf-8")
-    assert '#include "nco/nco_core.h"' in mixer_h  # depends_on auto-include
+    assert '#include "lfo/lfo_core.h"' in mixer_h  # depends_on auto-include
     mixer_cmake = (proj / "native/src/mixer/CMakeLists.txt").read_text("utf-8")
-    assert mixer_cmake.count("nco_core") >= 3  # PUBLIC + test + bench (gh-174)
+    assert mixer_cmake.count("lfo_core") >= 3  # PUBLIC + test + bench (gh-174)
     cfg_cmake = (proj / "native/src/config/CMakeLists.txt").read_text("utf-8")
     assert "cjson_core" in cfg_cmake  # component extra_link_libs
     resamp_ext = (proj / "native/src/dsp/dsp_ext_resamp.c").read_text("utf-8")
@@ -387,21 +479,23 @@ def run(root: Path) -> None:
 
     # build + C tests -------------------------------------------------------
     build = proj / "build"
-    _cmd(
-        [
-            "cmake",
-            "-S",
-            str(proj),
-            "-B",
-            str(build),
-            "-DBUILD_PYTHON=ON",
-            *_cmake_gen(),
-        ],
-        cwd=proj,
-    )
+    cmake_args = [
+        "cmake",
+        "-S",
+        str(proj),
+        "-B",
+        str(build),
+        "-DBUILD_PYTHON=ON",
+        *_cmake_gen(),
+    ]
+    if doppler_prefix:
+        cmake_args.append(f"-DDoppler_DIR={_doppler_dir(doppler_prefix)}")
+    _cmd(cmake_args, cwd=proj)
     _cmd(["cmake", "--build", str(build), "-j"], cwd=proj)
     _cmd(["ctest", "--test-dir", str(build), "--output-on-failure"], cwd=proj)
 
     # Python smoke test -----------------------------------------------------
     env = {**os.environ, "PYTHONPATH": str(proj / "src")}
+    if doppler_prefix:
+        env["KITCHEN_SINK_DOPPLER"] = "1"
     _cmd([sys.executable, str(HERE / "smoke.py")], cwd=proj, env=env)
