@@ -827,7 +827,10 @@ def _sync_aggregates(
         # gh-170: each module object's own _core.h gains its depends_on
         # includes (the per-object headers are otherwise sacred / never
         # refreshed on apply).
-        from ._init import _inject_includes_into_core_h
+        from ._init import (
+            _inject_includes_into_core_h,
+            _inject_object_core_cmake,
+        )
 
         for obj in C.module_objects(cfg, mod):
             obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
@@ -835,6 +838,20 @@ def _sync_aggregates(
                 obj_h, obj, C.depends_on(cfg, obj)
             ):
                 updated.append(obj_h)
+            # gh-174: a non-collocated module object's OBJECT-core CMakeLists is
+            # glue apply never re-renders, so surgically add its component-level
+            # extra_link_libs / extra_include_dirs (the module-level test/bench
+            # block is left intact). Collocated objects share the module
+            # CMakeLists (handled above).
+            if obj != mod:
+                obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
+                if _inject_object_core_cmake(
+                    obj_cmake,
+                    obj,
+                    C.component_extra_link_libs(cfg, obj),
+                    C.component_extra_include_dirs(cfg, obj),
+                ):
+                    updated.append(obj_cmake)
 
     # Standalone components: the sacred/glue split. Glue files (binding,
     # CMake, type stub) regenerate from the manifest on every apply, so a

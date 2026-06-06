@@ -77,3 +77,58 @@ def test_apply_no_extra_libs_leaves_no_object_core_link(tmp_path):
     )
     assert "<<" not in cmake  # placeholder resolved to empty
     assert "target_link_libraries(ddc_core PUBLIC" not in cmake
+
+
+# ── gh-174: component-level extra_link_libs reach a module object via apply ───
+def test_apply_injects_module_object_component_link(tmp_path):
+    dest = tmp_path / "p"
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "mymod")
+    _silent(
+        object_run,
+        dest,
+        "myobj",
+        module="mymod",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    cfg = C.load(dest)
+    cfg["myobj"]["extra_link_libs"] = ["cjson"]
+    cfg["myobj"]["extra_include_dirs"] = ["${CMAKE_SOURCE_DIR}/vendor"]
+    C.save(dest, cfg)
+    _silent(apply_run, dest)
+    cmake = (dest / "native/src/myobj/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "target_link_libraries(myobj_core PUBLIC" in cmake
+    assert "cjson" in cmake
+    assert "${CMAKE_SOURCE_DIR}/vendor" in cmake
+    # idempotent — second apply adds nothing
+    before = cmake
+    _silent(apply_run, dest)
+    assert (dest / "native/src/myobj/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    ) == before
+
+
+def test_apply_no_component_libs_leaves_module_object_cmake(tmp_path):
+    dest = tmp_path / "p"
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "mymod")
+    _silent(
+        object_run,
+        dest,
+        "myobj",
+        module="mymod",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    before = (dest / "native/src/myobj/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    _silent(apply_run, dest)
+    assert (dest / "native/src/myobj/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    ) == before  # no-op when no component libs
