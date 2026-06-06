@@ -865,7 +865,10 @@ def set_app(
     else:
         app["object"] = object_
         app.pop("function", None)
-        app.pop("module", None)
+        if module:
+            app["module"] = module  # owning module (gh-187 console scoping)
+        else:
+            app.pop("module", None)
     cfg["app"] = app
     return cfg
 

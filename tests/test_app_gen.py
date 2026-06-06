@@ -233,7 +233,8 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     jm_app(proj, target="c", name="addtool", function_="addn")
     jm_app(proj, target="console", name="addtool", function_="addn")
     c = (proj / "native" / "src" / "app" / "addtool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    # gh-187: a module-function console face lives under its module subpackage.
+    cli = (proj / "src" / "proj" / "mathx" / "cli.py").read_text()
     # C: includes the module core, parses each param, calls + prints result.
     assert "mathx/mathx_core.h" in c
     assert "float a = " in c and '"--a"' in c
@@ -491,3 +492,66 @@ def test_ctor_flags_string_enum_and_array(tmp_path: Path):
     assert "taps" not in names  # array init params have no scalar CLI form
     mode = next(f for f in flags if f["name"] == "mode")
     assert mode.get("choices") == ["tone", "noise"]
+
+
+# ── gh-187: object apps link depends_on cores + libm; module console scoping ──
+def test_object_app_links_depends_on_cores(tmp_path: Path):
+    """An object with depends_on gets those cores + libm on the app link line
+    (OBJECT libs don't propagate their deps to the exe)."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    # a leaf dependency core...
+    jm_object(
+        proj,
+        "lo",
+        None,
+        state_vars=[("f", "float", "1.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    # ...and an object that depends on it
+    jm_object(
+        proj,
+        "eng",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        depends_on=["lo"],
+        arg_type="float",
+        return_type="float",
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="tool", object_="eng")
+    cmake = (proj / "CMakeLists.txt").read_text()
+    line = next(
+        ln for ln in cmake.splitlines() if "target_link_libraries(tool" in ln
+    )
+    assert "eng_core" in line and "lo_core" in line
+    assert "PLATFORM_ID:Windows" in line and ">:m>" in line  # conditional libm
+
+
+def test_module_object_console_scoped_to_module(tmp_path: Path):
+    """A module object's console face lives under src/<pkg>/<module>/ and its
+    entry point is <pkg>.<module>.cli:main (gh-187 — avoids a cli collision)."""
+    from just_makeit._module import run as jm_module
+
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_module(proj, "wfm")
+    jm_object(
+        proj,
+        "gen",
+        "wfm",
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="console", name="tool", object_="gen", module="wfm")
+    assert (proj / "src" / "proj" / "wfm" / "cli.py").exists()
+    assert not (proj / "src" / "proj" / "cli.py").exists()
+    pyproject = (proj / "pyproject.toml").read_text()
+    assert "proj.wfm.cli:main" in pyproject
