@@ -378,8 +378,31 @@ def _colorize(text: str) -> str:
     return "".join(out)
 
 
+def _warn_version_skew(cfg: dict) -> None:
+    """Warn when the running jm differs from the one that generated the project.
+
+    A stale CLI on $PATH silently produces glue in an older format (gh-183);
+    this turns that footgun into an immediate, actionable warning. Advisory
+    only — `jm apply` reconciles a newer CLI onto an older tree.
+    """
+    from . import _config as C
+
+    recorded = C.jm_version(cfg)
+    running = C.jm_cli_version()
+    if not recorded or running == "unknown" or recorded == running:
+        return
+    print(
+        f"warning: this project was last generated with just-makeit "
+        f"{recorded}, but you are running {running}. Generated glue may be "
+        f"incorrect.\n         Install the matching version "
+        f"(uvx --from 'just-makeit=={recorded}' just-makeit …) or re-apply "
+        f"with the current CLI to move the project forward.",
+        file=sys.stderr,
+    )
+
+
 def _warn_schema() -> None:
-    """Print a warning if the project's schema is behind CURRENT_SCHEMA."""
+    """Warn if the project's schema or generating jm version is stale."""
     from . import _config as C
 
     cfg = C.load(Path.cwd())
@@ -392,6 +415,7 @@ def _warn_schema() -> None:
             "Run 'just-makeit upgrade' to get new features.",
             file=sys.stderr,
         )
+    _warn_version_skew(cfg)
 
 
 def main() -> None:

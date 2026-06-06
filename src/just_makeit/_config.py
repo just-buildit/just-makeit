@@ -20,6 +20,8 @@ default = "8"
 
 from __future__ import annotations
 
+import re as _re
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -703,6 +705,95 @@ def set_schema_version(cfg: dict, version: int) -> dict:
     return cfg
 
 
+def jm_cli_version() -> str:
+    """The running just-makeit version (best-effort; 'unknown' if unknown)."""
+    try:
+        from importlib.metadata import version
+
+        return version("just-makeit")
+    except Exception:
+        return "unknown"
+
+
+def jm_version(cfg: dict) -> str:
+    """The just-makeit version that last generated/applied this project.
+
+    Empty string for projects created before the `jm_version` stamp (gh-183).
+    """
+    return cfg.get("project", {}).get("jm_version", "")
+
+
+def set_jm_version(cfg: dict, ver: str) -> dict:
+    """Record the generating just-makeit version in-place; return cfg."""
+    cfg.setdefault("project", {})["jm_version"] = ver
+    return cfg
+
+
+def stamp_jm_version(root: Path, cfg: dict) -> str | None:
+    """Record the running jm version in `[project].jm_version`, monotonically.
+
+    Surgically rewrites only the `jm_version` line in the main manifest (no
+    fragment re-dump / churn). Never downgrades the record — a stale CLI keeps
+    warning (gh-183) instead of masking itself. Returns the version written, or
+    None if nothing changed. Updates `cfg` in place too.
+    """
+    running = jm_cli_version()
+    if running == "unknown":
+        return None
+    recorded = jm_version(cfg)
+    if recorded == running:
+        return None
+    if recorded and version_tuple(running) < version_tuple(recorded):
+        return None  # don't let an older CLI downgrade the record
+    mp = root / FILENAME
+    try:
+        text = mp.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if _re.search(r"^[ \t]*jm_version[ \t]*=", text, _re.M):
+        text = _re.sub(
+            r"^([ \t]*jm_version[ \t]*=[ \t]*).*$",
+            lambda m: m.group(1) + f'"{running}"',
+            text,
+            count=1,
+            flags=_re.M,
+        )
+    elif _re.search(r"^\[project\]", text, _re.M):
+        text = _re.sub(
+            r"^(\[project\][^\n]*\n)",
+            lambda m: m.group(1) + f'jm_version = "{running}"\n',
+            text,
+            count=1,
+            flags=_re.M,
+        )
+    else:
+        return None
+    mp.write_text(text, encoding="utf-8")
+    cfg.setdefault("project", {})["jm_version"] = running
+    return running
+
+
+def version_tuple(s: str) -> tuple:
+    """Parse 'X.Y.Z…' into a comparable int tuple (non-numeric tail dropped).
+
+    Pre-release suffixes (``0.16.0rc1``) compare by their numeric prefix, so
+    ``0.16.0rc1`` and ``0.16.0`` tuple-compare equal — good enough for a skew
+    warning (we don't need to order pre-releases).
+    """
+    out = []
+    for part in s.split("."):
+        digits = ""
+        for ch in part:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
 def project_name(cfg: dict) -> str:
     return cfg.get("project", {}).get("name", "")
 
@@ -745,6 +836,7 @@ def from_new(
             "pytest": "true" if pytest_ else "false",
             "pytest_benchmark": "true" if pytest_benchmark_ else "false",
             "schema": str(CURRENT_SCHEMA),
+            "jm_version": jm_cli_version(),
         }
     }
 

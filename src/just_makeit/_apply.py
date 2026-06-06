@@ -1130,6 +1130,10 @@ def run(
         print()
 
     cfg = C.load(root)
+    # gh-183: record the generating jm version (monotonic; surgical write).
+    _stamped = C.stamp_jm_version(root, cfg)
+    if _stamped:
+        print(f"  stamp   {C.FILENAME}  [project] jm_version = {_stamped}\n")
     if not C.components(cfg) and not C.modules(cfg):
         print(
             "error: manifest declares no objects or modules — nothing to materialize.",
