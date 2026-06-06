@@ -106,8 +106,39 @@ def test_function_mutable_param_is_non_const(tmp_path):
     assert "out = true" in C._dump(C.load(dest))
 
 
+def _inc_layout(tmp_path: Path, comp: str, comp_body: str, deps=()) -> Path:
+    """Write native/inc/<comp>/<comp>_core.h plus an empty header per dep, so
+    the dep-header existence check resolves. Returns the component header."""
+    inc = tmp_path / "native" / "inc"
+    for d in deps:
+        (inc / d).mkdir(parents=True, exist_ok=True)
+        (inc / d / f"{d}_core.h").write_text("/* dep */\n", encoding="utf-8")
+    h = inc / comp / f"{comp}_core.h"
+    h.parent.mkdir(parents=True, exist_ok=True)
+    h.write_text(comp_body, encoding="utf-8")
+    return h
+
+
 # ── unit: the injector is idempotent and a no-op without deps ────────────────
 def test_inject_includes_idempotent(tmp_path):
+    hdr = _inc_layout(
+        tmp_path,
+        "x",
+        "#ifndef X_CORE_H\n#define X_CORE_H\n"
+        '#include "clib_common.h"\n\n'
+        "typedef struct { int a; } x_state_t;\n"
+        "#endif /* X_CORE_H */\n",
+        deps=["dep"],
+    )
+    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is True
+    assert '#include "dep/dep_core.h"' in hdr.read_text(encoding="utf-8")
+    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is False  # no-op
+    assert _inject_includes_into_core_h(hdr, "x", []) is False  # no deps
+
+
+def test_inject_skips_dep_without_a_header(tmp_path):
+    # A bare link-target dep (e.g. `lo_core`) has no `lo_core/lo_core_core.h`,
+    # so no broken #include is injected (gh-170 follow-up).
     hdr = tmp_path / "x_core.h"
     hdr.write_text(
         "#ifndef X_CORE_H\n#define X_CORE_H\n"
@@ -116,21 +147,44 @@ def test_inject_includes_idempotent(tmp_path):
         "#endif /* X_CORE_H */\n",
         encoding="utf-8",
     )
-    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is True
-    assert '#include "dep/dep_core.h"' in hdr.read_text(encoding="utf-8")
-    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is False  # no-op
-    assert _inject_includes_into_core_h(hdr, "x", []) is False  # no deps
+    # native/inc/<dep>/<dep>_core.h does not exist for these
+    assert _inject_includes_into_core_h(hdr, "x", ["lo_core"]) is False
+    assert "lo_core" not in hdr.read_text(encoding="utf-8")
+
+
+def test_apply_skips_link_target_dep(tmp_path):
+    # Full apply: a component depending on a bare link target gets no include.
+    _silent(new_run, "tp", tmp_path / "tp")
+    _silent(
+        object_run,
+        tmp_path / "tp",
+        "wfm",
+        None,
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    cfg = C.load(tmp_path / "tp")
+    cfg["wfm"]["depends_on"] = ["m", "some_core"]  # libm + a bare target
+    C.save(tmp_path / "tp", cfg)
+    _silent(apply_run, tmp_path / "tp")
+    text = (tmp_path / "tp/native/inc/wfm/wfm_core.h").read_text(
+        encoding="utf-8"
+    )
+    assert "some_core/some_core_core.h" not in text
+    assert '#include "m/m_core.h"' not in text
 
 
 def test_inject_includes_fallback_when_no_includes(tmp_path):
     # A header with no #include lines: insert before the extern "C" / guard.
-    hdr = tmp_path / "y_core.h"
-    hdr.write_text(
+    hdr = _inc_layout(
+        tmp_path,
+        "y",
         "#ifndef Y_CORE_H\n#define Y_CORE_H\n"
         '#ifdef __cplusplus\nextern "C" {\n#endif\n'
         "typedef struct { int a; } y_state_t;\n"
         "#endif /* Y_CORE_H */\n",
-        encoding="utf-8",
+        deps=["dep"],
     )
     assert _inject_includes_into_core_h(hdr, "y", ["dep"]) is True
     text = hdr.read_text(encoding="utf-8")

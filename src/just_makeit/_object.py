@@ -1041,9 +1041,16 @@ def run(
         ctx["extra_link_on_object_core"] = ""
 
     # gh-170: include each depends_on component's header so opaque fields of
-    # its types compile (mirrors the standalone path in _init.run).
+    # its types compile (mirrors the standalone path in _init.run). Only deps
+    # with a real header are included — a bare link target like `lo_core` is
+    # skipped.
+    from ._init import _dep_header_includes
+
     ctx["depends_includes"] = "".join(
-        f'\n#include "{d}/{d}_core.h"' for d in depends_on
+        "\n" + inc
+        for inc in _dep_header_includes(
+            root / "native" / "inc", list(depends_on)
+        )
     )
 
     def r(tmpl):
