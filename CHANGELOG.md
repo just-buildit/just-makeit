@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.15.5] — 2026-06-06
+
+### Fixed
+
+- **`jm apply` now propagates a module object's component-level
+    `extra_link_libs` / `extra_include_dirs` to its OBJECT-core CMakeLists
+    (gh-174).** A non-collocated module object's `native/src/<obj>/CMakeLists.txt`
+    is glue `apply` never re-rendered, so component-level
+    `[<obj>] extra_link_libs` declared after creation left the
+    `<<extra_link_on_object_core>>` slot empty (only `jm object` filled it).
+    `apply` now *surgically* injects `target_link_libraries(<obj>_core PUBLIC   …)` and an extra `target_include_directories(<obj>_core PUBLIC …)` — adding
+    only the component wiring, leaving the module-level test/bench link block
+    untouched (idempotent; a no-op when there are no component-level settings).
+
 ## [0.15.4] — 2026-06-06
 
 ### Fixed
