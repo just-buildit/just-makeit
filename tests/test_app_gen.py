@@ -367,3 +367,57 @@ def test_app_record_survives_apply(tmp_path: Path):
     assert (proj / "native/src/app/gentool.c").exists()
     # no stray default app for the first object / project name
     assert not (proj / "native/src/app/proj.c").exists()
+
+
+# ── gh-184 Tier 2: dtype output (--sample_type), choice flags, --help ─────────
+def _gen_proj(tmp_path: Path):
+    """A cf32 generator object (the wavegen shape)."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "gen",
+        None,
+        no_state=True,
+        init_params=[("freq", "double", "0.0")],
+        arg_type="void",
+        return_type="float _Complex",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    return proj
+
+
+def test_sample_type_dtype_output_c(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="c", name="tool", object_="gen")
+    c = (proj / "native/src/app/tool.c").read_text()
+    assert "jm_convert_block(outbuf, k, sample_type" in c
+    assert "jm_parse_sample_type" in c
+    assert "[--sample_type cf32|cf64|ci32|ci16|ci8]" in c
+    # the convert helper + clamp are emitted before main
+    assert "static size_t\njm_convert_block(" in c
+    assert c.index("jm_convert_block(const") < c.index("int\nmain(")
+
+
+def test_sample_type_dtype_output_python(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="pep723", name="tool", object_="gen")
+    cli = (proj / "src/proj/cli.py").read_text()
+    assert "choices=['cf32', 'cf64', 'ci32', 'ci16', 'ci8']" in cli
+    assert "_buf = (_iq * _scale).astype(_dt).tobytes()" in cli
+    import py_compile
+
+    py_compile.compile(str(proj / "src/proj/cli.py"), doraise=True)
+    py_compile.compile(str(proj / "tool.py"), doraise=True)
+
+
+def test_c_app_has_help(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="c", name="tool", object_="gen")
+    c = (proj / "native/src/app/tool.c").read_text()
+    assert '!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")' in c
+    assert "fputs(" in c and "return 0;" in c

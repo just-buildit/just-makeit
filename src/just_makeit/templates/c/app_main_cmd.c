@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 
+/*<<helpers>>*/
 /*<<command_handlers>>*/
 static void
 usage(void)

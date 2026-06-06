@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "/*<<component>>*///*<<component>>*/_core.h"
-
+/*<<helpers>>*/
 int
 main(int argc, char *argv[])
 {
