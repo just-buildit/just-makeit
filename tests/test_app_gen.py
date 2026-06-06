@@ -421,3 +421,73 @@ def test_c_app_has_help(tmp_path: Path):
     c = (proj / "native/src/app/tool.c").read_text()
     assert '!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")' in c
     assert "fputs(" in c and "return 0;" in c
+
+
+def test_sample_type_blockwise(tmp_path: Path):
+    """A cf32 block (blockwise) app also gets --sample_type convert-on-write."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "flt",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float _Complex[]",
+        return_type="float _Complex[]",
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="t", object_="flt")
+    c = (proj / "native/src/app/t.c").read_text()
+    assert "jm_convert_block(outbuf, k, sample_type" in c
+
+
+def test_no_sample_type_for_real_output(tmp_path: Path):
+    """A non-cf32 (real float) generator gets no --sample_type machinery."""
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "g",
+        None,
+        no_state=True,
+        init_params=[("f", "double", "1.0")],
+        arg_type="void",
+        return_type="float",
+        mutable=True,
+    )
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+    jm_app(proj, target="c", name="t", object_="g")
+    c = (proj / "native/src/app/t.c").read_text()
+    assert "jm_convert_block" not in c and "sample_type" not in c
+
+
+def test_ctor_flags_string_enum_and_array(tmp_path: Path):
+    """_ctor_flags: string-enum init param → choice flag; array → skipped."""
+    from just_makeit import _app
+
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    jm_object(
+        proj,
+        "se",
+        None,
+        state_vars=[("g", "float", "1.0")],
+        init_params=[
+            ("mode", "string_enum:tone,noise", "tone"),
+            ("taps", "float[]", ""),
+            ("n", "int", "8"),
+        ],
+        arg_type="float",
+        return_type="float",
+    )
+    cfg = C.load(proj)
+    flags = _app._ctor_flags(cfg, "se")
+    names = [f["name"] for f in flags]
+    assert "mode" in names and "n" in names
+    assert "taps" not in names  # array init params have no scalar CLI form
+    mode = next(f for f in flags if f["name"] == "mode")
+    assert mode.get("choices") == ["tone", "noise"]
