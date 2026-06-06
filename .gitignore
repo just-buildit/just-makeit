@@ -227,3 +227,5 @@ docs/examples/*.md
 my_project/
 test123/
 scaffold_feedback.md
+
+.claude/

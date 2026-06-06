@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-05
+
+### Added
+
+- **`[module.X] reexports` — fold a sibling's symbols into a module's
+    `__init__.py`.** A module subpackage's generated `__init__.py` re-exports
+    its own C-extension types/functions; `reexports` additionally pulls names
+    from a *sibling* extension in the same package — typically a `no_generate`
+    module whose binding and `.pyi` are hand-written (e.g. a PyCapsule
+    functional API) — into both the import block and `__all__`. Declared as an
+    inline table mapping submodule → names:
+
+    ```toml
+    [module.ddc]
+    objects = ["ddc", "ddcr"]
+    reexports = { ddc_fn = ["ddcr_create", "ddcr_execute", "ddcr_destroy"] }
+    ```
+
+    This keeps the glue **hands-off**: the re-exports regenerate from the
+    manifest on every `jm apply` instead of being a hand-edit that apply would
+    clobber. Imports and `__all__` are single-line canonical — matching jm's
+    existing `__init__.py` glue — so adding the key never reflows a project's
+    other modules. Both generation paths (`jm object`/`method` and `jm apply`'s
+    merge) and both manifest writers (tomlkit and the `_dump` fallback) are
+    covered. New `tests/test_module_reexports.py`.
+
+### Fixed
+
+- **`jm apply` leaked the `<<extra_link_on_object_core>>` placeholder** for a
+    collocated object (object name == module name) with module
+    `extra_link_libs`. The gh-160 OBJECT-core PUBLIC-link slot was filled on the
+    `jm object` path but not when `apply` rebuilds the collocated CMakeLists, so
+    the literal template token reached the generated file and broke the CMake
+    build. `apply` now resolves it (regression: `tests/test_apply_collocated_   cmake.py`).
+
 ## [0.15.0] — 2026-06-05
 
 ### Added

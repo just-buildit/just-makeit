@@ -245,14 +245,69 @@ def _copy_external_cmake_blocks(
                 return  # one source file is enough
 
 
+def _import_re(module: str) -> "re.Pattern[str]":
+    """Match a ``from .<module> import ...`` line, single- or multi-line.
+
+    The parenthesised alternative is tried first because its ``(`` would
+    otherwise be captured as a "name" by the single-line branch (gh#5); its
+    ``[^)]*`` spans newlines, so a formatter-wrapped block matches too.
+    """
+    return re.compile(
+        rf"^from \.{re.escape(module)} import[ \t]*"
+        r"(\([^)]*\)|[^\n]*)[^\n]*$",
+        re.MULTILINE,
+    )
+
+
+_ALL_RE = re.compile(r"^__all__\s*=\s*\[([^\]]*)\]", re.MULTILINE)
+
+
+def _parse_import_names(stmt: str) -> list[str]:
+    """Names imported by a ``from .x import ...`` statement (either form)."""
+    body = re.sub(r"^from \.\w+ import", "", stmt, count=1)
+    body = re.sub(r"#[^\n]*", "", body).strip().strip("()")
+    out: list[str] = []
+    for n in body.split(","):
+        name = n.strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _fmt_from_import(module: str, names: list[str]) -> str:
+    """Render a ``from .<module> import ...`` line (single-line canonical).
+
+    jm's ``__init__.py`` glue is single-line by contract — a formatter may
+    wrap a long import, and :func:`_import_re` collapses it back on the next
+    pass (gh#5/#6). Reexport lines follow the same convention, so adding the
+    key never reflows a project's other modules.
+    """
+    return f"from .{module} import {', '.join(names)}  # noqa: E402"
+
+
+def _fmt_all(names: list[str]) -> str:
+    """Render an ``__all__`` assignment (single-line canonical)."""
+    return "__all__ = [" + ", ".join(f'"{n}"' for n in names) + "]"
+
+
 def _merge_module_init(
-    existing: str, module: str, all_exports: list[str]
+    existing: str,
+    module: str,
+    all_exports: list[str],
+    reexports: dict[str, list[str]] | None = None,
 ) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
-    Updates only the ``from .<module> import ...`` line and ``__all__`` list to
+    Updates the ``from .<module> import ...`` line and ``__all__`` list to
     include any newly added type/function names, leaving wrapper classes,
     docstrings, and all other user content intact.
+
+    *reexports* (``{submodule: [name, ...]}``, from the manifest) additionally
+    emits a ``from .<submodule> import ...`` line per sibling and appends those
+    names to ``__all__`` — so symbols re-exported from a hand-written
+    ``no_generate`` sibling regenerate cleanly instead of being clobbered.
+    Output is single-line canonical, matching jm's existing ``__init__.py``
+    glue, so adding the key never reflows a project's other modules.
 
     >>> src = ('# dsp/__init__.py\\n'
     ...        'from .dsp import Nco  # noqa: E402\\n'
@@ -285,61 +340,80 @@ def _merge_module_init(
     __all__ = ["Ema", "Iad", "Nco"]
     <BLANKLINE>
     """
-    # Match the import line in either the canonical single-line form
-    #   from .mod import A, B  # noqa: E402
-    # or the parenthesized multi-line form a formatter (ruff, black) may
-    # produce for long imports:
-    #   from .mod import (  # noqa: E402
-    #       A,
-    #       B,
-    #   )
-    # The parenthesized alternative is tried first because its `(` would
-    # otherwise be captured as a "name" by the single-line branch (gh#5).
-    import_pat = re.compile(
-        rf"^from \.{re.escape(module)} import[ \t]*"
-        r"(\([^)]*\)|[^\n]*)[^\n]*$",
-        re.MULTILINE,
-    )
-    all_pat = re.compile(r"^__all__\s*=\s*\[([^\]]*)\]", re.MULTILINE)
+    import_pat = _import_re(module)
 
-    existing_names: list[str] = []
-    existing_set: set[str] = set()
     m = import_pat.search(existing)
-    if m:
-        # Strip any inline comments, surrounding parens, and split on
-        # commas — works for both single-line and parenthesized forms.
-        raw = re.sub(r"#[^\n]*", "", m.group(1)).strip().strip("()")
-        for n in raw.split(","):
-            name = n.strip()
-            if name and name not in existing_set:
-                existing_names.append(name)
-                existing_set.add(name)
+    existing_names = _parse_import_names(m.group(0)) if m else []
 
     merged: list[str] = list(existing_names)
+    seen = set(merged)
     for name in all_exports:
-        if name not in existing_set:
+        if name not in seen:
             merged.append(name)
-            existing_set.add(name)
+            seen.add(name)
 
-    if not merged:
+    # Reexports from sibling submodules: merge declared names with any already
+    # present in that submodule's import line, in declaration order.
+    reexport_lines: dict[str, str] = {}
+    reexport_names: list[str] = []
+    for sub, names in (reexports or {}).items():
+        sm = _import_re(sub).search(existing)
+        sub_names = _parse_import_names(sm.group(0)) if sm else []
+        sub_seen = set(sub_names)
+        for n in names:
+            if n not in sub_seen:
+                sub_names.append(n)
+                sub_seen.add(n)
+        if not sub_names:
+            continue
+        reexport_lines[sub] = _fmt_from_import(sub, sub_names)
+        for n in sub_names:
+            if n not in reexport_names:
+                reexport_names.append(n)
+
+    all_names = merged + [n for n in reexport_names if n not in seen]
+    if not all_names:
         return existing
 
-    imports_str = ", ".join(merged)
-    all_str = ", ".join(f'"{n}"' for n in merged)
-    new_import = f"from .{module} import {imports_str}  # noqa: E402"
-    new_all = f"__all__ = [{all_str}]"
+    result = existing
 
-    if m:
-        result = import_pat.sub(new_import, existing)
-    elif all_pat.search(existing):
-        # Fresh module — no import line yet; insert one before __all__.
-        result = all_pat.sub(
-            lambda am: f"{new_import}\n\n{am.group(0)}", existing, count=1
-        )
-    else:
-        result = existing.rstrip("\n") + f"\n\n{new_import}\n"
-    if all_pat.search(result):
-        result = all_pat.sub(new_all, result, count=1)
+    # 1. Upsert the module's own import line.
+    if merged:
+        new_import = _fmt_from_import(module, merged)
+        if m:
+            result = import_pat.sub(lambda _: new_import, result, count=1)
+        elif _ALL_RE.search(result):
+            result = _ALL_RE.sub(
+                lambda am: f"{new_import}\n\n{am.group(0)}", result, count=1
+            )
+        else:
+            result = result.rstrip("\n") + f"\n\n{new_import}\n"
+
+    # 2. Upsert each reexport import line, after the module's own import.
+    for sub, line in reexport_lines.items():
+        sub_pat = _import_re(sub)
+        if sub_pat.search(result):
+            result = sub_pat.sub(lambda _: line, result, count=1)
+        else:
+            anchor = import_pat.search(result) if merged else None
+            if anchor:
+                result = (
+                    result[: anchor.end()]
+                    + "\n"
+                    + line
+                    + (result[anchor.end() :])
+                )
+            elif _ALL_RE.search(result):
+                result = _ALL_RE.sub(
+                    lambda am: f"{line}\n\n{am.group(0)}", result, count=1
+                )
+            else:
+                result = result.rstrip("\n") + f"\n{line}\n"
+
+    # 3. Upsert __all__ (module exports followed by reexported names).
+    new_all = _fmt_all(all_names)
+    if _ALL_RE.search(result):
+        result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
     return result
@@ -704,9 +778,23 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
+            # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
+            # the deps propagate transitively to the Python extension. The
+            # `jm object` path sets extra_link_on_object_core (run()); apply
+            # rebuilds the collocated CMakeLists here, so it must set it too —
+            # otherwise the `<<extra_link_on_object_core>>` placeholder leaks
+            # into the generated CMakeLists and breaks the build.
+            extra_link_on_object_core = (
+                f"target_link_libraries({obj}_core PUBLIC\n    "
+                + "\n    ".join(extra_libs)
+                + ")\n"
+                if extra_libs
+                else ""
+            )
             ctx_cmake = {
                 **ctx_,
                 "extra_link_libs_block": extra_link_libs_block,
+                "extra_link_on_object_core": extra_link_on_object_core,
             }
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
             # Append the collocated object's extra sources: a legacy
@@ -736,23 +824,26 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     Components = [ctx["Component"] for ctx in comp_ctxs]
     fn_names = [f["name"] for f in functions]
     all_exports = Components + fn_names
+    reexports = C.module_reexports(cfg, module)
     pkg_module_dir = root / "src" / pkg / module
     init_path = pkg_module_dir / "__init__.py"
-    if init_path.exists():
-        merged = _merge_module_init(
-            init_path.read_text(encoding="utf-8"), module, all_exports
-        )
-        _write(init_path, merged, "update")
+    existed = init_path.exists()
+    if existed:
+        base = init_path.read_text(encoding="utf-8")
     else:
-        object_imports = ", ".join(all_exports)
-        object_all = ", ".join(f'"{name}"' for name in all_exports)
-        init_ctx = {
-            "module": module,
-            "Module": Module,
-            "object_imports": object_imports,
-            "object_all": object_all,
-        }
-        _write(init_path, R.render(R.MODULE_INIT_PY, init_ctx), "update")
+        # Fresh scaffold: render the template with the module's own exports,
+        # then fold in any reexports through the same idempotent merge path.
+        base = R.render(
+            R.MODULE_INIT_PY,
+            {
+                "module": module,
+                "Module": Module,
+                "object_imports": ", ".join(all_exports),
+                "object_all": ", ".join(f'"{name}"' for name in all_exports),
+            },
+        )
+    merged = _merge_module_init(base, module, all_exports, reexports)
+    _write(init_path, merged, "update" if existed else "create")
 
     # Type stubs — regenerated in full every time the module changes.
     _write(

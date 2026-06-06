@@ -590,11 +590,16 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
 
 
 def _merge_module_init_file(
-    real_path: Path, module: str, temp_path: Path
+    real_path: Path,
+    module: str,
+    temp_path: Path,
+    reexports: dict[str, list[str]] | None = None,
 ) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
-    classes already in the real file."""
+    classes already in the real file. *reexports* (from the manifest) are
+    folded into the import block and __all__ so a no_generate sibling's
+    re-exported names regenerate cleanly instead of being hand-edited glue."""
     from ._object import _merge_module_init
 
     temp_text = temp_path.read_text(encoding="utf-8")
@@ -612,7 +617,7 @@ def _merge_module_init_file(
         return False
 
     existing = real_path.read_text(encoding="utf-8")
-    merged = _merge_module_init(existing, module, exports)
+    merged = _merge_module_init(existing, module, exports, reexports)
     if merged != existing:
         real_path.write_text(merged, encoding="utf-8")
         return True
@@ -791,7 +796,9 @@ def _sync_aggregates(
         mod_init = root / "src" / pkg / mod / "__init__.py"
         temp_mod_init = temp_root / "src" / pkg / mod / "__init__.py"
         if mod_init.exists() and temp_mod_init.exists():
-            if _merge_module_init_file(mod_init, mod, temp_mod_init):
+            if _merge_module_init_file(
+                mod_init, mod, temp_mod_init, C.module_reexports(cfg, mod)
+            ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.
         for rel in (
