@@ -9,8 +9,12 @@ Surfaced by the kitchen_sink integration example.
 """
 
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
