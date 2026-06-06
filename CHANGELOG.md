@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-06-06
+
+### Fixed
+
+- **Object apps now link their `depends_on` cores + libm** (gh-187). `jm app`
+    emitted `target_link_libraries(<app> PRIVATE <obj>_core)`, but an OBJECT
+    library doesn't propagate its PUBLIC link deps' objects to a consuming
+    executable — so an app over an object with `depends_on` (or that uses
+    `math.h`) failed to link (`undefined reference to lo_create / log10`). The
+    app link line now names the object's own core, each `depends_on` core, and a
+    Windows-safe conditional `m`.
+- **Module-object/function console faces are scoped to their subpackage**
+    (gh-187). The console target wrote `src/<pkg>/cli.py` + `<pkg>.cli:main`,
+    which collides when the package already has a `cli` submodule. A module app
+    now writes `src/<pkg>/<module>/cli.py` + `<pkg>.<module>.cli:main` (the
+    `[app]` record carries the module so it round-trips through `jm apply`).
+
 ## [0.16.0] — 2026-06-06
 
 ### Added

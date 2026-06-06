@@ -658,6 +658,27 @@ def _c_io_loop(
     return ""
 
 
+# libm only off-Windows — MinGW/MSVC link the math runtime implicitly (gh-187).
+_LIBM = "$<$<NOT:$<PLATFORM_ID:Windows>>:m>"
+
+
+def _app_object_link(cfg: dict, object_: str) -> str:
+    """Libraries an object app links: the object's own core, its `depends_on`
+    cores, and libm (gh-187).
+
+    OBJECT libraries don't propagate their PUBLIC link deps' objects to a
+    consuming executable, so an object's `depends_on` cores must be named on the
+    app's own link line — otherwise create()/step() reach undefined symbols
+    (e.g. lo_create) at link time.
+    """
+    libs = [f"{object_}_core"]
+    for d in cfg.get(object_, {}).get("depends_on", []):
+        core = d if d.endswith("_core") else f"{d}_core"
+        if core not in libs:
+            libs.append(core)
+    return " ".join(libs) + " " + _LIBM
+
+
 def _cmake_app_block(name: str, link_target: str) -> str:
     return (
         f"{_APP_CMAKE_SENTINEL}"
@@ -686,7 +707,9 @@ def _splice_cmake(cmake: Path, name: str, link_target: str) -> None:
     cmake.write_text(text, encoding="utf-8")
 
 
-def _update_pyproject_scripts(root: Path, name: str, pkg: str) -> bool:
+def _update_pyproject_scripts(
+    root: Path, name: str, pkg: str, module: str | None = None
+) -> bool:
     """Add/update [project.scripts] in pyproject.toml using tomlkit.
 
     Returns True on success, False if tomlkit is absent or pyproject.toml
@@ -704,7 +727,8 @@ def _update_pyproject_scripts(root: Path, name: str, pkg: str) -> bool:
         doc.add("project", _tk.table())
     if "scripts" not in doc["project"]:
         doc["project"].add("scripts", _tk.table())
-    doc["project"]["scripts"][name] = f"{pkg}.cli:main"
+    dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
+    doc["project"]["scripts"][name] = f"{dotted}:main"
     pyproject.write_text(_tk.dumps(doc), encoding="utf-8")
     return True
 
@@ -1117,7 +1141,7 @@ def run(
             R.APP_CONSOLE_CLI_FN,
             R.APP_PEP723_FN,
         )
-        link_target = f"{mod}_core"
+        link_target = f"{mod}_core " + _LIBM
     elif commands or (object_ is None and C.app_commands(cfg)):
         # ── multi-command app ────────────────────────────────────────────
         if name is None:
@@ -1157,7 +1181,7 @@ def run(
             name = pkg
         # Persist + merge flags before codegen so stored [[app.flags]] from
         # prior runs are reflected in the generated parsers (reproducible).
-        C.set_app(cfg, target, name, object_=object_)
+        C.set_app(cfg, target, name, object_=object_, module=module)
         for f in flags or []:
             C.add_app_flag(cfg, f)
         ctx = _build_ctx(
@@ -1173,7 +1197,7 @@ def run(
             R.APP_CONSOLE_CLI,
             R.APP_PEP723,
         )
-        link_target = f"{object_}_core"
+        link_target = _app_object_link(cfg, object_)
 
     print(f"just-makeit: scaffolding app '{name}' (target={target})")
     print()
@@ -1181,7 +1205,14 @@ def run(
     if target == "c":
         _run_c(root, ctx, name, link_target, main_tmpl)
     elif target == "console":
-        _run_console(root, ctx, name, pkg, console_tmpl)
+        _run_console(
+            root,
+            ctx,
+            name,
+            pkg,
+            console_tmpl,
+            module=C.app_config(cfg).get("module") or None,
+        )
     else:
         _run_pep723(root, ctx, name, pep_tmpl)
 
@@ -1223,21 +1254,29 @@ def _run_console(
     name: str,
     pkg: str,
     tmpl: str = R.APP_CONSOLE_CLI,
+    module: str | None = None,
 ) -> None:
-    cli_py = root / "src" / pkg / "cli.py"
+    # gh-187: scope the console module under its owning subpackage when the app
+    # is built from a module object/function, so it never collides with a
+    # `src/<pkg>/cli.py` already used by a `cli` subpackage.
+    cli_dir = root / "src" / pkg
+    if module:
+        cli_dir = cli_dir / module
+    cli_py = cli_dir / "cli.py"
+    dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
     cli_py.parent.mkdir(parents=True, exist_ok=True)
     cli_py.write_text(R.render(tmpl, ctx), encoding="utf-8")
     verb = "update" if cli_py.exists() else "create"
     print(f"  {verb}  {cli_py}")
 
-    updated = _update_pyproject_scripts(root, name, pkg)
+    updated = _update_pyproject_scripts(root, name, pkg, module)
     if updated:
         print(f"  update  {root / 'pyproject.toml'}")
     else:
         print(
             f"  note: add to pyproject.toml manually:\n"
             f"    [project.scripts]\n"
-            f'    {name} = "{pkg}.cli:main"'
+            f'    {name} = "{dotted}:main"'
         )
 
 
