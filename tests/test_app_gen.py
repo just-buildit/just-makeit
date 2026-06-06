@@ -555,3 +555,6 @@ def test_module_object_console_scoped_to_module(tmp_path: Path):
     assert not (proj / "src" / "proj" / "cli.py").exists()
     pyproject = (proj / "pyproject.toml").read_text()
     assert "proj.wfm.cli:main" in pyproject
+    # pep723 imports the class from the module subpackage, not the pkg root.
+    jm_app(proj, target="pep723", name="tool", object_="gen", module="wfm")
+    assert "from proj.wfm import Gen" in (proj / "tool.py").read_text()

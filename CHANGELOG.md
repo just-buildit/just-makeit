@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-06-06
+
+### Fixed
+
+- **The pep723 face imports a module object from its subpackage** (gh-187,
+    follow-up to 0.16.1). `app_pep723.py` hard-coded
+    `from <pkg> import <Component>`, but a module object's class lives at
+    `<pkg>.<module>`. A new `import_pkg` context key (`<pkg>.<module>` for module
+    objects, `<pkg>` otherwise) drives the import; `package` still names the pip
+    distribution for the dependency line. All three faces (c / console / pep723)
+    of a module-object app now produce byte-identical output.
+
 ## [0.16.1] — 2026-06-06
 
 ### Fixed
