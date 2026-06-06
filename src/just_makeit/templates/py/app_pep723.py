@@ -16,7 +16,7 @@ import sys
 
 import numpy as np
 
-from <<package>> import <<Component>>
+from <<import_pkg>> import <<Component>>
 
 
 def _make_parser() -> argparse.ArgumentParser:

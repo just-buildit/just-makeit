@@ -955,10 +955,15 @@ def _build_ctx(
     target: str,
     flags: list[dict] | None = None,
     argc_argv: bool = False,
+    module: str | None = None,
 ) -> dict[str, str]:
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
     Component = _to_title(component)
+    # gh-187: the pep723 face imports the class by absolute path; for a module
+    # object that's `<pkg>.<module>`, not `<pkg>`. `package` stays the pip
+    # distribution name (dependency line); `import_pkg` is the import path.
+    import_pkg = f"{pkg}.{module}" if module else pkg
 
     all_flags = _ctor_flags(cfg, component) + _extra_flags(flags)
     arg_t = C.arg_type(cfg, component)
@@ -1063,6 +1068,7 @@ def _build_ctx(
         "name": name,
         "project": pkg,
         "package": pkg,
+        "import_pkg": import_pkg,
         "version": version,
         "component": component,
         "Component": Component,
@@ -1191,6 +1197,7 @@ def run(
             target,
             flags=C.app_flags(cfg),
             argc_argv=argc_argv,
+            module=module,
         )
         main_tmpl, console_tmpl, pep_tmpl = (
             R.APP_MAIN_C,
