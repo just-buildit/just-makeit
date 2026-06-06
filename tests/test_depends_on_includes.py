@@ -120,3 +120,52 @@ def test_inject_includes_idempotent(tmp_path):
     assert '#include "dep/dep_core.h"' in hdr.read_text(encoding="utf-8")
     assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is False  # no-op
     assert _inject_includes_into_core_h(hdr, "x", []) is False  # no deps
+
+
+def test_inject_includes_fallback_when_no_includes(tmp_path):
+    # A header with no #include lines: insert before the extern "C" / guard.
+    hdr = tmp_path / "y_core.h"
+    hdr.write_text(
+        "#ifndef Y_CORE_H\n#define Y_CORE_H\n"
+        '#ifdef __cplusplus\nextern "C" {\n#endif\n'
+        "typedef struct { int a; } y_state_t;\n"
+        "#endif /* Y_CORE_H */\n",
+        encoding="utf-8",
+    )
+    assert _inject_includes_into_core_h(hdr, "y", ["dep"]) is True
+    text = hdr.read_text(encoding="utf-8")
+    assert '#include "dep/dep_core.h"' in text
+    assert text.index("dep/dep_core.h") < text.index("#ifdef __cplusplus")
+
+
+# ── a module object's header also gets its depends_on include ────────────────
+def test_module_object_gets_depends_on_include(tmp_path):
+    from just_makeit._module import run as module_run
+
+    dest = tmp_path / "tp"
+    _silent(new_run, "tp", dest)
+    _silent(module_run, dest, "sig")
+    _silent(
+        object_run,
+        dest,
+        "lfsr",
+        None,
+        state_vars=[("seed", "uint32_t", "1")],
+        arg_type="uint8_t",
+        return_type="uint8_t",
+    )
+    _silent(
+        object_run,
+        dest,
+        "mix",
+        module="sig",
+        no_state=True,
+        no_step=True,
+        init_params=[("n", "uint32_t", "8")],
+    )
+    cfg = C.load(dest)
+    cfg["mix"]["depends_on"] = ["lfsr"]
+    C.save(dest, cfg)
+    _silent(apply_run, dest)
+    hdr = (dest / "native/inc/mix/mix_core.h").read_text(encoding="utf-8")
+    assert '#include "lfsr/lfsr_core.h"' in hdr
