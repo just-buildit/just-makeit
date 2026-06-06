@@ -160,3 +160,24 @@ def test_status_warns_on_skew(tmp_path, capsys, monkeypatch):
     _status.run(proj)
     err = capsys.readouterr().err
     assert "9.9.9" in err and "0.16.0" in err
+
+
+def test_set_jm_version_direct():
+    cfg = C.set_jm_version({}, "1.2.3")
+    assert cfg["project"]["jm_version"] == "1.2.3"
+
+
+def test_jm_cli_version_unknown_on_error(monkeypatch):
+    import importlib.metadata
+
+    def _boom(_name):
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(importlib.metadata, "version", _boom)
+    assert C.jm_cli_version() == "unknown"
+
+
+def test_stamp_missing_manifest(tmp_path, monkeypatch):
+    """read_text on an absent manifest → OSError → no stamp."""
+    monkeypatch.setattr(C, "jm_cli_version", lambda: "0.16.0")
+    assert C.stamp_jm_version(tmp_path, {"project": {}}) is None
