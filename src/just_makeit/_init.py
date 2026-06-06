@@ -308,6 +308,22 @@ def _inject_decls_into_core_h(
     return True
 
 
+def _dep_header_includes(inc_root: Path, deps: "list[str]") -> "list[str]":
+    """``#include "<dep>/<dep>_core.h"`` for each dep whose header exists.
+
+    A ``depends_on`` entry may name a component (``lfsr`` → ``lfsr/lfsr_core.h``,
+    which exists) or a bare OBJECT-library link target (``lfsr_core`` →
+    ``lfsr_core/lfsr_core_core.h``, which does **not** exist). Only emit an
+    include that actually resolves, so a link-only dependency never injects a
+    broken ``#include`` (gh-170 follow-up). *inc_root* is ``native/inc``.
+    """
+    out: list[str] = []
+    for d in deps:
+        if (inc_root / d / f"{d}_core.h").exists():
+            out.append(f'#include "{d}/{d}_core.h"')
+    return out
+
+
 def _inject_includes_into_core_h(
     path: Path, comp: str, deps: "list[str]"
 ) -> bool:
@@ -316,14 +332,18 @@ def _inject_includes_into_core_h(
     gh-170: ``depends_on`` links a component against another's OBJECT lib, but
     the dependent's header also *uses* the dependency's types (e.g. an opaque
     ``lfsr_state_t *`` field), so it must include the dependency's header to
-    compile. The includes are placed after the last existing ``#include`` at
-    the top of the header; one already present is skipped. The sacred struct
-    and inline ``step()`` body are never touched. Returns True if changed."""
+    compile. Only deps whose header actually exists are injected (a bare link
+    target like ``lo_core`` is skipped — see :func:`_dep_header_includes`).
+    The includes are placed after the last existing ``#include`` at the top of
+    the header; one already present is skipped. The sacred struct and inline
+    ``step()`` body are never touched. Returns True if changed."""
     if not path.exists() or not deps:
         return False
     text = original = path.read_text(encoding="utf-8")
     missing = [
-        inc for d in deps if (inc := f'#include "{d}/{d}_core.h"') not in text
+        inc
+        for inc in _dep_header_includes(path.parent.parent, deps)
+        if inc not in text
     ]
     if not missing:
         return False
@@ -671,10 +691,14 @@ def run(
     ctx["extra_include_dirs_block"] = extra_include_dirs_block
     # gh-170: a `depends_on` component is linked AND its header is included, so
     # opaque fields of the dependency's types (e.g. `lfsr_state_t *`) compile
-    # without a manual edit. Each include is prefixed with a newline so it
-    # sits cleanly after the (possibly empty) perf include on the same line.
+    # without a manual edit. Only deps with a real header are included (a bare
+    # link target like `lo_core` is skipped). Each include is newline-prefixed
+    # so it sits cleanly after the (possibly empty) perf include.
     ctx["depends_includes"] = "".join(
-        f'\n#include "{d}/{d}_core.h"' for d in depends_on
+        "\n" + inc
+        for inc in _dep_header_includes(
+            root / "native" / "inc", list(depends_on)
+        )
     )
 
     def r(tmpl):

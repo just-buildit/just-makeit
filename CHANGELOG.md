@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.15.4] — 2026-06-06
+
+### Fixed
+
+- **`depends_on` auto-include (0.15.3) no longer injects a broken `#include`
+    for a bare link-target dependency.** A `depends_on` entry can name a
+    component (`lfsr` → `lfsr/lfsr_core.h`, which exists) **or** a bare
+    OBJECT-library link target (`lo_core` → `lo_core/lo_core_core.h`, which does
+    not). 0.15.3 emitted the include unconditionally, so a project that lists
+    link targets in `depends_on` (e.g. doppler's `ddc`) got an `#include` to a
+    nonexistent header and failed to compile. The include is now emitted only
+    when the dependency's header actually exists (`_dep_header_includes`), in
+    both the fresh-generation and `jm apply` paths. Regression tests added to
+    `tests/test_depends_on_includes.py`.
+
 ## [0.15.3] — 2026-06-06
 
 ### Added
