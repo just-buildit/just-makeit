@@ -396,14 +396,6 @@ def _implement_c_bodies(proj: Path):
         "    (void)state; (void)json;",
         "    cJSON_Delete(state->root);\n    state->root = cJSON_Parse(json);",
     )
-    # The generated bench for a no_step object leaves create as a TODO comment
-    # but still calls destroy(obj) → undeclared `obj`. config_create() takes no
-    # args, so wire it up. (jm bench-scaffold gap for no_step objects.)
-    _patch(
-        proj / "native" / "benchmarks" / "bench_config_core.c",
-        "    /* TODO: config_state_t *obj = config_create(...); */",
-        "    config_state_t *obj = config_create();",
-    )
 
 
 def run(root: Path) -> None:

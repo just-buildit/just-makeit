@@ -573,12 +573,12 @@ def _build_no_state_init_ctx(
         "pyi_param_docs": pyi_param_docs,
         "py_create_args": py_create_args,
         "c_create_args": c_create_args,
+        # gh-181: on this path an empty c_create_args means the object has no
+        # init params, i.e. a `create(void)` — so `<comp>_create()` is callable
+        # and the bench must declare `obj` (else the unconditional destroy(obj)
+        # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
             f"    {component}_state_t *obj = {component}_create({c_create_args});"
-            if c_create_args
-            else (
-                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
-            )
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
@@ -1601,12 +1601,12 @@ def make_state_ctx(
             )
         ),
         "c_create_args": c_create_args,
+        # gh-181: on this path an empty c_create_args means the object has no
+        # init params, i.e. a `create(void)` — so `<comp>_create()` is callable
+        # and the bench must declare `obj` (else the unconditional destroy(obj)
+        # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
             f"    {component}_state_t *obj = {component}_create({c_create_args});"
-            if c_create_args
-            else (
-                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
-            )
         ),
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_c": getter_setter_test_c,
