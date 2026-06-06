@@ -18,6 +18,9 @@ def main() -> None:
     assert np.allclose(y, [2.0, 4.0, 6.0]), y
     g.gain = 3.0
     assert g.gain == 3.0
+    # --batch method (1:1-rate block transform)
+    yb = g.process_batch(np.array([1.0, 2.0, 3.0], dtype=np.float32))
+    assert np.allclose(yb, [3.0, 6.0, 9.0]), yb
 
     # generator (void -> complex64), mutable
     lfo = dsp.Lfo(0, 2**30)

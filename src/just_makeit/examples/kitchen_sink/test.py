@@ -326,6 +326,13 @@ def _implement_c_bodies(proj: Path):
         "    return (float)x;",
         "    return state->gain * x;",
     )
+    # gain --batch method (1:1-rate block): scale a whole block
+    _patch(
+        src / "gain" / "gain_core.c",
+        "    (void)state; (void)in; (void)n; (void)out;",
+        "    for (size_t i = 0; i < n; i++)\n"
+        "        out[i] = state->gain * in[i];",
+    )
     # lfo — mutable generator (needs <math.h>)
     _patch(
         inc / "lfo" / "lfo_core.h",
@@ -418,6 +425,19 @@ def run(root: Path) -> None:
         return_type="float",
     )
     q(jm_property, proj, "gain", "gain", "dsp", "float", True)
+    # a --batch method (1:1-rate block transform) on gain
+    q(
+        jm_method,
+        proj,
+        "gain",
+        "process_batch",
+        "dsp",  # module
+        "float",  # arg_type
+        "float",  # return_type
+        False,  # variable_output
+        [],  # multi_output
+        batch=True,
+    )
     # generator — named `lfo`, not `nco`, to avoid clashing with the doppler
     # `nco` header that the optional `tone` object links below.
     q(
