@@ -8,13 +8,14 @@ jm's CI catches "all-together" regressions (it already surfaced gh-174's
 
 Generated project (module `dsp`):
   - gain   — scalar step(x)->y, writable property
-  - nco    — generator void->complex64, --class-name NCO, --mutable
+  - lfo    — generator void->complex64, --class-name Lfo, --mutable
   - meter  — consumer float->void, --field property
   - resamp — variable_output + pass_capacity + nogil execute (decimate by 2)
-  - mixer  — depends_on ["nco"]: opaque sibling nco_state_t* (header auto-incl)
+  - mixer  — depends_on ["lfo"]: opaque sibling lfo_state_t* (header auto-incl)
   - config — vendored cJSON: opaque cJSON*, component extra_link_libs +
              extra_include_dirs (the gh-174 path)
   - cjson  — a [project] c_deps OBJECT lib (vendored, no Python wrapper)
+  - tone   — (optional) links the real doppler: opaque nco_state_t*
 
 Called by tests/test_examples.py via run(root). Skips cleanly if cmake / a C
 compiler / numpy are unavailable (the shared harness checks those).
@@ -449,6 +450,22 @@ def run(root: Path) -> None:
     )
 
     q(jm_apply, proj)
+
+    # A vendored c_dep that a component uses must also be folded into the
+    # umbrella `<pkg>_lib` — `config_core` is added there (TARGET_OBJECTS) but
+    # its cJSON symbols aren't, so the shared lib has undefined symbols (a hard
+    # error on macOS, tolerated on Linux). Mirror how doppler folds its vendored
+    # pocketfft into doppler_lib — the canonical vendored-dep pattern.
+    top = proj / "CMakeLists.txt"
+    top_text = top.read_text(encoding="utf-8")
+    if "$<TARGET_OBJECTS:cjson_core>" not in top_text:
+        top.write_text(
+            top_text + "\ntarget_sources(kitchen_sink_lib PRIVATE"
+            " $<TARGET_OBJECTS:cjson_core>)\n"
+            "target_sources(kitchen_sink_lib_static PRIVATE"
+            " $<TARGET_OBJECTS:cjson_core>)\n",
+            encoding="utf-8",
+        )
 
     # the only hand step: implement the C algorithm bodies
     _implement_c_bodies(proj)
