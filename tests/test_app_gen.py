@@ -558,3 +558,36 @@ def test_module_object_console_scoped_to_module(tmp_path: Path):
     # pep723 imports the class from the module subpackage, not the pkg root.
     jm_app(proj, target="pep723", name="tool", object_="gen", module="wfm")
     assert "from proj.wfm import Gen" in (proj / "tool.py").read_text()
+
+
+def test_app_persists_in_manifest_split_layout(tmp_path: Path):
+    """gh-190: in a split-layout project, [app] lives in the manifest (not a
+    fragment) and round-trips through jm apply with its module intact."""
+    from just_makeit._module import run as jm_module
+    from just_makeit._apply import run as jm_apply
+
+    proj = tmp_path / "proj"
+    jm_new("proj", proj)
+    mani = proj / "just-makeit.toml"
+    mani.write_text(
+        'include = ["objects/*.toml", "modules/*.toml"]\n' + mani.read_text()
+    )
+    jm_module(proj, "wfm")
+    jm_object(
+        proj,
+        "gen",
+        "wfm",
+        state_vars=[("g", "float", "1.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    jm_apply(proj)
+    jm_app(proj, target="c", object_="gen", module="wfm", name="tool")
+    assert "[app]" in mani.read_text()
+    assert 'module = "wfm"' in mani.read_text()
+    assert not (proj / "objects" / "app.toml").exists()
+    # survives a reconcile
+    jm_apply(proj)
+    cfg = C.load(proj)
+    assert C.app_config(cfg).get("object") == "gen"
+    assert C.app_config(cfg).get("module") == "wfm"
