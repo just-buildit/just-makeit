@@ -1027,6 +1027,15 @@ def _dump(cfg: dict) -> str:
                 f'"{d}"' for d in comp_data["extra_include_dirs"]
             )
             lines.append(f"extra_include_dirs = [{inc_str}]")
+        # Custom C bodies, as heredocs. Emitted here — after the scalar keys,
+        # BEFORE any [[comp.*]] sub-table — so a C.load/C.save round-trip
+        # preserves them and TOML re-parses them onto the component (not the
+        # last sub-table entry). Without this, re-saving a fragment silently
+        # drops hand-written create/reset/destroy/step bodies.
+        for _impl_key in ("impl", "create_impl", "reset_impl", "destroy_impl"):
+            if comp_data.get(_impl_key):
+                _body = comp_data[_impl_key].replace('"""', '\\"\\"\\"')
+                lines.append(f'{_impl_key} = """\n{_body}\n"""')
         lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
