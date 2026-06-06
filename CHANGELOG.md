@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.15.6] — 2026-06-06
+
+### Fixed
+
+- **`depends_on` now links the dependency's OBJECT lib into the dependent
+    object's own test/bench executables**, not just the aggregating Python
+    extension. The dependent's `_core.c` calls the dependency's functions (e.g.
+    a sibling's `create()` via `create_impl`), so without the dep lib its
+    generated `ctest`/bench targets failed to link. The dep cores are now folded
+    into the object-core `target_link_libraries` (PUBLIC + test/bench), in both
+    fresh `jm object` generation and the `jm apply` surgical path (gh-174
+    follow-up). Surfaced by the `kitchen_sink` integration example.
+
+### Docs
+
+- Corrected `porting-guide.md` / `declarative-scaffolding.md`: `depends_on` is
+    set in TOML; there is no `--depends-on` CLI flag (the examples claimed one).
+
 ## [0.15.5] — 2026-06-06
 
 ### Fixed

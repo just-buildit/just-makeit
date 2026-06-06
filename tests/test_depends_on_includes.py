@@ -223,3 +223,60 @@ def test_module_object_gets_depends_on_include(tmp_path):
     _silent(apply_run, dest)
     hdr = (dest / "native/inc/mix/mix_core.h").read_text(encoding="utf-8")
     assert '#include "lfsr/lfsr_core.h"' in hdr
+
+
+# ── gh-174 follow-up: a depends_on object's own test/bench link the dep core ──
+def test_depends_on_links_dep_into_test_bench(tmp_path):
+    from just_makeit._module import run as module_run
+
+    dest = tmp_path / "p"
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "dsp")
+    _silent(
+        object_run,
+        dest,
+        "osc",
+        module="dsp",
+        state_vars=[("ph", "uint32_t", "0")],
+        arg_type="void",
+        return_type="float",
+    )
+    _silent(
+        object_run,
+        dest,
+        "mix",
+        module="dsp",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        depends_on=["osc"],
+    )
+    cmake = (dest / "native/src/mix/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    # fresh creation: the dep core reaches the object lib (PUBLIC) AND its
+    # test/bench exes — PUBLIC line + test + bench all name osc_core.
+    assert "target_link_libraries(mix_core PUBLIC" in cmake
+    assert "test_mix_core" in cmake
+    assert cmake.count("osc_core") >= 3
+
+    # apply-on-existing: depends_on added later still wires it (surgical
+    # injector) — at least the PUBLIC line, which propagates to test/bench.
+    _silent(
+        object_run,
+        dest,
+        "solo",
+        module="dsp",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    cfg = C.load(dest)
+    cfg["solo"]["depends_on"] = ["osc"]
+    C.save(dest, cfg)
+    _silent(apply_run, dest)
+    solo = (dest / "native/src/solo/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "target_link_libraries(solo_core PUBLIC" in solo
+    assert "osc_core" in solo
