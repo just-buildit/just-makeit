@@ -840,15 +840,20 @@ def _sync_aggregates(
                 updated.append(obj_h)
             # gh-174: a non-collocated module object's OBJECT-core CMakeLists is
             # glue apply never re-renders, so surgically add its component-level
-            # extra_link_libs / extra_include_dirs (the module-level test/bench
-            # block is left intact). Collocated objects share the module
-            # CMakeLists (handled above).
+            # extra_link_libs / extra_include_dirs AND its depends_on cores (so
+            # the object's own test/bench link the deps its core calls). The
+            # module-level test/bench block is left intact. Collocated objects
+            # share the module CMakeLists (handled above).
             if obj != mod:
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
+                _dep_cores = [
+                    (d[:-5] if d.endswith("_core") else d) + "_core"
+                    for d in C.depends_on(cfg, obj)
+                ]
                 if _inject_object_core_cmake(
                     obj_cmake,
                     obj,
-                    C.component_extra_link_libs(cfg, obj),
+                    list(C.component_extra_link_libs(cfg, obj)) + _dep_cores,
                     C.component_extra_include_dirs(cfg, obj),
                 ):
                     updated.append(obj_cmake)

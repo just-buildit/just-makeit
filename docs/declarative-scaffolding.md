@@ -534,8 +534,9 @@ Python binding is hand-written and must not be touched by the generator.
 depends_on = ["resamp", "fft"]
 ```
 
-When `jm object fir --depends-on resamp --depends-on fft` (or `jm apply`)
-creates the CMake entry for `fir`, it prepends:
+When `jm apply` creates the CMake entry for `fir` (with
+`depends_on = ["resamp", "fft"]` in its fragment — `depends_on` is set in
+TOML; there is no `--depends-on` CLI flag), it prepends:
 
 ```cmake
 target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:resamp_core>)

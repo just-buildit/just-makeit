@@ -1021,18 +1021,28 @@ def run(
     if destroy_impl_body is not None:
         ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
+    # The object's OWN test/bench executables must link both its explicit
+    # extra_link_libs AND its depends_on cores — the core calls the
+    # dependency's functions (e.g. a sibling's create() via create_impl), so
+    # without the dep OBJECT lib the test/bench fail to link (gh-174 follow-up).
+    # A depends_on entry may be a component (`nco` -> nco_core) or a bare link
+    # target (`lo_core`); normalise to a single `<name>_core` (gh-130).
+    _dep_cores = [
+        (d[:-5] if d.endswith("_core") else d) + "_core" for d in depends_on
+    ]
+    _obj_libs = list(extra_link_libs) + _dep_cores
     # gh-132: expose extra_link_libs_block so CMakeLists_object_core.cmake
     # can include the deps in test/bench target_link_libraries.
     ctx["extra_link_libs_block"] = (
-        "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
+        "\n    ".join(_obj_libs) + "\n    " if _obj_libs else ""
     )
     # gh-160: also link the OBJECT lib itself (PUBLIC) so the deps propagate
     # transitively to every consumer — the aggregating Python extension as well
     # as test/bench. Mirrors extra_link_on_core (_init.py) for standalone
     # components. Without this, a cross-module dep like ["obj_a_core"] reaches
     # only test/bench and the Python .so fails with undefined symbols.
-    if extra_link_libs:
-        _elibs = "\n    ".join(extra_link_libs)
+    if _obj_libs:
+        _elibs = "\n    ".join(_obj_libs)
         ctx["extra_link_on_object_core"] = (
             f"target_link_libraries({ctx['component']}_core PUBLIC\n"
             f"    {_elibs})\n"

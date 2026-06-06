@@ -391,18 +391,20 @@ just-makeit object biquad --module filter --arg-type float --return-type float
 
 ### Component dependencies
 
-When one component's C code calls another's:
+When one component's C code calls another's, declare `depends_on` in its
+fragment (TOML — there is no `--depends-on` CLI flag):
 
-```sh
-just-makeit object decimator \
-    --arg-type "float _Complex" \
-    --return-type float \
-    --depends-on hbfilter \
-    --depends-on nco
+```toml
+[decimator]
+arg_type    = "float _Complex"
+return_type = "float"
+depends_on  = ["hbfilter", "nco"]
 ```
 
-This wires `hbfilter` and `nco` OBJECT libraries into `decimator`'s CMake
-link list. The C code can then `#include "hbfilter/hbfilter_core.h"`.
+`jm apply` then wires the `hbfilter` and `nco` OBJECT libraries into
+`decimator`'s OBJECT lib **and** its test/bench link, and injects
+`#include "hbfilter/hbfilter_core.h"` into `decimator_core.h` (for any dep
+whose header exists). The C code can use the dependency's types directly.
 
 ______________________________________________________________________
 
