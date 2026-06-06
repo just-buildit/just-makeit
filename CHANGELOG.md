@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.15.8] — 2026-06-06
+
+### Fixed
+
+- **A `--batch` method now generates the 1:1-rate block C signature** —
+    `void <comp>_<name>(<comp>_state_t *state, const <in> *in, size_t n,   <out> *out)` (or `(state, size_t n, <out> *out)` for a void `arg_type`).
+    `_build_method_prototype` / `_methods_c_stub_fixed` had no batch handling, so
+    the stub fell through to the scalar `(state, T x)` shape while the generated
+    binding called the 4-arg form → `too many arguments to function` compile
+    error. Both the prototype and the stub now emit the batch shape (gh-179).
+    Surfaced by the `kitchen_sink` example.
+
 ## [0.15.7] — 2026-06-06
 
 ### Fixed
