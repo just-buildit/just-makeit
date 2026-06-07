@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-06
+
+### Added
+
+- **`jm app` output axes: `--file-type`, `--endian`, `--record`** (gh-193). A
+    cf32 generator/blockwise app — the stream that already gets `--sample_type` —
+    now also generates, byte-identically across all three faces
+    (c / console / pep723):
+
+    - `--file-type raw|csv` — raw interleaved I/Q (today's default) or a text
+        `I,Q` line per sample (`%0.9f` for cf32, `%0.17g` for cf64, `%d` for the
+        integer types);
+    - `--endian le|be` — big-endian reverses each element's bytes (raw only; csv
+        is text, endian-agnostic);
+    - `--record FILE` — a JSON record of the fully-resolved run (every flag after
+        defaulting, choice flags rendered as their chosen string) so a capture is
+        reproducible from its sidecar.
+
+    The C side adds `jm_write_block` / `jm_elem_size` beside `jm_convert_block`,
+    plus per-choice `jm_choices_*` name tables for the record; the Python faces
+    pack via numpy (`.byteswap()` for big-endian) and `json.dump`. Richer
+    containers (BLUE, SigMF, zmq) stay application-side — they need sample-rate /
+    segment / transport context that a generic generator can't know. Tested in
+    `test_app_gen.py` (`test_output_axes_c` / `test_output_axes_python`, plus the
+    updated `--sample_type` assertions).
+
 ## [0.16.4] — 2026-06-06
 
 ### Fixed
