@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.16.4] — 2026-06-06
+
+### Fixed
+
+- **`_dump` is idempotent for heredoc bodies** (gh-192). `impl`/`create_impl`/
+    `reset_impl`/`destroy_impl`/`init_post_parse`/multi-line `doc` were emitted
+    as `key = """\n{body}\n"""`; TOML load keeps the trailing newline, so each
+    `C.save`/re-dump grew the body by a blank line. With `[app]` now persisted
+    via `C.save` (0.16.3), every app op re-dumped fragments and the generated
+    step/impl gained a blank line per reconcile → a freshly-applied project read
+    as perpetually "stale". Bodies are now `strip("\n")`-normalised before
+    emission, so load→dump is stable. Regression test in
+    `test_dump_impl_roundtrip.py`.
+
 ## [0.16.3] — 2026-06-06
 
 ### Fixed

@@ -49,3 +49,26 @@ def test_dump_omits_absent_impl_bodies():
     dumped = C._dump(cfg)
     assert "create_impl" not in dumped
     assert "impl" not in dumped
+
+
+def test_dump_impl_is_idempotent_across_resaves():
+    """gh-192: a load->dump->load->dump cycle must not grow the impl body.
+
+    TOML keeps the trailing newline from `impl = \"\"\"\\n{body}\\n\"\"\"`; without
+    stripping it the body accumulates a blank line on every C.save, which made
+    a fresh `jm apply` perpetually 'stale' (the generated step gained a blank
+    line each reconcile)."""
+    cfg = {
+        "obj": {
+            "arg_type": "void",
+            "return_type": "float",
+            "impl": "return 1.0f;",
+            "create_impl": "obj->x = 0;",
+        }
+    }
+    d1 = C._dump(cfg)
+    d2 = C._dump(tomllib.loads(d1))
+    d3 = C._dump(tomllib.loads(d2))
+    assert d1 == d2 == d3, "dump is not idempotent — impl body is growing"
+    body = tomllib.loads(d3)["obj"]["impl"]
+    assert body.strip("\n") == "return 1.0f;"

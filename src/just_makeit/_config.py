@@ -1014,7 +1014,10 @@ def _doc_assign(value: str) -> str:
     docs use a basic string with quotes/backslashes escaped.
     """
     if "\n" in value:
-        body = value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+        # strip("\n") for round-trip idempotency (gh-192) — see _dump impl keys.
+        body = (
+            value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"').strip("\n")
+        )
         return f'doc = """\n{body}\n"""'
     body = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'doc = "{body}"'
@@ -1131,7 +1134,14 @@ def _dump(cfg: dict) -> str:
         # drops hand-written create/reset/destroy/step bodies.
         for _impl_key in ("impl", "create_impl", "reset_impl", "destroy_impl"):
             if comp_data.get(_impl_key):
-                _body = comp_data[_impl_key].replace('"""', '\\"\\"\\"')
+                # strip("\n") so a load→dump round-trip is idempotent: TOML keeps
+                # the trailing newline from `"""\n{body}\n"""`, which would
+                # otherwise accumulate a blank line per re-dump (gh-192).
+                _body = (
+                    comp_data[_impl_key]
+                    .replace('"""', '\\"\\"\\"')
+                    .strip("\n")
+                )
                 lines.append(f'{_impl_key} = """\n{_body}\n"""')
         lines.append("")
         for a in comp_data.get("array_args", []):
@@ -1168,7 +1178,11 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'create_fn = "{p["create_fn"]}"')
             lines.append("")
         if comp_data.get("init_post_parse"):
-            ipp = comp_data["init_post_parse"].replace('"""', '\\"\\"\\"')
+            ipp = (
+                comp_data["init_post_parse"]
+                .replace('"""', '\\"\\"\\"')
+                .strip("\n")
+            )
             lines.append(f'init_post_parse = """\n{ipp}\n"""')
             lines.append("")
         for m in comp_data.get("methods", []):
