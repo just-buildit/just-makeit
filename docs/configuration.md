@@ -156,6 +156,104 @@ default = "0.0f"
 
 ______________________________________________________________________
 
+## Module dependencies & external libraries
+
+`jm apply` regenerates each module's `CMakeLists.txt`, so dependency wiring must
+be **declared in the manifest** — a hand-edited link line is clobbered on the
+next apply. Four keys cover every case; none of them require post-apply patching,
+and `jm status --check` stays clean with no allowlist.
+
+| You need…                                                        | Key                                       | Scope          | Effect                                                                                                    |
+| ---------------------------------------------------------------- | ----------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| link an external/system library                                  | `extra_link_libs`                         | `[module.<m>]` | appended verbatim to `target_link_libraries`; **generator expressions allowed**                           |
+| link a *sibling* module's core                                   | `extra_link_libs` (name the `<obj>_core`) | `[module.<m>]` | names the target on the link line                                                                         |
+| call into another object's API (link **and** include its header) | `depends_on`                              | `[<object>]`   | links `<dep>_core` **and** injects `#include "<dep>/<dep>_core.h"` (gh-170)                               |
+| add a hand-written **C support dir** other modules link          | `c_deps`                                  | `[project]`    | emits `add_subdirectory(native/src/<dir>)`; that dir's `CMakeLists.txt` is hand-owned (never regenerated) |
+| add a hand-written **Python extension module**                   | `no_generate`                             | `[module.<m>]` | emits the `add_subdirectory`, leaves the module's `_ext.c` / `.pyi` / CMake alone                         |
+
+### `extra_link_libs` — external and sibling libraries
+
+```toml
+[module.source]
+objects = ["nco", "lo", "awgn"]
+# system libs and generator expressions are fine:
+extra_link_libs = ["$<$<PLATFORM_ID:Linux>:mvec>", "${MY_STATIC_LIB}", "m"]
+
+[module.wfm]
+objects = ["waveform_engine"]
+# link sibling cores from other modules by their <obj>_core target name:
+extra_link_libs = ["source_core", "lfsr_core", "m"]
+```
+
+Set it from the CLI with `jm module <m> --extra-link-libs TARGET` (repeatable).
+
+### `depends_on` — link *and* include a dependency
+
+When an object actually *calls* another object's C API (not just links it), use
+`depends_on` on the **object**, not the module. It links the dependency's core
+**and** auto-includes its header, so opaque-typed fields compile:
+
+```toml
+[waveform_engine]
+depends_on = ["source", "lfsr"]   # links source_core/lfsr_core + includes both headers
+```
+
+Prefer this over naming the cores in `extra_link_libs` whenever the dependency's
+*types or functions* are referenced from your `_core.c`.
+
+### `c_deps` — hand-written C support directories
+
+For a pure-C directory (object libraries, vendored code) that has **no** Python
+binding but that modules link against:
+
+```toml
+[project]
+c_deps = ["io", "vendor_dsp"]   # add_subdirectory(native/src/io), …
+```
+
+Each listed dir owns its `CMakeLists.txt` (define `add_library(<name>_core …)`,
+tests, etc.); modules then link it via `extra_link_libs = ["io_core", …]`. CLI:
+`jm new --c-dep DIR` (repeatable).
+
+### `no_generate` — hand-written extension modules
+
+For a module whose binding is written by hand (e.g. a free-function API over an
+opaque capsule):
+
+```toml
+[module.io]
+no_generate = "true"
+```
+
+`jm apply` emits the `add_subdirectory(native/src/io)` and otherwise leaves the
+module untouched — `io_ext.c`, `io.pyi`, and its `CMakeLists.txt` are yours.
+Pair with [`reexports`](#modulename-keys) on a sibling module to fold its symbols
+into a generated package `__init__.py`.
+
+### Worked example: three interdependent modules + a C support dir
+
+```toml
+[project]
+c_deps = ["io"]                    # hand-written native/src/io (io_core, …)
+
+[module.source]
+objects = ["source", "lfsr"]
+extra_link_libs = ["${DOPPLER_STATIC_LIBRARY}", "io_core", "m"]
+
+[module.wfm]
+objects = ["waveform_engine"]
+extra_link_libs = ["source_core", "lfsr_core", "m"]
+# …or, if waveform_engine calls source/lfsr APIs, drop those two libs and use:
+#   [waveform_engine]
+#   depends_on = ["source", "lfsr"]
+```
+
+This is exactly the wiring doppler uses (`c_deps = ["hbdecim", "resamp", "wfmcompose"]`; `[module.ddc] extra_link_libs = ["lo_core", …]`;
+`[synth] depends_on = ["lo", "awgn", "pn"]`) — fully declarative, idempotent
+across `jm apply`.
+
+______________________________________________________________________
+
 ## Complete CLI ↔ TOML mapping
 
 Every TOML key the schema accepts maps to a CLI flag. This is the
