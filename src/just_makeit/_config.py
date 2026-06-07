@@ -284,8 +284,8 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in ("project", "module", "include"):
-            continue
+        if key in ("project", "module", "include", "app"):
+            continue  # `app`, like `project`, always lives in the manifest
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -308,6 +308,8 @@ def save(root: Path, cfg: dict) -> None:
     manifest_content: dict = {}
     if "project" in cfg:
         manifest_content["project"] = cfg["project"]
+    if cfg.get("app"):
+        manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -1251,6 +1253,8 @@ def _dump(cfg: dict) -> str:
             lines.append(f'module = "{app.get("module", "")}"')
         elif app.get("object"):
             lines.append(f'object = "{app["object"]}"')
+            if app.get("module"):  # owning module (gh-187 console scoping)
+                lines.append(f'module = "{app["module"]}"')
         lines.append("")
         for f in app.get("flags", []):
             lines.append("[[app.flags]]")

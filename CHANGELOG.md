@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-06-06
+
+### Fixed
+
+- **`[app]` persists in the manifest for split-layout projects** (gh-190).
+    `save()` treated `app` like a component, so in a split-layout project
+    (`include = ["objects/*.toml", …]`) it routed `[app]` to `objects/app.toml`
+    and `jm apply` couldn't re-materialise the faces (the CMake app block was
+    dropped on the next reconcile). `save()` now keeps `app` in the manifest
+    (like `project`), and `_dump` emits the owning `module` for an object app so
+    the console/pep723 scoping (gh-187) round-trips. `_dump`/`_write_doc`
+    already emitted `[app]`; this completes flat + split parity.
+
 ## [0.16.2] — 2026-06-06
 
 ### Fixed
