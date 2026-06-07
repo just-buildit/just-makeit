@@ -49,3 +49,47 @@ def test_dump_omits_absent_impl_bodies():
     dumped = C._dump(cfg)
     assert "create_impl" not in dumped
     assert "impl" not in dumped
+
+
+def test_dump_impl_is_idempotent_across_resaves():
+    """gh-192: a load->dump->load->dump cycle must not grow the impl body.
+
+    TOML keeps the trailing newline from `impl = \"\"\"\\n{body}\\n\"\"\"`; without
+    stripping it the body accumulates a blank line on every C.save, which made
+    a fresh `jm apply` perpetually 'stale' (the generated step gained a blank
+    line each reconcile)."""
+    cfg = {
+        "obj": {
+            "arg_type": "void",
+            "return_type": "float",
+            "impl": "return 1.0f;",
+            "create_impl": "obj->x = 0;",
+        }
+    }
+    d1 = C._dump(cfg)
+    d2 = C._dump(tomllib.loads(d1))
+    d3 = C._dump(tomllib.loads(d2))
+    assert d1 == d2 == d3, "dump is not idempotent — impl body is growing"
+    body = tomllib.loads(d3)["obj"]["impl"]
+    assert body.strip("\n") == "return 1.0f;"
+
+
+def test_dump_doc_and_init_post_parse_idempotent():
+    """gh-192: multi-line doc + init_post_parse heredocs are also strip("\n")-
+    normalised, so they don't grow a blank line per re-dump either."""
+    cfg = {
+        "obj": {
+            "arg_type": "float",
+            "return_type": "float",
+            "doc": "line one\nline two\nline three",
+            "init_post_parse": "if (n < 0) n = 0;",
+            "methods": [{"name": "m", "doc": "method line a\nmethod line b"}],
+        }
+    }
+    d1 = C._dump(cfg)
+    d2 = C._dump(tomllib.loads(d1))
+    d3 = C._dump(tomllib.loads(d2))
+    assert d1 == d2 == d3, "doc / init_post_parse dump is not idempotent"
+    rt = tomllib.loads(d3)["obj"]
+    assert rt["doc"].strip("\n") == "line one\nline two\nline three"
+    assert rt["init_post_parse"].strip("\n") == "if (n < 0) n = 0;"
