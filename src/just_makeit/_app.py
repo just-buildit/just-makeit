@@ -238,20 +238,40 @@ _PY_WRITE = (
 
 _PY_PACK_WRITE = (
     "    _st = args.sample_type\n"
-    '    if _st == "cf32":\n'
-    "        _buf = out.astype(np.complex64).tobytes()\n"
-    '    elif _st == "cf64":\n'
-    "        _buf = out.astype(np.complex128).tobytes()\n"
+    '    if args.file_type == "csv":\n'
+    "        _lines = []\n"
+    '        if _st == "cf32":\n'
+    "            for _z in out:\n"
+    '                _lines.append("%0.9f,%0.9f" % (_z.real, _z.imag))\n'
+    '        elif _st == "cf64":\n'
+    "            for _z in out:\n"
+    '                _lines.append("%0.17g,%0.17g" % (_z.real, _z.imag))\n'
+    "        else:\n"
+    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
+    '                   "ci8": 127.0}[_st]\n'
+    "            for _z in out:\n"
+    '                _lines.append("%d,%d" % (\n'
+    "                    int(min(max(_z.real, -1.0), 1.0) * _sc),\n"
+    "                    int(min(max(_z.imag, -1.0), 1.0) * _sc)))\n"
+    '        _buf = ("\\n".join(_lines) + "\\n").encode() if _lines else b""\n'
     "    else:\n"
-    "        _iq = np.empty(out.size * 2, dtype=np.float64)\n"
-    "        _iq[0::2] = out.real\n"
-    "        _iq[1::2] = out.imag\n"
-    "        _iq = np.clip(_iq, -1.0, 1.0)\n"
-    '        _scale = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
-    '                  "ci8": 127.0}[_st]\n'
-    '        _dt = {"ci32": np.int32, "ci16": np.int16,\n'
-    '               "ci8": np.int8}[_st]\n'
-    "        _buf = (_iq * _scale).astype(_dt).tobytes()\n"
+    '        if _st == "cf32":\n'
+    "            _a = out.astype(np.complex64)\n"
+    '        elif _st == "cf64":\n'
+    "            _a = out.astype(np.complex128)\n"
+    "        else:\n"
+    "            _iq = np.empty(out.size * 2, dtype=np.float64)\n"
+    "            _iq[0::2] = out.real\n"
+    "            _iq[1::2] = out.imag\n"
+    "            _iq = np.clip(_iq, -1.0, 1.0)\n"
+    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
+    '                   "ci8": 127.0}[_st]\n'
+    '            _dt = {"ci32": np.int32, "ci16": np.int16,\n'
+    '                   "ci8": np.int8}[_st]\n'
+    "            _a = (_iq * _sc).astype(_dt)\n"
+    '        if args.endian == "be":\n'
+    "            _a = _a.byteswap()\n"
+    "        _buf = _a.tobytes()\n"
     "    if args.output:\n"
     '        with open(args.output, "wb") as _f:\n'
     "            _f.write(_buf)\n"
@@ -349,6 +369,7 @@ def _c_argv_parser(
     *,
     want_in: bool = True,
     want_out: bool = True,
+    want_record: bool = False,
 ) -> str:
     """Generate the C argv parsing block: typed decls + a strcmp loop, the
     requested --input/--output handling, and the file opens. 4-space indented.
@@ -413,6 +434,17 @@ def _c_argv_parser(
         usage_parts.append("[--output FILE]")
         help_rows.append(
             ("--output, -o FILE", "output file (default: stdout)")
+        )
+    if want_record:
+        decls.append("    const char *record_path = NULL;")
+        clauses.append(
+            'if (!strcmp(argv[i], "--record") && i + 1 < argc) {\n'
+            "            record_path = argv[++i];\n"
+            "        }"
+        )
+        usage_parts.append("[--record FILE]")
+        help_rows.append(
+            ("--record FILE", "write a JSON record of the resolved run")
         )
 
     usage = f"usage: {name} " + " ".join(usage_parts)
@@ -547,6 +579,139 @@ jm_convert_block(const float _Complex *in, size_t n, int st,
 }
 """
 
+# ── output container + byte order (gh-193, 0.17.0) ───────────────────────────
+# `--file-type raw|csv` and `--endian le|be` ride on the same cf32 output stream
+# as `--sample_type`. raw = interleaved I/Q (byte-swapped per element when big-
+# endian); csv = one "I,Q" line per sample (text, endian-agnostic). The host is
+# assumed little-endian (jm's targets), so big-endian output reverses each
+# element on the way out.
+_WRITE_BLOCK_C = """\
+/* Bytes per I or Q element for sample type st (for big-endian swapping). */
+static size_t
+jm_elem_size(int st)
+{
+    switch (st) {
+    case 1: return sizeof(double);
+    case 2: return sizeof(int32_t);
+    case 3: return sizeof(int16_t);
+    case 4: return sizeof(int8_t);
+    default: return sizeof(float);
+    }
+}
+
+/* Write n cf32 samples in the chosen sample_type/endian/file_type.
+   ftype: 0=raw 1=csv.  endian: 0=little 1=big (raw only). */
+static void
+jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
+               int endian, int ftype, unsigned char *bytes)
+{
+    if (ftype == 1) { /* csv: one I,Q line per sample */
+        for (size_t i = 0; i < n; i++) {
+            float re = crealf(in[i]), im = cimagf(in[i]);
+            if (st == 0)
+                fprintf(out, "%0.9f,%0.9f\\n", (double)re, (double)im);
+            else if (st == 1)
+                fprintf(out, "%0.17g,%0.17g\\n", (double)re, (double)im);
+            else {
+                double sc = (st == 2) ? 2147483647.0
+                            : (st == 3) ? 32767.0
+                                        : 127.0;
+                fprintf(out, "%ld,%ld\\n", jm_q(re, sc), jm_q(im, sc));
+            }
+        }
+        return;
+    }
+    size_t nb = jm_convert_block(in, n, st, bytes);
+    if (endian == 1) { /* big-endian: reverse each element's bytes */
+        size_t es = jm_elem_size(st);
+        if (es > 1)
+            for (size_t off = 0; off + es <= nb; off += es)
+                for (size_t a = 0, b = es - 1; a < b; a++, b--) {
+                    unsigned char t = bytes[off + a];
+                    bytes[off + a] = bytes[off + b];
+                    bytes[off + b] = t;
+                }
+    }
+    fwrite(bytes, 1, nb, out);
+}
+"""
+
+# printf format + cast for each numeric C type, used by the --record JSON dump.
+_C_REC_FMT = {
+    "float": ("%g", "(double)"),
+    "double": ("%g", "(double)"),
+    "int": ("%d", "(int)"),
+    "int8_t": ("%d", "(int)"),
+    "int16_t": ("%d", "(int)"),
+    "int32_t": ("%d", "(int)"),
+    "int64_t": ("%lld", "(long long)"),
+    "uint8_t": ("%u", "(unsigned)"),
+    "uint16_t": ("%u", "(unsigned)"),
+    "uint32_t": ("%lu", "(unsigned long)"),
+    "uint64_t": ("%llu", "(unsigned long long)"),
+    "size_t": ("%zu", ""),
+}
+
+
+def _c_choice_arrays(flags: list[dict]) -> str:
+    """Static name tables for choice flags, so --record can print the chosen
+    string (the parser stores the index)."""
+    out = []
+    for f in flags:
+        chs = f.get("choices")
+        if not chs:
+            continue
+        lit = ", ".join(f'"{c}"' for c in chs)
+        out.append(
+            f"static const char *const jm_choices_{f['name']}[] = {{{lit}}};"
+        )
+    return "\n".join(out)
+
+
+def _c_record_block(flags: list[dict], name: str, version: str) -> str:
+    """Emit a `--record` JSON dump of the resolved run from the parsed locals."""
+    lines = [
+        "    if (record_path) {",
+        '        FILE *rec = fopen(record_path, "w");',
+        "        if (rec) {",
+        f'            fprintf(rec, "{{\\"tool\\":\\"{name}\\",'
+        f'\\"version\\":\\"{version}\\"");',
+    ]
+    for f in flags:
+        nm = f["name"]
+        if f.get("choices"):
+            lines.append(
+                f'            fprintf(rec, ",\\"{nm}\\":\\"%s\\"", '
+                f"jm_choices_{nm}[{nm}]);"
+            )
+        elif f["type"] in _C_REC_FMT:
+            fmt, cast = _C_REC_FMT[f["type"]]
+            lines.append(
+                f'            fprintf(rec, ",\\"{nm}\\":{fmt}", {cast}{nm});'
+            )
+    lines += [
+        '            fprintf(rec, "}\\n");',
+        "            fclose(rec);",
+        "        }",
+        "    }",
+    ]
+    return "\n".join(lines)
+
+
+def _py_record_block(flags: list[dict], name: str, version: str) -> str:
+    """Emit a `--record` JSON dump in Python from the parsed args."""
+    fields = [f'"tool": "{name}"', f'"version": "{version}"']
+    for f in flags:
+        if f.get("choices") or f["type"] in _C_REC_FMT:
+            fields.append(f'"{f["name"]}": args.{f["name"]}')
+    body = ", ".join(fields)
+    return (
+        "    if args.record:\n"
+        "        import json\n"
+        '        with open(args.record, "w") as _rf:\n'
+        f"            json.dump({{{body}}}, _rf, indent=2)"
+    )
+
 
 def _is_cf32_out(ret_t: str) -> bool:
     """True if the output element type is single-precision complex (cf32)."""
@@ -595,9 +760,8 @@ def _c_io_loop(
             f"    size_t k;\n"
             f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
             f"        {component}_steps(state, inbuf, k, outbuf);\n"
-            f"        size_t nb = jm_convert_block(outbuf, k, sample_type,"
-            f" jm_bytes);\n"
-            f"        fwrite(jm_bytes, 1, nb, out);\n"
+            f"        jm_write_block(out, outbuf, k, sample_type, endian,"
+            f" file_type, jm_bytes);\n"
             f"    }}"
         )
     if shape == "generator" and sample_type:
@@ -609,9 +773,8 @@ def _c_io_loop(
             f"        size_t k = (count - produced) < {n}\n"
             f"                       ? (count - produced) : (size_t){n};\n"
             f"        {component}_steps(state, outbuf, k);\n"
-            f"        size_t nb = jm_convert_block(outbuf, k, sample_type,"
-            f" jm_bytes);\n"
-            f"        fwrite(jm_bytes, 1, nb, out);\n"
+            f"        jm_write_block(out, outbuf, k, sample_type, endian,"
+            f" file_type, jm_bytes);\n"
             f"        produced += k;\n"
             f"    }}"
         )
@@ -1008,10 +1171,45 @@ def _build_ctx(
                 "ctor": False,
                 "consumed": True,
             }
-            parse_flags.append(st_flag)
-            argparse_flags.append(st_flag)
+            # gh-193 (0.17.0): output container + byte order, on the same stream.
+            ft_flag = {
+                "name": "file_type",
+                "type": "choice",
+                "default": "raw",
+                "choices": ["raw", "csv"],
+                "help": "output container",
+                "ctor": False,
+                "consumed": True,
+            }
+            en_flag = {
+                "name": "endian",
+                "type": "choice",
+                "default": "le",
+                "choices": ["le", "be"],
+                "help": "byte order (raw only)",
+                "ctor": False,
+                "consumed": True,
+            }
+            for fl in (st_flag, ft_flag, en_flag):
+                parse_flags.append(fl)
+                argparse_flags.append(fl)
+            # --record is a path flag: parsed in C via want_record, surfaced in
+            # Python argparse here (str/default None, not CLI-numeric/choice).
+            argparse_flags.append(
+                {
+                    "name": "record",
+                    "type": "const char *",
+                    "default": "",
+                    "help": "write a JSON record of the resolved run",
+                    "ctor": False,
+                }
+            )
         arg_parse_block = _c_argv_parser(
-            name, parse_flags, want_in=want_in, want_out=want_out
+            name,
+            parse_flags,
+            want_in=want_in,
+            want_out=want_out,
+            want_record=sample_type,
         )
         create_call = _create_call(parsed=True)
         io_loop = _c_io_loop(
@@ -1019,7 +1217,18 @@ def _build_ctx(
         )
         helpers = _c_choice_parsers(parse_flags)
         if sample_type:
-            helpers = (helpers + "\n\n" if helpers else "") + _SAMPLE_TYPE_C
+            helpers = "\n\n".join(
+                x
+                for x in (
+                    helpers,
+                    _c_choice_arrays(parse_flags),
+                    _SAMPLE_TYPE_C + _WRITE_BLOCK_C,
+                )
+                if x
+            )
+            io_loop = (
+                _c_record_block(parse_flags, name, version) + "\n\n" + io_loop
+            )
         py_io_loop = R.render(
             _py_io_loop(
                 shape,
@@ -1031,6 +1240,12 @@ def _build_ctx(
             ),
             {"py_create_args": _py_create_args(all_flags)},
         )
+        if sample_type:
+            py_io_loop = (
+                _py_record_block(parse_flags, name, version)
+                + "\n"
+                + py_io_loop
+            )
         tail = []
         if want_in:
             tail.append("    if (in != stdin) fclose(in);")

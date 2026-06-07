@@ -395,7 +395,7 @@ def test_sample_type_dtype_output_c(tmp_path: Path):
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gen")
     c = (proj / "native/src/app/tool.c").read_text()
-    assert "jm_convert_block(outbuf, k, sample_type" in c
+    assert "jm_write_block(out, outbuf, k, sample_type, endian, file_type" in c
     assert "jm_parse_sample_type" in c
     assert "[--sample_type cf32|cf64|ci32|ci16|ci8]" in c
     # the convert helper + clamp are emitted before main
@@ -409,7 +409,46 @@ def test_sample_type_dtype_output_python(tmp_path: Path):
     jm_app(proj, target="pep723", name="tool", object_="gen")
     cli = (proj / "src/proj/cli.py").read_text()
     assert "choices=['cf32', 'cf64', 'ci32', 'ci16', 'ci8']" in cli
-    assert "_buf = (_iq * _scale).astype(_dt).tobytes()" in cli
+    assert "_a = (_iq * _sc).astype(_dt)" in cli
+    import py_compile
+
+    py_compile.compile(str(proj / "src/proj/cli.py"), doraise=True)
+    py_compile.compile(str(proj / "tool.py"), doraise=True)
+
+
+def test_output_axes_c(tmp_path: Path):
+    """gh-193 (0.17.0): a cf32 stream gets --file-type/--endian/--record."""
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="c", name="tool", object_="gen")
+    c = (proj / "native/src/app/tool.c").read_text()
+    # flags surface in usage/help
+    assert "[--file_type raw|csv]" in c
+    assert "[--endian le|be]" in c
+    assert "[--record FILE]" in c
+    # the csv + byte-swap writer is emitted
+    assert "static void\njm_write_block(" in c
+    assert "static size_t\njm_elem_size(" in c
+    assert 'fprintf(out, "%0.9f,%0.9f' in c  # csv float line
+    assert "bytes[off + a] = bytes[off + b];" in c  # big-endian swap
+    # --record dumps the resolved run, with choice names from the tables
+    assert "static const char *const jm_choices_sample_type[]" in c
+    assert "if (record_path) {" in c
+    assert 'fprintf(rec, ",\\"sample_type\\":\\"%s\\"", ' in c
+    assert 'fprintf(rec, ",\\"freq\\":%g", (double)freq);' in c
+
+
+def test_output_axes_python(tmp_path: Path):
+    proj = _gen_proj(tmp_path)
+    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="pep723", name="tool", object_="gen")
+    cli = (proj / "src/proj/cli.py").read_text()
+    assert "choices=['raw', 'csv']" in cli
+    assert "choices=['le', 'be']" in cli
+    assert '"--record", type=str' in cli
+    assert 'if args.file_type == "csv":' in cli
+    assert 'if args.endian == "be":' in cli
+    assert "_a = _a.byteswap()" in cli
+    assert "if args.record:" in cli and "json.dump(" in cli
     import py_compile
 
     py_compile.compile(str(proj / "src/proj/cli.py"), doraise=True)
@@ -441,7 +480,7 @@ def test_sample_type_blockwise(tmp_path: Path):
     jm_apply(proj)
     jm_app(proj, target="c", name="t", object_="flt")
     c = (proj / "native/src/app/t.c").read_text()
-    assert "jm_convert_block(outbuf, k, sample_type" in c
+    assert "jm_write_block(out, outbuf, k, sample_type, endian, file_type" in c
 
 
 def test_no_sample_type_for_real_output(tmp_path: Path):
