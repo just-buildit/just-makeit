@@ -61,6 +61,32 @@ both the C and Python parsers.
 
 ______________________________________________________________________
 
+## Output axes (complex-float streams)
+
+When the output element type is **complex float32** (a `generator` or
+`blockwise` shape returning `float _Complex`), `jm app` adds a set of built-in
+output flags — no declaration needed. They are generated **byte-identically
+across all three faces** (the C face converts inline; the Python faces use
+numpy), so a capture is reproducible regardless of which face produced it.
+
+| Flag            | Values                            | Effect                                                                                                                                     |
+| --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--sample_type` | `cf32` `cf64` `ci32` `ci16` `ci8` | wire type, converted on write (full-scale ±1.0 for the integer types)                                                                      |
+| `--file_type`   | `raw` `csv`                       | `raw` interleaved I/Q (default) or text `I,Q` lines (`%0.9f` cf32, `%0.17g` cf64, `%d` integer)                                            |
+| `--endian`      | `le` `be`                         | byte order; `be` reverses each element (raw only — csv is text)                                                                            |
+| `--record FILE` | path                              | write a JSON record of the fully-resolved run (every flag after defaulting; choice flags as their chosen string) for reproducible captures |
+
+`--sample_type` shipped in 0.16.0; `--file_type` / `--endian` / `--record` in
+0.17.0.
+
+> **Richer containers stay application-side.** Formats that need context a
+> generic generator can't know — sample rate (BLUE `xdelta`), per-segment
+> annotations (SigMF), or a transport (zmq) — are *not* generated. Provide them
+> in a hand-written tool over your C cores (see doppler's `wfmgen` composer,
+> which adds BLUE / SigMF / `zmq://` alongside the generated `wavegen`).
+
+______________________________________________________________________
+
 ## Targets
 
 ### `--target c`

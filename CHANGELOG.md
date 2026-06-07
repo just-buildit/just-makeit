@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-06-07
+
+### Fixed
+
+- **Class-docstring construction example honours the init_params ctor** (the #69
+    contract). For an object that declares **both** `init_params` and scalar
+    `--state` vars (state is then hidden/bridged), the generated `.pyi` "Create
+    with defaults" example was built from the **state** vars — wrong arity, and
+    wrong types for a `string_enum:` param (e.g. `Synth(0, 8, 0, 1.0, 0.0)` →
+    `TypeError`, failing a doctest gate). It now constructs from the init_params
+    as **keyword arguments** (`Synth(type="tone", fs=1000000.0, …)`,
+    string_enum defaults quoted), which is order-independent against the binding's
+    parse order, and the **Parameters** section documents the init_params. The
+    "reset restores defaults" demo is **skipped** for init_params ctors, whose
+    custom `create_impl` may derive state from a param and keep it across `reset()`
+    (e.g. a waveform `type`). Regression test in `test_stubs.py`.
+
+### Docs
+
+- `docs/commands/app.md`: document the cf32 output axes — `--sample_type`
+    (0.16.0) and `--file_type` / `--endian` / `--record` (0.17.0).
+
 ## [0.17.0] — 2026-06-06
 
 ### Added

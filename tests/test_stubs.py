@@ -150,6 +150,37 @@ class TestClassStub:
         pyi = _pyi(void_arg_project, "dsp", "myproj")
         assert "def __init__(self, gain: float = ...) -> None: ..." in pyi
 
+    def test_initparams_ctor_docstring(self, tmp_path):
+        """#69: with both init_params and scalar state, the class docstring's
+        construction example uses init_params as keyword args (string_enum
+        quoted), and the "reset restores defaults" demo is skipped — a custom
+        create_impl may derive state from the params and keep it across reset
+        (e.g. a waveform `kind`)."""
+        root = tmp_path / "myproj"
+        new_run("myproj", root, modules=["dsp"])
+        object_run(
+            root,
+            "eng",
+            "dsp",
+            state_vars=[("wtype", "int", "0"), ("nsps", "int", "8")],
+            init_params=[
+                ("kind", "string_enum:tone,noise", "tone"),
+                ("fs", "double", "1000000.0"),
+            ],
+            arg_type="void",
+            return_type="float _Complex",
+            mutable=True,
+        )
+        pyi = _pyi(root, "dsp", "myproj")
+        # construction example: init_params as kwargs, enum default quoted
+        assert 'Eng(kind="tone", fs=1000000.0)' in pyi
+        # not the hidden state vars
+        assert "Eng(0, 8)" not in pyi
+        # custom-create ⇒ no reset-restores-defaults demo
+        assert "Reset restores defaults" not in pyi
+        # Parameters document the constructor params
+        assert "kind :" in pyi and "constructor parameter." in pyi
+
 
 # ── step / steps ──────────────────────────────────────────────────────────────
 

@@ -181,6 +181,7 @@ def _build_class_docstring(
     import_line: str,
     py_create_args: str,
     brief: str = "",
+    custom_reset: bool = False,
 ) -> list[str]:
     """Return lines for a numpy-style class docstring (indented 4 spaces).
 
@@ -191,9 +192,25 @@ def _build_class_docstring(
     summary = brief or f"{Component} component."
     lines: list[str] = [f'    """{summary}', ""]
 
-    # Parameters section
+    # Parameters section. init_params win when present (they are what create()
+    # actually takes — the #69 contract); state vars are documented only for a
+    # plain --state object with no init_params.
     param_lines: list[str] = []
-    if state_vars and not no_state:
+    if init_params:
+        for name, ctype, dflt, *rest in init_params:
+            optional = rest[4] if len(rest) >= 5 else False
+            py_t = _py(ctype)
+            if optional:
+                py_t = f"{py_t} or None"
+            if ctype.startswith("string_enum:"):
+                py_d = f'"{dflt}"' if dflt else "..."
+            else:
+                py_d = _py_default_stub(ctype, dflt)
+            param_lines += [
+                f"    {name} : {py_t}, default {py_d}",
+                f"        {name} constructor parameter.",
+            ]
+    elif state_vars and not no_state:
         for name, ctype, dflt in state_vars:
             m = _ARRAY_RE.match(ctype.strip())
             if m:
@@ -210,20 +227,6 @@ def _build_class_docstring(
                     f"    {name} : {py_t}, default {py_d}",
                     f"        {name} state variable.",
                 ]
-    elif init_params:
-        for name, ctype, dflt, *rest in init_params:
-            optional = rest[4] if len(rest) >= 5 else False
-            py_t = _py(ctype)
-            if optional:
-                py_t = f"{py_t} or None"
-            if ctype.startswith("string_enum:"):
-                py_d = f'"{dflt}"' if dflt else "..."
-            else:
-                py_d = _py_default_stub(ctype, dflt)
-            param_lines += [
-                f"    {name} : {py_t}, default {py_d}",
-                f"        {name} constructor parameter.",
-            ]
 
     if param_lines:
         lines += ["    Parameters", "    ----------"] + param_lines + [""]
@@ -256,7 +259,10 @@ def _build_class_docstring(
     for name, out in scalar_getters[:3]:
         ex += [f"    >>> obj.get_{name}()", f"    {out}"]
 
-    if scalar_getters:
+    # The "reset restores defaults" demo assumes reset() zeroes the first state
+    # var. A custom reset_impl (#51) may deliberately preserve config (e.g. a
+    # waveform `type` set by create_impl), so skip the demo there.
+    if scalar_getters and not custom_reset:
         first_name, first_out = scalar_getters[0]
         first_ct = next(ct for n, ct, _ in state_vars if n == first_name)
         kind_map = {
@@ -352,18 +358,31 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     no_step = C.is_no_step(cfg, obj)
     no_state = C.is_no_state(cfg, obj)
 
-    # Constructor arg string for doctest
+    # Constructor arg string for doctest. init_params drive create() when
+    # present (the #69 contract — even when scalar state vars also exist, which
+    # are then hidden/bridged), so the example must use them; a string_enum
+    # default renders as its quoted string, not the enum index.
     scalar_vars = [
         (n, ct, dflt)
         for n, ct, dflt in state_vars
         if not _ARRAY_RE.match(ct.strip())
     ]
+
+    def _ctor_literal(ct: str, dflt: str) -> str:
+        if ct.startswith("string_enum:"):
+            return f'"{dflt}"' if dflt else "..."
+        return _py_default_stub(ct, dflt)
+
     py_create_args = (
-        ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars)
-        if (scalar_vars and not no_state)
+        # keyword args: order-independent against the binding's parse order, and
+        # self-documenting (string_enums show their chosen string).
+        ", ".join(f"{n}={_ctor_literal(ct, dflt)}" for n, ct, dflt, *_ in ip)
+        if ip
         else (
-            ", ".join(_py_default_stub(ct, dflt) for _, ct, dflt, *_ in ip)
-            if ip
+            ", ".join(
+                _py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars
+            )
+            if (scalar_vars and not no_state)
             else ""
         )
     )
@@ -389,6 +408,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         import_line,
         py_create_args,
         brief=_class_brief,
+        # init_params imply a create_impl that derives state from the params
+        # (the #69 contract), so the first state var is config — not guaranteed
+        # zeroed by reset(). Skip the "reset restores defaults" demo there.
+        # (init_params survive the apply-path cfg; reset_impl/create_impl don't.)
+        custom_reset=bool(ip),
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
 
