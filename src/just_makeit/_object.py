@@ -94,6 +94,25 @@ def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
     if verb.startswith("set_"):
         templates.add(f"set {verb[4:]}")
         templates.add(f"set {verb[4:]} from src")
+    if verb in ("step", "steps"):
+        # jm's own scaffold @brief for the built-in step()/steps() methods, by
+        # I/O shape. Filtering these keeps a fresh-scaffold header from enriching
+        # the .pyi differently than a manifest-only rebuild; a hand-written
+        # @brief (anything not in this set) is still derived.
+        templates.update(
+            {
+                "advance state by one tick (no i/o)",
+                "consume one input sample (sink; no output)",
+                "generate a block of output samples",
+                "generate one output sample from internal state",
+                "process a block of input samples (no output)",
+                "process a block of samples",
+                "process n iterations (no scalar output)",
+                "process one input buffer and return a result",
+                "process one input buffer (no scalar output)",
+                "process one input sample",
+            }
+        )
     return brief in templates
 
 
@@ -128,6 +147,7 @@ def _make_object_ctx(
     class_name: str | None = None,
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
+    doc_blocks: dict | None = None,
 ) -> dict:
     """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
@@ -163,7 +183,14 @@ def _make_object_ctx(
     # shared resolver — see Ctx.resolve_return_type's docstring.
     _rt = Ctx.resolve_return_type(arg_type, return_type)
     ctx.update(
-        Ctx.make_step_ctx(ctx, arg_type, _rt, no_step=no_step, mutable=mutable)
+        Ctx.make_step_ctx(
+            ctx,
+            arg_type,
+            _rt,
+            no_step=no_step,
+            mutable=mutable,
+            doc_blocks=doc_blocks,
+        )
     )
     # Re-generate pyi_examples now that package and Component are in ctx.
     # make_state_ctx emits placeholder text; we replace it with the real values.
@@ -593,6 +620,7 @@ def build_component_ctxs(
             class_name=C.class_name(cfg, obj),
             opaque_fields=C.opaque_fields(cfg, obj),
             no_ctor_names=C.no_ctor_names(cfg, obj),
+            doc_blocks=_doc_blocks,
         )
         ctx.update(
             Ctx.make_methods_ctx(

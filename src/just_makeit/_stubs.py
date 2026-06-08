@@ -314,18 +314,21 @@ def _method_doc_lines(
     fallback = f'        """{m_name.replace("_", " ").capitalize()}."""'
     if block is None and not override:
         return [fallback]
-    from ._docstring import render_numpy_method_doc
+    from ._docstring import _wrap, render_numpy_method_doc
 
     if block is not None:
-        summary, body, descs, ret = render_numpy_method_doc(block, py_params)
+        summary, body, descs, ret, examples = render_numpy_method_doc(
+            block, py_params
+        )
     else:
-        summary, body, descs, ret = "", [], {}, ""
+        summary, body, descs, ret, examples = "", [], {}, "", []
     summary = override or summary
     if not summary:
         summary = m_name.replace("_", " ").capitalize() + "."
     out = [f'        """{summary}']
-    for para in body:
-        out += ["", f"        {para}"] if para else [""]
+    for para in body:  # extended description — flowing, wrapped paragraphs
+        out.append("")
+        out += [f"        {w}" for w in _wrap(para, 72)]
     if py_params:
         out += ["", "        Parameters", "        ----------"]
         for pname, ann in py_params:
@@ -339,6 +342,9 @@ def _method_doc_lines(
             f"        {ret_ann}",
             f"            {ret or 'Output.'}",
         ]
+    if examples:  # @code ... @endcode -> runnable doctest
+        out += ["", "        Examples", "        --------"]
+        out += [f"        {ex}".rstrip() for ex in examples]
     out.append('        """')
     return out
 
@@ -357,6 +363,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     ip = C.init_params(cfg, obj)
     no_step = C.is_no_step(cfg, obj)
     no_state = C.is_no_state(cfg, obj)
+
+    def _builtin_doc(cfn, py_params, ret_ann, fallback_doc):
+        """Docstring lines for a built-in method: the header Doxygen for *cfn*
+        when present (so reset/step/steps are documentable), else the canned
+        one-liner *fallback_doc*."""
+        blk = doc_blocks.get(cfn)
+        if blk is not None:
+            return _method_doc_lines(blk, cfn, py_params, ret_ann)
+        return [f'        """{fallback_doc}"""']
 
     # Constructor arg string for doctest. init_params drive create() when
     # present (the #69 contract — even when scalar state vars also exist, which
@@ -448,11 +463,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # the extra-methods loop and must not be duplicated here.
     _user_has_reset = any(m["name"] == "reset" for m in obj_methods)
     if not _user_has_reset:
-        lines += [
-            "",
-            "    def reset(self) -> None:",
-            '        """Reset state to post-create defaults."""',
-        ]
+        lines += ["", "    def reset(self) -> None:"]
+        lines += _builtin_doc(
+            f"{obj}_reset", [], "None", "Reset state to post-create defaults."
+        )
 
     # step() / steps()
     if no_step:
@@ -461,46 +475,72 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         lines += [
             "",
             f"    def step(self, x: {_py(arg_type)}) -> {_py(return_type)}:",
-            '        """Process one buffer of samples."""',
         ]
+        lines += _builtin_doc(
+            f"{obj}_step",
+            [("x", _py(arg_type))],
+            _py(return_type),
+            "Process one buffer of samples.",
+        )
     elif arg_type != "void":
         lines += [
             "",
             f"    def step(self, x: {_py(arg_type)}) -> {_py(return_type)}:",
-            '        """Process one input sample."""',
         ]
+        lines += _builtin_doc(
+            f"{obj}_step",
+            [("x", _py(arg_type))],
+            _py(return_type),
+            "Process one input sample.",
+        )
         if return_type != "void":
             lines += [
                 "",
                 f"    def steps(self, x: NDArray[{_np(arg_type)}],"
                 f" out: NDArray[{_np(return_type)}] | None = None)"
                 f" -> NDArray[{_np(return_type)}]:",
-                '        """Process a samples array."""',
             ]
+            lines += _builtin_doc(
+                f"{obj}_steps",
+                [("x", f"NDArray[{_np(arg_type)}]")],
+                f"NDArray[{_np(return_type)}]",
+                "Process a samples array.",
+            )
         else:
             lines += [
                 "",
                 f"    def steps(self, x: NDArray[{_np(arg_type)}]) -> None:",
-                '        """Process a samples array."""',
             ]
+            lines += _builtin_doc(
+                f"{obj}_steps",
+                [("x", f"NDArray[{_np(arg_type)}]")],
+                "None",
+                "Process a samples array.",
+            )
     else:
-        lines += [
-            "",
-            f"    def step(self) -> {_py(return_type)}:",
-            '        """Generate one output sample."""',
-        ]
+        lines += ["", f"    def step(self) -> {_py(return_type)}:"]
+        lines += _builtin_doc(
+            f"{obj}_step", [], _py(return_type), "Generate one output sample."
+        )
         if return_type != "void":
             lines += [
                 "",
                 f"    def steps(self, n: int) -> NDArray[{_np(return_type)}]:",
-                '        """Generate n output samples."""',
             ]
+            lines += _builtin_doc(
+                f"{obj}_steps",
+                [("n", "int")],
+                f"NDArray[{_np(return_type)}]",
+                "Generate n output samples.",
+            )
         else:
-            lines += [
-                "",
-                "    def steps(self, n: int) -> None:",
-                '        """Advance state by n ticks."""',
-            ]
+            lines += ["", "    def steps(self, n: int) -> None:"]
+            lines += _builtin_doc(
+                f"{obj}_steps",
+                [("n", "int")],
+                "None",
+                "Advance state by n ticks.",
+            )
 
     # extra methods
     for m in obj_methods:

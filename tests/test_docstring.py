@@ -124,7 +124,7 @@ class TestExtractDocBlocks:
 class TestRenderNumpyMethodDoc:
     def test_drops_c_only_params_keeps_python_args(self):
         b = parse_doxygen_block(_EXECUTE_BLOCK)
-        summary, body, descs, ret = render_numpy_method_doc(
+        summary, body, descs, ret, _ex = render_numpy_method_doc(
             b, py_params=[("x", "NDArray[complex64]")]
         )
         assert summary == "Mix and resample a block of CF32 samples."
@@ -141,7 +141,7 @@ class TestRenderNumpyMethodDoc:
  * @return Scaled output.
  */"""
         b = parse_doxygen_block(raw)
-        _s, _b, descs, _r = render_numpy_method_doc(
+        _s, _b, descs, _r, _ex = render_numpy_method_doc(
             b, py_params=[("x", "NDArray[float32]")]
         )
         # C `samples` aligns positionally to Python `x`
@@ -149,7 +149,63 @@ class TestRenderNumpyMethodDoc:
 
     def test_missing_param_desc_is_empty_string(self):
         b = DoxyBlock(brief="Hi.")
-        _s, _b, descs, _r = render_numpy_method_doc(
+        _s, _b, descs, _r, _ex = render_numpy_method_doc(
             b, py_params=[("x", "float")]
         )
         assert descs["x"] == ""
+
+
+# ── @code → Examples doctests + paragraph grouping (gh: docstrings) ──────────
+class TestCodeExamples:
+    def test_code_block_captured_as_examples(self):
+        raw = (
+            "/**\n"
+            " * @brief Do a thing.\n"
+            " * @code\n"
+            " * >>> from pkg import Obj\n"
+            " * >>> Obj().go()\n"
+            " * 42\n"
+            " * @endcode\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw, name="go")
+        assert b is not None
+        assert b.examples == [
+            ">>> from pkg import Obj",
+            ">>> Obj().go()",
+            "42",
+        ]
+        assert b.brief == "Do a thing."
+
+    def test_code_only_block_is_not_trivial(self):
+        # a block whose only content is a @code example must survive even when
+        # the brief matches the name-template
+        raw = (
+            "/**\n * @brief go.\n * @code\n"
+            " * >>> 1 + 1\n * 2\n * @endcode\n */"
+        )
+        b = parse_doxygen_block(raw, name="go")
+        assert b is not None
+        assert b.examples == [">>> 1 + 1", "2"]
+
+    def test_render_returns_examples_and_paragraphs(self):
+        raw = (
+            "/**\n"
+            " * @brief Summary line.\n"
+            " *\n"
+            " * First paragraph line one\n"
+            " * line two of the same paragraph.\n"
+            " * @code\n"
+            " * >>> 1\n * 1\n"
+            " * @endcode\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw, name="m")
+        summary, body, _descs, _ret, examples = render_numpy_method_doc(b, [])
+        assert summary == "Summary line."
+        # multi-line prose collapses into one flowing paragraph (no per-line
+        # double-spacing)
+        assert body == [
+            "First paragraph line one line two of the same paragraph."
+        ]
+        assert examples == [">>> 1", "1"]
