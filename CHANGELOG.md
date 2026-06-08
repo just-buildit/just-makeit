@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-08
+
+### Added
+
+- **`@code` blocks become runnable `Examples` doctests** — a `@code … @endcode`
+    block in a header's Doxygen is rendered into the generated `.pyi` as a
+    numpy-style `Examples` section the doctest gate then runs.
+
+### Changed
+
+- **Multi-line Doxygen prose renders as flowing paragraphs** (no per-source-line
+    double-spacing); grouped + wrapped.
+- **Built-in `reset` / `step` / `steps` derive their docstring from the header
+    `@brief`** when written, matching extra-methods/properties; jm's own scaffold
+    `@brief`s are filtered so fresh-scaffold ↔ manifest-rebuild stays idempotent.
+
 ## [0.17.1] — 2026-06-07
 
 ### Fixed

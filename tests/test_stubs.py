@@ -765,3 +765,19 @@ def test_method_doc_lines_emits_examples_and_paragraphs():
     assert "Examples" in out and "--------" in out
     assert ">>> P().generate(4)" in out
     assert "Returns" in out
+
+
+def test_method_examples_end_with_blank_before_closing_quote():
+    """A method docstring with @code examples must leave a blank line before the
+    closing triple-quote, so pytest --doctest-glob (text-file mode) ends the
+    expected output before the `\"\"\"` instead of swallowing it."""
+    from just_makeit._docstring import DoxyBlock
+    from just_makeit._stubs import _method_doc_lines
+
+    block = DoxyBlock(
+        brief="Do it.",
+        examples=[">>> 1 + 1", "2"],
+    )
+    out = _method_doc_lines(block, "go", [], "int")
+    assert out[-1].strip() == '"""'
+    assert out[-2].strip() == ""  # blank line precedes the closer
