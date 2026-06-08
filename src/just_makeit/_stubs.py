@@ -345,6 +345,10 @@ def _method_doc_lines(
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", "        Examples", "        --------"]
         out += [f"        {ex}".rstrip() for ex in examples]
+        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+        # text file, where expected output runs until a blank line — without
+        # this the closing `"""` is swallowed into the last example's output.
+        out.append("")
     out.append('        """')
     return out
 
