@@ -29,6 +29,7 @@ def make_step_ctx(
     return_type: str,
     no_step: bool = False,
     mutable: bool = False,
+    doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Pre-render step() and steps() C and Python bodies for stateful objects.
 
@@ -896,6 +897,14 @@ def make_step_ctx(
         _step_sig = f"step(x) -> {_ret_hint_step}"
         _step_desc = "Process one input sample."
 
+    # A hand-written @brief in the header overrides the canned description, so
+    # help(Obj.step) matches the .pyi. (Scaffold @briefs are filtered out by
+    # _load_doc_blocks, so the default stays canned and idempotent.)
+    _db = doc_blocks or {}
+    _sblk = _db.get(f"{component}_step")
+    if _sblk and _sblk.brief:
+        _step_desc = _sblk.brief
+
     _step_doc_lines: list[str] = [_step_sig, "", _step_desc, ""]
     if _is_arr_arg:
         _step_doc_lines.append("    >>> import numpy as np")
@@ -924,6 +933,9 @@ def make_step_ctx(
             _steps_call = (
                 f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
             )
+        _ssblk = _db.get(f"{component}_steps")
+        if _ssblk and _ssblk.brief:
+            _steps_desc = _ssblk.brief
         _steps_doc_lines: list[str] = [_steps_sig, "", _steps_desc, ""]
         _steps_doc_lines.append("    >>> import numpy as np")
         _steps_doc_lines += [*_from_pkg, _obj_create, _steps_call]

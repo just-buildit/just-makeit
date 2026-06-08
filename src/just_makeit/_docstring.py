@@ -68,6 +68,7 @@ class DoxyBlock:
     body: list[str] = field(default_factory=list)
     params: list[tuple[str, str]] = field(default_factory=list)
     returns: str = ""
+    examples: list[str] = field(default_factory=list)
 
     def param_desc(self, name: str) -> str | None:
         """Return the description for parameter *name*, or ``None``."""
@@ -75,6 +76,27 @@ class DoxyBlock:
             if pname == name:
                 return desc
         return None
+
+
+def group_paragraphs(lines: list[str]) -> list[str]:
+    """Join a list of body *lines* into paragraphs.
+
+    Consecutive non-blank lines become one space-joined paragraph; blank lines
+    separate paragraphs. Used so multi-line Doxygen prose renders as flowing
+    paragraphs instead of one short line per source line (which the renderers
+    would otherwise blank-line-separate into a double-spaced block).
+    """
+    paras: list[str] = []
+    cur: list[str] = []
+    for ln in lines:
+        if ln.strip():
+            cur.append(ln.strip())
+        elif cur:
+            paras.append(" ".join(cur))
+            cur = []
+    if cur:
+        paras.append(" ".join(cur))
+    return paras
 
 
 # A C declaration line we can attribute a preceding comment to. Captures the
@@ -191,11 +213,28 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     body_lines: list[str] = []
     params: list[tuple[str, str]] = []
     return_parts: list[str] = []
+    example_lines: list[str] = []
     # current accumulation target: "brief" | "body" | "param" | "return"
     target = "brief"
     saw_brief_tag = False
+    in_code = False
 
     for ln in lines:
+        stripped = ln.strip()
+        # @code ... @endcode delimits a verbatim doctest example. Capture the
+        # interior lines (the `* ` decoration is already stripped) so they
+        # render into a numpy ``Examples`` block / runnable doctest.
+        if in_code:
+            if stripped.startswith("@endcode"):
+                in_code = False
+                target = "body"
+            else:
+                example_lines.append(ln)
+            continue
+        if stripped.startswith("@code"):
+            in_code = True
+            continue
+
         tag_m = _TAG_RE.match(ln)
         if tag_m:
             tag, rest = tag_m.group(1), tag_m.group(2).strip()
@@ -249,17 +288,27 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     while body_lines and not body_lines[-1].strip():
         body_lines.pop()
     returns = " ".join(return_parts).strip()
+    # trim trailing blank lines from the captured example
+    while example_lines and not example_lines[-1].strip():
+        example_lines.pop()
     block = DoxyBlock(
         brief=brief,
         body=body_lines,
         params=[(n, d) for n, d in params],
         returns=returns,
+        examples=example_lines,
     )
 
-    if not (brief or block.body or block.params or returns):
+    if not (brief or block.body or block.params or returns or example_lines):
         return None
     # Trivial scaffold brief (e.g. "@brief myverb.") with nothing else.
-    if name and not block.body and not block.params and not returns:
+    if (
+        name
+        and not block.body
+        and not block.params
+        and not returns
+        and not example_lines
+    ):
         norm = brief.rstrip(".").replace("_", " ").strip().lower()
         if norm == name.replace("_", " ").strip().lower():
             return None
@@ -286,7 +335,7 @@ def _wrap(text: str, width: int = 70) -> list[str]:
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
-) -> tuple[str, list[str], dict[str, str], str]:
+) -> tuple[str, list[str], dict[str, str], str, list[str]]:
     """Resolve a method's prose fields from *block* for numpy rendering.
 
     This returns the *pieces* (not a fully formatted docstring) so each
@@ -306,9 +355,11 @@ def render_numpy_method_doc(
     Returns
     -------
     tuple
-        ``(summary, body_lines, param_desc_by_name, return_desc)`` where
-        ``param_desc_by_name`` maps each Python arg name to its description
-        (possibly empty).
+        ``(summary, body_paragraphs, param_desc_by_name, return_desc,
+        example_lines)`` where ``body_paragraphs`` is the extended description
+        grouped into flowing paragraphs, ``param_desc_by_name`` maps each Python
+        arg name to its description (possibly empty), and ``example_lines`` are
+        the verbatim ``@code`` doctest lines (empty if none).
     """
     py_names = [n for n, _ in py_params]
     # exact-name matches first
@@ -329,4 +380,10 @@ def render_numpy_method_doc(
                 desc_by_name[n] = d
     for n in py_names:
         desc_by_name.setdefault(n, "")
-    return block.brief, list(block.body), desc_by_name, block.returns
+    return (
+        block.brief,
+        group_paragraphs(block.body),
+        desc_by_name,
+        block.returns,
+        list(block.examples),
+    )

@@ -739,3 +739,29 @@ class TestTwoDArrayStub:
     def test_optional_null_default(self, twod_project):
         pyi = _pyi(twod_project, "dsp", "myproj")
         assert "bank: NDArray[np.float32] | None = None" in pyi
+
+
+def test_method_doc_lines_emits_examples_and_paragraphs():
+    """_method_doc_lines renders body paragraphs + an Examples doctest block."""
+    from just_makeit._docstring import DoxyBlock
+    from just_makeit._stubs import _method_doc_lines
+
+    block = DoxyBlock(
+        brief="Generate chips.",
+        body=["Detailed prose explaining the behaviour at length."],
+        params=[],
+        returns="The chips.",
+        examples=[
+            ">>> from pkg import P",
+            ">>> P().generate(4)",
+            "[0, 1, 1, 0]",
+        ],
+    )
+    out = "\n".join(
+        _method_doc_lines(block, "generate", [], "NDArray[np.uint8]")
+    )
+    assert "Generate chips." in out
+    assert "Detailed prose explaining" in out
+    assert "Examples" in out and "--------" in out
+    assert ">>> P().generate(4)" in out
+    assert "Returns" in out
