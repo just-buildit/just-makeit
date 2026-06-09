@@ -385,8 +385,15 @@ def make_methods_ctx(
 
         out_type: str | None = m.get("out_type")
         out_divisor: int = int(m.get("out_divisor", 1))
-        _vo_out_elem = (
+        # The variable-output buffer holds *elements*, so a `T[]` return type
+        # (or out_type) must be reduced to its element type `T`; otherwise the
+        # buffer field, the `*out` param, sizeof(), and the NumPy enum all
+        # render the invalid `T[] *out` / `sizeof(T[])` (gh-201 follow-up).
+        _vo_out_src = (
             out_type if (variable_output and out_type) else return_type
+        )
+        _vo_out_elem = (
+            _vo_out_src[:-2] if _vo_out_src.endswith("[]") else _vo_out_src
         )
         _vo_out_disp = _ctype_display(_vo_out_elem)
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)

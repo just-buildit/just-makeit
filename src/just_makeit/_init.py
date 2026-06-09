@@ -31,6 +31,15 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # the `<<depends_includes>>` slot from leaking on paths that have no
         # dependency info to inject.
         "depends_includes": "",
+        # Stream-generator slots (gh-201). Default empty so every render path
+        # has them — a non-streamable object renders byte-identical, and the
+        # streamable paths overwrite these via Ctx.make_stream_ctx.
+        "stream_iter_block": "",
+        "stream_def_entry": "",
+        "stream_tp_iter": "",
+        "stream_type_ready": "",
+        "pyi_stream_typing": "",
+        "pyi_stream_methods": "",
     }
 
 
@@ -572,6 +581,8 @@ def run(
     no_state: bool = False,
     no_step: bool = False,
     mutable: bool = False,
+    streamable: bool = False,
+    stream_block_default: int | None = None,
     impl_body: str | None = None,
     create_impl_body: str | None = None,
     reset_impl_body: str | None = None,
@@ -683,6 +694,25 @@ def run(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
+        )
+    )
+    # Stream generator (gh-201). At creation there are no extra methods yet, so
+    # a streamable object resolves its producer to the built-in source `steps`;
+    # a later variable_output method re-points it (recomputed on every render).
+    ctx.update(
+        Ctx.make_stream_ctx(
+            ctx["component"],
+            ctx["Component"],
+            ctx["ComponentW"],
+            streamable=streamable,
+            methods=[],
+            arg_type=arg_type,
+            return_type=_rt,
+            default_block=(
+                stream_block_default
+                if stream_block_default is not None
+                else 1024
+            ),
         )
     )
     # Re-generate pyi_examples with the actual package name (not placeholder).
@@ -953,6 +983,8 @@ def run(
         no_state_=no_state,
         no_step_=no_step,
         mutable_=mutable,
+        streamable_=streamable,
+        stream_block_default_=stream_block_default,
         init_params_=init_params,
         class_name_=class_name,
         depends_on_=list(depends_on),

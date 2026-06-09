@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--streamable` objects get a generated `stream()` / `__iter__`** (gh-201) —
+    a blockwise object (`execute(block) -> array`) or source (`steps(n) ->   array`) grows `obj.stream(block, *, count=None, on_block=None)` and
+    `__iter__`, so callers write `for blk in obj.stream(4096): ...` instead of
+    the hand-rolled drain loop. It is pure cross-cutting glue: a C iterator type
+    drives the object's `variable_output` method (else built-in `steps`) block
+    by block, stopping on a drained (empty) block or when `count` is reached.
+    `on_block(block)` fires **after** each block is consumed — the seam a
+    downstream wraps for pacing/back-pressure. `--stream-block N` sets the
+    default block used by `__iter__`. Non-streamable objects are unchanged.
+
+### Fixed
+
+- **`--variable-output` method with an array (`T[]`) return type now compiles.**
+    `--return-type "float _Complex[]" --variable-output` rendered the invalid
+    `float complex[] *out` into `_core.h` / `_core.c` / `_ext.c` (and an
+    `NPY_FLOAT` dtype fallback). The output buffer holds *elements*, so the
+    `[]` is now stripped to the element type everywhere the buffer field,
+    `*out` param, `sizeof()`, and NumPy enum render.
+
 ## [0.18.0] — 2026-06-08
 
 ### Added

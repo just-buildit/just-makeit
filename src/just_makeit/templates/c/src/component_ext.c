@@ -84,9 +84,9 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyMethodDef /*<<ComponentW>>*/_methods[] = {
+/*<<stream_iter_block>>*/static PyMethodDef /*<<ComponentW>>*/_methods[] = {
 /*<<builtin_reset_pmd>>*//*<<step_pymethoddef_entry>>*//*<<steps_def_entry>>*/
-/*<<getter_setter_pymethoddef>>*//*<<extra_methods_pymethoddef>>*/    {"destroy",  (PyCFunction)/*<<ComponentW>>*/_destroy,  METH_NOARGS,
+/*<<getter_setter_pymethoddef>>*//*<<extra_methods_pymethoddef>>*//*<<stream_def_entry>>*/    {"destroy",  (PyCFunction)/*<<ComponentW>>*/_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)/*<<ComponentW>>*/_enter,   METH_NOARGS,  NULL},
     {"__exit__",  (PyCFunction)/*<<ComponentW>>*/_exit,    METH_VARARGS, NULL},
@@ -100,7 +100,7 @@ static PyTypeObject /*<<ComponentW>>*/Type = {
     .tp_dealloc   = (destructor)/*<<ComponentW>>*/_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = "/*<<Component>>*/ component. Wraps /*<<component>>*/_state_t.",
-    .tp_methods   = /*<<ComponentW>>*/_methods,/*<<tp_getset_decl>>*/
+    .tp_methods   = /*<<ComponentW>>*/_methods,/*<<tp_getset_decl>>*//*<<stream_tp_iter>>*/
     .tp_new       = /*<<ComponentW>>*/_new,
     .tp_init      = (initproc)/*<<ComponentW>>*/_init,
 };
@@ -122,7 +122,7 @@ PyInit_/*<<component>>*/(void)
 {
     import_array();
     if (PyType_Ready(&/*<<ComponentW>>*/Type) < 0)
-        return NULL;
+        return NULL;/*<<stream_type_ready>>*/
 
     PyObject *m = PyModule_Create(&/*<<component>>*/_module);
     if (!m)

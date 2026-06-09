@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any<<pyi_stream_typing>>
 import numpy as np
 from numpy.typing import NDArray
 
@@ -12,7 +12,7 @@ class <<Component>>:
 <<pyi_examples>>    """
 
     def __init__(self, <<init_params_pyi>>) -> None: ...
-<<builtin_reset_pyi>><<pyi_step_methods>><<pyi_extra_methods>><<getter_setter_stubs_pyi>>
+<<builtin_reset_pyi>><<pyi_step_methods>><<pyi_extra_methods>><<pyi_stream_methods>><<getter_setter_stubs_pyi>>
     def destroy(self) -> None:
         """Release C resources immediately."""
 

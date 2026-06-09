@@ -74,3 +74,56 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
         f"build failed for --preset {preset} "
         f"(foot-gun #1 regression):\n{bld.stdout}\n{bld.stderr}"
     )
+
+
+def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
+    """A ``--variable-output`` method whose return type carries an explicit
+    ``[]`` (e.g. ``--return-type "float _Complex[]"``) once rendered the
+    invalid ``float complex[] *out`` into ``_core.h`` / ``_core.c`` / ``_ext.c``
+    and failed to compile (gh-201 follow-up). The output buffer holds elements,
+    so the ``[]`` is now stripped to the element type.
+    """
+    if _SKIP:
+        pytest.skip(_SKIP)
+
+    root = tmp_path / "proj"
+    new_run("proj", root)
+    monkeypatch.chdir(root)
+    _cli_object.run(
+        [
+            "filt",
+            "--arg-type",
+            "float _Complex[]",
+            "--return-type",
+            "float _Complex[]",
+            "--variable-output",
+        ]
+    )
+
+    # The element type is stripped everywhere the buffer/param/sizeof renders.
+    core_h = (root / "native/inc/filt/filt_core.h").read_text()
+    core_c = (root / "native/src/filt/filt_core.c").read_text()
+    ext_c = (root / "native/src/filt/filt_ext.c").read_text()
+    for text in (core_h, core_c, ext_c):
+        assert "[] *out" not in text
+        assert "sizeof(float complex[])" not in text
+    assert "float complex *out" in core_h
+    assert (
+        "NPY_COMPLEX64" in ext_c
+    )  # element NumPy enum, not the NPY_FLOAT fallback
+
+    build = root / "build"
+    cfg = subprocess.run(
+        ["cmake", "-S", str(root), "-B", str(build)],
+        capture_output=True,
+        text=True,
+    )
+    assert cfg.returncode == 0, f"cmake configure failed:\n{cfg.stderr}"
+    bld = subprocess.run(
+        ["cmake", "--build", str(build)],
+        capture_output=True,
+        text=True,
+    )
+    assert bld.returncode == 0, (
+        f"array-return variable_output build failed:\n{bld.stdout}\n{bld.stderr}"
+    )

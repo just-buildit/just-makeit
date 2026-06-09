@@ -47,6 +47,21 @@ def _block_in_elem_disp(arg_type: str) -> str:
     return T._ctype_display(arg_type)
 
 
+def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
+    """Display ctype of a variable-output buffer's *element*.
+
+    A variable-output method writes into a ``<elem> *out`` buffer, so a ``T[]``
+    return type (or ``out_type``) must be reduced to its element ``T`` — else
+    the prototype/stub render the invalid ``T[] *out`` (the array-input
+    ``const T[] *in`` counterpart fixed in gh-139). A scalar type is already
+    its own element type, so this is a no-op for the common case.
+    """
+    src = out_type if out_type else return_type
+    if src.endswith("[]"):
+        src = src[:-2]
+    return T._ctype_display(src)
+
+
 def _methods_c_stub_variable(
     component: str,
     name: str,
@@ -68,8 +83,7 @@ def _methods_c_stub_variable(
     ``pass_capacity`` (gh-138) appends a trailing ``size_t max_out`` output
     capacity parameter, for a C API that bounds-checks the caller's buffer.
     """
-    buf_type = out_type if out_type else return_type
-    ret_disp = T._ctype_display(buf_type)
+    ret_disp = _out_elem_disp(return_type, out_type)
     has_arg = arg_type != "void"
     params = params or []
 
@@ -425,7 +439,7 @@ def _build_method_prototype(
             step_param = ", " + ", ".join(p_parts)
         else:
             step_param = ", size_t n"
-        out_disp = T._ctype_display(out_type) if out_type else ret_disp
+        out_disp = _out_elem_disp(return_type, out_type)
         return "\n".join(
             [
                 f"size_t {component}_{name}_max_out({component}_state_t *state);",
@@ -758,6 +772,21 @@ def run(
             no_state=C.is_no_state(cfg, object_name),
         )
         ctx.update(methods_ctx)
+        # Preserve the stream generator (gh-201) across `jm method`: the
+        # producer is recomputed from the updated methods list, so adding a
+        # variable_output method re-points stream() at it.
+        ctx.update(
+            Ctx.make_stream_ctx(
+                object_name,
+                Component,
+                ctx["ComponentW"],
+                streamable=C.is_streamable(cfg, object_name),
+                methods=C.methods(cfg, object_name),
+                arg_type=arg_type_,
+                return_type=return_type_,
+                default_block=C.stream_block_default(cfg, object_name),
+            )
+        )
         # extra_ext_sources: space-prefixed list of varargs binding .c files
         # compiled into the Python DSO target (not the pure-C OBJECT lib).
         ctx["extra_ext_sources"] = "".join(
