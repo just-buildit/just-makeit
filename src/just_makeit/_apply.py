@@ -114,6 +114,12 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "no_state": C.is_no_state(cfg, comp),
         "no_step": C.is_no_step(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
+        "streamable": C.is_streamable(cfg, comp),
+        "stream_block_default": (
+            C.stream_block_default(cfg, comp)
+            if C.is_streamable(cfg, comp)
+            else None
+        ),
         "init_params": C.init_params(cfg, comp),
         "init_post_parse_impl": C.init_post_parse(cfg, comp),
         "class_name": C.class_name(cfg, comp),

@@ -202,6 +202,19 @@ def run(
                 frozenset(n for n, _, _ in state_vars_list),
             )
         )
+        # Preserve the stream generator (gh-201) across `jm property`.
+        ctx.update(
+            Ctx.make_stream_ctx(
+                object_name,
+                Component,
+                ctx["ComponentW"],
+                streamable=C.is_streamable(cfg, object_name),
+                methods=C.methods(cfg, object_name),
+                arg_type=arg_type_,
+                return_type=return_type_,
+                default_block=C.stream_block_default(cfg, object_name),
+            )
+        )
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         if ext_c.exists():
             ext_c.write_text(

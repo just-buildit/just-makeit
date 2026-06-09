@@ -20,6 +20,7 @@ from ._state import (
 )
 from ._methods import make_methods_ctx, make_properties_ctx
 from ._step import make_perf_ctx, make_step_ctx
+from ._stream import make_stream_ctx
 
 __all__ = [
     "make_sample_ctx",
@@ -29,6 +30,7 @@ __all__ = [
     "make_properties_ctx",
     "make_perf_ctx",
     "make_step_ctx",
+    "make_stream_ctx",
     "_pyi_examples_block",
     "_build_no_state_init_ctx",
 ]

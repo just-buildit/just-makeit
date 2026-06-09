@@ -142,6 +142,8 @@ return_type = "float _Complex"
 mutable = "false"
 no_state = "false"
 no_step = "false"
+streamable = "true"       # generate stream()/__iter__ (only when set)
+stream_block_default = "1024"  # __iter__ / stream() default block
 
 [[engine.state]]
 name = "gain"

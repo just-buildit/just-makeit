@@ -409,6 +409,29 @@ def is_no_state(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_state"))
 
 
+def is_streamable(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --streamable.
+
+    A streamable object gets a generated ``stream()`` generator method and
+    ``__iter__`` that drive its producer (the ``variable_output`` method if
+    one exists, else the built-in ``steps``) block by block.
+    """
+    return _truthy(cfg.get(component, {}).get("streamable"))
+
+
+def stream_block_default(cfg: dict, component: str) -> int:
+    """Default block size for the generated ``stream()`` / ``__iter__``.
+
+    This is the producer argument used when the caller passes no explicit
+    block (e.g. ``for blk in obj:``).  Falls back to 1024 when unset.
+    """
+    raw = cfg.get(component, {}).get("stream_block_default")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 1024
+
+
 def is_no_step(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-step."""
     return _truthy(cfg.get(component, {}).get("no_step"))
@@ -938,6 +961,8 @@ def add_component(
     no_state_: bool = False,
     no_step_: bool = False,
     mutable_: bool = False,
+    streamable_: bool = False,
+    stream_block_default_: "int | None" = None,
     init_params_: list[tuple[str, str, str]] = (),
     class_name_: str | None = None,
     depends_on_: list[str] = (),
@@ -973,6 +998,12 @@ def add_component(
         "no_step": "true" if no_step_ else "false",
         "state": state_entries,
     }
+    # Only persisted when set — keeps existing manifests byte-identical so
+    # non-streamable objects produce no golden-output churn.
+    if streamable_:
+        entry["streamable"] = "true"
+    if stream_block_default_ is not None:
+        entry["stream_block_default"] = str(stream_block_default_)
     if array_args_:
         entry["array_args"] = [
             {"name": n, "type": dt} for n, dt in array_args_
@@ -1106,6 +1137,8 @@ def _dump(cfg: dict) -> str:
             "mutable",
             "no_state",
             "no_step",
+            "streamable",
+            "stream_block_default",
             "class_name",
         )
         lines.append(f"[{comp}]")

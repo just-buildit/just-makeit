@@ -112,6 +112,8 @@ def run(args: list[str]) -> None:
     no_state = False
     no_step = False
     mutable = False
+    streamable = False
+    stream_block_default_obj: int | None = None
     variable_output_obj = False
     max_out_obj: int = 0
     multi_output_obj: list[str] = []
@@ -146,6 +148,34 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--mutable":
             mutable = True
+            i += 1
+        elif tok == "--streamable":
+            streamable = True
+            i += 1
+        elif tok == "--stream-block":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --stream-block requires an integer",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            try:
+                stream_block_default_obj = int(remaining[i])
+            except ValueError:
+                print(
+                    f"error: --stream-block '{remaining[i]}' is not an"
+                    " integer",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if stream_block_default_obj <= 0:
+                print(
+                    "error: --stream-block must be a positive integer",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            streamable = True
             i += 1
         elif tok in ("--arg-type", "--return-type"):
             i += 1
@@ -346,6 +376,19 @@ def run(args: list[str]) -> None:
             destroy_impl_body_obj = _I.load_impl(
                 destroy_impl_spec, replacements
             )
+    # --streamable needs a block producer: a void-arg source (built-in steps)
+    # or a variable_output method (blockwise). With neither, the flag is
+    # recorded but stream() stays dormant until a variable_output method is
+    # added — warn so the no-op is not silent.
+    if streamable and arg_type != "void" and not variable_output_obj:
+        print(
+            "warning: --streamable has no block producer yet; stream() and"
+            " __iter__ will be generated once a variable_output method is"
+            " added (use --variable-output, or a void --arg-type for a"
+            " source).",
+            file=sys.stderr,
+        )
+
     _object.run(
         Path.cwd(),
         object_name,
@@ -358,6 +401,8 @@ def run(args: list[str]) -> None:
         no_state=no_state,
         no_step=no_step,
         mutable=mutable,
+        streamable=streamable,
+        stream_block_default=stream_block_default_obj,
         impl_body=impl_body_obj,
         create_impl_body=create_impl_body_obj,
         reset_impl_body=reset_impl_body_obj,
