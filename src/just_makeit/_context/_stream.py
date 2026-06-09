@@ -152,8 +152,10 @@ static PyObject *
         return NULL;
     }}
     it->emitted++;
-    if (it->on_block)
-        it->prev = Py_NewRef(blk);
+    if (it->on_block) {{
+        Py_INCREF(blk);
+        it->prev = blk;
+    }}
     return blk;
 }}
 
@@ -175,8 +177,10 @@ static PyObject *
     {iter_t} *it = PyObject_New({iter_t}, &{iter_ty});
     if (!it)
         return NULL;
-    it->src = Py_NewRef((PyObject *)self);
-    it->on_block = on_block ? Py_NewRef(on_block) : NULL;
+    Py_INCREF(self);
+    it->src = (PyObject *)self;
+    Py_XINCREF(on_block);
+    it->on_block = on_block;
     it->prev = NULL;
     it->block = block;
     it->count = count;
