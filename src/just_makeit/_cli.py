@@ -28,6 +28,8 @@ Commands:
     --find-package NAME         CMake `find_package(NAME REQUIRED)` (repeatable; e.g. Doppler).
     --pkg-module NAME           pkg-config module via `pkg_check_modules` (repeatable).
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
+    --windows                   Target Windows too (`[project] platforms`): emit the MinGW
+                                runtime-DLL CMake boilerplate. Off by default (Linux/macOS).
     --no-fragments              Use the legacy single-manifest layout (all sections inlined
                                 in just-makeit.toml). Default is the per-component fragment
                                 layout: objects -> objects/<name>.toml, modules -> modules/

@@ -37,6 +37,7 @@ def run(args: list[str]) -> None:
     find_packages: list[str] = []
     pkg_modules: list[str] = []
     c_deps: list[str] = []
+    windows = False
 
     remaining = args[1:]
     i = 0
@@ -126,6 +127,10 @@ def run(args: list[str]) -> None:
         elif tok == "--mutable":
             mutable = True
             i += 1
+        elif tok == "--windows":
+            # gh-213: opt into the Windows (MinGW) CMake boilerplate.
+            windows = True
+            i += 1
         elif tok == "--fragments":
             # Deprecated no-op: fragments is the default layout now.
             i += 1
@@ -206,5 +211,6 @@ def run(args: list[str]) -> None:
         find_packages=find_packages or None,
         pkg_modules=pkg_modules or None,
         c_deps=c_deps or None,
+        platforms=(["linux", "macos", "windows"] if windows else None),
         fragments=fragments,
     )

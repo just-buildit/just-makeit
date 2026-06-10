@@ -165,6 +165,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         perf=C.is_perf(cfg),
         pytest_=C.is_pytest(cfg),
         pytest_benchmark_=C.is_pytest_benchmark(cfg),
+        # gh-213: the temp project must target the same platforms so the
+        # per-component Windows CMake blocks match (apply/status diff cleanly).
+        platforms=cfg.get("project", {}).get("platforms"),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.

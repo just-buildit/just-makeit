@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
 from ._init import _to_title, _write, _write_compile_commands
@@ -95,6 +96,8 @@ def run(
         ),
         "extra_link_libs_block": "",
         "extra_include_dirs_block": "",
+        # gh-213: Windows runtime-DLL block, off unless the project targets it.
+        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=module),
     }
     _write(
         root / "native" / "src" / module / "CMakeLists.txt",

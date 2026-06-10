@@ -148,11 +148,9 @@ on Windows.
 cp "$(which mingw32-make)" "$(dirname $(which mingw32-make))/make.exe"
 ```
 
-Or use the Docker image, which has this already resolved:
-
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-windows:latest
-```
+Windows is opt-in (jm targets Linux/macOS by default); scaffold a
+Windows-targeting project with `jm new --windows`. See
+[`[project] platforms`](commands/scaffold.md).
 
 ______________________________________________________________________
 
