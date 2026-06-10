@@ -38,6 +38,7 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         "stream_def_entry": "",
         "stream_tp_iter": "",
         "stream_type_ready": "",
+        "stream_module_ready": "",
         "pyi_stream_typing": "",
         "pyi_stream_methods": "",
     }

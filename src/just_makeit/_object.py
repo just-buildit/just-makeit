@@ -512,10 +512,27 @@ def _restore_c_function_bodies(
     Buffer-lifecycle functions (_dealloc, _init) are always regenerated from
     the template so that newly added variable_output free() and malloc() calls
     are never silently dropped when the old fragment has no buffers yet.
+
+    The stream generator's glue (gh-203: ``*StreamIter_next``, ``_stream``,
+    ``_getiter``, ``_make_iter``, and the ``*StreamIter_dealloc``) is likewise
+    always regenerated — it is pure generated code that must track the manifest
+    (e.g. the producer method name), never a hand-edited body. Without this, a
+    fragment frozen at first generation keeps a stale producer when an object
+    becomes streamable or gains a variable_output method. The ``_stream`` /
+    ``_getiter`` / ``_make_iter`` wrappers are only treated as stream glue when
+    the fragment actually carries a ``StreamIter`` type, so a hypothetical
+    user method literally named ``stream`` on a non-streamable object keeps its
+    hand-written body.
     """
     _INFRA_SUFFIXES = ("_dealloc", "_init")
+    _STREAM_SUFFIXES = ("_stream", "_getiter", "_make_iter")
+    _has_stream = any("StreamIter" in n for n in preserved)
     for fn_name, old_body in preserved.items():
-        if any(fn_name.endswith(s) for s in _INFRA_SUFFIXES):
+        if "StreamIter" in fn_name:
+            continue
+        if _has_stream and fn_name.endswith(_STREAM_SUFFIXES):
+            continue
+        if fn_name.endswith(_INFRA_SUFFIXES):
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
@@ -640,6 +657,22 @@ def build_component_ctxs(
                 C.properties(cfg, obj),
                 frozenset(n for n, _, _ in state_vars),
                 doc_blocks=_doc_blocks,
+            )
+        )
+        # Stream generator (gh-203): a `--streamable` module object gets the
+        # same stream()/__iter__ as a standalone, filled into its
+        # COMPONENT_TYPE_SECTION slots; the per-object PyType_Ready for the
+        # iterator type rides along in `stream_module_ready` for the aggregator.
+        ctx.update(
+            Ctx.make_stream_ctx(
+                ctx["component"],
+                ctx["Component"],
+                ctx["ComponentW"],
+                streamable=C.is_streamable(cfg, obj),
+                methods=C.methods(cfg, obj),
+                arg_type=arg_type_,
+                return_type=return_type_,
+                default_block=C.stream_block_default(cfg, obj),
             )
         )
         # Class C __doc__ (tp_doc): TOML `doc` > create()'s @brief > default.
@@ -1190,6 +1223,8 @@ def run(
         no_state_=no_state,
         no_step_=no_step,
         mutable_=mutable,
+        streamable_=streamable,
+        stream_block_default_=stream_block_default,
         init_params_=init_params,
         class_name_=class_name,
         depends_on_=list(depends_on),
