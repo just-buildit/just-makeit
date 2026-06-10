@@ -2,10 +2,14 @@
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-06-10
+
 ### Added
 
 - **`--streamable` objects get a generated `stream()` / `__iter__`** (gh-201) —
-    a blockwise object (`execute(block) -> array`) or source (`steps(n) ->   array`) grows `obj.stream(block, *, count=None, on_block=None)` and
+    a blockwise object (`execute(block) -> array`) or source
+    (`steps(n) -> array`) grows `obj.stream(block, *, count=None, on_block=None)`
+    and
     `__iter__`, so callers write `for blk in obj.stream(4096): ...` instead of
     the hand-rolled drain loop. It is pure cross-cutting glue: a C iterator type
     drives the object's `variable_output` method (else built-in `steps`) block
