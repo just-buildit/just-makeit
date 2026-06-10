@@ -1,6 +1,7 @@
 """CLI dispatch tests for just-makeit."""
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -52,6 +53,31 @@ class TestHelp:
         r = _cli("frobnicate")
         assert r.returncode == 1
         assert "unknown command" in r.stderr
+
+    def test_help_lists_version_flags(self):
+        r = _cli("help")
+        assert "--version" in r.stdout and "-V" in r.stdout
+
+
+class TestVersion:
+    """`version` command plus the `--version` / `-V` flag aliases."""
+
+    def _ver(self, *args):
+        r = _cli(*args)
+        assert r.returncode == 0, r.stderr
+        out = r.stdout.strip()
+        # A real version like "0.18.1" (not "unknown" / empty).
+        assert re.match(r"^\d+\.\d+", out), out
+        return out
+
+    def test_version_command(self):
+        self._ver("version")
+
+    def test_double_dash_version_flag(self):
+        assert self._ver("--version") == self._ver("version")
+
+    def test_short_v_flag(self):
+        assert self._ver("-V") == self._ver("version")
 
 
 class TestNewCLI:

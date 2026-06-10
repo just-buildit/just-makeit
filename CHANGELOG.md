@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`just-makeit --version` / `-V`** — the universal idiom now works as an alias
+    for the `version` command when given as the first argument (previously only
+    the bare `version` subcommand printed the version).
+
 ## [0.18.1] — 2026-06-10
 
 ### Added
