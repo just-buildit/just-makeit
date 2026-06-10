@@ -162,7 +162,7 @@ assert np.array_equal(
 # count caps the iteration no matter how much source is left.
 d = Drainer(total=20, pos=0)
 first = next(d.stream(8, count=1))
-print("count=1 → one block of", first.shape[0])
+print("count=1 -> one block of", first.shape[0])
 assert first.shape == (8,)
 
 # on_block(b) fires after each consumed block (post-yield).
