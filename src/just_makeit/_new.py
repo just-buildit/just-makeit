@@ -70,6 +70,7 @@ def run(
     find_packages: list[str] | None = None,
     pkg_modules: list[str] | None = None,
     c_deps: list[str] | None = None,
+    platforms: list[str] | None = None,
     fragments: bool = False,
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
@@ -142,6 +143,11 @@ def run(
         cfg.setdefault("project", {})["pkg_modules"] = list(pkg_modules)
     if c_deps:
         cfg.setdefault("project", {})["c_deps"] = list(c_deps)
+    # Persist a non-default platform set (e.g. one that opts into Windows) so
+    # apply / status render the same CMakeLists; absence means the default
+    # linux/macos (gh-213).
+    if platforms:
+        cfg.setdefault("project", {})["platforms"] = list(platforms)
     C.save(root, cfg)
     # Opt into the per-component fragment layout up front: with the include
     # globs already in the manifest, every object/module scaffolded below

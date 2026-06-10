@@ -6,17 +6,11 @@ arg-count mismatch in ``tp_dealloc`` and failed to compile. The fix landed
 on main; this test compiles both preset scaffolds end-to-end so the mismatch
 cannot silently come back.
 
-Skipped when the C toolchain is unavailable (matches test_examples.py),
-and on Windows: this drives cmake directly with the default generator,
-which picks MSVC there — and MSVC rejects the project's C99 `float
-_Complex`. The project requires MinGW on Windows (its Makefile passes
-`-G "MinGW Makefiles"`), so the foot-gun #1 compile regression is covered
-on Linux/macOS rather than reproduced through MinGW here.
+Skipped when the C toolchain is unavailable (matches test_examples.py).
 """
 
 import shutil
 import subprocess
-import sys
 
 import pytest
 
@@ -25,8 +19,6 @@ from just_makeit._new import run as new_run
 
 
 def _skip_reason():
-    if sys.platform == "win32":
-        return "raw cmake selects MSVC on Windows; project requires MinGW"
     if not shutil.which("cmake"):
         return "cmake not found"
     if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
@@ -67,9 +59,9 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
     )
     # A clean build (compile + link) is the foot-gun #1 regression signal:
     # the bug was a destroy() arg-count mismatch that failed to *compile*.
-    # We deliberately don't assert on a built artifact path/extension — the
-    # Python module lands in src/<pkg>/ (not build/) and is .so on Unix but
-    # .pyd on Windows, which made the old check fail in CI cross-platform.
+    # We deliberately don't assert on a built artifact path — the Python
+    # module lands in src/<pkg>/ (not build/), which made the old check
+    # flaky.
     assert bld.returncode == 0, (
         f"build failed for --preset {preset} "
         f"(foot-gun #1 regression):\n{bld.stdout}\n{bld.stderr}"

@@ -828,6 +828,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "extra_link_libs_block": extra_link_libs_block,
         "extra_include_dirs_block": inc_dirs_extra,
         "extra_ext_sources": extra_ext_sources,
+        # gh-213: Windows runtime-DLL block, off unless the project targets it.
+        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=module),
     }
     # Collocated objects share the same CMakeLists file as the module itself;
     # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.

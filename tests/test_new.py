@@ -539,15 +539,9 @@ class TestNewValidation:
         assert re.search(r"project\(\s*gain\b", cmake)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="Generated C99 complex types are not supported by MSVC; "
-    "use MinGW or Clang on Windows to build generated projects.",
-)
 class TestNewBuild:
     """Integration test: new → cmake configure + build → CTest + pytest.
     Skipped if cmake or a C99-capable compiler is not available.
-    Skipped entirely on Windows (MSVC rejects float complex).
     """
 
     @pytest.fixture(scope="class")

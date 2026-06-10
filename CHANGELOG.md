@@ -8,6 +8,27 @@
     for the `version` command when given as the first argument (previously only
     the bare `version` subcommand printed the version).
 
+### Changed
+
+- **Windows CMake boilerplate is opt-in per project** (gh-213) — jm emitted the
+    MinGW runtime-DLL `if(WIN32 …)` block into every component / module
+    `CMakeLists.txt`, untested boilerplate the drift gate froze in place. It is
+    now gated on `[project] platforms` (default `["linux", "macos"]`): off by
+    default, opted in with `jm new --windows`, and `jm status --check` treats
+    its absence as correct. An existing project drops the per-component blocks
+    on its next `jm apply` once `windows` is not in `platforms` — which unblocks
+    projects (like doppler) that deliberately dropped Windows. The single
+    configure-time `libwinpthread` copy in the top `CMakeLists.txt` stays (a
+    harmless no-op off Windows).
+
+### Removed
+
+- **Windows CI and tooling** — jm no longer tests Windows. The MSVC path was
+    never exercised (jm emits CPython for MinGW/GCC) and the MinGW CI leg was
+    flaky infra more than signal. Dropped the `windows-latest` legs from the CI
+    / release / install-deps matrices, the `jm-examples-windows` Docker image
+    and its `windows` job, and `install-deps.ps1` / the `_run_ps1` path.
+
 ## [0.18.1] — 2026-06-10
 
 ### Added
