@@ -419,6 +419,16 @@ def is_streamable(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("streamable"))
 
 
+def is_async_stream(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --async-stream.
+
+    Adds `__aiter__` / `__anext__` to the generated stream iterator (and an
+    async `__aiter__` to the object) on top of the synchronous `stream()` /
+    `__iter__`.  Implies `streamable`.
+    """
+    return _truthy(cfg.get(component, {}).get("async_stream"))
+
+
 def stream_block_default(cfg: dict, component: str) -> int:
     """Default block size for the generated ``stream()`` / ``__iter__``.
 
@@ -962,6 +972,7 @@ def add_component(
     no_step_: bool = False,
     mutable_: bool = False,
     streamable_: bool = False,
+    async_stream_: bool = False,
     stream_block_default_: "int | None" = None,
     init_params_: list[tuple[str, str, str]] = (),
     class_name_: str | None = None,
@@ -1002,6 +1013,8 @@ def add_component(
     # non-streamable objects produce no golden-output churn.
     if streamable_:
         entry["streamable"] = "true"
+    if async_stream_:
+        entry["async_stream"] = "true"
     if stream_block_default_ is not None:
         entry["stream_block_default"] = str(stream_block_default_)
     if array_args_:
@@ -1138,6 +1151,7 @@ def _dump(cfg: dict) -> str:
             "no_state",
             "no_step",
             "streamable",
+            "async_stream",
             "stream_block_default",
             "class_name",
         )

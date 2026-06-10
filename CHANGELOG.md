@@ -19,6 +19,15 @@
     per-object section, with the iterator type readied per object in the
     module's `PyInit_`. The shared `<module>.pyi` grows the stub under the
     streamable class; non-streamable siblings are byte-identical.
+- **`--async-stream` adds `async for` to a streamable object** (gh-206) — opt-in
+    on top of `--streamable`, the generated iterator also implements
+    `__aiter__` / `__anext__` (and the object becomes async-iterable), so
+    `async for blk in obj.stream(4096): ...` and `async for blk in obj: ...`
+    work alongside the sync forms. `__anext__` offloads the producer step to
+    the running loop's default executor, so a `nogil` producer lets the event
+    loop run while the kernel works; on drain it raises `StopAsyncIteration`.
+    All in C — no Python wrapper class. Plain `--streamable` objects are
+    byte-identical (no async glue unless asked).
 
 ### Fixed
 

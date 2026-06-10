@@ -113,6 +113,7 @@ def run(args: list[str]) -> None:
     no_step = False
     mutable = False
     streamable = False
+    async_stream = False
     stream_block_default_obj: int | None = None
     variable_output_obj = False
     max_out_obj: int = 0
@@ -151,6 +152,11 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--streamable":
             streamable = True
+            i += 1
+        elif tok == "--async-stream":
+            # async iteration is layered on the sync stream; it implies it.
+            streamable = True
+            async_stream = True
             i += 1
         elif tok == "--stream-block":
             i += 1
@@ -402,6 +408,7 @@ def run(args: list[str]) -> None:
         no_step=no_step,
         mutable=mutable,
         streamable=streamable,
+        async_stream=async_stream,
         stream_block_default=stream_block_default_obj,
         impl_body=impl_body_obj,
         create_impl_body=create_impl_body_obj,
