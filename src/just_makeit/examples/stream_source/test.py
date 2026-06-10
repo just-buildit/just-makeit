@@ -1,10 +1,11 @@
 """End-to-end test for the stream_source example — keeps the README honest.
 
 Runs the exact walkthrough the README teaches: scaffold the streamable ramp
-source (matching .steps/01_scaffold.sh), implement step() with the body the
-README shows, build, then run .steps/03_demo.py against the built extension.
-The demo — the user-facing API usage most likely to break — is the same file
-the README embeds and is executed here, so it can never go stale.
+source (matching .steps/01_scaffold.sh), splice in step() from .steps/02_step.c,
+build, then run .steps/03_demo.py against the built extension. Both the C
+function and the Python demo are read from the same .steps/ files the README
+embeds, so the taught code is literally the code that compiles and runs — the
+example can never go stale.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/stream_source/test.py
@@ -35,13 +36,56 @@ def _cmd(args, cwd, env=None):
     return r
 
 
-# The generated step() stub, and the body the README's section 2 shows.
-_STEP_STUB = "    (void)state; /* TODO: implement */\n    return (float)0;"
-_STEP_BODY = (
-    "    const float out = state->value;\n"
-    "    state->value += state->step_inc;\n"
-    "    return out;"
-)
+def _matching_brace(src: str, open_idx: int) -> int:
+    """Index just past the '}' that matches the '{' at open_idx."""
+    depth = 0
+    for i in range(open_idx, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    raise AssertionError("unbalanced braces")
+
+
+def _replace_function(src: str, name: str, replacement: str) -> str:
+    """Replace the whole definition of C function ``name`` in ``src``.
+
+    Finds ``name(`` whose matching ``)`` is followed by ``{`` (a definition,
+    not a call or prototype), extends back over the return-type line, and swaps
+    everything through the matching ``}`` for ``replacement``. A preceding
+    ``/* <<IMPLEMENT ... >> */`` scaffold comment is dropped too.
+    """
+    pos = 0
+    while True:
+        idx = src.find(name + "(", pos)
+        if idx == -1:
+            raise AssertionError(f"definition of {name}() not found")
+        # Walk the parameter parens.
+        depth, i = 0, idx + len(name)
+        while i < len(src):
+            if src[i] == "(":
+                depth += 1
+            elif src[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        j = i + 1
+        while j < len(src) and src[j] in " \t\r\n":
+            j += 1
+        if j < len(src) and src[j] == "{":  # a definition
+            line_start = src.rfind("\n", 0, idx) + 1
+            ret_start = src.rfind("\n", 0, line_start - 1) + 1
+            before = src[:ret_start].rstrip()
+            if before.endswith("*/"):
+                c_open = before.rfind("/*")
+                if c_open != -1 and "<<IMPLEMENT" in before[c_open:]:
+                    ret_start = c_open
+            end = _matching_brace(src, j)
+            return src[:ret_start] + replacement + src[end:]
+        pos = idx + 1
 
 
 def run(root: Path) -> None:
@@ -73,11 +117,15 @@ def run(root: Path) -> None:
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
 
-    # 2. Implement step() with the body the README shows.
+    # 2. Splice in step() — the SAME .steps/02_step.c the README embeds, so the
+    #    taught function is the compiled function.
     core_h = proj / "native" / "inc" / "ramp" / "ramp_core.h"
-    text = core_h.read_text(encoding="utf-8")
-    assert _STEP_STUB in text, "step() stub not found — template changed?"
-    core_h.write_text(text.replace(_STEP_STUB, _STEP_BODY), encoding="utf-8")
+    snippet = (STEPS / "02_step.c").read_text(encoding="utf-8")
+    fn = snippet[snippet.index("static inline") :].rstrip() + "\n"
+    core_h.write_text(
+        _replace_function(core_h.read_text(encoding="utf-8"), "ramp_step", fn),
+        encoding="utf-8",
+    )
 
     # 3. Build (cmake + ctest runs the generated C smoke test).
     _cmd(

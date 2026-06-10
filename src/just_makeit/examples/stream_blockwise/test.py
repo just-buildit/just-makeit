@@ -1,10 +1,10 @@
 """End-to-end test for the stream_blockwise example — keeps the README honest.
 
 Runs the exact walkthrough the README teaches: scaffold the streamable drainer
-(matching .steps/01_scaffold.sh), fill in run()/run_max_out() with the bodies
-the README shows, build, then run .steps/03_demo.py against the built
-extension. The demo — the user-facing API usage most likely to break — is the
-same file the README embeds and is executed here, so it can never go stale.
+(matching .steps/01_scaffold.sh), splice in run_max_out()/run() from
+.steps/02_*.c, build, then run .steps/03_demo.py against the built extension.
+The C functions and the Python demo are read from the same .steps/ files the
+README embeds, so the taught code is literally the code that compiles and runs.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/stream_blockwise/test.py
@@ -35,25 +35,66 @@ def _cmd(args, cwd, env=None):
     return r
 
 
-# The generated stubs, and the bodies the README's section 2 shows.
-_MAX_OUT_STUB = "    (void)state;\n    return 0; /* placeholder */"
-_MAX_OUT_BODY = "    return (size_t)state->total;"
-_RUN_STUB = (
-    "    (void)state;\n"
-    "    (void)n;\n"
-    "    (void)out;\n"
-    "    return 0; /* placeholder */"
-)
-_RUN_BODY = (
-    "    int32_t avail = state->total - state->pos;\n"
-    "    if (avail < 0)\n"
-    "        avail = 0;\n"
-    "    size_t k = (size_t)avail < n ? (size_t)avail : n;\n"
-    "    for (size_t i = 0; i < k; i++)\n"
-    "        out[i] = (float complex)(float)(state->pos + (int32_t)i);\n"
-    "    state->pos += (int32_t)k;\n"
-    "    return k;"
-)
+def _matching_brace(src: str, open_idx: int) -> int:
+    """Index just past the '}' that matches the '{' at open_idx."""
+    depth = 0
+    for i in range(open_idx, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    raise AssertionError("unbalanced braces")
+
+
+def _replace_function(src: str, name: str, replacement: str) -> str:
+    """Replace the whole definition of C function ``name`` in ``src``.
+
+    Finds ``name(`` whose matching ``)`` is followed by ``{`` (a definition,
+    not a call or prototype), extends back over the return-type line, and swaps
+    everything through the matching ``}`` for ``replacement``. A preceding
+    ``/* <<IMPLEMENT ... >> */`` scaffold comment is dropped too.
+    """
+    pos = 0
+    while True:
+        idx = src.find(name + "(", pos)
+        if idx == -1:
+            raise AssertionError(f"definition of {name}() not found")
+        depth, i = 0, idx + len(name)
+        while i < len(src):
+            if src[i] == "(":
+                depth += 1
+            elif src[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        j = i + 1
+        while j < len(src) and src[j] in " \t\r\n":
+            j += 1
+        if j < len(src) and src[j] == "{":  # a definition
+            line_start = src.rfind("\n", 0, idx) + 1
+            ret_start = src.rfind("\n", 0, line_start - 1) + 1
+            before = src[:ret_start].rstrip()
+            if before.endswith("*/"):
+                c_open = before.rfind("/*")
+                if c_open != -1 and "<<IMPLEMENT" in before[c_open:]:
+                    ret_start = c_open
+            end = _matching_brace(src, j)
+            return src[:ret_start] + replacement + src[end:]
+        pos = idx + 1
+
+
+def _splice(src: str, name: str, snippet_file: str) -> str:
+    """Splice the complete function from .steps/<snippet_file> over ``name``.
+
+    The snippet's leading ``/* Implement in ... */`` note is dropped — only the
+    function (from its ``size_t`` return-type line) is spliced in.
+    """
+    snippet = (STEPS / snippet_file).read_text(encoding="utf-8")
+    fn = snippet[snippet.index("size_t") :].rstrip() + "\n"
+    return _replace_function(src, name, fn)
 
 
 def run(root: Path) -> None:
@@ -85,15 +126,12 @@ def run(root: Path) -> None:
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.complex64]]:" in pyi
 
-    # 2. Fill in run_max_out() and run() with the bodies the README shows.
+    # 2. Splice in run_max_out() and run() — the SAME .steps/02_*.c the README
+    #    embeds, so the taught functions are the compiled functions.
     core_c = proj / "native" / "src" / "drainer" / "drainer_core.c"
     text = core_c.read_text(encoding="utf-8")
-    for stub, body in (
-        (_MAX_OUT_STUB, _MAX_OUT_BODY),
-        (_RUN_STUB, _RUN_BODY),
-    ):
-        assert stub in text, "run() stub not found — template changed?"
-        text = text.replace(stub, body)
+    text = _splice(text, "drainer_run_max_out", "02_max_out.c")
+    text = _splice(text, "drainer_run", "02_run.c")
     core_c.write_text(text, encoding="utf-8")
 
     # 3. Build (cmake + ctest runs the generated C smoke test).
