@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-10
+
 ### Added
 
 - **`just-makeit --version` / `-V`** — the universal idiom now works as an alias
