@@ -184,19 +184,23 @@ format char), `zero` (C zero literal), `py_type` (numpy dtype string),
 producing the PyObject\* conversion expression). Array types append `[]` to any
 scalar key; fixed-length state fields append `[N]`.
 
-### Windows build
+### Windows (opt-in, gh-213)
 
-On Windows, the generated `Makefile` detects `OS=Windows_NT` and passes
-`-G "MinGW Makefiles"` to cmake. MSVC is not supported (C99 `float _Complex`
-is rejected); MinGW/gcc is required. `install-deps.ps1` installs MinGW via
-Chocolatey and creates a `make.exe` alias for `mingw32-make.exe`.
+jm itself does not test Windows — it emits CPython for MinGW/GCC, MSVC was
+never exercised, and the Windows CI was dropped. Windows support in generated
+projects is **opt-in per project** via `[project] platforms` (default
+`["linux", "macos"]`). `jm new --windows` records `platforms = [..., "windows"]`
+and emits the MinGW runtime-DLL `if(WIN32 …)` block into each component/module
+`CMakeLists.txt` (gated by `Ctx.make_platform_ctx` / `C.is_windows_target`); off
+by default that block is absent and `jm status --check` treats the absence as
+correct. The generated `Makefile` still detects `OS=Windows_NT` at make-time
+(MinGW required; MSVC rejects C99 `float _Complex`).
 
 ### Docker / Codespaces
 
 - `docker/Dockerfile.examples-linux` — builds from local source; installs all
-    9 bundled examples; used as the GitHub Codespaces base image
+    bundled examples; used as the GitHub Codespaces base image
     (`ghcr.io/just-buildit/jm-examples-linux:latest`)
-- `docker/Dockerfile.examples-windows` — Windows Server Core + MinGW
 - Images are rebuilt on push to `main` (paths: `docker/**`, `src/**`,
     `pyproject.toml`) and on every release tag via `docker.yml` called from
     `release.yml`

@@ -11,12 +11,7 @@ target_link_libraries(<<component>> PRIVATE
     <<component>>_core
     <<extra_link_libs_block>>Python3::NumPy)
 target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
-if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    # Avoid pulling in libgcc_s_seh-1.dll at runtime; libwinpthread-1.dll
-    # is copied once at configure time by the top CMakeLists.
-    target_link_options(<<component>> PRIVATE -static-libgcc)
-endif()
-set_target_properties(<<component>> PROPERTIES
+<<win_cmake_component>>set_target_properties(<<component>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
 add_custom_command(TARGET <<component>> POST_BUILD

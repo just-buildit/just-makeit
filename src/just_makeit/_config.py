@@ -842,6 +842,27 @@ def build_system(cfg: dict) -> str:
     return cfg.get("project", {}).get("build", "cmake")
 
 
+_DEFAULT_PLATFORMS = ["linux", "macos"]
+
+
+def project_platforms(cfg: dict) -> list[str]:
+    """Target platforms declared under ``[project] platforms``.
+
+    Defaults to ``["linux", "macos"]`` when unset — Windows is **opt-in**
+    (gh-213). A project targets Windows only by listing ``"windows"`` here,
+    which is what makes jm emit the MinGW runtime-DLL CMake boilerplate.
+    """
+    v = cfg.get("project", {}).get("platforms")
+    if not isinstance(v, (list, tuple)) or not v:
+        return list(_DEFAULT_PLATFORMS)
+    return [str(p) for p in v]
+
+
+def is_windows_target(cfg: dict) -> bool:
+    """True if the project lists ``windows`` in ``[project] platforms``."""
+    return "windows" in (p.lower() for p in project_platforms(cfg))
+
+
 def is_perf(cfg: dict) -> bool:
     return _truthy(cfg.get("project", {}).get("perf"))
 
@@ -1074,7 +1095,7 @@ def _dump(cfg: dict) -> str:
     if proj:
         lines.append("[project]")
         for k, v in proj.items():
-            if k in ("c_deps", "find_packages", "pkg_modules"):
+            if k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
                 items_str = ", ".join(f'"{x}"' for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:

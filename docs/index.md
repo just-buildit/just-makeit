@@ -62,24 +62,15 @@ ______________________________________________________________________
     |--------------|------------------------------------------------------------|
     | **Linux**    | apt · dnf · pacman · zypper · apk                          |
     | **macOS**    | Homebrew                                                   |
-    | **Windows**  | MSYS2 · winget · choco · scoop · direct download fallback  |
 
 
 ______________________________________________________________________
 
 ### Get it with Docker
 
-=== "docker-linux"
-
-    ```sh
-    docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
-    ```
-
-=== "docker-windows"
-
-    ```sh
-    docker run --rm -it ghcr.io/just-buildit/jm-examples-windows:latest
-    ```
+```sh
+docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+```
 
 ______________________________________________________________________
 
