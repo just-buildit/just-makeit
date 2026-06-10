@@ -13,6 +13,12 @@
     `on_block(block)` fires **after** each block is consumed — the seam a
     downstream wraps for pacing/back-pressure. `--stream-block N` sets the
     default block used by `__iter__`. Non-streamable objects are unchanged.
+- **`--streamable` now works for module objects too** (gh-203) — an object
+    inside a shared-`.so` module (`jm object --module <mod> --streamable`) gets
+    the same `stream()` / `__iter__` as a standalone, rendered into its
+    per-object section, with the iterator type readied per object in the
+    module's `PyInit_`. The shared `<module>.pyi` grows the stub under the
+    streamable class; non-streamable siblings are byte-identical.
 
 ### Fixed
 

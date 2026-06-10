@@ -353,6 +353,28 @@ def _method_doc_lines(
     return out
 
 
+def _obj_stream_pyi(cfg: dict, obj: str) -> str:
+    """Return the ``stream()`` / ``__iter__`` ``.pyi`` block for *obj*.
+
+    Empty string when the object is not ``--streamable`` or has no resolvable
+    block producer.  Reuses ``make_stream_ctx`` so the module ``.pyi`` matches
+    the standalone ``component.pyi`` stub exactly (gh-203).
+    """
+    from ._context import make_stream_ctx
+
+    Component = C.class_name(cfg, obj) or _title(obj)
+    return make_stream_ctx(
+        obj,
+        Component,
+        Component,
+        streamable=C.is_streamable(cfg, obj),
+        methods=C.methods(cfg, obj),
+        arg_type=C.arg_type(cfg, obj),
+        return_type=C.return_type(cfg, obj),
+        default_block=C.stream_block_default(cfg, obj),
+    )["pyi_stream_methods"]
+
+
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     Component = C.class_name(cfg, obj) or _title(obj)
     state_vars = C.state_vars(cfg, obj)
@@ -633,6 +655,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"    def {p_name}(self, value: {py_t}) -> None: ...",
             ]
 
+    # Stream generator (gh-203): a streamable object grows stream()/__iter__.
+    _stream_pyi = _obj_stream_pyi(cfg, obj)
+    if _stream_pyi:
+        lines.append(_stream_pyi.rstrip("\n"))
+
     lines += [
         "",
         "    def destroy(self) -> None:",
@@ -740,17 +767,24 @@ def make_module_pyi(cfg: dict, module: str) -> str:
 
         def apply(x: float) -> float: ...
     """
+    pkg = C.project_name(cfg)
+    objects = C.module_objects(cfg, module)
+
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
     needs_any = _uses_any(cfg, module)
+    # gh-203: a streamable object's stub references Callable + Iterator.
+    needs_stream = any(_obj_stream_pyi(cfg, o) for o in objects)
     parts: list[str] = [
         f"# {module}/{module}.pyi — type stubs for the {module} C extension."
     ]
-    if needs_literal or needs_any:
+    if needs_literal or needs_any or needs_stream:
         typing_imports = ", ".join(
             x
             for x in [
                 "Any" if needs_any else "",
+                "Callable" if needs_stream else "",
+                "Iterator" if needs_stream else "",
                 "Literal" if needs_literal else "",
             ]
             if x
@@ -759,9 +793,6 @@ def make_module_pyi(cfg: dict, module: str) -> str:
     if needs_numpy:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
-
-    pkg = C.project_name(cfg)
-    objects = C.module_objects(cfg, module)
     functions = C.module_functions(cfg, module)
 
     if objects:

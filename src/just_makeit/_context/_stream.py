@@ -34,6 +34,7 @@ _EMPTY: dict[str, str] = {
     "stream_def_entry": "",
     "stream_tp_iter": "",
     "stream_type_ready": "",
+    "stream_module_ready": "",
     "pyi_stream_typing": "",
     "pyi_stream_methods": "",
 }
@@ -237,6 +238,12 @@ static PyObject *
         f"\n\n    if (PyType_Ready(&{iter_ty}) < 0)\n        return NULL;"
     )
 
+    # Module aggregator form (gh-203): the multi-object PyInit_<module> joins
+    # one-line `PyType_Ready(...) return NULL;` checks per object, so the iter
+    # type's readiness check matches that single-line shape rather than the
+    # standalone two-line `stream_type_ready`.
+    stream_module_ready = f"    if (PyType_Ready(&{iter_ty}) < 0) return NULL;"
+
     pyi_stream_typing = ", Callable, Iterator"
 
     pyi_stream_methods = (
@@ -278,6 +285,7 @@ static PyObject *
         "stream_def_entry": stream_def_entry,
         "stream_tp_iter": stream_tp_iter,
         "stream_type_ready": stream_type_ready,
+        "stream_module_ready": stream_module_ready,
         "pyi_stream_typing": pyi_stream_typing,
         "pyi_stream_methods": pyi_stream_methods,
     }

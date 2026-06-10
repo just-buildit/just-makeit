@@ -195,9 +195,9 @@ static PyObject *
     Py_RETURN_NONE;
 }
 
-static PyMethodDef <<ComponentW>>_methods[] = {
+<<stream_iter_block>>static PyMethodDef <<ComponentW>>_methods[] = {
 <<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>>    {"destroy",  (PyCFunction)<<ComponentW>>_destroy,  METH_NOARGS,
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>>    {"destroy",  (PyCFunction)<<ComponentW>>_destroy,  METH_NOARGS,
      "Release resources."},
     {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
     {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS, NULL},
@@ -211,7 +211,7 @@ static PyTypeObject <<ComponentW>>Type = {
     .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = <<tp_doc>>,
-    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>>
+    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>><<stream_tp_iter>>
     .tp_new       = <<ComponentW>>_new,
     .tp_init      = (initproc)<<ComponentW>>_init,
 };
@@ -795,10 +795,15 @@ def render_module_ext_c(
     for ctx in comp_ctxs:
         parts.append(render(COMPONENT_TYPE_SECTION, ctx))
 
-    type_ready_checks = "\n".join(
-        f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
-        for ctx in comp_ctxs
-    )
+    type_ready_lines: list[str] = []
+    for ctx in comp_ctxs:
+        type_ready_lines.append(
+            f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
+        )
+        # gh-203: a streamable object also readies its iterator type.
+        if ctx.get("stream_module_ready"):
+            type_ready_lines.append(ctx["stream_module_ready"])
+    type_ready_checks = "\n".join(type_ready_lines)
     add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:
         C_ = ctx["Component"]
@@ -912,10 +917,15 @@ def render_module_ext_aggregator(
     if fn_ctx["function_wrappers"]:
         parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
     _extra_types = extra_types or []
-    type_ready_lines = [
-        f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
-        for ctx in comp_ctxs
-    ] + [
+    type_ready_lines: list[str] = []
+    for ctx in comp_ctxs:
+        type_ready_lines.append(
+            f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
+        )
+        # gh-203: a streamable object also readies its iterator type.
+        if ctx.get("stream_module_ready"):
+            type_ready_lines.append(ctx["stream_module_ready"])
+    type_ready_lines += [
         f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
         for et in _extra_types
     ]
