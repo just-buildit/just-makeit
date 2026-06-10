@@ -176,7 +176,7 @@ Commands:
     --check                     Report status only; exit 1 if anything is missing.
     -h, --help                  Show detailed help for this command.
   example [name]                Run a bundled end-to-end example (omit name to list).
-  version                       Show just-makeit's version.
+  version, --version, -V        Show just-makeit's version.
   help                          Show this message.
 
 Types (--arg-type / --return-type / --param / --state):
@@ -422,6 +422,13 @@ def _warn_schema() -> None:
 
 def main() -> None:
     args = sys.argv[1:]
+    # `prog --version` is the universal idiom; alias it (and `-V`) to the
+    # `version` command when given as the first/only argument.
+    if args and args[0] in ("--version", "-V"):
+        from . import __version__
+
+        print(__version__)
+        return
     if not args or args[0] in ("-h", "--help", "help"):
         print(_colorize(_USAGE), end="")
         return

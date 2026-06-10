@@ -53,6 +53,33 @@ class TestHelp:
         assert r.returncode == 1
         assert "unknown command" in r.stderr
 
+    def test_help_lists_version_flags(self):
+        r = _cli("help")
+        assert "--version" in r.stdout and "-V" in r.stdout
+
+
+class TestVersion:
+    """`version` command plus the `--version` / `-V` flag aliases."""
+
+    def _ver(self, *args):
+        # The value comes from importlib.metadata, which is "unknown" when jm
+        # runs from PYTHONPATH (not pip-installed) as in CI — so assert the
+        # alias invariant (all three forms agree, non-empty), not a format.
+        r = _cli(*args)
+        assert r.returncode == 0, r.stderr
+        out = r.stdout.strip()
+        assert out, "version output is empty"
+        return out
+
+    def test_version_command(self):
+        self._ver("version")
+
+    def test_double_dash_version_flag(self):
+        assert self._ver("--version") == self._ver("version")
+
+    def test_short_v_flag(self):
+        assert self._ver("-V") == self._ver("version")
+
 
 class TestNewCLI:
     def test_new_no_name_exits_1(self):

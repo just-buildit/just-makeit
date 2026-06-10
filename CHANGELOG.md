@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`just-makeit --version` / `-V`** — the universal idiom now works as an alias
+    for the `version` command when given as the first argument (previously only
+    the bare `version` subcommand printed the version).
+
 ### Changed
 
 - **Windows CMake boilerplate is opt-in per project** (gh-213) — jm emitted the
