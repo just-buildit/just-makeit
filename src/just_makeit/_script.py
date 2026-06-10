@@ -97,13 +97,16 @@ def _object_flags(
         parts.append(_bool_flag("--no-step"))
 
     if C.is_streamable(cfg, comp):
-        # --stream-block implies --streamable, so emit only the richer flag
-        # when a non-default block was recorded; otherwise the bare flag.
+        # --async-stream implies --streamable; emit the most specific flag.
+        # --stream-block also implies --streamable, so prefer it when a
+        # non-default block was recorded.
+        if C.is_async_stream(cfg, comp):
+            parts.append(_bool_flag("--async-stream"))
         if "stream_block_default" in cfg.get(comp, {}):
             parts.append(
                 _flag("--stream-block", str(C.stream_block_default(cfg, comp)))
             )
-        else:
+        elif not C.is_async_stream(cfg, comp):
             parts.append(_bool_flag("--streamable"))
 
     return parts

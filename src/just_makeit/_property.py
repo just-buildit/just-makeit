@@ -209,6 +209,7 @@ def run(
                 Component,
                 ctx["ComponentW"],
                 streamable=C.is_streamable(cfg, object_name),
+                async_stream=C.is_async_stream(cfg, object_name),
                 methods=C.methods(cfg, object_name),
                 arg_type=arg_type_,
                 return_type=return_type_,

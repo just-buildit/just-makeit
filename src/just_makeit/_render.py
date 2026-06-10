@@ -211,7 +211,7 @@ static PyTypeObject <<ComponentW>>Type = {
     .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_doc       = <<tp_doc>>,
-    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>><<stream_tp_iter>>
+    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>><<stream_tp_iter>><<stream_tp_async>>
     .tp_new       = <<ComponentW>>_new,
     .tp_init      = (initproc)<<ComponentW>>_init,
 };

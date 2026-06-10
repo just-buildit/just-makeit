@@ -648,6 +648,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             Component,
             ctx["ComponentW"],
             streamable=C.is_streamable(cfg, obj),
+            async_stream=C.is_async_stream(cfg, obj),
             methods=C.methods(cfg, obj),
             arg_type=arg_t,
             return_type=ret_t,

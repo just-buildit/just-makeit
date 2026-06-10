@@ -368,6 +368,7 @@ def _obj_stream_pyi(cfg: dict, obj: str) -> str:
         Component,
         Component,
         streamable=C.is_streamable(cfg, obj),
+        async_stream=C.is_async_stream(cfg, obj),
         methods=C.methods(cfg, obj),
         arg_type=C.arg_type(cfg, obj),
         return_type=C.return_type(cfg, obj),

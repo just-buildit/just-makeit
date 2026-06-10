@@ -33,6 +33,7 @@ _EMPTY: dict[str, str] = {
     "stream_iter_block": "",
     "stream_def_entry": "",
     "stream_tp_iter": "",
+    "stream_tp_async": "",
     "stream_type_ready": "",
     "stream_module_ready": "",
     "pyi_stream_typing": "",
@@ -75,6 +76,7 @@ def make_stream_ctx(
     ComponentW: str,
     *,
     streamable: bool = False,
+    async_stream: bool = False,
     methods: list[dict] | None = None,
     arg_type: str = "void",
     return_type: str = "void",
@@ -100,6 +102,92 @@ def make_stream_ctx(
     iter_t = f"{Component}StreamIter"
     iter_ty = f"{Component}StreamIterType"
     obj_t = f"{Component}Object"
+
+    # Async iteration (gh-206, opt-in via --async-stream): the same iterator
+    # type also implements __aiter__/__anext__. __anext__ offloads the
+    # GIL-holding producer call to the running loop's default executor, so a
+    # `nogil` producer lets the event loop run while the kernel works; on drain
+    # the executor callable raises StopAsyncIteration. All in C — no Python
+    # wrapper class. Empty segments keep the sync-only output byte-identical.
+    async_iter_funcs = ""
+    async_iter_type_lines = ""
+    async_obj_funcs = ""
+    stream_tp_async = ""
+    if async_stream:
+        async_iter_funcs = f"""\
+static PyObject *
+{iter_t}_anext_blocking({iter_t} *it, PyObject *Py_UNUSED(ignored))
+{{
+    /* The sync producer step, run in a thread executor by __anext__. A NULL
+       with no exception set means the producer drained, so raise
+       StopAsyncIteration to end `async for`. */
+    PyObject *blk = {iter_t}_next(it);
+    if (!blk && !PyErr_Occurred())
+        PyErr_SetNone(PyExc_StopAsyncIteration);
+    return blk;
+}}
+
+static PyMethodDef {iter_t}_methods[] = {{
+    {{"_anext_blocking", (PyCFunction){iter_t}_anext_blocking, METH_NOARGS,
+     NULL}},
+    {{NULL}}
+}};
+
+static PyObject *
+{iter_t}_aiter({iter_t} *it)
+{{
+    Py_INCREF(it);
+    return (PyObject *)it;
+}}
+
+static PyObject *
+{iter_t}_anext({iter_t} *it)
+{{
+    /* Run the blocking producer step in the running loop's default executor;
+       the returned Future is the awaitable __anext__ yields. */
+    PyObject *asyncio = PyImport_ImportModule("asyncio");
+    if (!asyncio)
+        return NULL;
+    PyObject *loop = PyObject_CallMethod(asyncio, "get_running_loop", NULL);
+    Py_DECREF(asyncio);
+    if (!loop)
+        return NULL;
+    PyObject *fn = PyObject_GetAttrString((PyObject *)it, "_anext_blocking");
+    if (!fn) {{
+        Py_DECREF(loop);
+        return NULL;
+    }}
+    PyObject *fut = PyObject_CallMethod(loop, "run_in_executor", "OO",
+                                        Py_None, fn);
+    Py_DECREF(loop);
+    Py_DECREF(fn);
+    return fut;
+}}
+
+static PyAsyncMethods {iter_t}_as_async = {{
+    .am_aiter  = (unaryfunc){iter_t}_aiter,
+    .am_anext  = (unaryfunc){iter_t}_anext,
+}};
+
+"""
+        async_iter_type_lines = (
+            f"    .tp_methods   = {iter_t}_methods,\n"
+            f"    .tp_as_async  = &{iter_t}_as_async,\n"
+        )
+        async_obj_funcs = f"""\
+static PyObject *
+{ComponentW}_aiter({obj_t} *self)
+{{
+    /* async for blk in obj: an async iterator over the default block. */
+    return {ComponentW}_getiter(self);
+}}
+
+static PyAsyncMethods {ComponentW}_as_async = {{
+    .am_aiter  = (unaryfunc){ComponentW}_aiter,
+}};
+
+"""
+        stream_tp_async = f"\n    .tp_as_async  = &{ComponentW}_as_async,"
 
     stream_iter_block = f"""\
 /* ---- Block iterator: stream() / __iter__ --------------- */
@@ -160,7 +248,7 @@ static PyObject *
     return blk;
 }}
 
-static PyTypeObject {iter_ty} = {{
+{async_iter_funcs}static PyTypeObject {iter_ty} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{component}.{iter_t}",
     .tp_basicsize = sizeof({iter_t}),
@@ -169,7 +257,7 @@ static PyTypeObject {iter_ty} = {{
     .tp_doc       = "Block iterator over {Component}.",
     .tp_iter      = PyObject_SelfIter,
     .tp_iternext  = (iternextfunc){iter_t}_next,
-}};
+{async_iter_type_lines}}};
 
 static PyObject *
 {ComponentW}_make_iter({obj_t} *self, Py_ssize_t block,
@@ -219,7 +307,7 @@ static PyObject *
     return {ComponentW}_make_iter(self, {block}, -1, NULL);
 }}
 
-"""
+{async_obj_funcs}"""
 
     stream_def_entry = (
         f'    {{"stream", (PyCFunction)(void *){ComponentW}_stream,\n'
@@ -245,6 +333,19 @@ static PyObject *
     stream_module_ready = f"    if (PyType_Ready(&{iter_ty}) < 0) return NULL;"
 
     pyi_stream_typing = ", Callable, Iterator"
+    pyi_async_methods = ""
+    if async_stream:
+        pyi_stream_typing = ", AsyncIterator, Callable, Iterator"
+        pyi_async_methods = (
+            f"\n    def __aiter__(self) -> AsyncIterator[{nd}]:\n"
+            f'        """Async-iterate output blocks (default block size).\n'
+            f"\n"
+            f"        ``stream(...)`` is also an async iterator, so\n"
+            f"        ``async for blk in obj.stream(n): ...`` works too — each\n"
+            f"        producer step runs in the running loop's default"
+            f" executor.\n"
+            f'        """\n'
+        )
 
     pyi_stream_methods = (
         f"\n    def stream(\n"
@@ -278,12 +379,14 @@ static PyObject *
         f"\n"
         f"    def __iter__(self) -> Iterator[{nd}]:\n"
         f'        """Iterate output blocks using the default block size."""\n'
+        f"{pyi_async_methods}"
     )
 
     return {
         "stream_iter_block": stream_iter_block,
         "stream_def_entry": stream_def_entry,
         "stream_tp_iter": stream_tp_iter,
+        "stream_tp_async": stream_tp_async,
         "stream_type_ready": stream_type_ready,
         "stream_module_ready": stream_module_ready,
         "pyi_stream_typing": pyi_stream_typing,
