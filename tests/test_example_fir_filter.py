@@ -143,21 +143,10 @@ class TestStep5C:
             f"-L{build_dir}",
             "-lmy_fir",
         ]
-        if sys.platform != "win32":
-            gcc_cmd += [f"-Wl,-rpath,{build_dir}"]
-        gcc_cmd += ["-lm", "-o", "demo"]
+        gcc_cmd += [f"-Wl,-rpath,{build_dir}", "-lm", "-o", "demo"]
         r = _run(gcc_cmd, cwd=project)
         assert r.returncode == 0, f"gcc failed:\n{r.stderr}"
-        if sys.platform == "win32":
-            exe = str(project / "demo.exe")
-            env = {
-                **os.environ,
-                "PATH": f"{build_dir};{os.environ.get('PATH', '')}",
-            }
-        else:
-            exe = "./demo"
-            env = None
-        r = _run([exe], cwd=project, env=env)
+        r = _run(["./demo"], cwd=project)
         assert r.returncode == 0, f"demo failed:\n{r.stderr}"
         return r.stdout
 

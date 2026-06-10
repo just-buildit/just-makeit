@@ -20,10 +20,6 @@ HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd, env=None):
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
@@ -132,7 +128,6 @@ def run(root: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],

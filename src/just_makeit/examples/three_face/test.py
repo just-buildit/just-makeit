@@ -26,10 +26,6 @@ import tempfile
 from pathlib import Path
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd):
     r = subprocess.run(
         [str(a) for a in args], cwd=cwd, capture_output=True, text=True
@@ -92,7 +88,6 @@ def run(root: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],
@@ -113,11 +108,7 @@ def run(root: Path) -> None:
     # Faces run from src/ (where the package + cmake-built gain.so live; the
     # pep723 gaintool.py at the root would otherwise shadow the package).
     src = proj / "src"
-    exe = (
-        proj
-        / "build"
-        / ("gaintool.exe" if sys.platform == "win32" else "gaintool")
-    )
+    exe = proj / "build" / "gaintool"
     assert exe.exists(), f"C binary not built: {exe}"
 
     # Face 1 — standalone C binary.

@@ -39,10 +39,6 @@ _DOPPLER_RELEASE_URL = (
 )
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd, env=None):
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
@@ -73,8 +69,6 @@ def _platform_tag() -> str | None:
             return "darwin-x86_64"
         if machine in ("arm64", "aarch64"):
             return "darwin-arm64"
-    if system == "win32":
-        return "windows-x86_64"
     return None
 
 
@@ -326,7 +320,6 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
             f"-DDoppler_DIR={doppler_dir}",

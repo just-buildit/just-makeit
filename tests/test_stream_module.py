@@ -25,8 +25,6 @@ from just_makeit._object import run as jm_object
 
 
 def _skip_reason():
-    if sys.platform == "win32":
-        return "raw cmake selects MSVC on Windows; project requires MinGW"
     if not shutil.which("cmake"):
         return "cmake not found"
     if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):

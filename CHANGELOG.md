@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **Windows CI and tooling** — jm no longer tests Windows. The MSVC path was
+    never exercised (jm emits CPython for MinGW/GCC) and the MinGW CI leg was
+    flaky infra more than signal. Dropped the `windows-latest` legs from the CI
+    / release / install-deps matrices, the `jm-examples-windows` Docker image
+    and its `windows` job, and `install-deps.ps1` / the `_run_ps1` path.
+    Generated projects still carry MinGW Windows boilerplate for now; making it
+    opt-in per project (`[project] platforms`) is tracked in #213.
+
 ## [0.18.1] — 2026-06-10
 
 ### Added

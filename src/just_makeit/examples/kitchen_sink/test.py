@@ -41,10 +41,6 @@ def _cmd(args, cwd, env=None):
     return r
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 # ── vendored cJSON-compatible reader (a [project] c_deps OBJECT lib) ──────────
 _CJSON_H = """\
 /* cJSON.h — compact cJSON-compatible JSON reader (vendored for the example).
@@ -625,7 +621,6 @@ def run(root: Path) -> None:
         "-B",
         str(build),
         "-DBUILD_PYTHON=ON",
-        *_cmake_gen(),
     ]
     if doppler_prefix:
         cmake_args.append(f"-DDoppler_DIR={_doppler_dir(doppler_prefix)}")
