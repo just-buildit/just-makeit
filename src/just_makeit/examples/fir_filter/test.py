@@ -15,10 +15,6 @@ HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd):
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -84,7 +80,6 @@ def _install_smoke(proj: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             f"-DCMAKE_PREFIX_PATH={install_prefix}",
         ],
         cwd=consumer,
@@ -92,7 +87,7 @@ def _install_smoke(proj: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=consumer)
 
     # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
-    if sys.platform == "win32" or not shutil.which("pkg-config"):
+    if not shutil.which("pkg-config"):
         return
     pc_dir = next(
         (p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None
@@ -163,7 +158,6 @@ def run(root: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],

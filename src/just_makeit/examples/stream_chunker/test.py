@@ -15,10 +15,6 @@ import sys
 import tempfile
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -92,7 +88,6 @@ def run(root: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],

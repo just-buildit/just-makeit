@@ -16,15 +16,10 @@ Also runnable directly: python3 examples/jm_app/test.py
 """
 
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).parent
-
-
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
 
 
 def _cmd(args, cwd):

@@ -31,10 +31,6 @@ from pathlib import Path
 HERE = Path(__file__).parent
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd, **kw):
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kw)
     if r.returncode != 0:
@@ -53,7 +49,6 @@ def _cmake_build(proj: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],
@@ -64,8 +59,6 @@ def _cmake_build(proj: Path) -> None:
 
 def _try_coverage(proj: Path, package: str) -> None:
     """Run C (lcov) + Python (pytest-cov) coverage; skip gracefully if missing."""
-    if sys.platform == "win32":
-        return
     if not shutil.which("lcov") or not shutil.which("genhtml"):
         print("  [full_workflow] skipping C coverage — lcov not found")
         return
@@ -88,7 +81,6 @@ def _try_coverage(proj: Path, package: str) -> None:
             "build/cov",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Debug",
             "-DCMAKE_C_FLAGS=--coverage -O0",
             f"-DPython3_EXECUTABLE={sys.executable}",

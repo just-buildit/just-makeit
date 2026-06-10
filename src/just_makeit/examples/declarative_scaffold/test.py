@@ -20,10 +20,6 @@ import tempfile
 from pathlib import Path
 
 
-def _cmake_gen():
-    return ["-G", "MinGW Makefiles"] if sys.platform == "win32" else []
-
-
 def _cmd(args, cwd):
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -116,7 +112,6 @@ def run(root: Path) -> None:
             "build",
             "-S",
             ".",
-            *_cmake_gen(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
         ],
@@ -130,7 +125,7 @@ def run(root: Path) -> None:
     # `cmake --build` would silently succeed without building it and
     # `ctest` would happily pass with zero registered tests. Assert.
     so_files = list((proj / "src" / "demo").glob("agc*"))
-    so_files = [p for p in so_files if p.suffix in (".so", ".pyd")]
+    so_files = [p for p in so_files if p.suffix == ".so"]
     assert so_files, (
         f"agc extension was not compiled into src/demo/ — "
         f"apply did not reconcile the top CMakeLists. "
