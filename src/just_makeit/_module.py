@@ -21,7 +21,12 @@ from . import _config as C
 from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
-from ._init import _to_title, _write, _write_compile_commands
+from ._init import (
+    _to_title,
+    _write,
+    _write_compile_commands,
+    ensure_parent_packages,
+)
 
 
 def run(
@@ -31,13 +36,9 @@ def run(
     extra_link_libs: list[str] | None = None,
     extra_types: list[str] | None = None,
 ) -> None:
-    if not module.replace("_", "").isalnum() or module[0].isdigit():
-        print(
-            f"error: '{module}' is not a valid module name.\n"
-            "Use lowercase letters, digits, and underscores only; "
-            "must not start with a digit.",
-            file=sys.stderr,
-        )
+    err = C.validate_module_id(module)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
         sys.exit(1)
 
     cfg_path = root / C.FILENAME
@@ -49,9 +50,20 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+    mp = C.module_paths(module)
 
     if module in C.modules(cfg):
         print(f"error: module '{module}' already exists.", file=sys.stderr)
+        sys.exit(1)
+    # A dotted module's cname must not collide with another module's cname or
+    # a standalone component (they share native dirs / CMake targets).
+    if mp.cname in C.module_cnames(cfg) or mp.cname in C.components(cfg):
+        print(
+            f"error: module '{module}' collides with existing "
+            f"'{mp.cname}'. Modules, components, and nested-module cnames "
+            "share one namespace.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if module in C.components(cfg):
         print(
@@ -62,62 +74,72 @@ def run(
         sys.exit(1)
 
     pkg = C.project_name(cfg)
-    Module = _to_title(module)
+    Module = _to_title(mp.cname)
 
     print(f"just-makeit: scaffolding module '{module}' in project '{pkg}'")
     print()
 
-    mod_ctx = {"module": module, "Module": Module, "MODULE": module.upper()}
+    # cname (dots→underscores) drives every C identifier / native dir / file
+    # prefix; for a flat module it equals `module`, so nothing below changes
+    # for existing projects.
+    cname = mp.cname
+    mod_ctx = {"module": cname, "Module": Module, "MODULE": cname.upper()}
+    # Render slots that split the module's roles (module=cname, module_leaf,
+    # module_pypath, module_output_name, module_tp).
+    mod_slots = Ctx.make_module_ctx(module, pkg)
 
     # C header and implementation for module-level functions
     _write(
-        root / "native" / "inc" / module / f"{module}_core.h",
+        root / "native" / "inc" / cname / f"{cname}_core.h",
         T.render(T.MODULE_CORE_H, mod_ctx),
     )
     _write(
-        root / "native" / "src" / module / f"{module}_core.c",
+        root / "native" / "src" / cname / f"{cname}_core.c",
         T.render(T.MODULE_CORE_C, mod_ctx),
     )
 
     # Empty module ext.c (no types yet — populated by `just-makeit object`)
     ext_c = T.render_module_ext_c(module, [])
-    _write(root / "native" / "src" / module / f"{module}_ext.c", ext_c)
+    _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
 
     # CMakeLists for the module (no object libs yet)
     cmake_ctx = {
-        "module": module,
+        **mod_slots,
         "Module": Module,
         "object_list": "",
-        "object_core_libs": f"{module}_core",
+        "object_core_libs": f"{cname}_core",
         "module_core_lib_block": (
-            f"add_library({module}_core OBJECT {module}_core.c)\n"
-            f"target_include_directories({module}_core PRIVATE"
+            f"add_library({cname}_core OBJECT {cname}_core.c)\n"
+            f"target_include_directories({cname}_core PRIVATE"
             f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
         ),
         "extra_link_libs_block": "",
         "extra_include_dirs_block": "",
         # gh-213: Windows runtime-DLL block, off unless the project targets it.
-        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=module),
+        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=cname),
     }
     _write(
-        root / "native" / "src" / module / "CMakeLists.txt",
+        root / "native" / "src" / cname / "CMakeLists.txt",
         T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
     )
 
-    # Python subpackage __init__.py — no objects yet, so no import line
-    # (an empty `from .<module> import` would be a SyntaxError).
-    pkg_module_dir = root / "src" / pkg / module
+    # Python subpackage at src/<pkg>/<pypath>/ (nested for dotted ids); ensure
+    # the intermediate packages exist so `pkg.<parent>...` is importable.
+    ensure_parent_packages(root, pkg, mp)
+    pkg_module_dir = root / "src" / pkg / mp.pypath
+    # No objects yet, so no import line (an empty `from .<leaf> import` would be
+    # a SyntaxError).
     _write(
         pkg_module_dir / "__init__.py",
-        T.render(T.MODULE_INIT_PY_EMPTY, {"module": module}),
+        T.render(T.MODULE_INIT_PY_EMPTY, mod_slots),
     )
-    _write(pkg_module_dir / f"{module}.pyi", S.make_module_pyi(cfg, module))
+    _write(pkg_module_dir / f"{mp.leaf}.pyi", S.make_module_pyi(cfg, module))
 
     # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
         cmake_text = cmake_path.read_text(encoding="utf-8")
-        sub = f"add_subdirectory(native/src/{module})\n"
+        sub = f"add_subdirectory(native/src/{cname})\n"
         if sub not in cmake_text:
             sentinel = "# ── Modules"
             if sentinel in cmake_text:

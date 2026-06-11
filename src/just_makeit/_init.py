@@ -56,6 +56,26 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
     print(f"  {verb}  {path}")
 
 
+def ensure_parent_packages(
+    root: Path, pkg: str, mp: "C.ModulePaths"
+) -> list[Path]:
+    """Create plain ``__init__.py`` markers for a nested module's parents.
+
+    A dotted module ``dsp.filters`` lives at ``src/<pkg>/dsp/filters/``; the
+    intermediate ``dsp`` package needs an ``__init__.py`` for ``pkg.dsp`` to be
+    importable. Create-if-missing (never clobbers a hand-edited marker);
+    returns the paths newly created. No-op for a flat module (no parents).
+    """
+    created: list[Path] = []
+    base = root / "src" / pkg
+    for depth in range(1, len(mp.parents) + 1):
+        init = base.joinpath(*mp.parents[:depth]) / "__init__.py"
+        if not init.exists():
+            _write(init, R.SUBPACKAGE_INIT_PY)
+            created.append(init)
+    return created
+
+
 # ── Core-file body preservation ──────────────────────────────────────────────
 # Regenerating commands re-render <comp>_core.h / <comp>_core.c from templates,
 # which would otherwise wipe any hand-written algorithm code.  The helpers

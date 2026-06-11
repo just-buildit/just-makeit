@@ -122,7 +122,7 @@ def _object_paths(
         root / "native" / "benchmarks" / f"bench_{obj}_core.c",
     ]
     if module:
-        sub = root / "src" / pkg / module
+        sub = root / "src" / pkg / C.module_paths(module).pypath
         paths += [
             sub / "tests" / f"test_{obj}.py",
             sub / "benchmarks" / f"bench_{obj}.py",
@@ -306,6 +306,42 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     print(f"Done!  Object '{obj}' removed.")
 
 
+def _prune_parent_packages(
+    root: Path, pkg: str, cfg: dict, mp: "C.ModulePaths"
+) -> None:
+    """Remove empty intermediate package dirs left by a removed nested module.
+
+    Walks the removed module's parent prefixes deepest-first; deletes each dir
+    that now holds nothing but its ``__init__.py`` and is not occupied by any
+    remaining module (its own dir or an ancestor of it). Stops at the first
+    prefix still in use.
+    """
+    if not mp.parents:
+        return
+    base = root / "src" / pkg
+    # Every directory prefix occupied by a surviving module.
+    needed: set[str] = set()
+    for other in C.modules(cfg):
+        segs = C.module_paths(other).pypath.split("/")
+        for d in range(1, len(segs) + 1):
+            needed.add("/".join(segs[:d]))
+    for depth in range(len(mp.parents), 0, -1):
+        prefix = "/".join(mp.parents[:depth])
+        if prefix in needed:
+            break
+        pkg_dir = base.joinpath(*mp.parents[:depth])
+        if not pkg_dir.exists():
+            continue
+        leftovers = [
+            p
+            for p in pkg_dir.iterdir()
+            if p.name not in ("__init__.py", "__pycache__")
+        ]
+        if leftovers:
+            break
+        _rm(pkg_dir)
+
+
 def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     pkg = C.project_name(cfg)
     if module not in C.modules(cfg):
@@ -346,15 +382,21 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
         _remove_object_files(root, cfg, pkg, obj, module)
         cfg.pop(obj, None)
 
-    # The module's own files.
-    _rm(root / "native" / "inc" / module)
-    _rm(root / "native" / "src" / module)
-    _rm(root / "src" / pkg / module)
-    _strip_cmake_module(root, module)
+    # The module's own files (cname for the flat native dir, pypath for the
+    # nested Python subpackage).
+    mp = C.module_paths(module)
+    _rm(root / "native" / "inc" / mp.cname)
+    _rm(root / "native" / "src" / mp.cname)
+    _rm(root / "src" / pkg / mp.pypath)
+    _strip_cmake_module(root, mp.cname)
 
     cfg.get("module", {}).pop(module, None)
     if cfg.get("module") == {}:
         cfg.pop("module", None)
+    # Prune now-empty intermediate package dirs left by a nested module (e.g.
+    # src/<pkg>/dsp/ after removing dsp.filters) — unless a sibling still needs
+    # them. Runs after the cfg pop so the sibling check sees the new state.
+    _prune_parent_packages(root, pkg, cfg, mp)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 

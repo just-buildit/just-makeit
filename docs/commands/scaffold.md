@@ -65,6 +65,12 @@ just-makeit module filter
 just-makeit module osc
 ```
 
+The name may be **dotted** to nest the module in a subpackage — `just-makeit module dsp.filters` places the extension at `src/<pkg>/dsp/filters/` so it
+imports as `from <pkg>.dsp.filters import Fir` (arbitrary depth supported).
+Intermediate packages (`dsp`) get a plain `__init__.py`; the native sources
+stay in a single flat dir (`native/src/dsp_filters/`). Objects are added the
+same way: `just-makeit object fir --module dsp.filters`.
+
 Creates:
 
 | File                               | Purpose                                            |

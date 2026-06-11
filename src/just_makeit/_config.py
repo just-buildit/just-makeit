@@ -27,6 +27,7 @@ try:
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 from pathlib import Path
+from typing import NamedTuple
 
 FILENAME = "just-makeit.toml"
 
@@ -298,7 +299,11 @@ def save(root: Path, cfg: dict) -> None:
         if mod in module_owners:
             dst = module_owners[mod]
         elif split_layout:
-            dst = root / "modules" / f"{mod}.toml"
+            # Sanitize a dotted module id to its cname for the fragment file
+            # name (modules/dsp_filters.toml) — one clean extension that still
+            # matches the modules/*.toml include glob; the dotted key lives
+            # inside the file.
+            dst = root / "modules" / f"{module_paths(mod).cname}.toml"
         else:
             dst = manifest_path
         by_file.setdefault(dst, {}).setdefault("module", {})[mod] = data
@@ -390,6 +395,99 @@ def add_module_function(cfg: dict, module: str, fn: dict) -> dict:
         .append(fn)
     )
     return cfg
+
+
+class ModulePaths(NamedTuple):
+    """Derived forms of a (possibly dotted) module id (gh nested modules).
+
+    A module name like ``dsp.filters`` is a *package path*: it nests the
+    extension under ``src/<pkg>/dsp/filters/`` and imports as
+    ``pkg.dsp.filters``. The single name plays three roles that nesting splits
+    apart, so each is derived once here:
+
+    ``id``      The canonical dotted name — the TOML key under ``[module.X]``.
+    ``leaf``    Final segment (``filters``) — the ``.so`` basename, ``PyInit_``
+                symbol, ``.m_name``, and the ``from .<leaf> import`` line.
+    ``cname``   Dots→underscores (``dsp_filters``) — the CMake target, the
+                ``native/src/<cname>/`` directory and C file prefixes. A single
+                ``\\w+`` token, so the flat native tree and apply/remove
+                ``add_subdirectory`` machinery are untouched.
+    ``pypath``  Dots→slashes (``dsp/filters``) — the Python output directory
+                under ``src/<pkg>/`` and the CMake ``LIBRARY_OUTPUT_DIRECTORY``.
+    ``parents`` Intermediate package names (``["dsp"]``) that need a plain
+                ``__init__.py`` marker for ``pkg.dsp`` to be importable.
+
+    Invariant: for a *dotless* id, ``leaf == cname == pypath == id`` and
+    ``parents == ()`` — every field equals today's string, so flat modules
+    render byte-for-byte unchanged.
+
+    >>> ModulePaths.of("dsp.filters")
+    ModulePaths(id='dsp.filters', leaf='filters', cname='dsp_filters', pypath='dsp/filters', parents=('dsp',))
+    >>> ModulePaths.of("dsp")
+    ModulePaths(id='dsp', leaf='dsp', cname='dsp', pypath='dsp', parents=())
+    """
+
+    id: str
+    leaf: str
+    cname: str
+    pypath: str
+    parents: tuple[str, ...]
+
+    @classmethod
+    def of(cls, module_id: str) -> "ModulePaths":
+        segs = module_id.split(".")
+        return cls(
+            id=module_id,
+            leaf=segs[-1],
+            cname="_".join(segs),
+            pypath="/".join(segs),
+            parents=tuple(segs[:-1]),
+        )
+
+
+def module_paths(module_id: str) -> ModulePaths:
+    """Derived path/identifier forms for a (possibly dotted) module id."""
+    return ModulePaths.of(module_id)
+
+
+def module_cnames(cfg: dict) -> set[str]:
+    """CMake-target / native-dir names (cname) of every module.
+
+    The top ``CMakeLists.txt`` carries ``add_subdirectory(native/src/<cname>)``
+    lines; apply classifies those blocks by membership in this set, so it must
+    compare against the cname token the regex captures, not the dotted id.
+    """
+    return {module_paths(m).cname for m in modules(cfg)}
+
+
+def validate_module_id(module_id: str) -> str | None:
+    """Return an error message for an invalid module id, else ``None``.
+
+    Each dot-separated segment must be a valid identifier (letters/digits/
+    underscores, not starting with a digit). Empty, leading/trailing-dot, and
+    double-dot names are rejected.
+    """
+    if not module_id:
+        return "module name must not be empty"
+    segs = module_id.split(".")
+    for seg in segs:
+        if not seg or not seg.replace("_", "").isalnum() or seg[0].isdigit():
+            return (
+                f"'{module_id}' is not a valid module name.\n"
+                "Use lowercase letters, digits, and underscores only; dotted "
+                "names (e.g. dsp.filters) nest the module in a subpackage. "
+                "Each dot-separated segment must not start with a digit."
+            )
+    return None
+
+
+def _module_key(mod: str) -> str:
+    """TOML table key for a module id — quoted when dotted.
+
+    ``[module."dsp.filters"]`` keeps the dotted id a single key; the bare
+    ``[module.dsp.filters]`` would parse as nested tables.
+    """
+    return f'"{mod}"' if "." in mod else mod
 
 
 def _truthy(v: object) -> bool:
@@ -1103,7 +1201,7 @@ def _dump(cfg: dict) -> str:
         lines.append("")
 
     for mod, data in cfg.get("module", {}).items():
-        lines.append(f"[module.{mod}]")
+        lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
             lines.append('no_generate = "true"')
         else:
@@ -1131,7 +1229,7 @@ def _dump(cfg: dict) -> str:
             lines.append(f"reexports = {{ {', '.join(parts)} }}")
         lines.append("")
         for fn in data.get("functions", []):
-            lines.append(f"[[module.{mod}.functions]]")
+            lines.append(f"[[module.{_module_key(mod)}.functions]]")
             lines.append(f'name = "{fn["name"]}"')
             if fn.get("doc"):
                 lines.append(f'doc = "{fn["doc"]}"')

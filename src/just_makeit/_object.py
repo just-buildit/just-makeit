@@ -30,6 +30,7 @@ from ._init import (
     _to_title,
     _write,
     _write_compile_commands,
+    ensure_parent_packages,
 )
 from ._docstring import extract_doc_blocks, parse_doxygen_block
 from ._context._parse import _build_ml_doc
@@ -684,6 +685,10 @@ def build_component_ctxs(
             or f"{ctx['Component']} type."
         )
         ctx["tp_doc"] = _build_ml_doc([_cdoc])
+        # Nested-module slots: override `module` to the cname (the fragment
+        # file is <cname>_ext_<comp>.c) and supply `module_tp` for the dotted
+        # tp_name. For a flat module these equal today's values (zero churn).
+        ctx.update(Ctx.make_module_ctx(module, pkg))
         comp_ctxs.append(ctx)
     return comp_ctxs
 
@@ -691,7 +696,12 @@ def build_component_ctxs(
 def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
-    Module = _to_title(module)
+    # cname drives the flat native dir / file prefixes; leaf is the .so basename
+    # and the collocated-object name; pypath is the nested Python dir. For a
+    # flat module all three equal `module` (zero churn).
+    mp = C.module_paths(module)
+    cname = mp.cname
+    Module = _to_title(cname)
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
 
@@ -701,8 +711,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # when migrating from a pre-split layout.  Only functions whose names
     # appear in the freshly rendered template survive (no cross-contamination).
     functions = C.module_functions(cfg, module)
-    ext_dir = root / "native" / "src" / module
-    ext_c_path = ext_dir / f"{module}_ext.c"
+    ext_dir = root / "native" / "src" / cname
+    ext_c_path = ext_dir / f"{cname}_ext.c"
 
     # Load migration source once: existing monolith bodies (used as fallback
     # when a fragment file does not yet exist).
@@ -711,13 +721,13 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         raw = ext_c_path.read_text(encoding="utf-8")
         # Only treat the file as a migration source when it is a monolith
         # (i.e. it does not yet contain #include lines for fragments).
-        first_frag = f"{module}_ext_{comp_ctxs[0]['component']}.c"
+        first_frag = f"{cname}_ext_{comp_ctxs[0]['component']}.c"
         if first_frag not in raw:
             monolith_bodies = _extract_c_function_bodies(raw)
 
     for ctx in comp_ctxs:
         comp = ctx["component"]
-        frag_path = ext_dir / f"{module}_ext_{comp}.c"
+        frag_path = ext_dir / f"{cname}_ext_{comp}.c"
         # Prefer bodies from the existing fragment; fall back to the monolith
         # during migration (only matching function names will be spliced in).
         if frag_path.exists():
@@ -736,10 +746,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     extra_files: set[str] = set()
     for ctx in comp_ctxs:
         comp = ctx["component"]
-        if (ext_dir / f"{module}_ext_{comp}_extra.c").exists():
-            extra_files.add(f"{module}_ext_{comp}_extra.c")
-    if (ext_dir / f"{module}_ext_extra.c").exists():
-        extra_files.add(f"{module}_ext_extra.c")
+        if (ext_dir / f"{cname}_ext_{comp}_extra.c").exists():
+            extra_files.add(f"{cname}_ext_{comp}_extra.c")
+    if (ext_dir / f"{cname}_ext_extra.c").exists():
+        extra_files.add(f"{cname}_ext_extra.c")
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     aggregator = R.render_module_ext_aggregator(
@@ -762,13 +772,15 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # <fn>.c (inline ones live entirely in the header).  Those sources are
     # compiled into the module's OBJECT library alongside <mod>_core.c.
     fn_srcs = [f"{fn['name']}.c" for fn in functions if not fn.get("inline")]
-    core_srcs = " ".join([f"{module}_core.c", *fn_srcs])
+    core_srcs = " ".join([f"{cname}_core.c", *fn_srcs])
     # Collocated case: when an object shares the module name (e.g. module="fft",
     # object="fft"), CMAKE_LISTS_OBJECT_CORE is prepended and already defines
     # <mod>_core; the function sources are appended to that library below.
     # Non-collocated: we define <mod>_core separately so that module-level
     # functions are compiled and linked in.
-    has_collocated = module in object_names
+    # A collocated object shares the module's leaf name (e.g. module "a.fft",
+    # object "fft"): CMAKE_LISTS_OBJECT_CORE already defines <leaf>_core.
+    has_collocated = mp.leaf in object_names
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
     inc_dirs_extra = (
         "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
@@ -783,11 +795,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         # include dirs so any extra include dirs propagate transitively to
         # the Python extension when it links against {module}_core.
         module_core_lib_block = (
-            f"add_library({module}_core OBJECT {core_srcs})\n"
-            f"target_include_directories({module}_core PUBLIC"
+            f"add_library({cname}_core OBJECT {core_srcs})\n"
+            f"target_include_directories({cname}_core PUBLIC"
             f" ${{CMAKE_SOURCE_DIR}}/native/inc{inc_dirs_extra})\n\n"
         )
-        libs_parts = [f"{module}_core"] + [
+        libs_parts = [f"{cname}_core"] + [
             f"{obj}_core" for obj in object_names
         ]
     extra_libs = C.extra_link_libs(cfg, module)
@@ -812,14 +824,16 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     _varargs_srcs: list[str] = []
     for _obj, _ctx_ in zip(object_names, comp_ctxs):
         for _bf in _ctx_.get("varargs_binding_files", []):
-            if _obj == module:
+            if _obj == mp.leaf:
                 _varargs_srcs.append(_bf)
             else:
                 _varargs_srcs.append(f"../{_obj}/{_bf}")
     extra_ext_sources = "".join(f" {f}" for f in _varargs_srcs)
 
     cmake_ctx = {
-        "module": module,
+        # Nested-module slots (module=cname, module_pypath, module_output_name);
+        # flat modules collapse these to today's values.
+        **Ctx.make_module_ctx(module, pkg),
         "Module": Module,
         "object_list": object_list,
         "module_comment": module_comment,
@@ -829,7 +843,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         "extra_include_dirs_block": inc_dirs_extra,
         "extra_ext_sources": extra_ext_sources,
         # gh-213: Windows runtime-DLL block, off unless the project targets it.
-        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=module),
+        **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=cname),
     }
     # Collocated objects share the same CMakeLists file as the module itself;
     # their OBJECT library cmake is prepended before CMAKE_LISTS_MODULE.
@@ -838,7 +852,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # have _methods.c — stubs go in _core.c.
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
-        if obj == module:
+        if obj == mp.leaf:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
@@ -878,7 +892,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 obj_cmake = obj_cmake.replace(old_lib, new_lib)
             collocated_cmake += obj_cmake
     _write(
-        root / "native" / "src" / module / "CMakeLists.txt",
+        root / "native" / "src" / cname / "CMakeLists.txt",
         collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
         "update",
     )
@@ -889,7 +903,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     fn_names = [f["name"] for f in functions]
     all_exports = Components + fn_names
     reexports = C.module_reexports(cfg, module)
-    pkg_module_dir = root / "src" / pkg / module
+    # Nested module: ensure the intermediate packages exist, then write under
+    # the nested pypath.
+    ensure_parent_packages(root, pkg, mp)
+    pkg_module_dir = root / "src" / pkg / mp.pypath
     init_path = pkg_module_dir / "__init__.py"
     existed = init_path.exists()
     if existed:
@@ -900,18 +917,20 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         base = R.render(
             R.MODULE_INIT_PY,
             {
-                "module": module,
+                **Ctx.make_module_ctx(module, pkg),
                 "Module": Module,
                 "object_imports": ", ".join(all_exports),
                 "object_all": ", ".join(f'"{name}"' for name in all_exports),
             },
         )
-    merged = _merge_module_init(base, module, all_exports, reexports)
+    # The import line in __init__.py is `from .<leaf> import ...`, so the merge
+    # must match/emit against the leaf, not the dotted id.
+    merged = _merge_module_init(base, mp.leaf, all_exports, reexports)
     _write(init_path, merged, "update" if existed else "create")
 
     # Type stubs — regenerated in full every time the module changes.
     _write(
-        pkg_module_dir / f"{module}.pyi",
+        pkg_module_dir / f"{mp.leaf}.pyi",
         S.make_module_pyi(cfg, module),
         "update",
     )
@@ -1197,8 +1216,9 @@ def run(
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)
 
-    # Python tests and benchmarks for this module object
-    pkg_mod_dir = root / "src" / pkg / module
+    # Python tests and benchmarks for this module object — under the nested
+    # pypath (src/<pkg>/dsp/filters/) for a dotted module id.
+    pkg_mod_dir = root / "src" / pkg / C.module_paths(module).pypath
     tests_init = pkg_mod_dir / "tests" / "__init__.py"
     if not tests_init.exists():
         _write(tests_init, R.TESTS_INIT_PY)

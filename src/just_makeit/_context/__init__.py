@@ -22,6 +22,7 @@ from ._methods import make_methods_ctx, make_properties_ctx
 from ._step import make_perf_ctx, make_step_ctx
 from ._stream import make_stream_ctx
 from ._platform import make_platform_ctx
+from ._modpath import make_module_ctx
 
 __all__ = [
     "make_sample_ctx",
@@ -33,6 +34,7 @@ __all__ = [
     "make_step_ctx",
     "make_stream_ctx",
     "make_platform_ctx",
+    "make_module_ctx",
     "_pyi_examples_block",
     "_build_no_state_init_ctx",
 ]
