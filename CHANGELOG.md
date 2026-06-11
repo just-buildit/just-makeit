@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Nested module subpackages** — a module id may now be **dotted**
+    (`jm module dsp.filters`, `jm object fir --module dsp.filters`), nesting the
+    extension under `src/<pkg>/dsp/filters/` so it imports as
+    `from pkg.dsp.filters import Fir`. Arbitrary depth is supported. The single
+    name's three roles are split by `_config.module_paths`: the leaf
+    (`filters`) drives `PyInit_`/`.m_name`/the `.so` basename; the cname
+    (`dsp_filters`) keeps the native `CMakeLists`/`add_subdirectory` machinery
+    flat and unique; the pypath (`dsp/filters`) places the Python package, with
+    plain `__init__.py` markers created for the intermediate packages. Flat
+    (dotless) modules render byte-for-byte unchanged. `jm status`/`apply`/
+    `remove` are nesting-aware (removal prunes now-empty parent packages).
+
 ## [0.19.0] — 2026-06-10
 
 ### Added

@@ -19,6 +19,7 @@ from ._types import (
     is_array_param_type,
     parse_out_type,
 )
+from . import _config as C
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -72,6 +73,7 @@ GITIGNORE = _load("misc/.gitignore")
 # ── Python ───────────────────────────────────────────────────────────────────
 MODULE_INIT_PY = _load("py/module_init.py")
 MODULE_INIT_PY_EMPTY = _load("py/module_init_empty.py")
+SUBPACKAGE_INIT_PY = _load("py/subpackage_init.py")
 PACKAGE_INIT_PY = _load("py/package_init.py")
 PACKAGE_INIT_PY_MINIMAL = _load("py/package_init_minimal.py")
 COMPONENT_PYI = _load("py/component.pyi")
@@ -206,7 +208,7 @@ static PyObject *
 
 static PyTypeObject <<ComponentW>>Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "<<module>>.<<Component>>",
+    .tp_name      = "<<module_tp>>.<<Component>>",
     .tp_basicsize = sizeof(<<Component>>Object),
     .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
@@ -240,14 +242,14 @@ MODULE_EXT_C_FOOTER = """\
 
 <<module_methods_def>>static PyModuleDef <<module>>_moduledef = {
     PyModuleDef_HEAD_INIT,
-    .m_name    = "<<module>>",
+    .m_name    = "<<module_leaf>>",
     .m_doc     = "<<Module>> module.",
     .m_size    = -1,
     .m_methods = <<module_m_methods>>,
 };
 
 PyMODINIT_FUNC
-PyInit_<<module>>(void)
+PyInit_<<module_leaf>>(void)
 {
     import_array();
 <<type_ready_checks>>
@@ -768,7 +770,15 @@ def render_module_ext_c(
     Each ctx must contain 'module' = module_name and 'Component' = the type name.
     Pass functions (from config module_functions()) to wire up module-level
     PyMethodDef entries; Python wrappers are emitted inline (not via #include).
+
+    ``module`` may be a dotted id (``dsp.filters``); the C identifiers /
+    file-name prefixes use the cname form (``dsp_filters``) while the
+    ``PyInit_``/``.m_name`` use the leaf (``filters``). For a dotless id all
+    three coincide, so flat modules render unchanged.
     """
+    mp = C.module_paths(module)
+    leaf = mp.leaf
+    module = mp.cname
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
@@ -818,6 +828,7 @@ def render_module_ext_c(
 
     footer_ctx = {
         "module": module,
+        "module_leaf": leaf,
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
@@ -877,6 +888,9 @@ def render_module_ext_aggregator(
         ``T``, jm emits ``PyType_Ready(&TType)`` and
         ``PyModule_AddObject(m, "T", (PyObject *)&TType)``.
     """
+    mp = C.module_paths(module)
+    leaf = mp.leaf
+    module = mp.cname
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
     fn_ctx = make_functions_ctx(module, Module, list(functions))
@@ -950,6 +964,7 @@ def render_module_ext_aggregator(
     add_object_calls = "\n".join(add_object_calls_lines)
     footer_ctx = {
         "module": module,
+        "module_leaf": leaf,
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,

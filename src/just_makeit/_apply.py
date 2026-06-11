@@ -216,8 +216,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # Seed _extra.c files from the real project so _regenerate_module()
     # detects and re-includes them in the temp aggregator.
     for mod in mods:
-        src_dir = project_root / "native" / "src" / mod
-        dst_dir = temp_root / "native" / "src" / mod
+        cname = C.module_paths(mod).cname
+        src_dir = project_root / "native" / "src" / cname
+        dst_dir = temp_root / "native" / "src" / cname
         if src_dir.is_dir():
             dst_dir.mkdir(parents=True, exist_ok=True)
             for extra in src_dir.glob("*_extra.c"):
@@ -542,7 +543,9 @@ def _splice_cmake_components(
     real = real_path.read_text(encoding="utf-8")
     temp = temp_path.read_text(encoding="utf-8")
 
-    module_names = set(C.modules(cfg))
+    # The regex captures the native-dir token, which for a nested module is its
+    # cname (dsp_filters), not the dotted id — so classify against cnames.
+    module_names = C.module_cnames(cfg)
     component_blocks: list[str] = []
     module_blocks: list[str] = []
     for m in _SUBDIR_BLOCK.finditer(temp):
@@ -565,7 +568,9 @@ def _splice_cmake_components(
     seen_mod_blocks = {b.split("\n")[0] for b in module_blocks}
     for mod in C.modules(cfg):
         if C.is_no_generate_module(cfg, mod):
-            line = f"add_subdirectory(native/src/{mod})\n"
+            line = (
+                f"add_subdirectory(native/src/{C.module_paths(mod).cname})\n"
+            )
             if line.rstrip("\n") not in seen_mod_blocks:
                 module_blocks.append(line)
 
@@ -808,20 +813,30 @@ def _sync_aggregates(
             continue
         if only_mod is not None and mod != only_mod:
             continue
+        # Nested-module forms: cname (flat native dir), pypath (nested Python
+        # dir), leaf (.so basename / import). Flat modules collapse all to mod.
+        mp = C.module_paths(mod)
+        # Re-create any intermediate package markers the user may have deleted
+        # (create-only — never clobbers a hand-edited marker).
+        from ._init import ensure_parent_packages
+
+        for init in ensure_parent_packages(root, pkg, mp):
+            updated.append(init)
         # Module subpackage __init__.py — merged so user wrapper classes
-        # below the re-exports survive (the gh#1 contract).
-        mod_init = root / "src" / pkg / mod / "__init__.py"
-        temp_mod_init = temp_root / "src" / pkg / mod / "__init__.py"
+        # below the re-exports survive (the gh#1 contract). The import line is
+        # `from .<leaf> import ...`, so merge against the leaf.
+        mod_init = root / "src" / pkg / mp.pypath / "__init__.py"
+        temp_mod_init = temp_root / "src" / pkg / mp.pypath / "__init__.py"
         if mod_init.exists() and temp_mod_init.exists():
             if _merge_module_init_file(
-                mod_init, mod, temp_mod_init, C.module_reexports(cfg, mod)
+                mod_init, mp.leaf, temp_mod_init, C.module_reexports(cfg, mod)
             ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.
         for rel in (
-            f"native/src/{mod}/{mod}_ext.c",
-            f"native/src/{mod}/CMakeLists.txt",
-            f"src/{pkg}/{mod}/{mod}.pyi",
+            f"native/src/{mp.cname}/{mp.cname}_ext.c",
+            f"native/src/{mp.cname}/CMakeLists.txt",
+            f"src/{pkg}/{mp.pypath}/{mp.leaf}.pyi",
         ):
             if _overwrite_if_changed(root / rel, temp_root / rel):
                 updated.append(root / rel)
@@ -830,8 +845,8 @@ def _sync_aggregates(
         # also create-only. The module header accumulates function
         # declarations: inject any the manifest implies that are missing,
         # splice-free.
-        rel = f"native/inc/{mod}/{mod}_core.h"
-        if _refresh_core_h_decls(root / rel, temp_root / rel, mod):
+        rel = f"native/inc/{mp.cname}/{mp.cname}_core.h"
+        if _refresh_core_h_decls(root / rel, temp_root / rel, mp.cname):
             if root / rel not in updated:
                 updated.append(root / rel)
         # gh-170: each module object's own _core.h gains its depends_on

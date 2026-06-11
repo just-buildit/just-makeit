@@ -1,4 +1,4 @@
-# <<module>>/__init__.py — re-export all types from the C extension.
+# <<module_pypath>>/__init__.py — re-export all types from the C extension.
 import os as _os
 import sys as _sys
 

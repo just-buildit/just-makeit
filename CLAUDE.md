@@ -120,6 +120,20 @@ A **module object** (`--module filter`) shares a `.so` subpackage
 `from my_project.filter import Fir, Biquad`. The module's `_ext.c` aggregates
 all objects' `PyMethodDef` tables into a single `PyModuleDef`.
 
+A module id may be **dotted** (`--module dsp.filters`) to nest it in a
+subpackage: `from my_project.dsp.filters import Fir`. `C.module_paths(id)`
+(a `ModulePaths` NamedTuple) splits the name's three roles — `leaf` (`filters`:
+`PyInit_`/`.m_name`/`.so` basename via CMake `OUTPUT_NAME`), `cname`
+(`dsp_filters`: the unique CMake target + flat `native/src/<cname>/` dir, so
+the `add_subdirectory` regex stays a single `\w+`), and `pypath` (`dsp/filters`:
+the Python output dir). Intermediate packages get a plain `__init__.py`
+(`_init.ensure_parent_packages`). `Ctx.make_module_ctx` supplies the render
+slots (`module`=cname, `module_leaf`, `module_pypath`, `module_output_name`,
+`module_tp`); they collapse to today's values for a flat id (zero churn). The
+TOML key is quoted (`[module."dsp.filters"]`); the split-layout fragment file is
+`modules/<cname>.toml`. `_apply._splice_cmake_components` classifies module
+blocks by `C.module_cnames(cfg)` (not the dotted id).
+
 ### `just-makeit.toml` schema
 
 The TOML file is the project's persistent state — `_config.py` is the only
