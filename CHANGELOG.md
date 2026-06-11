@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-06-11
+
 ### Added
 
 - **Nested module subpackages** — a module id may now be **dotted**
