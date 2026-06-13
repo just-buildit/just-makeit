@@ -253,7 +253,7 @@ _TONE_TOML = '''\
 arg_type     = "void"
 return_type  = "float _Complex"
 mutable      = "true"
-extra_link_libs = ["doppler::doppler_lib"]
+extra_link_libs = ["doppler::doppler-static"]
 create_impl  = """
 obj->nco = nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
@@ -565,7 +565,7 @@ def run(root: Path) -> None:
     # umbrella `<pkg>_lib` — `config_core` is added there (TARGET_OBJECTS) but
     # its cJSON symbols aren't, so the shared lib has undefined symbols (a hard
     # error on macOS, tolerated on Linux). Mirror how doppler folds its vendored
-    # pocketfft into doppler_lib — the canonical vendored-dep pattern.
+    # pocketfft into doppler-static — the canonical vendored-dep pattern.
     top = proj / "CMakeLists.txt"
     top_text = top.read_text(encoding="utf-8")
     if "$<TARGET_OBJECTS:cjson_core>" not in top_text:
@@ -592,7 +592,9 @@ def run(root: Path) -> None:
         tone_cmake = (proj / "native/src/tone/CMakeLists.txt").read_text(
             "utf-8"
         )
-        assert "doppler::doppler_lib" in tone_cmake  # links the real doppler
+        assert (
+            "doppler::doppler-static" in tone_cmake
+        )  # links the real doppler
 
     # assert the integration wiring jm produced ----------------------------
     mixer_h = (proj / "native/inc/mixer/mixer_core.h").read_text("utf-8")
