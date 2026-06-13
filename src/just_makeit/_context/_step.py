@@ -29,6 +29,7 @@ def make_step_ctx(
     return_type: str,
     no_step: bool = False,
     mutable: bool = False,
+    delegate: bool = False,
     doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Pre-render step() and steps() C and Python bodies for stateful objects.
@@ -341,17 +342,36 @@ def make_step_ctx(
             f" {component}_steps() declared below. */"
         )
         if is_void_return:
-            step_impl_def = (
-                f"/**\n"
-                f" * @brief Advance state by one tick (no I/O).\n"
-                f" * @param state  Must be non-NULL; state is mutated.\n"
-                f" */\n"
-                f"{step_qualifier} void\n"
-                f"{component}_step({component}_state_t *state)\n"
-                f"{{\n"
-                f"    (void)state; /* TODO: implement */\n"
-                f"}}"
-            )
+            if delegate:
+                step_impl_def = (
+                    f"/* Forward decl so the delegating step() below can call"
+                    f" steps() (gh-208). */\n"
+                    f"void {component}_steps({component}_state_t *state,"
+                    f" size_t n);\n"
+                    f"/**\n"
+                    f" * @brief Advance state by one tick (no I/O).\n"
+                    f" *\n"
+                    f" * Thin delegator to {component}_steps() (gh-208).\n"
+                    f" * @param state  Must be non-NULL; state is mutated.\n"
+                    f" */\n"
+                    f"{step_qualifier} void\n"
+                    f"{component}_step({component}_state_t *state)\n"
+                    f"{{\n"
+                    f"    {component}_steps(state, 1);\n"
+                    f"}}"
+                )
+            else:
+                step_impl_def = (
+                    f"/**\n"
+                    f" * @brief Advance state by one tick (no I/O).\n"
+                    f" * @param state  Must be non-NULL; state is mutated.\n"
+                    f" */\n"
+                    f"{step_qualifier} void\n"
+                    f"{component}_step({component}_state_t *state)\n"
+                    f"{{\n"
+                    f"    (void)state; /* TODO: implement */\n"
+                    f"}}"
+                )
             steps_c_decl = (
                 f"/**\n"
                 f" * @brief Process n iterations (no scalar output).\n"
@@ -363,15 +383,31 @@ def make_step_ctx(
                 f"    {component}_state_t *state,\n"
                 f"    size_t               n);"
             )
-            steps_c_impl = (
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
-                f"    size_t               n)\n"
-                f"{{\n"
-                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                f"        {component}_step(state);\n"
-                f"}}"
-            )
+            if delegate:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"    /* Per-tick algorithm lives here; step() delegates"
+                    f" to it (gh-208).\n"
+                    f"     * Do NOT call {component}_step() here"
+                    f" (recurses). */\n"
+                    f"    (void)state;\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)"
+                    f" {{ /* TODO: implement */ }}\n"
+                    f"}}"
+                )
+            else:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        {component}_step(state);\n"
+                    f"}}"
+                )
             step_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_step({Component}Object *self,"
@@ -403,21 +439,50 @@ def make_step_ctx(
             )
             step_py_flags = "METH_NOARGS"
         else:
-            _state_qual = "" if mutable else "const "
-            step_impl_def = (
-                f"/**\n"
-                f" * @brief Generate one output sample from internal state.\n"
-                f" * @param state  Must be non-NULL.\n"
-                f" * @return Next output sample ({ret_disp}).\n"
-                f" */\n"
-                f"{step_qualifier} {ret_disp}\n"
-                f"{component}_step"
-                f"({_state_qual}{component}_state_t *state)\n"
-                f"{{\n"
-                f"    (void)state; /* TODO: implement */\n"
-                f"    return ({ret_disp})0;\n"
-                f"}}"
-            )
+            # gh-208: delegate mode forwards step() to steps(); state is never
+            # const since steps() mutates it.
+            _state_qual = "" if (mutable or delegate) else "const "
+            if delegate:
+                step_impl_def = (
+                    f"/* Forward decl so the delegating step() below can call"
+                    f" steps() (gh-208). */\n"
+                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"    {ret_disp} *output, size_t n);\n"
+                    f"/**\n"
+                    f" * @brief Generate one output sample from internal"
+                    f" state.\n"
+                    f" *\n"
+                    f" * Thin delegator to {component}_steps() so the"
+                    f" per-sample algorithm\n"
+                    f" * exists once and step() == steps(.., 1)"
+                    f" byte-for-byte (gh-208).\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @return Next output sample ({ret_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} {ret_disp}\n"
+                    f"{component}_step({component}_state_t *state)\n"
+                    f"{{\n"
+                    f"    {ret_disp} y;\n"
+                    f"    {component}_steps(state, &y, 1);\n"
+                    f"    return y;\n"
+                    f"}}"
+                )
+            else:
+                step_impl_def = (
+                    f"/**\n"
+                    f" * @brief Generate one output sample from internal"
+                    f" state.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @return Next output sample ({ret_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} {ret_disp}\n"
+                    f"{component}_step"
+                    f"({_state_qual}{component}_state_t *state)\n"
+                    f"{{\n"
+                    f"    (void)state; /* TODO: implement */\n"
+                    f"    return ({ret_disp})0;\n"
+                    f"}}"
+                )
             steps_c_decl = (
                 f"/**\n"
                 f" * @brief Generate a block of output samples.\n"
@@ -431,16 +496,34 @@ def make_step_ctx(
                 f"    {ret_disp}          *output,\n"
                 f"    size_t               n);"
             )
-            steps_c_impl = (
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
-                f"    {ret_disp}          *output,\n"
-                f"    size_t               n)\n"
-                f"{{\n"
-                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                f"        output[i] = {component}_step(state);\n"
-                f"}}"
-            )
+            if delegate:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    {ret_disp}          *output,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"    /* Per-sample algorithm lives here; step()"
+                    f" delegates to it\n"
+                    f"     * (gh-208). Do NOT call {component}_step() here"
+                    f" (recurses). */\n"
+                    f"    (void)state;\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        output[i] = ({ret_disp})0;"
+                    f" /* TODO: implement */\n"
+                    f"}}"
+                )
+            else:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    {ret_disp}          *output,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        output[i] = {component}_step(state);\n"
+                    f"}}"
+                )
             step_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_step({Component}Object *self,"
@@ -599,19 +682,40 @@ def make_step_ctx(
             f" {component}_steps() declared below. */"
         )
         if is_void_return:
-            step_impl_def = (
-                f"/**\n"
-                f" * @brief Consume one input sample (sink; no output).\n"
-                f" * @param state  Must be non-NULL.\n"
-                f" * @param x      Input sample ({arg_disp}).\n"
-                f" */\n"
-                f"{step_qualifier} void\n"
-                f"{component}_step"
-                f"({component}_state_t *state, {arg_disp} x)\n"
-                f"{{\n"
-                f"    (void)state; (void)x; /* TODO: implement */\n"
-                f"}}"
-            )
+            if delegate:
+                step_impl_def = (
+                    f"/* Forward decl so the delegating step() below can call"
+                    f" steps() (gh-208). */\n"
+                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"    const {arg_disp} *input, size_t n);\n"
+                    f"/**\n"
+                    f" * @brief Consume one input sample (sink; no output).\n"
+                    f" *\n"
+                    f" * Thin delegator to {component}_steps() (gh-208).\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param x      Input sample ({arg_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} void\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state, {arg_disp} x)\n"
+                    f"{{\n"
+                    f"    {component}_steps(state, &x, 1);\n"
+                    f"}}"
+                )
+            else:
+                step_impl_def = (
+                    f"/**\n"
+                    f" * @brief Consume one input sample (sink; no output).\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param x      Input sample ({arg_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} void\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state, {arg_disp} x)\n"
+                    f"{{\n"
+                    f"    (void)state; (void)x; /* TODO: implement */\n"
+                    f"}}"
+                )
             steps_c_decl = (
                 f"/**\n"
                 f" * @brief Process a block of input samples (no output).\n"
@@ -625,16 +729,33 @@ def make_step_ctx(
                 f"    const {arg_disp}    *input,\n"
                 f"    size_t               n);"
             )
-            steps_c_impl = (
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
-                f"    const {arg_disp}    *input,\n"
-                f"    size_t               n)\n"
-                f"{{\n"
-                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                f"        {component}_step(state, input[i]);\n"
-                f"}}"
-            )
+            if delegate:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    const {arg_disp}    *input,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"    /* Per-sample algorithm lives here; step()"
+                    f" delegates to it\n"
+                    f"     * (gh-208). Do NOT call {component}_step() here"
+                    f" (recurses). */\n"
+                    f"    (void)state; (void)input;\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)"
+                    f" {{ /* TODO: implement */ }}\n"
+                    f"}}"
+                )
+            else:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    const {arg_disp}    *input,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        {component}_step(state, input[i]);\n"
+                    f"}}"
+                )
             step_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_step"
@@ -679,23 +800,55 @@ def make_step_ctx(
             )
             step_py_flags = "METH_VARARGS"
         else:
-            _state_qual = "" if mutable else "const "
-            step_impl_def = (
-                f"/**\n"
-                f" * @brief Process one input sample.\n"
-                f" * @param state  Must be non-NULL.\n"
-                f" * @param x      Input sample ({arg_disp}).\n"
-                f" * @return Output sample ({ret_disp}).\n"
-                f" */\n"
-                f"{step_qualifier} {ret_disp}\n"
-                f"{component}_step"
-                f"({_state_qual}{component}_state_t *state,"
-                f" {arg_disp} x)\n"
-                f"{{\n"
-                f"    (void)state; /* TODO: implement using state variables */\n"
-                f"    return ({ret_disp})x;\n"
-                f"}}"
-            )
+            # gh-208: in delegate mode step() forwards to steps(), so its state
+            # is never const (steps() mutates) and the per-sample body lives in
+            # steps() only.
+            _state_qual = "" if (mutable or delegate) else "const "
+            if delegate:
+                step_impl_def = (
+                    f"/* Forward decl so the delegating step() below can call"
+                    f" steps() (gh-208). */\n"
+                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"    const {arg_disp} *input, {ret_disp} *output,"
+                    f" size_t n);\n"
+                    f"/**\n"
+                    f" * @brief Process one input sample.\n"
+                    f" *\n"
+                    f" * Thin delegator to {component}_steps() so the"
+                    f" per-sample algorithm\n"
+                    f" * exists once and step() == steps(.., 1)"
+                    f" byte-for-byte (gh-208).\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param x      Input sample ({arg_disp}).\n"
+                    f" * @return Output sample ({ret_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} {ret_disp}\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state, {arg_disp} x)\n"
+                    f"{{\n"
+                    f"    {ret_disp} y;\n"
+                    f"    {component}_steps(state, &x, &y, 1);\n"
+                    f"    return y;\n"
+                    f"}}"
+                )
+            else:
+                step_impl_def = (
+                    f"/**\n"
+                    f" * @brief Process one input sample.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param x      Input sample ({arg_disp}).\n"
+                    f" * @return Output sample ({ret_disp}).\n"
+                    f" */\n"
+                    f"{step_qualifier} {ret_disp}\n"
+                    f"{component}_step"
+                    f"({_state_qual}{component}_state_t *state,"
+                    f" {arg_disp} x)\n"
+                    f"{{\n"
+                    f"    (void)state;"
+                    f" /* TODO: implement using state variables */\n"
+                    f"    return ({ret_disp})x;\n"
+                    f"}}"
+                )
             steps_c_decl = (
                 f"/**\n"
                 f" * @brief Process a block of samples.\n"
@@ -712,17 +865,38 @@ def make_step_ctx(
                 f"    {ret_disp}          *output,\n"
                 f"    size_t               n);"
             )
-            steps_c_impl = (
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
-                f"    const {arg_disp}    *input,\n"
-                f"    {ret_disp}          *output,\n"
-                f"    size_t               n)\n"
-                f"{{\n"
-                f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                f"        output[i] = {component}_step(state, input[i]);\n"
-                f"}}"
-            )
+            if delegate:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    const {arg_disp}    *input,\n"
+                    f"    {ret_disp}          *output,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"    /* Per-sample algorithm lives here; step()"
+                    f" delegates to it\n"
+                    f"     * (gh-208), so the two stay byte-identical."
+                    f" Vectorize freely;\n"
+                    f"     * do NOT call {component}_step() /"
+                    f" JM_DEFINE_STEPS here (recurses). */\n"
+                    f"    (void)state;\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        output[i] = ({ret_disp})input[i];"
+                    f" /* TODO: implement */\n"
+                    f"}}"
+                )
+            else:
+                steps_c_impl = (
+                    f"void {component}_steps(\n"
+                    f"    {component}_state_t *state,\n"
+                    f"    const {arg_disp}    *input,\n"
+                    f"    {ret_disp}          *output,\n"
+                    f"    size_t               n)\n"
+                    f"{{\n"
+                    f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
+                    f"        output[i] = {component}_step(state, input[i]);\n"
+                    f"}}"
+                )
             step_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_step"

@@ -112,6 +112,7 @@ def run(args: list[str]) -> None:
     no_state = False
     no_step = False
     mutable = False
+    step_delegates = False
     streamable = False
     async_stream = False
     stream_block_default_obj: int | None = None
@@ -249,6 +250,9 @@ def run(args: list[str]) -> None:
         elif tok == "--no-step":
             no_step = True
             i += 1
+        elif tok == "--step-delegates-to-steps":
+            step_delegates = True
+            i += 1
         elif tok == "--init-param":
             ip_var, i = parse_init_param_flag(remaining, i)
             init_params_obj.append(ip_var)
@@ -360,6 +364,22 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-208: delegation only makes sense for a per-sample scalar step().
+    if step_delegates and (
+        no_step
+        or variable_output_obj
+        or arg_type.endswith("[]")
+        or (return_type or "").endswith("[]")
+    ):
+        print(
+            "error: --step-delegates-to-steps needs a scalar step(); it is "
+            "incompatible with --no-step, --variable-output, and array "
+            "--arg-type/--return-type (blockwise objects already centralise "
+            "the algorithm in steps()).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     impl_body_obj: str | None = None
     create_impl_body_obj: str | None = None
     reset_impl_body_obj: str | None = None
@@ -407,6 +427,7 @@ def run(args: list[str]) -> None:
         no_state=no_state,
         no_step=no_step,
         mutable=mutable,
+        step_delegates=step_delegates,
         streamable=streamable,
         async_stream=async_stream,
         stream_block_default=stream_block_default_obj,

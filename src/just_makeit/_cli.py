@@ -54,6 +54,9 @@ Commands:
     --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --step-delegates-to-steps   Generate step() as a thin delegator to steps()
+                                (one impl; step()==steps(..,1) byte-for-byte
+                                under -ffast-math). Scalar/void-arg objects only.
     --init-param name:type[:default]  User-facing constructor param; repeatable.
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).
