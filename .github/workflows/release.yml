@@ -66,23 +66,21 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Extract changelog section for this tag
-        id: notes
         run: |
           TAG="${GITHUB_REF_NAME}"          # e.g. v0.10.7
           VER="${TAG#v}"                    # strip leading v → 0.10.7
           # Pull the block from ## [VER] down to the next ## heading (exclusive).
-          # Pass VER as an awk variable and match the literal `## [VER]` prefix
-          # with index() — the old in-pattern `\\\[${VER}\\\]` over-escaped to a
-          # regex that matched nothing, so release notes were silently empty.
-          NOTES=$(awk -v ver="$VER" \
+          # Match the literal `## [VER]` prefix with index() — a regex would need
+          # the version's dots escaped. Write the block to a FILE and hand it to
+          # `gh release` via --notes-file: inlining the notes into the shell
+          # (`--notes "${{ ... }}"`, which pastes the text into the script
+          # source) let backticks / parens / braces in the changelog run as
+          # shell commands and aborted the job (release-notes shell injection).
+          awk -v ver="$VER" \
             'index($0, "## [" ver "]") == 1 {found=1; next}
              found && /^## / {exit}
-             found {print}' CHANGELOG.md)
-          {
-            echo "notes<<EOF"
-            echo "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+             found {print}' CHANGELOG.md > release-notes.md
+          cat release-notes.md
 
       - name: Create GitHub Release
         env:
@@ -91,7 +89,7 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --latest \
-            --notes "${{ steps.notes.outputs.notes }}"
+            --notes-file release-notes.md
 
   docker:
     needs: github-release
