@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Union
 
 from . import _config as C
 from . import _render as T
@@ -27,8 +28,10 @@ from ._object import _regenerate_module
 # A function param is ``(name, type)`` or, for a writable array output param
 # (``--out-param``), ``(name, type, is_out)``.  The third element, when present
 # and truthy, renders the C binding as a non-const ``T *`` with a writable
-# NumPy view (gh-197/#221).
-FnParam = tuple[str, str] | tuple[str, str, bool]
+# NumPy view (gh-197/#221).  ``Union`` (not ``A | B``) because this is a
+# runtime module-level value, and ``GenericAlias | GenericAlias`` raises on
+# Python 3.9 (`from __future__ import annotations` only defers annotations).
+FnParam = Union[tuple[str, str], tuple[str, str, bool]]
 
 
 def _write_function_c(
