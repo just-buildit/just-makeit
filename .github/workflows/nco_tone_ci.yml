@@ -45,11 +45,11 @@ jobs:
       - name: Install jm build deps (cmake, Python, NumPy)
         run: jm-install-deps ${{ runner.temp }}/jm-venv
 
-      # ── Install doppler static library from GitHub release ─────────────────
-      # Download the pre-built release tarball, strip the shared library so
-      # only libdoppler.a is available, and patch the cmake config to declare
-      # doppler::doppler_lib as STATIC — ensuring the Python extension embeds
-      # doppler symbols instead of requiring a runtime libdoppler.so.
+      # ── Install doppler from its GitHub release ────────────────────────────
+      # doppler ships a self-contained static target (doppler::doppler-static),
+      # which the example links — so we just extract the tarball; no .so strip
+      # or SHARED→STATIC cmake patching is needed (that hack was for the old
+      # single doppler::doppler_lib SHARED target, removed in 0.13.x).
       - name: Download doppler release
         run: |
           gh release download \
@@ -59,29 +59,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Install doppler (static only)
+      - name: Install doppler
         run: |
           mkdir -p /tmp/doppler
           tar xzf /tmp/doppler-dl/doppler-*-linux-x86_64.tar.gz \
               -C /tmp/doppler --strip-components=1
 
-          # Remove the shared library so the linker cannot accidentally use it.
-          rm -f /tmp/doppler/lib64/libdoppler.so
-
-          # Patch the cmake config: change SHARED → STATIC and point to .a.
-          sed -i \
-            -e 's/add_library(doppler::doppler_lib SHARED/add_library(doppler::doppler_lib STATIC/' \
-            /tmp/doppler/lib64/cmake/doppler/doppler-targets.cmake
-
-          sed -i \
-            -e 's|IMPORTED_LOCATION_RELEASE ".*libdoppler\.so"|IMPORTED_LOCATION_RELEASE "${_IMPORT_PREFIX}/lib64/libdoppler.a"|' \
-            -e '/IMPORTED_SONAME_RELEASE/d' \
-            -e 's|".*libdoppler\.so"|"${_IMPORT_PREFIX}/lib64/libdoppler.a"|g' \
-            /tmp/doppler/lib64/cmake/doppler/doppler-targets-release.cmake
-
       # ── Run the nco_tone example ────────────────────────────────────────────
-      # Pass Doppler_DIR directly since doppler installs under lib64/cmake
-      # (cmake's default prefix search may not look there on all platforms).
+      # Pass the install prefix; cmake's find_package searches both
+      # <prefix>/lib/cmake and <prefix>/lib64/cmake, so this is libdir-agnostic.
       - name: Run nco_tone example
         run: |
           uv run python src/just_makeit/examples/nco_tone/test.py \

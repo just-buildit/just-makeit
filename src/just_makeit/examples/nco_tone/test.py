@@ -2,7 +2,7 @@
 
 Demonstrates:
   - [project] find_packages = ["Doppler"]  — managed external-deps block
-  - [tone] extra_link_libs = ["doppler::doppler_lib"]  — standalone linking
+  - [tone] extra_link_libs = ["doppler::doppler-static"]  — standalone linking
   - opaque state (nco_state_t*) with create_impl / destroy_impl
   - jm apply keeping the find_package() call alive across re-runs
 
@@ -31,8 +31,10 @@ from pathlib import Path
 
 # Pinned doppler version for the auto-download path. Bump when doppler
 # cuts a new release; eventually replace with a GitHub API lookup of the
-# latest release.
-_DOPPLER_VERSION = "0.4.6"
+# latest release. Must be >= 0.13.0, which introduced the
+# `doppler::doppler-static` cmake target this example links (and moved the
+# install dir lib64/ -> lib/).
+_DOPPLER_VERSION = "0.13.2"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
@@ -186,7 +188,7 @@ _FRAGMENT = '''\
 arg_type     = "void"
 return_type  = "float _Complex"
 mutable      = "true"
-extra_link_libs = ["doppler::doppler_lib"]
+extra_link_libs = ["doppler::doppler-static"]
 create_impl  = """
 obj->nco = nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
@@ -268,11 +270,11 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
         "jm apply changed CMakeLists.txt on second run"
     )
 
-    # 5. Verify the component CMakeLists links doppler::doppler_lib.
+    # 5. Verify the component CMakeLists links doppler::doppler-static.
     comp_cmake = (
         proj / "native" / "src" / "tone" / "CMakeLists.txt"
     ).read_text(encoding="utf-8")
-    assert "doppler::doppler_lib" in comp_cmake, comp_cmake
+    assert "doppler::doppler-static" in comp_cmake, comp_cmake
 
     # 6. Verify the generated header has the opaque nco field.
     core_h = proj / "native" / "inc" / "tone" / "tone_core.h"
