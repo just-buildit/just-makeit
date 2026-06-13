@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Documented
+
+- **Polymorphic constructor dispatch is already supported (gh-224)** — selecting
+    the C constructor from an array init-param's dtype or presence does not need
+    a new `init_variants` table; the existing `[[<comp>.init_params]]` fields
+    express both shapes. `real_type` + `real_create_fn` give dtype dispatch
+    (e.g. float32 taps → `fir_create_real`, complex64 taps → `fir_create`);
+    `optional = true` + `create_fn` give presence dispatch (e.g. a supplied
+    `bank` → `Resampler_create_custom`, omitted → `Resampler_create`). Added a
+    dtype-dispatch codegen test to lock the generated form.
+
 ### Added
 
 - **`depends_on` can own the link line (gh-225)** — a dependency entry may now
