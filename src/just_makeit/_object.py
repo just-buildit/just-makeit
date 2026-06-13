@@ -811,9 +811,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # PUBLIC-linked OBJECT lib's objects transitively through another OBJECT
     # lib into the final .so, so a cross-module dep like ["obj_a_core"] on a
     # member object would otherwise be missing → ImportError: undefined symbol.
+    # gh-225: a member object's `depends_on = [{name="dep", link=true}]` adds
+    # the dependency's `<dep>_core` to the module .so link line too, alongside
+    # its own extra_link_libs — same direct-link rationale as gh-160.
     _seen = set(libs_parts) | set(extra_libs)
     for _obj in object_names:
-        for _lib in C.component_extra_link_libs(cfg, _obj):
+        for _lib in C.component_extra_link_libs(
+            cfg, _obj
+        ) + C.depends_link_libs(cfg, _obj):
             if _lib not in _seen:
                 _seen.add(_lib)
                 libs_parts.append(_lib)
@@ -1123,7 +1128,8 @@ def run(
     # A depends_on entry may be a component (`nco` -> nco_core) or a bare link
     # target (`lo_core`); normalise to a single `<name>_core` (gh-130).
     _dep_cores = [
-        (d[:-5] if d.endswith("_core") else d) + "_core" for d in depends_on
+        (d[:-5] if d.endswith("_core") else d) + "_core"
+        for d in C.dep_names(depends_on)
     ]
     _obj_libs = list(extra_link_libs) + _dep_cores
     # gh-132: expose extra_link_libs_block so CMakeLists_object_core.cmake
@@ -1154,7 +1160,7 @@ def run(
     ctx["depends_includes"] = "".join(
         "\n" + inc
         for inc in _dep_header_includes(
-            root / "native" / "inc", list(depends_on)
+            root / "native" / "inc", C.dep_names(depends_on)
         )
     )
 
@@ -1294,7 +1300,7 @@ def run(
                 cmake_text += sub
             changed = True
         obj_lines = ""
-        for dep in depends_on:
+        for dep in C.dep_names(depends_on):
             # gh-130: strip a trailing _core suffix so callers can write
             # depends_on = ["lo_core"] without getting lo_core_core.
             dep_name = dep[:-5] if dep.endswith("_core") else dep

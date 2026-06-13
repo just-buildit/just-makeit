@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`depends_on` can own the link line (gh-225)** — a dependency entry may now
+    be a table `{ name = "fir", link = true }` instead of a bare string. With
+    `link = true`, jm adds the dependency's `<name>_core` directly to the
+    consuming target's `target_link_libraries` (the standalone component's or
+    the module's `.so`), so its symbols resolve in the built extension without a
+    manual `extra_link_libs` entry *and* a hand-edited `target_link_libraries`
+    in CMakeLists — and `jm status --check` now covers that link. A bare-string
+    dependency is unchanged (header include + objects into the aggregate lib,
+    no `.so` link). The link goes directly on the consuming target, not PUBLIC
+    on `<comp>_core`, because CMake does not propagate an OBJECT lib's objects
+    transitively into a `.so` (gh-160).
+
 ### Fixed
 
 - **`jm app` exe-target name collision (gh-184)** — `jm app --target c --name X`

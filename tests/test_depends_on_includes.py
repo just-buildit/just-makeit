@@ -280,3 +280,136 @@ def test_depends_on_links_dep_into_test_bench(tmp_path):
     )
     assert "target_link_libraries(solo_core PUBLIC" in solo
     assert "osc_core" in solo
+
+
+# ── gh-225: `depends_on = [{name, link=true}]` owns the consuming link line ──
+def _so_link_block(text: str, target: str) -> str:
+    """The `target_link_libraries(<target> PRIVATE …)` block for the .so."""
+    marker = f"target_link_libraries({target} PRIVATE"
+    start = text.index(marker)
+    return text[start : text.index(")", start)]
+
+
+class TestDependsOnLink:
+    """A `{name = "dep", link = true}` depends_on entry adds `<dep>_core`
+    directly to the consuming target's `target_link_libraries`, so the
+    dependency's symbols resolve in the built `.so` without a manual
+    `extra_link_libs` + CMakeLists edit. A bare-string dep is header/objects
+    only — no link (backward compatible)."""
+
+    def test_link_dep_on_standalone_so(self, tmp_path):
+        dest = tmp_path / "p"
+        _silent(new_run, "p", dest)
+        _silent(
+            object_run,
+            dest,
+            "lo",
+            None,
+            arg_type="void",
+            return_type="float _Complex",
+        )
+        _silent(
+            object_run,
+            dest,
+            "mixer",
+            None,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            depends_on=[{"name": "lo", "link": True}],
+        )
+        cmake = (dest / "native/src/mixer/CMakeLists.txt").read_text("utf-8")
+        assert "lo_core" in _so_link_block(cmake, "mixer")
+
+    def test_bare_dep_no_link_on_standalone_so(self, tmp_path):
+        dest = tmp_path / "p"
+        _silent(new_run, "p", dest)
+        _silent(
+            object_run,
+            dest,
+            "lo",
+            None,
+            arg_type="void",
+            return_type="float _Complex",
+        )
+        _silent(
+            object_run,
+            dest,
+            "mixer",
+            None,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            depends_on=["lo"],
+        )
+        cmake = (dest / "native/src/mixer/CMakeLists.txt").read_text("utf-8")
+        assert "lo_core" not in _so_link_block(cmake, "mixer")
+
+    def test_link_dep_on_module_so(self, tmp_path):
+        from just_makeit._module import run as module_run
+
+        dest = tmp_path / "p"
+        _silent(new_run, "p", dest)
+        _silent(
+            object_run,
+            dest,
+            "lo",
+            None,
+            arg_type="void",
+            return_type="float _Complex",
+        )
+        _silent(module_run, dest, "dsp")
+        _silent(
+            object_run,
+            dest,
+            "synth",
+            module="dsp",
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            depends_on=[{"name": "lo", "link": True}],
+        )
+        cmake = (dest / "native/src/dsp/CMakeLists.txt").read_text("utf-8")
+        assert "lo_core" in _so_link_block(cmake, "dsp")
+
+    def test_link_flag_survives_toml_roundtrip(self, tmp_path):
+        dest = tmp_path / "p"
+        _silent(new_run, "p", dest)
+        _silent(
+            object_run,
+            dest,
+            "lo",
+            None,
+            arg_type="void",
+            return_type="float _Complex",
+        )
+        _silent(
+            object_run,
+            dest,
+            "mixer",
+            None,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            depends_on=[{"name": "lo", "link": True}],
+        )
+        # Reload, re-apply: the dict (and the link line) must survive, and the
+        # drift gate stays clean (no spurious rewrite).
+        cfg = C.load(dest)
+        assert C.depends_on_raw(cfg, "mixer") == [{"name": "lo", "link": True}]
+        assert C.depends_link_libs(cfg, "mixer") == ["lo_core"]
+        dumped = C._dump(cfg)
+        assert 'depends_on = [{ name = "lo", link = true }]' in dumped
+
+
+class TestDependsOnHelpers:
+    """Pure config helpers over raw depends_on entries (gh-225)."""
+
+    def test_dep_names_mixes_strings_and_tables(self):
+        entries = ["a", {"name": "b", "link": True}, {"name": "c"}]
+        assert C.dep_names(entries) == ["a", "b", "c"]
+
+    def test_dep_link_libs_only_linked_normalised(self):
+        entries = [
+            "a",  # bare -> no link
+            {"name": "b", "link": True},  # -> b_core
+            {"name": "c", "link": False},  # explicit false -> no link
+            {"name": "d_core", "link": True},  # already suffixed -> d_core
+        ]
+        assert C.dep_link_libs(entries) == ["b_core", "d_core"]
