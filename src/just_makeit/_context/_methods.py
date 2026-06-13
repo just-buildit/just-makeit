@@ -685,6 +685,24 @@ def make_methods_ctx(
             buf_fields.append(
                 f"    size_t _{name}_buf_cap;  /* allocated capacity for {name} */\n"
             )
+            if not multi_output:
+                # Deferred-free freelist (gh-219): on grow we retire the old
+                # buffer here instead of freeing it, because a previously
+                # returned array may still alias it (SetBaseObject pins self,
+                # not the buffer).  Retired buffers are freed at dealloc, so
+                # they outlive any array that referenced them.  Empty on the
+                # fixed-block hot path (no growth after warmup -> zero cost).
+                buf_fields.append(
+                    f"    void **_{name}_retired;  /* gh-219 deferred free */\n"
+                    f"    size_t _{name}_retired_n;\n"
+                    f"    size_t _{name}_retired_cap;\n"
+                )
+                buf_free.append(
+                    f"    for (size_t _i = 0;"
+                    f" _i < self->_{name}_retired_n; _i++)\n"
+                    f"        free(self->_{name}_retired[_i]);\n"
+                    f"    free(self->_{name}_retired);\n"
+                )
             buf_alloc.append(
                 f"    {{\n"
                 f"        size_t _max ="
@@ -697,12 +715,36 @@ def make_methods_ctx(
             )
 
         # ── Python wrapper in ext.c ──────────────────────────────────────
+        # gh-219: single-output variable_output methods accept an optional
+        # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
+        # with blockwise steps(x, out=).  Multi-output and multi-param execute
+        # keep their positional-only signatures for now.
+        _enable_out = variable_output and not multi_output and not has_params
         if variable_output:
             if has_arg:
+                if _enable_out:
+                    _kwlist_decl = (
+                        '    static char *_kwlist[] = {"x", "out", NULL};\n'
+                    )
+                    _out_decl = "    PyObject *out_obj = NULL;\n"
+                    _parse_call = (
+                        "    if (!PyArg_ParseTupleAndKeywords("
+                        'args, kwds, "O|O",\n'
+                        "            _kwlist, &in_obj, &out_obj))\n"
+                        "        return NULL;\n"
+                    )
+                else:
+                    _kwlist_decl = ""
+                    _out_decl = ""
+                    _parse_call = (
+                        '    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                        "        return NULL;\n"
+                    )
                 parse_block = (
+                    f"{_kwlist_decl}"
                     f"    PyObject *in_obj = NULL;\n"
-                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
-                    f"        return NULL;\n"
+                    f"{_out_decl}"
+                    f"{_parse_call}"
                     f"    PyArrayObject *in_arr ="
                     f" (PyArrayObject *)PyArray_FROM_OTF(\n"
                     f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
@@ -809,11 +851,23 @@ def make_methods_ctx(
                     else "1"
                 )
             else:
-                parse_block = (
-                    "    Py_ssize_t n = 1;\n"
-                    '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
-                    "        return NULL;\n"
-                )
+                if _enable_out:
+                    parse_block = (
+                        "    static char *_kwlist[] ="
+                        ' {"count", "out", NULL};\n'
+                        "    Py_ssize_t n = 1;\n"
+                        "    PyObject *out_obj = NULL;\n"
+                        "    if (!PyArg_ParseTupleAndKeywords("
+                        'args, kwds, "|nO",\n'
+                        "            _kwlist, &n, &out_obj))\n"
+                        "        return NULL;\n"
+                    )
+                else:
+                    parse_block = (
+                        "    Py_ssize_t n = 1;\n"
+                        '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                        "        return NULL;\n"
+                    )
                 call_data = f"self->handle, (size_t)n, self->_{name}_buf"
                 decref_in = ""
                 _lazy_fallback = "(size_t)n"
@@ -896,6 +950,12 @@ def make_methods_ctx(
                     if decref_in.strip()
                     else ""
                 )
+                # Grow-on-demand with deferred free (gh-219): retire the old
+                # buffer to the freelist (malloc-new, never realloc-in-place)
+                # so any already-returned array still aliasing it stays valid
+                # until dealloc.  Reserve the retired slot before allocating
+                # the new buffer, so an OOM leaves the live buffer untouched
+                # (no use-after-free, no leak).
                 _lazy_alloc_vo = (
                     f"    size_t _need = {_lazy_fallback};\n"
                     f"    if (!self->_{name}_buf"
@@ -903,12 +963,27 @@ def make_methods_ctx(
                     f"        size_t _max ="
                     f" {component}_{name}_max_out(self->handle);\n"
                     f"        if (!_max || _max < _need) _max = _need;\n"
-                    f"        {_vo_out_disp} *_tmp = realloc("
-                    f"self->_{name}_buf,"
-                    f" _max * sizeof({_vo_out_disp}));\n"
+                    f"        if (self->_{name}_buf"
+                    f" && self->_{name}_retired_n"
+                    f" == self->_{name}_retired_cap) {{\n"
+                    f"            size_t _rcap = self->_{name}_retired_cap"
+                    f" ? self->_{name}_retired_cap * 2 : 4;\n"
+                    f"            void **_rt = realloc("
+                    f"self->_{name}_retired, _rcap * sizeof(void *));\n"
+                    f"            if (!_rt) {{"
+                    f" {_decref_early_vo}PyErr_NoMemory();"
+                    f" return NULL; }}\n"
+                    f"            self->_{name}_retired = _rt;\n"
+                    f"            self->_{name}_retired_cap = _rcap;\n"
+                    f"        }}\n"
+                    f"        {_vo_out_disp} *_tmp = malloc("
+                    f"_max * sizeof({_vo_out_disp}));\n"
                     f"        if (!_tmp) {{"
                     f" {_decref_early_vo}PyErr_NoMemory();"
                     f" return NULL; }}\n"
+                    f"        if (self->_{name}_buf)\n"
+                    f"            self->_{name}_retired"
+                    f"[self->_{name}_retired_n++] = self->_{name}_buf;\n"
                     f"        self->_{name}_buf = _tmp;\n"
                     f"        self->_{name}_buf_cap = _max;\n"
                     f"    }}\n"
@@ -916,13 +991,86 @@ def make_methods_ctx(
                 _kernel_vo = _kernel_call_block(
                     f"{component}_{name}({call_data}{_cap_arg})", nogil
                 )
+                # gh-219: the optional `out=` branch fills the caller's buffer
+                # instead of the internal one and returns a view of the filled
+                # prefix pinned to *their* array — zero-alloc, safe to retain.
+                # The kernel writes <= max_out by contract, so requiring
+                # out.size >= max_out is sufficient whether or not the C API
+                # takes an explicit capacity.
+                if _enable_out:
+                    _reindent = lambda blk: "".join(  # noqa: E731
+                        (("    " + ln) if ln.strip() else ln) + "\n"
+                        for ln in blk.splitlines()
+                    )
+                    _out_call_data = call_data.replace(
+                        f"self->_{name}_buf",
+                        f"({_vo_out_disp} *)PyArray_DATA(out_arr)",
+                    )
+                    _out_cap_arg = ", _cap" if pass_capacity else ""
+                    _out_kernel = _reindent(
+                        _kernel_call_block(
+                            f"{component}_{name}"
+                            f"({_out_call_data}{_out_cap_arg})",
+                            nogil,
+                        )
+                    )
+                    _out_decref = _reindent(decref_in) if decref_in else ""
+                    _out_none = (
+                        "        if (!n_out)"
+                        " { Py_DECREF(out_arr); Py_RETURN_NONE; }\n"
+                        if none_on_empty
+                        else ""
+                    )
+                    _out_branch = (
+                        f"    if (out_obj && out_obj != Py_None) {{\n"
+                        f"        PyArrayObject *out_arr ="
+                        f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                        f"            out_obj, {_vo_out_np},\n"
+                        f"            NPY_ARRAY_C_CONTIGUOUS"
+                        f" | NPY_ARRAY_WRITEABLE);\n"
+                        f"        if (!out_arr) {{"
+                        f" {_decref_early_vo}return NULL; }}\n"
+                        f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
+                        f"        size_t _omax ="
+                        f" {component}_{name}_max_out(self->handle);\n"
+                        f"        if (_cap < _omax) {{\n"
+                        f"            PyErr_Format(PyExc_ValueError,\n"
+                        f'                "out has %zu elements,'
+                        f' need >= %zu ({name}_max_out)",\n'
+                        f"                _cap, _omax);\n"
+                        f"            Py_DECREF(out_arr);"
+                        f" {_decref_early_vo}return NULL;\n"
+                        f"        }}\n"
+                        f"{_out_kernel}"
+                        f"{_out_decref}"
+                        f"{_out_none}"
+                        f"        npy_intp _odim = (npy_intp)n_out;\n"
+                        f"        PyObject *_oview = PyArray_SimpleNewFromData(\n"
+                        f"            1, &_odim, {_vo_out_np},"
+                        f" PyArray_DATA(out_arr));\n"
+                        f"        if (!_oview)"
+                        f" {{ Py_DECREF(out_arr); return NULL; }}\n"
+                        f"        PyArray_SetBaseObject("
+                        f"(PyArrayObject *)_oview,"
+                        f" (PyObject *)out_arr);\n"
+                        f"        return _oview;\n"
+                        f"    }}\n"
+                    )
+                    _vo_sig = (
+                        f"({Component}Object *self,"
+                        f" PyObject *args, PyObject *kwds)\n"
+                    )
+                else:
+                    _out_branch = ""
+                    _vo_sig = f"({Component}Object *self, PyObject *args)\n"
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self, PyObject *args)\n"
+                    f"{_vo_sig}"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    f"{_out_branch}"
                     f"{_lazy_alloc_vo}"
                     f"{_kernel_vo}"
                     f"{_none_on_empty_line}"
@@ -977,11 +1125,40 @@ def make_methods_ctx(
                 f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}.dtype",
                 f"    dtype('{_dtype_strs_vo[0]}')",
             ]
+            _vo_flags = (
+                "METH_VARARGS | METH_KEYWORDS"
+                if _enable_out
+                else "METH_VARARGS"
+            )
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
-                f" METH_VARARGS,\n"
+                f" {_vo_flags},\n"
                 f"     {_build_ml_doc(_vo_doc_lines)}}},\n"
             )
+            if _enable_out:
+                # gh-219: expose <verb>_max_out() so callers can size the
+                # `out=` buffer they pass in.
+                _mo_doc = (
+                    f"{name}_max_out() -> int\\n\\n"
+                    f"Max output length {name}() can produce for the current"
+                    f" state.\\nUse to size the ``out=`` buffer."
+                )
+                method_c_parts.append(
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}_max_out"
+                    f"({Component}Object *self,"
+                    f" PyObject *Py_UNUSED(ignored))\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"    return PyLong_FromSize_t(\n"
+                    f"        {component}_{name}_max_out(self->handle));\n"
+                    f"}}"
+                )
+                pmd_lines.append(
+                    f'    {{"{name}_max_out",'
+                    f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
+                    f'     METH_NOARGS, "{_mo_doc}"}},\n'
+                )
         elif result_fields:
             _rf_fmt_parts: list[str] = []
             _rf_arg_parts: list[str] = []
@@ -1297,6 +1474,11 @@ def make_methods_ctx(
             )
         else:
             ret_ann = _pyi_scalar(return_type)
+        # gh-219: single-output variable_output methods take an optional
+        # `out=` buffer and expose a <verb>_max_out() sibling.
+        _stub_enable_out = m_var and not m_multi and not params
+        if _stub_enable_out:
+            param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)
         _pyi_ret_desc = (
             f"Returns\n        -------\n        {ret_ann}\n"
@@ -1326,6 +1508,12 @@ def make_methods_ctx(
             else f"    def {name}(self) -> {ret_ann}:\n{_pyi_doc}"
         )
         pyi_lines.append(stub)
+        if _stub_enable_out:
+            pyi_lines.append(
+                f"    def {name}_max_out(self) -> int:\n"
+                f'        """Max output length {name}() can produce'
+                f' for the current state."""\n'
+            )
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 

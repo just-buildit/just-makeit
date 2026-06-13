@@ -584,7 +584,7 @@ def _build_params_parse(
 
 def _py_wrapper_for_function(
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[dict],
     return_type: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,
@@ -605,9 +605,7 @@ def _py_wrapper_for_function(
     ret_meta = _CTYPE_META.get(return_type)
 
     if params:
-        parse_block, call_args, cleanup = _build_params_parse(
-            [{"name": n, "type": t} for n, t in params]
-        )
+        parse_block, call_args, cleanup = _build_params_parse(params)
         py_args = "PyObject *args"
     else:
         parse_block = ""
@@ -660,12 +658,13 @@ def _py_wrapper_for_function(
             len_expr = _scalar_len_param
         else:
             first_arr = next(
-                (n for n, t in params if is_array_param_type(t)), None
+                (p["name"] for p in params if is_array_param_type(p["type"])),
+                None,
             )
             len_expr = f"{first_arr}_len" if first_arr else "1"
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
-        _arr_count = sum(1 for _, t in params if is_array_param_type(t))
+        _arr_count = sum(1 for p in params if is_array_param_type(p["type"]))
         _arr_args = call_args.split(", ")
         # Each array expands to 2 args; scalars are single.
         _insert_idx = _arr_count * 2
@@ -732,7 +731,7 @@ def make_functions_ctx(
     entries: list[str] = []
     for fn in functions:
         name = fn["name"]
-        params = [(p["name"], p["type"]) for p in fn.get("params", [])]
+        params = list(fn.get("params", []))
         return_type = fn.get("return_type", "void")
         doc = fn.get("doc", f"{name}.")
         flags = "METH_VARARGS" if params else "METH_NOARGS"
