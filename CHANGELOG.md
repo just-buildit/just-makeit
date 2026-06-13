@@ -6,6 +6,15 @@
 
 ### Added
 
+- **`out=` buffer for named `batch` methods (gh-222)** — a named 1:1-rate
+    `--batch` method now accepts an optional `out=` buffer:
+    `y = obj.process(x, out=buf)` (or positionally) writes in place and returns
+    `buf`, else allocates a fresh array as before. The buffer is validated
+    C-contiguous, writeable, dtype-matching, and length-equal to the input
+    (or `count`). Always available — no knob — matching the built-in
+    `steps(x, out=)` path that already covers fixed-size objects. (The built-in
+    `steps()` for scalar→scalar / blockwise objects already had `out=`; this
+    closes the gap for named batch variants.)
 - **`out=` buffer for `variable_output` methods (gh-219)** — single-output
     `variable_output` execute methods now accept an optional `out=` keyword:
     `y = obj.execute(x, out=buf)` fills the caller's array (zero allocation),

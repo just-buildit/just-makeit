@@ -461,20 +461,52 @@ def make_methods_ctx(
                     f"void {component}_{name}({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n, {ret_disp} *out);"
                 )
+                # gh-222: fixed-size (1:1) batch methods accept an optional
+                # `out=` buffer — write in place and return it, else allocate.
+                # Always available (no knob), matching the built-in steps(x,
+                # out=) path and the variable_output out= sibling.
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self, PyObject *args)\n"
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)\n"
                     f"{{\n"
                     f"{guard}"
+                    f'    static char *_kwlist[] = {{"x", "out", NULL}};\n'
                     f"    PyObject *in_obj = NULL;\n"
-                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    f"    PyObject *out_obj = NULL;\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords("
+                    f'args, kwds, "O|O",\n'
+                    f"            _kwlist, &in_obj, &out_obj))\n"
                     f"        return NULL;\n"
                     f"    PyArrayObject *in_arr ="
                     f" (PyArrayObject *)PyArray_FROM_OTF(\n"
                     f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
                     f"    if (!in_arr) return NULL;\n"
                     f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
+                    f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"        PyArrayObject *out_arr ="
+                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"            out_obj, {ret_np},\n"
+                    f"            NPY_ARRAY_C_CONTIGUOUS"
+                    f" | NPY_ARRAY_WRITEABLE);\n"
+                    f"        if (!out_arr)"
+                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+                    f"            PyErr_Format(PyExc_ValueError,\n"
+                    f'                "out length %zd != input length %zd",\n'
+                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
+                    f" (Py_ssize_t)n);\n"
+                    f"            Py_DECREF(out_arr);"
+                    f" Py_DECREF(in_arr); return NULL;\n"
+                    f"        }}\n"
+                    f"        {component}_{name}(self->handle,\n"
+                    f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
+                    f"            (size_t)n,\n"
+                    f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
+                    f"        Py_DECREF(in_arr);\n"
+                    f"        return (PyObject *)out_arr;\n"
+                    f"    }}\n"
                     f"    npy_intp dims[] = {{n}};\n"
                     f"    PyObject *out ="
                     f" PyArray_SimpleNew(1, dims, {ret_np});\n"
@@ -493,15 +525,40 @@ def make_methods_ctx(
                     f"void {component}_{name}({component}_state_t *state,"
                     f" size_t n, {ret_disp} *out);"
                 )
+                # gh-222: count-driven batch generator with optional `out=`.
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self, PyObject *args)\n"
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)\n"
                     f"{{\n"
                     f"{guard}"
+                    f'    static char *_kwlist[] = {{"count", "out", NULL}};\n'
                     f"    Py_ssize_t n = 1;\n"
-                    f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                    f"    PyObject *out_obj = NULL;\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords("
+                    f'args, kwds, "|nO",\n'
+                    f"            _kwlist, &n, &out_obj))\n"
                     f"        return NULL;\n"
+                    f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"        PyArrayObject *out_arr ="
+                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"            out_obj, {ret_np},\n"
+                    f"            NPY_ARRAY_C_CONTIGUOUS"
+                    f" | NPY_ARRAY_WRITEABLE);\n"
+                    f"        if (!out_arr) return NULL;\n"
+                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+                    f"            PyErr_Format(PyExc_ValueError,\n"
+                    f'                "out length %zd != count %zd",\n'
+                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
+                    f" (Py_ssize_t)n);\n"
+                    f"            Py_DECREF(out_arr); return NULL;\n"
+                    f"        }}\n"
+                    f"        {component}_{name}(self->handle,\n"
+                    f"            (size_t)n,\n"
+                    f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
+                    f"        return (PyObject *)out_arr;\n"
+                    f"    }}\n"
                     f"    npy_intp dims[] = {{n}};\n"
                     f"    PyObject *out ="
                     f" PyArray_SimpleNew(1, dims, {ret_np});\n"
@@ -517,7 +574,9 @@ def make_methods_ctx(
             _ret_np_str = _CTYPE_META[return_type]["py_type"].replace(
                 "np.", ""
             )
-            _batch_sig = f"{name}({'x' if has_arg else 'n'}) -> ndarray"
+            _batch_sig = (
+                f"{name}({'x' if has_arg else 'n'}, out=None) -> ndarray"
+            )
             _batch_doc_lines = [
                 _batch_sig,
                 "",
@@ -543,7 +602,7 @@ def make_methods_ctx(
             ]
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
-                f" METH_VARARGS,\n"
+                f" METH_VARARGS | METH_KEYWORDS,\n"
                 f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
             )
             for _j in range(_ndecl, len(decl_lines)):
