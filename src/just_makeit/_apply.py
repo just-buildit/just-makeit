@@ -124,7 +124,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "init_params": C.init_params(cfg, comp),
         "init_post_parse_impl": C.init_post_parse(cfg, comp),
         "class_name": C.class_name(cfg, comp),
-        "depends_on": C.depends_on(cfg, comp),
+        # gh-225: pass the RAW depends_on (preserving `{name, link}` tables) so
+        # the replayed scaffold re-persists the link flag and the consuming
+        # target's link line is regenerated; render paths flatten to names.
+        "depends_on": C.depends_on_raw(cfg, comp),
         "opaque_fields": C.opaque_fields(cfg, comp),
         "no_ctor_names": C.no_ctor_names(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),

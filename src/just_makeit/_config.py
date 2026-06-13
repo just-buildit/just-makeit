@@ -724,13 +724,68 @@ def component_extra_include_dirs(cfg: dict, component: str) -> list[str]:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def _dep_name(d) -> str:
+    """Name of a depends_on entry — a bare string or a ``{name, link}`` table."""
+    return d["name"] if isinstance(d, dict) else d
+
+
+def _dep_links(d) -> bool:
+    """Whether a depends_on entry also owns the consuming target's link line."""
+    return bool(d.get("link")) if isinstance(d, dict) else False
+
+
 def depends_on(cfg: dict, component: str) -> list[str]:
     """Return the transitive C OBJECT library deps for a component.
 
     Each name in the list gets a target_sources line emitted *before* the
     component's own target_sources in the root CMakeLists, so the combined
-    library target sees all required object files."""
+    library target sees all required object files. An entry may be a bare
+    string (``"fir"``) or a ``{name = "fir", link = true}`` table (gh-225);
+    this returns the names either way (header includes + aggregate-lib
+    objects apply to both forms)."""
+    return [_dep_name(d) for d in cfg.get(component, {}).get("depends_on", [])]
+
+
+def depends_on_raw(cfg: dict, component: str) -> list:
+    """Raw depends_on entries — bare strings and/or ``{name, link}`` tables.
+
+    Callers that must preserve the ``link`` flag (the replay/scaffold path that
+    re-persists the manifest) take this; header/object-only callers take
+    :func:`depends_on`, which flattens to names."""
     return list(cfg.get(component, {}).get("depends_on", []))
+
+
+def dep_names(entries) -> list[str]:
+    """Names from a raw depends_on list (each a string or ``{name, link}``)."""
+    return [_dep_name(d) for d in entries]
+
+
+def dep_link_libs(entries) -> list[str]:
+    """``<name>_core`` link targets for raw entries marked ``link = true``.
+
+    A ``{name = "fir", link = true}`` entry means jm owns the link: the
+    dependency's ``<name>_core`` is added directly to the consuming target's
+    ``target_link_libraries``, so its symbols resolve in the built ``.so``
+    without a manual ``extra_link_libs`` + CMakeLists edit (gh-225). CMake does
+    not pull a depends_on OBJECT lib's objects transitively into the final
+    ``.so`` (see gh-160), so the link must be direct on the consuming target.
+    Names are normalised to the ``<name>_core`` OBJECT-lib target."""
+    out: list[str] = []
+    for d in entries:
+        if _dep_links(d):
+            name = _dep_name(d)
+            out.append(name if name.endswith("_core") else f"{name}_core")
+    return out
+
+
+def depends_link_libs(cfg: dict, component: str) -> list[str]:
+    """``<name>_core`` link targets for a component's ``link = true`` deps.
+
+    The cfg-based convenience wrapper over :func:`dep_link_libs`; used where the
+    component's manifest section is already present (module aggregation, apply
+    header injection). Render paths that run *before* the section is persisted
+    (``_init.run``) call :func:`dep_link_libs` on the depends_on param instead."""
+    return dep_link_libs(depends_on_raw(cfg, component))
 
 
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
@@ -1295,8 +1350,16 @@ def _dump(cfg: dict) -> str:
         if comp_data.get("doc"):
             lines.append(_doc_assign(comp_data["doc"]))
         if comp_data.get("depends_on"):
-            deps_str = ", ".join(f'"{d}"' for d in comp_data["depends_on"])
-            lines.append(f"depends_on = [{deps_str}]")
+            parts = []
+            for d in comp_data["depends_on"]:
+                if isinstance(d, dict):
+                    inner = f'name = "{d["name"]}"'
+                    if d.get("link"):
+                        inner += ", link = true"
+                    parts.append(f"{{ {inner} }}")
+                else:
+                    parts.append(f'"{d}"')
+            lines.append(f"depends_on = [{', '.join(parts)}]")
         if comp_data.get("extra_link_libs"):
             libs_str = ", ".join(
                 f'"{lib}"' for lib in comp_data["extra_link_libs"]

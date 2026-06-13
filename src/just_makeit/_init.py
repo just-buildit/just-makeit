@@ -788,8 +788,17 @@ def run(
 
         ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
 
+    # gh-225: a `depends_on = [{name="dep", link=true}]` entry adds the
+    # dependency's `<dep>_core` directly to the consuming target's link line
+    # (the same slot extra_link_libs feeds), so its symbols resolve in the
+    # built .so. These go on the .so link only — NOT PUBLIC on <comp>_core,
+    # because CMake won't propagate the objects transitively into the .so
+    # (gh-160). The header-only behaviour of a bare-string dep is unchanged.
+    # Read from the depends_on param, not cfg: this component is not yet in
+    # the loaded manifest at render time (it's persisted at the end of run()).
+    block_libs = list(extra_link_libs) + C.dep_link_libs(depends_on)
     extra_link_libs_block = (
-        "\n    ".join(extra_link_libs) + "\n    " if extra_link_libs else ""
+        "\n    ".join(block_libs) + "\n    " if block_libs else ""
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
     ctx["extra_ext_sources"] = ""  # populated on jm method --varargs
@@ -818,7 +827,7 @@ def run(
     ctx["depends_includes"] = "".join(
         "\n" + inc
         for inc in _dep_header_includes(
-            root / "native" / "inc", list(depends_on)
+            root / "native" / "inc", C.dep_names(depends_on)
         )
     )
 
@@ -977,7 +986,7 @@ def run(
             if sub not in cmake_text:
                 obj_lines = ""
                 if f"{pkg}_lib" in cmake_text:
-                    for dep in depends_on:
+                    for dep in C.dep_names(depends_on):
                         dep_name = dep[:-5] if dep.endswith("_core") else dep
                         obj_lines += (
                             f"target_sources({pkg}_lib PRIVATE "
