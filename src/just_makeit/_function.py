@@ -24,12 +24,18 @@ from . import _render as T
 from ._init import _write_compile_commands
 from ._object import _regenerate_module
 
+# A function param is ``(name, type)`` or, for a writable array output param
+# (``--out-param``), ``(name, type, is_out)``.  The third element, when present
+# and truthy, renders the C binding as a non-const ``T *`` with a writable
+# NumPy view (gh-197/#221).
+FnParam = tuple[str, str] | tuple[str, str, bool]
+
 
 def _write_function_c(
     path: Path,
     module: str,
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[FnParam],
     return_type: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,
@@ -68,7 +74,7 @@ def _write_function_c(
 def _inject_into_core_h(
     path: Path,
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[FnParam],
     return_type: str,
     module: str,
     out_type: str = "",
@@ -102,7 +108,7 @@ def _inject_into_core_h(
 def _inject_inline_into_core_h(
     path: Path,
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[FnParam],
     return_type: str,
     module: str,
 ) -> None:
@@ -131,7 +137,7 @@ def run(
     fn_name: str,
     module: str,
     doc: str = "",
-    params: list[tuple[str, str]] | None = None,
+    params: list[FnParam] | None = None,
     return_type: str = "void",
     impl_body: str | None = None,
     out_type: str = "",

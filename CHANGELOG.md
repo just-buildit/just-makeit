@@ -28,6 +28,15 @@
     user-facing `--name`, so re-running `jm app` / `jm apply` is idempotent (no
     `X_app_app`). This completes gh-184 (parts 1 & 2 shipped in 0.16.0).
 
+- **`jm function --out-param` confirmed end-to-end (gh-221)** — a writable array
+    output param (`out = true`, → non-const `T *` + `NPY_ARRAY_WRITEABLE`) can be
+    declared from the CLI via `--out-param name:type[]`, threaded through
+    `_function.run()` as a 3-tuple, and persisted to the manifest. The CLI parser
+    (since 0.13.22) and renderer (gh-197) already supported this; added a
+    round-trip regression test covering the CLI/`run`/manifest/C seam and tidied
+    the now-misleading `list[tuple[str, str]]` param type hints to admit the
+    `(name, type, is_out)` form.
+
 ## [0.19.3] — 2026-06-13
 
 ### Added

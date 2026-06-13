@@ -294,7 +294,7 @@ def _fn_c_params(
 
 def fn_c_decl(
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[tuple],
     return_type: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,
@@ -345,7 +345,7 @@ def fn_c_decl(
 
 def fn_c_inline_stub(
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[tuple],
     return_type: str,
 ) -> str:
     """C body stub for embedding in ``_core.h`` as ``static inline``.
@@ -401,7 +401,7 @@ def fn_c_inline_stub(
 
 def fn_c_stub(
     fn_name: str,
-    params: list[tuple[str, str]],
+    params: list[tuple],
     return_type: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,

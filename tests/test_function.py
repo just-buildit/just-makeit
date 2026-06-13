@@ -92,6 +92,39 @@ class TestFunctionOutParamConst:
         assert "NPY_ARRAY_WRITEABLE" not in w
 
 
+class TestFunctionOutParamRoundTrip:
+    """gh-221: an `out` param supplied to `function_run` as a 3-tuple
+    `(name, type, is_out)` (the shape the CLI's `--out-param` builds) must
+    persist `out = true` to the manifest and render a writable pointer — the
+    CLI/run seam, not just the renderer (gh-197) or the CLI parser."""
+
+    def test_three_tuple_out_param_persists_and_renders(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["dsp"])
+        function_run(
+            root,
+            "envelope_power",
+            "dsp",
+            params=[
+                ("input", "float _Complex[]"),
+                ("output", "float[]", True),
+                ("n", "size_t"),
+            ],
+            return_type="void",
+        )
+        # Persisted to the manifest as out = true.
+        cfg = load(root)
+        fns = cfg_module_functions(cfg, "dsp")
+        out_p = next(p for p in fns[0]["params"] if p["name"] == "output")
+        assert out_p.get("out") is True
+        # Rendered as a writable, non-const pointer; the read-only input
+        # param keeps its const qualifier.
+        c = _fn_c(root, "dsp", "envelope_power")
+        assert "float *output" in c
+        assert "const float *output" not in c
+        assert "const float complex *input" in c
+
+
 class TestModuleScaffold:
     """just-makeit module creates _core.h and _core.c."""
 
