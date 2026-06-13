@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
 from just_makeit._app import run as app_run
+from just_makeit._object import run as object_run
 from just_makeit._config import load, app_config
 
 
@@ -226,3 +227,66 @@ class TestAppGenerationVsFallback:
         assert "if (argc > 1)" in text
         assert "IMPLEMENT" in text
         assert "(void)argc" not in text
+
+
+class TestAppTargetCollision:
+    """gh-184 part 3: an app whose --name matches an existing CMake target
+    (a module ext target, or a component's ext target) must use a distinct
+    exe target id (<name>_app) with OUTPUT_NAME <name>, so CMake doesn't error
+    with "another target with the same name already exists" while the built
+    binary stays <name>."""
+
+    def _module_project(self, tmp_path):
+        root = tmp_path / "proj"
+        new_run("proj", root, modules=["wfmgen"])
+        object_run(
+            root,
+            "synth",
+            "wfmgen",
+            arg_type="void",
+            return_type="float _Complex",
+        )
+        return root
+
+    def test_collision_with_module_target(self, tmp_path):
+        root = self._module_project(tmp_path)
+        app_run(root, target="c", name="wfmgen", object_="synth")
+        cmake = (root / "CMakeLists.txt").read_text()
+        # Distinct exe target, binary preserved via OUTPUT_NAME.
+        assert "add_executable(wfmgen_app native/src/app/wfmgen.c)" in cmake
+        assert (
+            "set_target_properties(wfmgen_app PROPERTIES OUTPUT_NAME wfmgen)"
+            in cmake
+        )
+        assert "target_link_libraries(wfmgen_app" in cmake
+        assert "install(TARGETS wfmgen_app" in cmake
+        # The app never claims the bare name (which the module ext target,
+        # declared in native/src/wfmgen/CMakeLists.txt, already owns).
+        assert "add_executable(wfmgen " not in cmake
+
+    def test_collision_with_component_target(self, project):
+        # `project` has component "engine"; an app named "engine" collides
+        # with engine's own Python ext target.
+        app_run(project, target="c", name="engine", object_="engine")
+        cmake = (project / "CMakeLists.txt").read_text()
+        assert "add_executable(engine_app native/src/app/engine.c)" in cmake
+        assert (
+            "set_target_properties(engine_app PROPERTIES OUTPUT_NAME engine)"
+            in cmake
+        )
+
+    def test_no_collision_omits_output_name(self, project):
+        app_run(project, target="c", name="dsp_tool", object_="engine")
+        cmake = (project / "CMakeLists.txt").read_text()
+        assert "add_executable(dsp_tool native/src/app/dsp_tool.c)" in cmake
+        # No app-specific OUTPUT_NAME (the top-level lib has its own, unrelated).
+        assert "OUTPUT_NAME dsp_tool" not in cmake
+
+    def test_collision_idempotent(self, tmp_path):
+        root = self._module_project(tmp_path)
+        app_run(root, target="c", name="wfmgen", object_="synth")
+        app_run(root, target="c", name="wfmgen", object_="synth")
+        cmake = (root / "CMakeLists.txt").read_text()
+        # Re-run reuses the same suffixed id — no <name>_app_app, single block.
+        assert cmake.count("add_executable(wfmgen_app") == 1
+        assert "wfmgen_app_app" not in cmake

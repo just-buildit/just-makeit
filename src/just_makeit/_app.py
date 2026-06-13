@@ -842,22 +842,73 @@ def _app_object_link(cfg: dict, object_: str) -> str:
     return " ".join(libs) + " " + _LIBM
 
 
-def _cmake_app_block(name: str, link_target: str) -> str:
+def _reserved_targets(cfg: dict) -> set[str]:
+    """CMake target names already claimed by the project.
+
+    An ``add_executable`` for an app cannot reuse a name that another target
+    in the same ``CMakeLists.txt`` already owns (CMake errors with "another
+    target with the same name already exists").  The claimants are: every
+    module ext target (its cname), every component's Python ext target plus its
+    ``<comp>_core`` OBJECT lib and ``test_<comp>_core`` smoke test, and the
+    top-level ``<pkg>_lib`` / ``<pkg>_lib_static`` aggregate libs (gh-184)."""
+    pkg = C.project_name(cfg).replace("-", "_")
+    reserved = set(C.module_cnames(cfg))
+    reserved |= {f"{pkg}_lib", f"{pkg}_lib_static"}
+    for comp in C.components(cfg):
+        reserved |= {comp, f"{comp}_core", f"test_{comp}_core"}
+    return reserved
+
+
+def _exe_target(name: str, cfg: dict) -> str:
+    """Return a collision-free CMake target id for the app executable.
+
+    Normally the target id equals the app ``name`` (so ``cmake --build
+    --target <name>`` is intuitive and the binary is ``<name>``).  When
+    ``name`` collides with an existing target — e.g. ``jm app --name wfmgen``
+    over a ``wfmgen`` module ext target — suffix the *target id* (``<name>_app``)
+    while keeping the binary name ``<name>`` via ``OUTPUT_NAME`` (gh-184).
+
+    Detection runs on the user-facing ``name`` (not a prior suffixed id), so
+    re-running ``jm app`` / ``jm apply`` yields the same id — never
+    ``<name>_app_app``."""
+    reserved = _reserved_targets(cfg)
+    if name not in reserved:
+        return name
+    target = f"{name}_app"
+    while target in reserved:
+        target += "_app"
+    return target
+
+
+def _cmake_app_block(
+    name: str, link_target: str, exe_target: str | None = None
+) -> str:
+    tgt = exe_target or name
+    # When the target id differs from the app name (collision avoidance),
+    # keep the built binary named <name> via OUTPUT_NAME.
+    output_name_line = (
+        f"set_target_properties({tgt} PROPERTIES OUTPUT_NAME {name})\n"
+        if tgt != name
+        else ""
+    )
     return (
         f"{_APP_CMAKE_SENTINEL}"
         "─────────────────────────────────────────────────────────\n"
-        f"add_executable({name} native/src/app/{name}.c)\n"
-        f"target_link_libraries({name} PRIVATE {link_target})\n"
-        f"install(TARGETS {name} DESTINATION bin)\n"
+        f"add_executable({tgt} native/src/app/{name}.c)\n"
+        f"{output_name_line}"
+        f"target_link_libraries({tgt} PRIVATE {link_target})\n"
+        f"install(TARGETS {tgt} DESTINATION bin)\n"
         f"{_APP_CMAKE_END}"
         "─────────────────────────────────────────────────────────\n"
     )
 
 
-def _splice_cmake(cmake: Path, name: str, link_target: str) -> None:
+def _splice_cmake(
+    cmake: Path, name: str, link_target: str, exe_target: str | None = None
+) -> None:
     """Insert or replace the App block in CMakeLists.txt."""
     text = cmake.read_text(encoding="utf-8")
-    block = _cmake_app_block(name, link_target)
+    block = _cmake_app_block(name, link_target, exe_target)
     start = text.find(_APP_CMAKE_SENTINEL)
     end = text.find(_APP_CMAKE_END)
     if start != -1 and end != -1:
@@ -1425,7 +1476,9 @@ def run(
     print()
 
     if target == "c":
-        _run_c(root, ctx, name, link_target, main_tmpl)
+        # Only the C target adds an add_executable() that can clash with a
+        # module/component CMake target; console/pep723 faces don't (gh-184).
+        _run_c(root, ctx, name, link_target, main_tmpl, _exe_target(name, cfg))
     elif target == "console":
         _run_console(
             root,
@@ -1450,6 +1503,7 @@ def _run_c(
     name: str,
     link_target: str,
     tmpl: str = R.APP_MAIN_C,
+    exe_target: str | None = None,
 ) -> None:
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
@@ -1458,15 +1512,26 @@ def _run_c(
     verb = "update" if main_c.exists() else "create"
     print(f"  {verb}  {main_c}")
 
+    tgt = exe_target or name
+    if tgt != name:
+        print(
+            f"  note: target name '{name}' is already used by another target; "
+            f"using exe target '{tgt}' (binary stays '{name}')."
+        )
     cmake = root / "CMakeLists.txt"
     if cmake.exists():
-        _splice_cmake(cmake, name, link_target)
+        _splice_cmake(cmake, name, link_target, exe_target)
         print(f"  update  {cmake}")
     else:
+        out_name = (
+            f"\n    set_target_properties({tgt} PROPERTIES OUTPUT_NAME {name})"
+            if tgt != name
+            else ""
+        )
         print(
             f"  note: CMakeLists.txt not found — add this manually:\n"
-            f"    add_executable({name} native/src/app/{name}.c)\n"
-            f"    target_link_libraries({name} PRIVATE {link_target})"
+            f"    add_executable({tgt} native/src/app/{name}.c){out_name}\n"
+            f"    target_link_libraries({tgt} PRIVATE {link_target})"
         )
 
 
