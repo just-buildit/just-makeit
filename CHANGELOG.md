@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm app` exe-target name collision (gh-184)** — `jm app --target c --name X`
+    over a project that already has a module or component target named `X` (e.g.
+    `--name wfmgen` against a `wfmgen` module) emitted `add_executable(X …)`,
+    which CMake rejected with *"another target with the same name already
+    exists."* The app now uses a distinct exe target id (`X_app`) with
+    `set_target_properties(X_app PROPERTIES OUTPUT_NAME X)` so the built binary
+    stays `X`; non-colliding names are unchanged. Detection runs on the
+    user-facing `--name`, so re-running `jm app` / `jm apply` is idempotent (no
+    `X_app_app`). This completes gh-184 (parts 1 & 2 shipped in 0.16.0).
+
 ## [0.19.3] — 2026-06-13
 
 ### Added
