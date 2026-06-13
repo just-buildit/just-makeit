@@ -448,6 +448,119 @@ class TestMethodMultiOutput:
         assert "nco_execute_iq(" in text
 
 
+class TestMethodOutKwarg:
+    """gh-219: single-output variable_output methods gain an optional `out=`
+    buffer (zero-alloc, caller-owned, safe to retain) and a <verb>_max_out()
+    sibling, mirroring the blockwise steps(x, out=) path."""
+
+    def _add(self, project, name="execute_cf32", arg="void", multi=None):
+        method_run(
+            project,
+            "nco",
+            name,
+            None,
+            arg,
+            "float _Complex",
+            True,
+            multi or [],
+        )
+        return (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_wrapper_takes_keywords(self, project):
+        ext = self._add(project, arg="float _Complex")
+        assert "METH_VARARGS | METH_KEYWORDS" in ext
+        assert "PyArg_ParseTupleAndKeywords" in ext
+        assert '{"x", "out", NULL}' in ext
+
+    def test_noarg_generator_takes_keywords(self, project):
+        ext = self._add(project, arg="void")
+        assert '{"count", "out", NULL}' in ext
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "|nO"' in ext
+
+    def test_out_branch_validates_and_returns_prefix_view(self, project):
+        ext = self._add(project, arg="float _Complex")
+        # validation against max_out + writable contiguous buffer
+        assert "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE" in ext
+        assert "nco_execute_cf32_max_out(self->handle)" in ext
+        assert "PyExc_ValueError" in ext
+        # the returned view is pinned to the caller's array, not self
+        assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
+        assert "(PyObject *)out_arr)" in ext
+
+    def test_max_out_method_exposed(self, project):
+        ext = self._add(project, arg="void")
+        assert '{"execute_cf32_max_out"' in ext
+        assert "PyLong_FromSize_t(" in ext
+        assert "Nco_execute_cf32_max_out" in ext or (
+            "nco_execute_cf32_max_out(self->handle)" in ext
+        )
+
+    def test_pyi_has_out_param_and_max_out(self, project):
+        self._add(project, arg="float _Complex")
+        pyi = (project / "src" / "dsp" / "nco.pyi").read_text(encoding="utf-8")
+        assert "out:" in pyi and "| None = None" in pyi
+        assert "def execute_cf32_max_out(self) -> int:" in pyi
+
+    def test_multi_output_stays_positional(self, project):
+        ext = self._add(project, arg="void", multi=["float _Complex"])
+        # the method wrapper keeps the positional-only signature (no kwds);
+        # `out_obj` elsewhere belongs to the object's built-in blockwise
+        # steps(), which is the separate #197 precedent.
+        assert (
+            "Nco_execute_cf32(NcoObject *self,"
+            " PyObject *args, PyObject *kwds)" not in ext
+        )
+        # no `out=`-sizing method is exposed (the C *_max_out() helper is still
+        # called internally for the buffer alloc, hence the quoted-name check).
+        assert '"execute_cf32_max_out"' not in ext
+
+
+class TestMethodDeferredFree:
+    """gh-219: the default zero-copy path must be use-after-free safe. On grow
+    the old buffer is retired to a freelist (malloc-new, never
+    realloc-in-place) and freed at dealloc, so any already-returned array
+    aliasing it stays valid."""
+
+    def _ext(self, project):
+        method_run(
+            project,
+            "nco",
+            "execute_cf32",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+        )
+        return (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_retired_freelist_fields(self, project):
+        ext = self._ext(project)
+        assert "_execute_cf32_retired" in ext
+        assert "_execute_cf32_retired_n" in ext
+        assert "_execute_cf32_retired_cap" in ext
+
+    def test_grow_uses_malloc_not_realloc_of_live_buffer(self, project):
+        ext = self._ext(project)
+        # the live output buffer is never realloc'd in place (that was the UAF)
+        assert "realloc(self->_execute_cf32_buf" not in ext
+        # a fresh buffer is malloc'd and the old one retired
+        assert "malloc(_max * sizeof(" in ext
+        assert (
+            "self->_execute_cf32_retired[self->_execute_cf32_retired_n++]"
+            " = self->_execute_cf32_buf" in ext
+        )
+
+    def test_dealloc_frees_retired_list(self, project):
+        ext = self._ext(project)
+        assert "free(self->_execute_cf32_retired[_i])" in ext
+        assert "free(self->_execute_cf32_retired)" in ext
+
+
 class TestMethodUpdatesConfig:
     def test_config_has_method(self, project):
         method_run(

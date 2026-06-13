@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-06-13
+
+### Added
+
+- **`out=` buffer for named `batch` methods (gh-222)** — a named 1:1-rate
+    `--batch` method now accepts an optional `out=` buffer:
+    `y = obj.process(x, out=buf)` (or positionally) writes in place and returns
+    `buf`, else allocates a fresh array as before. The buffer is validated
+    C-contiguous, writeable, dtype-matching, and length-equal to the input
+    (or `count`). Always available — no knob — matching the built-in
+    `steps(x, out=)` path that already covers fixed-size objects. (The built-in
+    `steps()` for scalar→scalar / blockwise objects already had `out=`; this
+    closes the gap for named batch variants.)
+- **`out=` buffer for `variable_output` methods (gh-219)** — single-output
+    `variable_output` execute methods now accept an optional `out=` keyword:
+    `y = obj.execute(x, out=buf)` fills the caller's array (zero allocation),
+    returns a view of the filled prefix pinned to *their* buffer, and is
+    therefore safe to retain — parity with the blockwise `steps(x, out=)` path.
+    A `obj.<verb>_max_out()` sibling is generated so callers can size the
+    buffer (`buf = np.empty(obj.execute_max_out(), dtype=...)`). The buffer is
+    validated as C-contiguous, writeable, dtype-matching, and `>= max_out`.
+    Multi-output and multi-param execute keep their positional-only signatures.
+
+### Fixed
+
+- **Use-after-free in the `variable_output` zero-copy default (gh-219)** — the
+    grow-on-demand internal buffer was `realloc`'d in place, so a previously
+    returned array (which pins `self`, not the buffer) could end up aliasing
+    freed memory after a grow. The grow path now allocates a fresh buffer and
+    *retires* the old one to a per-method freelist freed at dealloc, so retained
+    views stay valid. The fixed-block streaming hot path is unaffected (no
+    growth after warmup means nothing is ever retired).
+- **Module-function `out = true` array params emitted `const T *` (gh-197)** —
+    a writable output param on a `[[module.<m>.functions]]` entry rendered a
+    `const T *` pointer (and a `discards 'const' qualifier` build warning)
+    because the renderer projected params to `(name, type)` tuples, dropping the
+    `out`/`mutable` flags before they reached the pointer-qualifier decision.
+    They are now threaded through as full dicts, matching standalone-object
+    method params.
+
 ## [0.19.1] — 2026-06-11
 
 ### Added

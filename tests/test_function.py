@@ -54,6 +54,44 @@ def module_with_objects_and_functions(tmp_path):
     return root
 
 
+class TestFunctionOutParamConst:
+    """gh-197: a module-level function array param marked `out = true` must
+    render a writable `T *` (not `const T *`) in the binding. The `out`/`mutable`
+    flags reach the renderer only as full param dicts; an earlier projection to
+    (name, type) tuples silently dropped them and forced `const`."""
+
+    def _wrappers(self, *, out: bool):
+        from just_makeit._render import make_functions_ctx
+
+        param = {"name": "output", "type": "float[]"}
+        if out:
+            param |= {"out": True, "mutable": True}
+        fns = [
+            {
+                "name": "envelope_power",
+                "doc": "power",
+                "return_type": "void",
+                "params": [
+                    {"name": "input", "type": "float _Complex[]"},
+                    param,
+                    {"name": "n", "type": "size_t"},
+                ],
+            }
+        ]
+        return make_functions_ctx("dsp", "Dsp", fns)["function_wrappers"]
+
+    def test_out_true_emits_writable_pointer(self):
+        w = self._wrappers(out=True)
+        assert "float *output = (float *)PyArray_DATA(output_arr);" in w
+        assert "const float *output" not in w
+        assert "NPY_ARRAY_WRITEABLE" in w
+
+    def test_default_param_stays_const(self):
+        w = self._wrappers(out=False)
+        assert "const float *output = (const float *)" in w
+        assert "NPY_ARRAY_WRITEABLE" not in w
+
+
 class TestModuleScaffold:
     """just-makeit module creates _core.h and _core.c."""
 
