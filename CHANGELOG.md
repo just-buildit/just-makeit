@@ -12,6 +12,16 @@
     `optional = true` + `create_fn` give presence dispatch (e.g. a supplied
     `bank` → `Resampler_create_custom`, omitted → `Resampler_create`). Added a
     dtype-dispatch codegen test to lock the generated form.
+- **Multi-return packing is already supported (gh-223)** — returning more than
+    one array, or a list of fixed-shape records, needs no new
+    `return_type = "tuple(...)"` / `list_of` syntax. A **tuple of arrays** (e.g.
+    NCO `steps_u32_ovf(n) -> (uint32 phase[], uint8 overflow[])`) is a
+    `variable_output` method with `multi_output = ["uint8_t"]`; the binding
+    packs the outputs with `PyTuple_Pack`. A **list of fixed-shape records**
+    (e.g. a detector `push` returning `(lag, peak_mag, noise_est, test_stat)`
+    tuples) is `result_fields = [...]` + `max_results_param`, with `return_type`
+    naming the C record struct; the binding fills a bounded buffer and returns a
+    `list` of `Py_BuildValue` tuples. Added a test locking both exact shapes.
 
 ### Added
 
