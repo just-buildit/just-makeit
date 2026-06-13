@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.4] — 2026-06-13
+
 ### Documented
 
 - **Polymorphic constructor dispatch is already supported (gh-224)** — selecting
