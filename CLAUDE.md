@@ -156,6 +156,7 @@ return_type = "float _Complex"
 mutable = "false"
 no_state = "false"
 no_step = "false"
+step_delegates_to_steps = "true"  # step() delegates to steps() (gh-208; only when set)
 streamable = "true"       # generate stream()/__iter__ (only when set)
 stream_block_default = "1024"  # __iter__ / stream() default block
 

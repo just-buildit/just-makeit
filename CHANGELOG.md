@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.19.3] — 2026-06-13
+
+### Added
+
+- **`jm object --step-delegates-to-steps` (gh-208)** — generates the scalar
+    `step()` as a thin delegator to `steps()` (`step(x) { T y;   comp_steps(state, &x, &y, 1); return y; }`) instead of inlining a separate
+    per-sample body. The per-sample algorithm then lives in exactly one place
+    (`steps()`), so `step()` and `steps()` are **byte-identical by
+    construction** — closing a real `-ffast-math` divergence on FMA targets
+    (arm64/Apple Silicon) where an inlined scalar `step()` contracted
+    `a*b + c` into an FMA while a vectorized `steps()` did not. Recorded as
+    `step_delegates_to_steps = true` and round-tripped by `jm script`/`apply`.
+    Applies to scalar / void-arg objects (the flag is rejected for `--no-step`,
+    `--variable-output`, and array `--arg-type`/`--return-type`, which already
+    centralise the algorithm in `steps()`). In delegate mode the user's
+    `steps()` must not call `step()` or use `JM_DEFINE_STEPS` (its scalar
+    fallback calls `step()`) — that would recurse. Guarantees `step() ==   steps(.., 1)`, not `step()`-loop `== steps(N)` (chunk-invariance of a
+    vectorized `steps()` remains the project's responsibility).
+
 ## [0.19.2] — 2026-06-13
 
 ### Added

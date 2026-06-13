@@ -24,6 +24,15 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
 # ── Install build deps (cmake, gcc, pkg-config) ───────────────────────────────
 RUN just-makeit install-deps
 
+# ── C++ stdlib for doppler-linked examples ────────────────────────────────────
+# doppler 0.13.x ships its static archive (doppler::doppler-static) with vendored
+# C++ deps, so anything linking it pulls in -lstdc++. The slim base + C-only
+# toolchain lacks the C++ stdlib; g++ provides libstdc++-dev. (GitHub CI runners
+# already have it, so this only bites the slim image.)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Scaffold, build, and test all bundled examples ────────────────────────────
 RUN mkdir -p ${JM_HOME}/examples
 COPY docker/build_examples.py /tmp/build_examples.py

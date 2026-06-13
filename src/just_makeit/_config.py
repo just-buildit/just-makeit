@@ -545,6 +545,16 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def step_delegates(cfg: dict, component: str) -> bool:
+    """Return True if step() should be generated as a delegator to steps().
+
+    gh-208: with ``step_delegates_to_steps = true`` the per-sample algorithm
+    lives only in steps() and step() forwards to ``steps(.., 1)``, so the two
+    stay byte-identical under ``-ffast-math``.
+    """
+    return _truthy(cfg.get(component, {}).get("step_delegates_to_steps"))
+
+
 def extra_types(cfg: dict, module: str) -> list[str]:
     """Return hand-declared extra Python type names for a module's PyInit_.
 
@@ -1090,6 +1100,7 @@ def add_component(
     no_state_: bool = False,
     no_step_: bool = False,
     mutable_: bool = False,
+    step_delegates_: bool = False,
     streamable_: bool = False,
     async_stream_: bool = False,
     stream_block_default_: "int | None" = None,
@@ -1130,6 +1141,8 @@ def add_component(
     }
     # Only persisted when set — keeps existing manifests byte-identical so
     # non-streamable objects produce no golden-output churn.
+    if step_delegates_:
+        entry["step_delegates_to_steps"] = "true"
     if streamable_:
         entry["streamable"] = "true"
     if async_stream_:
@@ -1269,6 +1282,7 @@ def _dump(cfg: dict) -> str:
             "mutable",
             "no_state",
             "no_step",
+            "step_delegates_to_steps",
             "streamable",
             "async_stream",
             "stream_block_default",
