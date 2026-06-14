@@ -101,6 +101,10 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
+            # gh-240: an optional `=default` makes a scalar param omittable.
+            pdefault = ""
+            if "=" in ptype:
+                ptype, pdefault = ptype.split("=", 1)
             if T.is_array_param_type(ptype):
                 elem_ct = T.array_elem_ctype(ptype)
                 if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
@@ -120,7 +124,26 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            method_params.append((pname, ptype))
+            if pdefault and (
+                T.is_array_param_type(ptype)
+                or T._CTYPE_META.get(ptype, {}).get("parse_type")
+            ):
+                print(
+                    f"error: --param default (=...) is only supported on plain"
+                    f" scalar params; '{pname}:{ptype}' cannot take a default.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not pdefault and any(
+                len(mp) > 2 and mp[2] for mp in method_params
+            ):
+                print(
+                    f"error: required param '{pname}' cannot follow a"
+                    f" defaulted param; defaulted params must come last.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            method_params.append((pname, ptype, pdefault))
             i += 1
         elif tok == "--out-divisor":
             i += 1

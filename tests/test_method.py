@@ -1790,3 +1790,53 @@ class TestMethodVarargs:
         )
         assert "extern PyObject *" in ext
         assert "METH_VARARGS | METH_KEYWORDS" in ext
+
+
+class TestMethodDefaultParams:
+    """gh-240 (Phase A.2): a named method with params is keyword-capable, and a
+    scalar param with a `default` is optional — after the `|` in the binding's
+    PyArg_ParseTupleAndKeywords format, its C local seeded to the default, and
+    rendered as `name: type = default` in the `.pyi`."""
+
+    def _scaffold(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        object_run(
+            dest,
+            "filt",
+            module=None,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+        method_run(
+            dest,
+            "filt",
+            "apply_gain",
+            None,
+            "void",
+            "void",
+            False,
+            [],
+            params=[
+                ("x", "float _Complex[]"),
+                ("gain", "double", "2.0"),
+            ],
+        )
+        return dest
+
+    def test_binding_is_kw_capable_with_default(self, tmp_path):
+        dest = self._scaffold(tmp_path)
+        ext = (dest / "native/src/filt/filt_ext.c").read_text("utf-8")
+        assert "PyObject *kwds)" in ext
+        assert 'static char *_kwlist[] = {"x", "gain", NULL};' in ext
+        assert '"O|d"' in ext  # x required, gain optional
+        assert "double gain = 2.0;" in ext  # C local seeded with the default
+        assert (
+            "(PyCFunction)(void *)Filt_apply_gain, METH_VARARGS | METH_KEYWORDS"
+            in ext
+        )
+
+    def test_pyi_shows_default(self, tmp_path):
+        dest = self._scaffold(tmp_path)
+        pyi = (dest / "src/dsp/filt.pyi").read_text("utf-8")
+        assert "gain: float = 2.0" in pyi

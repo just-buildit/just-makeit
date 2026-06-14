@@ -1308,6 +1308,15 @@ def make_methods_ctx(
         else:
             # Fixed-output wrapper
             _p_cleanup = ""
+            # gh-238/gh-240: branches that parse via _build_params_parse are
+            # positional-OR-keyword (the parse uses PyArg_ParseTupleAndKeywords
+            # + a kwlist), so their wrapper takes `kwds` and the PyMethodDef
+            # entry is METH_VARARGS | METH_KEYWORDS. The bare scalar `step`-shape
+            # arg (no params) and the no-arg case stay positional / NOARGS.
+            _kw_sig = (
+                f"{Component}Object *self, PyObject *args, PyObject *kwds"
+            )
+            _kw_flags = "METH_VARARGS | METH_KEYWORDS"
             if has_params and has_arg:
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
@@ -1315,21 +1324,21 @@ def make_methods_ctx(
                     _combined
                 )
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = f"{Component}Object *self, PyObject *args"
-                meth_flags = "METH_VARARGS"
+                fn_sig = _kw_sig
+                meth_flags = _kw_flags
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(params)
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = f"{Component}Object *self, PyObject *args"
-                meth_flags = "METH_VARARGS"
+                fn_sig = _kw_sig
+                meth_flags = _kw_flags
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     [_x_param]
                 )
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = f"{Component}Object *self, PyObject *args"
-                meth_flags = "METH_VARARGS"
+                fn_sig = _kw_sig
+                meth_flags = _kw_flags
             elif has_arg:
                 parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
                 call_args_c = "self->handle, x"
@@ -1497,8 +1506,15 @@ def make_methods_ctx(
                 _fix_doc_lines.append(f"    {_py_z}")
             else:
                 _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
+            # A METH_KEYWORDS wrapper has the 3-arg PyCFunctionWithKeywords
+            # signature; cast through `(void *)` to silence -Wcast-function-type.
+            _cast = (
+                "(PyCFunction)(void *)"
+                if "KEYWORDS" in meth_flags
+                else "(PyCFunction)"
+            )
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
+                f'    {{"{name}", {_cast}{wrapper_prefix}_{name},'
                 f" {meth_flags},\n"
                 f"     {_build_ml_doc(_fix_doc_lines)}}},\n"
             )
@@ -1520,7 +1536,13 @@ def make_methods_ctx(
             if pt.endswith("[]"):
                 param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
             else:
-                param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}")
+                # gh-240: a defaulted scalar renders as an optional kwarg.
+                _suffix = (
+                    f" = {p['default']}"
+                    if p.get("default") not in (None, "")
+                    else ""
+                )
+                param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
         if result_fields:
             ret_ann = "list[tuple]"
         elif m_var:
