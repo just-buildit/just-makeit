@@ -371,18 +371,19 @@ capability is ~free unless keywords are actually used — see
 
 **Arguments**
 
-| Argument                | Description                                                                                        |
-| ----------------------- | -------------------------------------------------------------------------------------------------- |
-| `name`                  | Snake-case function name.                                                                          |
-| `--module mod`          | Module the function belongs to (required).                                                         |
-| `--param name:type`     | Named typed scalar parameter. Repeatable.                                                          |
-| `--param name:type[]`   | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.     |
-| `--return-type TYPE`    | C return type (default: `void`).                                                                   |
-| `--inline`              | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                 |
-| `--doc "text"`          | Python docstring for the function.                                                                 |
-| `--impl file::funcname` | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub. |
-| `--impl file::N:M`      | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.   |
-| `--replace old::new`    | String substitution applied to the body lifted by `--impl`. Repeatable.                            |
+| Argument                    | Description                                                                                                                                                    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                      | Snake-case function name.                                                                                                                                      |
+| `--module mod`              | Module the function belongs to (required).                                                                                                                     |
+| `--param name:type`         | Named typed scalar parameter. Repeatable.                                                                                                                      |
+| `--param name:type=default` | Optional scalar parameter — omitting it yields `default` (e.g. `gain:double=1.0`). Optional params must come after required ones; plain scalars only (gh-240). |
+| `--param name:type[]`       | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                 |
+| `--return-type TYPE`        | C return type (default: `void`).                                                                                                                               |
+| `--inline`                  | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                             |
+| `--doc "text"`              | Python docstring for the function.                                                                                                                             |
+| `--impl file::funcname`     | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                             |
+| `--impl file::N:M`          | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.                                                               |
+| `--replace old::new`        | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                        |
 
 **Example — no parameters:**
 

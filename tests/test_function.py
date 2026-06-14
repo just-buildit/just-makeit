@@ -145,6 +145,68 @@ class TestFunctionKeywordCapable:
         )
 
 
+class TestFunctionDefaultParams:
+    """gh-240: a scalar param with a `default` is optional — it goes after the
+    `|` in the parse format and its C local is initialised to the default, so an
+    omitted arg yields it."""
+
+    def _wrappers(self, params):
+        from just_makeit._render import make_functions_ctx
+
+        fns = [{"name": "scaled", "return_type": "void", "params": params}]
+        return make_functions_ctx("dsp", "Dsp", fns)["function_wrappers"]
+
+    def test_default_scalar_is_optional_in_format(self):
+        w = self._wrappers(
+            [
+                {"name": "x", "type": "float _Complex[]"},
+                {"name": "gain", "type": "double", "default": "2.0"},
+            ]
+        )
+        # required array before the `|`, defaulted scalar after it
+        assert '"O|d"' in w
+        assert "double gain = 2.0;" in w  # C local seeded with the default
+
+    def test_two_defaults_after_one_bar(self):
+        w = self._wrappers(
+            [
+                {"name": "x", "type": "float _Complex[]"},
+                {"name": "gain", "type": "double", "default": "1.0"},
+                {"name": "floor", "type": "double", "default": "-80.0"},
+            ]
+        )
+        assert '"O|dd"' in w  # a single `|`, both scalars optional
+        assert "double gain = 1.0;" in w
+        assert "double floor = -80.0;" in w
+
+    def test_required_after_default_raises(self):
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError):
+            self._wrappers(
+                [
+                    {"name": "gain", "type": "double", "default": "1.0"},
+                    {"name": "n", "type": "size_t"},  # required after default
+                ]
+            )
+
+    def test_pyi_shows_default(self, tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["dsp"])
+        function_run(
+            root,
+            "scaled",
+            "dsp",
+            params=[
+                ("x", "float _Complex[]"),
+                ("gain", "double", False, "2.0"),
+            ],
+            return_type="void",
+        )
+        pyi = (root / "src/dsp/dsp/dsp.pyi").read_text(encoding="utf-8")
+        assert "gain: float = 2.0" in pyi
+
+
 class TestFunctionOutParamRoundTrip:
     """gh-221: an `out` param supplied to `function_run` as a 3-tuple
     `(name, type, is_out)` (the shape the CLI's `--out-param` builds) must
