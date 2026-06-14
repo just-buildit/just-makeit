@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.8] — 2026-06-14
+
 ### Added
 
 - **`record_name` for single-record methods (gh-257)** — a `--single` method's
@@ -13,6 +15,16 @@
 
 ### Fixed
 
+- **Manifest-authored `single` + scalar param defaults were dropped by
+    `jm apply` (gh-257)** — gh-244 wired `jm method --single` /
+    `--param x:T=default` via the CLI + codegen, but the manifest→apply
+    round-trip that regenerated projects use never read them back, so authoring
+    those keys in TOML was silently ignored. `_apply` now forwards `single` and
+    3-tuple params (with defaults); `_stubs` types a `single` record as
+    `tuple[...]` and renders param defaults; and the single-record
+    `PyStructSequence` binding threads scalar method params (the
+    `analyze(x, lo, hi, …, guard_hz=0.0)` shape) into both the parse block and
+    the by-value kernel call.
 - **`jm apply`/`save` silently dropped unknown method keys (gh-257)** — the
     manifest write pass enumerated only the method keys it knew, so any
     hand-authored key (such as `record_name`) never survived a
