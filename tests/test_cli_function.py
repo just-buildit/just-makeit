@@ -62,7 +62,7 @@ class TestCliFunction:
             mock_run.assert_called_once()
             _, kwargs = mock_run.call_args
             assert kwargs["return_type"] == "float"
-            assert ("x", "float", False) in kwargs["params"]
+            assert ("x", "float", False, "") in kwargs["params"]
 
     def test_doc_missing_value_exits(self):
         with pytest.raises(SystemExit):
@@ -86,18 +86,43 @@ class TestCliFunction:
         with patch("just_makeit._function.run") as mock_run:
             _run(["fn", "--module", "dsp", "--param", "buf:float[]"])
             _, kwargs = mock_run.call_args
-            assert ("buf", "float[]", False) in kwargs["params"]
+            assert ("buf", "float[]", False, "") in kwargs["params"]
 
     def test_out_param_array(self):
         with patch("just_makeit._function.run") as mock_run:
             _run(["fn", "--module", "dsp", "--out-param", "out:float[]"])
             _, kwargs = mock_run.call_args
-            assert ("out", "float[]", True) in kwargs["params"]
+            assert ("out", "float[]", True, "") in kwargs["params"]
 
     def test_out_param_scalar_exits(self):
         # --out-param only applies to array params; scalars are rejected.
         with pytest.raises(SystemExit):
             _run(["fn", "--module", "dsp", "--out-param", "x:float"])
+
+    def test_scalar_default_parsed(self):
+        # gh-240: `name:type=default` → 4-tuple carrying the default.
+        with patch("just_makeit._function.run") as mock_run:
+            _run(["fn", "--module", "dsp", "--param", "gain:double=1.5"])
+            _, kwargs = mock_run.call_args
+            assert ("gain", "double", False, "1.5") in kwargs["params"]
+
+    def test_default_on_array_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "dsp", "--param", "buf:float[]=x"])
+
+    def test_required_after_default_exits(self):
+        with pytest.raises(SystemExit):
+            _run(
+                [
+                    "fn",
+                    "--module",
+                    "dsp",
+                    "--param",
+                    "gain:double=1.0",
+                    "--param",
+                    "n:size_t",
+                ]
+            )
 
     def test_return_type_bad_exits(self):
         with pytest.raises(SystemExit):

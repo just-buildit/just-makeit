@@ -25,13 +25,19 @@ from . import _render as T
 from ._init import _write_compile_commands
 from ._object import _regenerate_module
 
-# A function param is ``(name, type)`` or, for a writable array output param
-# (``--out-param``), ``(name, type, is_out)``.  The third element, when present
-# and truthy, renders the C binding as a non-const ``T *`` with a writable
-# NumPy view (gh-197/#221).  ``Union`` (not ``A | B``) because this is a
-# runtime module-level value, and ``GenericAlias | GenericAlias`` raises on
-# Python 3.9 (`from __future__ import annotations` only defers annotations).
-FnParam = Union[tuple[str, str], tuple[str, str, bool]]
+# A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
+# array output param (``--out-param``), where a truthy third element renders the
+# C binding as a non-const ``T *`` + writable NumPy view (gh-197/#221); or
+# ``(name, type, is_out, default)`` where a non-empty fourth element makes a
+# scalar param optional with that default (gh-240).  ``Union`` (not ``A | B``)
+# because this is a runtime module-level value, and ``GenericAlias |
+# GenericAlias`` raises on Python 3.9 (`from __future__ import annotations` only
+# defers annotations).
+FnParam = Union[
+    tuple[str, str],
+    tuple[str, str, bool],
+    tuple[str, str, bool, str],
+]
 
 
 def _write_function_c(
@@ -247,14 +253,16 @@ def run(
     if doc:
         fn_entry["doc"] = doc
     if params:
-        # Round-trip the optional `out` flag from 3-tuples so it survives
-        # apply / script regeneration (gh-72).
+        # Round-trip the optional `out` flag (gh-72) and `default` (gh-240) from
+        # the CLI tuples so they survive apply / script regeneration.
         _entries: list[dict] = []
         for p in params:
             n, t = p[0], p[1]
             entry = {"name": n, "type": t}
             if len(p) > 2 and p[2]:
                 entry["out"] = True
+            if len(p) > 3 and p[3]:
+                entry["default"] = p[3]
             _entries.append(entry)
         fn_entry["params"] = _entries
     if return_type != "void":

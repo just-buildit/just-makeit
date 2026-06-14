@@ -15,6 +15,7 @@ from ._types import (
     _CTYPE_TO_NPY,
     _PYBUILD_FMT,
     _ctype_display,
+    _join_fmt_with_optional,
     array_elem_ctype,
     is_array_param_type,
     parse_out_type,
@@ -564,12 +565,20 @@ def _build_params_parse(
                     f"    {disp} {pname} = {meta['to_c'](pname)};"
                 )
             else:
-                decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
+                # gh-240: a scalar with a `default` is optional — its C local is
+                # initialised to the default literal so an omitted arg yields it
+                # (PyArg leaves it untouched). Required scalars init to zero.
+                init = p.get("default") or meta["zero"]
+                decl_lines.append(f"    {disp} {pname} = {init};")
                 addr_exprs.append(f"&{pname}")
 
             call_args.append(pname)
 
-    fmt_str = "".join(fmt_chars)
+    # gh-240: split required vs optional. A param with a `default` is optional;
+    # the `|` in the PyArg format goes before the first optional param. Optional
+    # params must follow all required ones (the PyArg `|` rule == Python's
+    # "no required parameter after a defaulted one"); validate and error clearly.
+    fmt_str = _join_fmt_with_optional(fmt_chars, params)
     addr_str = ", ".join(addr_exprs)
     # gh-238: module functions are positional-OR-keyword. Each param name is a
     # kwarg (an array param's kwarg is its object), and the kwlist order matches

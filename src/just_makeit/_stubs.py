@@ -690,7 +690,14 @@ def _fn_stub(fn: dict) -> str:
         ret = _py(fn.get("return_type", "void"))
     params = fn.get("params", [])
     doc = fn.get("doc", "")
-    parts = [f"{p['name']}: {_py(p['type'])}" for p in params]
+    # gh-240: a param with a `default` is optional — surface it in the stub
+    # (`name: type = <default>`) so type-checkers and readers see the default.
+    parts = []
+    for p in params:
+        part = f"{p['name']}: {_py(p['type'])}"
+        if p.get("default") not in (None, ""):
+            part += f" = {p['default']}"
+        parts.append(part)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     one_liner = (
         doc.split("\n")[0]

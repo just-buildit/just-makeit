@@ -55,6 +55,13 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
+            # gh-240: an optional `=default` suffix makes a scalar param
+            # omittable (the binding applies the default when the caller leaves
+            # it out). Scoped to plain scalars: arrays, out-params, and complex
+            # (parse_type) scalars stay required.
+            pdefault = ""
+            if "=" in ptype:
+                ptype, pdefault = ptype.split("=", 1)
             if T.is_array_param_type(ptype):
                 elem_ct = T.array_elem_ctype(ptype)
                 if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
@@ -83,7 +90,27 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            fn_params.append((pname, ptype, is_out_flag))
+            if pdefault and (
+                T.is_array_param_type(ptype)
+                or is_out_flag
+                or T._CTYPE_META.get(ptype, {}).get("parse_type")
+            ):
+                print(
+                    f"error: --param default (=...) is only supported on plain"
+                    f" scalar params; '{pname}:{ptype}' cannot take a default.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # A defaulted param makes everything after it optional too: a
+            # required param may not follow a defaulted one (PyArg `|` rule).
+            if not pdefault and any(len(fp) > 3 and fp[3] for fp in fn_params):
+                print(
+                    f"error: required param '{pname}' cannot follow a"
+                    f" defaulted param; defaulted params must come last.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_params.append((pname, ptype, is_out_flag, pdefault))
             i += 1
         elif tok == "--return-type":
             i += 1

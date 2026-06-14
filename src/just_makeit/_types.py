@@ -324,6 +324,39 @@ def parse_out_type(out_type: str) -> tuple[str, str | None]:
     return out_type, None
 
 
+def _join_fmt_with_optional(fmt_chars: list[str], params: list[dict]) -> str:
+    """Join PyArg format chars, inserting ``|`` before the first optional param.
+
+    A param dict with a truthy ``default`` key is *optional* (omitting the arg
+    yields the default). The ``|`` marker in a ``PyArg_ParseTuple[AndKeywords]``
+    format separates required from optional, so every optional param must follow
+    all required ones — the same constraint Python enforces as "a non-default
+    parameter cannot follow a default one". Each param contributes exactly one
+    format char (an array param is a single ``O``), so param index == fmt index.
+
+    Raises ``ValueError`` if a required param follows a defaulted one.
+    """
+    first_opt = next(
+        (
+            i
+            for i, p in enumerate(params)
+            if p.get("default") not in (None, "")
+        ),
+        None,
+    )
+    if first_opt is None:
+        return "".join(fmt_chars)
+    for p in params[first_opt:]:
+        if p.get("default") in (None, ""):
+            raise ValueError(
+                f"parameter '{p['name']}' has no default but follows a "
+                "defaulted parameter; defaulted parameters must come last"
+            )
+    return (
+        "".join(fmt_chars[:first_opt]) + "|" + "".join(fmt_chars[first_opt:])
+    )
+
+
 def is_string_enum_type(ptype: str) -> bool:
     """Return True if ptype is a string-enum spec ('string_enum:a,b,...')."""
     return ptype.startswith("string_enum:")

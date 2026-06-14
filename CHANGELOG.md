@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Optional `jm function` params with defaults (gh-240)** — a scalar param may
+    declare a default: `jm function fn --param gain:double=1.0`. The param
+    becomes optional — `fn(x)` uses the default, `fn(x, 2.0)` / `fn(x, gain=2.0)`
+    overrides. The default goes after the `|` in the binding's
+    `PyArg_ParseTupleAndKeywords` format with the C local seeded to it, and shows
+    in the `.pyi` as `gain: float = 1.0`. Defaulted params must follow required
+    ones (the PyArg `|` rule == Python's "no required after default"); only plain
+    scalars take defaults (arrays / `out=` / complex stay required). The
+    omit-the-default path is ~free (see [Arguments](arguments.md)). Named-method
+    and `steps()` defaults follow next.
+
 - **`jm function` bindings are positional-or-keyword (gh-238)** — a generated
     module-level function with parameters now accepts keyword arguments
     (`dsp.scale_add(x=x, out=out, gain=2.0)`), matching constructors and named
@@ -13,6 +24,7 @@
     near-free (~0–5 ns/call) when callers still pass positionally — the keyword
     match cost (~12–25 ns/arg) is paid only when keywords are actually used. The
     per-sample hot path (`step()`/`steps()`) stays positional-only.
+
 - **New guide: [Arguments: positional vs keyword](arguments.md)** — documents
     what parsing jm emits where, the measured cost of each parsing style
     (including default/optional arguments), and the project-wide rule:

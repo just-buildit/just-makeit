@@ -133,9 +133,14 @@ the form:
 
 This is the "adjust in the hot path" story made concrete: `step(x)` takes the
 default, `step(x, override)` passes the override positionally — both effectively
-free, no keyword tax. (Module-function, method, and step/steps parameters are
-all required today — their CLI form `--param name:type` carries no default — so
-this is the rule for *when* defaults are added, not a feature that exists yet.)
+free, no keyword tax.
+
+**Module functions** support this today: `jm function fn --param gain:double=1.0`
+makes `gain` an optional keyword/positional arg — `fn(x)` uses `1.0`, while
+`fn(x, 2.0)` or `fn(x, gain=2.0)` overrides. Defaulted params must come after
+required ones, and (for now) only plain scalars take defaults. Named-method and
+`steps()` defaults are planned next — methods reuse this same lowering, and
+`steps()` will source its default from a `controllable` state field.
 
 ## Going faster than both
 

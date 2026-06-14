@@ -1322,6 +1322,9 @@ def _dump(cfg: dict) -> str:
                     # `mutable` is a synonym for `out`; canonicalise on dump.
                     if p.get("out") or p.get("mutable"):
                         base += ", out = true"
+                    # gh-240: an optional scalar default round-trips as a string.
+                    if p.get("default") not in (None, ""):
+                        base += f', default = "{p["default"]}"'
                     _emit.append("{" + base + "}")
                 lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
