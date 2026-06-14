@@ -246,7 +246,13 @@ def _build_no_state_init_ctx(
         dflt_raw = _dflt_raw[0] if _dflt_raw else ""
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
-            raw_init = dflt_raw if dflt_raw else meta["parse_zero"]
+            # gh-244: a parse_type init param (e.g. size_t via the K-format
+            # `unsigned long long` intermediate) parses into a `_raw` local, so
+            # its default must seed that local. Prefer an explicit `dflt_raw`,
+            # then the plain `dflt` (a size_t/int literal is a valid raw init),
+            # then the type's zero — previously `dflt` was ignored and an
+            # integer default silently zeroed (NULL ctor / wrong value).
+            raw_init = dflt_raw or dflt or meta["parse_zero"]
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )

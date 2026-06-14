@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`size_t` (and other `parse_type`) init-param defaults were dropped (gh-244)**
+    — a `parse_type` init param parses into a `<parse_type> <name>_raw`
+    intermediate (size_t via the `K`-format `unsigned long long`), and its
+    declared `default` must seed that `_raw` local. The generator used only the
+    rarely-set `default_raw`, so an integer default like `n = 8192` silently
+    initialised to `0` — the constructor then built with `n=0` (NULL →
+    `MemoryError`) or a wrong value (e.g. `pad=0`). `double`/`float` defaults
+    took a different branch and were unaffected. The `_raw` local now seeds from
+    `default_raw`, then the plain `default`, then the type's zero.
+
 ## [0.19.5] — 2026-06-14
 
 ### Added
