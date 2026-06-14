@@ -100,9 +100,31 @@
  * Usage (16-tap FIR: TAPS=16, LENGTH=TAPS-1=15):
  *   JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
  *                   FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
+ *
+ * Controllable per-call overrides (gh-240): when a state field is
+ * `controllable = true`, the generated fn_step() gains a trailing scalar
+ * parameter (e.g. `fn_step(state, x, float gain)`) and fn_steps() must accept
+ * and forward it. Use JM_DEFINE_STEPS_EX with two paren-wrapped suffixes — the
+ * parameter list and the matching argument list — so the macro threads the
+ * control into fn_steps()'s signature, the scalar tail call, and the SIMD batch
+ * call alike. Your hand-written fn_step_batch() takes the same trailing param:
+ *   JM_DEFINE_STEPS_EX(fir_filter, fir_filter_state_t, float complex,
+ *                      FIR_LENGTH, FIR_BATCH, FIR_CHUNK,
+ *                      (, float gain), (, gain))
+ *   //  -> void fir_filter_steps(state, in, out, n, float gain)
+ *   //     fir_filter_step(state, in[_i], gain)
+ *   //     fir_filter_step_batch(state, _scratch + _p, output + _i + _p, gain)
+ * Plain JM_DEFINE_STEPS forwards to EX with empty suffixes (byte-identical to
+ * the pre-gh-240 expansion), so non-controllable perf code is unchanged.
  */
+
+/* Strip one layer of parens from a paren-wrapped token so a comma-containing
+ * suffix can be passed as a single macro argument: _JM_EVAL_ (, float g) yields
+ * `, float g`; _JM_EVAL_ () yields nothing. */
+#define _JM_EVAL_(...) __VA_ARGS__
+
 #if JM_SIMD_WIDTH_F32 > 1
-#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)                \
+#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK, CARGS)         \
     {                                                                          \
         samp _scratch[(LENGTH) + (CHUNK)];                                    \
         while (_i + (BATCH) <= n) {                                           \
@@ -112,27 +134,34 @@
                 _scratch[_j] = state->delay[(LENGTH) - 1 - _j];              \
             memcpy(_scratch + (LENGTH), input + _i, _blk * sizeof(samp));    \
             for (size_t _p = 0; _p < _main; _p += (BATCH))                   \
-                fn##_step_batch(state, _scratch + _p, output + _i + _p);     \
+                fn##_step_batch(state, _scratch + _p,                        \
+                                output + _i + _p _JM_EVAL_ CARGS);           \
             for (int _j = 0; _j < (LENGTH); _j++)                             \
                 state->delay[_j] = _scratch[_main + (LENGTH) - 1 - _j];     \
             _i += _main;                                                      \
         }                                                                      \
     }
 #else
-#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK)  /* scalar: no batching */
+#  define _JM_STEPS_SIMD_(fn, st, samp, LENGTH, BATCH, CHUNK, CARGS)  /* scalar: no batching */
 #endif
 
-#define JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)         \
+/* Full form: CPARAMS / CARGS are paren-wrapped control suffixes (see header
+ * comment). Both () for the no-control case. */
+#define JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK,      \
+                           CPARAMS, CARGS)                                    \
 void fn##_steps(                                                               \
         state_t            *state,                                             \
         const sample_t     *input,                                             \
         sample_t           *output,                                            \
-        size_t              n)                                                 \
+        size_t              n _JM_EVAL_ CPARAMS)                              \
 {                                                                              \
     size_t _i = 0;                                                             \
-    _JM_STEPS_SIMD_(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)              \
+    _JM_STEPS_SIMD_(fn, state_t, sample_t, LENGTH, BATCH, CHUNK, CARGS)       \
     for (; _i < n; _i++)                                                       \
-        output[_i] = fn##_step(state, input[_i]);                             \
+        output[_i] = fn##_step(state, input[_i] _JM_EVAL_ CARGS);            \
 }
+
+#define JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)         \
+    JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK, (), ())
 
 #endif /* JM_PERF_H */

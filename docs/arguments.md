@@ -185,8 +185,9 @@ at generation with a clear error. Because a controllable field changes the
 object needs **`jm regenerate`** (which rebuilds `_core.c`/`_core.h`), not
 `jm apply` (which only re-materialises the binding fragment). Under `--perf` the
 generated plain-loop `steps()` threads the override fine; if you hand-swap it for
-the `JM_DEFINE_STEPS` SIMD macro, control params aren't wired through that macro
-yet.
+the SIMD `JM_DEFINE_STEPS` macro, use the `JM_DEFINE_STEPS_EX(…, (, float gain), (, gain))` form, which threads the control through `comp_steps()`'s signature,
+the scalar tail call, and the `comp_step_batch()` SIMD call (plain
+`JM_DEFINE_STEPS` is just the empty-suffix case).
 
 ## Going faster than both
 

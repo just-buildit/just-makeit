@@ -647,3 +647,79 @@ def test_pr1b_shape_e2e(tmp_path, comp, at, rt, patch_old, patch_new, checks):
     )
     assert run.returncode == 0, f"{comp} runtime failed:\n{run.stderr}"
     assert "PR1B OK" in run.stdout
+
+
+# ── PR-2: controllable through the JM_DEFINE_STEPS SIMD macro (perf) ───────────
+
+
+class TestPerfMacro:
+    def test_macro_has_layered_ex_form(self, tmp_path):
+        # A --perf project emits jm_perf.h with the EX form + the plain
+        # forwarder, so a hand-written SIMD steps() can thread control params.
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        init_run(root, "c", arg_type="float", return_type="float", perf=True)
+        perf_h = (root / "native/inc/jm_perf.h").read_text()
+        assert "JM_DEFINE_STEPS_EX(" in perf_h
+        assert "_JM_EVAL_" in perf_h
+        # plain JM_DEFINE_STEPS forwards to EX with empty suffixes.
+        assert (
+            "JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK,"
+            " (), ())" in perf_h
+        )
+
+
+def test_perf_controllable_macro_e2e(tmp_path):
+    """A controllable --perf object whose steps() is hand-swapped to the SIMD
+    macro threads the override through fn_steps()/fn_step()/fn_step_batch()."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    root = tmp_path / "proj"
+    new_run("proj", root)
+    init_run(
+        root,
+        "c",
+        state_vars=[("gain", "float", "2.0")],
+        arg_type="float",
+        return_type="float",
+        perf=True,
+        controllable_names=frozenset({"gain"}),
+    )
+    # step() = x * gain
+    h = root / "native/inc/c/c_core.h"
+    h.write_text(
+        h.read_text().replace("return (float)x;", "return (float)(x * gain);")
+    )
+    # Replace the generated plain-loop steps() with the SIMD macro + a batch fn.
+    import re
+
+    c = root / "native/src/c/c_core.c"
+    body = re.sub(r"void\s+c_steps\(.*?\n\}\n", "", c.read_text(), flags=re.S)
+    body += (
+        "\nstatic inline void\n"
+        "c_step_batch(c_state_t *state, const float *in, float *out,"
+        " float gain)\n"
+        "{ (void)state; for (int i = 0; i < 4; i++) out[i] = in[i] * gain; }\n"
+        "JM_DEFINE_STEPS_EX(c, c_state_t, float, 0, 4, 64,"
+        " (, float gain), (, gain))\n"
+    )
+    c.write_text(body)
+    _cmake_build(root)
+    script = (
+        "import numpy as np\n"
+        "from proj import C\n"
+        "o = C(gain=2.0)\n"
+        "x = np.arange(8, dtype=np.float32)\n"
+        "assert np.allclose(o.steps(x), x * 2.0), 'macro steps omit'\n"
+        "assert np.allclose(o.steps(x, gain=10.0), x * 10.0), 'macro steps kw'\n"
+        "assert o.step(3.0) == 6.0 and o.step(3.0, 5.0) == 15.0\n"
+        "print('PERF MACRO OK')\n"
+    )
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=root / "src",
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, f"runtime failed:\n{run.stderr}"
+    assert "PERF MACRO OK" in run.stdout
