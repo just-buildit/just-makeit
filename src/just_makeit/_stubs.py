@@ -531,7 +531,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     elif arg_type.endswith("[]"):
         lines += [
             "",
-            f"    def step(self, x: {_py(arg_type)}) -> {_py(return_type)}:",
+            f"    def step(self, x: {_py(arg_type)}{_ctrl_kw}"
+            f"{_ctrl_posonly}) -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
             f"{obj}_step",
@@ -568,7 +569,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             lines += [
                 "",
-                f"    def steps(self, x: NDArray[{_np(arg_type)}]) -> None:",
+                f"    def steps(self, x: NDArray[{_np(arg_type)}]"
+                f"{_ctrl_kw}) -> None:",
             ]
             lines += _builtin_doc(
                 f"{obj}_steps",
@@ -577,14 +579,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 "Process a samples array.",
             )
     else:
-        lines += ["", f"    def step(self) -> {_py(return_type)}:"]
+        lines += [
+            "",
+            f"    def step(self{_ctrl_kw}{_ctrl_posonly})"
+            f" -> {_py(return_type)}:",
+        ]
         lines += _builtin_doc(
             f"{obj}_step", [], _py(return_type), "Generate one output sample."
         )
         if return_type != "void":
             lines += [
                 "",
-                f"    def steps(self, n: int) -> NDArray[{_np(return_type)}]:",
+                f"    def steps(self, n: int{_ctrl_kw})"
+                f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(
                 f"{obj}_steps",
@@ -593,7 +600,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 "Generate n output samples.",
             )
         else:
-            lines += ["", "    def steps(self, n: int) -> None:"]
+            lines += [
+                "",
+                f"    def steps(self, n: int{_ctrl_kw}) -> None:",
+            ]
             lines += _builtin_doc(
                 f"{obj}_steps",
                 [("n", "int")],
