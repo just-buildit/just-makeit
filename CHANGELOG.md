@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.6] — 2026-06-14
+
 ### Added
 
 - **Single named-record method returns (`jm method … --single`, gh-244)** — a
