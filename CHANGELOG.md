@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm function` bindings are positional-or-keyword (gh-238)** — a generated
+    module-level function with parameters now accepts keyword arguments
+    (`dsp.scale_add(x=x, out=out, gain=2.0)`), matching constructors and named
+    methods. The binding emits `METH_VARARGS | METH_KEYWORDS` +
+    `PyArg_ParseTupleAndKeywords` with a `kwlist` of the parameter names; a
+    no-parameter function stays `METH_NOARGS`. Keyword *capability* is
+    near-free (~0–5 ns/call) when callers still pass positionally — the keyword
+    match cost (~12–25 ns/arg) is paid only when keywords are actually used. The
+    per-sample hot path (`step()`/`steps()`) stays positional-only.
+- **New guide: [Arguments: positional vs keyword](arguments.md)** — documents
+    what parsing jm emits where, the measured cost of each parsing style
+    (including default/optional arguments), and the project-wide rule:
+    positional-only for the `step()`/`steps()` hot path, positional-or-keyword
+    for constructors, methods, and functions.
+
 ### Changed
 
 - **Examples track doppler 0.15.1 and the Docker image drops `g++`.** The

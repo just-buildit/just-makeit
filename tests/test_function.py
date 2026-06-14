@@ -92,6 +92,59 @@ class TestFunctionOutParamConst:
         assert "NPY_ARRAY_WRITEABLE" not in w
 
 
+class TestFunctionKeywordCapable:
+    """gh-238: a module function with params is positional-OR-keyword —
+    METH_VARARGS | METH_KEYWORDS + PyArg_ParseTupleAndKeywords with a kwlist of
+    the param names. A no-param function stays METH_NOARGS. Keyword capability
+    is ~free when callers pass positionally; only actual keyword use pays the
+    match cost (the per-sample hot path step()/steps() stays positional-only)."""
+
+    def _ctx(self, fns):
+        from just_makeit._render import make_functions_ctx
+
+        return make_functions_ctx("dsp", "Dsp", fns)
+
+    def test_param_function_is_kw_capable(self):
+        ctx = self._ctx(
+            [
+                {
+                    "name": "scale_add",
+                    "return_type": "void",
+                    "params": [
+                        {"name": "x", "type": "float _Complex[]"},
+                        {"name": "gain", "type": "double"},
+                        {"name": "bias", "type": "double"},
+                    ],
+                }
+            ]
+        )
+        w = ctx["function_wrappers"]
+        # 3-arg binding signature + kwds parse + kwlist of the param names
+        assert (
+            "_bind_scale_add(PyObject *self, PyObject *args, "
+            "PyObject *kwds)" in w
+        )
+        assert 'static char *_kwlist[] = {"x", "gain", "bias", NULL};' in w
+        assert "PyArg_ParseTupleAndKeywords(args, kwds," in w
+        assert (
+            "PyArg_ParseTuple(args," not in w
+        )  # not the positional-only form
+        # PyMethodDef: kw flags + the (void *) cast for the 3-arg signature
+        assert (
+            '{"scale_add", (PyCFunction)(void *)_bind_scale_add, '
+            "METH_VARARGS | METH_KEYWORDS," in ctx["module_methods_def"]
+        )
+
+    def test_no_param_function_stays_noargs(self):
+        ctx = self._ctx([{"name": "reset", "return_type": "void"}])
+        # no kwds, no ParseTupleAndKeywords, plain METH_NOARGS entry
+        assert "PyObject *kwds" not in ctx["function_wrappers"]
+        assert "ParseTupleAndKeywords" not in ctx["function_wrappers"]
+        assert (
+            '{"reset", _bind_reset, METH_NOARGS,' in ctx["module_methods_def"]
+        )
+
+
 class TestFunctionOutParamRoundTrip:
     """gh-221: an `out` param supplied to `function_run` as a 3-tuple
     `(name, type, is_out)` (the shape the CLI's `--out-param` builds) must

@@ -363,6 +363,12 @@ array.
 With `--inline` the function instead lives entirely as a `static inline` body
 in `<module>_core.h` and gets no `.c` file.
 
+The generated `_bind_<name>` wrapper is **positional-or-keyword**
+(`METH_VARARGS | METH_KEYWORDS`): callers may pass arguments positionally or by
+name (`fn(input=x, n=8)`). A no-parameter function stays `METH_NOARGS`. Keyword
+capability is ~free unless keywords are actually used — see
+[Arguments: positional vs keyword](../arguments.md).
+
 **Arguments**
 
 | Argument                | Description                                                                                        |
