@@ -31,10 +31,12 @@ from pathlib import Path
 
 # Pinned doppler version for the auto-download path. Bump when doppler
 # cuts a new release; eventually replace with a GitHub API lookup of the
-# latest release. Must be >= 0.13.0, which introduced the
-# `doppler::doppler-static` cmake target this example links (and moved the
-# install dir lib64/ -> lib/).
-_DOPPLER_VERSION = "0.13.2"
+# latest release. Must be >= 0.14.0, which made `doppler::doppler-static`
+# C++-free (C99 pocketfft; the ZMQ/stream layer split into the optional
+# `doppler::stream` targets) — so anything linking it resolves with `-lm`
+# alone and no C++ stdlib. (0.13.0 introduced the target and moved the
+# install dir lib64/ -> lib/.)
+_DOPPLER_VERSION = "0.15.1"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
