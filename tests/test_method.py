@@ -1901,3 +1901,110 @@ class TestMethodSingleRecord:
             "def analyze(self, x: NDArray[np.complex64])"
             " -> tuple[float, float, int]:" in pyi
         )
+
+    # gh-257: a single-record method WITH scalar params, one defaulted — the
+    # doppler NPRMeasure.analyze(x, lo, hi, ..., guard_hz=0.0) shape that hit
+    # bug #3 (the single binding ignored method params -> too-few-arguments).
+    def _scaffold_with_params(self, tmp_path):
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_metrics_t",
+            False,
+            [],
+            params=[
+                ("lo", "double"),
+                ("hi", "double"),
+                ("guard_hz", "double", "0.0"),
+            ],
+            result_fields=[
+                {"name": "snr", "type": "float"},
+                {"name": "thd", "type": "float"},
+            ],
+            single=True,
+        )
+        return dest
+
+    def test_single_with_params_keyword_binding(self, tmp_path):
+        ext = (
+            self._scaffold_with_params(tmp_path) / "native/src/tm/tm_ext.c"
+        ).read_text("utf-8")
+        # input array + scalar params -> keyword-capable parse, default
+        # applied, params threaded into the by-value structseq kernel call.
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "Odd|d",' in ext
+        assert '{"x", "lo", "hi", "guard_hz", NULL}' in ext
+        assert "double guard_hz = 0.0;" in ext
+        assert "n_in, lo, hi, guard_hz);" in ext
+        assert (
+            '{"analyze", (PyCFunction)(void *)Tm_analyze,'
+            " METH_VARARGS | METH_KEYWORDS," in ext
+        )
+        assert "PyStructSequence_New(Tm_analyze_type)" in ext
+        assert "PyList_New" not in ext
+
+    def test_single_with_params_survives_apply(self, tmp_path):
+        # The #257 round-trip: jm apply must preserve `single` + the param
+        # default when regenerating the binding from the manifest.
+        dest = self._scaffold_with_params(tmp_path)
+        apply_run(dest)
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert "double guard_hz = 0.0;" in ext
+        assert "n_in, lo, hi, guard_hz);" in ext
+        assert "PyStructSequence_New(Tm_analyze_type)" in ext
+        assert "PyList_New" not in ext
+
+    def test_single_with_params_pyi(self, tmp_path):
+        pyi = (
+            self._scaffold_with_params(tmp_path) / "src/p/tm.pyi"
+        ).read_text("utf-8")
+        assert (
+            "def analyze(self, x: NDArray[np.complex64], lo: float,"
+            " hi: float, guard_hz: float = 0.0) -> tuple[float, float]:" in pyi
+        )
+
+    def test_single_params_no_input_array(self, tmp_path):
+        # A single-record method with scalar params but NO input array
+        # (arg_type void) -> keyword-only parse, no array handling.
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "calib",
+            None,
+            "void",
+            "tone_metrics_t",
+            False,
+            [],
+            params=[("lo", "double"), ("gain", "double", "1.0")],
+            result_fields=[
+                {"name": "snr", "type": "float"},
+                {"name": "thd", "type": "float"},
+            ],
+            single=True,
+        )
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "d|d",' in ext
+        assert '{"lo", "gain", NULL}' in ext
+        assert "double gain = 1.0;" in ext
+        assert "tm_calib(self->handle, lo, gain);" in ext
+        assert "PyStructSequence_New(Tm_calib_type)" in ext
