@@ -77,6 +77,30 @@ def _kernel_call_block(call_expr: str, nogil: bool) -> str:
     )
 
 
+def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
+    """Emit ``<ret> _r = <call>;`` for a single-record method — GIL-released
+    when *nogil* (gh-261).
+
+    Mirrors :func:`_kernel_call_block` but for a by-value struct return: ``_r``
+    is declared *outside* the ``Py_BEGIN_ALLOW_THREADS`` block so it survives to
+    the ``SET_ITEM`` loop, and numpy accessors in the call are hoisted above the
+    block (the input array stays alive — its ``Py_DECREF`` runs after, under the
+    GIL). Non-nogil reproduces the original single line by line."""
+    if not nogil:
+        return f"    {ret_disp} _r = {call_expr};\n"
+    hoist, rewritten = _hoist_for_nogil(call_expr)
+    return (
+        "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
+        "     * this object is not shared across threads concurrently (one\n"
+        "     * object per stream). */\n"
+        f"{hoist}"
+        f"    {ret_disp} _r;\n"
+        "    Py_BEGIN_ALLOW_THREADS\n"
+        f"    _r = {rewritten};\n"
+        "    Py_END_ALLOW_THREADS\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # _bench_method_block
 # ---------------------------------------------------------------------------
@@ -1306,10 +1330,14 @@ def make_methods_ctx(
                     f"    }}\n"
                 )
                 _s_call = (
-                    f"    {ret_disp} _r = {component}_{name}(self->handle,\n"
-                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
-                    f" n_in{_call_tail});\n"
-                    f"    Py_DECREF(in_arr);\n"
+                    _single_kernel_block(
+                        ret_disp,
+                        f"{component}_{name}(self->handle,\n"
+                        f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
+                        f" n_in{_call_tail})",
+                        nogil,
+                    )
+                    + "    Py_DECREF(in_arr);\n"
                 )
             elif has_arg:
                 _s_parse = (
@@ -1331,10 +1359,14 @@ def make_methods_ctx(
                     f"    }}\n"
                 )
                 _s_call = (
-                    f"    {ret_disp} _r = {component}_{name}(self->handle,\n"
-                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
-                    f" n_in);\n"
-                    f"    Py_DECREF(in_arr);\n"
+                    _single_kernel_block(
+                        ret_disp,
+                        f"{component}_{name}(self->handle,\n"
+                        f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
+                        f" n_in)",
+                        nogil,
+                    )
+                    + "    Py_DECREF(in_arr);\n"
                 )
             elif _has_kw:
                 _kw = "".join(f'"{n}", ' for n in _sp_kwnames)
@@ -1353,9 +1385,10 @@ def make_methods_ctx(
                     f"        if (!{_sid}_type) return NULL;\n"
                     f"    }}\n"
                 )
-                _s_call = (
-                    f"    {ret_disp} _r ="
-                    f" {component}_{name}(self->handle{_call_tail});\n"
+                _s_call = _single_kernel_block(
+                    ret_disp,
+                    f"{component}_{name}(self->handle{_call_tail})",
+                    nogil,
                 )
             else:
                 _s_parse = ""
@@ -1366,8 +1399,10 @@ def make_methods_ctx(
                     f"        if (!{_sid}_type) return NULL;\n"
                     f"    }}\n"
                 )
-                _s_call = (
-                    f"    {ret_disp} _r = {component}_{name}(self->handle);\n"
+                _s_call = _single_kernel_block(
+                    ret_disp,
+                    f"{component}_{name}(self->handle)",
+                    nogil,
                 )
             _set_lines = []
             for _i, _f in enumerate(result_fields):

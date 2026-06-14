@@ -2070,3 +2070,51 @@ class TestMethodSingleRecord:
         assert "double gain = 1.0;" in ext
         assert "tm_calib(self->handle, lo, gain);" in ext
         assert "PyStructSequence_New(Tm_calib_type)" in ext
+
+    def test_single_nogil_releases_gil(self, tmp_path):
+        # gh-261: a single-record method with nogil wraps the by-value kernel
+        # in Py_BEGIN/END_ALLOW_THREADS, hoisting the array fetch above it and
+        # keeping the input's Py_DECREF under the GIL after.
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_metrics_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            nogil=True,
+        )
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert (
+            "(const float complex *)PyArray_DATA(in_arr);" in ext
+        )  # hoisted above the block
+        assert "tone_metrics_t _r;" in ext  # declared outside the block
+        assert "Py_BEGIN_ALLOW_THREADS" in ext
+        assert "_r = tm_analyze(self->handle," in ext
+        assert "Py_END_ALLOW_THREADS" in ext
+        # the input's final Py_DECREF stays under the GIL, after the released
+        # block (rindex skips the earlier error-path DECREF).
+        assert ext.index("Py_END_ALLOW_THREADS") < ext.rindex(
+            "Py_DECREF(in_arr)"
+        )
+
+    def test_single_without_nogil_holds_gil(self, tmp_path):
+        # default (no nogil) keeps the inline call, no ALLOW_THREADS — unchanged.
+        ext = (self._scaffold(tmp_path) / "native/src/tm/tm_ext.c").read_text(
+            "utf-8"
+        )
+        assert "ALLOW_THREADS" not in ext
+        assert "tone_metrics_t _r = tm_analyze(self->handle," in ext

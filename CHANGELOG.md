@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`nogil` was silently ignored on `single`-record methods (gh-261)** — a
+    `single` result_fields method that also set `nogil = true` generated a
+    binding that called the by-value kernel with the GIL **held** (no
+    `Py_BEGIN_ALLOW_THREADS`), so a pure-C record sweep (doppler's
+    `tonemeas.analyze`) couldn't scale thread-per-shard. The single-record
+    binding now wraps the kernel call in `Py_BEGIN/END_ALLOW_THREADS` when
+    `nogil` is set — hoisting the numpy array fetch above the block and keeping
+    the input's `Py_DECREF` under the GIL after — matching the `variable_output`
+    `nogil` path. Non-`nogil` output is byte-identical.
+
 ### Added
 
 - **`functions_in_core` — module functions in one TU (gh-247)** — a module's
