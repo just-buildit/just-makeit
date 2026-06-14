@@ -1974,6 +1974,68 @@ class TestMethodSingleRecord:
             " hi: float, guard_hz: float = 0.0) -> tuple[float, float]:" in pyi
         )
 
+    def test_record_name_overrides_derived_structseq_name(self, tmp_path):
+        # gh-257: a chosen public record name (ToneMetrics), independent of the
+        # C return type (tone_metrics_t would derive "ToneMetrics" anyway, so
+        # use a distinct name to prove the override).
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_meas_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            record_name="ToneMetrics",
+        )
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert '"tm.ToneMetrics"' in ext  # chosen name
+        assert '"tm.ToneMeas"' not in ext  # not the derived name
+
+    def test_record_name_round_trips_and_survives_apply(self, tmp_path):
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_meas_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            record_name="ToneMetrics",
+        )
+        # Persisted in the manifest (the generic unknown-key passthrough).
+        cfg = load(dest)
+        assert cfg["tm"]["methods"][0]["record_name"] == "ToneMetrics"
+        # Survives a from-manifest regenerate: delete the binding, re-apply.
+        (dest / "native/src/tm/tm_ext.c").unlink()
+        apply_run(dest)
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert '"tm.ToneMetrics"' in ext
+
     def test_single_params_no_input_array(self, tmp_path):
         # A single-record method with scalar params but NO input array
         # (arg_type void) -> keyword-only parse, no array handling.

@@ -1282,6 +1282,38 @@ def _doc_assign(value: str) -> str:
     return f'doc = "{body}"'
 
 
+# Method keys the _dump serializer emits explicitly (the list/table ones —
+# multi_output/extra_args/params/result_fields — included). Any OTHER scalar
+# key authored on a manifest method is round-tripped generically (gh-257) so a
+# hand-written key such as `record_name` survives save()->load() instead of
+# being silently stripped by the write pass.
+_KNOWN_METHOD_KEYS = frozenset(
+    {
+        "name",
+        "doc",
+        "arg_type",
+        "return_type",
+        "varargs",
+        "variable_output",
+        "pass_capacity",
+        "nogil",
+        "none_on_empty",
+        "batch",
+        "multi_output",
+        "extra_args",
+        "params",
+        "out_type",
+        "out_divisor",
+        "bench",
+        "max_results",
+        "result_fields",
+        "single",
+        "py_return_type",
+        "max_out",
+    }
+)
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -1518,6 +1550,24 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'py_return_type = "{m["py_return_type"]}"')
             if m.get("max_out"):
                 lines.append(f"max_out = {m['max_out']}")
+            # gh-257: preserve any manifest-authored scalar key the explicit
+            # block above doesn't know (e.g. `record_name`). List/table keys are
+            # already emitted above; `_`-prefixed keys are transient (e.g.
+            # `_doc_blocks`). Zero churn — jm only writes known keys, so this
+            # emits nothing for jm-generated manifests.
+            for _k, _v in m.items():
+                if (
+                    _k in _KNOWN_METHOD_KEYS
+                    or _k.startswith("_")
+                    or isinstance(_v, (list, dict))
+                ):
+                    continue
+                if isinstance(_v, bool):
+                    lines.append(f"{_k} = {'true' if _v else 'false'}")
+                elif isinstance(_v, (int, float)):
+                    lines.append(f"{_k} = {_v}")
+                else:
+                    lines.append(f'{_k} = "{_v}"')
             lines.append("")
         for p in comp_data.get("properties", []):
             lines.append(f"[[{comp}.properties]]")

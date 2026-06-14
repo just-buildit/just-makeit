@@ -517,3 +517,34 @@ class TestCommentPreservation:
         save(tmp_path, cfg)
         result = toml.read_text(encoding="utf-8")
         assert 'build = "make"' in result  # untouched key preserved
+
+
+def test_dump_preserves_unknown_scalar_method_keys():
+    # gh-257: the method serializer must round-trip manifest-authored keys it
+    # does not explicitly know (record_name + any future scalar), so the write
+    # pass stops silently stripping them. Transient `_`-prefixed and list/table
+    # keys are not re-emitted generically.
+    cfg = {
+        "tm": {
+            "arg_type": "void",
+            "return_type": "void",
+            "state": [],
+            "methods": [
+                {
+                    "name": "analyze",
+                    "return_type": "tone_meas_t",
+                    "single": True,
+                    "record_name": "ToneMetrics",  # unknown -> round-trips
+                    "future_flag": True,  # unknown bool
+                    "future_count": 7,  # unknown int
+                    "_doc_blocks": {"x": 1},  # transient -> skipped
+                }
+            ],
+        }
+    }
+    out = _dump(cfg)
+    assert 'record_name = "ToneMetrics"' in out
+    assert "future_flag = true" in out
+    assert "future_count = 7" in out
+    assert "_doc_blocks" not in out
+    assert out.count("single = true") == 1  # known key not duplicated
