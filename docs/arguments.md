@@ -57,9 +57,23 @@ Two very different costs, and conflating them is the trap:
     positional one. That's a deliberate ergonomics-for-speed trade the *caller*
     makes at each call site.
 
-This is also why `step()`/`steps()` stay positional-only: they're single-arg and
-run in tight loops, so even the ~3–5 ns capability tax isn't worth paying, and
-keywords would add no readability.
+### Where the cost lands: per-sample vs per-block
+
+The same nanoseconds matter very differently depending on how often the call
+fires — which is why `step()` and `steps()` are treated differently:
+
+- **`step()` is per-sample.** Its parse cost is paid on *every* sample, so it
+    stays **positional-only**. A *keyword* call on a per-sample binding is
+    catastrophic: `step(x, gain=…)` measures **+47 ns — ~3.4× the entire call** —
+    multiplied by every sample in the stream.
+- **`steps()` is per-block.** One parse amortises over the whole block (that same
+    +47 ns keyword call spread across a 1024-sample block is ~0.05 ns/sample), so
+    `steps()` can afford keyword arguments. Its `out=` variant
+    (`steps(x, out=buf)`) is keyword-capable for exactly this reason.
+
+Independently of arguments: prefer **`steps(block)`** over a per-sample `step()`
+loop — one call amortises the parse (and the Python call overhead) over the
+whole block.
 
 ### Default / optional arguments
 
@@ -94,11 +108,34 @@ it and get the default:
 Engine(gain=2.0)   # `rate` and any other defaulted init_params omitted → defaults
 ```
 
-Module-function and method parameters are all required today (their CLI form,
-`--param name:type`, carries no default), so there is nothing to make optional
-yet. If a parameter ever gains a default, it should follow the constructor's
-lead and become optional — the measurements above show that costs nothing for
-the callers who rely on the default.
+**Optional defaults do *not* require keyword capability.** `PyArg_ParseTuple`
+takes optional *positional* arguments via `|` (`"O|d"`) while staying
+`METH_VARARGS` — no keyword machinery at all. Measured against today's
+positional `step(x)`:
+
+| call                                            | Δ vs `step(x)`      |
+| ----------------------------------------------- | ------------------- |
+| `step(x)` — optional arg omitted (the hot path) | **+0.7 ns** (noise) |
+| `step(x, gain)` — override passed positionally  | +4 ns               |
+| if kw-capable: `step(x, gain=…)` — keyword call | **+47 ns**          |
+
+So a defaulted parameter lowers differently by call site — the cost model picks
+the form:
+
+1. **functions / named methods** → keyword-capable
+    (`PyArg_ParseTupleAndKeywords`, `|`). Multi-param, not the inner loop;
+    keyword clarity is worth it and is free unless used.
+1. **`step()`** (per-sample) → **positional-optional only** (`PyArg_ParseTuple`
+    with `|`); never `METH_KEYWORDS`. The omit path is free (+0.7 ns); a keyword
+    call would cost ~3× the call, *per sample*.
+1. **`steps()`** (per-block) → keyword-capable is fine (the parse amortises over
+    the block); positional-optional is fine too.
+
+This is the "adjust in the hot path" story made concrete: `step(x)` takes the
+default, `step(x, override)` passes the override positionally — both effectively
+free, no keyword tax. (Module-function, method, and step/steps parameters are
+all required today — their CLI form `--param name:type` carries no default — so
+this is the rule for *when* defaults are added, not a feature that exists yet.)
 
 ## Going faster than both
 
