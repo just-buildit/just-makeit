@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.7] — 2026-06-14
+
 ### Fixed
 
 - **`depends_on { link = true }` broke a collocated module-object's own
