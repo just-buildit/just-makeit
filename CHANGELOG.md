@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.5] — 2026-06-14
+
 ### Added
 
 - **Optional `jm method` params with defaults; named methods are now
