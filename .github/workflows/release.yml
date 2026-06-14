@@ -72,10 +72,12 @@ jobs:
           # Pull the block from ## [VER] down to the next ## heading (exclusive).
           # Match the literal `## [VER]` prefix with index() — a regex would need
           # the version's dots escaped. Write the block to a FILE and hand it to
-          # `gh release` via --notes-file: inlining the notes into the shell
-          # (`--notes "${{ ... }}"`, which pastes the text into the script
-          # source) let backticks / parens / braces in the changelog run as
-          # shell commands and aborted the job (release-notes shell injection).
+          # `gh release` via --notes-file: the old form inlined the notes with a
+          # templated expression in the shell, which pasted the changelog text
+          # into the script source so backticks / parens / braces ran as shell
+          # commands and aborted the job (release-notes shell injection).
+          # (NB: do not write a GitHub Actions expression literal in this
+          # comment — the runner parses one even inside a shell comment.)
           awk -v ver="$VER" \
             'index($0, "## [" ver "]") == 1 {found=1; next}
              found && /^## / {exit}
