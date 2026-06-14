@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Controllable overrides through the SIMD `JM_DEFINE_STEPS` macro (gh-240)** —
+    the perf-path macro gains a `JM_DEFINE_STEPS_EX(fn, …, CPARAMS, CARGS)` form
+    that threads a controllable override into the generated `fn_steps()`
+    signature, the scalar tail call, and the `fn_step_batch()` SIMD call. Plain
+    `JM_DEFINE_STEPS` now forwards to it with empty suffixes, so existing perf
+    code (e.g. the `fir_filter` example) expands byte-identically. This closes
+    the last gap of the optional/default-parameters epic: a controllable field
+    now works with hand-written SIMD `steps()`, not just the generated
+    plain-loop. Usage: `JM_DEFINE_STEPS_EX(comp, comp_state_t, float, L, B, C,   (, float gain), (, gain))`.
+
 - **Controllable overrides on every `step()`/`steps()` shape (gh-240)** —
     `controllable = true` now works on **all** non-perf shapes: scalar→scalar,
     scalar→void sinks, void-arg generators and ticks, array-input `step()`, and
