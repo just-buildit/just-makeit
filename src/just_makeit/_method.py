@@ -182,6 +182,42 @@ def _methods_c_stub_result_fields(
     return "\n".join(lines) + "\n"
 
 
+def _methods_c_stub_result_single(
+    component: str,
+    name: str,
+    arg_type: str,
+    return_type: str,
+) -> str:
+    """C stub for a method that returns one record struct by value (gh-244).
+
+    The single-record sibling of :func:`_methods_c_stub_result_fields`: no
+    ``results[]`` buffer / ``max_results`` — the kernel computes and returns one
+    ``<return_type>`` value, which the binding unpacks into a named
+    PyStructSequence.
+    """
+    ret_disp = T._ctype_display(return_type)
+    has_arg = arg_type != "void"
+    if has_arg:
+        arg_disp = _block_in_elem_disp(arg_type)
+        step_param = f", const {arg_disp} *in, size_t n_in"
+        suppress = "    (void)in; (void)n_in;"
+    else:
+        step_param = ""
+        suppress = ""
+    lines = [
+        "/* <<IMPLEMENT: compute and return the record >> */",
+        ret_disp,
+        f"{component}_{name}({component}_state_t *state{step_param})",
+        "{",
+        "    (void)state;",
+        suppress,
+        f"    {ret_disp} _r = {{0}};",
+        "    return _r; /* placeholder */",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _methods_c_stub_fixed(
     component: str,
     name: str,
@@ -501,6 +537,7 @@ def run(
     none_on_empty: bool = False,
     result_fields: list[dict] | None = None,
     max_results: int = 64,
+    single: bool = False,
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -572,7 +609,15 @@ def run(
         )
         _write_varargs_core_c(binding_c, object_name, method_name)
     else:
-        if result_fields:
+        if result_fields and single:
+            # gh-244: return one record by value (no results[] buffer).
+            stub = _methods_c_stub_result_single(
+                object_name,
+                method_name,
+                arg_type,
+                return_type,
+            )
+        elif result_fields:
             stub = _methods_c_stub_result_fields(
                 object_name,
                 method_name,
@@ -712,6 +757,8 @@ def run(
     if result_fields:
         method_entry["result_fields"] = result_fields
         method_entry["max_results"] = max_results
+    if single:
+        method_entry["single"] = True
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:

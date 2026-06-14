@@ -365,6 +365,9 @@ def make_methods_ctx(
         params: list[dict] = m.get("params", [])
         result_fields: list[dict] = m.get("result_fields", [])
         max_results: int = int(m.get("max_results", 64))
+        # gh-244: return ONE named record (PyStructSequence) rather than a
+        # list[tuple]. The C kernel returns the record struct by value.
+        single_record: bool = m.get("single", False)
         none_on_empty: bool = m.get("none_on_empty", False)
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
@@ -1218,6 +1221,99 @@ def make_methods_ctx(
                     f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
                     f'     METH_NOARGS, "{_mo_doc}"}},\n'
                 )
+        elif result_fields and single_record:
+            # gh-244: return ONE named record as a PyStructSequence (named,
+            # unpackable) instead of a list[tuple]. The C kernel returns the
+            # record struct by value; the structseq type is created lazily and
+            # cached in this translation unit, so module-init/aggregator wiring
+            # is untouched.
+            _sid = f"{wrapper_prefix}_{name}"
+            _rec_base = (
+                return_type[:-2] if return_type.endswith("_t") else return_type
+            )
+            _rec_name = (
+                "".join(w.capitalize() for w in _rec_base.split("_") if w)
+                or "Record"
+            )
+            _seq_fields_c = "".join(
+                f'    {{"{_f["name"]}", NULL}},\n' for _f in result_fields
+            )
+            _descriptor = (
+                f"static PyStructSequence_Field {_sid}_fields[] = {{\n"
+                f"{_seq_fields_c}"
+                f"    {{NULL, NULL}},\n"
+                f"}};\n"
+                f"static PyStructSequence_Desc {_sid}_desc = {{\n"
+                f'    "{component}.{_rec_name}", NULL,'
+                f" {_sid}_fields, {len(result_fields)}\n"
+                f"}};\n"
+                f"static PyTypeObject *{_sid}_type = NULL;\n\n"
+            )
+            if has_arg:
+                _s_parse = (
+                    f"    PyObject *in_obj = NULL;\n"
+                    f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    f"        return NULL;\n"
+                    f"    PyArrayObject *in_arr ="
+                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                    f"    if (!in_arr) return NULL;\n"
+                    f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
+                )
+                _s_ensure = (
+                    f"    if (!{_sid}_type) {{\n"
+                    f"        {_sid}_type ="
+                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
+                    f"        if (!{_sid}_type)"
+                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"    }}\n"
+                )
+                _s_call = (
+                    f"    {ret_disp} _r = {component}_{name}(self->handle,\n"
+                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
+                    f" n_in);\n"
+                    f"    Py_DECREF(in_arr);\n"
+                )
+            else:
+                _s_parse = ""
+                _s_ensure = (
+                    f"    if (!{_sid}_type) {{\n"
+                    f"        {_sid}_type ="
+                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
+                    f"        if (!{_sid}_type) return NULL;\n"
+                    f"    }}\n"
+                )
+                _s_call = (
+                    f"    {ret_disp} _r = {component}_{name}(self->handle);\n"
+                )
+            _set_lines = []
+            for _i, _f in enumerate(result_fields):
+                _topy = _CTYPE_META[_f["type"]]["to_py"](f"_r.{_f['name']}")
+                _set_lines.append(
+                    f"    PyStructSequence_SET_ITEM(_o, {_i}, {_topy});\n"
+                )
+            wrapper = _descriptor + (
+                f"static PyObject *\n"
+                f"{wrapper_prefix}_{name}"
+                f"({Component}Object *self, PyObject *args)\n"
+                f"{{\n"
+                f"{guard}"
+                f"{_s_parse}"
+                f"{_s_ensure}"
+                f"{_s_call}"
+                f"    PyObject *_o = PyStructSequence_New({_sid}_type);\n"
+                f"    if (!_o) return NULL;\n"
+                f"{''.join(_set_lines)}"
+                f"    return _o;\n"
+                f"}}"
+            )
+            _s_names = ", ".join(_f["name"] for _f in result_fields)
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
+                f" METH_VARARGS,\n"
+                f'     "{name}({"x" if has_arg else ""}) ->'
+                f' {_rec_name} record ({_s_names})."}},\n'
+            )
         elif result_fields:
             _rf_fmt_parts: list[str] = []
             _rf_arg_parts: list[str] = []
@@ -1543,7 +1639,17 @@ def make_methods_ctx(
                     else ""
                 )
                 param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
-        if result_fields:
+        if result_fields and single_record:
+            # gh-244: one named record — a PyStructSequence (a tuple subclass).
+            # Type it as a tuple of the field types: unpacking type-checks and
+            # named attribute access works at runtime. (A full NamedTuple stub
+            # is a possible refinement.)
+            ret_ann = (
+                "tuple["
+                + ", ".join(_pyi_scalar(f["type"]) for f in result_fields)
+                + "]"
+            )
+        elif result_fields:
             ret_ann = "list[tuple]"
         elif m_var:
             all_rts = [return_type] + list(m_multi)

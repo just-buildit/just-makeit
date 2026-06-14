@@ -25,6 +25,7 @@ def run(args: list[str]) -> None:
     pass_capacity = False
     nogil = False
     varargs = False
+    single = False
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -63,6 +64,11 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--varargs":
             varargs = True
+            i += 1
+        elif tok == "--single":
+            # gh-244: with --result-field, return ONE named record
+            # (PyStructSequence) instead of a list[tuple].
+            single = True
             i += 1
         elif tok == "--doc":
             i += 1
@@ -242,13 +248,19 @@ def run(args: list[str]) -> None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-            elif val != "void" and val not in T._CTYPE_META:
+            elif (
+                tok == "--arg-type"
+                and val != "void"
+                and val not in T._CTYPE_META
+            ):
                 print(
                     f"error: {tok} '{val}' is not a supported scalar type.\n"
                     f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-244: --return-type may name a record struct for a result_fields
+            # method; validate it post-loop (once --result-field is known).
             if tok == "--arg-type":
                 arg_type = val
             else:
@@ -284,10 +296,26 @@ def run(args: list[str]) -> None:
             print(f"error: unexpected argument '{tok}'", file=sys.stderr)
             sys.exit(1)
 
-    if return_type != "void" and return_type not in T._CTYPE_META:
+    # gh-244: a result_fields method's --return-type names the user's record
+    # struct (the buffer element type for a list, or the returned record for
+    # --single), not a scalar — so it's exempt from the scalar allowlist.
+    if (
+        return_type != "void"
+        and return_type not in T._CTYPE_META
+        and not result_fields
+    ):
         print(
             f"error: --return-type '{return_type}' must be void or a scalar.\n"
             f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # gh-244: --single returns ONE named record; only meaningful with
+    # --result-field (which supplies the field names/types).
+    if single and not result_fields:
+        print(
+            "error: --single requires at least one --result-field.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -315,6 +343,7 @@ def run(args: list[str]) -> None:
         py_return_type=py_return_type,
         max_out=max_out,
         result_fields=result_fields or None,
+        single=single,
         varargs=varargs,
         pass_capacity=pass_capacity,
         nogil=nogil,
