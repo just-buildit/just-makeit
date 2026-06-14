@@ -120,7 +120,18 @@ class TestModuleDispatch:
                 extra_include_dirs=None,
                 extra_link_libs=None,
                 extra_types=None,
+                functions_in_core=False,
             )
+
+    def test_module_functions_in_core_flag_dispatches(
+        self, tmp_path, monkeypatch
+    ):
+        # gh-247: --functions-in-core flips the forwarded kwarg to True.
+        monkeypatch.chdir(tmp_path)
+        with patch("just_makeit._module.run") as mock:
+            with patch("just_makeit._cli._warn_schema"):
+                _main(["module", "dsp", "--functions-in-core"])
+            assert mock.call_args.kwargs["functions_in_core"] is True
 
 
 # ── perf command ───────────────────────────────────────────────────────────────

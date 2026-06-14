@@ -879,6 +879,16 @@ class TestModuleCommandCLI:
         _cli("module", "dsp", cwd=dest)
         assert (dest / "native" / "inc" / "dsp" / "dsp_core.h").exists()
 
+    def test_module_functions_in_core_flag(self, tmp_path):
+        # gh-247: --functions-in-core sets the module flag in the manifest.
+        dest = tmp_path / "proj"
+        _cli("new", "proj", str(dest))
+        r = _cli("module", "dsp", "--functions-in-core", cwd=dest)
+        assert r.returncode == 0
+        from just_makeit._config import functions_in_core, load
+
+        assert functions_in_core(load(dest), "dsp") is True
+
     def test_module_object_creates_python_test(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))

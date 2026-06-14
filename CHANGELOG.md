@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`functions_in_core` — module functions in one TU (gh-247)** — a module's
+    free functions are generated one `.c` per function by default. Flag a module
+    `functions_in_core = true` (or `jm module <m> --functions-in-core`) to append
+    every function body to the shared `<m>_core.c` instead — so `static` helpers
+    live once, the module is a single translation unit, and CMake lists only
+    `<m>_core.c`. Off by default, so existing projects are byte-identical. The
+    flag round-trips through `jm apply` (which previously resurrected the
+    per-function files).
+
 ## [0.19.8] — 2026-06-14
 
 ### Added
