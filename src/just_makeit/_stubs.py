@@ -639,13 +639,22 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if m_arg != "void":
             param_parts.append(f"x: {_py(m_arg)}")
         for p in m_params:
-            param_parts.append(f"{p['name']}: {_py(p['type'])}")
+            # gh-240: a defaulted param renders as an optional kwarg.
+            pann = f"{p['name']}: {_py(p['type'])}"
+            if p.get("default"):
+                pann += f" = {p['default']}"
+            param_parts.append(pann)
 
         if m_py_return_type:
             ret_ann = m_py_return_type
         elif m_result_fields:
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
-            ret_ann = f"list[tuple[{field_types}]]"
+            # gh-244: a `single` method returns ONE record, not a list of them.
+            ret_ann = (
+                f"tuple[{field_types}]"
+                if m.get("single")
+                else f"list[tuple[{field_types}]]"
+            )
         elif m_var:
             all_rts = [m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]

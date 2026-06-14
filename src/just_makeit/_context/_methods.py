@@ -1249,7 +1249,64 @@ def make_methods_ctx(
                 f"}};\n"
                 f"static PyTypeObject *{_sid}_type = NULL;\n\n"
             )
-            if has_arg:
+            # Method params (scalars; a `default` makes it an optional kwarg,
+            # gh-240). Array params in a single method are not supported.
+            _sp_decls: list[str] = []
+            _sp_fmt = ""
+            _sp_addrs: list[str] = []
+            _sp_callargs: list[str] = []
+            _sp_kwnames: list[str] = []
+            _sp_seen_default = False
+            for _p in params:
+                _pn = _p["name"]
+                _pt = _p["type"]
+                _pmeta = _CTYPE_META.get(_pt, {})
+                _pdefault = _p.get("default", "")
+                if _pdefault and not _sp_seen_default:
+                    _sp_fmt += "|"
+                    _sp_seen_default = True
+                _sp_decls.append(
+                    f"    {_ctype_display(_pt)} {_pn} = {_pdefault or '0'};"
+                )
+                _sp_fmt += _pmeta.get("fmt", "d")
+                _sp_addrs.append(f"&{_pn}")
+                _sp_callargs.append(_pn)
+                _sp_kwnames.append(_pn)
+            _has_kw = bool(params)
+            _call_tail = "".join(f", {a}" for a in _sp_callargs)
+            _decl_block = ("\n".join(_sp_decls) + "\n") if _sp_decls else ""
+
+            if has_arg and _has_kw:
+                _kw = "".join(f'"{n}", ' for n in (["x"] + _sp_kwnames))
+                _s_parse = (
+                    f"    PyObject *in_obj = NULL;\n"
+                    f"{_decl_block}"
+                    f"    static char *_kwlist[] = {{{_kw}NULL}};\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
+                    f' "O{_sp_fmt}",\n'
+                    f"            _kwlist, &in_obj, {', '.join(_sp_addrs)}))\n"
+                    f"        return NULL;\n"
+                    f"    PyArrayObject *in_arr ="
+                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
+                    f"    if (!in_arr) return NULL;\n"
+                    f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
+                )
+                _s_ensure = (
+                    f"    if (!{_sid}_type) {{\n"
+                    f"        {_sid}_type ="
+                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
+                    f"        if (!{_sid}_type)"
+                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"    }}\n"
+                )
+                _s_call = (
+                    f"    {ret_disp} _r = {component}_{name}(self->handle,\n"
+                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
+                    f" n_in{_call_tail});\n"
+                    f"    Py_DECREF(in_arr);\n"
+                )
+            elif has_arg:
                 _s_parse = (
                     f"    PyObject *in_obj = NULL;\n"
                     f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
@@ -1274,6 +1331,27 @@ def make_methods_ctx(
                     f" n_in);\n"
                     f"    Py_DECREF(in_arr);\n"
                 )
+            elif _has_kw:
+                _kw = "".join(f'"{n}", ' for n in _sp_kwnames)
+                _s_parse = (
+                    f"{_decl_block}"
+                    f"    static char *_kwlist[] = {{{_kw}NULL}};\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
+                    f' "{_sp_fmt}",\n'
+                    f"            _kwlist, {', '.join(_sp_addrs)}))\n"
+                    f"        return NULL;\n"
+                )
+                _s_ensure = (
+                    f"    if (!{_sid}_type) {{\n"
+                    f"        {_sid}_type ="
+                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
+                    f"        if (!{_sid}_type) return NULL;\n"
+                    f"    }}\n"
+                )
+                _s_call = (
+                    f"    {ret_disp} _r ="
+                    f" {component}_{name}(self->handle{_call_tail});\n"
+                )
             else:
                 _s_parse = ""
                 _s_ensure = (
@@ -1292,10 +1370,15 @@ def make_methods_ctx(
                 _set_lines.append(
                     f"    PyStructSequence_SET_ITEM(_o, {_i}, {_topy});\n"
                 )
+            _wrap_sig = (
+                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
+                if _has_kw
+                else f"({Component}Object *self, PyObject *args)"
+            )
             wrapper = _descriptor + (
                 f"static PyObject *\n"
                 f"{wrapper_prefix}_{name}"
-                f"({Component}Object *self, PyObject *args)\n"
+                f"{_wrap_sig}\n"
                 f"{{\n"
                 f"{guard}"
                 f"{_s_parse}"
@@ -1308,10 +1391,15 @@ def make_methods_ctx(
                 f"}}"
             )
             _s_names = ", ".join(_f["name"] for _f in result_fields)
+            _sig_args = ", ".join((["x"] if has_arg else []) + _sp_kwnames)
+            _md_cast = "(PyCFunction)(void *)" if _has_kw else "(PyCFunction)"
+            _md_flags = (
+                "METH_VARARGS | METH_KEYWORDS" if _has_kw else "METH_VARARGS"
+            )
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
-                f" METH_VARARGS,\n"
-                f'     "{name}({"x" if has_arg else ""}) ->'
+                f'    {{"{name}", {_md_cast}{wrapper_prefix}_{name},'
+                f" {_md_flags},\n"
+                f'     "{name}({_sig_args}) ->'
                 f' {_rec_name} record ({_s_names})."}},\n'
             )
         elif result_fields:

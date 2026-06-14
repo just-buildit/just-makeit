@@ -328,7 +328,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 bool(m.get("variable_output")),
                 list(m.get("multi_output", [])),
                 params=[
-                    (p["name"], p["type"])
+                    (p["name"], p["type"], p.get("default", ""))
                     for p in (m.get("extra_args") or m.get("params", []))
                 ],
                 out_type=m.get("out_type"),
@@ -338,6 +338,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 none_on_empty=bool(m.get("none_on_empty")),
                 result_fields=list(m.get("result_fields", [])),
                 max_results=int(m.get("max_results", 64)),
+                single=bool(m.get("single")),
                 py_return_type=m.get("py_return_type", ""),
                 max_out=int(m.get("max_out", 0)),
                 varargs=bool(m.get("varargs")),
