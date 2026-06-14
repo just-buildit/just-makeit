@@ -78,6 +78,24 @@ class TestGeneration:
         cmake = (_measure_dir(root) / "CMakeLists.txt").read_text()
         assert "add_library(measure_core OBJECT measure_core.c)" in cmake
 
+    def test_in_core_function_with_impl_body(self, tmp_path):
+        # An --impl-lifted body lands in <module>_core.c too.
+        root = tmp_path / "p"
+        new_run("p", root)
+        module_run(root, "measure", functions_in_core=True)
+        function_run(
+            root,
+            "gcd",
+            "measure",
+            params=[("a", "int32_t"), ("b", "int32_t")],
+            return_type="int32_t",
+            impl_body="while (b) { int32_t t = b; b = a % b; a = t; }"
+            " return a;",
+        )
+        core = (_measure_dir(root) / "measure_core.c").read_text()
+        assert "while (b)" in core and "return a;" in core
+        assert not (_measure_dir(root) / "gcd.c").exists()
+
     def test_flag_round_trips_manifest(self, tmp_path):
         root = tmp_path / "p"
         _two_fn_module(root, in_core=True)
