@@ -270,3 +270,37 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
         "collocated composing object failed to link "
         f"(gh-254):\n{bld.stdout}\n{bld.stderr}"
     )
+
+
+def test_collocated_dedup_dep_and_extra_lib(tmp_path):
+    # A dep core that also appears in the module's extra_link_libs must be
+    # linked once, not twice (dedup of extra_libs ∪ dep cores).
+    dest = tmp_path / "p"
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "ddc")
+    _silent(
+        object_run,
+        dest,
+        "lo",
+        module="ddc",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    _silent(
+        object_run,
+        dest,
+        "ddc",
+        module="ddc",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        depends_on=[{"name": "lo", "link": True}],
+    )
+    cfg = C.load(dest)
+    cfg["module"]["ddc"]["extra_link_libs"] = ["lo_core"]  # also lists the dep
+    C.save(dest, cfg)
+    _silent(apply_run, dest)
+    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
+    assert _link_block(cmake, "test_ddc_core").count("lo_core") == 1
+    assert _link_block(cmake, "ddc_core PUBLIC").count("lo_core") == 1
