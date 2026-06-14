@@ -5,12 +5,13 @@ override on the object's ``steps()``: ``obj.steps(x, gain=2.0)`` uses the
 supplied value for that block while omitting it reads the live ``self->gain``.
 The override is non-persistent — it never mutates the field (gh-240, Phase B).
 
-Covers the blockwise array-in / array-out shape (gh-244 Phase B) and the
-scalar->scalar step()+steps() shape (item 4 PR-1, which also folds in the
-``out=`` keyword unification). step() takes its overrides positionally (hot
-path); steps() takes them by keyword. Real-scalar (float/int) fields only;
-array-input step(), void-arg generators/sinks, and complex scalars are rejected
-at generation with a clean error. Declaration is TOML-first
+Covers every non-perf shape: blockwise array->array (gh-244 Phase B),
+scalar->scalar (item 4 PR-1, which folds in the ``out=`` keyword unification),
+and the PR-1b shapes — scalar->void sinks, void-arg generators/ticks (step()
+flips METH_NOARGS->METH_VARARGS when controllable), and array-input step().
+step() takes its overrides positionally (hot path); steps() takes them by
+keyword. Real-scalar (float/int) fields only; complex scalars and --no-step are
+rejected at generation with a clean error. Declaration is TOML-first
 (``controllable_names`` threaded through generation).
 """
 
@@ -157,6 +158,45 @@ class TestModuleStub:
         assert "gain: float = ..." in stub
         assert "def step(" not in stub
 
+    @pytest.mark.parametrize(
+        "comp,at,rt,step_sig,steps_sub",
+        [
+            # generator: step() positional-only, steps(n, gain=...) keyword.
+            (
+                "osc",
+                "void",
+                "float",
+                "def step(self, gain: float = ..., /)",
+                "def steps(self, n: int, gain: float = ...)",
+            ),
+            # sink: step(x, gain, /) positional-only, steps(x, gain=...) kw.
+            (
+                "snk",
+                "float",
+                "void",
+                "gain: float = ..., /)",
+                "def steps(self, x: NDArray[np.float32], gain: float = ...)",
+            ),
+        ],
+    )
+    def test_pr1b_module_stub(
+        self, tmp_path, comp, at, rt, step_sig, steps_sub
+    ):
+        root = tmp_path / "proj"
+        new_run("proj", root, modules=["dsp"])
+        object_run(
+            root,
+            comp,
+            "dsp",
+            arg_type=at,
+            return_type=rt,
+            state_vars=[("gain", "float", "2.0")],
+            controllable_names=frozenset({"gain"}),
+        )
+        stub = _stubs._obj_stub(C.load(root), comp, "proj", "dsp")
+        assert step_sig in stub
+        assert steps_sub in stub
+
 
 # ── Manifest round-trip ───────────────────────────────────────────────────────
 
@@ -182,30 +222,34 @@ class TestValidation:
         ctx.update(make_perf_ctx(False))
         return ctx
 
-    def test_rejects_array_input_step_shape(self):
-        # array-in -> scalar-out has a step() but no steps() to attach the
-        # override to; deferred past PR-1 (rejected, not a compile failure).
-        ctx = self._ctx("float[]", "float")
-        with pytest.raises(ValueError, match="not yet supported"):
-            make_step_ctx(
-                ctx, "float[]", "float", controllable=[("gain", "float")]
-            )
-
-    def test_rejects_void_arg_generator(self):
-        # void-arg generators/sinks (NOARGS->VARARGS flip) are deferred.
-        ctx = self._ctx("void", "float")
-        with pytest.raises(ValueError, match="not yet supported"):
-            make_step_ctx(
-                ctx, "void", "float", controllable=[("gain", "float")]
-            )
-
-    def test_accepts_scalar_scalar(self):
-        # scalar->scalar is now supported (PR-1); must NOT raise.
+    def test_rejects_no_step(self):
         ctx = self._ctx("float", "float")
-        out = make_step_ctx(
-            ctx, "float", "float", controllable=[("gain", "float")]
-        )
-        assert ", float gain)" in out["steps_c_decl"]
+        with pytest.raises(ValueError, match="--no-step"):
+            make_step_ctx(
+                ctx,
+                "float",
+                "float",
+                no_step=True,
+                controllable=[("gain", "float")],
+            )
+
+    @pytest.mark.parametrize(
+        "at,rt",
+        [
+            ("float", "float"),  # scalar->scalar
+            ("float", "void"),  # sink
+            ("void", "float"),  # generator
+            ("void", "void"),  # tick generator
+            ("float[]", "float"),  # array-input
+            ("float[]", "float[]"),  # blockwise
+        ],
+    )
+    def test_accepts_all_pr1b_shapes(self, at, rt):
+        ctx = self._ctx(at, rt)
+        out = make_step_ctx(ctx, at, rt, controllable=[("gain", "float")])
+        # The control param lands in the step() sig (most shapes) or, for
+        # blockwise (no step()), in the steps() decl.
+        assert "float gain" in (out["step_impl_def"] + out["steps_c_decl"])
 
     def test_rejects_complex_scalar(self):
         ctx = self._ctx("float _Complex[]", "float _Complex[]")
@@ -493,3 +537,113 @@ def test_step_controllable_perf_before_after(tmp_path, capsys):
     # Loose sanity: the omit path must not be pathologically slower than base
     # (catches e.g. an accidental persistent setter call). Tolerant of noise.
     assert omit < base * 2 + 40, (base, omit, pas)
+
+
+# ── PR-1b: generators, sinks, array-input ─────────────────────────────────────
+
+
+def _make(root, comp, at, rt):
+    new_run("proj", root)
+    init_run(
+        root,
+        comp,
+        state_vars=[("gain", "float", "2.0")],
+        arg_type=at,
+        return_type=rt,
+        controllable_names=frozenset({"gain"}),
+    )
+
+
+class TestGeneratorFlip:
+    """A controllable generator flips step() from METH_NOARGS to a
+    positional-optional METH_VARARGS; a non-controllable one is unchanged."""
+
+    def test_noncontrollable_generator_is_noargs(self, tmp_path):
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        init_run(root, "osc", arg_type="void", return_type="float")
+        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        assert "Osc_step(OscObject *self, PyObject *Py_UNUSED" in ext
+        assert "(PyCFunction)Osc_step,      METH_NOARGS" in ext or (
+            "Osc_step," in ext and "METH_NOARGS" in ext
+        )
+
+    def test_controllable_generator_flips_to_varargs(self, tmp_path):
+        root = tmp_path / "proj"
+        _make(root, "osc", "void", "float")
+        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        # step() now takes args and parses a positional-optional control.
+        assert "Osc_step(OscObject *self, PyObject *args)" in ext
+        assert 'PyArg_ParseTuple(args, "|f", &gain)' in ext
+        assert "Osc_step," in ext and "METH_VARARGS" in ext
+        # steps(n) becomes keyword-capable.
+        assert '{"n", "gain", NULL}' in ext
+        assert "METH_VARARGS | METH_KEYWORDS" in ext
+
+
+@pytest.mark.parametrize(
+    "comp,at,rt,patch_old,patch_new,checks",
+    [
+        (
+            "osc",
+            "void",
+            "float",
+            None,
+            None,
+            "o=C(gain=2.0)\n"
+            "o.step(); o.step(5.0)\n"
+            "try: o.step(gain=5.0); raise SystemExit('kw')\n"
+            "except TypeError: pass\n"
+            "assert o.steps(4).shape == (4,)\n"
+            "assert o.steps(4, gain=9.0).shape == (4,)\n"
+            "assert o.get_gain() == 2.0\n",
+        ),
+        (
+            "sink",
+            "float",
+            "void",
+            None,
+            None,
+            "import numpy as np\n"
+            "o=C(gain=2.0)\n"
+            "o.step(1.0); o.step(1.0, 5.0)\n"
+            "try: o.step(1.0, gain=5.0); raise SystemExit('kw')\n"
+            "except TypeError: pass\n"
+            "assert o.steps(np.ones(4, dtype=np.float32)) is None\n"
+            "assert o.steps(np.ones(4, dtype=np.float32), gain=9.0) is None\n"
+            "assert o.get_gain() == 2.0\n",
+        ),
+        (
+            "det",
+            "float[]",
+            "float",
+            None,
+            None,
+            "import numpy as np\n"
+            "o=C(gain=2.0)\n"
+            "x=np.ones(4, dtype=np.float32)\n"
+            "o.step(x); o.step(x, 5.0)\n"
+            "try: o.step(x, gain=5.0); raise SystemExit('kw')\n"
+            "except TypeError: pass\n"
+            "assert o.get_gain() == 2.0\n",
+        ),
+    ],
+)
+def test_pr1b_shape_e2e(tmp_path, comp, at, rt, patch_old, patch_new, checks):
+    """Build each new shape and prove step()/steps() override semantics +
+    step()'s positional-only keyword rejection."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    root = tmp_path / "proj"
+    _make(root, comp, at, rt)
+    _cmake_build(root)
+    Klass = comp.capitalize()
+    script = f"from proj import {Klass} as C\n" + checks + "print('PR1B OK')\n"
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=root / "src",
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, f"{comp} runtime failed:\n{run.stderr}"
+    assert "PR1B OK" in run.stdout

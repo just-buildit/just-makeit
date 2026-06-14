@@ -77,13 +77,10 @@ def make_step_ctx(
         and not return_type.endswith("[]")
     )
     if controllable:
-        if no_step or not (_blockwise or _scalar_scalar):
+        if no_step:
             raise ValueError(
-                "controllable state vars are not yet supported for this shape. "
-                "PR-1 supports blockwise array->array and scalar->scalar "
-                "step()+steps(); --no-step, array-input step(), and "
-                "void-arg/void-return generators and sinks are deferred. "
-                f"got arg_type={arg_type!r}, return_type={return_type!r}"
+                "controllable state vars need a step()/steps() to attach to; "
+                "they are incompatible with --no-step."
             )
         _bad = [
             n
@@ -118,6 +115,12 @@ def make_step_ctx(
     )
     # step() positional-parse list (rebuilt by _step_parse_block per shape).
     _ctrl_parse = list(_ctrl)
+    # A steps() is keyword-capable when it already has an out= param
+    # (blockwise / scalar->scalar — unified in PR-1) OR when a control override
+    # is present (generators/sinks flip to keyword only then, so the
+    # non-controllable scaffold stays byte-identical). Drives the wrapper
+    # signature, parse, and PyMethodDef flags for the non-blockwise tail.
+    steps_kw = _scalar_scalar or bool(_ctrl)
 
     if no_step:
         py_create_args = ctx.get("py_create_args", "")
@@ -453,13 +456,50 @@ def make_step_ctx(
             f" * External C consumers use"
             f" {component}_steps() declared below. */"
         )
+        # Generator step() is METH_NOARGS by default; a control override flips
+        # it to a positional-optional METH_VARARGS (step([gain]) — still no
+        # keywords on the per-sample path). Generator steps(n) gains a keyword
+        # parse only when controllable, so the non-controllable scaffold is
+        # byte-identical.
+        if _ctrl:
+            _gen_step_sig = f"({Component}Object *self, PyObject *args)"
+            _gen_step_parse = (
+                f"{ctrl_field_locals}"
+                f'    if (!PyArg_ParseTuple(args, "|{ctrl_kw_fmt}"'
+                f"{ctrl_parse_refs}))\n"
+                f"        return NULL;\n"
+            )
+            _gen_step_flags = "METH_VARARGS"
+            _gen_steps_sig = (
+                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
+            )
+            _gen_steps_parse = (
+                f'    static char *kwlist[] = {{"n", {ctrl_kw_entries}NULL}};\n'
+                f"    Py_ssize_t n = 1;\n"
+                f"{ctrl_field_locals}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
+                f'            "|n{ctrl_kw_fmt}", kwlist, &n{ctrl_parse_refs}))\n'
+                f"        return NULL;\n"
+            )
+        else:
+            _gen_step_sig = (
+                f"({Component}Object *self, PyObject *Py_UNUSED(ignored))"
+            )
+            _gen_step_parse = ""
+            _gen_step_flags = "METH_NOARGS"
+            _gen_steps_sig = f"({Component}Object *self, PyObject *args)"
+            _gen_steps_parse = (
+                "    Py_ssize_t n = 1;\n"
+                '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
+                "        return NULL;\n"
+            )
         if is_void_return:
             if delegate:
                 step_impl_def = (
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
                     f"void {component}_steps({component}_state_t *state,"
-                    f" size_t n);\n"
+                    f" size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Advance state by one tick (no I/O).\n"
                     f" *\n"
@@ -467,9 +507,10 @@ def make_step_ctx(
                     f" * @param state  Must be non-NULL; state is mutated.\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step({component}_state_t *state)\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
-                    f"    {component}_steps(state, 1);\n"
+                    f"    {component}_steps(state, 1{ctrl_args});\n"
                     f"}}"
                 )
             else:
@@ -479,7 +520,8 @@ def make_step_ctx(
                     f" * @param state  Must be non-NULL; state is mutated.\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step({component}_state_t *state)\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; /* TODO: implement */\n"
                     f"}}"
@@ -493,13 +535,13 @@ def make_step_ctx(
                 f" */\n"
                 f"void {component}_steps(\n"
                 f"    {component}_state_t *state,\n"
-                f"    size_t               n);"
+                f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-tick algorithm lives here; step() delegates"
                     f" to it (gh-208).\n"
@@ -514,42 +556,39 @@ def make_step_ctx(
                 steps_c_impl = (
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        {component}_step(state);\n"
+                    f"        {component}_step(state{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
                 f"static PyObject *\n"
-                f"{Component}_step({Component}Object *self,"
-                f" PyObject *Py_UNUSED(ignored))\n"
+                f"{Component}_step{_gen_step_sig}\n"
                 f"{{\n"
                 f"    if (!self->handle) {{\n"
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    {component}_step(self->handle);\n"
+                f"{_gen_step_parse}"
+                f"    {component}_step(self->handle{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
             steps_ext_fn = (
                 f"static PyObject *\n"
-                f"{Component}_steps"
-                f"({Component}Object *self, PyObject *args)\n"
+                f"{Component}_steps{_gen_steps_sig}\n"
                 f"{{\n"
                 f"    if (!self->handle) {{\n"
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    Py_ssize_t n = 1;\n"
-                f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
-                f"        return NULL;\n"
-                f"    {component}_steps(self->handle, (size_t)n);\n"
+                f"{_gen_steps_parse}"
+                f"    {component}_steps(self->handle, (size_t)n{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
-            step_py_flags = "METH_NOARGS"
+            step_py_flags = _gen_step_flags
         else:
             # gh-208: delegate mode forwards step() to steps(); state is never
             # const since steps() mutates it.
@@ -559,7 +598,7 @@ def make_step_ctx(
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
                     f"void {component}_steps({component}_state_t *state,\n"
-                    f"    {ret_disp} *output, size_t n);\n"
+                    f"    {ret_disp} *output, size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Generate one output sample from internal"
                     f" state.\n"
@@ -572,10 +611,11 @@ def make_step_ctx(
                     f" * @return Next output sample ({ret_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
-                    f"{component}_step({component}_state_t *state)\n"
+                    f"{component}_step"
+                    f"({component}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    {ret_disp} y;\n"
-                    f"    {component}_steps(state, &y, 1);\n"
+                    f"    {component}_steps(state, &y, 1{ctrl_args});\n"
                     f"    return y;\n"
                     f"}}"
                 )
@@ -589,7 +629,7 @@ def make_step_ctx(
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
                     f"{component}_step"
-                    f"({_state_qual}{component}_state_t *state)\n"
+                    f"({_state_qual}{component}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; /* TODO: implement */\n"
                     f"    return ({ret_disp})0;\n"
@@ -606,14 +646,14 @@ def make_step_ctx(
                 f"void {component}_steps(\n"
                 f"    {component}_state_t *state,\n"
                 f"    {ret_disp}          *output,\n"
-                f"    size_t               n);"
+                f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
                     f"    {ret_disp}          *output,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-sample algorithm lives here; step()"
                     f" delegates to it\n"
@@ -630,37 +670,35 @@ def make_step_ctx(
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
                     f"    {ret_disp}          *output,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        output[i] = {component}_step(state);\n"
+                    f"        output[i] = {component}_step(state{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
                 f"static PyObject *\n"
-                f"{Component}_step({Component}Object *self,"
-                f" PyObject *Py_UNUSED(ignored))\n"
+                f"{Component}_step{_gen_step_sig}\n"
                 f"{{\n"
                 f"    if (!self->handle) {{\n"
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    {ret_disp} y = {component}_step(self->handle);\n"
+                f"{_gen_step_parse}"
+                f"    {ret_disp} y ="
+                f" {component}_step(self->handle{ctrl_args});\n"
                 f"    return {step_return};\n"
                 f"}}"
             )
             steps_ext_fn = (
                 f"static PyObject *\n"
-                f"{Component}_steps"
-                f"({Component}Object *self, PyObject *args)\n"
+                f"{Component}_steps{_gen_steps_sig}\n"
                 f"{{\n"
                 f"    if (!self->handle) {{\n"
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    Py_ssize_t n = 1;\n"
-                f'    if (!PyArg_ParseTuple(args, "|n", &n))\n'
-                f"        return NULL;\n"
+                f"{_gen_steps_parse}"
                 f"\n"
                 f"    npy_intp dims[] = {{n}};\n"
                 f"    PyObject *out_arr ="
@@ -672,17 +710,21 @@ def make_step_ctx(
                 f"        self->handle,\n"
                 f"        ({ret_disp} *)PyArray_DATA"
                 f"((PyArrayObject *)out_arr),\n"
-                f"        (size_t)n);\n"
+                f"        (size_t)n{ctrl_args});\n"
                 f"\n"
                 f"    return out_arr;\n"
                 f"}}"
             )
-            step_py_flags = "METH_NOARGS"
+            step_py_flags = _gen_step_flags
     elif arg_type.endswith("[]"):
         elem_type = arg_type[:-2]
         elem_disp = _ctype_display(elem_type)
         in_np_enum = ctx.get("in_np_enum", "NPY_COMPLEX64")
         step_return = ctx.get("step_return_expr", "Py_RETURN_NONE")
+        # array-input step() has no steps(); control overrides are positional
+        # (step(x, gain)). The array `x` is the required "O"; control scalars
+        # follow the `|`.
+        _arr_parse_fmt = f"O|{ctrl_kw_fmt}" if _ctrl else "O"
 
         step_header_decl = (
             f"/* step() is a static inline defined below (after the struct).\n"
@@ -700,7 +742,7 @@ def make_step_ctx(
                 f"{step_qualifier} void\n"
                 f"{component}_step(\n"
                 f"    {component}_state_t *state,\n"
-                f"    const {elem_disp} *x, size_t x_len)\n"
+                f"    const {elem_disp} *x, size_t x_len{ctrl_c_sig})\n"
                 f"{{\n"
                 f"    (void)state; (void)x; (void)x_len;"
                 f" /* TODO: implement */\n"
@@ -716,7 +758,9 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"    PyObject *x_obj = NULL;\n"
-                f'    if (!PyArg_ParseTuple(args, "O", &x_obj))\n'
+                f"{ctrl_field_locals}"
+                f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
+                f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"
@@ -727,7 +771,7 @@ def make_step_ctx(
                 f"    const {elem_disp} *x = "
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
-                f"    {component}_step(self->handle, x, x_len);\n"
+                f"    {component}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -744,7 +788,7 @@ def make_step_ctx(
                 f"{step_qualifier} {ret_disp}\n"
                 f"{component}_step(\n"
                 f"    {component}_state_t *state,\n"
-                f"    const {elem_disp} *x, size_t x_len)\n"
+                f"    const {elem_disp} *x, size_t x_len{ctrl_c_sig})\n"
                 f"{{\n"
                 f"    (void)state; (void)x; (void)x_len;"
                 f" /* TODO: implement */\n"
@@ -761,7 +805,9 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"    PyObject *x_obj = NULL;\n"
-                f'    if (!PyArg_ParseTuple(args, "O", &x_obj))\n'
+                f"{ctrl_field_locals}"
+                f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
+                f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"
@@ -773,7 +819,7 @@ def make_step_ctx(
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
                 f"    {ret_disp} y ="
-                f" {component}_step(self->handle, x, x_len);\n"
+                f" {component}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
                 f"    return {step_return};\n"
                 f"}}"
@@ -809,7 +855,7 @@ def make_step_ctx(
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
                     f"void {component}_steps({component}_state_t *state,\n"
-                    f"    const {arg_disp} *input, size_t n);\n"
+                    f"    const {arg_disp} *input, size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Consume one input sample (sink; no output).\n"
                     f" *\n"
@@ -819,9 +865,9 @@ def make_step_ctx(
                     f" */\n"
                     f"{step_qualifier} void\n"
                     f"{component}_step"
-                    f"({component}_state_t *state, {arg_disp} x)\n"
+                    f"({component}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
-                    f"    {component}_steps(state, &x, 1);\n"
+                    f"    {component}_steps(state, &x, 1{ctrl_args});\n"
                     f"}}"
                 )
             else:
@@ -833,7 +879,7 @@ def make_step_ctx(
                     f" */\n"
                     f"{step_qualifier} void\n"
                     f"{component}_step"
-                    f"({component}_state_t *state, {arg_disp} x)\n"
+                    f"({component}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; (void)x; /* TODO: implement */\n"
                     f"}}"
@@ -849,14 +895,14 @@ def make_step_ctx(
                 f"void {component}_steps(\n"
                 f"    {component}_state_t *state,\n"
                 f"    const {arg_disp}    *input,\n"
-                f"    size_t               n);"
+                f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-sample algorithm lives here; step()"
                     f" delegates to it\n"
@@ -872,10 +918,10 @@ def make_step_ctx(
                     f"void {component}_steps(\n"
                     f"    {component}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
-                    f"    size_t               n)\n"
+                    f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        {component}_step(state, input[i]);\n"
+                    f"        {component}_step(state, input[i]{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
@@ -888,22 +934,43 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{step_parse}\n"
-                f"    {component}_step(self->handle, x);\n"
+                f"    {component}_step(self->handle, x{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
+            if _ctrl:
+                # Sink steps() has no out=, but a control override needs
+                # keyword binding (steps(x, gain=...)); flip to AndKeywords.
+                _sink_sig = (
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)"
+                )
+                _sink_parse = (
+                    f'    static char *kwlist[] = {{"x",'
+                    f" {ctrl_kw_entries}NULL}};\n"
+                    f"    PyObject *in_obj = NULL;\n"
+                    f"{ctrl_field_locals}"
+                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
+                    f'            "O|{ctrl_kw_fmt}", kwlist,'
+                    f" &in_obj{ctrl_parse_refs}))\n"
+                    f"        return NULL;\n"
+                )
+            else:
+                _sink_sig = f"({Component}Object *self, PyObject *args)"
+                _sink_parse = (
+                    "    PyObject *in_obj = NULL;\n"
+                    '    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
+                    "        return NULL;\n"
+                )
             steps_ext_fn = (
                 f"static PyObject *\n"
-                f"{Component}_steps"
-                f"({Component}Object *self, PyObject *args)\n"
+                f"{Component}_steps{_sink_sig}\n"
                 f"{{\n"
                 f"    if (!self->handle) {{\n"
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    PyObject *in_obj = NULL;\n"
-                f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
-                f"        return NULL;\n"
+                f"{_sink_parse}"
                 f"\n"
                 f"    PyArrayObject *in_arr = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"
@@ -915,7 +982,7 @@ def make_step_ctx(
                 f"    {component}_steps(\n"
                 f"        self->handle,\n"
                 f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
-                f"        (size_t)PyArray_SIZE(in_arr));\n"
+                f"        (size_t)PyArray_SIZE(in_arr){ctrl_args});\n"
                 f"    Py_DECREF(in_arr);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -1186,27 +1253,29 @@ def make_step_ctx(
     _obj_create = f"    >>> obj = {Component}({_create})"
 
     _ret_hint_step = "None" if is_void_return else ret_disp
+    # step() takes its control overrides positionally (hot path) — shown
+    # bracketed in the doc; keyword calls are rejected at runtime. `_void` form
+    # holds just the controls (no input arg); `_arg` form trails after `x`.
+    _ctrl_names = ", ".join(n for n, _, _ in _ctrl)
+    _ctrl_b_void = f"[{_ctrl_names}]" if _ctrl else ""
+    _ctrl_b_arg = f"[, {_ctrl_names}]" if _ctrl else ""
     if _is_void_arg and is_void_return:
-        _step_sig = "step() -> None"
+        _step_sig = f"step({_ctrl_b_void}) -> None"
         _step_desc = "Advance state by one tick (no I/O)."
     elif _is_void_arg:
-        _step_sig = f"step() -> {_ret_hint_step}"
+        _step_sig = f"step({_ctrl_b_void}) -> {_ret_hint_step}"
         _step_desc = "Generate one output sample from internal state."
     elif _is_arr_arg and is_void_return:
-        _step_sig = "step(x) -> None"
+        _step_sig = f"step(x{_ctrl_b_arg}) -> None"
         _step_desc = "Process an input buffer (no scalar output)."
     elif _is_arr_arg:
-        _step_sig = f"step(x) -> {_ret_hint_step}"
+        _step_sig = f"step(x{_ctrl_b_arg}) -> {_ret_hint_step}"
         _step_desc = "Process an input buffer and return a result."
     elif is_void_return:
-        _step_sig = "step(x) -> None"
+        _step_sig = f"step(x{_ctrl_b_arg}) -> None"
         _step_desc = "Consume one input sample (sink; no output)."
     else:
-        # step() takes its control overrides positionally (hot path); show the
-        # bracketed positional form in the doc — keyword calls are rejected.
-        _ctrl_pos_doc = "".join(f", {n}" for n, _, _ in _ctrl)
-        _bracket = f"[{_ctrl_pos_doc}]" if _ctrl else ""
-        _step_sig = f"step(x{_bracket}) -> {_ret_hint_step}"
+        _step_sig = f"step(x{_ctrl_b_arg}) -> {_ret_hint_step}"
         _step_desc = "Process one input sample."
 
     # A hand-written @brief in the header overrides the canned description, so
@@ -1229,9 +1298,12 @@ def make_step_ctx(
         )
 
     if steps_ext_fn:
+        _ctrl_kw_doc = "".join(f", {n}=..." for n, _, _ in _ctrl)
         if _is_void_arg:
             _steps_sig = (
-                "steps(n=1) -> ndarray" if not is_void_return else "steps(n=1)"
+                f"steps(n=1{_ctrl_kw_doc}) -> ndarray"
+                if not is_void_return
+                else f"steps(n=1{_ctrl_kw_doc})"
             )
             _steps_desc = (
                 "Generate n output samples."
@@ -1240,7 +1312,6 @@ def make_step_ctx(
             )
             _steps_call = "    >>> y = obj.steps(4)"
         else:
-            _ctrl_kw_doc = "".join(f", {n}=..." for n, _, _ in _ctrl)
             _steps_sig = f"steps(x[, out{_ctrl_kw_doc}]) -> ndarray"
             _steps_desc = "Process a block of samples in batch."
             _steps_call = (
@@ -1263,10 +1334,10 @@ def make_step_ctx(
                 "    >>> y.dtype",
                 f"    dtype('{_out_np_str}')",
             ]
-        # out= unification: scalar->scalar steps() is keyword-capable (so out=
-        # and any control overrides take keywords); generator/sink steps()
-        # stay positional (METH_VARARGS).
-        if _scalar_scalar:
+        # A keyword-capable steps() (out= shapes, or any controllable shape)
+        # gets METH_KEYWORDS + the void* cast; a positional one stays plain
+        # METH_VARARGS (non-controllable generators/sinks — byte-identical).
+        if steps_kw:
             steps_def_entry = (
                 f'    {{"steps",    (PyCFunction)(void *){Component}_steps,'
                 f"    METH_VARARGS | METH_KEYWORDS,\n"
@@ -1319,7 +1390,7 @@ def make_step_ctx(
 
     if _is_void_arg and is_void_return:
         _pyi_step_doc = '        """Advance state by one tick (no I/O)."""\n'
-        _pyi_step_self = "self"
+        _pyi_step_self = f"self{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
     elif _is_void_arg:
         _pyi_step_doc = (
             f'        """Generate one output sample from internal state.\n\n'
@@ -1329,7 +1400,7 @@ def make_step_ctx(
             f"            Output sample.\n"
             f'        """\n'
         )
-        _pyi_step_self = "self"
+        _pyi_step_self = f"self{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
     elif is_void_return:
         _pyi_step_doc = (
             f'        """Consume one input sample (no output).\n\n'
@@ -1339,7 +1410,9 @@ def make_step_ctx(
             f"            Input sample.\n"
             f'        """\n'
         )
-        _pyi_step_self = f"self, x: {in_py_hint}"
+        _pyi_step_self = (
+            f"self, x: {in_py_hint}{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
+        )
     else:
         _pyi_step_doc = (
             f'        """Process one input sample.\n\n'

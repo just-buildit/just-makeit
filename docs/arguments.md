@@ -162,24 +162,31 @@ override threads into the C `amp_steps(state, in, n, out, gain)` signature (the
 one declared, intentional change to the sacred core), and the binding sources it
 `arg-if-provided else self->gain`.
 
-The same `controllable = true` flag also reaches **`step()`** on the
-scalar→scalar shape — but there `step()` keeps its positional-only binding
-(`step(x, gain)`, never a keyword call) because the parse is paid per-sample. So
-a controllable field gives you `step(x)` (uses the field) and `step(x, override)`
-(per-call), both effectively free on the omit path; the keyword form lives on
-`steps()` where the parse amortises. A controllable field threads through *both*
-`step()` and `steps()` consistently (they share the per-sample algorithm).
+The same `controllable = true` flag also reaches **`step()`** — but there
+`step()` keeps its positional-only binding (`step(x, gain)`, never a keyword
+call) because the parse is paid per-sample. So a controllable field gives you
+`step(x)` (uses the field) and `step(x, override)` (per-call), both effectively
+free on the omit path; the keyword form lives on `steps()` where the parse
+amortises. A controllable field threads through *both* `step()` and `steps()`
+consistently (they share the per-sample algorithm). For a void-input **generator**
+(`step() -> y`), the override is the *only* arg, so `step()` flips from
+`METH_NOARGS` to a positional-optional `step([gain])` when a field is
+controllable.
 
 Folded in alongside: every built-in `steps()` is now keyword-capable, so
 `steps(x, out=buf)` works as a keyword everywhere — not just when a field is
 controllable.
 
-Supported shapes: blockwise array→array `steps()`, and scalar→scalar
-`step()`+`steps()`, with real-scalar (float/int) fields. Array-input `step()`,
-void-arg generators/sinks, and complex scalars are rejected at generation with a
-clear error (a deferred follow-up, not a foot-gun). Under `--perf` the generated
-plain-loop `steps()` threads the override fine; if you hand-swap it for the
-`JM_DEFINE_STEPS` SIMD macro, control params aren't wired through that macro yet.
+Supported on **every step/steps shape** — scalar→scalar, scalar→void sinks,
+void-arg generators and ticks, array-input `step()`, and blockwise array→array —
+with real-scalar (float/int) fields. Complex scalars and `--no-step` are rejected
+at generation with a clear error. Because a controllable field changes the
+*sacred* `comp_step()`/`comp_steps()` signature, retrofitting it onto an existing
+object needs **`jm regenerate`** (which rebuilds `_core.c`/`_core.h`), not
+`jm apply` (which only re-materialises the binding fragment). Under `--perf` the
+generated plain-loop `steps()` threads the override fine; if you hand-swap it for
+the `JM_DEFINE_STEPS` SIMD macro, control params aren't wired through that macro
+yet.
 
 ## Going faster than both
 

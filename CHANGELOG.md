@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Controllable overrides on every `step()`/`steps()` shape (gh-240)** —
+    `controllable = true` now works on **all** non-perf shapes: scalar→scalar,
+    scalar→void sinks, void-arg generators and ticks, array-input `step()`, and
+    blockwise array→array. For a void-input generator (`step() -> y`) the
+    override is the only argument, so `step()` flips from `METH_NOARGS` to a
+    positional-optional `step([gain])` when a field is controllable;
+    non-controllable generators/sinks are byte-for-byte unchanged. The control
+    param threads through both `step()` (positional) and `steps()` (keyword)
+    consistently, in delegate and non-delegate modes. Complex scalars and
+    `--no-step` are rejected at generation with a clear error. Retrofitting a
+    controllable field onto an existing object needs `jm regenerate` (it changes
+    the sacred `comp_step()`/`comp_steps()` signature), not `jm apply`.
+
 - **Controllable `step()` overrides + `out=` keyword unification (gh-240)** —
     the `controllable = true` flag now also reaches **`step()`** on the
     scalar→scalar shape. `step(x)` reads the live field; `step(x, override)`
