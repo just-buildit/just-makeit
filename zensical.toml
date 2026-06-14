@@ -38,6 +38,7 @@ nav = [
   { "Porting guide"      = "porting-guide.md"},
   { "Stateful vs Pure"   = "pure.md"         },
   { "Performance"        = "perf.md"         },
+  { "Arguments (positional vs keyword)" = "arguments.md" },
   { "State Types"        = "types.md"        },
   { "Template Reference" = "template.md"     },
   { "Customization"      = "customization.md"},

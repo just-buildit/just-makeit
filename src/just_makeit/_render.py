@@ -496,8 +496,10 @@ def _build_params_parse(
       (const elem_t *name, size_t name_len).
 
     Returns (parse_block, call_args_c, cleanup):
-      parse_block  — indented C code: declarations, PyArg_ParseTuple, array
-                     conversion and error-exit paths with partial cleanup
+      parse_block  — indented C code: a kwlist, declarations,
+                     PyArg_ParseTupleAndKeywords (positional-or-keyword), array
+                     conversion and error-exit paths with partial cleanup. The
+                     caller's wrapper must take a ``PyObject *kwds`` parameter.
       call_args_c  — comma-sep C variables/expressions for the downstream call
       cleanup      — Py_DECREF lines for all acquired numpy arrays (empty string
                      when no array params); caller must emit before every return
@@ -569,10 +571,20 @@ def _build_params_parse(
 
     fmt_str = "".join(fmt_chars)
     addr_str = ", ".join(addr_exprs)
+    # gh-238: module functions are positional-OR-keyword. Each param name is a
+    # kwarg (an array param's kwarg is its object), and the kwlist order matches
+    # the fmt/addr order. Keyword *capability* is ~free when callers still pass
+    # positionally; the keyword-match cost is paid only when keywords are used —
+    # the right trade for the (often multi-param) function call site, which is
+    # rarely the innermost loop. The per-sample hot path (step/steps) stays
+    # positional-only.
+    kwnames = "".join(f'"{p["name"]}", ' for p in params)
     lines = (
-        decl_lines
+        [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
+        + decl_lines
         + [
-            f'    if (!PyArg_ParseTuple(args, "{fmt_str}", {addr_str}))',
+            f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_str}",',
+            f"            _kwlist, {addr_str}))",
             "        return NULL;",
         ]
         + conv_lines
@@ -606,7 +618,9 @@ def _py_wrapper_for_function(
 
     if params:
         parse_block, call_args, cleanup = _build_params_parse(params)
-        py_args = "PyObject *args"
+        # Positional-or-keyword (gh-238): the binding takes kwds and parses with
+        # PyArg_ParseTupleAndKeywords. A no-param function stays METH_NOARGS.
+        py_args = "PyObject *args, PyObject *kwds"
     else:
         parse_block = ""
         call_args = ""
@@ -734,7 +748,17 @@ def make_functions_ctx(
         params = list(fn.get("params", []))
         return_type = fn.get("return_type", "void")
         doc = fn.get("doc", f"{name}.")
-        flags = "METH_VARARGS" if params else "METH_NOARGS"
+        # gh-238: a function with params is positional-or-keyword
+        # (METH_VARARGS | METH_KEYWORDS); a no-param function stays METH_NOARGS.
+        # The kw-capable binding has the 3-arg PyCFunctionWithKeywords signature,
+        # so cast it through `(void *)` in the table (jm's convention; silences
+        # -Wcast-function-type).
+        if params:
+            flags = "METH_VARARGS | METH_KEYWORDS"
+            fn_ref = f"(PyCFunction)(void *)_bind_{name}"
+        else:
+            flags = "METH_NOARGS"
+            fn_ref = f"_bind_{name}"
         wrappers.append(
             _py_wrapper_for_function(
                 name,
@@ -745,7 +769,7 @@ def make_functions_ctx(
                 max_results_param=fn.get("max_results_param", ""),
             )
         )
-        entries.append(f'    {{"{name}", _bind_{name}, {flags}, "{doc}"}},')
+        entries.append(f'    {{"{name}", {fn_ref}, {flags}, "{doc}"}},')
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)
     methods_def = (

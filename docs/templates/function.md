@@ -93,8 +93,16 @@ from my_dsp.io import q15_to_float
 
 inp = np.arange(-32768, 32768, dtype=np.int16)
 out = np.empty(inp.size, dtype=np.float32)
-q15_to_float(inp, out, inp.size)
+q15_to_float(inp, out, inp.size)               # positional
+q15_to_float(input=inp, output=out, n=inp.size)  # or by keyword
 ```
+
+Generated functions are **positional-or-keyword**: each parameter can be passed
+positionally or by name. Keyword *capability* is essentially free; you only pay
+the keyword-matching cost (~12–25 ns/arg) when you actually pass by name. See
+[Arguments: positional vs keyword](../arguments.md) for the full cost model and
+the project-wide rule (the per-sample `step()`/`steps()` hot path stays
+positional-only).
 
 ## Variants
 
