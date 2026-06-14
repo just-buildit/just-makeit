@@ -368,6 +368,9 @@ def make_methods_ctx(
         # gh-244: return ONE named record (PyStructSequence) rather than a
         # list[tuple]. The C kernel returns the record struct by value.
         single_record: bool = m.get("single", False)
+        # gh-257: optional chosen public name for the single-record structseq,
+        # overriding the C-return-type derivation below.
+        record_name: str = m.get("record_name", "")
         none_on_empty: bool = m.get("none_on_empty", False)
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
@@ -1231,7 +1234,9 @@ def make_methods_ctx(
             _rec_base = (
                 return_type[:-2] if return_type.endswith("_t") else return_type
             )
-            _rec_name = (
+            # gh-257: a manifest `record_name` picks the public structseq name
+            # independent of the C return type; else derive from return_type.
+            _rec_name = record_name or (
                 "".join(w.capitalize() for w in _rec_base.split("_") if w)
                 or "Record"
             )

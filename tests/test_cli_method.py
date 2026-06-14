@@ -237,6 +237,29 @@ class TestCliMethod:
         with pytest.raises(SystemExit):
             _run(["tm", "analyze", "--single"])
 
+    def test_record_name_flag_forwarded(self):
+        # gh-257: --record-name forwards a chosen public structseq name.
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "tm",
+                    "analyze",
+                    "--result-field",
+                    "snr:float",
+                    "--return-type",
+                    "tone_meas_t",
+                    "--single",
+                    "--record-name",
+                    "ToneMetrics",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["record_name"] == "ToneMetrics"
+
+    def test_record_name_requires_value(self):
+        with pytest.raises(SystemExit):
+            _run(["tm", "analyze", "--record-name"])
+
     def test_result_field_missing_value_exits(self):
         with pytest.raises(SystemExit):
             _run(["det", "detect", "--result-field"])

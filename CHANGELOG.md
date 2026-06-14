@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`record_name` for single-record methods (gh-257)** — a `--single` method's
+    public record type defaulted to the name derived from its C `--return-type`
+    (`tone_meas_t` → `ToneMeas`). You can now pick the name explicitly with
+    `jm method … --single --record-name ToneMetrics` or `record_name = "…"` in
+    the manifest, so the `PyStructSequence` is named independently of the C
+    struct.
+
+### Fixed
+
+- **`jm apply`/`save` silently dropped unknown method keys (gh-257)** — the
+    manifest write pass enumerated only the method keys it knew, so any
+    hand-authored key (such as `record_name`) never survived a
+    `save()`→`load()` round-trip. The serializer now preserves any scalar method
+    key it doesn't explicitly handle (transient `_`-prefixed and list/table keys
+    excepted), so manifest-authored keys round-trip. Zero churn — jm only writes
+    known keys, so existing manifests are byte-identical.
+
 ## [0.19.7] — 2026-06-14
 
 ### Fixed

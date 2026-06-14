@@ -26,6 +26,7 @@ def run(args: list[str]) -> None:
     nogil = False
     varargs = False
     single = False
+    record_name = ""
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -69,6 +70,15 @@ def run(args: list[str]) -> None:
             # gh-244: with --result-field, return ONE named record
             # (PyStructSequence) instead of a list[tuple].
             single = True
+            i += 1
+        elif tok == "--record-name":
+            # gh-257: chosen public name for the --single record, overriding
+            # the C-return-type derivation.
+            i += 1
+            if i >= len(remaining):
+                print("error: --record-name requires a name", file=sys.stderr)
+                sys.exit(1)
+            record_name = remaining[i]
             i += 1
         elif tok == "--doc":
             i += 1
@@ -344,6 +354,7 @@ def run(args: list[str]) -> None:
         max_out=max_out,
         result_fields=result_fields or None,
         single=single,
+        record_name=record_name,
         varargs=varargs,
         pass_capacity=pass_capacity,
         nogil=nogil,

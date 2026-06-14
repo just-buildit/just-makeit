@@ -538,6 +538,7 @@ def run(
     result_fields: list[dict] | None = None,
     max_results: int = 64,
     single: bool = False,
+    record_name: str = "",
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -759,6 +760,10 @@ def run(
         method_entry["max_results"] = max_results
     if single:
         method_entry["single"] = True
+    if record_name:
+        # gh-257: a chosen public name for the single-record structseq,
+        # independent of the C return-type derivation.
+        method_entry["record_name"] = record_name
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:
