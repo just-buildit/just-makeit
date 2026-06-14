@@ -892,6 +892,32 @@ def no_ctor_names(cfg: dict, component: str) -> frozenset[str]:
     )
 
 
+def controllable_state_vars(
+    cfg: dict, component: str
+) -> list[tuple[str, str]]:
+    """Non-opaque state entries flagged ``controllable = true``.
+
+    A controllable state var becomes an optional, keyword-capable per-call
+    override on the object's ``steps()``: ``obj.steps(x, gain=2.0)`` uses the
+    supplied value for that block, while omitting it reads ``self->gain``.
+    The override is non-persistent (it does not mutate the field).  Returns
+    ``(name, ctype)`` pairs in declaration order — the order in which the C
+    ``<comp>_steps()`` signature and the kwlist append them."""
+    return [
+        (s["name"], s["type"])
+        for s in cfg.get(component, {}).get("state", [])
+        if s.get("controllable") and not s.get("opaque")
+    ]
+
+
+def controllable_names(cfg: dict, component: str) -> frozenset[str]:
+    """Names of state entries flagged ``controllable = true``.
+
+    The round-trip key threaded through generation so ``jm apply`` /
+    ``jm regenerate`` re-persist the flag (mirrors :func:`no_ctor_names`)."""
+    return frozenset(n for n, _ in controllable_state_vars(cfg, component))
+
+
 def schema_version(cfg: dict) -> int:
     """Return the project's schema version (1 for pre-schema projects)."""
     return int(cfg.get("project", {}).get("schema", 1))
@@ -1164,6 +1190,7 @@ def add_component(
     depends_on_: list[str] = (),
     opaque_fields_: "list[tuple[str, str]]" = (),
     no_ctor_names_: "frozenset[str]" = frozenset(),
+    controllable_names_: "frozenset[str]" = frozenset(),
     extra_link_libs_: list[str] = (),
     extra_include_dirs_: list[str] = (),
 ) -> dict:
@@ -1180,6 +1207,7 @@ def add_component(
             "type": t,
             "default": d,
             **({"no_ctor": True} if n in no_ctor_names_ else {}),
+            **({"controllable": True} if n in controllable_names_ else {}),
         }
         for n, t, d in vars_
     ]
@@ -1405,6 +1433,8 @@ def _dump(cfg: dict) -> str:
                 lines.append("opaque = true")
             if s.get("no_ctor"):
                 lines.append("no_ctor = true")
+            if s.get("controllable"):
+                lines.append("controllable = true")
             lines.append("")
         for p in comp_data.get("init_params", []):
             lines.append(f"[[{comp}.init_params]]")

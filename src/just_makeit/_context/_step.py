@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    _KIND_PY_ISINSTANCE,
     _ctype_display,
 )
 from ._parse import _build_ml_doc
@@ -31,6 +32,7 @@ def make_step_ctx(
     mutable: bool = False,
     delegate: bool = False,
     doc_blocks: dict | None = None,
+    controllable: list[tuple[str, str]] = (),
 ) -> dict[str, str]:
     """Pre-render step() and steps() C and Python bodies for stateful objects.
 
@@ -58,6 +60,31 @@ def make_step_ctx(
     omp_simd_hint = ctx.get("omp_simd_hint", "")
     step_return = ctx.get("step_return_expr", "PyFloat_FromDouble((double)y)")
     is_void_return = return_type == "void"
+
+    # Controllable state vars (gh-240): each becomes an optional, keyword-
+    # capable per-call override on steps(), defaulting to the live state
+    # field.  PR-1 supports only the blockwise (array-in / array-out) shape
+    # with real-scalar (float/int) fields; reject anything else cleanly so a
+    # mis-declared manifest fails at generation, not at compile time.
+    if controllable:
+        if no_step or not (
+            arg_type.endswith("[]") and return_type.endswith("[]")
+        ):
+            raise ValueError(
+                "controllable state vars require the blockwise steps() shape "
+                "(array arg_type and array return_type); got "
+                f"arg_type={arg_type!r}, return_type={return_type!r}"
+            )
+        _bad = [
+            n
+            for n, ct in controllable
+            if _CTYPE_META.get(ct, {}).get("kind") not in ("float", "int")
+        ]
+        if _bad:
+            raise ValueError(
+                "controllable state vars must be real scalar (float/int) "
+                f"types; {', '.join(_bad)} is not supported"
+            )
 
     if no_step:
         py_create_args = ctx.get("py_create_args", "")
@@ -122,19 +149,54 @@ def make_step_ctx(
         out_np_dtype = ctx.get("out_np_dtype", "np.complex64")
         pyi_steps = ctx.get("pyi_steps_stub", "")
 
+        # Controllable per-call overrides (gh-240): each (name, ctype) becomes
+        # an optional keyword arg on steps() that defaults to the live state
+        # field.  The C steps() signature gains the params (the declared,
+        # intentional sacred-signature change), the binding sources them
+        # `arg-if-provided else self->handle-><name>`, and METH_KEYWORDS lets
+        # the parse amortize over the whole block.  All strings collapse to
+        # empty when no field is controllable, so the default scaffold is
+        # byte-identical.
+        _ctrl = [
+            (
+                n,
+                _ctype_display(ct),
+                _CTYPE_META[ct]["fmt"],
+                _KIND_PY_ISINSTANCE[_CTYPE_META[ct]["kind"]],
+            )
+            for n, ct in controllable
+        ]
+        ctrl_sig = "".join(f", {disp} {n}" for n, disp, _, _ in _ctrl)
+        ctrl_call = "".join(f", {n}" for n, _, _, _ in _ctrl)
+        ctrl_field_call = "".join(f", obj->{n}" for n, _, _, _ in _ctrl)
+        if _ctrl:
+            # Regenerate the steps() .pyi (make_sample_ctx built it without the
+            # controllable kwargs) so the type stub exposes `gain: float = ...`.
+            _ctrl_pyi = "".join(
+                f"        {n}: {hint} = ...,\n" for n, _, _, hint in _ctrl
+            )
+            pyi_steps = (
+                f"\n    def steps(\n"
+                f"        self,\n"
+                f"        x: NDArray[{in_np_dtype}],\n"
+                f"        out: NDArray[{out_np_dtype}] | None = None,\n"
+                f"{_ctrl_pyi}"
+                f"    ) -> NDArray[{out_np_dtype}]: ...\n"
+            )
+
         steps_c_decl_bw = (
             f"void\n"
             f"{component}_steps(\n"
             f"    {component}_state_t *state,\n"
             f"    const {in_disp}     *in, size_t n,\n"
-            f"    {out_disp}          *out);"
+            f"    {out_disp}          *out{ctrl_sig});"
         )
         steps_c_impl_bw = (
             f"void\n"
             f"{component}_steps(\n"
             f"    {component}_state_t *state,\n"
             f"    const {in_disp}     *in, size_t n,\n"
-            f"    {out_disp}          *out)\n"
+            f"    {out_disp}          *out{ctrl_sig})\n"
             f"{{\n"
             f"    /* <<IMPLEMENT: blockwise transform"
             f" — replace this pass-through>> */\n"
@@ -143,18 +205,47 @@ def make_step_ctx(
             f"        out[i] = ({out_disp})in[i];\n"
             f"}}"
         )
+        if _ctrl:
+            _ctrl_kwlist = "".join(f'"{n}", ' for n, _, _, _ in _ctrl)
+            _ctrl_fmt = "".join(fmt for _, _, fmt, _ in _ctrl)
+            _ctrl_parse_args = "".join(f", &{n}" for n, _, _, _ in _ctrl)
+            _ctrl_locals = "".join(
+                f"    {disp} {n} = self->handle->{n};\n"
+                for n, disp, _, _ in _ctrl
+            )
+            _bw_sig = (
+                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
+            )
+            _bw_parse = (
+                f'    static char *kwlist[] = {{"x", "out",'
+                f" {_ctrl_kwlist}NULL}};\n"
+                f"    PyObject *x_obj = NULL, *out_obj = NULL;\n"
+                f"{_ctrl_locals}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
+                f'            "O|O{_ctrl_fmt}", kwlist,\n'
+                f"            &x_obj, &out_obj{_ctrl_parse_args}))\n"
+                f"        return NULL;\n"
+            )
+            _bw_meth_flags = "METH_VARARGS | METH_KEYWORDS"
+            _bw_meth_cast = "(PyCFunction)(void *)"
+        else:
+            _bw_sig = f"({Component}Object *self, PyObject *args)"
+            _bw_parse = (
+                "    PyObject *x_obj = NULL, *out_obj = NULL;\n"
+                '    if (!PyArg_ParseTuple(args, "O|O", &x_obj, &out_obj))\n'
+                "        return NULL;\n"
+            )
+            _bw_meth_flags = "METH_VARARGS"
+            _bw_meth_cast = "(PyCFunction)"
         steps_ext_fn_bw = (
             f"static PyObject *\n"
-            f"{Component}_steps"
-            f"({Component}Object *self, PyObject *args)\n"
+            f"{Component}_steps{_bw_sig}\n"
             f"{{\n"
             f"    if (!self->handle) {{\n"
             f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
             f"        return NULL;\n"
             f"    }}\n"
-            f"    PyObject *x_obj = NULL, *out_obj = NULL;\n"
-            f'    if (!PyArg_ParseTuple(args, "O|O", &x_obj, &out_obj))\n'
-            f"        return NULL;\n"
+            f"{_bw_parse}"
             f"    PyArrayObject *x_arr = (PyArrayObject *)\n"
             f"    PyArray_FROM_OTF(\n"
             f"        x_obj, {in_np_enum}, NPY_ARRAY_C_CONTIGUOUS);\n"
@@ -180,7 +271,7 @@ def make_step_ctx(
             f"            self->handle,\n"
             f"            (const {in_disp} *)PyArray_DATA(x_arr),\n"
             f"            (size_t)n,\n"
-            f"            ({out_disp} *)PyArray_DATA(out_arr));\n"
+            f"            ({out_disp} *)PyArray_DATA(out_arr){ctrl_call});\n"
             f"        Py_DECREF(x_arr);\n"
             f"        return (PyObject *)out_arr;\n"
             f"    }}\n"
@@ -192,17 +283,24 @@ def make_step_ctx(
             f"        self->handle,\n"
             f"        (const {in_disp} *)PyArray_DATA(x_arr),\n"
             f"        (size_t)n,\n"
-            f"        ({out_disp} *)PyArray_DATA((PyArrayObject *)out));\n"
+            f"        ({out_disp} *)PyArray_DATA((PyArrayObject *)out)"
+            f"{ctrl_call});\n"
             f"    Py_DECREF(x_arr);\n"
             f"    return out;\n"
             f"}}"
         )
+        _ctrl_doc_sig = "".join(f", {n}=..." for n, _, _, _ in _ctrl)
+        _ctrl_doc_lines = [
+            f"{n} — optional per-call override of the current {n} state."
+            for n, _, _, _ in _ctrl
+        ]
         _bw_steps_doc = [
-            f"steps(x[, out]) -> NDArray[{out_np_dtype}]",
+            f"steps(x[, out{_ctrl_doc_sig}]) -> NDArray[{out_np_dtype}]",
             "",
             "Apply the blockwise transform to the input array.",
             "x   — input NDArray; shape (n,).",
             "out — optional pre-allocated output array of the same length.",
+            *_ctrl_doc_lines,
             "Returns a newly allocated output array, or `out` if supplied.",
             "",
             "    >>> import numpy as np",
@@ -220,15 +318,16 @@ def make_step_ctx(
             f"    dtype('{out_np_dtype.replace('np.', '')}')",
         ]
         steps_def_entry_bw = (
-            f'    {{"steps",    (PyCFunction){Component}_steps,'
-            f"    METH_VARARGS,\n"
+            f'    {{"steps",    {_bw_meth_cast}{Component}_steps,'
+            f"    {_bw_meth_flags},\n"
             f"     {_build_ml_doc(_bw_steps_doc)}}},\n"
         )
         _bw_bench_timing = (
             f"    double _times_steps[ITERATIONS];\n"
             f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
             f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
-            f"        {component}_steps(obj, in, BENCH_N, out);\n"
+            f"        {component}_steps(obj, in, BENCH_N, out"
+            f"{ctrl_field_call});\n"
             f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
             f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
             f"    }}\n"
@@ -247,7 +346,8 @@ def make_step_ctx(
             f"    {{\n"
             f"        {in_disp} _bw_in[1]  = {{{in_zero}}};\n"
             f"        {out_disp} _bw_out[1] = {{{out_zero}}};\n"
-            f"        {component}_steps(obj, _bw_in, 1, _bw_out);\n"
+            f"        {component}_steps(obj, _bw_in, 1, _bw_out"
+            f"{ctrl_field_call});\n"
             f"    }}"
         )
         _bw_pytest = (
@@ -323,6 +423,14 @@ def make_step_ctx(
             # Warmup and bench: blockwise only has steps(); bench_step_timing_block
             # is intentionally empty to avoid declaring _times_steps twice.
             "bench_warmup_fn": f"{component}_steps",
+            # The warmup template calls warmup_fn(obj, <bench_step_input_arg>);
+            # controllable steps() needs the extra field args appended so the
+            # call matches the widened signature (collapses to a no-op when no
+            # field is controllable).
+            "bench_step_input_arg": (
+                ctx.get("bench_step_input_arg", "in, BENCH_N, out")
+                + ctrl_field_call
+            ),
             "bench_step_timing_block": "",
             "bench_steps_timing_block": _bw_bench_timing,
             "steps_def_entry": steps_def_entry_bw,

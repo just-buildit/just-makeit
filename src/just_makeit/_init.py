@@ -619,6 +619,7 @@ def run(
     init_params: list[tuple[str, str, str]] = (),
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
+    controllable_names: "frozenset[str]" = frozenset(),
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
@@ -720,6 +721,9 @@ def run(
             no_step=no_step,
             mutable=mutable,
             delegate=step_delegates,
+            controllable=[
+                (n, ct) for n, ct, _ in vars_ if n in controllable_names
+            ],
         )
     )
     ctx.update(
@@ -1043,6 +1047,7 @@ def run(
         init_params_=init_params,
         class_name_=class_name,
         depends_on_=list(depends_on),
+        controllable_names_=controllable_names,
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
     )

@@ -498,6 +498,30 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # step() / steps()
     if no_step:
         pass
+    elif arg_type.endswith("[]") and return_type.endswith("[]"):
+        # Blockwise (array-in / array-out): there is no step(); the object
+        # exposes steps(x[, out]). A controllable state field adds an optional,
+        # keyword-capable per-call override that defaults to the live field
+        # (gh-240) — rendered as `name: <pytype> = ...` after `out`.
+        ctrl = C.controllable_state_vars(cfg, obj)
+        params = [
+            "        self,",
+            f"        x: NDArray[{_np(arg_type)}],",
+            f"        out: NDArray[{_np(return_type)}] | None = None,",
+        ]
+        params += [f"        {n}: {_py(ct)} = ..." for n, ct in ctrl]
+        lines += [
+            "",
+            "    def steps(",
+            *params,
+            f"    ) -> NDArray[{_np(return_type)}]:",
+        ]
+        lines += _builtin_doc(
+            f"{obj}_steps",
+            [("x", f"NDArray[{_np(arg_type)}]")],
+            f"NDArray[{_np(return_type)}]",
+            "Apply the blockwise transform to the input array.",
+        )
     elif arg_type.endswith("[]"):
         lines += [
             "",
