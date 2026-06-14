@@ -141,9 +141,28 @@ free, no keyword tax.
 keyword/positional arg: `fn(x)` uses `1.0`, while `fn(x, 2.0)` or
 `fn(x, gain=2.0)` overrides. (Adding a defaulted param also makes named methods
 keyword-capable, the same as functions.) Defaulted params must come after
-required ones, and (for now) only plain scalars take defaults. `steps()`
-defaults are planned next — `steps()` will source its default from a
-`controllable` state field.
+required ones, and (for now) only plain scalars take defaults.
+
+**`steps()` overrides** are state-backed rather than compile-time constants. Flag
+a state field `controllable = true` in the manifest and it becomes an optional,
+keyword-capable `steps()` argument that defaults to the *live* field value:
+
+```toml
+[[amp.state]]
+name = "gain"
+type = "float"
+default = "2.0"
+controllable = true   # -> steps(x, gain=...) overrides self->gain for the block
+```
+
+`amp.steps(x)` reads the current `gain`; `amp.steps(x, gain=10.0)` (or
+positionally, `amp.steps(x, None, 10.0)`) overrides it for that call only — the
+override never mutates the field, so `get_gain()` is unchanged afterwards. The
+override threads into the C `amp_steps(state, in, n, out, gain)` signature (the
+one declared, intentional change to the sacred core), and the binding sources it
+`arg-if-provided else self->gain`. PR-1 supports the blockwise array-in /
+array-out shape with real-scalar (float/int) fields; other shapes and complex
+scalars are rejected at generation with a clear error.
 
 ## Going faster than both
 

@@ -149,6 +149,7 @@ def _make_object_ctx(
     class_name: str | None = None,
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
+    controllable: list[tuple[str, str]] = (),
     doc_blocks: dict | None = None,
 ) -> dict:
     """Build the render ctx for an object."""
@@ -193,6 +194,7 @@ def _make_object_ctx(
             mutable=mutable,
             delegate=step_delegates,
             doc_blocks=doc_blocks,
+            controllable=controllable,
         )
     )
     # Re-generate pyi_examples now that package and Component are in ctx.
@@ -641,6 +643,7 @@ def build_component_ctxs(
             class_name=C.class_name(cfg, obj),
             opaque_fields=C.opaque_fields(cfg, obj),
             no_ctor_names=C.no_ctor_names(cfg, obj),
+            controllable=C.controllable_state_vars(cfg, obj),
             doc_blocks=_doc_blocks,
         )
         ctx.update(
@@ -968,6 +971,7 @@ def run(
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
+    controllable_names: "frozenset[str]" = frozenset(),
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -1023,6 +1027,7 @@ def run(
             init_params=init_params,
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
+            controllable_names=controllable_names,
             class_name=class_name,
             depends_on=list(depends_on),
             extra_link_libs=list(extra_link_libs),
@@ -1102,6 +1107,9 @@ def run(
         class_name=class_name,
         opaque_fields=opaque_fields,
         no_ctor_names=no_ctor_names,
+        controllable=[
+            (n, ct) for n, ct, _ in vars_ if n in controllable_names
+        ],
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -1269,6 +1277,7 @@ def run(
         depends_on_=list(depends_on),
         opaque_fields_=list(opaque_fields),
         no_ctor_names_=no_ctor_names,
+        controllable_names_=controllable_names,
         # gh-160: persist extra_link_libs/extra_include_dirs for module objects
         # too (the standalone path already did). Without this they're dropped
         # from the manifest, so the module aggregation can't propagate a

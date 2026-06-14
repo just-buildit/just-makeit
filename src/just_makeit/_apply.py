@@ -130,6 +130,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "depends_on": C.depends_on_raw(cfg, comp),
         "opaque_fields": C.opaque_fields(cfg, comp),
         "no_ctor_names": C.no_ctor_names(cfg, comp),
+        "controllable_names": C.controllable_names(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),
         "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
     }

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Controllable `steps()` overrides (`controllable = true`, gh-240)** — a state
+    field flagged `controllable = true` in the manifest becomes an optional,
+    keyword-capable per-call override on the object's `steps()`. Omitting it
+    reads the live field (`obj.steps(x)` uses `self->gain`); passing it overrides
+    for that block only (`obj.steps(x, gain=2.0)` or positionally
+    `obj.steps(x, None, 2.0)`), never mutating the field. The flag threads the
+    param into the C `comp_steps(state, in, n, out, gain)` signature (the one
+    declared, intentional change to the sacred core) and sources it
+    `arg-if-provided else self->field`; the binding moves to
+    `PyArg_ParseTupleAndKeywords` (`METH_VARARGS | METH_KEYWORDS`) so the parse
+    amortizes over the block. Scope: the blockwise array-in / array-out
+    `steps()` shape with real-scalar (float/int) fields; other shapes and complex
+    scalars are rejected at generation with a clear error. Declaration is
+    TOML-first and round-trips through `jm apply` / `jm regenerate`. This
+    completes the optional/default-parameters epic (`step()` per-sample control
+    params remain deferred — see `docs/arguments.md`).
+
 ## [0.19.6] — 2026-06-14
 
 ### Added
