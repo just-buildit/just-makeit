@@ -213,6 +213,30 @@ class TestCliMethod:
                 {"name": "magnitude", "type": "float"},
             ]
 
+    def test_single_with_result_field_and_struct_return(self):
+        # gh-244: --single + a struct --return-type forwards single=True and
+        # the struct return type is accepted (exempt from the scalar allowlist).
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "tm",
+                    "analyze",
+                    "--result-field",
+                    "snr:float",
+                    "--return-type",
+                    "tone_metrics_t",
+                    "--single",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["single"] is True
+            args = mock_run.call_args[0]
+            assert args[5] == "tone_metrics_t"  # return_type (positional 5)
+
+    def test_single_without_result_field_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["tm", "analyze", "--single"])
+
     def test_result_field_missing_value_exits(self):
         with pytest.raises(SystemExit):
             _run(["det", "detect", "--result-field"])

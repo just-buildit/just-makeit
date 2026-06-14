@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Single named-record method returns (`jm method … --single`, gh-244)** — a
+    `result_fields` method can now return **one named record** instead of a
+    `list[tuple]`. With `--single`, the C kernel returns the record struct by
+    value (`<return_type> method(state, …)`), and the binding unpacks it into a
+    `PyStructSequence` — named attribute access *and* tuple unpacking:
+    `r = obj.analyze(x); r.snr, r.enob; snr, *_ = r`. The structseq type is
+    created lazily and cached in the translation unit (no module-init/aggregator
+    changes). The `--return-type` of a `result_fields` method now also accepts a
+    user record struct (previously rejected by the scalar allowlist). The `.pyi`
+    types it as `tuple[…]` of the field types (named-attribute typing via a
+    full `NamedTuple` stub is a possible refinement).
+
 ### Fixed
 
 - **`size_t` (and other `parse_type`) init-param defaults were dropped (gh-244)**

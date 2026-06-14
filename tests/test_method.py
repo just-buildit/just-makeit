@@ -1840,3 +1840,64 @@ class TestMethodDefaultParams:
         dest = self._scaffold(tmp_path)
         pyi = (dest / "src/dsp/filt.pyi").read_text("utf-8")
         assert "gain: float = 2.0" in pyi
+
+
+class TestMethodSingleRecord:
+    """gh-244 part 1: --single on a result_fields method returns ONE named
+    record (PyStructSequence) by value, not a list[tuple]. The struct return
+    type is user-defined; the binding lazily creates + caches the structseq
+    type and SET_ITEMs each field."""
+
+    def _scaffold(self, tmp_path):
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_metrics_t",
+            False,
+            [],
+            result_fields=[
+                {"name": "snr", "type": "float"},
+                {"name": "thd", "type": "float"},
+                {"name": "nbins", "type": "uint32_t"},
+            ],
+            single=True,
+        )
+        return dest
+
+    def test_binding_is_structseq_not_list(self, tmp_path):
+        ext = (self._scaffold(tmp_path) / "native/src/tm/tm_ext.c").read_text(
+            "utf-8"
+        )
+        assert "PyStructSequence_Field Tm_analyze_fields[]" in ext
+        assert "PyStructSequence_NewType(&Tm_analyze_desc)" in ext
+        assert "PyObject *_o = PyStructSequence_New(Tm_analyze_type);" in ext
+        assert "PyStructSequence_SET_ITEM(_o, 0, PyFloat_FromDouble" in ext
+        assert "tone_metrics_t _r = tm_analyze(self->handle," in ext
+        assert "PyList_New" not in ext  # not the list[tuple] path
+
+    def test_c_stub_returns_struct_by_value(self, tmp_path):
+        core = (
+            self._scaffold(tmp_path) / "native/src/tm/tm_core.c"
+        ).read_text("utf-8")
+        assert "tone_metrics_t" in core
+        assert "tm_analyze(tm_state_t *state, const float complex *in," in core
+        assert "return _r;" in core
+
+    def test_pyi_is_tuple_of_field_types(self, tmp_path):
+        pyi = (self._scaffold(tmp_path) / "src/p/tm.pyi").read_text("utf-8")
+        assert (
+            "def analyze(self, x: NDArray[np.complex64])"
+            " -> tuple[float, float, int]:" in pyi
+        )
