@@ -145,13 +145,31 @@ def _build_params_parse(
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
-def _step_parse_block(sample_type: str, samp: dict) -> str:
+def _step_parse_block(
+    sample_type: str,
+    samp: dict,
+    ctrl: "list[tuple[str, str, str]]" = (),
+) -> str:
     """4-space-indented parse block for step(); ends without trailing newline.
 
     Uses 'x_raw' as the intermediate parse variable so to_c("x") works
     (the to_c lambdas append '_raw' to the base name they receive).
+
+    ``ctrl`` is the controllable per-call override list (gh-240): each entry
+    ``(name, c_display_type, pyarg_fmt)`` becomes a **positional-optional**
+    argument after ``x`` — ``step(x[, gain])``. step() stays positional-only
+    (never METH_KEYWORDS) because a keyword call costs ~3.4x the call on this
+    per-sample hot path. Each override defaults to the live ``self->handle->``
+    field, so omitting it is free and the override is non-persistent. Empty
+    ``ctrl`` reproduces the original byte-for-byte (the ``|`` is absent).
     """
     disp = _ctype_display(sample_type)
+    ctrl_locals = "".join(
+        f"    {cdisp} {name} = self->handle->{name};\n"
+        for name, cdisp, _ in ctrl
+    )
+    ctrl_fmt = "|" + "".join(f for _, _, f in ctrl) if ctrl else ""
+    ctrl_refs = "".join(f", &{name}" for name, _, _ in ctrl)
     if "parse_type" in samp:
         parse_type = samp["parse_type"]
         parse_zero = samp["parse_zero"]
@@ -159,7 +177,9 @@ def _step_parse_block(sample_type: str, samp: dict) -> str:
         to_c_expr = samp["to_c"]("x")
         return (
             f"    {parse_type} x_raw = {parse_zero};\n"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}", &x_raw))\n'
+            f"{ctrl_locals}"
+            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
+            f" &x_raw{ctrl_refs}))\n"
             f"        return NULL;\n"
             f"    {disp} x = {to_c_expr};"
         )
@@ -167,6 +187,8 @@ def _step_parse_block(sample_type: str, samp: dict) -> str:
         fmt = samp["fmt"]
         return (
             f"    {disp} x;\n"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}", &x))\n'
+            f"{ctrl_locals}"
+            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
+            f" &x{ctrl_refs}))\n"
             f"        return NULL;"
         )

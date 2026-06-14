@@ -160,9 +160,26 @@ positionally, `amp.steps(x, None, 10.0)`) overrides it for that call only — th
 override never mutates the field, so `get_gain()` is unchanged afterwards. The
 override threads into the C `amp_steps(state, in, n, out, gain)` signature (the
 one declared, intentional change to the sacred core), and the binding sources it
-`arg-if-provided else self->gain`. PR-1 supports the blockwise array-in /
-array-out shape with real-scalar (float/int) fields; other shapes and complex
-scalars are rejected at generation with a clear error.
+`arg-if-provided else self->gain`.
+
+The same `controllable = true` flag also reaches **`step()`** on the
+scalar→scalar shape — but there `step()` keeps its positional-only binding
+(`step(x, gain)`, never a keyword call) because the parse is paid per-sample. So
+a controllable field gives you `step(x)` (uses the field) and `step(x, override)`
+(per-call), both effectively free on the omit path; the keyword form lives on
+`steps()` where the parse amortises. A controllable field threads through *both*
+`step()` and `steps()` consistently (they share the per-sample algorithm).
+
+Folded in alongside: every built-in `steps()` is now keyword-capable, so
+`steps(x, out=buf)` works as a keyword everywhere — not just when a field is
+controllable.
+
+Supported shapes: blockwise array→array `steps()`, and scalar→scalar
+`step()`+`steps()`, with real-scalar (float/int) fields. Array-input `step()`,
+void-arg generators/sinks, and complex scalars are rejected at generation with a
+clear error (a deferred follow-up, not a foot-gun). Under `--perf` the generated
+plain-loop `steps()` threads the override fine; if you hand-swap it for the
+`JM_DEFINE_STEPS` SIMD macro, control params aren't wired through that macro yet.
 
 ## Going faster than both
 
