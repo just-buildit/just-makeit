@@ -777,7 +777,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # Each non-inline module-level function lives in its own sacred
     # <fn>.c (inline ones live entirely in the header).  Those sources are
     # compiled into the module's OBJECT library alongside <mod>_core.c.
-    fn_srcs = [f"{fn['name']}.c" for fn in functions if not fn.get("inline")]
+    # gh-247: in functions-in-core mode every function body lives in
+    # <module>_core.c, so there are no per-function .c sources to list.
+    if C.functions_in_core(cfg, module):
+        fn_srcs = []
+    else:
+        fn_srcs = [
+            f"{fn['name']}.c" for fn in functions if not fn.get("inline")
+        ]
     core_srcs = " ".join([f"{cname}_core.c", *fn_srcs])
     # Collocated case: when an object shares the module name (e.g. module="fft",
     # object="fft"), CMAKE_LISTS_OBJECT_CORE is prepended and already defines

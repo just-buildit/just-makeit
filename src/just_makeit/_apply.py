@@ -202,6 +202,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
             or cfg.get("module", {}).get(m, {}).get("extra_include_dirs")
+            # gh-247: functions_in_core must reach the temp TOML *before* the
+            # function replay below, else _function.run() falls back to
+            # per-function .c files and the build double-defines the symbols.
+            or cfg.get("module", {}).get(m, {}).get("functions_in_core")
         )
     ]
     if _mods_need_update:
@@ -215,6 +219,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 tmod["extra_link_libs"] = mod_data["extra_link_libs"]
             if mod_data.get("extra_include_dirs"):
                 tmod["extra_include_dirs"] = mod_data["extra_include_dirs"]
+            if mod_data.get("functions_in_core"):
+                tmod["functions_in_core"] = mod_data["functions_in_core"]
         C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()

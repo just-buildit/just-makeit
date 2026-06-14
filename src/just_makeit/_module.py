@@ -35,6 +35,7 @@ def run(
     extra_include_dirs: list[str] | None = None,
     extra_link_libs: list[str] | None = None,
     extra_types: list[str] | None = None,
+    functions_in_core: bool = False,
 ) -> None:
     err = C.validate_module_id(module)
     if err:
@@ -176,6 +177,12 @@ def run(
         cfg.setdefault("module", {}).setdefault(module, {})["extra_types"] = (
             list(extra_types)
         )
+    if functions_in_core:
+        # gh-247: keep this module's free functions in <module>_core.c (one TU)
+        # rather than one .c per function.
+        cfg.setdefault("module", {}).setdefault(module, {})[
+            "functions_in_core"
+        ] = "true"
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

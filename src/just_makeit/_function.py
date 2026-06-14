@@ -201,10 +201,15 @@ def run(
     fn_c = root / "native" / "src" / module / f"{fn_name}.c"
     core_h = root / "native" / "inc" / module / f"{module}_core.h"
 
-    # Warn if the monolithic _core.c already defines this symbol — both it and
-    # the new per-function stub would be compiled, causing duplicate definitions.
     core_c = root / "native" / "src" / module / f"{module}_core.c"
-    if core_c.exists():
+    # gh-247: a module may opt to keep all its free functions in one TU
+    # (<module>_core.c) rather than one .c per function.
+    in_core = C.functions_in_core(cfg, module)
+    # Warn if the monolithic _core.c already defines this symbol — both it and
+    # the new per-function stub would be compiled, causing duplicate
+    # definitions. In functions-in-core mode the body BELONGS in _core.c, so
+    # the warning would be spurious.
+    if core_c.exists() and not in_core and not inline:
         core_text = core_c.read_text(encoding="utf-8")
         full_name = f"{module}_{fn_name}"
         if full_name in core_text:
@@ -221,6 +226,38 @@ def run(
         # Inline functions live entirely in the header — no .c entry.
         _inject_inline_into_core_h(
             core_h, fn_name, params, return_type, module
+        )
+    elif in_core:
+        # gh-247: append the stub to the shared <module>_core.c (which already
+        # includes the header), exactly like `jm method` appends to an object
+        # core. Shared `static` helpers can then live once, and CMakeLists
+        # lists only <module>_core.c.
+        stub = T.fn_c_stub(
+            fn_name,
+            params,
+            return_type,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+        )
+        if impl_body is not None:
+            from . import _impl as I
+
+            stub = I.inject_body_into_stub(stub, impl_body)
+        existing = core_c.read_text(encoding="utf-8")
+        core_c.write_text(
+            existing.rstrip() + "\n\n" + stub + "\n", encoding="utf-8"
+        )
+        print(f"  update  {core_c}")
+        _inject_into_core_h(
+            core_h,
+            fn_name,
+            params,
+            return_type,
+            module,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
         )
     else:
         # Each function gets its own sacred <fn_name>.c translation unit.
@@ -288,5 +325,7 @@ def run(
     print()
     if inline:
         print(f"Done!  Implement {fn_name}() in {core_h.name}")
+    elif in_core:
+        print(f"Done!  Implement {fn_name}() in {core_c.name}")
     else:
         print(f"Done!  Implement {fn_name}() in {fn_c.name}")

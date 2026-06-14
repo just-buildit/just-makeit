@@ -39,6 +39,8 @@ Commands:
     --extra-include-dirs DIR    CMake include path; repeatable (e.g. ${DOPPLER_INCLUDE_DIR}).
     --extra-link-libs TARGET    CMake link target; repeatable (e.g. PkgConfig::DOPPLER).
     --extra-types NAME          Hand-written Python type to register in PyInit_; repeatable.
+    --functions-in-core         Keep this module's functions in <module>_core.c (one TU,
+                                shared static helpers) instead of one .c per function.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:
@@ -454,6 +456,7 @@ def main() -> None:
         mod_extra_inc: list[str] = []
         mod_extra_libs: list[str] = []
         mod_extra_types: list[str] = []
+        mod_functions_in_core = False
         rest = args[2:]
         j = 0
         while j < len(rest):
@@ -488,6 +491,9 @@ def main() -> None:
                     sys.exit(1)
                 mod_extra_types.append(rest[j])
                 j += 1
+            elif tok == "--functions-in-core":
+                mod_functions_in_core = True
+                j += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -497,6 +503,7 @@ def main() -> None:
             extra_include_dirs=mod_extra_inc or None,
             extra_link_libs=mod_extra_libs or None,
             extra_types=mod_extra_types or None,
+            functions_in_core=mod_functions_in_core,
         )
 
     elif cmd == "object":

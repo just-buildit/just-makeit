@@ -120,6 +120,7 @@ class TestModuleDispatch:
                 extra_include_dirs=None,
                 extra_link_libs=None,
                 extra_types=None,
+                functions_in_core=False,
             )
 
 

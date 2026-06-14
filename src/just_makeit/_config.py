@@ -643,6 +643,19 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
     return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
+def functions_in_core(cfg: dict, module: str) -> bool:
+    """Return True if the module's free functions live in ``<module>_core.c``
+    as one translation unit, rather than one ``.c`` per function (gh-247).
+
+    Off by default (each function gets its own sacred ``<fn>.c``). When on,
+    ``jm function`` appends each stub to the shared ``<module>_core.c`` — so
+    `static` helpers can be shared and the module is one TU — and the
+    CMakeLists lists only ``<module>_core.c``."""
+    return _truthy(
+        cfg.get("module", {}).get(module, {}).get("functions_in_core")
+    )
+
+
 def c_deps(cfg: dict) -> list[str]:
     """Return C-only dependency subdirectory names declared under [project].
 
@@ -1332,6 +1345,8 @@ def _dump(cfg: dict) -> str:
         lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
             lines.append('no_generate = "true"')
+        if data.get("functions_in_core") in (True, "true"):
+            lines.append('functions_in_core = "true"')
         else:
             objs = data.get("objects", [])
             objs_str = ", ".join(f'"{o}"' for o in objs)
