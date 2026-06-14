@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Examples track doppler 0.15.1 and the Docker image drops `g++`.** The
+    `nco_tone` / `kitchen_sink` examples bump their pinned doppler auto-download
+    from 0.13.2 to **0.15.1**, whose `doppler::doppler-static` archive is
+    **C++-free** (C99 pocketfft; the ZMQ/stream layer split into the optional
+    `doppler::stream` targets). Linking it now resolves with `-lm` alone, so
+    `docker/Dockerfile.examples-linux` no longer installs `g++` for the slim
+    image. (Supersedes the examples half of the now-closed #229, whose
+    `--step-delegates-to-steps` feature already shipped via #228.)
+
 ## [0.19.4] — 2026-06-13
 
 ### Documented
