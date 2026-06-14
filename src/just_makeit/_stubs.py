@@ -390,6 +390,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     ip = C.init_params(cfg, obj)
     no_step = C.is_no_step(cfg, obj)
     no_state = C.is_no_state(cfg, obj)
+    # Controllable per-call overrides (gh-240): step() shows them positional-
+    # only (trailing `/`, since its binding rejects keyword calls); steps()
+    # shows them keyword-capable. Empty unless a field is controllable.
+    _ctrl = C.controllable_state_vars(cfg, obj)
+    _ctrl_kw = "".join(f", {n}: {_py(ct)} = ..." for n, ct in _ctrl)
+    _ctrl_posonly = ", /" if _ctrl else ""
 
     def _builtin_doc(cfn, py_params, ret_ann, fallback_doc):
         """Docstring lines for a built-in method: the header Doxygen for *cfn*
@@ -536,7 +542,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     elif arg_type != "void":
         lines += [
             "",
-            f"    def step(self, x: {_py(arg_type)}) -> {_py(return_type)}:",
+            f"    def step(self, x: {_py(arg_type)}{_ctrl_kw}"
+            f"{_ctrl_posonly}) -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
             f"{obj}_step",
@@ -548,7 +555,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             lines += [
                 "",
                 f"    def steps(self, x: NDArray[{_np(arg_type)}],"
-                f" out: NDArray[{_np(return_type)}] | None = None)"
+                f" out: NDArray[{_np(return_type)}] | None = None"
+                f"{_ctrl_kw})"
                 f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(

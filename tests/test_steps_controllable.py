@@ -5,10 +5,13 @@ override on the object's ``steps()``: ``obj.steps(x, gain=2.0)`` uses the
 supplied value for that block while omitting it reads the live ``self->gain``.
 The override is non-persistent — it never mutates the field (gh-240, Phase B).
 
-Scope (PR-1): the blockwise array-in / array-out steps() shape with
-real-scalar (float/int) fields only.  Declaration is TOML-first
-(``controllable_names`` threaded through generation); other shapes and
-complex scalars are rejected at generation with a clean error.
+Covers the blockwise array-in / array-out shape (gh-244 Phase B) and the
+scalar->scalar step()+steps() shape (item 4 PR-1, which also folds in the
+``out=`` keyword unification). step() takes its overrides positionally (hot
+path); steps() takes them by keyword. Real-scalar (float/int) fields only;
+array-input step(), void-arg generators/sinks, and complex scalars are rejected
+at generation with a clean error. Declaration is TOML-first
+(``controllable_names`` threaded through generation).
 """
 
 import shutil
@@ -179,12 +182,30 @@ class TestValidation:
         ctx.update(make_perf_ctx(False))
         return ctx
 
-    def test_rejects_non_blockwise_shape(self):
-        ctx = self._ctx("float", "float")
-        with pytest.raises(ValueError, match="blockwise"):
+    def test_rejects_array_input_step_shape(self):
+        # array-in -> scalar-out has a step() but no steps() to attach the
+        # override to; deferred past PR-1 (rejected, not a compile failure).
+        ctx = self._ctx("float[]", "float")
+        with pytest.raises(ValueError, match="not yet supported"):
             make_step_ctx(
-                ctx, "float", "float", controllable=[("gain", "float")]
+                ctx, "float[]", "float", controllable=[("gain", "float")]
             )
+
+    def test_rejects_void_arg_generator(self):
+        # void-arg generators/sinks (NOARGS->VARARGS flip) are deferred.
+        ctx = self._ctx("void", "float")
+        with pytest.raises(ValueError, match="not yet supported"):
+            make_step_ctx(
+                ctx, "void", "float", controllable=[("gain", "float")]
+            )
+
+    def test_accepts_scalar_scalar(self):
+        # scalar->scalar is now supported (PR-1); must NOT raise.
+        ctx = self._ctx("float", "float")
+        out = make_step_ctx(
+            ctx, "float", "float", controllable=[("gain", "float")]
+        )
+        assert ", float gain)" in out["steps_c_decl"]
 
     def test_rejects_complex_scalar(self):
         ctx = self._ctx("float _Complex[]", "float _Complex[]")
@@ -249,3 +270,226 @@ def test_controllable_override_e2e(amp):
     )
     assert run.returncode == 0, f"runtime check failed:\n{run.stderr}"
     assert "E2E OK" in run.stdout
+
+
+# ── Scalar -> scalar step() + steps() (item 4 PR-1) ───────────────────────────
+
+
+@pytest.fixture()
+def scalar(tmp_path):
+    """Standalone scalar->scalar object (float -> float) with a controllable
+    ``gain`` field; step() is positional, steps() keyword-capable."""
+    root = tmp_path / "proj"
+    new_run("proj", root)
+    init_run(
+        root,
+        "amp",
+        state_vars=[("gain", "float", "2.0")],
+        arg_type="float",
+        return_type="float",
+        controllable_names=frozenset({"gain"}),
+    )
+    return root
+
+
+def _cmake_build(root):
+    cfg = subprocess.run(
+        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        capture_output=True,
+        text=True,
+    )
+    assert cfg.returncode == 0, f"configure failed:\n{cfg.stderr}"
+    bld = subprocess.run(
+        ["cmake", "--build", str(root / "build")],
+        capture_output=True,
+        text=True,
+    )
+    assert bld.returncode == 0, f"build failed:\n{bld.stdout}\n{bld.stderr}"
+
+
+class TestScalarSignature:
+    def test_step_and_steps_take_control(self, scalar):
+        h = (scalar / "native/inc/amp/amp_core.h").read_text()
+        # step() inline gains the param; steps() decl gains it too.
+        assert "float x, float gain)" in h
+        assert "size_t               n, float gain);" in h
+
+    def test_step_parses_positional_not_keyword(self, scalar):
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        # step() stays positional (PyArg_ParseTuple), default from the field.
+        assert "float gain = self->handle->gain;" in ext
+        assert 'PyArg_ParseTuple(args, "f|f", &x, &gain)' in ext
+
+    def test_steps_is_keyword_capable(self, scalar):
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        assert '"x", "out", "gain", NULL' in ext
+        assert "PyArg_ParseTupleAndKeywords" in ext
+
+    def test_step_methoddef_stays_varargs_only(self, scalar):
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        # step() never gets METH_KEYWORDS (per-sample hot path).
+        assert "(PyCFunction)Amp_step,     METH_VARARGS," in ext
+        # steps() does.
+        assert (
+            "(PyCFunction)(void *)Amp_steps,    METH_VARARGS | METH_KEYWORDS"
+            in ext
+        )
+
+    def test_pyi_step_positional_only_steps_keyword(self, scalar):
+        pyi = (scalar / "src/proj/amp.pyi").read_text()
+        assert (
+            "def step(self, x: float, gain: float = ..., /) -> float:" in pyi
+        )
+        assert (
+            "out: NDArray[np.float32] | None = None, gain: float = ..." in pyi
+        )
+
+
+class TestOutUnification:
+    """out= folded into item 4: every built-in scalar steps() is now
+    keyword-capable, even with no controllable field."""
+
+    def test_plain_scalar_steps_is_keyword_capable(self, tmp_path):
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        init_run(
+            root, "plain", arg_type="float", return_type="float"
+        )  # no controllable
+        ext = (root / "native/src/plain/plain_ext.c").read_text()
+        assert "PyArg_ParseTupleAndKeywords" in ext
+        assert '{"x", "out", NULL}' in ext
+        assert (
+            "(PyCFunction)(void *)Plain_steps,    "
+            "METH_VARARGS | METH_KEYWORDS" in ext
+        )
+
+    def test_plain_scalar_out_kwarg_works_e2e(self, tmp_path):
+        if _SKIP:
+            pytest.skip(_SKIP)
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        init_run(root, "plain", arg_type="float", return_type="float")
+        _cmake_build(root)
+        script = (
+            "import numpy as np\n"
+            "from proj import Plain\n"
+            "p = Plain()\n"
+            "x = np.ones(4, dtype=np.float32)\n"
+            "buf = np.zeros(4, dtype=np.float32)\n"
+            "r = p.steps(x, out=buf)\n"  # out= as a keyword — the fold-in
+            "assert r is buf\n"
+            "print('OUT KW OK')\n"
+        )
+        run = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=root / "src",
+            capture_output=True,
+            text=True,
+        )
+        assert run.returncode == 0, run.stderr
+        assert "OUT KW OK" in run.stdout
+
+
+def test_scalar_controllable_e2e(scalar):
+    """Build a scalar object and prove step()/steps() override semantics,
+    including that step() rejects a keyword call (positional-only)."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    # y = x * gain (the override is observable).
+    h = scalar / "native/inc/amp/amp_core.h"
+    h.write_text(
+        h.read_text().replace("return (float)x;", "return (float)(x * gain);")
+    )
+    _cmake_build(scalar)
+    script = (
+        "import numpy as np\n"
+        "from proj import Amp\n"
+        "a = Amp(gain=2.0)\n"
+        "assert a.step(3.0) == 6.0, 'step omit reads field'\n"
+        "assert a.step(3.0, 10.0) == 30.0, 'step positional override'\n"
+        "try:\n"
+        "    a.step(3.0, gain=10.0); raise SystemExit('kw must be rejected')\n"
+        "except TypeError:\n"
+        "    pass\n"
+        "assert a.get_gain() == 2.0, 'override must not persist'\n"
+        "x = np.arange(4, dtype=np.float32)\n"
+        "assert np.allclose(a.steps(x), x * 2.0), 'steps omit'\n"
+        "assert np.allclose(a.steps(x, gain=10.0), x * 10.0), 'steps kw'\n"
+        "assert a.get_gain() == 2.0\n"
+        "print('SCALAR E2E OK')\n"
+    )
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=scalar / "src",
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, f"runtime check failed:\n{run.stderr}"
+    assert "SCALAR E2E OK" in run.stdout
+
+
+def test_step_controllable_perf_before_after(tmp_path, capsys):
+    """Measure the zero-cost-default claim in ONE interpreter (no cross-process
+    noise): a controllable step()'s OMIT path should be ~indistinguishable from
+    a non-controllable twin's step(), while passing the override adds only the
+    extra-arg cost. Two objects in one project so both import side by side.
+    Reports before/after ns/call; asserts only a loose bound so CI noise can't
+    flake it."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    root = tmp_path / "proj"
+    new_run("proj", root)
+    # base: non-controllable. ctrl: controllable. Same shape, same package.
+    init_run(
+        root,
+        "base",
+        state_vars=[("gain", "float", "2.0")],
+        arg_type="float",
+        return_type="float",
+    )
+    init_run(
+        root,
+        "ctrl",
+        state_vars=[("gain", "float", "2.0")],
+        arg_type="float",
+        return_type="float",
+        controllable_names=frozenset({"gain"}),
+    )
+    _cmake_build(root)
+
+    measure = (
+        "import time\n"
+        "from proj import Base, Ctrl\n"
+        "b = Base(gain=2.0); c = Ctrl(gain=2.0)\n"
+        "N = 300000\n"
+        "def t(fn):\n"
+        "    best = float('inf')\n"
+        "    for _ in range(7):\n"  # best-of-7 rejects scheduler noise
+        "        s = time.perf_counter()\n"
+        "        for _ in range(N): fn()\n"
+        "        best = min(best, time.perf_counter() - s)\n"
+        "    return best / N * 1e9\n"
+        "base = t(lambda: b.step(1.0))\n"
+        "omit = t(lambda: c.step(1.0))\n"
+        "pas  = t(lambda: c.step(1.0, 3.0))\n"
+        "print(f'{base:.1f} {omit:.1f} {pas:.1f}')\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", measure],
+        cwd=root / "src",
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    base, omit, pas = (float(v) for v in out.stdout.split())
+    with capsys.disabled():
+        print(
+            f"\n[step() perf] non-controllable step(x):    {base:6.1f} ns/call"
+            f"\n[step() perf] controllable   step(x):    {omit:6.1f} ns/call "
+            f"({omit - base:+.1f} vs base — omit path)"
+            f"\n[step() perf] controllable   step(x, g): {pas:6.1f} ns/call "
+            f"({pas - base:+.1f} vs base — pass path)"
+        )
+    # Loose sanity: the omit path must not be pathologically slower than base
+    # (catches e.g. an accidental persistent setter call). Tolerant of noise.
+    assert omit < base * 2 + 40, (base, omit, pas)

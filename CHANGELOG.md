@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Controllable `step()` overrides + `out=` keyword unification (gh-240)** —
+    the `controllable = true` flag now also reaches **`step()`** on the
+    scalar→scalar shape. `step(x)` reads the live field; `step(x, override)`
+    overrides it for that one sample, **positionally only** (`PyArg_ParseTuple   "f|f"`, never `METH_KEYWORDS`) because the parse is paid per-sample — a
+    keyword call would cost ~3.4× the call. The field threads through *both*
+    `step()` and `steps()` consistently (they share the per-sample algorithm),
+    in delegate and non-delegate modes. Measured: the omit path is
+    indistinguishable from a non-controllable baseline (~0 ns), passing the
+    override adds ~2 ns. Folded in: every built-in `steps()` now parses with
+    `PyArg_ParseTupleAndKeywords`, so `steps(x, out=buf)` works as a keyword
+    everywhere — not only when a field is controllable. Scope: blockwise
+    array→array and scalar→scalar, real-scalar (float/int) fields; array-input
+    `step()`, void-arg generators/sinks, and complex scalars are rejected at
+    generation with a clear error (deferred follow-ups). The `.pyi` types
+    `step()`'s overrides positional-only (trailing `/`) and `steps()`'s as
+    keyword args.
+
 - **Controllable `steps()` overrides (`controllable = true`, gh-240)** — a state
     field flagged `controllable = true` in the manifest becomes an optional,
     keyword-capable per-call override on the object's `steps()`. Omitting it
