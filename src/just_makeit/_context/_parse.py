@@ -9,6 +9,7 @@ from __future__ import annotations
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
+    _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
     _ctype_display,
@@ -115,17 +116,26 @@ def _build_params_parse(
                     f"    {disp} {pname} = {meta['to_c'](pname)};"
                 )
             else:
-                decl_lines.append(f"    {disp} {pname} = {meta['zero']};")
+                # gh-240: a scalar with a `default` is optional — seed its C
+                # local with the default literal so an omitted arg yields it.
+                init = p.get("default") or meta["zero"]
+                decl_lines.append(f"    {disp} {pname} = {init};")
                 addr_exprs.append(f"&{pname}")
 
             call_args.append(pname)
 
-    fmt_str = "".join(fmt_chars)
+    # gh-238/gh-240: named methods are positional-OR-keyword (matching functions
+    # and constructors). Each param name is a kwarg; a param with a `default`
+    # goes after the `|` (optional). The wrapper must take a `PyObject *kwds`.
+    kwnames = "".join(f'"{p["name"]}", ' for p in params)
+    fmt_str = _join_fmt_with_optional(fmt_chars, params)
     addr_str = ", ".join(addr_exprs)
     lines = (
-        decl_lines
+        [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
+        + decl_lines
         + [
-            f'    if (!PyArg_ParseTuple(args, "{fmt_str}", {addr_str}))',
+            f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_str}",',
+            f"            _kwlist, {addr_str}))",
             "        return NULL;",
         ]
         + conv_lines

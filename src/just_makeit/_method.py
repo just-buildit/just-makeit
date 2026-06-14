@@ -599,7 +599,9 @@ def run(
                 arg_type,
                 return_type,
                 multi_output,
-                params,
+                # The C stub signature ignores the optional `default` (a
+                # binding concern); project to (name, type) (gh-240).
+                [(p[0], p[1]) for p in params],
                 out_type,
                 batch=batch,
             )
@@ -680,7 +682,15 @@ def run(
     if varargs:
         method_entry["varargs"] = True
     if params:
-        method_entry["params"] = [{"name": n, "type": t} for n, t in params]
+        # gh-240: a 3-tuple param carries an optional `default`; persist it so a
+        # defaulted scalar round-trips and renders as an optional kwarg.
+        _mp: list[dict] = []
+        for p in params:
+            entry = {"name": p[0], "type": p[1]}
+            if len(p) > 2 and p[2]:
+                entry["default"] = p[2]
+            _mp.append(entry)
+        method_entry["params"] = _mp
     if variable_output:
         method_entry["variable_output"] = True
     if pass_capacity:

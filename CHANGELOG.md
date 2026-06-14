@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Optional `jm method` params with defaults; named methods are now
+    keyword-capable (gh-240)** — `jm method obj m --param gain:double=1.0` makes
+    `gain` an optional arg (`obj.m(x)` uses the default, `obj.m(x, 2.0)` /
+    `obj.m(x, gain=2.0)` overrides). As part of this, named methods with params
+    moved from positional-only (`METH_VARARGS` + `PyArg_ParseTuple`) to
+    positional-or-keyword (`METH_VARARGS | METH_KEYWORDS` +
+    `PyArg_ParseTupleAndKeywords`), matching functions and constructors — keyword
+    capability is ~free when callers pass positionally. Defaulted params go after
+    the `|`, the C local is seeded to the default, and the `.pyi` shows
+    `name: type = default`. Same rules as the function feature: defaults must
+    follow required params; plain scalars only. (`steps()` defaults follow next.)
+
 - **Optional `jm function` params with defaults (gh-240)** — a scalar param may
     declare a default: `jm function fn --param gain:double=1.0`. The param
     becomes optional — `fn(x)` uses the default, `fn(x, 2.0)` / `fn(x, gain=2.0)`

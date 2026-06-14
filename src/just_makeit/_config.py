@@ -1458,10 +1458,15 @@ def _dump(cfg: dict) -> str:
             _ea = m.get("extra_args") or m.get("params")
             if _ea:
                 _ekey = "extra_args" if "extra_args" in m else "params"
-                parts = ", ".join(
-                    f'{{name = "{p["name"]}", type = "{p["type"]}"}}'
-                    for p in _ea
-                )
+
+                def _param_inline(p: dict) -> str:
+                    s = f'name = "{p["name"]}", type = "{p["type"]}"'
+                    # gh-240: an optional scalar default round-trips as a string.
+                    if p.get("default") not in (None, ""):
+                        s += f', default = "{p["default"]}"'
+                    return "{" + s + "}"
+
+                parts = ", ".join(_param_inline(p) for p in _ea)
                 lines.append(f"{_ekey} = [{parts}]")
             if m.get("out_type"):
                 lines.append(f'out_type = "{m["out_type"]}"')

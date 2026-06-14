@@ -101,13 +101,37 @@ class TestCliMethod:
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--param", "n:int"])
             _, kwargs = mock_run.call_args
-            assert ("n", "int") in kwargs.get("params", [])
+            assert ("n", "int", "") in kwargs.get("params", [])
 
     def test_param_valid_array(self):
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--param", "coeffs:float[]"])
             _, kwargs = mock_run.call_args
-            assert ("coeffs", "float[]") in kwargs.get("params", [])
+            assert ("coeffs", "float[]", "") in kwargs.get("params", [])
+
+    def test_scalar_default_parsed(self):
+        # gh-240: `name:type=default` → 3-tuple carrying the default.
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--param", "gain:double=1.5"])
+            _, kwargs = mock_run.call_args
+            assert ("gain", "double", "1.5") in kwargs.get("params", [])
+
+    def test_default_on_array_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--param", "buf:float[]=x"])
+
+    def test_required_after_default_exits(self):
+        with pytest.raises(SystemExit):
+            _run(
+                [
+                    "fir",
+                    "execute",
+                    "--param",
+                    "gain:double=1.0",
+                    "--param",
+                    "n:size_t",
+                ]
+            )
 
     def test_param_bad_array_elem_exits(self):
         with pytest.raises(SystemExit):
@@ -122,7 +146,7 @@ class TestCliMethod:
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--extra-arg", "dump_now:bool"])
             _, kwargs = mock_run.call_args
-            assert ("dump_now", "bool") in kwargs.get("params", [])
+            assert ("dump_now", "bool", "") in kwargs.get("params", [])
 
     def test_extra_arg_bad_format_exits(self):
         with pytest.raises(SystemExit):
