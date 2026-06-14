@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`depends_on { link = true }` broke a collocated module-object's own
+    test/bench (gh-254)** — when an object's name equals its module's (collocated,
+    e.g. doppler's `ddc`/`ddcr`), the `.so` aggregator and the object-core
+    test/bench share one `CMakeLists.txt` that `jm apply`/`jm object`
+    regenerates. `link=true` linked the dependency core onto the `.so` but
+    dropped it from `test_<obj>_core`/`bench_<obj>_core`, so an object whose
+    `_core.c` **composes** a sibling failed to link (`undefined reference`).
+    `link=true` is now **additive** for the collocated path: the dependency
+    `<dep>_core` is linked directly onto the object's own test/bench (and PUBLIC
+    on its `_core`) **and** the `.so` — matching the non-collocated behaviour. No
+    change when an object has no `depends_on`.
+
 ### Added
 
 - **Controllable overrides through the SIMD `JM_DEFINE_STEPS` macro (gh-240)** —

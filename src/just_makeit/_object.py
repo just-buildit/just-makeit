@@ -867,6 +867,26 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
+            # gh-254: a collocated object whose <obj>_core.c COMPOSES a sibling
+            # core needs that <dep>_core directly on its OWN test/bench links
+            # too — not just the module .so. The .so link (object_core_libs)
+            # already carries link=true deps; here we make link=true *additive*
+            # rather than a move by also linking every depends_on core onto
+            # test_<obj>_core / bench_<obj>_core (which link <obj>_core, whose
+            # .c calls the dep's symbols). OBJECT-lib PUBLIC deps don't
+            # propagate to a final target (gh-160), so the link must be direct
+            # on the test/bench targets, exactly as the create path does for
+            # non-collocated objects. Mirror that `_dep_cores` normalisation so
+            # a bare `lo_core` entry doesn't become `lo_core_core`.
+            _obj_dep_cores = [
+                (d[:-5] if d.endswith("_core") else d) + "_core"
+                for d in C.dep_names(C.depends_on_raw(cfg, obj))
+            ]
+            _colib: list[str] = []
+            for _l in list(extra_libs) + _obj_dep_cores:
+                if _l not in _colib:
+                    _colib.append(_l)
+            _colib_block = "\n    ".join(_colib) + "\n    " if _colib else ""
             # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
             # the deps propagate transitively to the Python extension. The
             # `jm object` path sets extra_link_on_object_core (run()); apply
@@ -875,14 +895,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # into the generated CMakeLists and breaks the build.
             extra_link_on_object_core = (
                 f"target_link_libraries({obj}_core PUBLIC\n    "
-                + "\n    ".join(extra_libs)
+                + "\n    ".join(_colib)
                 + ")\n"
-                if extra_libs
+                if _colib
                 else ""
             )
             ctx_cmake = {
                 **ctx_,
-                "extra_link_libs_block": extra_link_libs_block,
+                "extra_link_libs_block": _colib_block,
                 "extra_link_on_object_core": extra_link_on_object_core,
             }
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
