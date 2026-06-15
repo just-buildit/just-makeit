@@ -720,6 +720,9 @@ def run(
         else []
     )
     import_line = f"from {pkg} import {ctx['Component']}"
+    # gh-273: suppress the construction doctest when a required init-param has
+    # no default — there is no valid seed and a validating ctor would reject the
+    # type's zero under `pytest --doctest-glob='*.pyi'`.
     ctx["pyi_examples"] = (
         Ctx._pyi_examples_block(
             scalar_state,
@@ -728,7 +731,7 @@ def run(
             ctx.get("py_create_args", ""),
             ctx["Component"],
         )
-        if scalar_state
+        if scalar_state and not Ctx._unseedable_required(init_params)
         else ""
     )
 

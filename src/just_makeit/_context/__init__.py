@@ -17,6 +17,7 @@ from ._state import (
     make_state_ctx,
     _pyi_examples_block,
     _build_no_state_init_ctx,
+    _unseedable_required,
 )
 from ._methods import make_methods_ctx, make_properties_ctx
 from ._step import make_perf_ctx, make_step_ctx
@@ -37,4 +38,5 @@ __all__ = [
     "make_module_ctx",
     "_pyi_examples_block",
     "_build_no_state_init_ctx",
+    "_unseedable_required",
 ]

@@ -44,7 +44,7 @@ except ImportError:
 
 
 class Test<<Component>>(unittest.TestCase):
-    def test_create(self):
+<<pytest_class_skip>>    def test_create(self):
         obj = <<Component>>(<<py_create_args>>)
         self.assertIsNotNone(obj)
 <<step_pytest_methods>>

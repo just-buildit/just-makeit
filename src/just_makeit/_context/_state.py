@@ -866,6 +866,80 @@ def _make_gs_decls_impls(
 # ---------------------------------------------------------------------------
 
 
+def _unseedable_required(init_params: list) -> list:
+    """Names of ``required`` scalar init-params that carry no default (gh-273).
+
+    Such a param has no value jm can put in a generated smoke test or doctest;
+    a validating constructor would reject the type's zero. Arrays are excluded
+    (they seed as ``np.zeros`` and are always positional). Returns the names in
+    declaration order (empty when the constructor is fully seedable)."""
+    return [
+        p[0]
+        for p in init_params
+        if len(p) > 8
+        and p[8]  # required
+        and not (len(p) > 2 and p[2])  # no default
+        and not str(p[1]).endswith("[]")  # scalar
+    ]
+
+
+def _ctor_seed_slots(component: str, init_params: list) -> dict:
+    """Smoke-test slots that depend on whether the constructor can be seeded.
+
+    A ``required`` scalar init-param with no default (gh-266) has no value jm
+    can put in a generated smoke test. For a constructor that *validates* its
+    inputs (rejecting the type's zero — sample rate, span, size …), the
+    auto-seeded C smoke (``create(0, …)`` → ``CHECK(obj != NULL)``) and the
+    pytest construction then fail with the constructor's own error (gh-273). The
+    feature is most useful for exactly such params, so jm must not assert a
+    construction it cannot validly seed.
+
+    When such a param exists the generated tests *defer* instead of asserting:
+
+    - ``obj_null_check`` — the C smoke treats a NULL return as a skip (prints a
+      note and returns 0) rather than ``CHECK(obj != NULL)``; if the constructor
+      happens to accept the zero seed the rest of the smoke still runs;
+    - ``pytest_class_skip`` / ``pytest_module_skip`` — the pytest case is skipped
+      (a ``setUp`` ``skipTest`` for the unittest-style file, a module
+      ``pytestmark`` for the pure-pytest file) with a note to pass valid args.
+
+    Without an unseedable param every slot is its historic value, so existing
+    output is byte-identical.
+    """
+    unseed = _unseedable_required(init_params)
+    if not unseed:
+        return {
+            "obj_null_check": (
+                "    CHECK(obj != NULL);\n    if (!obj) return 1;"
+            ),
+            "pytest_class_skip": "",
+            "pytest_module_skip": "",
+        }
+    names = ", ".join(unseed)
+    msg = (
+        f"required constructor parameter(s) {names} have no default; "
+        "seed valid arguments to enable this smoke test"
+    )
+    return {
+        "obj_null_check": (
+            "    if (!obj) {\n"
+            f"        /* {names}: required with no default — a validating\n"
+            f"           {component}_create() may reject the zero-seeded call\n"
+            "           above. Pass valid arguments to smoke-test further. */\n"
+            f'        printf("test_{component}_core SKIPPED'
+            f' ({names} need seeding)\\n");\n'
+            "        return 0;\n"
+            "    }"
+        ),
+        "pytest_class_skip": (
+            f'    def setUp(self):\n        self.skipTest("{msg}")\n\n'
+        ),
+        "pytest_module_skip": (
+            f'pytestmark = pytest.mark.skip(reason="{msg}")\n'
+        ),
+    }
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -1001,6 +1075,7 @@ def make_state_ctx(
             base["state_struct_fields"] = "\n".join(
                 f"    {ct} {name};" for name, ct in opaque_fields
             )
+        base.update(_ctor_seed_slots(component, list(init_params)))
         return base
 
     if roles is None:
@@ -1504,6 +1579,9 @@ def make_state_ctx(
     )
 
     # ── PYI Examples ────────────────────────────────────────────────────
+    # gh-273: a required init-param with no default has no valid construction
+    # seed, so suppress the doctest rather than emit one a validating ctor
+    # rejects under `pytest --doctest-glob='*.pyi'`.
     pyi_examples = (
         _pyi_examples_block(
             ctor_scalars,
@@ -1512,7 +1590,7 @@ def make_state_ctx(
             py_create_args,
             Component,
         )
-        if ctor_scalars
+        if ctor_scalars and not _unseedable_required(init_params)
         else ""
     )
 
@@ -1797,4 +1875,5 @@ def make_state_ctx(
         for _k in _CTOR_OVERRIDE_KEYS:
             if _k in _init_ctx:
                 result[_k] = _init_ctx[_k]
+    result.update(_ctor_seed_slots(component, list(init_params)))
     return result

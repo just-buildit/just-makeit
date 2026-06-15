@@ -2,7 +2,24 @@
 
 ## [Unreleased]
 
-## [0.19.12] — 2026-06-15
+### Fixed
+
+- **A `required` init-param with no `default` generated failing smoke tests /
+    doctests for validating constructors (gh-273)** — `required` (gh-266) is most
+    useful for params that have no sane default and *are* validated (sample rate,
+    span, size). But jm seeded the generated `.pyi` construction doctest, the C
+    smoke (`create(0, …)` → `CHECK(obj != NULL)`), and the pytest case with the
+    type's **zero**, which such a constructor rejects — so a fresh scaffold was
+    red (`MemoryError: …_create returned NULL`, `1 failed` under
+    `--doctest-glob='*.pyi'`). jm has no valid value to seed, so the generated
+    tests now **defer** instead of asserting: the `.pyi` omits the construction
+    doctest, the C smoke treats a NULL return as a skip (prints a note, returns
+    0\) rather than `CHECK`-ing it, and the pytest case is skipped (a `setUp`
+    `skipTest`, or a module `pytestmark` for the pure-pytest file) with a note to
+    pass valid arguments. Declaring a `default` **as well** (`required = true`
+    with `default = "…"`) keeps the param a mandatory positional but seeds the
+    smoke/doctest with that value — the supported way to get a runnable example
+    for a validated required param. Fully-seedable objects are byte-identical.
 
 ### Fixed
 

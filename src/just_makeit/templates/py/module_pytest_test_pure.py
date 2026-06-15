@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from <<package>>.<<module>> import <<Component>>
-
+<<pytest_module_skip>>
 
 def test_create():
     obj = <<Component>>(<<py_create_args>>)
