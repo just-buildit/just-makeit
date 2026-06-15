@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.10] — 2026-06-14
+
 ### Added
 
 - **`[project] c_style` — emit C in the project's house style (gh-265)** —
