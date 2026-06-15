@@ -38,6 +38,9 @@ JM_BENCH_H = _load("c/inc/jm_bench.h")
 COMPONENT_CORE_H = _load("c/inc/component_core.h")
 MODULE_CORE_H = _load("c/inc/module_core.h")
 UMBRELLA_H = _load("c/inc/umbrella.h")
+# Seeded into a new project only when `--c-style clang-format` is requested
+# (gh-265), so `clang-format --style=file` has the house style to format to.
+CLANG_FORMAT = _load("c/.clang-format")
 # ── C source ─────────────────────────────────────────────────────────────────
 COMPONENT_CORE_C = _load("c/src/component_core.c")
 COMPONENT_EXT_C = _load("c/src/component_ext.c")

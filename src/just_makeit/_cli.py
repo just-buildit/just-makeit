@@ -30,6 +30,9 @@ Commands:
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
     --windows                   Target Windows too (`[project] platforms`): emit the MinGW
                                 runtime-DLL CMake boilerplate. Off by default (Linux/macOS).
+    --c-style STYLE             Reformat generated C to the project's style after every
+                                mutating command (`[project] c_style`). Only `clang-format`
+                                is supported; seeds a `.clang-format` and runs it on native/.
     --no-fragments              Use the legacy single-manifest layout (all sections inlined
                                 in just-makeit.toml). Default is the per-component fragment
                                 layout: objects -> objects/<name>.toml, modules -> modules/
@@ -1042,3 +1045,37 @@ def main() -> None:
         print(f"just-makeit: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'just-makeit help' for usage.", file=sys.stderr)
         sys.exit(1)
+
+    # gh-265: optional house-style pass over the generated C. No-op unless the
+    # manifest opts in via [project] c_style. `new` formats its own freshly
+    # created tree (its root is a subdir, not cwd), so it is handled in
+    # _new.run and excluded here. Only commands that emit/regenerate native C
+    # are swept; query/build commands leave the tree alone.
+    if cmd in _C_EMITTING_COMMANDS:
+        from . import _cfmt
+        from . import _config as C
+
+        root = Path.cwd()
+        if (root / C.FILENAME).exists():
+            _cfmt.format_project(root, C.load(root))
+
+
+# Commands that write or regenerate native C/H and should trigger the optional
+# clang-format pass (gh-265). `new` self-formats; query/build/bench do not emit.
+_C_EMITTING_COMMANDS = frozenset(
+    {
+        "module",
+        "object",
+        "method",
+        "property",
+        "function",
+        "add",
+        "perf",
+        "apply",
+        "regenerate",
+        "remove",
+        "upgrade",
+        "split-objects",
+        "bind",
+    }
+)
