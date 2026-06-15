@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The gh-271 per-object CMakeLists reconcile clobbered hand-owned build rules
+    (gh-275, regression in 0.19.11)** — 0.19.11 re-rendered a module object's
+    `native/src/<obj>/CMakeLists.txt` from the manifest, which silently dropped
+    bespoke build wiring the manifest cannot express: extra `add_library`
+    sources (vendored `.c` compiled straight into `<obj>_core`),
+    `set_source_files_properties`, and a hand-added `target_link_libraries(...   PUBLIC m)`. In doppler, `fft_core` compiles in pocketfft + PFFFT this way,
+    so every FFT consumer broke with `undefined reference`. The reconcile now
+    detects a **hand-owned** per-object CMakeLists — one carrying extra
+    `add_library` sources, `set_source_files_properties`, or an
+    `add_custom_command`/`add_custom_target` — and leaves it untouched (and
+    `status --check` reports it as up to date), while pure-jm objects still get
+    the gh-271 `depends_on` reconcile.
+
 ## [0.19.11] — 2026-06-15
 
 ### Fixed
