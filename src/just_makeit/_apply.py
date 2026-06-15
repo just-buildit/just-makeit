@@ -668,6 +668,40 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
+def _is_hand_owned_object_cmake(text: str, comp: str) -> bool:
+    """True when a per-object ``CMakeLists.txt`` carries bespoke build wiring.
+
+    The gh-271 reconcile re-renders a module object's per-object CMakeLists from
+    the manifest. That is safe only while the file stays within the shape jm
+    emits; once it gains build rules the manifest cannot express — extra
+    ``add_library`` sources (vendored ``.c`` compiled into ``<comp>_core``),
+    ``set_source_files_properties``, or a custom build step — re-rendering would
+    silently drop them (gh-275: doppler's ``fft_core`` compiles in pocketfft /
+    PFFFT, breaking every FFT consumer). Such a file is *hand-owned*: jm leaves
+    it untouched and ``status --check`` treats it as up to date.
+
+    Detected signals, all of which jm never generates itself:
+
+    - an ``add_library(<comp>_core OBJECT …)`` source list naming anything
+      besides ``<comp>_core.c``;
+    - a ``set_source_files_properties`` / ``add_custom_command`` /
+      ``add_custom_target`` statement anywhere in the file.
+    """
+    m = re.search(
+        rf"add_library\(\s*{re.escape(comp)}_core\s+OBJECT\s+([^)]*)\)", text
+    )
+    if m and any(s != f"{comp}_core.c" for s in m.group(1).split()):
+        return True
+    return any(
+        kw in text
+        for kw in (
+            "set_source_files_properties",
+            "add_custom_command",
+            "add_custom_target",
+        )
+    )
+
+
 def _reconcile_object_core_cmake(
     real: Path, temp: Path, comp: str, include_dirs: "list[str]"
 ) -> bool:
@@ -693,12 +727,20 @@ def _reconcile_object_core_cmake(
     2. user ``if(VAR) … endif()`` external-library blocks (e.g.
        ``if(DOPPLER_C_LIB)``) — hand-added wiring jm cannot re-derive.
 
+    A file that has gone *hand-owned* (bespoke ``add_library`` sources /
+    ``set_source_files_properties`` the manifest can't express — gh-275) is left
+    untouched, since re-rendering it would drop those rules.
+
     Returns True if the file changed."""
     if not real.exists() or not temp.exists():
         return False
     from ._object import _external_cmake_blocks
 
     original = real.read_text(encoding="utf-8")
+    # gh-275: never re-render a hand-owned file (vendored sources, per-source
+    # build properties) — the canonical render cannot reproduce them.
+    if _is_hand_owned_object_cmake(original, comp):
+        return False
     new = temp.read_text(encoding="utf-8")
     # (1) re-add component extra_include_dirs as a second PUBLIC include block,
     # just before the test executable (matches _inject_object_core_cmake).

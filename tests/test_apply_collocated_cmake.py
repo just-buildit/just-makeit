@@ -497,3 +497,95 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
         "test_tone_core failed to link a depends_on added post-scaffold "
         f"(gh-271):\n{bld.stdout}\n{bld.stderr}"
     )
+
+
+# ── gh-275: the reconcile must not clobber a hand-owned per-object CMakeLists ──
+
+
+_HAND_OWNED_FFT = """\
+# OBJECT library — pure C core, no Python dependency.
+add_library(fft_core OBJECT fft_core.c pocketfft.c pocketfft_c99.c pffft.c)
+target_include_directories(fft_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/native/inc ${CMAKE_SOURCE_DIR}/native/inc/fft)
+set_source_files_properties(pffft.c PROPERTIES
+    INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/native/inc/pffft
+    COMPILE_DEFINITIONS "_USE_MATH_DEFINES;_DEFAULT_SOURCE")
+target_link_libraries(fft_core PUBLIC m)
+
+add_executable(test_fft_core ${CMAKE_SOURCE_DIR}/native/tests/test_fft_core.c)
+target_link_libraries(test_fft_core PRIVATE fft_core m)
+add_test(NAME test_fft_core COMMAND test_fft_core)
+
+add_executable(bench_fft_core ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_fft_core.c)
+target_link_libraries(bench_fft_core PRIVATE fft_core m)
+"""
+
+
+def _module_with_hand_owned_fft(dest):
+    """Module `dsp` with a hand-owned `fft` (vendored pocketfft/PFFFT sources,
+    per-source properties) plus a pure-jm `tone` — the doppler shape."""
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "dsp")
+    for obj in ("fft", "tone"):
+        _silent(
+            object_run,
+            dest,
+            obj,
+            module="dsp",
+            state_vars=[("g", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+    (dest / "native/src/fft/CMakeLists.txt").write_text(_HAND_OWNED_FFT)
+
+
+def test_apply_preserves_hand_owned_object_cmake(tmp_path):
+    dest = tmp_path / "p"
+    _module_with_hand_owned_fft(dest)
+    _silent(apply_run, dest)
+    # Byte-for-byte intact: vendored sources, source properties, PUBLIC m.
+    assert (
+        dest / "native/src/fft/CMakeLists.txt"
+    ).read_text() == _HAND_OWNED_FFT
+
+
+def test_apply_hand_owned_survives_sibling_dep_change(tmp_path):
+    # A reconcile triggered by another object's depends_on change must still
+    # leave the hand-owned file untouched.
+    dest = tmp_path / "p"
+    _module_with_hand_owned_fft(dest)
+    _set_depends_on(dest, "tone", ["fft"])
+    _silent(apply_run, dest)
+    assert (
+        dest / "native/src/fft/CMakeLists.txt"
+    ).read_text() == _HAND_OWNED_FFT
+    # ...while the pure-jm sibling is still reconciled.
+    assert "fft_core" in (dest / "native/src/tone/CMakeLists.txt").read_text()
+
+
+def test_status_check_clean_for_hand_owned_object_cmake(tmp_path):
+    from just_makeit import _status
+
+    dest = tmp_path / "p"
+    _module_with_hand_owned_fft(dest)
+    assert _silent(_status.run, dest, check=True) == 0  # no phantom drift
+
+
+def test_hand_owned_detection():
+    from just_makeit._apply import _is_hand_owned_object_cmake
+
+    # Pure-jm: only its own core, no bespoke rules.
+    plain = "add_library(foo_core OBJECT foo_core.c)\n"
+    assert not _is_hand_owned_object_cmake(plain, "foo")
+    # Extra vendored source compiled into the core.
+    assert _is_hand_owned_object_cmake(
+        "add_library(foo_core OBJECT foo_core.c vendor.c)\n", "foo"
+    )
+    # Per-source build properties jm never emits.
+    assert _is_hand_owned_object_cmake(
+        plain + "set_source_files_properties(vendor.c PROPERTIES X Y)\n", "foo"
+    )
+    # Custom build step.
+    assert _is_hand_owned_object_cmake(
+        plain + "add_custom_command(OUTPUT gen.c COMMAND gen)\n", "foo"
+    )
