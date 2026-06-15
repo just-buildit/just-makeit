@@ -304,3 +304,196 @@ def test_collocated_dedup_dep_and_extra_lib(tmp_path):
     cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
     assert _link_block(cmake, "test_ddc_core").count("lo_core") == 1
     assert _link_block(cmake, "ddc_core PUBLIC").count("lo_core") == 1
+
+
+# ── gh-271: apply reconciles a CHANGED depends_on on a non-collocated object ──
+
+
+def _measure_module(dest):
+    """Module `measure` with non-collocated `base`, `extra`, and a `tone`
+    object that initially depends only on `base` (the doppler `measure` shape:
+    object name never equals the module name)."""
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "measure")
+    for obj in ("base", "extra"):
+        _silent(
+            object_run,
+            dest,
+            obj,
+            module="measure",
+            state_vars=[("g", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+    _silent(
+        object_run,
+        dest,
+        "tone",
+        module="measure",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        depends_on=[{"name": "base", "link": True}],
+    )
+
+
+def _set_depends_on(dest, obj, names):
+    cfg = C.load(dest)
+    cfg[obj]["depends_on"] = [{"name": n, "link": True} for n in names]
+    C.save(dest, cfg)
+
+
+def test_apply_reconciles_added_dep_on_existing_object(tmp_path):
+    # The gh-271 bug: once tone_core already had a PUBLIC link block (from its
+    # original `base` dep), apply's surgical add skipped it, so a newly added
+    # dep never reached tone's own _core/test/bench link lines.
+    dest = tmp_path / "p"
+    _measure_module(dest)
+    cmake = dest / "native/src/tone/CMakeLists.txt"
+    assert "extra_core" not in cmake.read_text()
+    _set_depends_on(dest, "tone", ["base", "extra"])
+    _silent(apply_run, dest)
+    text = cmake.read_text()
+    for target in ("tone_core PUBLIC", "test_tone_core", "bench_tone_core"):
+        block = _link_block(text, target)
+        assert "base_core" in block, target
+        assert "extra_core" in block, target
+    # idempotent — a second apply changes nothing.
+    before = cmake.read_text()
+    _silent(apply_run, dest)
+    assert cmake.read_text() == before
+
+
+def test_apply_reconciles_removed_dep_on_existing_object(tmp_path):
+    dest = tmp_path / "p"
+    _measure_module(dest)
+    _set_depends_on(dest, "tone", ["base", "extra"])
+    _silent(apply_run, dest)
+    # Now drop `extra` back out — the stale link line must be reconciled away.
+    _set_depends_on(dest, "tone", ["base"])
+    _silent(apply_run, dest)
+    text = (dest / "native/src/tone/CMakeLists.txt").read_text()
+    assert "extra_core" not in text
+    assert "base_core" in _link_block(text, "test_tone_core")
+
+
+def test_apply_reconcile_preserves_external_block(tmp_path):
+    # A hand-added if(VAR) external-library block must survive the reconcile
+    # overwrite (the gh-174 guarantee jm cannot re-derive from the manifest).
+    dest = tmp_path / "p"
+    _measure_module(dest)
+    cmake = dest / "native/src/tone/CMakeLists.txt"
+    cmake.write_text(
+        cmake.read_text().rstrip() + "\n\nif(DOPPLER_C_LIB)\n"
+        "  target_link_libraries(tone_core PUBLIC ${DOPPLER_C_LIB})\n"
+        "endif()\n"
+    )
+    _set_depends_on(dest, "tone", ["base", "extra"])
+    _silent(apply_run, dest)
+    text = cmake.read_text()
+    assert "extra_core" in text  # dep reconciled
+    assert "if(DOPPLER_C_LIB)" in text  # external block preserved
+
+
+def test_apply_reconcile_preserves_component_include_dirs(tmp_path):
+    dest = tmp_path / "p"
+    _measure_module(dest)
+    cfg = C.load(dest)
+    cfg["tone"]["extra_include_dirs"] = ["${CMAKE_SOURCE_DIR}/vendor"]
+    cfg["tone"]["depends_on"] = [
+        {"name": "base", "link": True},
+        {"name": "extra", "link": True},
+    ]
+    C.save(dest, cfg)
+    _silent(apply_run, dest)
+    text = (dest / "native/src/tone/CMakeLists.txt").read_text()
+    assert "extra_core" in text
+    assert "${CMAKE_SOURCE_DIR}/vendor" in text
+
+
+def test_status_check_flags_stale_object_depends_on(tmp_path):
+    # status --check ran the same skipped reconcile, so it reported "up to
+    # date" for a per-object CMakeLists whose depends_on had drifted.
+    from just_makeit import _status
+
+    dest = tmp_path / "p"
+    _measure_module(dest)
+    # Manifest gains a dep but the per-object CMakeLists is left stale.
+    _set_depends_on(dest, "tone", ["base", "extra"])
+    cfg_only = C.load(dest)  # no apply — disk file still base-only
+    assert (
+        "extra_core"
+        not in (dest / "native/src/tone/CMakeLists.txt").read_text()
+    )
+    assert C.depends_on(cfg_only, "tone") == ["base", "extra"]
+    changed = _silent(_status.run, dest, check=True)
+    assert changed > 0  # drift detected
+
+
+def test_apply_reconcile_object_test_links_e2e(tmp_path):
+    """The real regression: tone_core.c calls a sibling symbol after its
+    depends_on is changed post-scaffold. Without the reconcile, test_tone_core
+    fails with `undefined reference`. Build just that C test target (the module
+    .so aggregation is out of scope here) to prove the symbol resolves."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    dest = tmp_path / "p"
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "measure")
+    _silent(
+        object_run,
+        dest,
+        "extra",
+        module="measure",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    # tone starts with NO dependency.
+    _silent(
+        object_run,
+        dest,
+        "tone",
+        module="measure",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    # tone_core.c now composes extra's symbol.
+    h = dest / "native/inc/tone/tone_core.h"
+    h.write_text(
+        h.read_text()
+        .replace(
+            "#include <stddef.h>",
+            '#include <stddef.h>\n#include "extra/extra_core.h"',
+            1,
+        )
+        .replace(
+            "return (float)x;",
+            "return (float)x + extra_get_g((const extra_state_t *)0);",
+        )
+    )
+    # Declare the dependency *after the fact* — the gh-271 scenario.
+    _set_depends_on(dest, "tone", ["extra"])
+    _silent(apply_run, dest)
+    cfg = subprocess.run(
+        ["cmake", "-S", str(dest), "-B", str(dest / "build")],
+        capture_output=True,
+        text=True,
+    )
+    assert cfg.returncode == 0, cfg.stderr
+    bld = subprocess.run(
+        [
+            "cmake",
+            "--build",
+            str(dest / "build"),
+            "--target",
+            "test_tone_core",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert bld.returncode == 0, (
+        "test_tone_core failed to link a depends_on added post-scaffold "
+        f"(gh-271):\n{bld.stdout}\n{bld.stderr}"
+    )

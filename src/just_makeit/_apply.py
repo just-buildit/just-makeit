@@ -668,6 +668,59 @@ def _overwrite_if_changed(real: Path, temp: Path) -> bool:
     return True
 
 
+def _reconcile_object_core_cmake(
+    real: Path, temp: Path, comp: str, include_dirs: "list[str]"
+) -> bool:
+    """Reconcile a non-collocated module object's ``CMakeLists.txt`` (gh-271).
+
+    A module object's per-object ``native/src/<obj>/CMakeLists.txt`` is glue,
+    but ``jm apply`` historically only *added* missing link/include lines to it
+    (``_inject_object_core_cmake``), so a *change* to the object's ``depends_on``
+    never reached the file once its ``target_link_libraries(<obj>_core PUBLIC …)``
+    block already existed — the new dep cores were silently dropped from the
+    object's own ``_core`` / ``test`` / ``bench`` link lines and the C test
+    failed to link. ``jm status --check`` missed the drift because it observes
+    the same skipped reconcile.
+
+    The fix overwrites the file from the freshly-replayed canonical render in
+    *temp* (which carries the current ``extra_link_libs`` + ``depends_on`` cores
+    on every link line), then restores the two things the manifest-driven render
+    cannot reproduce:
+
+    1. component-level ``extra_include_dirs`` — the per-object template has no
+       slot for them, so they only ever reach the file via this injection
+       (mirrors the standalone path's gh-174 behaviour);
+    2. user ``if(VAR) … endif()`` external-library blocks (e.g.
+       ``if(DOPPLER_C_LIB)``) — hand-added wiring jm cannot re-derive.
+
+    Returns True if the file changed."""
+    if not real.exists() or not temp.exists():
+        return False
+    from ._object import _external_cmake_blocks
+
+    original = real.read_text(encoding="utf-8")
+    new = temp.read_text(encoding="utf-8")
+    # (1) re-add component extra_include_dirs as a second PUBLIC include block,
+    # just before the test executable (matches _inject_object_core_cmake).
+    if include_dirs and include_dirs[0] not in new:
+        anchor = f"add_executable(test_{comp}_core"
+        if anchor in new:
+            block = (
+                f"target_include_directories({comp}_core PUBLIC\n    "
+                + "\n    ".join(include_dirs)
+                + ")\n"
+            )
+            new = new.replace(anchor, f"{block}{anchor}", 1)
+    # (2) preserve user external-library blocks the canonical render omits.
+    for block in _external_cmake_blocks(original):
+        if block not in new:
+            new = new.rstrip("\n") + "\n\n" + block + "\n"
+    if new == original:
+        return False
+    real.write_text(new, encoding="utf-8")
+    return True
+
+
 def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
     """Bring the real ``_core.h`` up to date with the manifest, splice-free.
 
@@ -864,10 +917,7 @@ def _sync_aggregates(
         # gh-170: each module object's own _core.h gains its depends_on
         # includes (the per-object headers are otherwise sacred / never
         # refreshed on apply).
-        from ._init import (
-            _inject_includes_into_core_h,
-            _inject_object_core_cmake,
-        )
+        from ._init import _inject_includes_into_core_h
 
         for obj in C.module_objects(cfg, mod):
             obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
@@ -875,23 +925,24 @@ def _sync_aggregates(
                 obj_h, obj, C.depends_on(cfg, obj)
             ):
                 updated.append(obj_h)
-            # gh-174: a non-collocated module object's OBJECT-core CMakeLists is
-            # glue apply never re-renders, so surgically add its component-level
-            # extra_link_libs / extra_include_dirs AND its depends_on cores (so
-            # the object's own test/bench link the deps its core calls). The
-            # module-level test/bench block is left intact. Collocated objects
-            # share the module CMakeLists (handled above).
+            # gh-271: a non-collocated module object's OBJECT-core CMakeLists is
+            # glue, so reconcile it from the canonical replay render — this picks
+            # up a *changed* depends_on / extra_link_libs on the object's own
+            # _core / test / bench link lines (the old surgical-add path skipped
+            # the link block once it already existed, dropping new deps). The
+            # reconcile preserves component extra_include_dirs and user external
+            # if(VAR) blocks. Collocated objects share the module CMakeLists
+            # (handled above).
             if obj != mod:
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
-                _dep_cores = [
-                    (d[:-5] if d.endswith("_core") else d) + "_core"
-                    for d in C.depends_on(cfg, obj)
-                ]
-                if _inject_object_core_cmake(
+                temp_cmake = (
+                    temp_root / "native" / "src" / obj / "CMakeLists.txt"
+                )
+                if _reconcile_object_core_cmake(
                     obj_cmake,
+                    temp_cmake,
                     obj,
-                    list(C.component_extra_link_libs(cfg, obj)) + _dep_cores,
-                    C.component_extra_include_dirs(cfg, obj),
+                    list(C.component_extra_include_dirs(cfg, obj)),
                 ):
                     updated.append(obj_cmake)
 

@@ -224,6 +224,38 @@ def _make_object_ctx(
     return ctx
 
 
+# A standalone `if(VAR) … endif()` block at the top level of a CMakeLists.
+# Group 1 is the whole block, group 2 the guard variable.
+_EXTERNAL_BLOCK_RE = re.compile(
+    r"(if\s*\(\s*(\w+)\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))",
+    re.MULTILINE,
+)
+# Guards emitted by just-makeit's own templates — never external wiring.
+_CMAKE_KNOWN_GUARDS = {"BUILD_PYTHON"}
+
+
+def _external_cmake_blocks(text: str) -> "list[str]":
+    """Return the external ``if(VAR) … endif()`` wiring blocks in *text*.
+
+    A block qualifies when its guard is not one jm itself emits
+    (:data:`_CMAKE_KNOWN_GUARDS`) and it carries
+    ``target_link_libraries`` / ``target_include_directories`` — i.e. a
+    user-added conditional like ``if(DOPPLER_C_LIB)``. These are content
+    ``jm apply`` cannot re-derive from the manifest, so the reconcile path
+    preserves them across an overwrite (gh-271)."""
+    out: list[str] = []
+    for m in _EXTERNAL_BLOCK_RE.finditer(text):
+        block, guard = m.group(1), m.group(2)
+        if guard in _CMAKE_KNOWN_GUARDS:
+            continue
+        if (
+            "target_include_directories" in block
+            or "target_link_libraries" in block
+        ):
+            out.append(block)
+    return out
+
+
 def _copy_external_cmake_blocks(
     root: Path, new_comp: str, new_cmake_path: Path
 ) -> None:
@@ -244,37 +276,21 @@ def _copy_external_cmake_blocks(
     if not src_dir.exists():
         return
 
-    # Match a standalone if(VAR) … endif() block at the top level of cmake
-    block_pat = re.compile(
-        r"(if\s*\(\s*(\w+)\s*\)\n(?:[^\n]*\n)*?endif\s*\(\s*\))",
-        re.MULTILINE,
-    )
-
-    # Guards emitted by just-makeit's own templates — never external wiring.
-    known_guards = {"BUILD_PYTHON"}
-
     for cmake_file in sorted(src_dir.glob("*/CMakeLists.txt")):
         if cmake_file.parent.name == new_comp:
             continue
         text = cmake_file.read_text(encoding="utf-8")
-        for m in block_pat.finditer(text):
-            block = m.group(1)
-            if m.group(2) in known_guards:
-                continue
-            if (
-                "target_include_directories" in block
-                or "target_link_libraries" in block
-            ):
-                old_comp = cmake_file.parent.name
-                adapted = block.replace(old_comp, new_comp)
-                existing = new_cmake_path.read_text(encoding="utf-8")
-                if adapted not in existing:
-                    new_cmake_path.write_text(
-                        existing.rstrip("\n") + "\n\n" + adapted + "\n",
-                        encoding="utf-8",
-                    )
-                    print(f"  update  {new_cmake_path}  (external lib block)")
-                return  # one source file is enough
+        for block in _external_cmake_blocks(text):
+            old_comp = cmake_file.parent.name
+            adapted = block.replace(old_comp, new_comp)
+            existing = new_cmake_path.read_text(encoding="utf-8")
+            if adapted not in existing:
+                new_cmake_path.write_text(
+                    existing.rstrip("\n") + "\n\n" + adapted + "\n",
+                    encoding="utf-8",
+                )
+                print(f"  update  {new_cmake_path}  (external lib block)")
+            return  # one source file is enough
 
 
 def _import_re(module: str) -> "re.Pattern[str]":

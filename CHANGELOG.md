@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` didn't reconcile a per-object `CMakeLists.txt` when its
+    `depends_on` changed (gh-271)** — for a non-collocated multi-object module
+    (doppler `measure` = `tonemeas`/`imdmeas`/`nprmeas`), changing an existing
+    object's `depends_on` updated the module `.so` aggregator but left the
+    object's own `native/src/<obj>/CMakeLists.txt` stale: the new dep was
+    missing from its `_core` PUBLIC, `test_<obj>_core`, and `bench_<obj>_core`
+    link lines, so the C test failed to link (`undefined reference`). `jm apply`
+    only ever *added* link lines, so once the `target_link_libraries(<obj>_core   PUBLIC …)` block already existed the change was dropped — and
+    `jm status --check` missed the drift because it observes the same skipped
+    reconcile. Apply now reconciles the per-object file from the canonical
+    render (picking up added *and* removed deps on every link line) while
+    preserving component `extra_include_dirs` and user `if(VAR)` external-library
+    blocks; `status --check` now flags the stale link line as drift.
+
 ## [0.19.10] — 2026-06-14
 
 ### Added
