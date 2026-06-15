@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.14] — 2026-06-15
+
 ### Added
 
 - **`record_module` for a single-record method's structseq `__module__`
