@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.13] — 2026-06-15
+
 ### Fixed
 
 - **A `required` init-param with no `default` generated failing smoke tests /
