@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`[project] c_style` — emit C in the project's house style (gh-265)** —
+    jm emits its own canonical 4-space C, so a project with a different
+    committed style (doppler, jm's poster-child, uses GNU 2-space) had to run
+    `clang-format` over the generated `native/**` fragments by hand after every
+    `jm apply` — a documented, every-apply manual step. Setting
+    `c_style = "clang-format"` (or `jm new --c-style clang-format`, which also
+    seeds a `.clang-format`) makes jm run that pass itself after every mutating
+    command, so emitted code already matches the committed `.clang-format`.
+    Off by default → output is byte-identical for existing projects. A missing
+    `clang-format` binary is a soft failure (a warning; the command still
+    succeeds).
+
 ## [0.19.9] — 2026-06-14
 
 ### Fixed

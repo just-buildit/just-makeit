@@ -72,6 +72,7 @@ def run(
     c_deps: list[str] | None = None,
     platforms: list[str] | None = None,
     fragments: bool = False,
+    c_style: str = "",
 ) -> None:
     if not project.replace("_", "").isalnum() or project[0].isdigit():
         print(
@@ -148,6 +149,14 @@ def run(
     # linux/macos (gh-213).
     if platforms:
         cfg.setdefault("project", {})["platforms"] = list(platforms)
+    # gh-265: record the C-output style and seed a .clang-format so the
+    # post-command formatting pass has a house style to format to.
+    if c_style:
+        cfg.setdefault("project", {})["c_style"] = c_style
+        if c_style == "clang-format":
+            cf = root / ".clang-format"
+            if not cf.exists():
+                _write(cf, T.CLANG_FORMAT)
     C.save(root, cfg)
     # Opt into the per-component fragment layout up front: with the include
     # globs already in the manifest, every object/module scaffolded below
@@ -211,3 +220,11 @@ def run(
         print(
             f"{Color.done('Done!')}  {Color.cmd(f'cd {root.name} && just-makeit object <name>')}"
         )
+
+    # gh-265: format the freshly scaffolded tree to the project's house style.
+    # `new` creates its own subdir (root != cwd), so the CLI's post-command
+    # hook does not cover it — sweep it here. No-op unless c_style is set.
+    if c_style:
+        from . import _cfmt
+
+        _cfmt.format_project(root, cfg)

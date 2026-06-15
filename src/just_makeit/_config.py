@@ -1065,6 +1065,18 @@ def is_windows_target(cfg: dict) -> bool:
     return "windows" in (p.lower() for p in project_platforms(cfg))
 
 
+def c_style(cfg: dict) -> str:
+    """C-output style declared under ``[project] c_style`` (gh-265).
+
+    Empty (the default) leaves jm's canonical 4-space output untouched. The
+    only recognised value today is ``"clang-format"``: jm runs ``clang-format``
+    over the generated ``native/**`` C/H after every mutating command, so the
+    emitted code already matches the project's committed ``.clang-format``
+    instead of forcing a manual reformat pass (doppler's documented friction).
+    """
+    return str(cfg.get("project", {}).get("c_style", ""))
+
+
 def is_perf(cfg: dict) -> bool:
     return _truthy(cfg.get("project", {}).get("perf"))
 

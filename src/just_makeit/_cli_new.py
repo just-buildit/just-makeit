@@ -38,6 +38,7 @@ def run(args: list[str]) -> None:
     pkg_modules: list[str] = []
     c_deps: list[str] = []
     windows = False
+    c_style = ""
 
     remaining = args[1:]
     i = 0
@@ -131,6 +132,26 @@ def run(args: list[str]) -> None:
             # gh-213: opt into the Windows (MinGW) CMake boilerplate.
             windows = True
             i += 1
+        elif tok == "--c-style":
+            # gh-265: record a C-output style so generated C is reformatted to
+            # the project's committed style after every mutating command.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --c-style requires a value (clang-format)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            val = remaining[i]
+            if val != "clang-format":
+                print(
+                    f"error: --c-style '{val}' is not supported.\n"
+                    "Supported: clang-format",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            c_style = val
+            i += 1
         elif tok == "--fragments":
             # Deprecated no-op: fragments is the default layout now.
             i += 1
@@ -213,4 +234,5 @@ def run(args: list[str]) -> None:
         c_deps=c_deps or None,
         platforms=(["linux", "macos", "windows"] if windows else None),
         fragments=fragments,
+        c_style=c_style,
     )
