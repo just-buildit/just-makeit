@@ -400,53 +400,6 @@ def _inject_includes_into_core_h(
     return True
 
 
-def _inject_object_core_cmake(
-    path: Path,
-    comp: str,
-    link_libs: "list[str]",
-    include_dirs: "list[str]",
-) -> bool:
-    """Add component-level link/include wiring to an OBJECT-core CMakeLists.
-
-    gh-174: a module object's ``native/src/<obj>/CMakeLists.txt`` is glue that
-    ``jm apply`` does not re-render, so component-level ``extra_link_libs`` /
-    ``extra_include_dirs`` declared after creation never reached it (the
-    ``<<extra_link_on_object_core>>`` slot stayed empty). This *surgically*
-    adds — never overwrites — the same `PUBLIC` wiring ``jm object`` emits, so
-    the module-level test/bench link block already in the file is untouched.
-    Both lines are inserted just before the ``add_executable(test_<obj>_core``
-    block; each is skipped if already present (idempotent). Returns True if
-    changed."""
-    if not path.exists() or (not link_libs and not include_dirs):
-        return False
-    text = original = path.read_text(encoding="utf-8")
-    anchor = f"add_executable(test_{comp}_core"
-    if anchor not in text:
-        return False
-    block = ""
-    if link_libs and f"target_link_libraries({comp}_core PUBLIC" not in text:
-        block += (
-            f"target_link_libraries({comp}_core PUBLIC\n    "
-            + "\n    ".join(link_libs)
-            + ")\n"
-        )
-    # A second target_include_directories(... PUBLIC ...) accumulates dirs;
-    # skip when the first extra dir is already wired.
-    if include_dirs and include_dirs[0] not in text:
-        block += (
-            f"target_include_directories({comp}_core PUBLIC\n    "
-            + "\n    ".join(include_dirs)
-            + ")\n"
-        )
-    if not block:
-        return False
-    text = text.replace(anchor, f"{block}{anchor}", 1)
-    if text == original:
-        return False
-    path.write_text(text, encoding="utf-8")
-    return True
-
-
 def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
     """Surgically insert a member into the ``<comp>_state_t`` struct.
 
