@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.15] — 2026-06-15
+
 ### Changed
 
 - **`depends_on` is flattened transitively when rendering per-object
