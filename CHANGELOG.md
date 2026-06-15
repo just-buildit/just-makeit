@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.9] — 2026-06-14
+
 ### Fixed
 
 - **`nogil` was silently ignored on `single`-record methods (gh-261)** — a
