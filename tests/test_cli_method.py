@@ -260,6 +260,29 @@ class TestCliMethod:
         with pytest.raises(SystemExit):
             _run(["tm", "analyze", "--record-name"])
 
+    def test_record_module_flag_forwarded(self):
+        # gh-261: --record-module forwards the structseq __module__ qualifier.
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "tm",
+                    "analyze",
+                    "--result-field",
+                    "snr:float",
+                    "--return-type",
+                    "tone_meas_t",
+                    "--single",
+                    "--record-module",
+                    "my_pkg.dsp",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs["record_module"] == "my_pkg.dsp"
+
+    def test_record_module_requires_value(self):
+        with pytest.raises(SystemExit):
+            _run(["tm", "analyze", "--record-module"])
+
     def test_result_field_missing_value_exits(self):
         with pytest.raises(SystemExit):
             _run(["det", "detect", "--result-field"])
