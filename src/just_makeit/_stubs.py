@@ -199,9 +199,17 @@ def _build_class_docstring(
     if init_params:
         for name, ctype, dflt, *rest in init_params:
             optional = rest[4] if len(rest) >= 5 else False
+            required = rest[5] if len(rest) >= 6 else False
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
+            if required:
+                # gh-266: no default — document it as a required parameter.
+                param_lines += [
+                    f"    {name} : {py_t}",
+                    f"        {name} constructor parameter (required).",
+                ]
+                continue
             if ctype.startswith("string_enum:"):
                 py_d = f'"{dflt}"' if dflt else "..."
             else:
@@ -419,7 +427,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     def _ctor_literal(ct: str, dflt: str) -> str:
         if ct.startswith("string_enum:"):
             return f'"{dflt}"' if dflt else "..."
-        return _py_default_stub(ct, dflt)
+        lit = _py_default_stub(ct, dflt)
+        # gh-266: a required scalar has no default, so seed the doctest call
+        # with the type's zero — the example must still construct an object.
+        return lit if lit != "" else _py_default_stub(ct, "0")
 
     py_create_args = (
         # keyword args: order-independent against the binding's parse order, and
@@ -471,11 +482,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         )
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif ip:
+        # gh-266: a required scalar has no default, so it is emitted without a
+        # `= ...` placeholder and hoisted ahead of every defaulted parameter —
+        # a default-less stub arg after a defaulted one is a syntax error, and
+        # this mirrors the constructor's positional-before-`|` ordering.
+        req_parts: list[str] = []
         parts_init: list[str] = []
         for param in ip:
             n, t = param[0], param[1]
             optional = param[6] if len(param) > 6 else False
-            if optional:
+            required = param[8] if len(param) > 8 else False
+            if required and not t.endswith("[]"):
+                req_parts.append(f"{n}: {_py(t)}")
+            elif optional:
                 parts_init.append(f"{n}: {_py(t)} | None = None")
             elif t.startswith("string_enum:"):
                 dflt = param[2] if len(param) > 2 else ""
@@ -486,7 +505,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 )
             else:
                 parts_init.append(f"{n}: {_py(t)} = ...")
-        init_params_str = ", ".join(parts_init)
+        init_params_str = ", ".join(req_parts + parts_init)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
         lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")

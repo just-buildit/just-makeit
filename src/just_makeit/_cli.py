@@ -66,6 +66,8 @@ Commands:
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).
                                       Optional array form: name:type[]:optional[:create_fn]
+                                      Required scalar form: name:type:required (no default;
+                                      omitting it raises TypeError, not a late MemoryError).
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --extra-include-dirs DIR    CMake include path for this component; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
