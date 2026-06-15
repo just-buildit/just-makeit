@@ -424,18 +424,28 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if not _ARRAY_RE.match(ct.strip())
     ]
 
-    def _ctor_literal(ct: str, dflt: str) -> str:
+    def _ctor_literal(ct: str, dflt: str, required: bool = False) -> str:
         if ct.startswith("string_enum:"):
             return f'"{dflt}"' if dflt else "..."
+        # gh-273: a required scalar with no default has no value jm can seed —
+        # a validating constructor would reject the type's zero. Render `...`
+        # (for any type, including floats whose zero literal is `.0`) so
+        # _build_class_docstring suppresses the construction doctest rather than
+        # emitting one that raises under `pytest --doctest-glob='*.pyi'`.
+        if required and not dflt:
+            return "..."
         lit = _py_default_stub(ct, dflt)
-        # gh-266: a required scalar has no default, so seed the doctest call
-        # with the type's zero — the example must still construct an object.
+        # A non-required no-default scalar keeps the historic zero seed.
         return lit if lit != "" else _py_default_stub(ct, "0")
+
+    def _ctor_arg(p) -> str:
+        n, ct, dflt = p[0], p[1], p[2]
+        return f"{n}={_ctor_literal(ct, dflt, required=len(p) > 8 and bool(p[8]))}"
 
     py_create_args = (
         # keyword args: order-independent against the binding's parse order, and
         # self-documenting (string_enums show their chosen string).
-        ", ".join(f"{n}={_ctor_literal(ct, dflt)}" for n, ct, dflt, *_ in ip)
+        ", ".join(_ctor_arg(p) for p in ip)
         if ip
         else (
             ", ".join(

@@ -193,3 +193,85 @@ def test_required_raises_typeerror_at_runtime(tmp_path):
     )
     assert check.returncode == 0, f"{check.stdout}\n{check.stderr}"
     assert "ok" in check.stdout
+
+
+# ── gh-273: a required param with no default has no valid smoke/doctest seed ──
+
+
+def _csmoke(dest, name="writer"):
+    return (dest / f"native/tests/test_{name}_core.c").read_text("utf-8")
+
+
+def _pytest_py(dest, name="writer"):
+    return (dest / f"src/p/tests/test_{name}.py").read_text("utf-8")
+
+
+class TestSeedDeferral:
+    def test_required_no_default_c_smoke_is_tolerant(self, tmp_path):
+        dest = _build(tmp_path, [_req("fs", "double")])
+        c = _csmoke(dest)
+        # No hard assertion that a zero-seeded construction succeeds.
+        assert "CHECK(obj != NULL)" not in c
+        assert "if (!obj) return 1;" not in c
+        # Instead: a tolerant skip that still builds and passes.
+        assert "SKIPPED" in c
+        assert "return 0;" in c
+
+    def test_required_no_default_pytest_skips(self, tmp_path):
+        dest = _build(tmp_path, [_req("fs", "double")])
+        py = _pytest_py(dest)
+        assert "def setUp(self):" in py
+        assert "self.skipTest(" in py
+
+    def test_required_no_default_pure_pytest_skips(self, tmp_path):
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        cfg = C.load(dest)
+        cfg["project"]["pytest"] = "true"
+        C.save(dest, cfg)
+        object_run(
+            dest,
+            "writer",
+            None,
+            no_state=True,
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            init_params=[_req("fs", "double")],
+        )
+        py = _pytest_py(dest)
+        assert "pytestmark = pytest.mark.skip(" in py
+
+    def test_required_no_default_float_pyi_has_no_doctest(self, tmp_path):
+        # double's zero literal is `.0` (non-empty), so the suppression must
+        # key off `required`, not an empty rendered literal.
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "bar",
+            None,
+            state_vars=[("gain", "double", "1.0")],
+            arg_type="float",
+            return_type="float",
+            init_params=[_req("fs", "double"), _opt("gain", "double", "1.0")],
+        )
+        assert ">>> obj = Bar(" not in _pyi(dest, "bar")
+
+    def test_required_with_default_keeps_assertions(self, tmp_path):
+        # The documented escape hatch: `required` enforces the positional, the
+        # `default` seeds a valid smoke/doctest value — so tests stay strict.
+        dest = _build(
+            tmp_path,
+            [("fs", "double", "2.048e6", "", "", "", False, "", True)],
+        )
+        c = _csmoke(dest)
+        assert "CHECK(obj != NULL)" in c
+        assert "SKIPPED" not in c
+        assert "def setUp(self):" not in _pytest_py(dest)
+
+    def test_all_optional_unaffected(self, tmp_path):
+        dest = _build(tmp_path, [_opt("gain", "double", "1.5")])
+        c = _csmoke(dest)
+        assert "CHECK(obj != NULL)" in c
+        assert "SKIPPED" not in c
+        assert "def setUp(self):" not in _pytest_py(dest)

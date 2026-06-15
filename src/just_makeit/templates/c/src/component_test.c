@@ -23,8 +23,7 @@ int main(void)
 {
     int _fails = 0;
     /*<<component>>*/_state_t *obj = /*<<component>>*/_create(/*<<c_create_args>>*/);
-    CHECK(obj != NULL);
-    if (!obj) return 1;
+/*<<obj_null_check>>*/
 
 /*<<getter_setter_test_c>>*/
 
