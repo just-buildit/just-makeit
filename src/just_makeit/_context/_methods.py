@@ -395,6 +395,11 @@ def make_methods_ctx(
         # gh-257: optional chosen public name for the single-record structseq,
         # overriding the C-return-type derivation below.
         record_name: str = m.get("record_name", "")
+        # gh-261: optional module qualifier for the structseq's __module__ —
+        # by default Python derives it from the C component name; a project can
+        # set this to its import path (e.g. "doppler.measure") so a record's
+        # type(r).__module__ / repr matches where it is imported from.
+        record_module: str = m.get("record_module", "")
         none_on_empty: bool = m.get("none_on_empty", False)
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
@@ -1273,7 +1278,7 @@ def make_methods_ctx(
                 f"    {{NULL, NULL}},\n"
                 f"}};\n"
                 f"static PyStructSequence_Desc {_sid}_desc = {{\n"
-                f'    "{component}.{_rec_name}", NULL,'
+                f'    "{record_module or component}.{_rec_name}", NULL,'
                 f" {_sid}_fields, {len(result_fields)}\n"
                 f"}};\n"
                 f"static PyTypeObject *{_sid}_type = NULL;\n\n"

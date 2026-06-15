@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`record_module` for a single-record method's structseq `__module__`
+    (gh-261)** — a `single = true` result-fields method generates a
+    `PyStructSequence` whose `__module__` was hard-wired to the C component name
+    (`type(r).__module__ == "tonemeas"`), not the package it's imported from
+    (`"doppler.measure"`); `record_name` (gh-257) only controls the final
+    segment. A method can now set `record_module = "…"` in the manifest (or
+    `jm method … --record-module my_pkg.dsp`) to qualify the structseq's
+    `__module__` / `repr` with the project's import path. Round-trips through
+    `jm apply`; unset → component-qualified as before (byte-identical).
+
 ## [0.19.13] — 2026-06-15
 
 ### Fixed

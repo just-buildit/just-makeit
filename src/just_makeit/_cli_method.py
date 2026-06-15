@@ -27,6 +27,7 @@ def run(args: list[str]) -> None:
     varargs = False
     single = False
     record_name = ""
+    record_module = ""
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -79,6 +80,17 @@ def run(args: list[str]) -> None:
                 print("error: --record-name requires a name", file=sys.stderr)
                 sys.exit(1)
             record_name = remaining[i]
+            i += 1
+        elif tok == "--record-module":
+            # gh-261: module qualifier for the --single record's __module__,
+            # so its repr matches the project's import path.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --record-module requires a name", file=sys.stderr
+                )
+                sys.exit(1)
+            record_module = remaining[i]
             i += 1
         elif tok == "--doc":
             i += 1
@@ -355,6 +367,7 @@ def run(args: list[str]) -> None:
         result_fields=result_fields or None,
         single=single,
         record_name=record_name,
+        record_module=record_module,
         varargs=varargs,
         pass_capacity=pass_capacity,
         nogil=nogil,

@@ -2036,6 +2036,96 @@ class TestMethodSingleRecord:
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
         assert '"tm.ToneMetrics"' in ext
 
+    def test_record_module_qualifies_structseq_module(self, tmp_path):
+        # gh-261 item 2: record_module sets the structseq __module__ to the
+        # project's import path instead of the C component name.
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_meas_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            record_name="ToneMetrics",
+            record_module="my_pkg.dsp",
+        )
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        # __module__ is everything before the last dot of the desc name.
+        assert '"my_pkg.dsp.ToneMetrics"' in ext
+        assert '"tm.ToneMetrics"' not in ext  # not the component name
+
+    def test_record_module_unset_keeps_component_name(self, tmp_path):
+        # No record_module -> historic behaviour (component-qualified), so
+        # existing projects are byte-identical.
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_meas_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            record_name="ToneMetrics",
+        )
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert '"tm.ToneMetrics"' in ext
+
+    def test_record_module_round_trips_and_survives_apply(self, tmp_path):
+        dest = tmp_path / "p"
+        new_run("p", dest)
+        object_run(
+            dest,
+            "tm",
+            module=None,
+            arg_type="float _Complex",
+            return_type="void",
+        )
+        method_run(
+            dest,
+            "tm",
+            "analyze",
+            None,
+            "float _Complex[]",
+            "tone_meas_t",
+            False,
+            [],
+            result_fields=[{"name": "snr", "type": "float"}],
+            single=True,
+            record_name="ToneMetrics",
+            record_module="my_pkg.dsp",
+        )
+        cfg = load(dest)
+        assert cfg["tm"]["methods"][0]["record_module"] == "my_pkg.dsp"
+        (dest / "native/src/tm/tm_ext.c").unlink()
+        apply_run(dest)
+        ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
+        assert '"my_pkg.dsp.ToneMetrics"' in ext
+
     def test_single_params_no_input_array(self, tmp_path):
         # A single-record method with scalar params but NO input array
         # (arg_type void) -> keyword-only parse, no array handling.
