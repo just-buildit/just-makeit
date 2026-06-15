@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.11] — 2026-06-15
+
 ### Fixed
 
 - **`jm apply` didn't reconcile a per-object `CMakeLists.txt` when its
