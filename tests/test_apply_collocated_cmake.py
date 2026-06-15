@@ -589,3 +589,88 @@ def test_hand_owned_detection():
     assert _is_hand_owned_object_cmake(
         plain + "add_custom_command(OUTPUT gen.c COMMAND gen)\n", "foo"
     )
+
+
+# ── gh-280: depends_on is flattened transitively on per-object link lines ─────
+
+
+def _chain_module(dest):
+    """Module `spectral` with a fft <- corr <- detector chain where each object
+    declares only its DIRECT dep (the doppler spectral shape)."""
+    _silent(new_run, "p", dest)
+    _silent(module_run, dest, "spectral")
+    _silent(
+        object_run,
+        dest,
+        "fft",
+        module="spectral",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    _silent(
+        object_run,
+        dest,
+        "corr",
+        module="spectral",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        depends_on=[{"name": "fft", "link": True}],
+    )
+    _silent(
+        object_run,
+        dest,
+        "detector",
+        module="spectral",
+        state_vars=[("g", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        depends_on=[{"name": "corr", "link": True}],
+    )
+
+
+def test_transitive_closure_on_object_link_lines(tmp_path):
+    dest = tmp_path / "p"
+    _chain_module(dest)
+    det = (dest / "native/src/detector/CMakeLists.txt").read_text()
+    # detector declared only `corr`, but every link line carries the closure.
+    for target in (
+        "detector_core PUBLIC",
+        "test_detector_core",
+        "bench_detector_core",
+    ):
+        block = _link_block(det, target)
+        assert "corr_core" in block, target  # direct
+        assert "fft_core" in block, target  # transitive
+
+
+def test_transitive_closure_survives_apply(tmp_path):
+    dest = tmp_path / "p"
+    _chain_module(dest)
+    _silent(apply_run, dest)
+    det = (dest / "native/src/detector/CMakeLists.txt").read_text()
+    assert "fft_core" in _link_block(det, "test_detector_core")
+
+
+def test_transitive_closure_deduped_and_direct_first(tmp_path):
+    from just_makeit._config import transitive_dep_cores, load
+
+    dest = tmp_path / "p"
+    _chain_module(dest)
+    cfg = load(dest)
+    # Walking from detector's direct dep yields corr then its closure, once each.
+    cores = transitive_dep_cores(cfg, [{"name": "corr", "link": True}])
+    assert cores == ["corr_core", "fft_core"]
+
+
+def test_transitive_closure_cycle_guarded(tmp_path):
+    # A pathological cycle (a <-> b) must terminate, not recurse forever.
+    from just_makeit._config import transitive_dep_cores
+
+    cfg = {
+        "a": {"depends_on": [{"name": "b", "link": True}]},
+        "b": {"depends_on": [{"name": "a", "link": True}]},
+    }
+    cores = transitive_dep_cores(cfg, [{"name": "a", "link": True}])
+    assert set(cores) == {"a_core", "b_core"}
