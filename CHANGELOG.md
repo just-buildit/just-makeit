@@ -15,6 +15,18 @@
     Off by default → output is byte-identical for existing projects. A missing
     `clang-format` binary is a soft failure (a warning; the command still
     succeeds).
+- **`required` init-param flag (gh-266)** — block-I/O objects had all-optional
+    init params (a `|kkk` PyArg format), so `Component(0, 0, 0)` returned NULL
+    and surfaced a late, opaque `MemoryError`; there was no declarative way to
+    mark an init param mandatory (doppler `CLAUDE.md:124`). A scalar init-param
+    declared `required = true` (CLI `--init-param name:type:required`) now parses
+    as a positional **before** the PyArg `|`, so omitting it raises a clear
+    `TypeError` at construction instead. Required scalars are hoisted ahead of
+    the defaulted params in the constructor, the `.pyi` (no default, required
+    first), and the docstring; the generated smoke test seeds them with the
+    type's zero. Round-trips through `jm apply` / the manifest. Array
+    init-params are already required positionals, so `required` is rejected for
+    them. Default off → output unchanged for existing projects.
 
 ## [0.19.9] — 2026-06-14
 

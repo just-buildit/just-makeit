@@ -240,9 +240,11 @@ class TestOptionalArrayToml:
             "",
             True,
             "Resamp_create_custom",
+            False,
         )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
+        assert result[1][8] is False
 
     def test_normal_param_reads_back_false_optional(self):
         from just_makeit._config import from_new, add_component, init_params
@@ -256,7 +258,7 @@ class TestOptionalArrayToml:
             init_params_=[("n", "int", "16")],
         )
         result = init_params(cfg, "gen")
-        assert result == [("n", "int", "16", "", "", "", False, "")]
+        assert result == [("n", "int", "16", "", "", "", False, "", False)]
 
 
 # ── CLI parser ────────────────────────────────────────────────────────────────
@@ -274,6 +276,7 @@ class TestParseInitParamCLI:
             "",
             True,
             "Resamp_create_custom",
+            False,
         )
 
     def test_optional_1d_returns_8tuple(self):
@@ -287,15 +290,16 @@ class TestParseInitParamCLI:
             "",
             True,
             "Filt_create_custom",
+            False,
         )
 
     def test_optional_without_create_fn(self):
         tok = _parse_init_param("taps:float[]:optional")
-        assert tok == ("taps", "float[]", "", "", "", "", True, "")
+        assert tok == ("taps", "float[]", "", "", "", "", True, "", False)
 
     def test_scalar_returns_8tuple_false_optional(self):
         tok = _parse_init_param("rate:double:0.0")
-        assert tok == ("rate", "double", "0.0", "", "", "", False, "")
+        assert tok == ("rate", "double", "0.0", "", "", "", False, "", False)
 
     def test_scalar_no_default_returns_8tuple(self):
         tok = _parse_init_param("n:int")

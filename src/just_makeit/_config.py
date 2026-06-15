@@ -810,9 +810,10 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
 
 
 def init_params(cfg: dict, component: str) -> list[tuple]:
-    """Return --init-param entries as 8-tuples.
+    """Return --init-param entries as 9-tuples.
 
-    ``(name, type, default, default_raw, real_type, real_create_fn, optional, create_fn)``
+    ``(name, type, default, default_raw, real_type, real_create_fn, optional,
+    create_fn, required)``
 
     ``default_raw`` overrides the type's parse_zero for the raw C variable.
     ``real_type`` / ``real_create_fn`` enable dtype-dispatch: when the array
@@ -821,8 +822,12 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     ``optional`` / ``create_fn`` enable optional-array dispatch: when the
     caller supplies the array kwarg, ``create_fn`` is called instead of
     ``<component>_create``; when omitted, ``<component>_create`` is called
-    with only the scalar params.  All fields default to ``""`` / ``False``
-    when absent.  Callers may unpack defensively with ``param[:3]``.
+    with only the scalar params.  ``required`` (gh-266) marks a *scalar* param
+    mandatory: it parses as a positional before the PyArg ``|`` so omitting it
+    raises ``TypeError`` at the call boundary instead of passing the type's
+    zero through to a constructor that returns NULL.  All fields default to
+    ``""`` / ``False`` when absent.  Callers may unpack defensively with
+    ``param[:3]``.
     """
     return [
         (
@@ -834,6 +839,7 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
             p.get("real_create_fn", ""),
             p.get("optional", False),
             p.get("create_fn", ""),
+            p.get("required", False),
         )
         for p in cfg.get(component, {}).get("init_params", [])
     ]
@@ -1278,6 +1284,8 @@ def add_component(
                 rec["optional"] = True
             if len(p) > 7 and p[7]:
                 rec["create_fn"] = p[7]
+            if len(p) > 8 and p[8]:
+                rec["required"] = True
             entry["init_params"].append(rec)
     if class_name_:
         entry["class_name"] = class_name_
@@ -1511,6 +1519,8 @@ def _dump(cfg: dict) -> str:
                 lines.append("optional = true")
             if "create_fn" in p:
                 lines.append(f'create_fn = "{p["create_fn"]}"')
+            if p.get("required"):
+                lines.append("required = true")
             lines.append("")
         if comp_data.get("init_post_parse"):
             ipp = (
