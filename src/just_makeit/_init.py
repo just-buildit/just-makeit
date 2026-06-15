@@ -756,7 +756,11 @@ def run(
     # (gh-160). The header-only behaviour of a bare-string dep is unchanged.
     # Read from the depends_on param, not cfg: this component is not yet in
     # the loaded manifest at render time (it's persisted at the end of run()).
-    block_libs = list(extra_link_libs) + C.dep_link_libs(depends_on)
+    # gh-280: flatten the depends_on closure so the consuming target links every
+    # core it transitively pulls in (a CMake OBJECT lib won't propagate them).
+    block_libs = list(extra_link_libs) + C.transitive_dep_cores(
+        cfg, depends_on, link_only=True
+    )
     extra_link_libs_block = (
         "\n    ".join(block_libs) + "\n    " if block_libs else ""
     )

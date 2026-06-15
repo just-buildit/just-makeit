@@ -801,6 +801,51 @@ def depends_link_libs(cfg: dict, component: str) -> list[str]:
     return dep_link_libs(depends_on_raw(cfg, component))
 
 
+def transitive_dep_cores(
+    cfg: dict, entries: list, link_only: bool = False
+) -> list[str]:
+    """Deduped, direct-first closure of ``<name>_core`` link targets reachable
+    from *entries* over the ``depends_on`` graph (gh-280).
+
+    CMake OBJECT libraries don't propagate their objects through transitive
+    PUBLIC linking, so every core a `test_<obj>_core` / `bench_<obj>_core` (and
+    the module ``.so``) ultimately pulls in must appear **directly** on its link
+    line. Rather than make each object hand-list the full closure on its
+    ``depends_on`` (redundant, and silently stale when a level is inserted), jm
+    walks the graph and emits the closure itself — so an object declares only
+    its *direct* deps.
+
+    *entries* is a raw ``depends_on`` list (the consuming object need not be in
+    *cfg* yet — `_init.run` renders before persisting); each dependency's own
+    ``depends_on`` is read from *cfg* by stripping the ``_core`` suffix to its
+    component key. ``link_only`` follows / emits only ``link = true`` edges (the
+    ``.so`` and standalone paths); otherwise every ``depends_on`` edge counts
+    (the module per-object paths, which link all declared cores). The walk is
+    cycle-guarded via the dedupe set."""
+
+    def _cores(ents):
+        if link_only:
+            return dep_link_libs(ents)
+        return [
+            (n[:-5] if n.endswith("_core") else n) + "_core"
+            for n in dep_names(ents)
+        ]
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _visit(ents):
+        for core in _cores(ents):
+            if core in seen:
+                continue
+            seen.add(core)
+            out.append(core)
+            _visit(depends_on_raw(cfg, core[:-5]))
+
+    _visit(entries)
+    return out
+
+
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
     """Return declared array constructor args for component as [(name, dtype), ...]."""
     return [

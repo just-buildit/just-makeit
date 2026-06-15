@@ -840,11 +840,15 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # gh-225: a member object's `depends_on = [{name="dep", link=true}]` adds
     # the dependency's `<dep>_core` to the module .so link line too, alongside
     # its own extra_link_libs — same direct-link rationale as gh-160.
+    # gh-280: flatten each member's link=true closure so the .so pulls in every
+    # transitively-composed core, not just the directly-declared ones.
     _seen = set(libs_parts) | set(extra_libs)
     for _obj in object_names:
         for _lib in C.component_extra_link_libs(
             cfg, _obj
-        ) + C.depends_link_libs(cfg, _obj):
+        ) + C.transitive_dep_cores(
+            cfg, C.depends_on_raw(cfg, _obj), link_only=True
+        ):
             if _lib not in _seen:
                 _seen.add(_lib)
                 libs_parts.append(_lib)
@@ -900,11 +904,12 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # propagate to a final target (gh-160), so the link must be direct
             # on the test/bench targets, exactly as the create path does for
             # non-collocated objects. Mirror that `_dep_cores` normalisation so
-            # a bare `lo_core` entry doesn't become `lo_core_core`.
-            _obj_dep_cores = [
-                (d[:-5] if d.endswith("_core") else d) + "_core"
-                for d in C.dep_names(C.depends_on_raw(cfg, obj))
-            ]
+            # a bare `lo_core` entry doesn't become `lo_core_core`. gh-280: the
+            # closure is flattened so a collocated object also need only declare
+            # its direct deps.
+            _obj_dep_cores = C.transitive_dep_cores(
+                cfg, C.depends_on_raw(cfg, obj)
+            )
             _colib: list[str] = []
             for _l in list(extra_libs) + _obj_dep_cores:
                 if _l not in _colib:
@@ -1177,11 +1182,10 @@ def run(
     # dependency's functions (e.g. a sibling's create() via create_impl), so
     # without the dep OBJECT lib the test/bench fail to link (gh-174 follow-up).
     # A depends_on entry may be a component (`nco` -> nco_core) or a bare link
-    # target (`lo_core`); normalise to a single `<name>_core` (gh-130).
-    _dep_cores = [
-        (d[:-5] if d.endswith("_core") else d) + "_core"
-        for d in C.dep_names(depends_on)
-    ]
+    # target (`lo_core`); normalise to a single `<name>_core` (gh-130). gh-280:
+    # flatten the closure so an object need only declare its direct deps — jm
+    # adds the transitive cores the test/bench link line otherwise lacks.
+    _dep_cores = C.transitive_dep_cores(cfg, depends_on)
     _obj_libs = list(extra_link_libs) + _dep_cores
     # gh-132: expose extra_link_libs_block so CMakeLists_object_core.cmake
     # can include the deps in test/bench target_link_libraries.

@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
-## [0.19.14] — 2026-06-15
+### Changed
+
+- **`depends_on` is flattened transitively when rendering per-object
+    `CMakeLists.txt` (gh-280)** — a CMake OBJECT library doesn't propagate its
+    objects through transitive PUBLIC linking, so every core a
+    `test_<obj>_core` / `bench_<obj>_core` (and the module `.so`) ultimately
+    pulls in must appear **directly** on its link line. Previously each object
+    had to hand-list the full transitive closure on its own `depends_on`
+    (redundant with the graph jm already holds, and silently stale — inserting a
+    level mid-chain turned every downstream object's closure into a build-time
+    `undefined reference`, not a manifest error). jm now walks the `depends_on`
+    graph (cycle-guarded, deduped, direct-first) and emits the closure itself,
+    so an object declares only its **direct** deps: `depends_on = ["corr_core"]`
+    yields `corr_core` + the transitively-reached `fft_core` on every link line.
+    Applies to the standalone, module non-collocated, collocated, and module
+    `.so` link paths. Projects already listing full closures are unaffected
+    (the walk dedupes to the same set).
 
 ### Added
 
