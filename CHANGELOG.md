@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.12] — 2026-06-15
+
 ### Fixed
 
 - **The gh-271 per-object CMakeLists reconcile clobbered hand-owned build rules
