@@ -11,6 +11,7 @@ archetype) AND a deliberately **non-wfm** ``Ring`` over a toy ``ringbuf_t``
 (the genericity gate — a derived-``expr`` ``stats`` getter, int-in→array-out
 ``pop``, array-in→scalar ``push``, no wfm coupling)."""
 
+import pytest
 import sys
 from pathlib import Path
 
@@ -369,3 +370,35 @@ class TestWellFormedC:
             '{"close", (PyCFunction)Ring_close, METH_NOARGS, '
             '"close() -> None"},'
         ) in _rsrc()
+
+
+class TestMixedArgMethod:
+    """#308: an array arg + trailing scalars must parse and pass through to the
+    C fn, not silently drop the scalars — the ZmqSink.send(iq, fs, fc) shape."""
+
+    def test_array_plus_scalars(self):
+        m = {
+            "name": "send",
+            "fn": "wfm_zmq_sink_send",
+            "args": [
+                {"name": "iq", "type": "float _Complex[]"},
+                {"name": "fs", "type": "double"},
+                {"name": "fc", "type": "double"},
+            ],
+        }
+        s = _handle._emit_method(_writer_cfg(), "wfm_writer", m)
+        assert 'PyArg_ParseTuple(args, "Odd", &x_obj, &fs, &fc)' in s
+        assert "double fs;" in s and "double fc;" in s
+        assert "wfm_zmq_sink_send(self->h, in_data, n_in, fs, fc)" in s
+
+    def test_more_than_one_array_arg_is_unsupported(self):
+        m = {
+            "name": "bad",
+            "fn": "f",
+            "args": [
+                {"name": "a", "type": "float[]"},
+                {"name": "b", "type": "float[]"},
+            ],
+        }
+        with pytest.raises(NotImplementedError):
+            _handle._emit_method(_writer_cfg(), "wfm_writer", m)

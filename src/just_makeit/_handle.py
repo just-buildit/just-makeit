@@ -281,8 +281,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 
     Three shapes (the doppler archetype):
       (a) scalar(s) → scalar return — ``track_clipping(on) -> None``;
-      (b) array-in → scalar return — ``write(iq) -> size_t`` (reuses the capsule
-          ``PyArray_FROM_OTF`` input marshaling);
+      (b) array-in (+ optional trailing scalars) → scalar return — ``write(iq)
+          -> size_t`` and ``send(iq, fs, fc) -> None`` (reuses the capsule
+          ``PyArray_FROM_OTF`` input marshaling; the scalars parse after the
+          array and pass straight through to ``fn(h, in_data, n_in, …)``, #308);
       (c) int-in → array-out — ``read(n) -> ndarray`` (allocates an out array of
           size n, calls ``fn(h, out, n) -> actual``, returns an INDEPENDENT
           numpy-owned array trimmed to ``actual`` — never a dangling view; the
@@ -330,10 +332,23 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (b) array-in → scalar return: marshal the input like the capsule path.
+    # (b) array-in (+ optional trailing scalars) → scalar / None return.
+    # The array marshals like the capsule path; any further scalar args parse
+    # after it and pass through to fn(self->h, in_data, n_in, <scalars>) — e.g.
+    # ZmqSink.send(iq, fs, fc) -> wfm_zmq_sink_send(h, iq, n, fs, fc) (#308).
     if array_in:
         a = array_in[0]
         in_elem, in_npy = _array_elem_npy(a["type"])
+        others = [s for s in margs if s is not a]
+        if any(str(s.get("type", "")).endswith("[]") for s in others):
+            raise NotImplementedError(
+                f"handle method '{name}': more than one array arg is "
+                "unsupported"
+            )
+        scal_decls = "".join(f"    {s['type']} {s['name']};\n" for s in others)
+        scal_fmt = "".join(_scalar_fmt(s["type"]) for s in others)
+        scal_addrs = "".join(f", &{s['name']}" for s in others)
+        scal_call = "".join(f", {s['name']}" for s in others)
         ret_to_py = (
             _to_py(returns, "r")
             if returns
@@ -345,14 +360,15 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {tname}_{name}({obj} *self, PyObject *args)
 {{
     PyObject *x_obj;
-    if (!PyArg_ParseTuple(args, "O", &x_obj)) return NULL;
+{scal_decls}    if (!PyArg_ParseTuple(args, "O{scal_fmt}", &x_obj{scal_addrs}))
+        return NULL;
 {closed_guard}
     PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(
         x_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
     if (!x_arr) return NULL;
     size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
-{ret_decl}{gil_open}    {assign}{fn}(self->h, in_data, n_in);
+{ret_decl}{gil_open}    {assign}{fn}(self->h, in_data, n_in{scal_call});
 {gil_close}    Py_DECREF(x_arr);
     return {ret_to_py};
 }}
