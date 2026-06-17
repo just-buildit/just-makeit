@@ -817,6 +817,16 @@ def composer_oo(cfg: dict, module: str) -> dict:
     return dict(cfg.get("module", {}).get(module, {}).get("oo", {}))
 
 
+def composer_stream(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.composer]`` table (gh-287 round 3).
+
+    Composer-level ergonomics generated into the ``.so``. Key: ``stream`` —
+    ``true`` to generate a ``<Composer>.stream(block=4096)`` method returning a
+    generated iterator that drains ``execute`` (the ``for blk in c.stream(n):``
+    convenience), so a project drops its hand-written streaming wrapper."""
+    return dict(cfg.get("module", {}).get(module, {}).get("composer", {}))
+
+
 def composer_json(cfg: dict, module: str) -> bool:
     """Return True if a composer generates ``to_json`` / ``from_json`` (gh-287).
 
@@ -1722,6 +1732,13 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         for k in ("emit", "discriminant", "composer_type_name"):
             if oo.get(k):
                 out.append(f'{k} = "{oo[k]}"')
+        out.append("")
+
+    comp = data.get("composer")
+    if comp:
+        out.append(f"[module.{mk}.composer]")
+        if comp.get("stream"):
+            out.append("stream = true")
         out.append("")
 
     js = data.get("json")

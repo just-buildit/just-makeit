@@ -23,6 +23,7 @@ from just_makeit._config import (
     composer_sample_type,
     composer_segment,
     composer_source,
+    composer_stream,
     composer_timeline,
     is_capsule_module,
     is_composer_module,
@@ -250,3 +251,21 @@ def test_save_load_preserves_aliases_and_coerce(tmp_path):
     assert by["level"]["aliases"] == ["amplitude"]
     assert by["bits"]["aliases"] == ["pattern"]
     assert by["bits"]["coerce"] == "bit_pattern"
+
+
+def test_save_load_preserves_composer_stream(tmp_path):
+    """``[module.X.composer] stream`` (feature 3) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "[module.wfm_compose.composer]" in manifest
+    assert "stream = true" in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_stream(cfg2, "wfm_compose").get("stream") is True
+
+
+def test_composer_stream_absent_by_default():
+    """No ``[module.X.composer]`` table → ``composer_stream`` is empty."""
+    assert composer_stream(_cfg(), "wfm_compose") == {}

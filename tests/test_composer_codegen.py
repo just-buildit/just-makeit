@@ -574,3 +574,71 @@ class TestBitPatternCoercion:
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert "bits must be bytes or None" in s
         assert "PyUnicode_Check" not in s
+
+
+def _stream_cfg():
+    """_cfg() with the composer declaring a generated ``stream()`` (feature 3)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+    return cfg
+
+
+class TestComposerStream:
+    """``[module.X.composer] stream`` (gh-287 round 3): a generated
+    ``Composer.stream(block=4096)`` returning an internal iterator that drains
+    ``execute`` into blocks — the ``for blk in c.stream(n):`` convenience, so a
+    project drops its hand-written streaming wrapper. Generic — the iterator is
+    defined purely in terms of the composer's own ``execute``."""
+
+    def test_iterator_type_and_method_emitted(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        # an internal iterator type with the iter protocol slots
+        assert "ComposerStreamObject" in s
+        assert ".tp_iter      = ComposerStream_iter," in s
+        assert ".tp_iternext  = (iternextfunc)ComposerStream_next," in s
+        # the stream() method building it, wired into tp_methods
+        assert "Composer_stream(ComposerObject *self" in s
+        assert '{"stream", (PyCFunction)(void (*)(void))Composer_stream,' in s
+
+    def test_iterator_drains_execute(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        # next() pulls a block from the composer's own execute …
+        assert 'PyObject_CallMethod(self->composer, "execute", "n"' in s
+        # … and an empty block ends iteration (StopIteration via NULL)
+        assert "if (n == 0)" in s
+
+    def test_block_guard_and_default(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        assert "Py_ssize_t block = 4096;" in s
+        assert "block must be > 0" in s
+
+    def test_iterator_holds_strong_ref(self):
+        """The iterator pins the composer (its execute backs every block)."""
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        assert "Py_INCREF(self);" in s
+        assert "Py_XDECREF(self->composer);" in s
+
+    def test_internal_type_readied_not_exposed(self):
+        """PyType_Ready'd so instances are usable, but not module-added."""
+        ext = _composer.render_ext(_stream_cfg(), "wfm_compose")
+        assert "PyType_Ready(&ComposerStreamType)" in ext
+        assert 'PyModule_AddObject(m, "ComposerStream"' not in ext
+
+    def test_absent_by_default(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "ComposerStream" not in s
+        assert "Composer_stream" not in s
+        ext = _composer.render_ext(_cfg(), "wfm_compose")
+        assert "ComposerStreamType" not in ext
+
+    def test_pyi_declares_stream(self):
+        pyi = _composer.render_pyi(_stream_cfg(), "wfm_compose")
+        assert (
+            "def stream(self, block: int = ...)"
+            " -> Iterator[NDArray[np.complex64]]: ..." in pyi
+        )
+        assert "from typing import Any, Iterator" in pyi
+        # absent without the table — and Iterator is not imported
+        plain = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert "def stream(" not in plain
+        assert "from typing import Any\n" in plain

@@ -1188,6 +1188,91 @@ static PyObject *
             f'     "to_json() -> str"}},\n'
         )
 
+    # Feature 3 — a generated stream() iterator (drains execute into blocks),
+    # so a project drops its hand-written `for blk in c.stream(n):` wrapper.
+    stream_code = stream_row = ""
+    if C.composer_stream(cfg, module).get("stream"):
+        stream_code = f"""/* Iterator returned by {cname}.stream(): drains execute() into blocks. */
+typedef struct {{
+    PyObject_HEAD
+    PyObject  *composer; /* strong ref to the {cname} */
+    Py_ssize_t block;
+}} {cname}StreamObject;
+
+static PyTypeObject {cname}StreamType;
+
+static void
+{cname}Stream_dealloc({cname}StreamObject *self)
+{{
+    Py_XDECREF(self->composer);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}}
+
+static PyObject *
+{cname}Stream_iter(PyObject *self)
+{{
+    Py_INCREF(self);
+    return self;
+}}
+
+static PyObject *
+{cname}Stream_next({cname}StreamObject *self)
+{{
+    PyObject *blk =
+        PyObject_CallMethod(self->composer, "execute", "n", self->block);
+    if (!blk)
+        return NULL;
+    Py_ssize_t n = PyObject_Length(blk);
+    if (n < 0) {{ /* error from execute */
+        Py_DECREF(blk);
+        return NULL;
+    }}
+    if (n == 0) {{ /* finite spec drained -> StopIteration (NULL, no exception) */
+        Py_DECREF(blk);
+        return NULL;
+    }}
+    return blk;
+}}
+
+static PyTypeObject {cname}StreamType = {{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "{dotted}Stream",
+    .tp_basicsize = sizeof({cname}StreamObject),
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_dealloc   = (destructor){cname}Stream_dealloc,
+    .tp_iter      = {cname}Stream_iter,
+    .tp_iternext  = (iternextfunc){cname}Stream_next,
+    .tp_doc       = PyDoc_STR("Iterator over {cname}.stream() blocks."),
+}};
+
+static PyObject *
+{cname}_stream({obj} *self, PyObject *args, PyObject *kwds)
+{{
+    static char *kwlist[] = {{"block", NULL}};
+    Py_ssize_t block = 4096;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|n", kwlist, &block))
+        return NULL;
+    if (block <= 0) {{
+        PyErr_SetString(PyExc_ValueError, "block must be > 0");
+        return NULL;
+    }}
+    {cname}StreamObject *it =
+        PyObject_New({cname}StreamObject, &{cname}StreamType);
+    if (!it)
+        return NULL;
+    Py_INCREF(self);
+    it->composer = (PyObject *)self;
+    it->block = block;
+    return (PyObject *)it;
+}}
+
+"""
+        stream_row = (
+            f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
+            f"     METH_VARARGS | METH_KEYWORDS,\n"
+            f'     "stream(block=4096) -> iterator of complex64 blocks"}},\n'
+        )
+
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
 typedef struct {{
@@ -1601,7 +1686,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
-static PyMethodDef {cname}_methods[] = {{
+{stream_code}static PyMethodDef {cname}_methods[] = {{
     {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
      "execute(n) -> ndarray[complex64]"}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
@@ -1609,7 +1694,7 @@ static PyMethodDef {cname}_methods[] = {{
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-{json_rows}    {{NULL, NULL, 0, NULL}}
+{stream_row}{json_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
@@ -1722,6 +1807,10 @@ static struct PyModuleDef _moduledef = {{
     ready = "\n".join(
         f"    if (PyType_Ready(&{t}Type) < 0) return NULL;" for t in types
     )
+    # The stream() iterator is an internal type — readied but not module-exposed.
+    if C.composer_stream(cfg, module).get("stream"):
+        cn = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+        ready += f"\n    if (PyType_Ready(&{cn}StreamType) < 0) return NULL;"
     add = "\n".join(
         f"    Py_INCREF(&{t}Type);\n"
         f'    PyModule_AddObject(m, "{t}", (PyObject *)&{t}Type);'
@@ -1832,11 +1921,13 @@ def render_pyi(cfg: dict, module: str) -> str:
     cname = oo.get("composer_type_name", "Composer")
     src_sig = _pyi_field_sig(src.get("fields", []))
     seg_scalar_sig = _pyi_field_sig(seg.get("fields", []))
+    has_stream = bool(C.composer_stream(cfg, module).get("stream"))
+    typing_imports = "Any, Iterator" if has_stream else "Any"
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
         "from __future__ import annotations",
-        "from typing import Any",
+        f"from typing import {typing_imports}",
         "import numpy as np",
         "from numpy.typing import NDArray",
         "",
@@ -1888,6 +1979,14 @@ def render_pyi(cfg: dict, module: str) -> str:
         ") -> None: ...",
         "    def execute(self, n: int) -> NDArray[np.complex64]: ...",
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]: ...",
+        *(
+            [
+                "    def stream(self, block: int = ...)"
+                " -> Iterator[NDArray[np.complex64]]: ..."
+            ]
+            if C.composer_stream(cfg, module).get("stream")
+            else []
+        ),
         "    def close(self) -> None: ...",
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
