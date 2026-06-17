@@ -455,12 +455,17 @@ def render_segment_type(cfg: dict, module: str) -> str:
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
     src_type_obj = f"{src_tname}Type"
+    # The Timeline type `add` sequences into; declared (and defined) after
+    # Segment, so it is forward-declared here.
+    tl_tname = C.composer_timeline(cfg, module).get("type_name")
 
     members = "".join(f"    {f['type']} {f['name']};\n" for f in fields)
     parts: list[str] = []
     # Forward declaration — the `sum` classmethod (emitted before the type
     # definition) allocates via the type object.
     parts.append(f"static PyTypeObject {type_obj};\n")
+    if tl_tname:
+        parts.append(f"static PyTypeObject {tl_tname}Type;\n")
     parts.append(f"""typedef struct {{
     PyObject_HEAD
     PyObject *sources;   /* list of {src_tname}, length >= 1 */
@@ -613,6 +618,39 @@ static int
             f"(setter){tname}_set_{n}, NULL, NULL}},"
         )
     parts.append("\n".join(getset_fns))
+
+    # add(*others) -> Timeline — the time-sequence counterpart of sum (which
+    # mixes sources at the same time). Only emitted when the module declares a
+    # timeline type.
+    add_fn = ""
+    add_row = ""
+    if tl_tname:
+        add_fn = f"""
+static PyObject *
+{tname}_add({obj} *self, PyObject *args)
+{{
+    Py_ssize_t n = PyTuple_GET_SIZE(args);
+    PyObject *list = PyList_New(n + 1);
+    if (!list)
+        return NULL;
+    Py_INCREF(self);
+    PyList_SET_ITEM(list, 0, (PyObject *)self);
+    for (Py_ssize_t i = 0; i < n; i++) {{
+        PyObject *it = PyTuple_GET_ITEM(args, i);
+        Py_INCREF(it);
+        PyList_SET_ITEM(list, i + 1, it);
+    }}
+    PyObject *tl =
+        PyObject_CallFunctionObjArgs((PyObject *)&{tl_tname}Type, list, NULL);
+    Py_DECREF(list);
+    return tl;
+}}
+"""
+        add_row = (
+            f'    {{"add", (PyCFunction){tname}_add, METH_VARARGS,\n'
+            f'     "add(*others) -> {tl_tname}"}},\n'
+        )
+    parts.append(add_fn)
     parts.append(f"""
 static PyGetSetDef {tname}_getset[] = {{
 {chr(10).join(getset_rows)}
@@ -623,7 +661,7 @@ static PyMethodDef {tname}_methods[] = {{
     {{"sum", (PyCFunction)(void (*)(void)){tname}_sum,
      METH_VARARGS | METH_KEYWORDS | METH_CLASS,
      "sum(*sources, **segment_fields) -> {tname}"}},
-    {{NULL, NULL, 0, NULL}}
+{add_row}    {{NULL, NULL, 0, NULL}}
 }};
 """)
 
@@ -801,7 +839,100 @@ def render_composer_type(cfg: dict, module: str) -> str:
         f"        sg->{f['name']} = src[i].{f['name']};" for f in seg_fields
     )
 
-    return f"""typedef struct {{
+    # JSON faces (gh-287 C2.3): from_json / from_file classmethods + to_json.
+    # from_json/_file follow the regular <backing>_* convention; the serializer
+    # is irregular (wfm's is wfm_spec_to_json, not wfm_compose_*), so its name +
+    # any trailing literal args (wfm's headroom=0.0) are manifest-declared.
+    jtbl = cfg.get("module", {}).get(module, {}).get("json", {})
+    json_fns = ""
+    json_rows = ""
+    if C.composer_json(cfg, module):
+        from_json_fn = jtbl.get("from_json_fn", f"{backing}_from_json")
+        from_file_fn = jtbl.get("from_file_fn", f"{backing}_from_file")
+        to_json_fn = jtbl.get("to_json_fn", f"{backing}_to_json")
+        trailing = jtbl.get("to_json_trailing", [])
+        trail = "" if not trailing else ", " + ", ".join(trailing)
+        json_fns = f"""
+static PyObject *
+{cname}_from_json(PyObject *cls, PyObject *args)
+{{
+    (void)cls;
+    const char *json;
+    if (!PyArg_ParseTuple(args, "s", &json))
+        return NULL;
+    {backing}_state_t *st = {from_json_fn}(json);
+    if (!st) {{
+        PyErr_SetString(PyExc_ValueError, "{from_json_fn} failed");
+        return NULL;
+    }}
+    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    if (!self) {{
+        {destroy_fn}(st);
+        return NULL;
+    }}
+    self->state = st;
+    self->destroyed = 0;
+    return (PyObject *)self;
+}}
+
+static PyObject *
+{cname}_from_file(PyObject *cls, PyObject *args)
+{{
+    (void)cls;
+    PyObject *pathobj;
+    if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
+        return NULL;
+    {backing}_state_t *st = {from_file_fn}(PyBytes_AS_STRING(pathobj));
+    Py_DECREF(pathobj);
+    if (!st) {{
+        PyErr_SetString(PyExc_OSError, "{from_file_fn} failed");
+        return NULL;
+    }}
+    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    if (!self) {{
+        {destroy_fn}(st);
+        return NULL;
+    }}
+    self->state = st;
+    self->destroyed = 0;
+    return (PyObject *)self;
+}}
+
+static PyObject *
+{cname}_to_json({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    if (self->destroyed) {{
+        PyErr_SetString(PyExc_RuntimeError, "composer already closed");
+        return NULL;
+    }}
+    size_t n;
+    int repeat = 0, continuous = 0;
+    const {seg_struct} *segs =
+        {segments_fn}(self->state, &n, &repeat, &continuous);
+    char *js = {to_json_fn}(segs, n, repeat, continuous{trail});
+    if (!js) {{
+        PyErr_SetString(PyExc_RuntimeError, "{to_json_fn} failed");
+        return NULL;
+    }}
+    PyObject *s = PyUnicode_FromString(js);
+    free(js);
+    return s;
+}}
+"""
+        json_rows = (
+            f'    {{"from_json", (PyCFunction){cname}_from_json,\n'
+            f"     METH_VARARGS | METH_CLASS,"
+            f' "from_json(json) -> {cname}"}},\n'
+            f'    {{"from_file", (PyCFunction){cname}_from_file,\n'
+            f"     METH_VARARGS | METH_CLASS,"
+            f' "from_file(path) -> {cname}"}},\n'
+            f'    {{"to_json", (PyCFunction){cname}_to_json, METH_NOARGS,\n'
+            f'     "to_json() -> str"}},\n'
+        )
+
+    return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
+
+typedef struct {{
     PyObject_HEAD
     {backing}_state_t *state;
     int                destroyed;
@@ -1010,11 +1141,17 @@ static int
 
     size_t n;
     {seg_struct} *segs = _build_{backing}_segments(seglist, &n);
-    Py_DECREF(seglist);
-    if (!segs)
+    if (!segs) {{
+        Py_DECREF(seglist);
         return -1;
+    }}
+    /* The transient segs' bits pointers ALIAS the Synth objects' buffers, so
+     * seglist must outlive {create_fn} (which deep-copies them) — dropping it
+     * earlier would, in the single-segment-kwargs path where seglist is the
+     * sole owner, free the bits out from under the read. */
     self->state = {create_fn}(segs, n, repeat, continuous);
     _free_{backing}_segments(segs, n);
+    Py_DECREF(seglist);
     if (!self->state) {{
         PyErr_SetString(PyExc_ValueError, "{create_fn} failed");
         return -1;
@@ -1198,7 +1335,7 @@ static PyObject *
     (void)args;
     return {cname}_close(self, NULL);
 }}
-
+{json_fns}
 static PyGetSetDef {cname}_getset[] = {{
     {{"segments", (getter){cname}_get_segments, NULL, NULL, NULL}},
     {{"repeat", (getter){cname}_get_repeat, NULL, NULL, NULL}},
@@ -1214,7 +1351,7 @@ static PyMethodDef {cname}_methods[] = {{
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-    {{NULL, NULL, 0, NULL}}
+{json_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
