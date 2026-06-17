@@ -741,6 +741,93 @@ def capsule_extra_link_libs(cfg: dict, module: str) -> list[str]:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def is_composer_module(cfg: dict, module: str) -> bool:
+    """Return True if the module is a generated *composer* extension (gh-287).
+
+    A composer module is built on the capsule skeleton (gh-286) but adds a
+    multi-source / segment / timeline composition data model and CPython OO
+    types. It declares ``kind = "composer"`` and a set of sub-tables
+    (``source`` / ``segment`` / ``timeline`` / ``oo`` / ``json``) describing how
+    one or more ``generator`` source objects are summed, sequenced, and
+    serialized. Subsumes doppler's hand-written ``wfmcompose_py`` extension."""
+    return module_kind(cfg, module) == "composer"
+
+
+def composer_composes(cfg: dict, module: str) -> list[str]:
+    """Return the ``generator`` source objects a composer reuses (gh-287).
+
+    Each name is an existing object whose ``init_params`` define a source's
+    synth configuration — the composer's ``source`` table layers the
+    composition-only fields (level, snr, enums, bits) on top. doppler's
+    ``wfm_compose`` composes ``["wfm_synth"]``."""
+    v = cfg.get("module", {}).get(module, {}).get("composes", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def composer_sample_type(cfg: dict, module: str) -> bool:
+    """Return True if a composer turns on the jm-app output axes (gh-287).
+
+    When set, the generated CLI faces inherit ``--sample_type`` /
+    ``--file-type`` / ``--endian`` / ``--record`` from ``jm app`` verbatim
+    (``sample_type/file_type/endian`` stay owned by ``jm app`` — never
+    re-declared in the enum SSOT)."""
+    return _truthy(cfg.get("module", {}).get(module, {}).get("sample_type"))
+
+
+def composer_source(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.source]`` table (gh-287).
+
+    Describes the composition-only fields layered on the composed generator's
+    ``init_params`` — exactly the data ``wfm_source_t`` carries beyond
+    ``wfm_synth_create()`` (wfm_compose.h:49). Keys:
+
+    ``object``       the composed generator object name (e.g. ``"wfm_synth"``);
+    ``enum_fields``  ``{field: enum_name}`` — int fields serialized as strings
+                     via the ``[[enum]]`` SSOT (gh-285);
+    ``extra_fields`` ``[{name, type, default?}, …]`` — scalar add-ons (level, snr);
+    ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``)."""
+    return dict(cfg.get("module", {}).get(module, {}).get("source", {}))
+
+
+def composer_segment(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.segment]`` table (gh-287).
+
+    Maps 1:1 to ``wfm_segment_t`` (wfm_compose.h:77). Keys: ``fields``
+    (``[{name, type, default?}, …]`` — fs / num_samples / off_samples) and
+    ``sources`` (``"multi"`` to sum N sources per segment, ``"single"`` for
+    one)."""
+    return dict(cfg.get("module", {}).get(module, {}).get("segment", {}))
+
+
+def composer_timeline(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.timeline]`` table (gh-287).
+
+    Keys: ``loop`` — the ordered loop modes (e.g. ``["once","repeat",
+    "continuous"]``) mapping to the ``repeat`` / ``continuous`` create flags."""
+    return dict(cfg.get("module", {}).get(module, {}).get("timeline", {}))
+
+
+def composer_oo(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.oo]`` table (gh-287).
+
+    Keys: ``factories`` (the convenience constructors — ``tone`` / ``bpsk`` /
+    … — exposed alongside the generated CPython types) and ``emit`` (``"ctypes"``
+    to emit mutable ``PyTypeObject``s in the ``.so``, the default and only
+    supported mode — the ergonomics live in the extension, not pure Python)."""
+    return dict(cfg.get("module", {}).get(module, {}).get("oo", {}))
+
+
+def composer_json(cfg: dict, module: str) -> bool:
+    """Return True if a composer generates ``to_json`` / ``from_json`` (gh-287).
+
+    The JSON shape is derived from ``source.fields`` / ``segment.fields`` and
+    the ``[[enum]]`` SSOT (enums serialize as strings), so the recorded spec
+    round-trips byte-for-byte (wfm_compose.h:143)."""
+    return _truthy(
+        cfg.get("module", {}).get(module, {}).get("json", {}).get("enabled")
+    )
+
+
 def functions_in_core(cfg: dict, module: str) -> bool:
     """Return True if the module's free functions live in ``<module>_core.c``
     as one translation unit, rather than one ``.c`` per function (gh-247).
@@ -1534,6 +1621,83 @@ _KNOWN_METHOD_KEYS = frozenset(
 )
 
 
+def _inline_field(f: dict) -> str:
+    """Serialize a ``{name, type, default?}`` field as a TOML inline table."""
+    parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
+    if f.get("default") not in (None, ""):
+        parts.append(f'default = "{f["default"]}"')
+    return "{ " + ", ".join(parts) + " }"
+
+
+def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
+    """Render a composer module's source/segment/timeline/oo/json sub-tables
+    (gh-287). Each is a single TOML table; field lists are inline-table arrays
+    so the whole spec round-trips through ``load``/``save`` unchanged."""
+    out: list[str] = []
+
+    src = data.get("source")
+    if src:
+        out.append(f"[module.{mk}.source]")
+        if src.get("object"):
+            out.append(f'object = "{src["object"]}"')
+        ef = src.get("enum_fields") or {}
+        if ef:
+            inner = ", ".join(f'{k} = "{v}"' for k, v in ef.items())
+            out.append(f"enum_fields = {{ {inner} }}")
+        xf = src.get("extra_fields") or []
+        if xf:
+            out.append(
+                "extra_fields = ["
+                + ", ".join(_inline_field(f) for f in xf)
+                + "]"
+            )
+        bf = src.get("bytes_field")
+        if bf:
+            inner = ", ".join(f'{k} = "{v}"' for k, v in bf.items())
+            out.append(f"bytes_field = {{ {inner} }}")
+        out.append("")
+
+    seg = data.get("segment")
+    if seg:
+        out.append(f"[module.{mk}.segment]")
+        fields = seg.get("fields") or []
+        if fields:
+            out.append(
+                "fields = ["
+                + ", ".join(_inline_field(f) for f in fields)
+                + "]"
+            )
+        if seg.get("sources"):
+            out.append(f'sources = "{seg["sources"]}"')
+        out.append("")
+
+    tl = data.get("timeline")
+    if tl and tl.get("loop"):
+        out.append(f"[module.{mk}.timeline]")
+        out.append("loop = [" + ", ".join(f'"{x}"' for x in tl["loop"]) + "]")
+        out.append("")
+
+    oo = data.get("oo")
+    if oo:
+        out.append(f"[module.{mk}.oo]")
+        facs = oo.get("factories") or []
+        if facs:
+            out.append(
+                "factories = [" + ", ".join(f'"{x}"' for x in facs) + "]"
+            )
+        if oo.get("emit"):
+            out.append(f'emit = "{oo["emit"]}"')
+        out.append("")
+
+    js = data.get("json")
+    if js:
+        out.append(f"[module.{mk}.json]")
+        out.append("enabled = " + ("true" if js.get("enabled") else "false"))
+        out.append("")
+
+    return out
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -1560,10 +1724,10 @@ def _dump(cfg: dict) -> str:
         lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
             lines.append('no_generate = "true"')
-        if data.get("kind") == "capsule":
-            # gh-286: a capsule module exposes free functions over an opaque
-            # PyCapsule — no object-group `objects` list.
-            lines.append('kind = "capsule"')
+        if data.get("kind") in ("capsule", "composer"):
+            # gh-286/gh-287: capsule + composer modules expose state via an
+            # opaque PyCapsule (composer adds OO types) — no `objects` list.
+            lines.append(f'kind = "{data["kind"]}"')
             if data.get("backing"):
                 lines.append(f'backing = "{data["backing"]}"')
             if data.get("capsule_name"):
@@ -1572,6 +1736,14 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'package = "{data["package"]}"')
             if data.get("header"):
                 lines.append(f'header = "{data["header"]}"')
+            if data.get("kind") == "composer":
+                # gh-287: composes a generator source object; sample_type turns
+                # on the inherited jm-app output axes.
+                if data.get("composes"):
+                    cstr = ", ".join(f'"{c}"' for c in data["composes"])
+                    lines.append(f"composes = [{cstr}]")
+                if data.get("sample_type"):
+                    lines.append("sample_type = true")
             if data.get("depends_on"):
                 parts = []
                 for d in data["depends_on"]:
@@ -1644,8 +1816,9 @@ def _dump(cfg: dict) -> str:
                 lines.append("inline = true")
             lines.append("")
 
-        # gh-286: capsule module sub-tables — create params, methods, props.
-        if data.get("kind") == "capsule":
+        # gh-286/gh-287: capsule + composer sub-tables — create params,
+        # methods, props (shared); composer adds source/segment/timeline/oo/json.
+        if data.get("kind") in ("capsule", "composer"):
             mk = _module_key(mod)
             for p in data.get("init_params", []):
                 lines.append(f"[[module.{mk}.init_params]]")
@@ -1673,6 +1846,8 @@ def _dump(cfg: dict) -> str:
                 if pr.get("writable"):
                     lines.append("writable = true")
                 lines.append("")
+        if data.get("kind") == "composer":
+            lines += _dump_composer_subtables(_module_key(mod), data)
 
     for comp in components(cfg):
         comp_data = cfg[comp]
