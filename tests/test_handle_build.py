@@ -35,13 +35,16 @@ pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 
 # A real FIFO ring buffer — the hand-C backing the generated glue wraps. The
-# `push_gain` method is the #308 array+scalar shape; `stats` fills a struct.
+# `push_gain` method is the #308 array+scalar shape; `stats` fills a struct
+# (a live getter); `info` fills the fixed-metadata struct a cache=true getter
+# resolves once at construction.
 _RINGBUF_H = """\
 #ifndef RINGBUF_H
 #define RINGBUF_H
 #include <stddef.h>
 typedef struct ringbuf ringbuf_t;
 typedef struct { size_t used; } ringbuf_stats_t;
+typedef struct { size_t capacity; } ringbuf_info_t;
 ringbuf_t *ringbuf_open(size_t capacity);
 void ringbuf_close(ringbuf_t *r);
 size_t ringbuf_push(ringbuf_t *r, const float *x, size_t n);
@@ -49,6 +52,7 @@ size_t ringbuf_push_gain(ringbuf_t *r, const float *x, size_t n, float gain);
 size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
 void ringbuf_clear(ringbuf_t *r);
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
+void ringbuf_info(const ringbuf_t *r, ringbuf_info_t *out);
 #endif
 """
 
@@ -94,6 +98,9 @@ size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n) {
 void ringbuf_clear(ringbuf_t *r) { r->used = 0; r->head = 0; }
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out) {
     out->used = r->used;
+}
+void ringbuf_info(const ringbuf_t *r, ringbuf_info_t *out) {
+    out->capacity = r->cap;
 }
 """
 
@@ -146,7 +153,18 @@ def _ringbuf_module() -> dict:
                         "(double)self->capacity : 0.0",
                     },
                 ],
-            }
+            },
+            {
+                # cache=true: fixed metadata resolved ONCE in tp_init. If the
+                # cache fetch is not wired into the constructor the struct stays
+                # zero-initialized and `cap` reads 0 (the gh-306 regression).
+                "fn": "ringbuf_info",
+                "out": "ringbuf_info_t",
+                "cache": True,
+                "fields": [
+                    {"name": "cap", "from": "capacity", "type": "size_t"},
+                ],
+            },
         ],
     }
 
@@ -207,6 +225,9 @@ def test_generated_handle_so_compiles_imports_and_runs(tmp_path):
 
     r = Ring(capacity=4)
     assert r.used == 0 and r.fill_fraction == 0.0
+    # cache=true getter resolved once in tp_init (regression guard: a missing
+    # cache fetch leaves the struct zeroed and this reads 0, not 4).
+    assert r.cap == 4
 
     # array-in -> scalar (drops when full at capacity 4)
     assert r.push(np.array([1, 2, 3, 4, 5, 6], dtype=np.float32)) == 4
@@ -226,6 +247,17 @@ def test_mixed_array_scalar_method_passes_scalars(tmp_path):
     r = Ring(capacity=8)
     assert r.push_gain(np.array([1, 2, 3], dtype=np.float32), 10.0) == 3
     assert r.pop(3).tolist() == [10.0, 20.0, 30.0]
+
+
+def test_cache_true_getter_resolved_in_tp_init(tmp_path):
+    """gh-306 regression: a cache=true getter is resolved once in tp_init.
+
+    Before the fix the cache fetch was never emitted into the constructor, so
+    the stashed out-struct stayed zero-initialized and the cached property read
+    0. Here `cap` must equal the constructor capacity for every instance."""
+    Ring = _build_ring_so(tmp_path).Ring
+    assert Ring(capacity=4).cap == 4
+    assert Ring(capacity=16).cap == 16
 
 
 def test_context_manager_and_closed_guard(tmp_path):
