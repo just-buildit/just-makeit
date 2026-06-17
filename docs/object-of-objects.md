@@ -1,12 +1,12 @@
-# The object-of-objects pattern: capsule & composer generators
+# The object-of-objects pattern: capsule, composer & handle generators
 
-A comprehensive guide to `kind = "capsule"` and `kind = "composer"` — the
-generators that turn jm from a *one-off binding scaffolder* into a *templating
-engine that composes objects of objects*. From one declarative manifest jm emits
-a self-contained extension module whose ergonomic API lives **in the `.so`** (no
-forced pure-Python wrapper), with an optional take-it-or-leave-it `.pyi`, JSON
-(de)serialization, and a command-line tool — leaving only the DSP kernels
-hand-written.
+A comprehensive guide to `kind = "capsule"`, `kind = "composer"`, and
+`kind = "handle"` — the generators that turn jm from a *one-off binding
+scaffolder* into a *templating engine that composes objects of objects*. From one
+declarative manifest jm emits a self-contained extension module whose ergonomic
+API lives **in the `.so`** (no forced pure-Python wrapper), with an optional
+take-it-or-leave-it `.pyi`, JSON (de)serialization, and a command-line tool —
+leaving only the DSP kernels and resource logic hand-written.
 
 ______________________________________________________________________
 
@@ -16,9 +16,9 @@ ______________________________________________________________________
     - [1.1 The problem](#11-the-problem)
     - [1.2 The solution](#12-the-solution)
     - [1.3 What it enables](#13-what-it-enables)
-    - [1.4 The feature trio at a glance](#14-the-feature-trio-at-a-glance)
+    - [1.4 The feature set at a glance](#14-the-feature-set-at-a-glance)
 - [2. Mental model](#2-mental-model)
-    - [2.1 Two shapes: capsule and composer](#21-two-shapes-capsule-and-composer)
+    - [2.1 Three shapes: capsule, composer, handle](#21-three-shapes-capsule-composer-handle)
     - [2.2 The generated-vs-hand-written seam](#22-the-generated-vs-hand-written-seam)
     - [2.3 The enum SSOT](#23-the-enum-ssot)
 - [3. The capsule generator (`kind = "capsule"`)](#3-the-capsule-generator-kind--capsule)
@@ -36,12 +36,17 @@ ______________________________________________________________________
     - [4.7 JSON faces (generated vs delegated)](#47-json-faces-generated-vs-delegated)
     - [4.8 The CLI face](#48-the-cli-face)
     - [4.9 apply materialization](#49-apply-materialization)
-- [5. Lifecycle & memory invariants](#5-lifecycle--memory-invariants)
-- [6. Validation discipline: reference-first](#6-validation-discipline-reference-first)
-- [7. Manifest reference](#7-manifest-reference)
-- [8. When to use which](#8-when-to-use-which)
-- [9. Gaps & roadmap](#9-gaps--roadmap)
-- [10. Appendix: the build arc](#10-appendix-the-build-arc)
+- [5. The handle generator (`kind = "handle"`)](#5-the-handle-generator-kind--handle)
+    - [5.1 What it generates](#51-what-it-generates)
+    - [5.2 The decoded-getter property](#52-the-decoded-getter-property)
+    - [5.3 RAII, optional backends & the UAF rule](#53-raii-optional-backends--the-uaf-rule)
+    - [5.4 Worked example: doppler's transport layer](#54-worked-example-dopplers-transport-layer)
+- [6. Lifecycle & memory invariants](#6-lifecycle--memory-invariants)
+- [7. Validation discipline: reference-first](#7-validation-discipline-reference-first)
+- [8. Manifest reference](#8-manifest-reference)
+- [9. When to use which](#9-when-to-use-which)
+- [10. Gaps & roadmap](#10-gaps--roadmap)
+- [11. Appendix: the build arc](#11-appendix-the-build-arc)
 
 ______________________________________________________________________
 
@@ -93,24 +98,25 @@ Two layered generators, each driven entirely by the manifest:
     binding, marshalling, types, serialization, build wiring, and stubs are
     generated and reconciled by `jm apply` / guarded by `jm status --check`.
 
-### 1.4 The feature trio at a glance
+### 1.4 The feature set at a glance
 
-| Issue  | Feature             | Role                                        |
-| ------ | ------------------- | ------------------------------------------- |
-| gh-285 | `[[enum]]` SSOT     | one string-enum table feeding every face    |
-| gh-286 | `kind = "capsule"`  | free-functions-over-`PyCapsule` skeleton    |
-| gh-287 | `kind = "composer"` | OO types + JSON + CLI, built on the capsule |
+| Issue  | Feature             | Role                                           |
+| ------ | ------------------- | ---------------------------------------------- |
+| gh-285 | `[[enum]]` SSOT     | one string-enum table feeding every face       |
+| gh-286 | `kind = "capsule"`  | free-functions-over-`PyCapsule` skeleton       |
+| gh-287 | `kind = "composer"` | OO types + JSON + CLI, built on the capsule    |
+| gh-306 | `kind = "handle"`   | one typed class over an opaque resource handle |
 
 ______________________________________________________________________
 
 ## 2. Mental model
 
-### 2.1 Two shapes: capsule and composer
+### 2.1 Three shapes: capsule, composer, handle
 
-Both expose C state through an **opaque `PyCapsule`** rather than copying it into
-Python. They differ in the surface they present:
+All three expose opaque hand-C state rather than copying it into Python. They
+differ in the surface they present:
 
-- A **capsule module** presents *free functions*. State is a capsule handle
+- A **capsule module** presents *free functions*. State is a `PyCapsule` handle
     passed as the first argument: `state = create(...); y = execute(state, x, out); destroy(state)`. This is the lift of a hand-written
     "functions-over-a-capsule" extension.
 
@@ -119,20 +125,32 @@ Python. They differ in the surface they present:
     objects and calls methods. The composer is "an object (the Composer) made of
     objects (Segments, each made of Synths)" — hence *object of objects*.
 
+- A **handle module** presents *one CPython type over a single opaque resource
+    handle* — a file writer, a socket, a clock, a session. It is the
+    **intersection** of the other two: the capsule's opaque backing and lifecycle,
+    wearing the composer's typed-class face (constructor, methods, properties,
+    context-manager). It is the *RAII resource* shape, distinct from the capsule's
+    free functions and the composer's object-of-objects.
+
 ### 2.2 The generated-vs-hand-written seam
 
 The dividing line is deliberate and stable:
 
-| Generated by jm                                                                     | Hand-written (stays in `_core.c` / app-side)        |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Enum int↔string tables (the SSOT)                                                   | The accumulation kernel                             |
-| Capsule mechanics + `execute`/`reset`/`destroy`/`get_`/`set_` + GIL + numpy marshal | The per-source resolution (e.g. shared noise floor) |
-| Source/segment marshalling + a `bytes` buffer                                       | The synthesis kernels                               |
-| The `Synth`/`Segment`/`Timeline`/`Composer` types + factories                       | Container/transport writers (BLUE / SigMF / zmq)    |
-| JSON to/from, the CLI face, CMake, `.pyi`                                           | —                                                   |
+| Generated by jm                                                                     | Hand-written (stays in `_core.c` / app-side)           |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Enum int↔string tables (the SSOT)                                                   | The accumulation kernel                                |
+| Capsule mechanics + `execute`/`reset`/`destroy`/`get_`/`set_` + GIL + numpy marshal | The per-source resolution (e.g. shared noise floor)    |
+| Source/segment marshalling + a `bytes` buffer                                       | The synthesis kernels                                  |
+| The `Synth`/`Segment`/`Timeline`/`Composer` types + factories                       | The writer / socket / clock C *logic* (BLUE/SigMF/zmq) |
+| The `Writer`/`Reader`/`ZmqSink`/`SampleClock` **handle types** (over that C logic)  | —                                                      |
+| JSON to/from, the CLI face, CMake, `.pyi`                                           | —                                                      |
 
 The rule of thumb: **jm generates everything that is a mechanical projection of
-the manifest; you hand-write only what encodes the algorithm.**
+the manifest; you hand-write only what encodes the algorithm** — the DSP kernels
+*and* the resource logic (a file writer, a socket). The handle generator moved
+the transport *binding* across the seam: the `Writer`/`Reader`/`ZmqSink`/
+`SampleClock` types are now generated, leaving only the writer/socket/clock C
+behind them hand-written.
 
 ### 2.3 The enum SSOT
 
@@ -362,7 +380,7 @@ the fluent face of the segment list the composer already sequences.
 - `close` / `__enter__` / `__exit__` / `dealloc` destroy the backing state.
 
 The transient `<segment_struct>[]` **aliases** each source's `bits` pointer;
-`<backing>_create` deep-copies (see [§5](#5-lifecycle--memory-invariants)), so
+`<backing>_create` deep-copies (see [§6](#6-lifecycle--memory-invariants)), so
 the transient arrays are freed straight after and ownership stays with the
 `Synth` objects.
 
@@ -412,7 +430,99 @@ alone.
 
 ______________________________________________________________________
 
-## 5. Lifecycle & memory invariants
+## 5. The handle generator (`kind = "handle"`)
+
+### 5.1 What it generates
+
+A handle module is the **intersection** of the capsule and composer generators
+(§2.1): the capsule's opaque hand-C backing and lifecycle, wearing the composer's
+typed-class face. Where a capsule presents free functions and a composer presents
+an object of objects, a handle presents **one typed `PyTypeObject` over a single
+opaque resource handle**.
+
+`jm apply` materializes the same three glue files as a capsule —
+`native/src/<mod>/<mod>_ext.c`, `CMakeLists.txt`, `<leaf>.pyi` — recognized at
+all **four** dispatch sites in `_apply.py` (the import block, the materialize
+dispatch, the `_mods_need_update` exclusion filter, and `_sync_aggregates` glue
+reconciliation; miss any and `jm apply` / `jm status --check` break silently).
+
+The generated type carries:
+
+- a **constructor** (`tp_init`) that coerces `create_args` — enum-string→index
+    via the SSOT, `os.fspath` for a `path` arg, scalar casts — calls the backing
+    `create_fn`, and runs an optional conditional `create_post` setter;
+- **methods** mapping `name → fn(self->h, …)`: scalar args; an array-in arg
+    (numpy-marshaled exactly like the capsule path); an array arg followed by
+    trailing scalars (`send(iq, fs, fc)`, gh-308); or an int-in→array-out shape
+    returning an **independent** numpy-owned array;
+- **decoded-getter properties** (§5.2) — the genuinely new code;
+- the **RAII protocol** (§5.3): an idempotent `close()`, `__enter__`/`__exit__`,
+    and a `tp_dealloc` that closes a forgotten handle;
+- an optional **weak-symbol backend guard** (§5.3).
+
+Almost everything is reused: the enum SSOT tables + `_enum_index` (composer), the
+scalar format-char machinery and numpy marshaling (capsule / `_types`), and the
+context-manager + idempotent-close pattern (composer). The only genuinely new C
+is the decoded-getter property and the weak-symbol guard.
+
+### 5.2 The decoded-getter property
+
+A composer getset reads a struct field directly; a handle property decodes the
+output of a **shared C getter**. One getter `fn(self->h, &tmp)` fills an
+out-struct; each declared property decodes one named field with a transform:
+
+| transform | example                                                     |
+| --------- | ----------------------------------------------------------- |
+| plain     | `_to_py(tmp.frac)`                                          |
+| `enum`    | `_enum_<e>[tmp.idx]` → string (the SSOT)                    |
+| `scale`   | `tmp.ns * 1e-9`                                             |
+| `expr`    | verbatim C: `tmp.peak > 0 ? 20*log10(tmp.peak) : -INFINITY` |
+
+An `expr` may also read a constructor value stashed into the object struct
+(`self->sample_type >= 2`). A getter marked `cache = true` is resolved **once** in
+`tp_init` (fixed metadata — a reader's sample rate); otherwise it is called
+**live** on each access (a running clock's counters).
+
+```toml
+[[module.wfm_writer.getters]]
+fn = "wfm_writer_stats"; out = "wfm_writer_stats_t"; cache = false
+[[module.wfm_writer.getters.fields]]
+name = "clip_fraction"; from = "frac"; type = "double"
+[[module.wfm_writer.getters.fields]]
+name = "peak_dbfs"; type = "double"; expr = "tmp.peak > 0 ? 20*log10(tmp.peak) : -INFINITY"
+```
+
+### 5.3 RAII, optional backends & the UAF rule
+
+`close()` is idempotent (`if (!self->closed) { close_fn(self->h); self->closed = 1; }`),
+`__exit__` calls it, and `tp_dealloc` closes a still-open handle — so a `with`
+block and a forgotten handle both release cleanly. A POSIX-only backend is
+declared `optional_backend = "<symbol>"`: the symbol is a weak extern, and
+`tp_init` raises `NotImplementedError` when it resolves to NULL.
+
+The use-after-free rule (§6) applies to `tp_init`: a `path` arg crosses as a
+borrowed `PyBytes` (from `PyUnicode_FSConverter`); the backing `*_open` copies it,
+so the borrow is `Py_DECREF`'d only **after** `create_fn` returns. A method
+returning data from a grow-on-demand buffer returns an independent numpy-owned
+array, never a dangling view.
+
+### 5.4 Worked example: doppler's transport layer
+
+The handle generator exists to retire doppler's hand-written `wfmcompose_py.c`
+(~400 lines of CPython). `Writer`, `Reader`, `ZmqSink`, and `SampleClock` are
+**one archetype — a capsule-backed resource handle — instantiated four times**
+over the existing `wfm_writer.c` / `wfm_reader.c` / `wfm_sink.c` C API (whose
+`wfm_reader_info()` already fills a struct, ideal for the decoded-getter path).
+`Reader` uses `cache = true` info getters; `ZmqSink` / `SampleClock` use the
+weak-symbol guard (POSIX-only); `ZmqSink.send(iq, fs, fc)` is the array+scalar
+method shape. The validation was reference-first (§7): the first real compile of
+generated handle output — scaffold → `jm apply` → compile + a real C backing →
+import → exercise — caught a codegen bug a string-assertion missed, and now
+guards the marshaling end-to-end in CI.
+
+______________________________________________________________________
+
+## 6. Lifecycle & memory invariants
 
 The hard-won rules that keep the generated C correct:
 
@@ -449,7 +559,7 @@ The hard-won rules that keep the generated C correct:
 
 ______________________________________________________________________
 
-## 6. Validation discipline: reference-first
+## 7. Validation discipline: reference-first
 
 Unlike the capsule (which cloned a known-good hand-written extension), the
 composer OO types had **no existing C reference** — the behaviour lived in
@@ -475,13 +585,13 @@ validated Python. So the discipline was:
 
 ______________________________________________________________________
 
-## 7. Manifest reference
+## 8. Manifest reference
 
-**Shared (capsule & composer):**
+**Shared (capsule, composer & handle):**
 
 | key               | meaning                                                                |
 | ----------------- | ---------------------------------------------------------------------- |
-| `kind`            | `"capsule"` or `"composer"`                                            |
+| `kind`            | `"capsule"`, `"composer"`, or `"handle"`                               |
 | `backing`         | symbol prefix; wraps `<backing>_state_t`, calls `<backing>_*`          |
 | `capsule_name`    | the `PyCapsule` name string                                            |
 | `package`         | package dir the `.so`/`.pyi` build into (default: module path)         |
@@ -510,9 +620,22 @@ A **field** entry (`source.fields`/`segment.fields`):
 `{ name, type, enum?, default?, bytes? }` — one declaration drives the
 marshalling, the type slots, the JSON shape, and the CLI flag.
 
+**Handle only:**
+
+| table / key         | meaning                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `handle_type`       | the opaque C handle type (default `<backing>_t`)                                                                      |
+| `type_name`         | the generated CPython class name (`Writer`)                                                                           |
+| `create_fn`         | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`) |
+| `[[X.create_post]]` | conditional post-create setter `{fn, when?, arg?}`                                                                    |
+| `[[X.methods]]`     | `{name, fn, args[], returns?, nogil?}` — scalar / array-in (+ trailing scalars) / int-in→array-out                    |
+| `[[X.getters]]`     | a shared getter `{fn, out, cache?, fields[]}`; each field `{name, from?, type, enum?, scale?, expr?}`                 |
+| `context_manager`   | emit `__enter__`/`__exit__` + idempotent `close` (`close_fn`)                                                         |
+| `optional_backend`  | a weak-symbol backend; absent → `NotImplementedError`                                                                 |
+
 ______________________________________________________________________
 
-## 8. When to use which
+## 9. When to use which
 
 - Reach for **`kind = "capsule"`** when the natural API is *free functions over
     an opaque handle* — a streaming processor whose state you create once and feed
@@ -526,12 +649,18 @@ ______________________________________________________________________
     composer. If you want the ergonomic OO surface to live in the `.so` (not a
     pure-Python wrapper), plus JSON round-trip and a CLI, this is the shape.
 
+- Reach for **`kind = "handle"`** when the natural API is *one typed object over
+    an opaque resource handle* with RAII — a file writer, a socket sink, a sample
+    clock, a session: a constructor, a few methods, read-only decoded-from-a-getter
+    properties, and a `with`-block / `close()`. It's the typed-class counterpart to
+    a capsule (which gives the same backing as flat free functions instead).
+
 - Stay with a plain object-group module / `jm app` when there is a single
     object with a simple scalar/blockwise/generator I/O shape and no composition.
 
 ______________________________________________________________________
 
-## 9. Gaps & roadmap
+## 10. Gaps & roadmap
 
 - **JSON delegation vs generation.** The generated JSON ser/de is generic and
     SSOT-driven. A project that must reproduce a *domain-specific* wire schema
@@ -548,7 +677,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 10. Appendix: the build arc
+## 11. Appendix: the build arc
 
 | Issue / PR | Slice                                                        |
 | ---------- | ------------------------------------------------------------ |
@@ -559,6 +688,8 @@ ______________________________________________________________________
 | gh-287     | composer: `jm apply` materialization                         |
 | gh-287     | composer: generic SSOT-driven JSON ser/de                    |
 | gh-287     | composer: generic c-face CLI generator                       |
+| gh-306     | handle generator: typed class, decoded-getters, RAII         |
+| gh-308     | handle: array+scalar method args + real-compile CI harness   |
 
 Each slice was validated by compiling and running the generated C against a real
 project and comparing byte-for-byte to the hand-written reference, culminating in
