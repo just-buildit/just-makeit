@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.19.17] — 2026-06-17
+
+### Added
+
+- **Composer OO types are subclassable (gh-287)** — the generated
+    `Synth`/`Segment`/`Timeline`/`Composer` types now carry
+    `Py_TPFLAGS_BASETYPE`, so a project can keep the ergonomic generated types in
+    the `.so` and add domain-specific conveniences via a thin Python subclass
+    (e.g. `.steps()`, pattern-string sugar, a `.stream()` generator) instead of
+    hand-rolling a parallel OO layer. Subclasses still flow through the generated
+    `Composer`, which type-checks inputs with the subclass-accepting
+    `PyObject_TypeCheck`. Strictly additive — the flag only opens subclassing;
+    direct use is unchanged.
+
 ## [0.19.16] — 2026-06-16
 
 ### Added
