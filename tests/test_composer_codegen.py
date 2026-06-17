@@ -766,3 +766,135 @@ class TestSegmentFlatAccessors:
         pyi = _composer.render_pyi(cfg, "playlist")
         assert "    gain: float" in pyi
         assert "    channel: int" in pyi
+
+
+def _gen_json_cfg():
+    """_cfg() with the generic SSOT-driven JSON (no to_json_fn delegation)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+    return cfg
+
+
+class TestFromJsonClsAlloc:
+    """``from_json`` / ``from_file`` allocate via ``cls`` (gh-287 round 3 feature
+    5): a Python subclass round-trips through the alternate constructors instead
+    of being downcast to the base type. The methods are already ``METH_CLASS``,
+    so ``cls`` is the (possibly derived) type — alloc through it."""
+
+    def test_delegated_path_allocs_via_cls(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        # both classmethods take the type from cls and alloc through it
+        assert "PyTypeObject *type = (PyTypeObject *)cls;" in s
+        assert "(ComposerObject *)type->tp_alloc(type, 0)" in s
+        # the old hardcoded base-type alloc is gone from the JSON ctors
+        assert "ComposerType.tp_alloc(&ComposerType, 0)" not in s
+
+    def test_generated_path_threads_type_through_wrap(self):
+        s = _composer.render_composer_type(_gen_json_cfg(), "wfm_compose")
+        # the shared wrapper takes the type; from_json/from_file pass cls
+        assert (
+            "_Composer_wrap_state(PyTypeObject *type, wfm_compose_state_t *st)"
+            in s
+        )
+        assert "(ComposerObject *)type->tp_alloc(type, 0)" in s
+        assert "_Composer_wrap_state((PyTypeObject *)cls, st)" in s
+        assert "ComposerType.tp_alloc(&ComposerType, 0)" not in s
+
+
+def _to_dict_cfg():
+    """_cfg() with the composer opting into the generic to_dict() (feature 5)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"to_dict": True}
+    return cfg
+
+
+class TestComposerToDict:
+    """``[module.X.composer] to_dict`` (gh-287 round 3 feature 5): a generic
+    ``Composer.to_dict()`` that serializes the *resolved* composition into a
+    plain nested dict (repeat / continuous / segments → sources), driven by the
+    SSOT field names and the OO getsets — the generic introspection primitive
+    any sidecar (SigMF / BLUE / …) is built from in Python, not by jm."""
+
+    def test_method_and_helper_emitted(self):
+        s = _composer.render_composer_type(_to_dict_cfg(), "wfm_compose")
+        assert "Composer_to_dict(ComposerObject *self" in s
+        # a generic per-object serializer driven by a key array
+        assert (
+            "_Composer_obj_to_dict(PyObject *o, const char *const *keys)" in s
+        )
+        assert "PyObject_GetAttrString(o, keys[i])" in s
+        # reuses the resolved-spec path (so segments reflect the live state)
+        assert "_Composer_resolved(self)" in s
+        # method row wired in
+        assert '{"to_dict", (PyCFunction)Composer_to_dict, METH_NOARGS,' in s
+
+    def test_key_arrays_from_ssot(self):
+        s = _composer.render_composer_type(_to_dict_cfg(), "wfm_compose")
+        # segment keys = the segment's OWN fields; source keys = source fields
+        assert (
+            '_Composer_seg_keys[] = { "fs", "num_samples", "off_samples", NULL };'
+            in s
+        )
+        assert '_Composer_src_keys[] = { "type", "freq",' in s
+        assert (
+            ', "bits", NULL };' in s
+        )  # bytes field included, NULL-terminated
+
+    def test_nested_shape(self):
+        s = _composer.render_composer_type(_to_dict_cfg(), "wfm_compose")
+        # the dict is {repeat, continuous, segments:[{..., sources:[...]}]}
+        assert 'PyDict_SetItemString(sd, "sources", src_out)' in s
+        assert '"{s:O,s:O,s:N}", "repeat",' in s
+        assert '"continuous",' in s and '"segments", segs_out' in s
+
+    def test_absent_by_default(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "Composer_to_dict" not in s
+        assert "_Composer_obj_to_dict" not in s
+
+    def test_pyi_declares_to_dict(self):
+        pyi = _composer.render_pyi(_to_dict_cfg(), "wfm_compose")
+        assert "    def to_dict(self) -> dict: ..." in pyi
+        assert "def to_dict(" not in _composer.render_pyi(
+            _cfg(), "wfm_compose"
+        )
+
+    def test_generic_non_wfm_composer(self):
+        """Proves to_dict is a generic object-of-objects primitive: a playlist
+        composer serializes its OWN field names (dur / gain / channel)."""
+        cfg = {
+            "project": {"name": "studio", "version": "0.1.0"},
+            "module": {
+                "playlist": {
+                    "kind": "composer",
+                    "backing": "playlist",
+                    "composes": ["clip"],
+                    "composer": {"to_dict": True},
+                    "source": {
+                        "object": "clip",
+                        "struct": "clip_t",
+                        "type_name": "Clip",
+                        "fields": [
+                            {
+                                "name": "gain",
+                                "type": "double",
+                                "default": "1.0",
+                            },
+                            {"name": "channel", "type": "int", "default": "0"},
+                        ],
+                    },
+                    "segment": {
+                        "type_name": "Track",
+                        "struct": "track_t",
+                        "sources": "multi",
+                        "fields": [{"name": "dur", "type": "size_t"}],
+                    },
+                    "timeline": {"type_name": "Reel", "loop": ["once"]},
+                    "oo": {"composer_type_name": "Mix"},
+                }
+            },
+        }
+        s = _composer.render_composer_type(cfg, "playlist")
+        assert "Mix_to_dict(MixObject *self" in s
+        assert '_Mix_seg_keys[] = { "dur", NULL };' in s
+        assert '_Mix_src_keys[] = { "gain", "channel", NULL };' in s

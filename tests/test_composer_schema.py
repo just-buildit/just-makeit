@@ -286,3 +286,29 @@ def test_save_load_preserves_flat_sources(tmp_path):
 def test_flat_sources_absent_by_default():
     """No ``flat_sources`` key → the segment does not opt in."""
     assert "flat_sources" not in composer_segment(_cfg(), "wfm_compose")
+
+
+def test_save_load_preserves_to_dict(tmp_path):
+    """``[module.X.composer] to_dict`` (feature 5) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"to_dict": True}
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "[module.wfm_compose.composer]" in manifest
+    assert "to_dict = true" in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_stream(cfg2, "wfm_compose").get("to_dict") is True
+
+
+def test_stream_and_to_dict_coexist(tmp_path):
+    """Both composer-table keys round-trip together."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {
+        "stream": True,
+        "to_dict": True,
+    }
+    save(tmp_path, cfg)
+    cfg2 = load(tmp_path)
+    tbl = composer_stream(cfg2, "wfm_compose")
+    assert tbl.get("stream") is True and tbl.get("to_dict") is True

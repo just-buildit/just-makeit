@@ -822,10 +822,16 @@ def composer_oo(cfg: dict, module: str) -> dict:
 def composer_stream(cfg: dict, module: str) -> dict:
     """Return the composer ``[module.X.composer]`` table (gh-287 round 3).
 
-    Composer-level ergonomics generated into the ``.so``. Key: ``stream`` —
-    ``true`` to generate a ``<Composer>.stream(block=4096)`` method returning a
-    generated iterator that drains ``execute`` (the ``for blk in c.stream(n):``
-    convenience), so a project drops its hand-written streaming wrapper."""
+    Composer-level ergonomics generated into the ``.so``. Keys:
+
+    ``stream``    ``true`` to generate a ``<Composer>.stream(block=4096)``
+                  method returning an iterator that drains ``execute`` (the
+                  ``for blk in c.stream(n):`` convenience);
+    ``to_dict``   ``true`` to generate a ``<Composer>.to_dict()`` returning the
+                  resolved composition (``repeat`` / ``continuous`` / nested
+                  ``segments``) as a plain dict — the generic introspection
+                  primitive any sidecar metadata (SigMF, BLUE, …) is built from
+                  in Python, so jm generates none of those formats itself."""
     return dict(cfg.get("module", {}).get(module, {}).get("composer", {}))
 
 
@@ -1743,6 +1749,8 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         out.append(f"[module.{mk}.composer]")
         if comp.get("stream"):
             out.append("stream = true")
+        if comp.get("to_dict"):
+            out.append("to_dict = true")
         out.append("")
 
     js = data.get("json")
