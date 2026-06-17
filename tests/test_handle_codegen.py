@@ -350,3 +350,22 @@ class TestPyi:
         assert "class Ring:" in pyi
         assert "def pop(self, n: int) -> NDArray[Any]: ..." in pyi
         assert "def fill_fraction(self) -> float: ..." in pyi
+
+
+class TestWellFormedC:
+    """Guards the bug class a text-assertion misses but the compiler hits: a
+    stray brace in the generated method table. The gh-306 end-to-end build
+    caught `{"close", ...}},` (a doubled brace) — these keep it caught here."""
+
+    def test_method_table_braces_balanced(self):
+        for src in (_wsrc(), _rsrc()):
+            assert src.count("{") == src.count("}"), "unbalanced braces"
+            # flat method rows + designated-initializer structs never emit a
+            # doubled `}}`; one is the close-row codegen bug.
+            assert "}}" not in src, "doubled brace in generated C"
+
+    def test_close_row_well_formed(self):
+        assert (
+            '{"close", (PyCFunction)Ring_close, METH_NOARGS, '
+            '"close() -> None"},'
+        ) in _rsrc()

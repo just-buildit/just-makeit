@@ -555,7 +555,7 @@ static PyObject *
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
-        '"close() -> None"}},'
+        '"close() -> None"},'
     )
     method_table = "\n".join(method_rows)
 
