@@ -416,3 +416,33 @@ class TestComposerCli:
         cm = _composer.render_cmake(_cfg(), "wfm_compose")
         assert "add_executable" not in cm
         assert _composer.composer_cli(_cfg(), "wfm_compose") == {}
+
+
+class TestSubclassable:
+    """All four OO types set ``Py_TPFLAGS_BASETYPE`` so a project can subclass
+    them — e.g. wrap the generated ``Synth`` in a Python subclass that adds
+    standalone-generation conveniences while still flowing through the generated
+    ``Composer`` (which type-checks with subclass-accepting ``PyObject_TypeCheck``).
+    Without the flag, CPython rejects subclassing ("not an acceptable base type").
+    """
+
+    def test_source_type_is_basetype(self):
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE" in s
+
+    def test_segment_type_is_basetype(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        assert "Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE" in s
+
+    def test_timeline_type_is_basetype(self):
+        s = _composer.render_timeline_type(_cfg(), "wfm_compose")
+        assert "Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE" in s
+
+    def test_composer_type_is_basetype(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE" in s
+
+    def test_all_four_types_in_full_ext(self):
+        """The assembled module sets the flag on every emitted type."""
+        s = _composer.render_ext(_cfg(), "wfm_compose")
+        assert s.count("Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE") == 4

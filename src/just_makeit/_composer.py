@@ -359,7 +359,7 @@ static PyGetSetDef {tname}_getset[] = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
@@ -671,7 +671,7 @@ static PyMethodDef {tname}_methods[] = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
@@ -783,7 +783,7 @@ static PyTypeObject {type_obj} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
@@ -1366,7 +1366,7 @@ static PyTypeObject {type_obj} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){cname}_init,
     .tp_dealloc   = (destructor){cname}_dealloc,
