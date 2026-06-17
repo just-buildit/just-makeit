@@ -202,6 +202,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         if C.is_capsule_module(cfg, mod):
             _capsule.materialize(cfg, temp_root, mod)
             continue
+        # gh-287: composer modules carry no object-group scaffold either. The
+        # generators land in a later slice (C2.4); until then skip them so apply
+        # never mis-scaffolds a composer as an empty object-group module.
+        if C.is_composer_module(cfg, mod):
+            continue
         _module.run(temp_root, mod)
 
     # After module scaffolding, copy module-level metadata (e.g.
@@ -212,6 +217,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         for m in mods
         if not C.is_no_generate_module(cfg, m)
         and not C.is_capsule_module(cfg, m)
+        and not C.is_composer_module(cfg, m)
         and (
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
@@ -934,6 +940,9 @@ def _sync_aggregates(
         if C.is_no_generate_module(cfg, mod):
             continue
         if only_mod is not None and mod != only_mod:
+            continue
+        # gh-287: composer generation lands in a later slice (C2.4); skip for now.
+        if C.is_composer_module(cfg, mod):
             continue
         # gh-286: a capsule module's three glue files (binding, CMake, .pyi)
         # regenerate from the manifest like any other module aggregator. There
