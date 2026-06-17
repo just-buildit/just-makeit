@@ -703,6 +703,44 @@ def module_init_params(cfg: dict, module: str) -> list[tuple]:
     ]
 
 
+def capsule_package(cfg: dict, module: str) -> str:
+    """Return the package directory a capsule module's ``.so`` / ``.pyi`` land in.
+
+    A capsule module has no ``PyTypeObject`` and frequently lives *inside* a
+    sibling object-group package rather than its own — doppler's ``ddc_fn``
+    extension is built into the ``ddc`` package so ``doppler.ddc`` can re-export
+    its free functions (``from .ddc_fn import ddcr_create``). Declare it with::
+
+        [module.ddc_fn]
+        kind    = "capsule"
+        package = "ddc"
+
+    When unset the module's own ``pypath`` is used, so a standalone capsule
+    module (``doppler.<module>``) needs no key."""
+    return cfg.get("module", {}).get(module, {}).get("package", "")
+
+
+def capsule_header(cfg: dict, module: str) -> str:
+    """Return the backing C API header a capsule binding must include.
+
+    Defaults to ``<backing>/<backing>_core.h``; override when the backing
+    object's public API is declared elsewhere — ``ddcr``'s lifecycle lives in
+    ``ddc/ddc_core.h``, so ``ddc_fn`` sets ``header = "ddc/ddc_core.h"``."""
+    return cfg.get("module", {}).get(module, {}).get("header", "")
+
+
+def capsule_depends_on(cfg: dict, module: str) -> list:
+    """Raw ``depends_on`` entries for a capsule module (strings / ``{name,link}``
+    tables). The ``link = true`` cores are linked onto the generated ``.so``."""
+    return list(cfg.get("module", {}).get(module, {}).get("depends_on", []))
+
+
+def capsule_extra_link_libs(cfg: dict, module: str) -> list[str]:
+    """Non-component link targets for a capsule ``.so`` (e.g. ``["m"]``)."""
+    v = cfg.get("module", {}).get(module, {}).get("extra_link_libs", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def functions_in_core(cfg: dict, module: str) -> bool:
     """Return True if the module's free functions live in ``<module>_core.c``
     as one translation unit, rather than one ``.c`` per function (gh-247).
@@ -1530,6 +1568,21 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'backing = "{data["backing"]}"')
             if data.get("capsule_name"):
                 lines.append(f'capsule_name = "{data["capsule_name"]}"')
+            if data.get("package"):
+                lines.append(f'package = "{data["package"]}"')
+            if data.get("header"):
+                lines.append(f'header = "{data["header"]}"')
+            if data.get("depends_on"):
+                parts = []
+                for d in data["depends_on"]:
+                    if isinstance(d, dict):
+                        inner = f'name = "{d["name"]}"'
+                        if d.get("link"):
+                            inner += ", link = true"
+                        parts.append(f"{{ {inner} }}")
+                    else:
+                        parts.append(f'"{d}"')
+                lines.append(f"depends_on = [{', '.join(parts)}]")
         elif data.get("functions_in_core") in (True, "true"):
             lines.append('functions_in_core = "true"')
         else:
