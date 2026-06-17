@@ -402,6 +402,8 @@ class TestComposerCli:
         assert "wfm_compose_execute(c, buf, 4096)" in s
         # pure C tool — no Python
         assert "Python.h" not in s and "PyObject" not in s
+        # bytes-field buffer freed after create (create deep-copies) — no leak
+        assert "free(src.bits);" in s
 
     def test_cli_cmake_exe_outside_build_python(self):
         cfg = self._cli_cfg()
