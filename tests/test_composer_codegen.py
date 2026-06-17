@@ -642,3 +642,127 @@ class TestComposerStream:
         plain = _composer.render_pyi(_cfg(), "wfm_compose")
         assert "def stream(" not in plain
         assert "from typing import Any\n" in plain
+
+
+def _flat_cfg():
+    """_cfg() with the segment opting into flat single-source accessors (feat 4)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["segment"]["flat_sources"] = True
+    return cfg
+
+
+class TestSegmentFlatAccessors:
+    """``[module.X.segment] flat_sources`` (gh-287 round 3 feature 4): a Segment
+    built from exactly one source proxies that source's fields as read-only
+    attributes (``segment.freq`` → ``segment.sources[0].freq``), so a project
+    drops a hand-written ``__getattr__`` fallback. Generic — the names come from
+    ``source.fields`` and each getter delegates to the source's own getset."""
+
+    def test_flat_getsets_emitted_for_source_fields(self):
+        s = _composer.render_segment_type(_flat_cfg(), "wfm_compose")
+        # one read-only getset per source field, delegating to sources[0]
+        for n in (
+            "type",
+            "freq",
+            "snr_mode",
+            "seed",
+            "pn_poly",
+            "lfsr",
+            "bits",
+        ):
+            assert f"Segment_flat_{n}(SegmentObject *self" in s
+            assert (
+                f'{{"{n}", (getter)Segment_flat_{n}, NULL, NULL, NULL}},' in s
+            )
+        assert (
+            'PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "freq")'
+            in s
+        )
+
+    def test_multi_source_raises_attributeerror(self):
+        s = _composer.render_segment_type(_flat_cfg(), "wfm_compose")
+        assert "if (PyList_GET_SIZE(self->sources) != 1)" in s
+        assert "PyExc_AttributeError" in s
+
+    def test_read_only_no_setter(self):
+        """Flat accessors are read-only — the getset row has a NULL setter."""
+        s = _composer.render_segment_type(_flat_cfg(), "wfm_compose")
+        # the source-proxy rows pass NULL where the segment scalars pass a setter
+        assert "(setter)Segment_flat_freq" not in s
+
+    def test_segment_scalar_still_writable(self):
+        """The segment's own scalars keep their read/write getset (not flat)."""
+        s = _composer.render_segment_type(_flat_cfg(), "wfm_compose")
+        assert "(setter)Segment_set_fs" in s
+        assert "Segment_flat_fs" not in s  # fs is a segment field, not proxied
+
+    def test_no_collision_with_segment_fields(self):
+        """A source field that shares a segment field's name is not proxied —
+        the segment's own attribute wins (generic collision guard)."""
+        cfg = _flat_cfg()
+        # give the source a field named "fs" (collides with the segment scalar)
+        cfg["module"]["wfm_compose"]["source"]["fields"].append(
+            {"name": "fs", "type": "double", "default": "0.0"}
+        )
+        s = _composer.render_segment_type(cfg, "wfm_compose")
+        assert "Segment_flat_fs" not in s
+
+    def test_absent_without_flat_sources(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        assert "Segment_flat_" not in s
+
+    def test_pyi_declares_flat_attributes(self):
+        pyi = _composer.render_pyi(_flat_cfg(), "wfm_compose")
+        assert "    freq: float" in pyi
+        assert "    type: str" in pyi  # enum field → str
+        assert "    bits: bytes | None" in pyi
+        # absent without the table
+        assert "    freq: float" not in _composer.render_pyi(
+            _cfg(), "wfm_compose"
+        )
+
+    def test_generic_non_wfm_composer(self):
+        """Proves the engine is a generic object-of-objects templater, not
+        wfm-coupled: a ``playlist`` composer over a ``clip`` source flattens its
+        OWN field names (gain / channel), with no waveform vocabulary."""
+        cfg = {
+            "project": {"name": "studio", "version": "0.1.0"},
+            "module": {
+                "playlist": {
+                    "kind": "composer",
+                    "composes": ["clip"],
+                    "source": {
+                        "object": "clip",
+                        "struct": "clip_t",
+                        "type_name": "Clip",
+                        "fields": [
+                            {
+                                "name": "gain",
+                                "type": "double",
+                                "default": "1.0",
+                            },
+                            {"name": "channel", "type": "int", "default": "0"},
+                        ],
+                    },
+                    "segment": {
+                        "type_name": "Track",
+                        "struct": "track_t",
+                        "sources": "multi",
+                        "flat_sources": True,
+                        "fields": [{"name": "dur", "type": "size_t"}],
+                    },
+                    "oo": {"composer_type_name": "Mix"},
+                }
+            },
+        }
+        s = _composer.render_segment_type(cfg, "playlist")
+        assert "Track_flat_gain(TrackObject *self" in s
+        assert "Track_flat_channel(TrackObject *self" in s
+        assert (
+            'PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "gain")'
+            in s
+        )
+        assert "Track_flat_dur" not in s  # dur is a Track scalar, not proxied
+        pyi = _composer.render_pyi(cfg, "playlist")
+        assert "    gain: float" in pyi
+        assert "    channel: int" in pyi

@@ -269,3 +269,20 @@ def test_save_load_preserves_composer_stream(tmp_path):
 def test_composer_stream_absent_by_default():
     """No ``[module.X.composer]`` table → ``composer_stream`` is empty."""
     assert composer_stream(_cfg(), "wfm_compose") == {}
+
+
+def test_save_load_preserves_flat_sources(tmp_path):
+    """``[module.X.segment] flat_sources`` (feature 4) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["segment"]["flat_sources"] = True
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "flat_sources = true" in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_segment(cfg2, "wfm_compose").get("flat_sources") is True
+
+
+def test_flat_sources_absent_by_default():
+    """No ``flat_sources`` key → the segment does not opt in."""
+    assert "flat_sources" not in composer_segment(_cfg(), "wfm_compose")
