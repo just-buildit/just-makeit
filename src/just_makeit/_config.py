@@ -32,7 +32,7 @@ from typing import NamedTuple
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 6
+CURRENT_SCHEMA = 7
 
 
 def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:

@@ -151,6 +151,14 @@ MIGRATIONS: dict[int, list] = {
         # TOMLs. Projects stay single-file unless they opt in by adding
         # `include`; the bump alone is the migration.
     ],
+    6: [
+        # Schema 7 gates the top-level `[[enum]]` single-source-of-truth and
+        # the `type = "enum:<name>"` parameter reference (gh-285). Projects
+        # keep inlining `string_enum:a,b,c` unless they opt in by declaring an
+        # `[[enum]]`; the bump alone is the migration. (Older jm cannot read a
+        # manifest that declares `[[enum]]`, so the bump also signals the
+        # minimum tool version.)
+    ],
 }
 
 

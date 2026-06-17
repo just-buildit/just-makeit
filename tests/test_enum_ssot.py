@@ -102,6 +102,28 @@ class TestInitParamsResolution:
         ]
 
 
+class TestConsumerFacesReadSSOT:
+    """The point of the SSOT: every codegen face reads the one declaration
+    transparently, because resolution happens at the init_params() choke
+    point. Here the `jm app` choice-flag derivation is the witness."""
+
+    def test_app_choice_flag_from_enum_ref(self):
+        from just_makeit import _app
+
+        cfg = _cfg()
+        flags = {f["name"]: f for f in _app._ctor_flags(cfg, "syn")}
+        # the enum:wfm_type param becomes a choice flag carrying the resolved
+        # value set — no choices were spelled out on the app side.
+        assert flags["kind"].get("choices") == [
+            "tone",
+            "noise",
+            "pn",
+            "qpsk",
+        ]
+        # a plain scalar param stays a non-choice flag.
+        assert flags["fs"].get("choices") is None
+
+
 class TestRoundTrip:
     def test_save_load_preserves_reference_and_manifest_owns_enum(
         self, tmp_path
