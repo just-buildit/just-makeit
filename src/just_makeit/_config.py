@@ -859,6 +859,182 @@ def functions_in_core(cfg: dict, module: str) -> bool:
     )
 
 
+# ── handle modules (gh-306) ──────────────────────────────────────────────────
+#
+# A ``kind = "handle"`` module is the *intersection* of the capsule generator
+# (gh-286 — opaque hand-C backing + lifecycle + numpy marshaling) and the
+# composer generator (gh-287 — a typed ``PyTypeObject`` face): it emits one
+# CPython class over an OPAQUE hand-C resource handle (e.g. ``Writer`` over
+# ``wfm_writer_t``). The accessors below mirror the ``capsule_*`` / ``composer_*``
+# drill-down pattern; like every jm reader, unknown keys pass through (no schema
+# validation) so the surface is purely additive.
+
+
+def is_handle_module(cfg: dict, module: str) -> bool:
+    """Return True if the module is a generated *handle* extension (gh-306).
+
+    A handle module declares ``kind = "handle"`` and templates the
+    capsule-backed typed-resource archetype once: an opaque create → handle, a
+    typed ``PyTypeObject`` with methods over the handle, properties decoded from
+    a shared C getter, a context-manager / idempotent-close RAII protocol, and
+    an optional weak-symbol backend guard."""
+    return module_kind(cfg, module) == "handle"
+
+
+def handle_backing(cfg: dict, module: str) -> str:
+    """Return a handle module's ``backing`` symbol prefix.
+
+    The opaque resource type defaults to ``<backing>_t`` and the lifecycle
+    functions to ``<backing>_open`` / ``<backing>_close``; ``wfm_writer`` →
+    ``wfm_writer_t``, ``wfm_writer_open``, ``wfm_writer_close``, …."""
+    return cfg.get("module", {}).get(module, {}).get("backing", "")
+
+
+def handle_type(cfg: dict, module: str) -> str:
+    """Return the opaque C handle type — defaults to ``<backing>_t``.
+
+    The generated struct stores a ``<handle_type> *`` and never introspects it;
+    its lifetime is owned by ``create_fn`` / ``close_fn``."""
+    backing = handle_backing(cfg, module)
+    return (
+        cfg.get("module", {})
+        .get(module, {})
+        .get("handle_type", f"{backing}_t" if backing else "")
+    )
+
+
+def handle_type_name(cfg: dict, module: str) -> str:
+    """Return the Python class name the handle module registers (``"Writer"``).
+
+    Defaults to the ``type_name`` key; falls back to the CamelCased backing."""
+    tn = cfg.get("module", {}).get(module, {}).get("type_name")
+    if tn:
+        return tn
+    backing = handle_backing(cfg, module)
+    return (
+        "".join(p.capitalize() for p in backing.split("_")) if backing else ""
+    )
+
+
+def handle_create_fn(cfg: dict, module: str) -> str:
+    """Return the C constructor a handle's ``tp_init`` calls.
+
+    Coerces the declared ``create_args`` and calls
+    ``<handle_type> *create_fn(...)``; a NULL return becomes a ``tp_init``
+    error. Defaults to ``<backing>_open``."""
+    backing = handle_backing(cfg, module)
+    return (
+        cfg.get("module", {})
+        .get(module, {})
+        .get("create_fn", f"{backing}_open" if backing else "")
+    )
+
+
+def handle_create_args(cfg: dict, module: str) -> list[dict]:
+    """Return a handle's ``[[module.X.create_args]]`` — the ``create_fn`` args.
+
+    Each is ``{name, type, enum?, default?, kwonly?}``. ``type`` is a scalar C
+    type (coerced via :data:`_types._CTYPE_META`), ``"path"`` (an ``os.fspath``
+    coercion crossing as ``O&`` + ``PyUnicode_FSConverter``), or carries an
+    ``enum`` (a string parsed to the C int via the ``[[enum]]`` SSOT)."""
+    return list(cfg.get("module", {}).get(module, {}).get("create_args", []))
+
+
+def handle_create_post(cfg: dict, module: str) -> list[dict]:
+    """Return a handle's ``[[module.X.create_post]]`` post-create setters.
+
+    Each is ``{fn, when?, arg?}`` — a C call run after ``create_fn`` succeeds,
+    optionally guarded by a truthy init arg (``when = "headroom"``) and passed a
+    verbatim-C argument expression (``arg = "pow(10, -headroom/20)"``)."""
+    return list(cfg.get("module", {}).get(module, {}).get("create_post", []))
+
+
+def handle_methods(cfg: dict, module: str) -> list[dict]:
+    """Return a handle's ``[[module.X.methods]]`` — handle methods.
+
+    Each is ``{name, fn, args?, returns?, nogil?}`` and yields a
+    ``tp_methods`` entry calling ``fn(self->h, …)``. ``args`` are scalars or one
+    array-in (marshaled like the capsule numpy path); ``returns`` is a scalar
+    type or an array form (``"int_in -> array"``)."""
+    return list(cfg.get("module", {}).get(module, {}).get("methods", []))
+
+
+def handle_getters(cfg: dict, module: str) -> list[dict]:
+    """Return a handle's ``[[module.X.getters]]`` — decoded-getter properties.
+
+    Each is ``{fn, out, cache?, fields:[…]}``: one C getter ``fn(self->h, &tmp)``
+    fills an ``out``-typed struct, and each declared field decodes one property
+    from it. A field is ``{name, from?, type, enum?, scale?, expr?}`` — plain
+    (``_to_py(tmp.<from|name>)``), ``enum`` (index → string), ``scale``
+    (multiply), or ``expr`` (verbatim C over ``tmp.<f>`` + stashed inits).
+    ``cache = true`` resolves the getter once in ``tp_init`` (fixed metadata)."""
+    return list(cfg.get("module", {}).get(module, {}).get("getters", []))
+
+
+def handle_context(cfg: dict, module: str) -> bool:
+    """Return True if the handle generates the context-manager protocol.
+
+    ``__enter__`` returns ``self``; ``__exit__`` calls ``close``. Independent of
+    the always-generated idempotent ``close`` + ``tp_dealloc``."""
+    return _truthy(
+        cfg.get("module", {}).get(module, {}).get("context_manager")
+    )
+
+
+def handle_close_fn(cfg: dict, module: str) -> str:
+    """Return the idempotent destructor a handle's ``close`` / ``tp_dealloc``
+    call. Defaults to ``<backing>_close``."""
+    backing = handle_backing(cfg, module)
+    return (
+        cfg.get("module", {})
+        .get(module, {})
+        .get("close_fn", f"{backing}_close" if backing else "")
+    )
+
+
+def handle_optional_backend(cfg: dict, module: str) -> str:
+    """Return the weak symbol a handle's ``tp_init`` guards on, if any.
+
+    When set (``optional_backend = "wfm_zmq_sink_open"``), the backing is
+    declared as a weak extern and ``tp_init`` raises ``NotImplementedError`` when
+    the symbol resolves to NULL — the "not on this platform" path."""
+    return cfg.get("module", {}).get(module, {}).get("optional_backend", "")
+
+
+# The package / header / depends_on / extra_link_libs keys behave exactly as
+# their capsule twins; expose handle-named aliases so the generator reads a
+# consistent ``handle_*`` surface (and a future schema split stays cheap).
+
+
+def handle_package(cfg: dict, module: str) -> str:
+    """Package directory a handle module's ``.so`` / ``.pyi`` land in.
+
+    Like a capsule module, a handle frequently lives *inside* a sibling package
+    (doppler's ``Writer`` lands in the ``wfm`` package). Defaults to the
+    module's own ``pypath`` when unset. See :func:`capsule_package`."""
+    return capsule_package(cfg, module)
+
+
+def handle_header(cfg: dict, module: str) -> str:
+    """Backing C API header a handle binding must include.
+
+    Defaults to ``<backing>/<backing>_core.h`` (filled by the generator). See
+    :func:`capsule_header`."""
+    return capsule_header(cfg, module)
+
+
+def handle_depends_on(cfg: dict, module: str) -> list:
+    """Raw ``depends_on`` entries for a handle module; ``link = true`` cores are
+    linked onto the generated ``.so``. See :func:`capsule_depends_on`."""
+    return capsule_depends_on(cfg, module)
+
+
+def handle_extra_link_libs(cfg: dict, module: str) -> list[str]:
+    """Non-component link targets for a handle ``.so`` (e.g. ``["m"]``).
+    See :func:`capsule_extra_link_libs`."""
+    return capsule_extra_link_libs(cfg, module)
+
+
 def c_deps(cfg: dict) -> list[str]:
     """Return C-only dependency subdirectory names declared under [project].
 
@@ -1658,6 +1834,83 @@ def _inline_field(f: dict) -> str:
     return "{ " + ", ".join(parts) + " }"
 
 
+def _inline_dict(d: dict) -> str:
+    """Serialize a flat dict (scalar values only) as a TOML inline table.
+
+    Drives the handle (gh-306) nested ``methods.args`` / ``getters.fields``
+    arrays — each member is one ``{ name = "x", type = "double", … }`` table.
+    Booleans render bare, everything else as a quoted string (the manifest keeps
+    numeric defaults as strings, matching the rest of ``_dump``)."""
+    parts = []
+    for k, v in d.items():
+        if isinstance(v, bool):
+            parts.append(f"{k} = {'true' if v else 'false'}")
+        else:
+            parts.append(f'{k} = "{v}"')
+    return "{ " + ", ".join(parts) + " }"
+
+
+def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
+    """Render a handle module's create_args / create_post / methods / getters
+    sub-tables (gh-306). Each is a ``[[module.X.<tbl>]]`` array; nested
+    ``methods.args`` and ``getters.fields`` are inline-table arrays, so the whole
+    spec round-trips through ``load`` / ``save`` unchanged."""
+    out: list[str] = []
+
+    for a in data.get("create_args", []):
+        out.append(f"[[module.{mk}.create_args]]")
+        out.append(f'name = "{a["name"]}"')
+        out.append(f'type = "{a["type"]}"')
+        if a.get("enum"):
+            out.append(f'enum = "{a["enum"]}"')
+        if a.get("default") not in (None, ""):
+            out.append(f'default = "{a["default"]}"')
+        if a.get("kwonly"):
+            out.append("kwonly = true")
+        out.append("")
+
+    for p in data.get("create_post", []):
+        out.append(f"[[module.{mk}.create_post]]")
+        out.append(f'fn = "{p["fn"]}"')
+        if p.get("when"):
+            out.append(f'when = "{p["when"]}"')
+        if "arg" in p:
+            out.append(f'arg = "{p["arg"]}"')
+        out.append("")
+
+    for m in data.get("methods", []):
+        out.append(f"[[module.{mk}.methods]]")
+        out.append(f'name = "{m["name"]}"')
+        out.append(f'fn = "{m["fn"]}"')
+        if m.get("returns"):
+            out.append(f'returns = "{m["returns"]}"')
+        if m.get("nogil"):
+            out.append("nogil = true")
+        if m.get("args"):
+            out.append(
+                "args = ["
+                + ", ".join(_inline_dict(a) for a in m["args"])
+                + "]"
+            )
+        out.append("")
+
+    for g in data.get("getters", []):
+        out.append(f"[[module.{mk}.getters]]")
+        out.append(f'fn = "{g["fn"]}"')
+        out.append(f'out = "{g["out"]}"')
+        if g.get("cache"):
+            out.append("cache = true")
+        if g.get("fields"):
+            out.append(
+                "fields = ["
+                + ", ".join(_inline_dict(f) for f in g["fields"])
+                + "]"
+            )
+        out.append("")
+
+    return out
+
+
 def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     """Render a composer module's source/segment/timeline/oo/json sub-tables
     (gh-287). Each is a single TOML table; field lists are inline-table arrays
@@ -1797,9 +2050,10 @@ def _dump(cfg: dict) -> str:
         lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
             lines.append('no_generate = "true"')
-        if data.get("kind") in ("capsule", "composer"):
-            # gh-286/gh-287: capsule + composer modules expose state via an
-            # opaque PyCapsule (composer adds OO types) — no `objects` list.
+        if data.get("kind") in ("capsule", "composer", "handle"):
+            # gh-286/gh-287/gh-306: capsule + composer + handle modules expose
+            # an opaque backing (composer adds OO types; handle a typed class) —
+            # no `objects` list.
             lines.append(f'kind = "{data["kind"]}"')
             if data.get("backing"):
                 lines.append(f'backing = "{data["backing"]}"')
@@ -1809,6 +2063,19 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'package = "{data["package"]}"')
             if data.get("header"):
                 lines.append(f'header = "{data["header"]}"')
+            if data.get("kind") == "handle":
+                # gh-306: the typed-class scalar keys.
+                for _hk in (
+                    "type_name",
+                    "create_fn",
+                    "close_fn",
+                    "handle_type",
+                    "optional_backend",
+                ):
+                    if data.get(_hk):
+                        lines.append(f'{_hk} = "{data[_hk]}"')
+                if data.get("context_manager"):
+                    lines.append("context_manager = true")
             if data.get("kind") == "composer":
                 # gh-287: composes a generator source object; sample_type turns
                 # on the inherited jm-app output axes.
@@ -1921,6 +2188,8 @@ def _dump(cfg: dict) -> str:
                 lines.append("")
         if data.get("kind") == "composer":
             lines += _dump_composer_subtables(_module_key(mod), data)
+        if data.get("kind") == "handle":
+            lines += _dump_handle_subtables(_module_key(mod), data)
 
     for comp in components(cfg):
         comp_data = cfg[comp]

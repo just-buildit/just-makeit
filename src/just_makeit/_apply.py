@@ -157,6 +157,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         _capsule,
         _composer,
         _function,
+        _handle,
         _method,
         _module,
         _new,
@@ -208,6 +209,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         if C.is_composer_module(cfg, mod):
             _composer.materialize(cfg, temp_root, mod)
             continue
+        # gh-306: a handle module emits its typed-class binding / CMake / .pyi
+        # directly from the manifest (no object-group scaffold).
+        if C.is_handle_module(cfg, mod):
+            _handle.materialize(cfg, temp_root, mod)
+            continue
         _module.run(temp_root, mod)
 
     # After module scaffolding, copy module-level metadata (e.g.
@@ -219,6 +225,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         if not C.is_no_generate_module(cfg, m)
         and not C.is_capsule_module(cfg, m)
         and not C.is_composer_module(cfg, m)
+        and not C.is_handle_module(cfg, m)
         and (
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
@@ -942,12 +949,17 @@ def _sync_aggregates(
             continue
         if only_mod is not None and mod != only_mod:
             continue
-        # gh-286/gh-287: a capsule OR composer module's three glue files
-        # (binding, CMake, .pyi) regenerate from the manifest like any other
-        # module aggregator. There is no _core.h / object loop / module
-        # __init__.py to reconcile — the owning package re-exports the public
-        # names via [module.X.reexports].
-        if C.is_capsule_module(cfg, mod) or C.is_composer_module(cfg, mod):
+        # gh-286/gh-287/gh-306: a capsule OR composer OR handle module's three
+        # glue files (binding, CMake, .pyi) regenerate from the manifest like
+        # any other module aggregator. There is no _core.h / object loop /
+        # module __init__.py to reconcile — the owning package re-exports the
+        # public names via [module.X.reexports]. (Handle uses the same three
+        # glue files; the composer's _cli.c is composer-only.)
+        if (
+            C.is_capsule_module(cfg, mod)
+            or C.is_composer_module(cfg, mod)
+            or C.is_handle_module(cfg, mod)
+        ):
             mp = C.module_paths(mod)
             out_pkg = C.capsule_package(cfg, mod) or mp.pypath
             glue = [
