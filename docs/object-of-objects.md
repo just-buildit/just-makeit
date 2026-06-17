@@ -456,8 +456,9 @@ The generated type carries:
     trailing scalars (`send(iq, fs, fc)`, gh-308); or an int-in→array-out shape
     returning an **independent** numpy-owned array;
 - **decoded-getter properties** (§5.2) — the genuinely new code;
-- the **RAII protocol** (§5.3): an idempotent `close()`, `__enter__`/`__exit__`,
-    and a `tp_dealloc` that closes a forgotten handle;
+- the **RAII protocol** (§5.3): an always-generated idempotent `close()` and a
+    `tp_dealloc` that closes a forgotten handle, plus `__enter__`/`__exit__` when
+    `context_manager` is set;
 - an optional **weak-symbol backend guard** (§5.3).
 
 Almost everything is reused: the enum SSOT tables + `_enum_index` (composer), the
@@ -494,9 +495,12 @@ name = "peak_dbfs"; type = "double"; expr = "tmp.peak > 0 ? 20*log10(tmp.peak) :
 
 ### 5.3 RAII, optional backends & the UAF rule
 
-`close()` is idempotent (`if (!self->closed) { close_fn(self->h); self->closed = 1; }`),
-`__exit__` calls it, and `tp_dealloc` closes a still-open handle — so a `with`
-block and a forgotten handle both release cleanly. A POSIX-only backend is
+`close()` (calling `close_fn`, default `<backing>_close`) and `tp_dealloc` are
+always generated: `close()` is idempotent
+(`if (!self->closed) { close_fn(self->h); self->closed = 1; }`) and `tp_dealloc`
+closes a still-open handle, so even a forgotten handle releases. Setting
+`context_manager` additionally emits `__enter__`/`__exit__` (the latter calls
+`close()`), so a `with` block releases cleanly too. A POSIX-only backend is
 declared `optional_backend = "<symbol>"`: the symbol is a weak extern, and
 `tp_init` raises `NotImplementedError` when it resolves to NULL.
 
@@ -509,7 +513,9 @@ array, never a dangling view.
 ### 5.4 Worked example: doppler's transport layer
 
 The handle generator exists to retire doppler's hand-written `wfmcompose_py.c`
-(~400 lines of CPython). `Writer`, `Reader`, `ZmqSink`, and `SampleClock` are
+(~960 lines of CPython — the four transport types plus segment-tuple parsing and
+free functions that move to jm module functions). `Writer`, `Reader`, `ZmqSink`,
+and `SampleClock` are
 **one archetype — a capsule-backed resource handle — instantiated four times**
 over the existing `wfm_writer.c` / `wfm_reader.c` / `wfm_sink.c` C API (whose
 `wfm_reader_info()` already fills a struct, ideal for the decoded-getter path).
@@ -630,7 +636,8 @@ marshalling, the type slots, the JSON shape, and the CLI flag.
 | `[[X.create_post]]` | conditional post-create setter `{fn, when?, arg?}`                                                                    |
 | `[[X.methods]]`     | `{name, fn, args[], returns?, nogil?}` — scalar / array-in (+ trailing scalars) / int-in→array-out                    |
 | `[[X.getters]]`     | a shared getter `{fn, out, cache?, fields[]}`; each field `{name, from?, type, enum?, scale?, expr?}`                 |
-| `context_manager`   | emit `__enter__`/`__exit__` + idempotent `close` (`close_fn`)                                                         |
+| `close_fn`          | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                      |
+| `context_manager`   | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                       |
 | `optional_backend`  | a weak-symbol backend; absent → `NotImplementedError`                                                                 |
 
 ______________________________________________________________________
