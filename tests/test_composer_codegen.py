@@ -66,6 +66,7 @@ def _cfg():
                 },
                 "segment": {
                     "type_name": "Segment",
+                    "struct": "wfm_segment_t",
                     "fields": [
                         {"name": "fs", "type": "double", "default": "1e6"},
                         {
@@ -81,10 +82,15 @@ def _cfg():
                     ],
                     "sources": "multi",
                 },
+                "timeline": {
+                    "type_name": "Timeline",
+                    "loop": ["once", "repeat", "continuous"],
+                },
                 "oo": {
                     "factories": ["tone", "qpsk"],
                     "emit": "ctypes",
                     "discriminant": "type",
+                    "composer_type_name": "Composer",
                 },
             }
         },
@@ -200,3 +206,66 @@ class TestSegmentType:
         assert "Py_XDECREF(self->sources);" in s
         # warning-clean keyword-method cast
         assert "(PyCFunction)(void (*)(void))Segment_sum" in s
+
+
+class TestTimelineType:
+    def test_sequence_protocol(self):
+        s = _composer.render_timeline_type(_cfg(), "wfm_compose")
+        assert "static PyTypeObject TimelineType =" in s
+        assert '.tp_name      = "doppler.wfm.Timeline"' in s
+        assert "Timeline_iter" in s and ".tp_iter" in s
+        assert ".mp_length" in s and ".mp_subscript" in s
+        # add() extends and returns self (chainable)
+        assert "Timeline_add" in s
+        assert "PyList_Append(self->segments" in s
+        # init copies any iterable
+        assert "PySequence_List(seq)" in s
+
+
+class TestComposerType:
+    def test_holds_backing_state(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "wfm_compose_state_t *state;" in s
+        assert "int                destroyed;" in s
+        assert "static PyTypeObject ComposerType =" in s
+        assert '.tp_name      = "doppler.wfm.Composer"' in s
+
+    def test_build_segments_from_oo(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        # builds a transient wfm_segment_t[] from Segment/Synth objects
+        assert "_build_wfm_compose_segments" in s
+        assert "srcs[k] = syn->src;" in s  # aliases bits, create deep-copies
+        assert "segs[i].sources = srcs;" in s
+        assert "segs[i].n_sources = (size_t)ns;" in s
+        assert "segs[i].fs = seg->fs;" in s
+        # frees only the transient arrays, never the bits (owned by Synth)
+        assert "NOT the bits" in s
+        assert "wfm_compose_create(segs, n, repeat, continuous)" in s
+
+    def test_init_dispatch(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        # single-segment-from-kwargs vs explicit segments vs Timeline/list
+        assert "PyObject_Call((PyObject *)&SegmentType, empty, kw)" in s
+        assert "PyObject_TypeCheck(segments, &SegmentType)" in s
+        assert "PySequence_List(segments)" in s
+        assert "not both" in s  # segments XOR kwargs guard
+        assert '_pop_flag(kw, "repeat"' in s
+
+    def test_execute_and_compose(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "wfm_compose_execute(self->state, out, (size_t)max)" in s
+        assert "Py_BEGIN_ALLOW_THREADS" in s  # GIL released across the kernel
+        assert "PyArray_Concatenate(chunks, 0)" in s
+        assert "cannot compose() a continuous spec" in s
+
+    def test_resolved_and_close(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        # segments/repeat/continuous reflect the resolved spec as OO objects
+        assert "_wfm_compose_segments_to_list" in s
+        assert "wfm_compose_segments(self->state" in s
+        assert "Composer_get_segments" in s
+        # rebuilt sources deep-copy their bits
+        assert "malloc(syn->src.n_bits)" in s
+        # close / context manager / dealloc destroy the backing state
+        assert "wfm_compose_destroy(self->state)" in s
+        assert "Composer_enter" in s and "Composer_exit" in s
