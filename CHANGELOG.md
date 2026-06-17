@@ -32,6 +32,25 @@
     `<backing>_core.c` (sacred). doppler's `ddc_fn` is the reference adopter:
     it drops `no_generate` for `kind = "capsule"` with a byte-identical link
     list. This is the runtime skeleton the composer (#287) builds on.
+- **`kind = "composer"` module generator (gh-287)** — turns jm from a
+    one-binding-per-struct scaffolder into a templating engine that **composes
+    objects of objects**. A composer declares `source`/`segment`/`timeline`/`oo`
+    sub-tables and generates, into the `.so`, the full ergonomic OO surface as
+    real CPython types: a source config type (`Synth` — keyword `tp_init`,
+    per-field getset, enum-validated assignment, factory functions) with
+    `Segment.sum`/`Segment.add`, a `Timeline` sequence, and a `Composer` that
+    drives the backing `<backing>_compose_*` kernel (`execute`/`compose` with
+    zero-copy complex64 slices + GIL release, `segments`/`repeat`/`continuous`
+    reflection, context-manager `close`). JSON faces (`to_json`/`from_json`/
+    `from_file`) are **generated from the `source`/`segment` fields + the
+    `[[enum]]` SSOT** (one `_enum_*` table, no per-face duplication), with
+    hand-serializer delegation as an opt-in escape hatch for exact wire-compat.
+    An opt-in `[module.X.cli]` emits a generic pure-C `main()` that builds from
+    field flags or `--from-file` and streams via `jm app`'s output axes
+    (`--sample_type`/`--file-type`/`--endian`). `jm apply` materializes the
+    `_ext.c`/`CMakeLists.txt`/`.pyi` (+ optional `_cli.c`); `jm status --check`
+    covers them. Kernels stay hand-written in `<backing>_core.c` (sacred).
+    Validated byte-exact against doppler's `compose.py` across every spec shape.
 
 ## [0.19.15] — 2026-06-15
 
