@@ -173,6 +173,16 @@ def render_source_type(cfg: dict, module: str) -> str:
     # source-of-a-generator opts in via [module.X.source.generates].
     gen = _source_generates(cfg, module)
 
+    # Feature 2 — input ergonomics, generated into tp_init so the .so is the API:
+    #  (a) field aliases: a ctor kwarg accepted as a stand-in for the canonical
+    #      field (e.g. f_start -> freq); folded before parsing, both-given errors.
+    #  (b) bit_pattern coercion: a bytes field accepts a 0/1 pattern as bytes, a
+    #      binary/hex string ("0101" / "0xAA55"), or a sequence of ints.
+    aliases = [(a, f["name"]) for f in fields for a in f.get("aliases", [])]
+    bits_coerce = any(
+        f.get("bytes") and f.get("coerce") == "bit_pattern" for f in fields
+    )
+
     parts: list[str] = []
 
     # struct: backing config + an extra fs (segment owns it in composition, but
@@ -244,7 +254,141 @@ def render_source_type(cfg: dict, module: str) -> str:
             assign.append(f"    self->src.{n} = {n};")
     assign_s = "\n".join(assign)
 
-    parts.append(f"""/* Copy a Python bytes (0/1 pattern) or None into src->bits (owned). */
+    store_bits = """    src->bits   = buf;
+    src->n_bits = (size_t)nb;
+    return 1;"""
+    if bits_coerce:
+        attach_doc = (
+            "Coerce a 0/1 pattern (bytes | binary/hex str | int sequence)"
+        )
+        attach_body = f"""    if (PyBytes_Check(obj)) {{
+        Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+        if (nb <= 0)
+            return 1;
+        uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}
+    }}
+    if (PyUnicode_Check(obj)) {{
+        Py_ssize_t slen;
+        const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
+        if (!s)
+            return 0;
+        if (slen >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {{
+            Py_ssize_t nd = slen - 2, nb = nd * 4; /* hex digit -> 4 bits MSB */
+            uint8_t *buf = (uint8_t *)malloc(nb ? (size_t)nb : 1);
+            if (!buf) {{ PyErr_NoMemory(); return 0; }}
+            for (Py_ssize_t i = 0; i < nd; i++) {{
+                char c = s[2 + i];
+                int v = (c >= '0' && c <= '9')   ? c - '0'
+                        : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+                        : (c >= 'A' && c <= 'F') ? c - 'A' + 10
+                                                 : -1;
+                if (v < 0) {{
+                    free(buf);
+                    PyErr_SetString(PyExc_ValueError, "invalid hex digit");
+                    return 0;
+                }}
+                for (int b = 0; b < 4; b++)
+                    buf[i * 4 + b] = (uint8_t)((v >> (3 - b)) & 1);
+            }}
+{store_bits}
+        }}
+        uint8_t *buf = (uint8_t *)malloc(slen ? (size_t)slen : 1);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        for (Py_ssize_t i = 0; i < slen; i++) {{
+            if (s[i] != '0' && s[i] != '1') {{
+                free(buf);
+                PyErr_SetString(PyExc_ValueError,
+                                "bit string must be 0/1 or '0x..' hex");
+                return 0;
+            }}
+            buf[i] = (uint8_t)(s[i] - '0');
+        }}
+        Py_ssize_t nb = slen;
+{store_bits}
+    }}
+    {{
+        PyObject *seq = PySequence_Fast(
+            obj, "bits must be bytes, a 0/1 string, or a sequence of ints");
+        if (!seq)
+            return 0;
+        Py_ssize_t nb = PySequence_Fast_GET_SIZE(seq);
+        uint8_t *buf = (uint8_t *)malloc(nb ? (size_t)nb : 1);
+        if (!buf) {{ Py_DECREF(seq); PyErr_NoMemory(); return 0; }}
+        for (Py_ssize_t i = 0; i < nb; i++) {{
+            long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(seq, i));
+            if (v == -1 && PyErr_Occurred()) {{
+                free(buf);
+                Py_DECREF(seq);
+                return 0;
+            }}
+            buf[i] = (uint8_t)(v != 0);
+        }}
+        Py_DECREF(seq);
+{store_bits}
+    }}"""
+    else:
+        attach_doc = "Copy a Python bytes (0/1 pattern) or None into src->bits"
+        attach_body = f"""    if (!PyBytes_Check(obj)) {{
+        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
+        return 0;
+    }}
+    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+    if (nb <= 0)
+        return 1;
+    uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+    if (!buf) {{
+        PyErr_NoMemory();
+        return 0;
+    }}
+    memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}"""
+
+    # Alias-folding preamble (feature 2a): rename alias kwargs to their canonical
+    # field before parsing. kwds is copied only when an alias is actually present
+    # (the common no-alias call pays nothing).
+    if aliases:
+        folds = []
+        for a, canon in aliases:
+            folds.append(f"""        {{
+            PyObject *_a = PyDict_GetItemString(kwds, "{a}");
+            if (_a) {{
+                if (!_kw_owned) {{
+                    _kw = PyDict_Copy(kwds);
+                    if (!_kw) return -1;
+                    _kw_owned = 1;
+                }}
+                if (PyDict_GetItemString(_kw, "{canon}")) {{
+                    PyErr_SetString(PyExc_TypeError,
+                        "{canon} and {a} are aliases — pass only one");
+                    Py_DECREF(_kw);
+                    return -1;
+                }}
+                if (PyDict_SetItemString(_kw, "{canon}", _a) < 0
+                    || PyDict_DelItemString(_kw, "{a}") < 0) {{
+                    Py_DECREF(_kw);
+                    return -1;
+                }}
+            }}
+        }}""")
+        alias_pre = (
+            "    PyObject *_kw = kwds;\n    int _kw_owned = 0;\n"
+            "    if (kwds) {\n" + "\n".join(folds) + "\n    }\n"
+        )
+        parse_kw = "_kw"
+        parse_fail = (
+            "        if (_kw_owned) Py_DECREF(_kw);\n        return -1;"
+        )
+        parse_ok = "    if (_kw_owned) Py_DECREF(_kw);\n"
+    else:
+        alias_pre = ""
+        parse_kw = "kwds"
+        parse_fail = "        return -1;"
+        parse_ok = ""
+
+    parts.append(f"""/* {attach_doc} (owned). */
 static int
 _attach_bytes({struct} *src, PyObject *obj)
 {{
@@ -253,22 +397,7 @@ _attach_bytes({struct} *src, PyObject *obj)
     src->n_bits = 0;
     if (!obj || obj == Py_None)
         return 1;
-    if (!PyBytes_Check(obj)) {{
-        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
-        return 0;
-    }}
-    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
-    if (nb <= 0)
-        return 1;
-    uint8_t *copy = (uint8_t *)malloc((size_t)nb);
-    if (!copy) {{
-        PyErr_NoMemory();
-        return 0;
-    }}
-    memcpy(copy, PyBytes_AS_STRING(obj), (size_t)nb);
-    src->bits   = copy;
-    src->n_bits = (size_t)nb;
-    return 1;
+{attach_body}
 }}
 
 static int
@@ -277,11 +406,12 @@ static int
     static char *kwlist[] = {{{kwlist}, "fs", NULL}};
 {decls_s}
     double fs = 1e6;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
-            {addrs_s}, &fs))
-        return -1;
-    self->fs = fs;
-{"    self->_gen = NULL;" + chr(10) if gen else ""}{assign_s}
+{alias_pre}    if (!PyArg_ParseTupleAndKeywords(args, {parse_kw}, "{fmt}", kwlist,
+            {addrs_s}, &fs)) {{
+{parse_fail}
+    }}
+{parse_ok}    self->fs = fs;
+{(f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
     return 0;
 }}
 """)

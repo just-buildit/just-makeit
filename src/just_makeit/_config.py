@@ -1631,6 +1631,12 @@ def _inline_field(f: dict) -> str:
         parts.append(f'default = "{f["default"]}"')
     if f.get("bytes"):
         parts.append("bytes = true")
+    if f.get("aliases"):
+        parts.append(
+            "aliases = [" + ", ".join(f'"{a}"' for a in f["aliases"]) + "]"
+        )
+    if f.get("coerce"):
+        parts.append(f'coerce = "{f["coerce"]}"')
     return "{ " + ", ".join(parts) + " }"
 
 

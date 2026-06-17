@@ -492,9 +492,15 @@ class TestSourceGenerates:
         s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
         assert ".tp_methods   = Synth_methods," in s
 
-    def test_init_nulls_handle(self):
+    def test_init_reinit_safe(self):
+        """A second __init__() must destroy any prior generator before clearing
+        the handle (tp_alloc zero-inits the first construction, so a bare
+        `_gen = NULL` would leak the built generator on re-init)."""
         s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
-        assert "self->_gen = NULL;" in s
+        assert (
+            "if (self->_gen) { wfm_synth_destroy(self->_gen); "
+            "self->_gen = NULL; }" in s
+        )
 
     def test_ext_includes_generator_header_and_bridge_decl(self):
         s = _composer.render_ext(_gen_cfg(), "wfm_compose")
@@ -517,3 +523,54 @@ class TestSourceGenerates:
         assert "def step(self) -> complex: ..." in pyi
         # absent without generates
         assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
+
+
+def _alias_coerce_cfg():
+    """_cfg() with a field alias (freq<-f_start) + bit_pattern coercion (bits)."""
+    cfg = _cfg()
+    for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+        if f["name"] == "freq":
+            f["aliases"] = ["f_start"]
+        if f["name"] == "bits":
+            f["aliases"] = ["pattern"]
+            f["coerce"] = "bit_pattern"
+    return cfg
+
+
+class TestFieldAliases:
+    """``aliases`` (feature 2a): a ctor kwarg stands in for the canonical field,
+    folded before parsing; passing both errors. Generic — generated in tp_init."""
+
+    def test_alias_fold_emitted(self):
+        s = _composer.render_source_type(_alias_coerce_cfg(), "wfm_compose")
+        assert 'PyDict_GetItemString(kwds, "f_start")' in s
+        assert "freq and f_start are aliases" in s
+        assert "_kw = PyDict_Copy(kwds)" in s
+        # pattern -> bits alias too
+        assert 'PyDict_GetItemString(kwds, "pattern")' in s
+        # parse uses the (possibly copied) kw dict and frees it
+        assert "PyArg_ParseTupleAndKeywords(args, _kw," in s
+        assert "if (_kw_owned) Py_DECREF(_kw);" in s
+
+    def test_no_alias_no_copy(self):
+        """Without aliases, tp_init parses kwds directly (no copy, no _kw)."""
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "PyArg_ParseTupleAndKeywords(args, kwds," in s
+        assert "_kw_owned" not in s
+
+
+class TestBitPatternCoercion:
+    """``coerce = "bit_pattern"`` (feature 2b): a bytes field accepts a 0/1
+    pattern as bytes, a binary/hex string, or a sequence of ints — generated."""
+
+    def test_coercion_paths_emitted(self):
+        s = _composer.render_source_type(_alias_coerce_cfg(), "wfm_compose")
+        assert "PyUnicode_Check(obj)" in s  # str path
+        assert "PySequence_Fast(" in s  # sequence path
+        assert "s[1] == 'x' || s[1] == 'X'" in s  # 0x hex
+        assert "bit string must be 0/1 or '0x..' hex" in s
+
+    def test_plain_bytes_only_without_coerce(self):
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "bits must be bytes or None" in s
+        assert "PyUnicode_Check" not in s

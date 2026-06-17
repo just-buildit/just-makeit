@@ -233,3 +233,20 @@ def test_save_load_preserves_source_generates(tmp_path):
         "generator": "wfm_synth",
         "bridge_fn": "wfm_source_to_synth",
     }
+
+
+def test_save_load_preserves_aliases_and_coerce(tmp_path):
+    """Field ``aliases`` / ``coerce`` (feature 2) survive save/load."""
+    cfg = _cfg()
+    for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+        if f["name"] == "level":
+            f["aliases"] = ["amplitude"]
+        if f["name"] == "bits":
+            f["aliases"] = ["pattern"]
+            f["coerce"] = "bit_pattern"
+    save(tmp_path, cfg)
+    cfg2 = load(tmp_path)
+    by = {f["name"]: f for f in composer_source(cfg2, "wfm_compose")["fields"]}
+    assert by["level"]["aliases"] == ["amplitude"]
+    assert by["bits"]["aliases"] == ["pattern"]
+    assert by["bits"]["coerce"] == "bit_pattern"
