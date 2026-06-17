@@ -155,6 +155,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     paths in the TOML are resolved relative to it."""
     from . import (
         _capsule,
+        _composer,
         _function,
         _method,
         _module,
@@ -202,10 +203,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         if C.is_capsule_module(cfg, mod):
             _capsule.materialize(cfg, temp_root, mod)
             continue
-        # gh-287: composer modules carry no object-group scaffold either. The
-        # generators land in a later slice (C2.4); until then skip them so apply
-        # never mis-scaffolds a composer as an empty object-group module.
+        # gh-287: a composer module emits its OO-type binding / CMake / .pyi
+        # directly from the manifest (no object-group scaffold).
         if C.is_composer_module(cfg, mod):
+            _composer.materialize(cfg, temp_root, mod)
             continue
         _module.run(temp_root, mod)
 
@@ -941,14 +942,12 @@ def _sync_aggregates(
             continue
         if only_mod is not None and mod != only_mod:
             continue
-        # gh-287: composer generation lands in a later slice (C2.4); skip for now.
-        if C.is_composer_module(cfg, mod):
-            continue
-        # gh-286: a capsule module's three glue files (binding, CMake, .pyi)
-        # regenerate from the manifest like any other module aggregator. There
-        # is no _core.h / object loop / module __init__.py to reconcile — the
-        # owning package re-exports the free functions via [module.X.reexports].
-        if C.is_capsule_module(cfg, mod):
+        # gh-286/gh-287: a capsule OR composer module's three glue files
+        # (binding, CMake, .pyi) regenerate from the manifest like any other
+        # module aggregator. There is no _core.h / object loop / module
+        # __init__.py to reconcile — the owning package re-exports the public
+        # names via [module.X.reexports].
+        if C.is_capsule_module(cfg, mod) or C.is_composer_module(cfg, mod):
             mp = C.module_paths(mod)
             out_pkg = C.capsule_package(cfg, mod) or mp.pypath
             for rel in (

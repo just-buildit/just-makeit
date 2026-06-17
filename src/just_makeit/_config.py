@@ -1622,10 +1622,15 @@ _KNOWN_METHOD_KEYS = frozenset(
 
 
 def _inline_field(f: dict) -> str:
-    """Serialize a ``{name, type, default?}`` field as a TOML inline table."""
+    """Serialize a composer field (``{name, type, enum?, default?, bytes?}``) as
+    a TOML inline table — drives the source/segment field marshalling (gh-287)."""
     parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
+    if f.get("enum"):
+        parts.append(f'enum = "{f["enum"]}"')
     if f.get("default") not in (None, ""):
         parts.append(f'default = "{f["default"]}"')
+    if f.get("bytes"):
+        parts.append("bytes = true")
     return "{ " + ", ".join(parts) + " }"
 
 
@@ -1638,28 +1643,30 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     src = data.get("source")
     if src:
         out.append(f"[module.{mk}.source]")
-        if src.get("object"):
-            out.append(f'object = "{src["object"]}"')
-        ef = src.get("enum_fields") or {}
-        if ef:
-            inner = ", ".join(f'{k} = "{v}"' for k, v in ef.items())
-            out.append(f"enum_fields = {{ {inner} }}")
-        xf = src.get("extra_fields") or []
-        if xf:
+        for k in ("object", "struct", "type_name"):
+            if src.get(k):
+                out.append(f'{k} = "{src[k]}"')
+        fields = src.get("fields") or []
+        if fields:
             out.append(
-                "extra_fields = ["
-                + ", ".join(_inline_field(f) for f in xf)
+                "fields = ["
+                + ", ".join(_inline_field(f) for f in fields)
                 + "]"
             )
-        bf = src.get("bytes_field")
-        if bf:
-            inner = ", ".join(f'{k} = "{v}"' for k, v in bf.items())
-            out.append(f"bytes_field = {{ {inner} }}")
         out.append("")
 
     seg = data.get("segment")
     if seg:
         out.append(f"[module.{mk}.segment]")
+        for k in (
+            "type_name",
+            "struct",
+            "sources",
+            "sources_member",
+            "count_member",
+        ):
+            if seg.get(k):
+                out.append(f'{k} = "{seg[k]}"')
         fields = seg.get("fields") or []
         if fields:
             out.append(
@@ -1667,32 +1674,46 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + ", ".join(_inline_field(f) for f in fields)
                 + "]"
             )
-        if seg.get("sources"):
-            out.append(f'sources = "{seg["sources"]}"')
         out.append("")
 
     tl = data.get("timeline")
-    if tl and tl.get("loop"):
+    if tl:
         out.append(f"[module.{mk}.timeline]")
-        out.append("loop = [" + ", ".join(f'"{x}"' for x in tl["loop"]) + "]")
+        if tl.get("type_name"):
+            out.append(f'type_name = "{tl["type_name"]}"')
+        if tl.get("loop"):
+            out.append(
+                "loop = [" + ", ".join(f'"{x}"' for x in tl["loop"]) + "]"
+            )
         out.append("")
 
     oo = data.get("oo")
     if oo:
         out.append(f"[module.{mk}.oo]")
-        facs = oo.get("factories") or []
-        if facs:
+        if oo.get("factories"):
             out.append(
-                "factories = [" + ", ".join(f'"{x}"' for x in facs) + "]"
+                "factories = ["
+                + ", ".join(f'"{x}"' for x in oo["factories"])
+                + "]"
             )
-        if oo.get("emit"):
-            out.append(f'emit = "{oo["emit"]}"')
+        for k in ("emit", "discriminant", "composer_type_name"):
+            if oo.get(k):
+                out.append(f'{k} = "{oo[k]}"')
         out.append("")
 
     js = data.get("json")
     if js:
         out.append(f"[module.{mk}.json]")
         out.append("enabled = " + ("true" if js.get("enabled") else "false"))
+        for k in ("to_json_fn", "from_json_fn", "from_file_fn"):
+            if js.get(k):
+                out.append(f'{k} = "{js[k]}"')
+        if js.get("to_json_trailing"):
+            out.append(
+                "to_json_trailing = ["
+                + ", ".join(f'"{x}"' for x in js["to_json_trailing"])
+                + "]"
+            )
         out.append("")
 
     return out
