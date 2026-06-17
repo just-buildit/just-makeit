@@ -1157,7 +1157,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
 static PyObject *
 {cname}_from_json(PyObject *cls, PyObject *args)
 {{
-    (void)cls;
+    PyTypeObject *type = (PyTypeObject *)cls; /* alloc via cls: subclass round-trips */
     const char *json;
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
@@ -1166,7 +1166,7 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "{from_json_fn} failed");
         return NULL;
     }}
-    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -1179,7 +1179,7 @@ static PyObject *
 static PyObject *
 {cname}_from_file(PyObject *cls, PyObject *args)
 {{
-    (void)cls;
+    PyTypeObject *type = (PyTypeObject *)cls; /* alloc via cls: subclass round-trips */
     PyObject *pathobj;
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
@@ -1189,7 +1189,7 @@ static PyObject *
         PyErr_SetString(PyExc_OSError, "{from_file_fn} failed");
         return NULL;
     }}
-    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -1317,6 +1317,99 @@ static PyObject *
             f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
             f"     METH_VARARGS | METH_KEYWORDS,\n"
             f'     "stream(block=4096) -> iterator of complex64 blocks"}},\n'
+        )
+
+    # Feature 5 — a generic `to_dict()`: serialize the *resolved* composition
+    # (repeat / continuous / segments → [{<seg fields>, sources: [{<src
+    # fields>}]}]) into a plain nested Python dict. Driven entirely by the SSOT
+    # field names and the OO getsets (so enums render as strings, bits as
+    # bytes), it is the generic introspection primitive any sidecar — SigMF,
+    # BLUE, a CSV manifest — is built from in Python; jm generates none of those.
+    to_dict_code = to_dict_row = ""
+    if C.composer_stream(cfg, module).get("to_dict"):
+        seg_keys = "".join(
+            f'"{f["name"]}", '
+            for f in C.composer_segment(cfg, module).get("fields", [])
+        )
+        src_keys = "".join(
+            f'"{f["name"]}", '
+            for f in C.composer_source(cfg, module).get("fields", [])
+        )
+        to_dict_code = f"""/* Serialize one resolved object's named fields into a dict via its getsets
+ * (enums → str, bits → bytes) — generic over the SSOT field list. */
+static PyObject *
+_{cname}_obj_to_dict(PyObject *o, const char *const *keys)
+{{
+    PyObject *d = PyDict_New();
+    if (!d)
+        return NULL;
+    for (Py_ssize_t i = 0; keys[i]; i++) {{
+        PyObject *v = PyObject_GetAttrString(o, keys[i]);
+        if (!v) {{ Py_DECREF(d); return NULL; }}
+        int rc = PyDict_SetItemString(d, keys[i], v);
+        Py_DECREF(v);
+        if (rc < 0) {{ Py_DECREF(d); return NULL; }}
+    }}
+    return d;
+}}
+
+static const char *const _{cname}_seg_keys[] = {{ {seg_keys}NULL }};
+static const char *const _{cname}_src_keys[] = {{ {src_keys}NULL }};
+
+static PyObject *
+{cname}_to_dict({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    PyObject *r = _{cname}_resolved(self);
+    if (!r)
+        return NULL;
+    PyObject *seglist = PyTuple_GET_ITEM(r, 0); /* borrowed */
+    Py_ssize_t nseg = PyList_GET_SIZE(seglist);
+    PyObject *segs_out = PyList_New(nseg);
+    if (!segs_out)
+        goto fail;
+    for (Py_ssize_t i = 0; i < nseg; i++) {{
+        PyObject *seg = PyList_GET_ITEM(seglist, i); /* borrowed */
+        PyObject *sd = _{cname}_obj_to_dict(seg, _{cname}_seg_keys);
+        if (!sd)
+            goto fail_segs;
+        PyObject *srcs = PyObject_GetAttrString(seg, "sources");
+        if (!srcs) {{ Py_DECREF(sd); goto fail_segs; }}
+        Py_ssize_t nsrc = PyList_GET_SIZE(srcs);
+        PyObject *src_out = PyList_New(nsrc);
+        if (!src_out) {{ Py_DECREF(srcs); Py_DECREF(sd); goto fail_segs; }}
+        for (Py_ssize_t k = 0; k < nsrc; k++) {{
+            PyObject *kd = _{cname}_obj_to_dict(
+                PyList_GET_ITEM(srcs, k), _{cname}_src_keys);
+            if (!kd) {{
+                Py_DECREF(src_out); Py_DECREF(srcs); Py_DECREF(sd);
+                goto fail_segs;
+            }}
+            PyList_SET_ITEM(src_out, k, kd); /* steals */
+        }}
+        Py_DECREF(srcs);
+        int rc = PyDict_SetItemString(sd, "sources", src_out);
+        Py_DECREF(src_out);
+        if (rc < 0) {{ Py_DECREF(sd); goto fail_segs; }}
+        PyList_SET_ITEM(segs_out, i, sd); /* steals */
+    }}
+    {{
+        PyObject *out = Py_BuildValue(
+            "{{s:O,s:O,s:N}}", "repeat", PyTuple_GET_ITEM(r, 1),
+            "continuous", PyTuple_GET_ITEM(r, 2), "segments", segs_out);
+        Py_DECREF(r);
+        return out; /* Py_BuildValue stole segs_out via N */
+    }}
+fail_segs:
+    Py_DECREF(segs_out);
+fail:
+    Py_DECREF(r);
+    return NULL;
+}}
+
+"""
+        to_dict_row = (
+            f'    {{"to_dict", (PyCFunction){cname}_to_dict, METH_NOARGS,\n'
+            f'     "to_dict() -> dict (resolved repeat/continuous/segments)"}},\n'
         )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
@@ -1732,7 +1825,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
-{stream_code}static PyMethodDef {cname}_methods[] = {{
+{stream_code}{to_dict_code}static PyMethodDef {cname}_methods[] = {{
     {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
      "execute(n) -> ndarray[complex64]"}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
@@ -1740,7 +1833,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-{stream_row}{json_rows}    {{NULL, NULL, 0, NULL}}
+{stream_row}{to_dict_row}{json_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
@@ -2042,6 +2135,11 @@ def render_pyi(cfg: dict, module: str) -> str:
             if C.composer_stream(cfg, module).get("stream")
             else []
         ),
+        *(
+            ["    def to_dict(self) -> dict: ..."]
+            if C.composer_stream(cfg, module).get("to_dict")
+            else []
+        ),
         "    def close(self) -> None: ...",
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
@@ -2139,7 +2237,6 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
     obj = f"{cname}Object"
-    type_obj = f"{cname}Type"
     create_fn = f"{backing}_create"
     segments_fn = f"{backing}_segments"
     destroy_fn = f"{backing}_destroy"
@@ -2331,13 +2428,13 @@ fail:
 }}
 
 static PyObject *
-_{cname}_wrap_state({backing}_state_t *st)
+_{cname}_wrap_state(PyTypeObject *type, {backing}_state_t *st)
 {{
     if (!st) {{
         PyErr_SetString(PyExc_ValueError, "invalid composer spec");
         return NULL;
     }}
-    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -2350,7 +2447,6 @@ _{cname}_wrap_state({backing}_state_t *st)
 static PyObject *
 {cname}_from_json(PyObject *cls, PyObject *args)
 {{
-    (void)cls;
     const char *json;
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
@@ -2361,13 +2457,12 @@ static PyObject *
     }}
     {backing}_state_t *st = _{backing}_from_root(root);
     cJSON_Delete(root);
-    return _{cname}_wrap_state(st);
+    return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
 }}
 
 static PyObject *
 {cname}_from_file(PyObject *cls, PyObject *args)
 {{
-    (void)cls;
     PyObject *pathobj;
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
@@ -2394,7 +2489,7 @@ static PyObject *
     }}
     {backing}_state_t *st = _{backing}_from_root(root);
     cJSON_Delete(root);
-    return _{cname}_wrap_state(st);
+    return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
 }}
 """
 
