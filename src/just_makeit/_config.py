@@ -285,8 +285,8 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in ("project", "module", "include", "app"):
-            continue  # `app`, like `project`, always lives in the manifest
+        if key in ("project", "module", "include", "app", "enum"):
+            continue  # `app`/`enum`, like `project`, always live in the manifest
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -315,6 +315,8 @@ def save(root: Path, cfg: dict) -> None:
         manifest_content["project"] = cfg["project"]
     if cfg.get("app"):
         manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
+    if cfg.get("enum"):
+        manifest_content["enum"] = cfg["enum"]  # [[enum]] SSOT, manifest-owned
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -346,7 +348,7 @@ def save(root: Path, cfg: dict) -> None:
 
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in ("project", "module", "app")]
+    return [k for k in cfg if k not in ("project", "module", "app", "enum")]
 
 
 def modules(cfg: dict) -> list[str]:
@@ -674,6 +676,50 @@ def status_allow(cfg: dict) -> list[str]:
     return list(cfg.get("project", {}).get("status_allow", []))
 
 
+def enums(cfg: dict) -> dict[str, list[str]]:
+    """Return the project's named string-enums, ``{name: [values, …]}``.
+
+    Declared once at the top level as a single-source-of-truth so the same
+    ordered value set feeds every face (C choice tables, JSON, choice flags,
+    bindings) instead of being re-spelled per parameter:
+
+    .. code-block:: toml
+
+        [[enum]]
+        name = "wfm_type"
+        values = ["tone", "noise", "pn", "bpsk", "qpsk", "chirp", "bits"]
+
+    Value order *is* the C integer value — append-only, never reorder. A
+    parameter refers to one with ``type = "enum:wfm_type"`` (see
+    :func:`resolve_enum_type`)."""
+    out: dict[str, list[str]] = {}
+    for e in cfg.get("enum", []):
+        name = e.get("name")
+        if name:
+            out[name] = list(e.get("values", []))
+    return out
+
+
+def resolve_enum_type(cfg: dict, ptype: str) -> str:
+    """Expand an ``enum:<name>`` reference to its ``string_enum:`` spec.
+
+    Returns *ptype* unchanged when it is not an enum reference, so this is safe
+    to apply to every parameter type. Resolution happens only on the codegen
+    read path (e.g. :func:`init_params`); the manifest keeps the ``enum:``
+    reference on disk. Raises ``ValueError`` for an undefined enum name."""
+    if not ptype.startswith("enum:"):
+        return ptype
+    name = ptype[len("enum:") :]
+    registry = enums(cfg)
+    if name not in registry:
+        known = ", ".join(sorted(registry)) or "(none declared)"
+        raise ValueError(
+            f"parameter type '{ptype}' references an undefined [[enum]] "
+            f"'{name}'; declared enums: {known}"
+        )
+    return "string_enum:" + ",".join(registry[name])
+
+
 def find_packages(cfg: dict) -> list[str]:
     """Return CMake package names declared under [project].
 
@@ -877,7 +923,7 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     return [
         (
             p["name"],
-            p["type"],
+            resolve_enum_type(cfg, p["type"]),
             p.get("default", ""),
             p.get("default_raw", ""),
             p.get("real_type", ""),
@@ -1404,6 +1450,14 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')
+        lines.append("")
+
+    # [[enum]] SSOT tables (top-level, manifest-owned) — render before modules.
+    for e in cfg.get("enum", []):
+        lines.append("[[enum]]")
+        lines.append(f'name = "{e["name"]}"')
+        vals_str = ", ".join(f'"{v}"' for v in e.get("values", []))
+        lines.append(f"values = [{vals_str}]")
         lines.append("")
 
     for mod, data in cfg.get("module", {}).items():
