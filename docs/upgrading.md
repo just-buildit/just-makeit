@@ -23,7 +23,7 @@ as of v0.14). If your project's schema is behind, `just-makeit` will remind
 you whenever you run a command that modifies the project:
 
 ```
-warning: project schema is v4, current is v6.
+warning: project schema is v4, current is v7.
 Run 'just-makeit upgrade' to get new features.
 ```
 
@@ -54,7 +54,7 @@ If the project is already current:
 
 ```sh
 $ just-makeit upgrade
-already up to date (schema 6)
+already up to date (schema 7)
 ```
 
 ______________________________________________________________________
@@ -74,13 +74,14 @@ ______________________________________________________________________
 
 ## What each migration adds
 
-| Migration | Adds                                                                                           |
-| --------- | ---------------------------------------------------------------------------------------------- |
-| 1 → 2     | Docs scaffolding: `zensical.toml`, `docs/index.md`, `docs/api.md`.                             |
-| 2 → 3     | Regenerates bench files so per-method timing blocks appear in older projects.                  |
-| 3 → 4     | Adds `native/benchmarks/jm_bench.h` (per-round stats + pytest-benchmark JSON); regens benches. |
-| 4 → 5     | Moves benchmarking under `just-makeit bench`; writes dated snapshots to `benchmarks/history/`. |
-| 5 → 6     | Gates the `include = [...]` split-manifest key; the version bump alone is the migration.       |
+| Migration | Adds                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| 1 → 2     | Docs scaffolding: `zensical.toml`, `docs/index.md`, `docs/api.md`.                                            |
+| 2 → 3     | Regenerates bench files so per-method timing blocks appear in older projects.                                 |
+| 3 → 4     | Adds `native/benchmarks/jm_bench.h` (per-round stats + pytest-benchmark JSON); regens benches.                |
+| 4 → 5     | Moves benchmarking under `just-makeit bench`; writes dated snapshots to `benchmarks/history/`.                |
+| 5 → 6     | Gates the `include = [...]` split-manifest key; the version bump alone is the migration.                      |
+| 6 → 7     | Gates the top-level `[[enum]]` SSOT and `type = "enum:<name>"` refs; the version bump alone is the migration. |
 
 The schema 1 → 2 files are starter stubs — edit them freely after the
 upgrade. See [`make docs` and `make coverage`](commands/build.md) for the

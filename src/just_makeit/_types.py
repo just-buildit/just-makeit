@@ -367,6 +367,23 @@ def string_enum_choices(ptype: str) -> list[str]:
     return ptype[len("string_enum:") :].split(",")
 
 
+def is_enum_ref(ptype: str) -> bool:
+    """Return True if ptype references a named ``[[enum]]`` ('enum:<name>').
+
+    The single-source-of-truth form: instead of inlining the choices on every
+    parameter (``string_enum:tone,noise,…``), a parameter names a top-level
+    ``[[enum]]`` table once and refers to it (``enum:wfm_type``). The config
+    layer resolves the reference to the equivalent ``string_enum:`` spec, so
+    every downstream consumer (choice flags, stubs, C state) is unchanged.
+    """
+    return ptype.startswith("enum:")
+
+
+def enum_ref_name(ptype: str) -> str:
+    """Return the enum name from an 'enum:<name>' reference."""
+    return ptype[len("enum:") :]
+
+
 def parse_array_type(ctype: str) -> tuple[str, int] | None:
     """Return (elem_ctype, size) if ctype is a valid array type, else None.
 

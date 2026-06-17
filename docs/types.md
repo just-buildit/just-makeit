@@ -439,12 +439,38 @@ path doesn't — filepaths, format names, optional buffers.
 | Any [array shape](#array-element-types) `T[]`                | required positional ndarray                 | `--init-param coeffs:"float _Complex[]"`        |
 | `T[][]` (2-D array)                                          | required 2-D ndarray (e.g. polyphase banks) | `--init-param bank:"float _Complex[][]"`        |
 | `string_enum:a,b,c`                                          | optional string mapped to a C enum index    | `--init-param mode:"string_enum:read,write,rw"` |
+| `enum:<name>`                                                | a named `[[enum]]` (single source of truth) | `--init-param mode:"enum:io_mode"`              |
 | `T[N]` (fixed length)                                        | not accepted here — use `--state` for that  | —                                               |
 
 `const char *` is legal as an init-param but **not** as a state field —
 strings live in Python land or the caller's memory; the state struct
 holds the parsed/converted result. The reader template carries
 `filepath:"const char *"` in its init-params and `fd:int` in its state.
+
+### Named enums — `[[enum]]` single source of truth
+
+`string_enum:a,b,c` inlines the choices on the parameter. When the *same*
+value set is used by more than one parameter — or needs to feed more than the
+one binding (a CLI choice flag, a JSON field, a C enum) — inlining duplicates
+it, and the copies drift. Declare it once at the top level instead, then refer
+to it with `enum:<name>`:
+
+```toml
+[[enum]]
+name = "io_mode"
+values = ["read", "write", "rw"]   # order IS the C int — append-only
+
+[[reader.init_params]]
+name = "mode"
+type = "enum:io_mode"
+```
+
+`enum:<name>` resolves to the equivalent `string_enum:read,write,rw` on the
+codegen read path, so it behaves identically everywhere `string_enum:` does
+(choice flags, stubs, the C enum index) — the manifest just keeps the value
+list in one place. Value order is the C integer value, so **append only; never
+reorder**. Referring to an undeclared enum is an error. (Requires schema 7;
+run `jm upgrade`.)
 
 ______________________________________________________________________
 
