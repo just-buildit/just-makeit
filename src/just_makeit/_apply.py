@@ -153,7 +153,15 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
 
     *project_root* is the source project (not the temp) — `impl_file`
     paths in the TOML are resolved relative to it."""
-    from . import _function, _method, _module, _new, _object, _property
+    from . import (
+        _capsule,
+        _function,
+        _method,
+        _module,
+        _new,
+        _object,
+        _property,
+    )
 
     project = C.project_name(cfg)
     mods = C.modules(cfg)
@@ -189,6 +197,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     for mod in mods:
         if C.is_no_generate_module(cfg, mod):
             continue
+        # gh-286: a capsule module has no object-group scaffold — generate its
+        # binding / CMake / .pyi directly from the manifest instead.
+        if C.is_capsule_module(cfg, mod):
+            _capsule.materialize(cfg, temp_root, mod)
+            continue
         _module.run(temp_root, mod)
 
     # After module scaffolding, copy module-level metadata (e.g.
@@ -198,6 +211,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         m
         for m in mods
         if not C.is_no_generate_module(cfg, m)
+        and not C.is_capsule_module(cfg, m)
         and (
             cfg.get("module", {}).get(m, {}).get("extra_link_libs")
             or cfg.get("module", {}).get(m, {}).get("extra_types")
@@ -920,6 +934,21 @@ def _sync_aggregates(
         if C.is_no_generate_module(cfg, mod):
             continue
         if only_mod is not None and mod != only_mod:
+            continue
+        # gh-286: a capsule module's three glue files (binding, CMake, .pyi)
+        # regenerate from the manifest like any other module aggregator. There
+        # is no _core.h / object loop / module __init__.py to reconcile — the
+        # owning package re-exports the free functions via [module.X.reexports].
+        if C.is_capsule_module(cfg, mod):
+            mp = C.module_paths(mod)
+            out_pkg = C.capsule_package(cfg, mod) or mp.pypath
+            for rel in (
+                f"native/src/{mp.cname}/{mp.cname}_ext.c",
+                f"native/src/{mp.cname}/CMakeLists.txt",
+                f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
+            ):
+                if _overwrite_if_changed(root / rel, temp_root / rel):
+                    updated.append(root / rel)
             continue
         # Nested-module forms: cname (flat native dir), pypath (nested Python
         # dir), leaf (.so basename / import). Flat modules collapse all to mod.
