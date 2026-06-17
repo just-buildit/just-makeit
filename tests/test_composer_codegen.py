@@ -376,3 +376,43 @@ class TestComposerJsonGenerated:
         )
         cm = _composer.render_cmake(cfg, "wfm_compose")
         assert "${CMAKE_SOURCE_DIR}/vendor/cjson" in cm
+
+
+class TestComposerCli:
+    def _cli_cfg(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["cli"] = {
+            "enabled": True,
+            "name": "wfmgen2",
+        }
+        return cfg
+
+    def test_render_cli_shape(self):
+        s = _composer.render_cli(self._cli_cfg(), "wfm_compose")
+        assert "int\nmain(int argc, char **argv)" in s
+        # reuses jm app's output-axes machinery
+        assert "jm_write_block(" in s and "jm_convert_block(" in s
+        assert "--sample_type" in s and "--file-type" in s and "--endian" in s
+        # source-field flags; enum validated via the SSOT table (no hand table)
+        assert '"--type"' in s and '"--freq"' in s
+        assert "_enum_index(_enum_wfm_type, type)" in s
+        # segment-field flag + --from-file (backing parser) + build/exec/destroy
+        assert '"--num_samples"' in s and '"--from-file"' in s
+        assert "wfm_compose_create(&seg, 1, repeat, continuous)" in s
+        assert "wfm_compose_execute(c, buf, 4096)" in s
+        # pure C tool — no Python
+        assert "Python.h" not in s and "PyObject" not in s
+        # bytes-field buffer freed after create (create deep-copies) — no leak
+        assert "free(src.bits);" in s
+
+    def test_cli_cmake_exe_outside_build_python(self):
+        cfg = self._cli_cfg()
+        cm = _composer.render_cmake(cfg, "wfm_compose")
+        # the exe block follows the endif() that closes the BUILD_PYTHON guard
+        assert "add_executable(wfmgen2 wfm_compose_cli.c)" in cm
+        assert cm.index("endif()") < cm.index("add_executable(wfmgen2")
+
+    def test_cli_absent_by_default(self):
+        cm = _composer.render_cmake(_cfg(), "wfm_compose")
+        assert "add_executable" not in cm
+        assert _composer.composer_cli(_cfg(), "wfm_compose") == {}

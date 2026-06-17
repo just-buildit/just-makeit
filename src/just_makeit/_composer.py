@@ -1516,6 +1516,26 @@ add_custom_command(TARGET {leaf} POST_BUILD
     COMMENT "Copy {leaf} extension module")
 
 endif()
+{_cli_cmake_block(cfg, module, link_cores, extra)}"""
+
+
+def _cli_cmake_block(
+    cfg: dict, module: str, link_cores: list, extra: list
+) -> str:
+    """CMake for the optional standalone c-face CLI (a pure-C tool — no Python,
+    so it sits outside the BUILD_PYTHON guard)."""
+    cli = composer_cli(cfg, module)
+    if not cli.get("enabled"):
+        return ""
+    mp = C.module_paths(module)
+    prog = cli.get("name", module)
+    libs = "".join(f"    {lib}\n" for lib in link_cores + extra)
+    return f"""
+# {prog} — generated c-face composer CLI (gh-287). Pure C; no Python.
+add_executable({prog} {mp.cname}_cli.c)
+target_link_libraries({prog} PRIVATE
+{libs})
+target_include_directories({prog} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
 """
 
 
@@ -1640,6 +1660,11 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
         root / "src" / pkg / out_pkg / f"{mp.leaf}.pyi",
         render_pyi(cfg, module),
     )
+    if composer_cli(cfg, module).get("enabled"):
+        _write(
+            root / "native" / "src" / mp.cname / f"{mp.cname}_cli.c",
+            render_cli(cfg, module),
+        )
 
     cmake_path = root / "CMakeLists.txt"
     if cmake_path.exists():
@@ -1945,5 +1970,208 @@ static PyObject *
     {backing}_state_t *st = _{backing}_from_root(root);
     cJSON_Delete(root);
     return _{cname}_wrap_state(st);
+}}
+"""
+
+
+# ── generic composer CLI (c face, gh-287 — retires a hand-written wfmgen) ─────
+
+
+def composer_cli(cfg: dict, module: str) -> dict:
+    """Return the composer's ``[module.X.cli]`` table (opt-in c-face CLI).
+
+    A composer with ``[module.X.cli] enabled = true`` gets a generated
+    standalone C command-line tool: source/segment-field flags (enum flags
+    validated against the ``[[enum]]`` SSOT), ``--from-file`` (JSON spec via the
+    backing parser), and the ``jm app`` output axes (``--sample_type`` /
+    ``--file-type`` / ``--endian``). Generic — reusable by any composer."""
+    return dict(cfg.get("module", {}).get(module, {}).get("cli", {}))
+
+
+def render_cli(cfg: dict, module: str) -> str:
+    """Render a generic c-face composer CLI (a `main()`), reusing jm app's
+    output-axes machinery (`jm_convert_block`/`jm_write_block`) and the SSOT
+    enum tables for choice-flag validation — so no hand-written enum tables."""
+    from . import _app
+
+    backing = C.capsule_backing(cfg, module)
+    header = C.capsule_header(cfg, module) or f"{backing}/{backing}_core.h"
+    src = C.composer_source(cfg, module)
+    seg = C.composer_segment(cfg, module)
+    src_struct, seg_struct = src["struct"], seg["struct"]
+    src_fields = list(src.get("fields", []))
+    seg_fields = list(seg.get("fields", []))
+    sources_member = seg.get("sources_member", "sources")
+    count_member = seg.get("count_member", "n_sources")
+    create_fn = f"{backing}_create"
+    execute_fn = f"{backing}_execute"
+    destroy_fn = f"{backing}_destroy"
+    from_file_fn = (
+        cfg.get("module", {})
+        .get(module, {})
+        .get("json", {})
+        .get("from_file_fn", f"{backing}_from_file")
+    )
+    sample_types = " ".join(_app._SAMPLE_TYPES)
+
+    # per-field flag decls (defaults), argv parse cases, struct assembly.
+    decls, parse, assign = [], [], []
+    for f in src_fields:
+        n = f["name"]
+        if f.get("enum"):
+            decls.append(f'    const char *{n} = "{f.get("default", "")}";')
+            parse.append(
+                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
+            )
+            assign.append(f"""    {{
+        int _v = _enum_index(_enum_{f["enum"]}, {n});
+        if (_v < 0) {{ fprintf(stderr, "bad --{n} %s\\n", {n}); return 2; }}
+        src.{n} = _v;
+    }}""")
+        elif f.get("bytes"):
+            decls.append(f"    const char *{n} = NULL;")
+            parse.append(
+                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
+            )
+            assign.append(f"""    if ({n}) {{
+        size_t _ln = strlen({n});
+        uint8_t *_b = (uint8_t *)malloc(_ln ? _ln : 1);
+        size_t _k = 0;
+        for (size_t _j = 0; _j < _ln; _j++)
+            if ({n}[_j] == '0' || {n}[_j] == '1') _b[_k++] = ({n}[_j] - '0');
+        src.bits = _b; src.n_bits = _k;
+    }}""")
+        else:
+            ct = f["type"]
+            dflt = f.get("default", "0")
+            decls.append(f"    {ct} {n} = ({ct}){dflt};")
+            conv = (
+                f"({ct})strtod(argv[++i], NULL)"
+                if ct in ("double", "float")
+                else f"({ct})strtoull(argv[++i], NULL, 0)"
+            )
+            parse.append(
+                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
+            )
+            assign.append(f"        src.{n} = {n};")
+
+    seg_decls, seg_parse, seg_assign = [], [], []
+    for f in seg_fields:
+        n, ct = f["name"], f["type"]
+        dflt = f.get("default", "0")
+        seg_decls.append(f"    {ct} {n} = ({ct}){dflt};")
+        conv = (
+            f"({ct})strtod(argv[++i], NULL)"
+            if ct in ("double", "float")
+            else f"({ct})strtoull(argv[++i], NULL, 0)"
+        )
+        seg_parse.append(
+            f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
+        )
+        seg_assign.append(f"        seg.{n} = {n};")
+
+    decls_s = "\n".join(decls + seg_decls)
+    parse_s = "\n".join(parse + seg_parse)
+    assign_s = "\n".join(assign)
+    seg_assign_s = "\n".join(seg_assign)
+    # The flag path mallocs each bytes field's buffer; <backing>_create
+    # deep-copies it, so free our copy after create — keeps the tool
+    # Valgrind-clean (constant even under --continuous).
+    bytes_free = "".join(
+        f"        free(src.{f['name']});\n"
+        for f in src_fields
+        if f.get("bytes")
+    )
+
+    return f"""/*
+ * {module}_cli.c — generic composer command-line tool (generated by jm; gh-287).
+ *
+ * Build a composer from source/segment-field flags or a JSON spec
+ * (--from-file), then stream samples in the chosen wire format. Enum flags are
+ * validated against the [[enum]] SSOT; no hand-written enum tables.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <complex.h>
+
+#include "{header}"
+
+{_app._SAMPLE_TYPE_C}
+{_app._WRITE_BLOCK_C}
+{render_enum_tables(cfg, module)}
+static int
+_st_index(const char *s)
+{{
+    static const char *const t[] = {{ {", ".join('"' + x + '"' for x in _app._SAMPLE_TYPES)}, NULL }};
+    for (int i = 0; t[i]; i++) if (!strcmp(s, t[i])) return i;
+    return -1;
+}}
+
+static void
+usage(const char *prog)
+{{
+    fprintf(stderr,
+        "usage: %s [--<field> V ...] [--from-file SPEC.json]\\n"
+        "          [--sample_type {sample_types}] [--file-type raw|csv]\\n"
+        "          [--endian le|be] [--out FILE] [--repeat] [--continuous]\\n",
+        prog);
+}}
+
+int
+main(int argc, char **argv)
+{{
+    const char *from_file = NULL, *out_path = NULL;
+    int st = 0, ft = 0, en = 0, repeat = 0, continuous = 0;
+{decls_s}
+    for (int i = 1; i < argc; i++) {{
+        const char *a = argv[i];
+        if (!strcmp(a, "--from-file") && i+1<argc) from_file = argv[++i];
+        else if (!strcmp(a, "--out") && i+1<argc) out_path = argv[++i];
+        else if (!strcmp(a, "--repeat")) repeat = 1;
+        else if (!strcmp(a, "--continuous")) continuous = 1;
+        else if (!strcmp(a, "--sample_type") && i+1<argc) {{
+            st = _st_index(argv[++i]);
+            if (st < 0) {{ usage(argv[0]); return 2; }}
+        }}
+        else if (!strcmp(a, "--file-type") && i+1<argc)
+            ft = !strcmp(argv[++i], "csv") ? 1 : 0;
+        else if (!strcmp(a, "--endian") && i+1<argc)
+            en = !strcmp(argv[++i], "be") ? 1 : 0;
+        else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {{ usage(argv[0]); return 0; }}
+{parse_s}
+        else {{ fprintf(stderr, "unknown arg %s\\n", a); usage(argv[0]); return 2; }}
+    }}
+
+    {backing}_state_t *c;
+    if (from_file) {{
+        c = {from_file_fn}(from_file);
+    }} else {{
+        {src_struct} src;
+        memset(&src, 0, sizeof src);
+{assign_s}
+        {seg_struct} seg;
+        memset(&seg, 0, sizeof seg);
+        seg.{sources_member} = &src;
+        seg.{count_member} = 1;
+{seg_assign_s}
+        c = {create_fn}(&seg, 1, repeat, continuous);
+{bytes_free}    }}
+    if (!c) {{ fprintf(stderr, "failed to build composer\\n"); return 1; }}
+
+    FILE *out = out_path ? fopen(out_path, "wb") : stdout;
+    if (!out) {{ perror("fopen"); {destroy_fn}(c); return 1; }}
+
+    float _Complex buf[4096];
+    unsigned char bytes[4096 * 16];
+    size_t n;
+    while ((n = {execute_fn}(c, buf, 4096)) > 0) {{
+        jm_write_block(out, buf, n, st, en, ft, bytes);
+        if (n < 4096) break;
+    }}
+    if (out != stdout) fclose(out);
+    {destroy_fn}(c);
+    return 0;
 }}
 """

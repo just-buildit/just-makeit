@@ -950,11 +950,20 @@ def _sync_aggregates(
         if C.is_capsule_module(cfg, mod) or C.is_composer_module(cfg, mod):
             mp = C.module_paths(mod)
             out_pkg = C.capsule_package(cfg, mod) or mp.pypath
-            for rel in (
+            glue = [
                 f"native/src/{mp.cname}/{mp.cname}_ext.c",
                 f"native/src/{mp.cname}/CMakeLists.txt",
                 f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
-            ):
+            ]
+            # gh-287: a composer with the optional c-face CLI also regenerates
+            # its <cname>_cli.c (glue).
+            from . import _composer
+
+            if C.is_composer_module(cfg, mod) and _composer.composer_cli(
+                cfg, mod
+            ).get("enabled"):
+                glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
+            for rel in glue:
                 if _overwrite_if_changed(root / rel, temp_root / rel):
                     updated.append(root / rel)
             continue
