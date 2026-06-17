@@ -53,21 +53,28 @@ def _cfg():
                 "depends_on": [{"name": "wfm", "link": True}],
                 "source": {
                     "object": "wfm_synth",
-                    "enum_fields": {
-                        "type": "wfm_type",
-                        "snr_mode": "snr_mode",
-                    },
-                    "extra_fields": [
+                    "struct": "wfm_source_t",
+                    "type_name": "Synth",
+                    "fields": [
+                        {
+                            "name": "type",
+                            "type": "int",
+                            "enum": "wfm_type",
+                            "default": "tone",
+                        },
+                        {
+                            "name": "snr_mode",
+                            "type": "int",
+                            "enum": "snr_mode",
+                            "default": "auto",
+                        },
                         {"name": "level", "type": "double", "default": "0.0"},
-                        {"name": "snr", "type": "double", "default": "100.0"},
+                        {"name": "bits", "type": "uint8_t*", "bytes": True},
                     ],
-                    "bytes_field": {
-                        "name": "bits",
-                        "c": "uint8_t*",
-                        "len": "n_bits",
-                    },
                 },
                 "segment": {
+                    "type_name": "Segment",
+                    "struct": "wfm_segment_t",
                     "fields": [
                         {"name": "fs", "type": "double"},
                         {"name": "num_samples", "type": "size_t"},
@@ -79,12 +86,21 @@ def _cfg():
                     ],
                     "sources": "multi",
                 },
-                "timeline": {"loop": ["once", "repeat", "continuous"]},
+                "timeline": {
+                    "type_name": "Timeline",
+                    "loop": ["once", "repeat", "continuous"],
+                },
                 "oo": {
                     "factories": ["tone", "noise", "pn", "bpsk", "qpsk"],
                     "emit": "ctypes",
+                    "discriminant": "type",
+                    "composer_type_name": "Composer",
                 },
-                "json": {"enabled": True},
+                "json": {
+                    "enabled": True,
+                    "to_json_fn": "wfm_spec_to_json",
+                    "to_json_trailing": ["0.0"],
+                },
             }
         },
     }
@@ -112,12 +128,17 @@ class TestReaders:
     def test_source_table(self):
         src = composer_source(_cfg(), "wfm_compose")
         assert src["object"] == "wfm_synth"
-        assert src["enum_fields"] == {
-            "type": "wfm_type",
-            "snr_mode": "snr_mode",
-        }
-        assert [f["name"] for f in src["extra_fields"]] == ["level", "snr"]
-        assert src["bytes_field"]["len"] == "n_bits"
+        assert src["struct"] == "wfm_source_t"
+        assert src["type_name"] == "Synth"
+        assert [f["name"] for f in src["fields"]] == [
+            "type",
+            "snr_mode",
+            "level",
+            "bits",
+        ]
+        # enum + bytes tags survive on the fields
+        assert src["fields"][0]["enum"] == "wfm_type"
+        assert src["fields"][3]["bytes"] is True
 
     def test_segment_table(self):
         seg = composer_segment(_cfg(), "wfm_compose")
