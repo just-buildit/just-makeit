@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [0.19.18] — 2026-06-17
+
+### Added
+
+Round 3 of the `kind = "composer"` generator (gh-287) — generic "object of
+objects" ergonomics generated **into the `.so`**, so a bare import gives the
+full typed OO surface and a project hand-writes only its algorithm. Every
+feature is driven by the `source.fields` / `segment.fields` + `[[enum]]` SSOT
+and carries a non-waveform test proving zero domain coupling.
+
+- **Source standalone generation (`source.generates`)** — a source type
+    generates samples on its own (`Synth(...).steps(n)` / `.step()` / `.reset()`)
+    by delegating to a composed generator built once from the source struct by a
+    project-provided straight-C `bridge_fn`. jm emits the plumbing (cached lazy
+    handle, variable-output `steps()`, scalar `step()`, `reset()`); the bridge is
+    pure C, no CPython.
+- **Field aliases + `bit_pattern` coercion** — generated into `tp_init` so a
+    project drops its hand-written ctor wrapper: `aliases = [...]` lets a kwarg
+    stand in for the canonical field (both-given raises `TypeError`); the
+    `bit_pattern` coercion accepts a 0/1 pattern as bytes, a binary/hex string,
+    or a sequence of ints.
+- **Generated `stream()` iterator** — `[module.X.composer] stream = true` emits
+    `<Composer>.stream(block=4096)`, an internal iterator that drains the
+    composer's own `execute()` into blocks (empty block → `StopIteration`), so a
+    project drops its hand-written `for blk in c.stream(n):` wrapper.
+- **Flat single-source `Segment` accessors** — setting `flat_sources = true` in
+    the `[module.X.segment]` table proxies a single-source segment's source
+    fields as read-only attributes (`seg.freq` → `seg.sources[0].freq`); a
+    multi-source segment
+    raises `AttributeError`. Names come from `source.fields`; a collision with a
+    segment-level attribute is skipped (the segment's own attribute wins).
+- **Subclass-friendly `from_json` / `from_file` + generic `to_dict()`** — the
+    alternate constructors allocate via `cls` (`tp_alloc(type, 0)`) so a
+    `Composer` subclass round-trips through them instead of being downcast;
+    `[module.X.composer] to_dict = true` generates `Composer.to_dict()` returning
+    the resolved composition as a plain nested dict — the generic introspection
+    primitive any sidecar metadata format (SigMF, BLUE, …) is built from in
+    Python. jm generates none of those formats itself.
+
 ## [0.19.17] — 2026-06-17
 
 ### Added
