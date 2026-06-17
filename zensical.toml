@@ -33,6 +33,7 @@ nav = [
   { "Artifacts"          = "artifacts.md"    },
   { "Configuration"      = "configuration.md"},
   { "Quick reference"    = "quick-reference.md" },
+  { "Object-of-objects (capsule & composer)" = "object-of-objects.md" },
   { "Declarative scaffolding" = "declarative-scaffolding.md" },
   { "Upgrading"          = "upgrading.md"    },
   { "Porting guide"      = "porting-guide.md"},
