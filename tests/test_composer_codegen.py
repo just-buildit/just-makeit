@@ -65,12 +65,18 @@ def _cfg():
                     ],
                 },
                 "segment": {
+                    "type_name": "Segment",
                     "fields": [
-                        {"name": "fs", "type": "double"},
+                        {"name": "fs", "type": "double", "default": "1e6"},
                         {
-                            "name": "snr_mode",
-                            "type": "int",
-                            "enum": "snr_mode",
+                            "name": "num_samples",
+                            "type": "size_t",
+                            "default": "1024",
+                        },
+                        {
+                            "name": "off_samples",
+                            "type": "size_t",
+                            "default": "0",
                         },
                     ],
                     "sources": "multi",
@@ -152,5 +158,45 @@ class TestSourceType:
     def test_factory_method_rows(self):
         rows = _composer.factory_method_rows(_cfg(), "wfm_compose")
         joined = "\n".join(rows)
-        assert '{"tone", (PyCFunction)_factory_tone' in joined
+        assert '{"tone", (PyCFunction)(void (*)(void))_factory_tone' in joined
         assert "METH_VARARGS | METH_KEYWORDS" in joined
+
+
+class TestSegmentType:
+    def test_struct_and_type_object(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        # holds a sources list + the segment scalar fields (no backing struct)
+        assert "PyObject *sources;" in s
+        assert "double fs;" in s
+        assert "size_t num_samples;" in s
+        assert "size_t off_samples;" in s
+        assert "static PyTypeObject SegmentType =" in s
+        assert '.tp_name      = "doppler.wfm.Segment"' in s
+        # forward declaration so sum() can allocate before the type is defined
+        assert "static PyTypeObject SegmentType;" in s
+
+    def test_inline_ctor_forwards_to_source_type(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        # builds one source by forwarding leftover args/kwds to the source type
+        assert "PyObject_Call((PyObject *)&SynthType, args, kw)" in s
+        # segment fields are popped (deleted) from the forwarded kwds
+        assert 'PyDict_DelItemString(kw, "num_samples")' in s
+
+    def test_sum_classmethod(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        assert "Segment_sum(PyObject *cls" in s
+        assert "METH_VARARGS | METH_KEYWORDS | METH_CLASS" in s
+        # validates each positional source is the source type
+        assert "PyObject_TypeCheck(it, &SynthType)" in s
+        assert "needs at least one source" in s
+        # allocates via the (forward-declared) type object
+        assert "SegmentType.tp_alloc(&SegmentType, 0)" in s
+
+    def test_getsets_and_dealloc(self):
+        s = _composer.render_segment_type(_cfg(), "wfm_compose")
+        assert "Segment_get_sources" in s  # read-only sources getter
+        assert "Segment_get_num_samples" in s
+        assert "Segment_set_fs" in s
+        assert "Py_XDECREF(self->sources);" in s
+        # warning-clean keyword-method cast
+        assert "(PyCFunction)(void (*)(void))Segment_sum" in s

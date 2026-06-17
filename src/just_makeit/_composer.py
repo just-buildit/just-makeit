@@ -407,8 +407,238 @@ def factory_method_rows(cfg: dict, module: str) -> list[str]:
     rows = []
     for fac in oo.get("factories", []):
         rows.append(
-            f'    {{"{fac}", (PyCFunction)_factory_{fac}, '
+            f'    {{"{fac}", (PyCFunction)(void (*)(void))_factory_{fac}, '
             f"METH_VARARGS | METH_KEYWORDS,\n"
             f'     "{fac}(**kw) -> {C.composer_source(cfg, module)["type_name"]}"}},'
         )
     return rows
+
+
+# ── segment type (e.g. Segment) ──────────────────────────────────────────────
+
+
+def _from_py_scalar(ctype: str, obj: str) -> str:
+    """C expression converting a PyObject to a scalar C value."""
+    if ctype in ("double", "float"):
+        return f"({ctype})PyFloat_AsDouble({obj})"
+    if ctype == "uint64_t":
+        return f"(uint64_t)PyLong_AsUnsignedLongLong({obj})"
+    if ctype == "uint32_t":
+        return f"(uint32_t)PyLong_AsUnsignedLong({obj})"
+    if ctype == "size_t":
+        return f"(size_t)PyLong_AsSize_t({obj})"
+    return f"({ctype})PyLong_AsLong({obj})"
+
+
+def _segment_fields(cfg: dict, module: str) -> list[dict]:
+    return list(C.composer_segment(cfg, module).get("fields", []))
+
+
+def render_segment_type(cfg: dict, module: str) -> str:
+    """Emit the ``Segment`` ``PyTypeObject``: segment-level scalars (fs /
+    num_samples / off_samples) plus a Python list of source objects.
+
+    Two faces, matching compose.py: the inline single-source constructor
+    (``Segment(type="tone", num_samples=…)`` — forwards the source fields to the
+    source type and wraps the one result) and the multi-source ``sum``
+    classmethod (``Segment.sum(*sources, num_samples=…)``). The backing
+    ``wfm_segment_t[]`` is built later by the Composer; the type itself is pure
+    Python-side data, so it needs no backing struct."""
+    seg = C.composer_segment(cfg, module)
+    tname = seg["type_name"]  # e.g. "Segment"
+    src_tname = C.composer_source(cfg, module)["type_name"]  # e.g. "Synth"
+    fields = _segment_fields(cfg, module)
+    pkg = C.project_name(cfg)
+    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
+
+    obj = f"{tname}Object"
+    type_obj = f"{tname}Type"
+    src_type_obj = f"{src_tname}Type"
+
+    members = "".join(f"    {f['type']} {f['name']};\n" for f in fields)
+    parts: list[str] = []
+    # Forward declaration — the `sum` classmethod (emitted before the type
+    # definition) allocates via the type object.
+    parts.append(f"static PyTypeObject {type_obj};\n")
+    parts.append(f"""typedef struct {{
+    PyObject_HEAD
+    PyObject *sources;   /* list of {src_tname}, length >= 1 */
+{members}}} {obj};
+""")
+
+    parts.append(f"""static void
+{tname}_dealloc({obj} *self)
+{{
+    Py_XDECREF(self->sources);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}}
+""")
+
+    # defaults applied before extraction.
+    def _default(f):
+        if f.get("default") not in (None, ""):
+            return f["default"]
+        return "0"
+
+    set_defaults = "\n".join(
+        f"    self->{f['name']} = {_default(f)};" for f in fields
+    )
+
+    # extract a segment field from a kwargs dict; *delete* (init) or leave
+    # (sum). Shared body emitted as a macro-free inline block per field.
+    def _extract_block(f, *, delete: bool):
+        n, ct = f["name"], f["type"]
+        conv = _from_py_scalar(ct, "_o")
+        dele = (
+            f'        if (PyDict_DelItemString(kw, "{n}") < 0) goto fail;\n'
+            if delete
+            else ""
+        )
+        return (
+            f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
+            f"        if (_o) {{\n"
+            f"            self->{n} = {conv};\n"
+            f"            if (PyErr_Occurred()) goto fail;\n"
+            f"{dele}        }}\n    }}"
+        )
+
+    init_extracts = "\n".join(_extract_block(f, delete=True) for f in fields)
+    sum_extracts = "\n".join(_extract_block(f, delete=False) for f in fields)
+
+    # tp_init — single-source inline: forward leftover args/kwds to the source
+    # type, wrap the one source.
+    parts.append(f"""static int
+{tname}_init({obj} *self, PyObject *args, PyObject *kwds)
+{{
+{set_defaults}
+    PyObject *kw = kwds ? PyDict_Copy(kwds) : PyDict_New();
+    if (!kw)
+        return -1;
+{init_extracts}
+    PyObject *one = PyObject_Call((PyObject *)&{src_type_obj}, args, kw);
+    Py_DECREF(kw);
+    if (!one)
+        return -1;
+    PyObject *list = PyList_New(1);
+    if (!list) {{
+        Py_DECREF(one);
+        return -1;
+    }}
+    PyList_SET_ITEM(list, 0, one); /* steals */
+    Py_XSETREF(self->sources, list);
+    return 0;
+fail:
+    Py_DECREF(kw);
+    return -1;
+}}
+""")
+
+    # sum classmethod — *sources positional + segment kwargs.
+    parts.append(f"""static PyObject *
+{tname}_sum(PyObject *cls, PyObject *args, PyObject *kwds)
+{{
+    (void)cls;
+    Py_ssize_t nsrc = PyTuple_GET_SIZE(args);
+    if (nsrc < 1) {{
+        PyErr_SetString(PyExc_ValueError,
+                        "{tname}.sum needs at least one source");
+        return NULL;
+    }}
+    PyObject *list = PyList_New(nsrc);
+    if (!list)
+        return NULL;
+    for (Py_ssize_t i = 0; i < nsrc; i++) {{
+        PyObject *it = PyTuple_GET_ITEM(args, i);
+        if (!PyObject_TypeCheck(it, &{src_type_obj})) {{
+            PyErr_SetString(PyExc_TypeError,
+                            "{tname}.sum sources must be {src_tname}");
+            Py_DECREF(list);
+            return NULL;
+        }}
+        Py_INCREF(it);
+        PyList_SET_ITEM(list, i, it);
+    }}
+    {obj} *self = ({obj} *){type_obj}.tp_alloc(&{type_obj}, 0);
+    if (!self) {{
+        Py_DECREF(list);
+        return NULL;
+    }}
+    self->sources = list;
+{set_defaults}
+    PyObject *kw = kwds; /* borrowed; read-only */
+    if (kw) {{
+{sum_extracts}
+    }}
+    return (PyObject *)self;
+fail:
+    Py_DECREF(self);
+    return NULL;
+}}
+""")
+
+    # getsets: sources (read-only) + each segment scalar.
+    getset_fns = [
+        f"""static PyObject *
+{tname}_get_sources({obj} *self, void *closure)
+{{
+    (void)closure;
+    Py_INCREF(self->sources);
+    return self->sources;
+}}"""
+    ]
+    getset_rows = [
+        f'    {{"sources", (getter){tname}_get_sources, NULL, NULL, NULL}},'
+    ]
+    for f in fields:
+        n, ct = f["name"], f["type"]
+        to_py = _to_py_scalar(ct, f"self->{n}")
+        store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
+        getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    return {to_py};
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+{store}
+    if (PyErr_Occurred()) return -1;
+    return 0;
+}}""")
+        getset_rows.append(
+            f'    {{"{n}", (getter){tname}_get_{n}, '
+            f"(setter){tname}_set_{n}, NULL, NULL}},"
+        )
+    parts.append("\n".join(getset_fns))
+    parts.append(f"""
+static PyGetSetDef {tname}_getset[] = {{
+{chr(10).join(getset_rows)}
+    {{NULL, NULL, NULL, NULL, NULL}}
+}};
+
+static PyMethodDef {tname}_methods[] = {{
+    {{"sum", (PyCFunction)(void (*)(void)){tname}_sum,
+     METH_VARARGS | METH_KEYWORDS | METH_CLASS,
+     "sum(*sources, **segment_fields) -> {tname}"}},
+    {{NULL, NULL, 0, NULL}}
+}};
+""")
+
+    parts.append(f"""static PyTypeObject {type_obj} = {{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "{dotted}",
+    .tp_basicsize = sizeof({obj}),
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_new       = PyType_GenericNew,
+    .tp_init      = (initproc){tname}_init,
+    .tp_dealloc   = (destructor){tname}_dealloc,
+    .tp_getset    = {tname}_getset,
+    .tp_methods   = {tname}_methods,
+    .tp_doc       = PyDoc_STR(
+        "{tname} — one segment: a list of sources + its span."),
+}};
+""")
+    return "\n".join(parts)
