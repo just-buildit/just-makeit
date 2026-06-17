@@ -817,6 +817,16 @@ def composer_oo(cfg: dict, module: str) -> dict:
     return dict(cfg.get("module", {}).get(module, {}).get("oo", {}))
 
 
+def composer_stream(cfg: dict, module: str) -> dict:
+    """Return the composer ``[module.X.composer]`` table (gh-287 round 3).
+
+    Composer-level ergonomics generated into the ``.so``. Key: ``stream`` —
+    ``true`` to generate a ``<Composer>.stream(block=4096)`` method returning a
+    generated iterator that drains ``execute`` (the ``for blk in c.stream(n):``
+    convenience), so a project drops its hand-written streaming wrapper."""
+    return dict(cfg.get("module", {}).get(module, {}).get("composer", {}))
+
+
 def composer_json(cfg: dict, module: str) -> bool:
     """Return True if a composer generates ``to_json`` / ``from_json`` (gh-287).
 
@@ -1631,6 +1641,12 @@ def _inline_field(f: dict) -> str:
         parts.append(f'default = "{f["default"]}"')
     if f.get("bytes"):
         parts.append("bytes = true")
+    if f.get("aliases"):
+        parts.append(
+            "aliases = [" + ", ".join(f'"{a}"' for a in f["aliases"]) + "]"
+        )
+    if f.get("coerce"):
+        parts.append(f'coerce = "{f["coerce"]}"')
     return "{ " + ", ".join(parts) + " }"
 
 
@@ -1654,6 +1670,23 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + "]"
             )
         out.append("")
+        gen = src.get("generates")
+        if gen:
+            out.append(f"[module.{mk}.source.generates]")
+            for k in (
+                "generator",
+                "bridge_fn",
+                "state_type",
+                "steps_fn",
+                "step_fn",
+                "reset_fn",
+                "destroy_fn",
+                "header",
+                "output_type",
+            ):
+                if gen.get(k):
+                    out.append(f'{k} = "{gen[k]}"')
+            out.append("")
 
     seg = data.get("segment")
     if seg:
@@ -1699,6 +1732,13 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         for k in ("emit", "discriminant", "composer_type_name"):
             if oo.get(k):
                 out.append(f'{k} = "{oo[k]}"')
+        out.append("")
+
+    comp = data.get("composer")
+    if comp:
+        out.append(f"[module.{mk}.composer]")
+        if comp.get("stream"):
+            out.append("stream = true")
         out.append("")
 
     js = data.get("json")

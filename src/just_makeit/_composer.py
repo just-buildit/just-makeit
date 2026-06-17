@@ -116,6 +116,39 @@ def _source_fields(cfg: dict, module: str) -> list[dict]:
     return list(C.composer_source(cfg, module).get("fields", []))
 
 
+def _source_generates(cfg: dict, module: str) -> dict | None:
+    """The source's standalone-generation config, with generic defaults filled.
+
+    ``[module.X.source.generates]`` opts the source type into standalone sample
+    generation by delegating to a *composed generator* object. Keys:
+
+    ``generator``    the composed generator object name (e.g. ``"wfm_synth"``);
+    ``bridge_fn``    a straight-C function ``<state_type> *fn(const <struct> *,
+                     double fs)`` the project writes (its construction algorithm —
+                     no CPython); jm emits the binding that calls it.
+
+    Defaults (overridable): ``state_type = <generator>_state_t``,
+    ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
+    destroy}``, ``header = <generator>/<generator>_core.h``,
+    ``output_type = "float complex"`` (NumPy ``complex64``). Returns ``None`` when
+    the source declares no generation."""
+    g = C.composer_source(cfg, module).get("generates")
+    if not g:
+        return None
+    gen = g["generator"]
+    return {
+        "generator": gen,
+        "bridge_fn": g["bridge_fn"],
+        "state_type": g.get("state_type", f"{gen}_state_t"),
+        "steps_fn": g.get("steps_fn", f"{gen}_steps"),
+        "step_fn": g.get("step_fn", f"{gen}_step"),
+        "reset_fn": g.get("reset_fn", f"{gen}_reset"),
+        "destroy_fn": g.get("destroy_fn", f"{gen}_destroy"),
+        "header": g.get("header", f"{gen}/{gen}_core.h"),
+        "output_type": g.get("output_type", "float complex"),
+    }
+
+
 def render_source_type(cfg: dict, module: str) -> str:
     """Emit the source ``PyTypeObject`` (e.g. ``Synth``): a config object
     wrapping the backing C struct, with a keyword ``tp_init``, per-field getset
@@ -133,23 +166,46 @@ def render_source_type(cfg: dict, module: str) -> str:
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
 
+    # Optional standalone generation: the source delegates to a *composed
+    # generator* object, built once from the source struct by a project-provided
+    # straight-C bridge function (no CPython glue). jm emits the steps/step/reset
+    # plumbing; the bridge encodes the construction algorithm. Generic — any
+    # source-of-a-generator opts in via [module.X.source.generates].
+    gen = _source_generates(cfg, module)
+
+    # Feature 2 — input ergonomics, generated into tp_init so the .so is the API:
+    #  (a) field aliases: a ctor kwarg accepted as a stand-in for the canonical
+    #      field (e.g. f_start -> freq); folded before parsing, both-given errors.
+    #  (b) bit_pattern coercion: a bytes field accepts a 0/1 pattern as bytes, a
+    #      binary/hex string ("0101" / "0xAA55"), or a sequence of ints.
+    aliases = [(a, f["name"]) for f in fields for a in f.get("aliases", [])]
+    bits_coerce = any(
+        f.get("bytes") and f.get("coerce") == "bit_pattern" for f in fields
+    )
+
     parts: list[str] = []
 
     # struct: backing config + an extra fs (segment owns it in composition, but
-    # the source carries it for standalone use), + a borrowed bytes ref kept
-    # alive alongside the owned src.bits copy.
+    # the source carries it for standalone use). With generation, a lazily-built
+    # composed-generator handle (NULL until the first steps/step) rides along.
+    gen_field = f"\n    {gen['state_type']} *_gen;" if gen else ""
     parts.append(f"""typedef struct {{
     PyObject_HEAD
     {struct} src;
-    double   fs;
+    double   fs;{gen_field}
 }} {obj};
 """)
 
-    # dealloc — free the owned bits buffer.
+    # dealloc — destroy any built generator, then free the owned bits buffer.
+    gen_dtor = (
+        f"    if (self->_gen) {gen['destroy_fn']}(self->_gen);\n"
+        if gen
+        else ""
+    )
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-    free(self->src.bits);
+{gen_dtor}    free(self->src.bits);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
@@ -198,7 +254,141 @@ def render_source_type(cfg: dict, module: str) -> str:
             assign.append(f"    self->src.{n} = {n};")
     assign_s = "\n".join(assign)
 
-    parts.append(f"""/* Copy a Python bytes (0/1 pattern) or None into src->bits (owned). */
+    store_bits = """    src->bits   = buf;
+    src->n_bits = (size_t)nb;
+    return 1;"""
+    if bits_coerce:
+        attach_doc = (
+            "Coerce a 0/1 pattern (bytes | binary/hex str | int sequence)"
+        )
+        attach_body = f"""    if (PyBytes_Check(obj)) {{
+        Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+        if (nb <= 0)
+            return 1;
+        uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}
+    }}
+    if (PyUnicode_Check(obj)) {{
+        Py_ssize_t slen;
+        const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
+        if (!s)
+            return 0;
+        if (slen >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {{
+            Py_ssize_t nd = slen - 2, nb = nd * 4; /* hex digit -> 4 bits MSB */
+            uint8_t *buf = (uint8_t *)malloc(nb ? (size_t)nb : 1);
+            if (!buf) {{ PyErr_NoMemory(); return 0; }}
+            for (Py_ssize_t i = 0; i < nd; i++) {{
+                char c = s[2 + i];
+                int v = (c >= '0' && c <= '9')   ? c - '0'
+                        : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+                        : (c >= 'A' && c <= 'F') ? c - 'A' + 10
+                                                 : -1;
+                if (v < 0) {{
+                    free(buf);
+                    PyErr_SetString(PyExc_ValueError, "invalid hex digit");
+                    return 0;
+                }}
+                for (int b = 0; b < 4; b++)
+                    buf[i * 4 + b] = (uint8_t)((v >> (3 - b)) & 1);
+            }}
+{store_bits}
+        }}
+        uint8_t *buf = (uint8_t *)malloc(slen ? (size_t)slen : 1);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        for (Py_ssize_t i = 0; i < slen; i++) {{
+            if (s[i] != '0' && s[i] != '1') {{
+                free(buf);
+                PyErr_SetString(PyExc_ValueError,
+                                "bit string must be 0/1 or '0x..' hex");
+                return 0;
+            }}
+            buf[i] = (uint8_t)(s[i] - '0');
+        }}
+        Py_ssize_t nb = slen;
+{store_bits}
+    }}
+    {{
+        PyObject *seq = PySequence_Fast(
+            obj, "bits must be bytes, a 0/1 string, or a sequence of ints");
+        if (!seq)
+            return 0;
+        Py_ssize_t nb = PySequence_Fast_GET_SIZE(seq);
+        uint8_t *buf = (uint8_t *)malloc(nb ? (size_t)nb : 1);
+        if (!buf) {{ Py_DECREF(seq); PyErr_NoMemory(); return 0; }}
+        for (Py_ssize_t i = 0; i < nb; i++) {{
+            long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(seq, i));
+            if (v == -1 && PyErr_Occurred()) {{
+                free(buf);
+                Py_DECREF(seq);
+                return 0;
+            }}
+            buf[i] = (uint8_t)(v != 0);
+        }}
+        Py_DECREF(seq);
+{store_bits}
+    }}"""
+    else:
+        attach_doc = "Copy a Python bytes (0/1 pattern) or None into src->bits"
+        attach_body = f"""    if (!PyBytes_Check(obj)) {{
+        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
+        return 0;
+    }}
+    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+    if (nb <= 0)
+        return 1;
+    uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+    if (!buf) {{
+        PyErr_NoMemory();
+        return 0;
+    }}
+    memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}"""
+
+    # Alias-folding preamble (feature 2a): rename alias kwargs to their canonical
+    # field before parsing. kwds is copied only when an alias is actually present
+    # (the common no-alias call pays nothing).
+    if aliases:
+        folds = []
+        for a, canon in aliases:
+            folds.append(f"""        {{
+            PyObject *_a = PyDict_GetItemString(kwds, "{a}");
+            if (_a) {{
+                if (!_kw_owned) {{
+                    _kw = PyDict_Copy(kwds);
+                    if (!_kw) return -1;
+                    _kw_owned = 1;
+                }}
+                if (PyDict_GetItemString(_kw, "{canon}")) {{
+                    PyErr_SetString(PyExc_TypeError,
+                        "{canon} and {a} are aliases — pass only one");
+                    Py_DECREF(_kw);
+                    return -1;
+                }}
+                if (PyDict_SetItemString(_kw, "{canon}", _a) < 0
+                    || PyDict_DelItemString(_kw, "{a}") < 0) {{
+                    Py_DECREF(_kw);
+                    return -1;
+                }}
+            }}
+        }}""")
+        alias_pre = (
+            "    PyObject *_kw = kwds;\n    int _kw_owned = 0;\n"
+            "    if (kwds) {\n" + "\n".join(folds) + "\n    }\n"
+        )
+        parse_kw = "_kw"
+        parse_fail = (
+            "        if (_kw_owned) Py_DECREF(_kw);\n        return -1;"
+        )
+        parse_ok = "    if (_kw_owned) Py_DECREF(_kw);\n"
+    else:
+        alias_pre = ""
+        parse_kw = "kwds"
+        parse_fail = "        return -1;"
+        parse_ok = ""
+
+    parts.append(f"""/* {attach_doc} (owned). */
 static int
 _attach_bytes({struct} *src, PyObject *obj)
 {{
@@ -207,22 +397,7 @@ _attach_bytes({struct} *src, PyObject *obj)
     src->n_bits = 0;
     if (!obj || obj == Py_None)
         return 1;
-    if (!PyBytes_Check(obj)) {{
-        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
-        return 0;
-    }}
-    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
-    if (nb <= 0)
-        return 1;
-    uint8_t *copy = (uint8_t *)malloc((size_t)nb);
-    if (!copy) {{
-        PyErr_NoMemory();
-        return 0;
-    }}
-    memcpy(copy, PyBytes_AS_STRING(obj), (size_t)nb);
-    src->bits   = copy;
-    src->n_bits = (size_t)nb;
-    return 1;
+{attach_body}
 }}
 
 static int
@@ -231,11 +406,12 @@ static int
     static char *kwlist[] = {{{kwlist}, "fs", NULL}};
 {decls_s}
     double fs = 1e6;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
-            {addrs_s}, &fs))
-        return -1;
-    self->fs = fs;
-{assign_s}
+{alias_pre}    if (!PyArg_ParseTupleAndKeywords(args, {parse_kw}, "{fmt}", kwlist,
+            {addrs_s}, &fs)) {{
+{parse_fail}
+    }}
+{parse_ok}    self->fs = fs;
+{(f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
     return 0;
 }}
 """)
@@ -355,6 +531,80 @@ static PyGetSetDef {tname}_getset[] = {{
 }};
 """)
 
+    # Standalone generation methods (steps/step/reset) — emitted only when the
+    # source declares a composed generator. Each lazily builds the generator via
+    # the project's straight-C bridge_fn, then delegates; the handle is cached on
+    # the instance (freed in dealloc).
+    tp_methods_slot = ""
+    if gen:
+        out_t = gen["output_type"]
+        parts.append(f"""/* Lazily build the composed generator from this source's config. */
+static int
+{tname}_ensure_gen({obj} *self)
+{{
+    if (!self->_gen) {{
+        self->_gen = {gen["bridge_fn"]}(&self->src, self->fs);
+        if (!self->_gen) {{
+            PyErr_SetString(PyExc_RuntimeError,
+                            "{gen["bridge_fn"]} returned NULL");
+            return -1;
+        }}
+    }}
+    return 0;
+}}
+
+static PyObject *
+{tname}_steps({obj} *self, PyObject *args)
+{{
+    Py_ssize_t n;
+    if (!PyArg_ParseTuple(args, "n", &n))
+        return NULL;
+    if (n < 0) {{
+        PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+        return NULL;
+    }}
+    if ({tname}_ensure_gen(self) < 0)
+        return NULL;
+    npy_intp dims[1] = {{ n }};
+    PyObject *arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    if (!arr)
+        return NULL;
+    {out_t} *out = ({out_t} *)PyArray_DATA((PyArrayObject *)arr);
+    Py_BEGIN_ALLOW_THREADS
+    {gen["steps_fn"]}(self->_gen, out, (size_t)n);
+    Py_END_ALLOW_THREADS
+    return arr;
+}}
+
+static PyObject *
+{tname}_step({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    if ({tname}_ensure_gen(self) < 0)
+        return NULL;
+    {out_t} y = {gen["step_fn"]}(self->_gen);
+    return PyComplex_FromDoubles(crealf(y), cimagf(y));
+}}
+
+static PyObject *
+{tname}_reset({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    if (self->_gen)
+        {gen["reset_fn"]}(self->_gen);
+    Py_RETURN_NONE;
+}}
+
+static PyMethodDef {tname}_methods[] = {{
+    {{"steps", (PyCFunction){tname}_steps, METH_VARARGS,
+     "steps(n) -> complex64[n] — generate n samples standalone."}},
+    {{"step", (PyCFunction){tname}_step, METH_NOARGS,
+     "step() -> complex — generate one sample standalone."}},
+    {{"reset", (PyCFunction){tname}_reset, METH_NOARGS,
+     "reset() -> None — rewind the generator to sample 0."}},
+    {{NULL, NULL, 0, NULL}}
+}};
+""")
+        tp_methods_slot = f"\n    .tp_methods   = {tname}_methods,"
+
     parts.append(f"""static PyTypeObject {type_obj} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
@@ -363,7 +613,7 @@ static PyGetSetDef {tname}_getset[] = {{
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
-    .tp_getset    = {tname}_getset,
+    .tp_getset    = {tname}_getset,{tp_methods_slot}
     .tp_doc       = PyDoc_STR("{tname} — one composable source configuration."),
 }};
 """)
@@ -938,6 +1188,91 @@ static PyObject *
             f'     "to_json() -> str"}},\n'
         )
 
+    # Feature 3 — a generated stream() iterator (drains execute into blocks),
+    # so a project drops its hand-written `for blk in c.stream(n):` wrapper.
+    stream_code = stream_row = ""
+    if C.composer_stream(cfg, module).get("stream"):
+        stream_code = f"""/* Iterator returned by {cname}.stream(): drains execute() into blocks. */
+typedef struct {{
+    PyObject_HEAD
+    PyObject  *composer; /* strong ref to the {cname} */
+    Py_ssize_t block;
+}} {cname}StreamObject;
+
+static PyTypeObject {cname}StreamType;
+
+static void
+{cname}Stream_dealloc({cname}StreamObject *self)
+{{
+    Py_XDECREF(self->composer);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}}
+
+static PyObject *
+{cname}Stream_iter(PyObject *self)
+{{
+    Py_INCREF(self);
+    return self;
+}}
+
+static PyObject *
+{cname}Stream_next({cname}StreamObject *self)
+{{
+    PyObject *blk =
+        PyObject_CallMethod(self->composer, "execute", "n", self->block);
+    if (!blk)
+        return NULL;
+    Py_ssize_t n = PyObject_Length(blk);
+    if (n < 0) {{ /* error from execute */
+        Py_DECREF(blk);
+        return NULL;
+    }}
+    if (n == 0) {{ /* finite spec drained -> StopIteration (NULL, no exception) */
+        Py_DECREF(blk);
+        return NULL;
+    }}
+    return blk;
+}}
+
+static PyTypeObject {cname}StreamType = {{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "{dotted}Stream",
+    .tp_basicsize = sizeof({cname}StreamObject),
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_dealloc   = (destructor){cname}Stream_dealloc,
+    .tp_iter      = {cname}Stream_iter,
+    .tp_iternext  = (iternextfunc){cname}Stream_next,
+    .tp_doc       = PyDoc_STR("Iterator over {cname}.stream() blocks."),
+}};
+
+static PyObject *
+{cname}_stream({obj} *self, PyObject *args, PyObject *kwds)
+{{
+    static char *kwlist[] = {{"block", NULL}};
+    Py_ssize_t block = 4096;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|n", kwlist, &block))
+        return NULL;
+    if (block <= 0) {{
+        PyErr_SetString(PyExc_ValueError, "block must be > 0");
+        return NULL;
+    }}
+    {cname}StreamObject *it =
+        PyObject_New({cname}StreamObject, &{cname}StreamType);
+    if (!it)
+        return NULL;
+    Py_INCREF(self);
+    it->composer = (PyObject *)self;
+    it->block = block;
+    return (PyObject *)it;
+}}
+
+"""
+        stream_row = (
+            f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
+            f"     METH_VARARGS | METH_KEYWORDS,\n"
+            f'     "stream(block=4096) -> iterator of complex64 blocks"}},\n'
+        )
+
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
 typedef struct {{
@@ -1351,7 +1686,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
-static PyMethodDef {cname}_methods[] = {{
+{stream_code}static PyMethodDef {cname}_methods[] = {{
     {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
      "execute(n) -> ndarray[complex64]"}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
@@ -1359,7 +1694,7 @@ static PyMethodDef {cname}_methods[] = {{
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-{json_rows}    {{NULL, NULL, 0, NULL}}
+{stream_row}{json_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
@@ -1416,6 +1751,19 @@ def render_ext(cfg: dict, module: str) -> str:
         f'#include <stdio.h>\n#include "{json_header}"\n' if gen_json else ""
     )
 
+    # Standalone generation pulls in the composed generator's header and the
+    # project's straight-C bridge declaration (source config -> generator state).
+    gen = _source_generates(cfg, module)
+    gen_includes = ""
+    if gen:
+        src_struct = C.composer_source(cfg, module)["struct"]
+        gen_includes = (
+            f'#include "{gen["header"]}"\n'
+            "/* project bridge (straight C, no CPython): build the generator. */\n"
+            f"extern {gen['state_type']} *{gen['bridge_fn']}("
+            f"const {src_struct} *, double);\n"
+        )
+
     parts = [
         f"""/*
  * {mp.cname}_ext.c — composer extension for `{backing}` (generated by jm; gh-287).
@@ -1432,7 +1780,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include <string.h>
 
 #include "{header}"
-{json_includes}""",
+{gen_includes}{json_includes}""",
         render_enum_tables(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
@@ -1459,6 +1807,10 @@ static struct PyModuleDef _moduledef = {{
     ready = "\n".join(
         f"    if (PyType_Ready(&{t}Type) < 0) return NULL;" for t in types
     )
+    # The stream() iterator is an internal type — readied but not module-exposed.
+    if C.composer_stream(cfg, module).get("stream"):
+        cn = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+        ready += f"\n    if (PyType_Ready(&{cn}StreamType) < 0) return NULL;"
     add = "\n".join(
         f"    Py_INCREF(&{t}Type);\n"
         f'    PyModule_AddObject(m, "{t}", (PyObject *)&{t}Type);'
@@ -1569,11 +1921,13 @@ def render_pyi(cfg: dict, module: str) -> str:
     cname = oo.get("composer_type_name", "Composer")
     src_sig = _pyi_field_sig(src.get("fields", []))
     seg_scalar_sig = _pyi_field_sig(seg.get("fields", []))
+    has_stream = bool(C.composer_stream(cfg, module).get("stream"))
+    typing_imports = "Any, Iterator" if has_stream else "Any"
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
         "from __future__ import annotations",
-        "from typing import Any",
+        f"from typing import {typing_imports}",
         "import numpy as np",
         "from numpy.typing import NDArray",
         "",
@@ -1581,6 +1935,14 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
         "    def __getattr__(self, name: str) -> Any: ...",
+    ]
+    if _source_generates(cfg, module):
+        lines += [
+            "    def steps(self, n: int) -> NDArray[np.complex64]: ...",
+            "    def step(self) -> complex: ...",
+            "    def reset(self) -> None: ...",
+        ]
+    lines += [
         "",
         f"class {seg_t}:",
         f"    sources: list[{src_t}]",
@@ -1617,6 +1979,14 @@ def render_pyi(cfg: dict, module: str) -> str:
         ") -> None: ...",
         "    def execute(self, n: int) -> NDArray[np.complex64]: ...",
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]: ...",
+        *(
+            [
+                "    def stream(self, block: int = ...)"
+                " -> Iterator[NDArray[np.complex64]]: ..."
+            ]
+            if C.composer_stream(cfg, module).get("stream")
+            else []
+        ),
         "    def close(self) -> None: ...",
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",

@@ -23,6 +23,7 @@ from just_makeit._config import (
     composer_sample_type,
     composer_segment,
     composer_source,
+    composer_stream,
     composer_timeline,
     is_capsule_module,
     is_composer_module,
@@ -213,3 +214,58 @@ class TestRoundTrip:
             "wfm_type",
             "snr_mode",
         }
+
+
+def test_save_load_preserves_source_generates(tmp_path):
+    """``[module.X.source.generates]`` (feature 1) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["generates"] = {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "[module.wfm_compose.source.generates]" in manifest
+    assert 'generator = "wfm_synth"' in manifest
+    assert 'bridge_fn = "wfm_source_to_synth"' in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_source(cfg2, "wfm_compose")["generates"] == {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }
+
+
+def test_save_load_preserves_aliases_and_coerce(tmp_path):
+    """Field ``aliases`` / ``coerce`` (feature 2) survive save/load."""
+    cfg = _cfg()
+    for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+        if f["name"] == "level":
+            f["aliases"] = ["amplitude"]
+        if f["name"] == "bits":
+            f["aliases"] = ["pattern"]
+            f["coerce"] = "bit_pattern"
+    save(tmp_path, cfg)
+    cfg2 = load(tmp_path)
+    by = {f["name"]: f for f in composer_source(cfg2, "wfm_compose")["fields"]}
+    assert by["level"]["aliases"] == ["amplitude"]
+    assert by["bits"]["aliases"] == ["pattern"]
+    assert by["bits"]["coerce"] == "bit_pattern"
+
+
+def test_save_load_preserves_composer_stream(tmp_path):
+    """``[module.X.composer] stream`` (feature 3) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "[module.wfm_compose.composer]" in manifest
+    assert "stream = true" in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_stream(cfg2, "wfm_compose").get("stream") is True
+
+
+def test_composer_stream_absent_by_default():
+    """No ``[module.X.composer]`` table → ``composer_stream`` is empty."""
+    assert composer_stream(_cfg(), "wfm_compose") == {}

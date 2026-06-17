@@ -446,3 +446,199 @@ class TestSubclassable:
         """The assembled module sets the flag on every emitted type."""
         s = _composer.render_ext(_cfg(), "wfm_compose")
         assert s.count("Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE") == 4
+
+
+def _gen_cfg():
+    """_cfg() with the source declaring standalone generation (feature 1)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["generates"] = {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }
+    return cfg
+
+
+class TestSourceGenerates:
+    """``[module.X.source.generates]`` (gh-287 round 3): the source type
+    generates standalone by delegating to a composed generator, built by the
+    project's straight-C ``bridge_fn``. jm emits the steps/step/reset plumbing;
+    the bridge is pure C. Generic — wfm_synth is just one instance."""
+
+    def test_struct_holds_generator_handle(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "wfm_synth_state_t *_gen;" in s
+
+    def test_emits_steps_step_reset(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "Synth_steps(SynthObject *self" in s
+        assert "Synth_step(SynthObject *self" in s
+        assert "Synth_reset(SynthObject *self" in s
+        # delegates to the generator's variable-output steps and scalar step
+        assert "wfm_synth_steps(self->_gen, out, (size_t)n)" in s
+        assert "wfm_synth_step(self->_gen)" in s
+        assert "wfm_synth_reset(self->_gen)" in s
+
+    def test_lazy_build_via_bridge(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        # the handle is built once by the project's straight-C bridge
+        assert "wfm_source_to_synth(&self->src, self->fs)" in s
+        assert "Synth_ensure_gen(SynthObject *self)" in s
+
+    def test_dealloc_destroys_generator(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "if (self->_gen) wfm_synth_destroy(self->_gen);" in s
+
+    def test_tp_methods_wired(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert ".tp_methods   = Synth_methods," in s
+
+    def test_init_reinit_safe(self):
+        """A second __init__() must destroy any prior generator before clearing
+        the handle (tp_alloc zero-inits the first construction, so a bare
+        `_gen = NULL` would leak the built generator on re-init)."""
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert (
+            "if (self->_gen) { wfm_synth_destroy(self->_gen); "
+            "self->_gen = NULL; }" in s
+        )
+
+    def test_ext_includes_generator_header_and_bridge_decl(self):
+        s = _composer.render_ext(_gen_cfg(), "wfm_compose")
+        assert '#include "wfm_synth/wfm_synth_core.h"' in s
+        assert (
+            "extern wfm_synth_state_t *wfm_source_to_synth("
+            "const wfm_source_t *, double);" in s
+        )
+
+    def test_absent_without_generates(self):
+        """A source with no ``generates`` emits none of the generation glue."""
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "_gen" not in s
+        assert "Synth_steps" not in s
+        assert ".tp_methods" not in s
+
+    def test_pyi_declares_generation_methods(self):
+        pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
+        assert "def steps(self, n: int) -> NDArray[np.complex64]: ..." in pyi
+        assert "def step(self) -> complex: ..." in pyi
+        # absent without generates
+        assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
+
+
+def _alias_coerce_cfg():
+    """_cfg() with a field alias (freq<-f_start) + bit_pattern coercion (bits)."""
+    cfg = _cfg()
+    for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+        if f["name"] == "freq":
+            f["aliases"] = ["f_start"]
+        if f["name"] == "bits":
+            f["aliases"] = ["pattern"]
+            f["coerce"] = "bit_pattern"
+    return cfg
+
+
+class TestFieldAliases:
+    """``aliases`` (feature 2a): a ctor kwarg stands in for the canonical field,
+    folded before parsing; passing both errors. Generic — generated in tp_init."""
+
+    def test_alias_fold_emitted(self):
+        s = _composer.render_source_type(_alias_coerce_cfg(), "wfm_compose")
+        assert 'PyDict_GetItemString(kwds, "f_start")' in s
+        assert "freq and f_start are aliases" in s
+        assert "_kw = PyDict_Copy(kwds)" in s
+        # pattern -> bits alias too
+        assert 'PyDict_GetItemString(kwds, "pattern")' in s
+        # parse uses the (possibly copied) kw dict and frees it
+        assert "PyArg_ParseTupleAndKeywords(args, _kw," in s
+        assert "if (_kw_owned) Py_DECREF(_kw);" in s
+
+    def test_no_alias_no_copy(self):
+        """Without aliases, tp_init parses kwds directly (no copy, no _kw)."""
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "PyArg_ParseTupleAndKeywords(args, kwds," in s
+        assert "_kw_owned" not in s
+
+
+class TestBitPatternCoercion:
+    """``coerce = "bit_pattern"`` (feature 2b): a bytes field accepts a 0/1
+    pattern as bytes, a binary/hex string, or a sequence of ints — generated."""
+
+    def test_coercion_paths_emitted(self):
+        s = _composer.render_source_type(_alias_coerce_cfg(), "wfm_compose")
+        assert "PyUnicode_Check(obj)" in s  # str path
+        assert "PySequence_Fast(" in s  # sequence path
+        assert "s[1] == 'x' || s[1] == 'X'" in s  # 0x hex
+        assert "bit string must be 0/1 or '0x..' hex" in s
+
+    def test_plain_bytes_only_without_coerce(self):
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "bits must be bytes or None" in s
+        assert "PyUnicode_Check" not in s
+
+
+def _stream_cfg():
+    """_cfg() with the composer declaring a generated ``stream()`` (feature 3)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+    return cfg
+
+
+class TestComposerStream:
+    """``[module.X.composer] stream`` (gh-287 round 3): a generated
+    ``Composer.stream(block=4096)`` returning an internal iterator that drains
+    ``execute`` into blocks — the ``for blk in c.stream(n):`` convenience, so a
+    project drops its hand-written streaming wrapper. Generic — the iterator is
+    defined purely in terms of the composer's own ``execute``."""
+
+    def test_iterator_type_and_method_emitted(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        # an internal iterator type with the iter protocol slots
+        assert "ComposerStreamObject" in s
+        assert ".tp_iter      = ComposerStream_iter," in s
+        assert ".tp_iternext  = (iternextfunc)ComposerStream_next," in s
+        # the stream() method building it, wired into tp_methods
+        assert "Composer_stream(ComposerObject *self" in s
+        assert '{"stream", (PyCFunction)(void (*)(void))Composer_stream,' in s
+
+    def test_iterator_drains_execute(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        # next() pulls a block from the composer's own execute …
+        assert 'PyObject_CallMethod(self->composer, "execute", "n"' in s
+        # … and an empty block ends iteration (StopIteration via NULL)
+        assert "if (n == 0)" in s
+
+    def test_block_guard_and_default(self):
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        assert "Py_ssize_t block = 4096;" in s
+        assert "block must be > 0" in s
+
+    def test_iterator_holds_strong_ref(self):
+        """The iterator pins the composer (its execute backs every block)."""
+        s = _composer.render_composer_type(_stream_cfg(), "wfm_compose")
+        assert "Py_INCREF(self);" in s
+        assert "Py_XDECREF(self->composer);" in s
+
+    def test_internal_type_readied_not_exposed(self):
+        """PyType_Ready'd so instances are usable, but not module-added."""
+        ext = _composer.render_ext(_stream_cfg(), "wfm_compose")
+        assert "PyType_Ready(&ComposerStreamType)" in ext
+        assert 'PyModule_AddObject(m, "ComposerStream"' not in ext
+
+    def test_absent_by_default(self):
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "ComposerStream" not in s
+        assert "Composer_stream" not in s
+        ext = _composer.render_ext(_cfg(), "wfm_compose")
+        assert "ComposerStreamType" not in ext
+
+    def test_pyi_declares_stream(self):
+        pyi = _composer.render_pyi(_stream_cfg(), "wfm_compose")
+        assert (
+            "def stream(self, block: int = ...)"
+            " -> Iterator[NDArray[np.complex64]]: ..." in pyi
+        )
+        assert "from typing import Any, Iterator" in pyi
+        # absent without the table — and Iterator is not imported
+        plain = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert "def stream(" not in plain
+        assert "from typing import Any\n" in plain
