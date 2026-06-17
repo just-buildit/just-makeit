@@ -240,6 +240,11 @@ def render_tp_init(cfg: dict, module: str) -> str:
         stash.append(f"    self->{n} = {src};")
     stash_s = "\n".join(stash)
 
+    # Resolve every cache=true getter once into its stashed out-struct (read
+    # after create_fn + create_post so it reflects the fully-built handle). The
+    # cache=true getset then reads self->_g<i> instead of calling the getter.
+    cache_s = _cache_fetch(cfg, module)
+
     parse_fail = f"{fs_decref}        return -1;"
 
     return f"""static int
@@ -260,6 +265,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
     self->closed = 0;
 {stash_s}
 {post_s}
+{cache_s}
     return 0;
 }}
 """
