@@ -329,3 +329,50 @@ class TestComposerJson:
         decref = s.index("Py_DECREF(seglist);", create)  # the post-build one
         assert create < free < decref
         assert "seglist must outlive" in s
+
+
+class TestComposerJsonGenerated:
+    def _gen_cfg(self):
+        # drop the to_json_fn delegation -> generic SSOT-driven generated ser/de
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+        return cfg
+
+    def test_generated_by_default(self):
+        s = _composer.render_composer_type(self._gen_cfg(), "wfm_compose")
+        # generated path: builds segs from a parsed cJSON root, enum via SSOT
+        assert "_json_parse_source" in s and "_json_add_source" in s
+        assert "_wfm_compose_from_root" in s
+        # enum serialized via the SSOT table (not a duplicated table)
+        assert (
+            'cJSON_AddStringToObject(so, "type", _enum_wfm_type[src->type])'
+            in s
+        )
+        assert "_enum_index(_enum_wfm_type" in s  # parse side
+        # uniform schema: a sources array, version stamped from the module name
+        assert 'cJSON_AddArrayToObject(sj, "sources")' in s
+        assert '"wfm_compose-1"' in s
+        # bytes field <-> JSON int array
+        assert "cJSON_CreateNumber(src->bits[bi])" in s
+        # NOT delegating to a hand serializer
+        assert "wfm_spec_to_json" not in s
+
+    def test_delegation_when_to_json_fn_set(self):
+        # the default _cfg() sets json.to_json_fn -> delegation escape hatch
+        s = _composer.render_composer_type(_cfg(), "wfm_compose")
+        assert "wfm_spec_to_json(segs, n, repeat, continuous, 0.0)" in s
+        assert "_json_parse_source" not in s  # no generated ser/de
+
+    def test_render_ext_includes_cjson_only_when_generated(self):
+        gen = _composer.render_ext(self._gen_cfg(), "wfm_compose")
+        assert '#include "cJSON.h"' in gen and "#include <stdio.h>" in gen
+        deleg = _composer.render_ext(_cfg(), "wfm_compose")
+        assert "cJSON.h" not in deleg
+
+    def test_cmake_adds_json_include_dir(self):
+        cfg = self._gen_cfg()
+        cfg["module"]["wfm_compose"]["json"]["include_dir"] = (
+            "${CMAKE_SOURCE_DIR}/vendor/cjson"
+        )
+        cm = _composer.render_cmake(cfg, "wfm_compose")
+        assert "${CMAKE_SOURCE_DIR}/vendor/cjson" in cm
