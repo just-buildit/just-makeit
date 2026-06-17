@@ -116,6 +116,39 @@ def _source_fields(cfg: dict, module: str) -> list[dict]:
     return list(C.composer_source(cfg, module).get("fields", []))
 
 
+def _source_generates(cfg: dict, module: str) -> dict | None:
+    """The source's standalone-generation config, with generic defaults filled.
+
+    ``[module.X.source.generates]`` opts the source type into standalone sample
+    generation by delegating to a *composed generator* object. Keys:
+
+    ``generator``    the composed generator object name (e.g. ``"wfm_synth"``);
+    ``bridge_fn``    a straight-C function ``<state_type> *fn(const <struct> *,
+                     double fs)`` the project writes (its construction algorithm —
+                     no CPython); jm emits the binding that calls it.
+
+    Defaults (overridable): ``state_type = <generator>_state_t``,
+    ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
+    destroy}``, ``header = <generator>/<generator>_core.h``,
+    ``output_type = "float complex"`` (NumPy ``complex64``). Returns ``None`` when
+    the source declares no generation."""
+    g = C.composer_source(cfg, module).get("generates")
+    if not g:
+        return None
+    gen = g["generator"]
+    return {
+        "generator": gen,
+        "bridge_fn": g["bridge_fn"],
+        "state_type": g.get("state_type", f"{gen}_state_t"),
+        "steps_fn": g.get("steps_fn", f"{gen}_steps"),
+        "step_fn": g.get("step_fn", f"{gen}_step"),
+        "reset_fn": g.get("reset_fn", f"{gen}_reset"),
+        "destroy_fn": g.get("destroy_fn", f"{gen}_destroy"),
+        "header": g.get("header", f"{gen}/{gen}_core.h"),
+        "output_type": g.get("output_type", "float complex"),
+    }
+
+
 def render_source_type(cfg: dict, module: str) -> str:
     """Emit the source ``PyTypeObject`` (e.g. ``Synth``): a config object
     wrapping the backing C struct, with a keyword ``tp_init``, per-field getset
@@ -133,23 +166,36 @@ def render_source_type(cfg: dict, module: str) -> str:
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
 
+    # Optional standalone generation: the source delegates to a *composed
+    # generator* object, built once from the source struct by a project-provided
+    # straight-C bridge function (no CPython glue). jm emits the steps/step/reset
+    # plumbing; the bridge encodes the construction algorithm. Generic — any
+    # source-of-a-generator opts in via [module.X.source.generates].
+    gen = _source_generates(cfg, module)
+
     parts: list[str] = []
 
     # struct: backing config + an extra fs (segment owns it in composition, but
-    # the source carries it for standalone use), + a borrowed bytes ref kept
-    # alive alongside the owned src.bits copy.
+    # the source carries it for standalone use). With generation, a lazily-built
+    # composed-generator handle (NULL until the first steps/step) rides along.
+    gen_field = f"\n    {gen['state_type']} *_gen;" if gen else ""
     parts.append(f"""typedef struct {{
     PyObject_HEAD
     {struct} src;
-    double   fs;
+    double   fs;{gen_field}
 }} {obj};
 """)
 
-    # dealloc — free the owned bits buffer.
+    # dealloc — destroy any built generator, then free the owned bits buffer.
+    gen_dtor = (
+        f"    if (self->_gen) {gen['destroy_fn']}(self->_gen);\n"
+        if gen
+        else ""
+    )
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-    free(self->src.bits);
+{gen_dtor}    free(self->src.bits);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
@@ -235,7 +281,7 @@ static int
             {addrs_s}, &fs))
         return -1;
     self->fs = fs;
-{assign_s}
+{"    self->_gen = NULL;" + chr(10) if gen else ""}{assign_s}
     return 0;
 }}
 """)
@@ -355,6 +401,80 @@ static PyGetSetDef {tname}_getset[] = {{
 }};
 """)
 
+    # Standalone generation methods (steps/step/reset) — emitted only when the
+    # source declares a composed generator. Each lazily builds the generator via
+    # the project's straight-C bridge_fn, then delegates; the handle is cached on
+    # the instance (freed in dealloc).
+    tp_methods_slot = ""
+    if gen:
+        out_t = gen["output_type"]
+        parts.append(f"""/* Lazily build the composed generator from this source's config. */
+static int
+{tname}_ensure_gen({obj} *self)
+{{
+    if (!self->_gen) {{
+        self->_gen = {gen["bridge_fn"]}(&self->src, self->fs);
+        if (!self->_gen) {{
+            PyErr_SetString(PyExc_RuntimeError,
+                            "{gen["bridge_fn"]} returned NULL");
+            return -1;
+        }}
+    }}
+    return 0;
+}}
+
+static PyObject *
+{tname}_steps({obj} *self, PyObject *args)
+{{
+    Py_ssize_t n;
+    if (!PyArg_ParseTuple(args, "n", &n))
+        return NULL;
+    if (n < 0) {{
+        PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+        return NULL;
+    }}
+    if ({tname}_ensure_gen(self) < 0)
+        return NULL;
+    npy_intp dims[1] = {{ n }};
+    PyObject *arr = PyArray_SimpleNew(1, dims, NPY_COMPLEX64);
+    if (!arr)
+        return NULL;
+    {out_t} *out = ({out_t} *)PyArray_DATA((PyArrayObject *)arr);
+    Py_BEGIN_ALLOW_THREADS
+    {gen["steps_fn"]}(self->_gen, out, (size_t)n);
+    Py_END_ALLOW_THREADS
+    return arr;
+}}
+
+static PyObject *
+{tname}_step({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    if ({tname}_ensure_gen(self) < 0)
+        return NULL;
+    {out_t} y = {gen["step_fn"]}(self->_gen);
+    return PyComplex_FromDoubles(crealf(y), cimagf(y));
+}}
+
+static PyObject *
+{tname}_reset({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+    if (self->_gen)
+        {gen["reset_fn"]}(self->_gen);
+    Py_RETURN_NONE;
+}}
+
+static PyMethodDef {tname}_methods[] = {{
+    {{"steps", (PyCFunction){tname}_steps, METH_VARARGS,
+     "steps(n) -> complex64[n] — generate n samples standalone."}},
+    {{"step", (PyCFunction){tname}_step, METH_NOARGS,
+     "step() -> complex — generate one sample standalone."}},
+    {{"reset", (PyCFunction){tname}_reset, METH_NOARGS,
+     "reset() -> None — rewind the generator to sample 0."}},
+    {{NULL, NULL, 0, NULL}}
+}};
+""")
+        tp_methods_slot = f"\n    .tp_methods   = {tname}_methods,"
+
     parts.append(f"""static PyTypeObject {type_obj} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "{dotted}",
@@ -363,7 +483,7 @@ static PyGetSetDef {tname}_getset[] = {{
     .tp_new       = PyType_GenericNew,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
-    .tp_getset    = {tname}_getset,
+    .tp_getset    = {tname}_getset,{tp_methods_slot}
     .tp_doc       = PyDoc_STR("{tname} — one composable source configuration."),
 }};
 """)
@@ -1416,6 +1536,19 @@ def render_ext(cfg: dict, module: str) -> str:
         f'#include <stdio.h>\n#include "{json_header}"\n' if gen_json else ""
     )
 
+    # Standalone generation pulls in the composed generator's header and the
+    # project's straight-C bridge declaration (source config -> generator state).
+    gen = _source_generates(cfg, module)
+    gen_includes = ""
+    if gen:
+        src_struct = C.composer_source(cfg, module)["struct"]
+        gen_includes = (
+            f'#include "{gen["header"]}"\n'
+            "/* project bridge (straight C, no CPython): build the generator. */\n"
+            f"extern {gen['state_type']} *{gen['bridge_fn']}("
+            f"const {src_struct} *, double);\n"
+        )
+
     parts = [
         f"""/*
  * {mp.cname}_ext.c — composer extension for `{backing}` (generated by jm; gh-287).
@@ -1432,7 +1565,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include <string.h>
 
 #include "{header}"
-{json_includes}""",
+{gen_includes}{json_includes}""",
         render_enum_tables(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
@@ -1581,6 +1714,14 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
         "    def __getattr__(self, name: str) -> Any: ...",
+    ]
+    if _source_generates(cfg, module):
+        lines += [
+            "    def steps(self, n: int) -> NDArray[np.complex64]: ...",
+            "    def step(self) -> complex: ...",
+            "    def reset(self) -> None: ...",
+        ]
+    lines += [
         "",
         f"class {seg_t}:",
         f"    sources: list[{src_t}]",

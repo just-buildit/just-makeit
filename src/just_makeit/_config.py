@@ -1654,6 +1654,23 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + "]"
             )
         out.append("")
+        gen = src.get("generates")
+        if gen:
+            out.append(f"[module.{mk}.source.generates]")
+            for k in (
+                "generator",
+                "bridge_fn",
+                "state_type",
+                "steps_fn",
+                "step_fn",
+                "reset_fn",
+                "destroy_fn",
+                "header",
+                "output_type",
+            ):
+                if gen.get(k):
+                    out.append(f'{k} = "{gen[k]}"')
+            out.append("")
 
     seg = data.get("segment")
     if seg:

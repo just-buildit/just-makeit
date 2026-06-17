@@ -213,3 +213,23 @@ class TestRoundTrip:
             "wfm_type",
             "snr_mode",
         }
+
+
+def test_save_load_preserves_source_generates(tmp_path):
+    """``[module.X.source.generates]`` (feature 1) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["generates"] = {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "[module.wfm_compose.source.generates]" in manifest
+    assert 'generator = "wfm_synth"' in manifest
+    assert 'bridge_fn = "wfm_source_to_synth"' in manifest
+
+    cfg2 = load(tmp_path)
+    assert composer_source(cfg2, "wfm_compose")["generates"] == {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }

@@ -446,3 +446,74 @@ class TestSubclassable:
         """The assembled module sets the flag on every emitted type."""
         s = _composer.render_ext(_cfg(), "wfm_compose")
         assert s.count("Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE") == 4
+
+
+def _gen_cfg():
+    """_cfg() with the source declaring standalone generation (feature 1)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["generates"] = {
+        "generator": "wfm_synth",
+        "bridge_fn": "wfm_source_to_synth",
+    }
+    return cfg
+
+
+class TestSourceGenerates:
+    """``[module.X.source.generates]`` (gh-287 round 3): the source type
+    generates standalone by delegating to a composed generator, built by the
+    project's straight-C ``bridge_fn``. jm emits the steps/step/reset plumbing;
+    the bridge is pure C. Generic — wfm_synth is just one instance."""
+
+    def test_struct_holds_generator_handle(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "wfm_synth_state_t *_gen;" in s
+
+    def test_emits_steps_step_reset(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "Synth_steps(SynthObject *self" in s
+        assert "Synth_step(SynthObject *self" in s
+        assert "Synth_reset(SynthObject *self" in s
+        # delegates to the generator's variable-output steps and scalar step
+        assert "wfm_synth_steps(self->_gen, out, (size_t)n)" in s
+        assert "wfm_synth_step(self->_gen)" in s
+        assert "wfm_synth_reset(self->_gen)" in s
+
+    def test_lazy_build_via_bridge(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        # the handle is built once by the project's straight-C bridge
+        assert "wfm_source_to_synth(&self->src, self->fs)" in s
+        assert "Synth_ensure_gen(SynthObject *self)" in s
+
+    def test_dealloc_destroys_generator(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "if (self->_gen) wfm_synth_destroy(self->_gen);" in s
+
+    def test_tp_methods_wired(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert ".tp_methods   = Synth_methods," in s
+
+    def test_init_nulls_handle(self):
+        s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
+        assert "self->_gen = NULL;" in s
+
+    def test_ext_includes_generator_header_and_bridge_decl(self):
+        s = _composer.render_ext(_gen_cfg(), "wfm_compose")
+        assert '#include "wfm_synth/wfm_synth_core.h"' in s
+        assert (
+            "extern wfm_synth_state_t *wfm_source_to_synth("
+            "const wfm_source_t *, double);" in s
+        )
+
+    def test_absent_without_generates(self):
+        """A source with no ``generates`` emits none of the generation glue."""
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "_gen" not in s
+        assert "Synth_steps" not in s
+        assert ".tp_methods" not in s
+
+    def test_pyi_declares_generation_methods(self):
+        pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
+        assert "def steps(self, n: int) -> NDArray[np.complex64]: ..." in pyi
+        assert "def step(self) -> complex: ..." in pyi
+        # absent without generates
+        assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
