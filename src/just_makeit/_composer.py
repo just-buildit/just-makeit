@@ -82,12 +82,11 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
     return seen
 
 
-def render_enum_tables(cfg: dict, module: str) -> str:
-    """Emit one ``static const char *const _enum_<name>[]`` table per enum the
-    module references, plus a shared ``_enum_index`` lookup. Order **is** the C
-    int (the ``[[enum]]`` SSOT contract — append-only), so every face agrees."""
-    enums = C.enums(cfg)
-    parts = [
+# The shared string-enum → index lookup. A single SSOT constant so the handle
+# generator (gh-306) reuses the identical lookup (and the "order is the C int"
+# contract) rather than re-spelling it.
+_ENUM_INDEX_FN = "\n".join(
+    [
         "/* String-enum tables — order is the C int (the [[enum]] SSOT). */",
         "static int",
         "_enum_index(const char *const *tab, const char *s)",
@@ -99,6 +98,15 @@ def render_enum_tables(cfg: dict, module: str) -> str:
         "}",
         "",
     ]
+)
+
+
+def render_enum_tables(cfg: dict, module: str) -> str:
+    """Emit one ``static const char *const _enum_<name>[]`` table per enum the
+    module references, plus a shared ``_enum_index`` lookup. Order **is** the C
+    int (the ``[[enum]]`` SSOT contract — append-only), so every face agrees."""
+    enums = C.enums(cfg)
+    parts = [_ENUM_INDEX_FN]
     for name in _enums_used(cfg, module):
         values = enums.get(name, [])
         items = "".join(f'    "{v}",\n' for v in values)
