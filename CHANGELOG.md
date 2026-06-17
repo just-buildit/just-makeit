@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.19.16] — 2026-06-16
+
+### Added
+
+- **`[[enum]]` single-source-of-truth for string enums (gh-285)** — a named
+    top-level `[[enum]]` declares an ordered value set once; a parameter refers
+    to it with `type = "enum:<name>"` instead of inlining
+    `string_enum:a,b,c` on every face that touches it. The reference resolves to
+    the equivalent `string_enum:` spec on the codegen read path (`init_params()`,
+    the one choke point every consumer reads), so choice flags, `.pyi` stubs, and
+    the C enum index are unchanged, while the manifest keeps the `enum:` reference
+    verbatim on disk — exactly one place the value list lives. Value order **is**
+    the C integer value (append-only, never reorder); an undeclared reference
+    raises a clear error. `[[enum]]` is manifest-owned (like `[project]`/`[app]`),
+    gated behind schema 7 (additive and opt-in — inline `string_enum:` keeps
+    working; the version bump alone is the migration). This is the keystone for
+    the generated capsule (#286) and composer (#287) work.
+
 ## [0.19.15] — 2026-06-15
 
 ### Changed
