@@ -19,6 +19,19 @@
     gated behind schema 7 (additive and opt-in — inline `string_enum:` keeps
     working; the version bump alone is the migration). This is the keystone for
     the generated capsule (#286) and composer (#287) work.
+- **`kind = "capsule"` module generator (gh-286)** — a generated CPython
+    extension that exposes its C state as **free functions over an opaque
+    `PyCapsule`** instead of a `PyTypeObject` per object, for functional/
+    procedural C APIs that don't fit the class model. A capsule module declares
+    a `backing` (`<backing>_state_t` + `<backing>_create`/`_destroy`), its
+    `init_params`, `methods` (numpy-in → caller-owned numpy-view-out, with an
+    optional `nogil` GIL release across the kernel), and `properties`
+    (`get_`/`set_` accessors); `jm apply` generates the `<module>_ext.c` capsule
+    mechanics (the use-after-destroy guard, marshaling, a zero-copy `out[:n_out]`
+    view), the module `CMakeLists.txt`, and a `.pyi` stub, and `jm status   --check` covers them. The kernel bodies stay hand-written in
+    `<backing>_core.c` (sacred). doppler's `ddc_fn` is the reference adopter:
+    it drops `no_generate` for `kind = "capsule"` with a byte-identical link
+    list. This is the runtime skeleton the composer (#287) builds on.
 
 ## [0.19.15] — 2026-06-15
 
