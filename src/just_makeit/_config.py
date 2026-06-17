@@ -793,9 +793,11 @@ def composer_segment(cfg: dict, module: str) -> dict:
     """Return the composer ``[module.X.segment]`` table (gh-287).
 
     Maps 1:1 to ``wfm_segment_t`` (wfm_compose.h:77). Keys: ``fields``
-    (``[{name, type, default?}, …]`` — fs / num_samples / off_samples) and
+    (``[{name, type, default?}, …]`` — fs / num_samples / off_samples),
     ``sources`` (``"multi"`` to sum N sources per segment, ``"single"`` for
-    one)."""
+    one), and ``flat_sources`` (``true`` to proxy a single-source segment's
+    source fields as read-only attributes — ``segment.freq`` reads
+    ``segment.sources[0].freq``; gh-287 round 3 feature 4)."""
     return dict(cfg.get("module", {}).get(module, {}).get("segment", {}))
 
 
@@ -1700,6 +1702,8 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         ):
             if seg.get(k):
                 out.append(f'{k} = "{seg[k]}"')
+        if seg.get("flat_sources"):
+            out.append("flat_sources = true")
         fields = seg.get("fields") or []
         if fields:
             out.append(

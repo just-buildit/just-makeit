@@ -686,6 +686,27 @@ def _segment_fields(cfg: dict, module: str) -> list[dict]:
     return list(C.composer_segment(cfg, module).get("fields", []))
 
 
+def _segment_flat_fields(cfg: dict, module: str) -> list[dict]:
+    """Source fields a single-source ``Segment`` exposes inline (feature 4).
+
+    When ``[module.X.segment] flat_sources = true``, a Segment built from one
+    source proxies that source's fields as read-only attributes
+    (``segment.freq`` → ``segment.sources[0].freq``) — the flat single-source
+    view that lets a project drop a hand-written ``__getattr__`` fallback.
+    Generic over any composer: the names come from ``source.fields``. A name
+    that collides with a segment-level getset (``sources`` or a segment scalar)
+    is skipped so the segment's own attribute always wins. Returns ``[]`` when
+    the segment does not opt in."""
+    if not C.composer_segment(cfg, module).get("flat_sources"):
+        return []
+    taken = {"sources"} | {f["name"] for f in _segment_fields(cfg, module)}
+    return [
+        f
+        for f in C.composer_source(cfg, module).get("fields", [])
+        if f["name"] not in taken
+    ]
+
+
 def render_segment_type(cfg: dict, module: str) -> str:
     """Emit the ``Segment`` ``PyTypeObject``: segment-level scalars (fs /
     num_samples / off_samples) plus a Python list of source objects.
@@ -869,6 +890,31 @@ static int
             f'    {{"{n}", (getter){tname}_get_{n}, '
             f"(setter){tname}_set_{n}, NULL, NULL}},"
         )
+
+    # Feature 4 — flat single-source accessors: a segment built from exactly one
+    # source proxies that source's fields as read-only attributes
+    # (segment.freq → segment.sources[0].freq), so a project drops a
+    # hand-written __getattr__ fallback. Generic — the names come from
+    # source.fields and each getter delegates to the source's own getset (so an
+    # enum field still reads as a string). A multi-source segment has no single
+    # waveform to flatten, so the getter raises AttributeError there.
+    for f in _segment_flat_fields(cfg, module):
+        n = f["name"]
+        getset_fns.append(f"""static PyObject *
+{tname}_flat_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (PyList_GET_SIZE(self->sources) != 1) {{
+        PyErr_SetString(PyExc_AttributeError,
+                        "{n} is only on a single-source {tname}");
+        return NULL;
+    }}
+    return PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "{n}");
+}}""")
+        getset_rows.append(
+            f'    {{"{n}", (getter){tname}_flat_{n}, NULL, NULL, NULL}},'
+        )
+
     parts.append("\n".join(getset_fns))
 
     # add(*others) -> Timeline — the time-sequence counterpart of sum (which
@@ -1891,19 +1937,22 @@ target_include_directories({prog} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
 """
 
 
+def _pyi_field_type(f: dict) -> str:
+    """The ``.pyi`` annotation type for a source/segment field."""
+    if f.get("enum"):
+        return "str"
+    if f.get("bytes"):
+        return "bytes | None"
+    if f["type"] in ("double", "float"):
+        return "float"
+    return "int"
+
+
 def _pyi_field_sig(fields: list[dict]) -> str:
     """Keyword signature fragment for a source/segment field list."""
-    out = []
-    for f in fields:
-        if f.get("enum"):
-            out.append(f"{f['name']}: str = ...")
-        elif f.get("bytes"):
-            out.append(f"{f['name']}: bytes | None = ...")
-        elif f["type"] in ("double", "float"):
-            out.append(f"{f['name']}: float = ...")
-        else:
-            out.append(f"{f['name']}: int = ...")
-    return ", ".join(out)
+    return ", ".join(
+        f"{f['name']}: {_pyi_field_type(f)} = ..." for f in fields
+    )
 
 
 def render_pyi(cfg: dict, module: str) -> str:
@@ -1946,6 +1995,12 @@ def render_pyi(cfg: dict, module: str) -> str:
         "",
         f"class {seg_t}:",
         f"    sources: list[{src_t}]",
+        # Feature 4 — flat single-source accessors (read-only; AttributeError on
+        # a multi-source segment).
+        *[
+            f"    {f['name']}: {_pyi_field_type(f)}"
+            for f in _segment_flat_fields(cfg, module)
+        ],
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         f"{seg_scalar_sig}) -> None: ...",
         "    @classmethod",
