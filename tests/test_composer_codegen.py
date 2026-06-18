@@ -898,3 +898,46 @@ class TestComposerToDict:
         assert "Mix_to_dict(MixObject *self" in s
         assert '_Mix_seg_keys[] = { "dur", NULL };' in s
         assert '_Mix_src_keys[] = { "gain", "channel", NULL };' in s
+
+
+class TestRealtimeStream:
+    """gh-317 feature 1: `realtime = {clock_create, pace, destroy, header}` paces
+    the generated stream() iterator to an fs-Hz clock IN the .so, so a project
+    drops its hand-written `paced()` helper. Off by default (plain stream)."""
+
+    def _rt_cfg(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["composer"] = {
+            "stream": True,
+            "realtime": {
+                "clock_create": "dp_sample_clock_create",
+                "pace": "dp_sample_clock_pace",
+                "destroy": "dp_sample_clock_destroy",
+                "header": "timing/timing_core.h",
+            },
+        }
+        return cfg
+
+    def test_iterator_paces_in_c(self):
+        s = _composer.render_composer_type(self._rt_cfg(), "wfm_compose")
+        # opaque clock on the iterator struct, lazily created, paced by count.
+        assert "double realtime;" in s and "void *clk;" in s
+        assert "self->clk = dp_sample_clock_create(self->realtime, 0);" in s
+        assert "dp_sample_clock_pace(self->clk, (size_t)n);" in s
+        assert "dp_sample_clock_destroy(self->clk);" in s  # dealloc
+        # stream(block, realtime=) parses both.
+        assert 'static char *kwlist[] = {"block", "realtime", NULL};' in s
+        assert 'ParseTupleAndKeywords(args, kwds, "|nd"' in s
+
+    def test_realtime_header_included(self):
+        ext = _composer.render_ext(self._rt_cfg(), "wfm_compose")
+        assert '#include "timing/timing_core.h"' in ext
+
+    def test_plain_stream_unchanged(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+        s = _composer.render_composer_type(cfg, "wfm_compose")
+        # no realtime machinery when the sub-table is absent (back-compat).
+        assert "self->realtime" not in s
+        assert "->clk" not in s
+        assert 'ParseTupleAndKeywords(args, kwds, "|n", kwlist, &block))' in s

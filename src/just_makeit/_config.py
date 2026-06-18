@@ -2020,6 +2020,11 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
             out.append("stream = true")
         if comp.get("to_dict"):
             out.append("to_dict = true")
+        rt = comp.get("realtime")
+        if rt:
+            # gh-317: the realtime stream clock fns as an inline table.
+            _rt = ", ".join(f'{k} = "{v}"' for k, v in rt.items())
+            out.append(f"realtime = {{ {_rt} }}")
         out.append("")
 
     js = data.get("json")
