@@ -379,6 +379,15 @@ the fluent face of the segment list the composer already sequences.
     rebuilt OO objects.
 - `close` / `__enter__` / `__exit__` / `dealloc` destroy the backing state.
 
+A `[module.X.composer]` ergonomics table adds optional in-`.so` conveniences so
+no hand-Python wraps the composer: `stream = true` generates
+`stream(block=4096)` — an iterator that drains `execute()` into blocks — and
+`to_dict = true` generates `to_dict()` (the resolved composition as a plain
+nested dict, the generic primitive any sidecar format is built from). With a
+`realtime = {clock_create, pace, destroy, header}` sub-table the iterator also
+**paces to an `fs`-Hz clock in C** (`for blk in c.stream(4096, realtime=1e6):`),
+so a project drops its hand-written `paced()` helper (gh-317).
+
 The transient `<segment_struct>[]` **aliases** each source's `bits` pointer;
 `<backing>_create` deep-copies (see [§6](#6-lifecycle--memory-invariants)), so
 the transient arrays are freed straight after and ownership stays with the
@@ -448,14 +457,19 @@ reconciliation; miss any and `jm apply` / `jm status --check` break silently).
 
 The generated type carries:
 
-- a **constructor** (`tp_init`) that coerces `create_args` — enum-string→index
-    via the SSOT, `os.fspath` for a `path` arg, scalar casts — calls the backing
-    `create_fn`, and runs an optional conditional `create_post` setter;
-- **methods** mapping `name → fn(self->h, …)`: scalar args; an array-in arg
-    (numpy-marshaled exactly like the capsule path); an array arg followed by
-    trailing scalars (`send(iq, fs, fc)`, gh-308); or an int-in→array-out shape
-    returning an **independent** numpy-owned array;
-- **decoded-getter properties** (§5.2) — the genuinely new code;
+- a **constructor** — either `create_fn` (allocates and returns the handle) or,
+    for an init-in-place C API, `init_fn` (jm `malloc`s `sizeof(handle_type)`,
+    calls `init_fn(self->h, …)`, and `free`s on close; gh-315). It coerces
+    `create_args` — enum-string→index via the SSOT, `os.fspath` for a `path` arg,
+    scalar casts — and runs an optional conditional `create_post` setter;
+- **methods** mapping `name → fn(self->h, …)`, in four shapes: scalar args
+    (honoring `default` / keyword args, gh-319); an array-in arg (numpy-marshaled
+    like the capsule path), optionally followed by trailing scalars
+    (`send(iq, fs, fc)`, gh-308); an int-in→array-out shape returning an
+    **independent** numpy-owned array; and an **array-in + writable array-out**
+    execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311);
+- **decoded-getter properties** (§5.2), including **writable** scalar
+    properties — the genuinely new code;
 - the **RAII protocol** (§5.3): an always-generated idempotent `close()` and a
     `tp_dealloc` that closes a forgotten handle, plus `__enter__`/`__exit__` when
     `context_manager` is set;
@@ -483,6 +497,17 @@ An `expr` may also read a constructor value stashed into the object struct
 (`self->sample_type >= 2`). A getter marked `cache = true` is resolved **once** in
 `tp_init` (fixed metadata — a reader's sample rate); otherwise it is called
 **live** on each access (a running clock's counters).
+
+Three variations cover the C APIs that don't fill a struct (gh-311/gh-314):
+
+- a getter whose `out` is a **scalar** C type returns by value
+    (`tmp = fn(self->h)`) and its single field decodes `tmp` directly;
+- each field may instead name its **own** scalar getter via `getter = "T fn(h)"`
+    (no shared `fn`/`out`), so a project drops the hand-C struct shim that bundled
+    per-property getters into a `*_stats_t` purely to fit the decode;
+- a field that also names a `writable_fn` becomes a **read/write** property — the
+    getset gains a `(setter)` that coerces the value (`PyArg_Parse`) and calls
+    `set_fn(self->h, v)`.
 
 ```toml
 [[module.wfm_writer.getters]]
@@ -519,9 +544,11 @@ and `SampleClock` are
 **one archetype — a capsule-backed resource handle — instantiated four times**
 over the existing `wfm_writer.c` / `wfm_reader.c` / `wfm_sink.c` C API (whose
 `wfm_reader_info()` already fills a struct, ideal for the decoded-getter path).
-`Reader` uses `cache = true` info getters; `ZmqSink` / `SampleClock` use the
-weak-symbol guard (POSIX-only); `ZmqSink.send(iq, fs, fc)` is the array+scalar
-method shape. The validation was reference-first (§7): the first real compile of
+`Reader` uses `cache = true` info getters; `Writer` / `ZmqSink` expose their
+stats as **per-field scalar getters** (gh-314, no `*_stats_t` shim);
+`SampleClock` is built **in place** via `init_fn` (gh-315, no create/destroy
+shim); `ZmqSink` / `SampleClock` use the weak-symbol guard (POSIX-only);
+`ZmqSink.send(iq, fs, fc)` is the array+scalar method shape. The validation was reference-first (§7): the first real compile of
 generated handle output — scaffold → `jm apply` → compile + a real C backing →
 import → exercise — caught a codegen bug a string-assertion missed, and now
 guards the marshaling end-to-end in CI.
@@ -620,6 +647,7 @@ ______________________________________________________________________
 | `[X.timeline]` | `type_name`, `loop[]`                                                                                                                         |
 | `[X.oo]`       | `factories[]`, `emit` (`"ctypes"`), `discriminant`, `composer_type_name`                                                                      |
 | `[X.json]`     | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing` (delegation), `header`/`include_dir` (generated path)       |
+| `[X.composer]` | `stream`, `to_dict`; optional `realtime = {clock_create, pace, destroy, header}` to pace `stream()` in C (gh-317)                             |
 | `[X.cli]`      | `enabled`, `name`                                                                                                                             |
 
 A **field** entry (`source.fields`/`segment.fields`):
@@ -628,17 +656,18 @@ marshalling, the type slots, the JSON shape, and the CLI flag.
 
 **Handle only:**
 
-| table / key         | meaning                                                                                                               |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `handle_type`       | the opaque C handle type (default `<backing>_t`)                                                                      |
-| `type_name`         | the generated CPython class name (`Writer`)                                                                           |
-| `create_fn`         | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`) |
-| `[[X.create_post]]` | conditional post-create setter `{fn, when?, arg?}`                                                                    |
-| `[[X.methods]]`     | `{name, fn, args[], returns?, nogil?}` — scalar / array-in (+ trailing scalars) / int-in→array-out                    |
-| `[[X.getters]]`     | a shared getter `{fn, out, cache?, fields[]}`; each field `{name, from?, type, enum?, scale?, expr?}`                 |
-| `close_fn`          | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                      |
-| `context_manager`   | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                       |
-| `optional_backend`  | a weak-symbol backend; absent → `NotImplementedError`                                                                 |
+| table / key         | meaning                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handle_type`       | the opaque C handle type (default `<backing>_t`)                                                                                                                                                 |
+| `type_name`         | the generated CPython class name (`Writer`)                                                                                                                                                      |
+| `create_fn`         | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`)                                                                            |
+| `init_fn`           | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                             |
+| `[[X.create_post]]` | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                               |
+| `[[X.methods]]`     | `{name, fn, args[], returns?, nogil?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319)             |
+| `[[X.getters]]`     | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314) |
+| `close_fn`          | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                 |
+| `context_manager`   | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                                                                                                  |
+| `optional_backend`  | a weak-symbol backend; absent → `NotImplementedError`                                                                                                                                            |
 
 ______________________________________________________________________
 
@@ -697,6 +726,12 @@ ______________________________________________________________________
 | gh-287     | composer: generic c-face CLI generator                       |
 | gh-306     | handle generator: typed class, decoded-getters, RAII         |
 | gh-308     | handle: array+scalar method args + real-compile CI harness   |
+| gh-311     | handle: array-in→writable-array-out execute + writable prop  |
+| gh-314     | handle: per-field scalar getters (drop the struct shim)      |
+| gh-315     | handle: `init_fn` init-in-place constructor                  |
+| gh-319     | handle: keyword / default args on methods                    |
+| gh-318     | module functions: stateless `variable_output` (self-sizing)  |
+| gh-317     | composer: realtime-paced `stream()` (in-`.so` pacing)        |
 
 Each slice was validated by compiling and running the generated C against a real
 project and comparing byte-for-byte to the hand-written reference, culminating in
