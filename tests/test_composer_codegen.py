@@ -925,6 +925,14 @@ class TestRealtimeStream:
         assert "self->clk = dp_sample_clock_create(self->realtime, 0);" in s
         assert "dp_sample_clock_pace(self->clk, (size_t)n);" in s
         assert "dp_sample_clock_destroy(self->clk);" in s  # dealloc
+        # gh-343-review #1: the pace sleeps, so it must release the GIL — the
+        # pace call sits between BEGIN/END ALLOW_THREADS (clock create does not).
+        _b = s.index("Py_BEGIN_ALLOW_THREADS\n        dp_sample_clock_pace")
+        _e = s.index(
+            "dp_sample_clock_pace(self->clk, (size_t)n);\n        Py_END_ALLOW_THREADS"
+        )
+        assert _b >= 0 and _e >= 0
+        assert "Py_BEGIN_ALLOW_THREADS\n            self->clk =" not in s
         # stream(block, realtime=) parses both.
         assert 'static char *kwlist[] = {"block", "realtime", NULL};' in s
         assert 'ParseTupleAndKeywords(args, kwds, "|nd"' in s

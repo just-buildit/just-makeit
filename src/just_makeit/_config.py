@@ -1025,6 +1025,19 @@ def handle_close_fn(cfg: dict, module: str) -> str:
     )
 
 
+def handle_close_returns(cfg: dict, module: str) -> str:
+    """Return the C return type of a handle's ``close_fn``, if it reports a
+    status code (gh-178 review #5).
+
+    Defaults to ``""`` — ``close_fn`` is treated as ``void`` and its result is
+    ignored, matching most destructors. When set (``close_returns = "int"``),
+    the generated ``close()`` captures the return value and raises
+    ``RuntimeError`` on a non-zero code (``wfm_writer_close`` patches the BLUE
+    header on close and can fail on a short write). ``tp_dealloc`` and the
+    re-``__init__`` teardown still ignore it — neither may raise."""
+    return cfg.get("module", {}).get(module, {}).get("close_returns", "")
+
+
 def handle_optional_backend(cfg: dict, module: str) -> str:
     """Return the weak symbol a handle's ``tp_init`` guards on, if any.
 

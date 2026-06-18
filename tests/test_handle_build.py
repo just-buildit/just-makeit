@@ -144,7 +144,9 @@ def _ringbuf_module() -> dict:
                 "returns": "size_t",
                 "args": [
                     {"name": "x", "type": "float[]"},
-                    {"name": "gain", "type": "float"},
+                    # gh-178 review #6: a trailing-scalar default, callable
+                    # positionally, by keyword, or omitted.
+                    {"name": "gain", "type": "float", "default": "1.0f"},
                 ],
             },
             {
@@ -341,6 +343,74 @@ def _build_ticks_so(tmp: Path):
     return _compile_import(tmp, "ticks", _TICKS_H, _TICKS_C)
 
 
+# A third backing whose close_fn reports a status code (gh-178 review #5).
+# `flaky_close` returns the code stashed at open; close() must raise on nonzero.
+_FLAKY_H = """\
+#ifndef FLAKY_H
+#define FLAKY_H
+typedef struct flaky flaky_t;
+flaky_t *flaky_open(int rc);
+int flaky_close(flaky_t *f);
+#endif
+"""
+
+_FLAKY_C = """\
+#include "flaky/flaky.h"
+#include <stdlib.h>
+struct flaky { int rc; };
+flaky_t *flaky_open(int rc) {
+    flaky_t *f = malloc(sizeof *f);
+    if (f) f->rc = rc;
+    return f;
+}
+int flaky_close(flaky_t *f) { int rc = f->rc; free(f); return rc; }
+"""
+
+
+def _flaky_module() -> dict:
+    return {
+        "kind": "handle",
+        "backing": "flaky",
+        "header": "flaky/flaky.h",
+        "type_name": "Flaky",
+        "context_manager": True,
+        "create_fn": "flaky_open",
+        "close_fn": "flaky_close",
+        "close_returns": "int",  # gh-178 review #5
+        "create_args": [{"name": "rc", "type": "int", "default": "0"}],
+        "methods": [],
+        "getters": [],
+    }
+
+
+def _build_flaky_so(tmp: Path):
+    new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
+    cfg = C.load(tmp)
+    cfg.setdefault("module", {})["flaky"] = _flaky_module()
+    C.save(tmp, cfg)
+    apply_run(tmp)
+    return _compile_import(tmp, "flaky", _FLAKY_H, _FLAKY_C)
+
+
+def test_close_status_code_raises(tmp_path):
+    """gh-178 review #5: close() captures close_fn's rc and raises on nonzero;
+    a zero rc closes cleanly. The handle is marked closed either way (one-shot),
+    so a second close is a silent no-op and there is no double-free."""
+    Flaky = _build_flaky_so(tmp_path).Flaky
+
+    Flaky(rc=0).close()  # clean close, no raise
+
+    f = Flaky(rc=7)
+    with pytest.raises(RuntimeError):
+        f.close()
+    f.close()  # already closed -> no-op, no double-free
+
+    # __exit__ propagates the close failure too.
+    with pytest.raises(RuntimeError):
+        with Flaky(rc=1):
+            pass
+
+
 def test_generated_handle_so_compiles_imports_and_runs(tmp_path):
     mod = _build_ring_so(tmp_path)
     Ring = mod.Ring
@@ -364,11 +434,45 @@ def test_generated_handle_so_compiles_imports_and_runs(tmp_path):
 
 
 def test_mixed_array_scalar_method_passes_scalars(tmp_path):
-    """#308: push_gain(x, gain) must apply the scalar, not drop it."""
+    """#308: push_gain(x, gain) must apply the scalar, not drop it. gh-178
+    review #6: the trailing scalar carries a default and accepts keywords."""
     Ring = _build_ring_so(tmp_path).Ring
     r = Ring(capacity=8)
     assert r.push_gain(np.array([1, 2, 3], dtype=np.float32), 10.0) == 3
     assert r.pop(3).tolist() == [10.0, 20.0, 30.0]
+
+    # keyword form
+    assert r.push_gain(np.array([1, 2], dtype=np.float32), gain=4.0) == 2
+    assert r.pop(2).tolist() == [4.0, 8.0]
+
+    # omitted -> default gain 1.0
+    assert r.push_gain(np.array([5, 6], dtype=np.float32)) == 2
+    assert r.pop(2).tolist() == [5.0, 6.0]
+
+
+def test_required_create_arg_rejects_missing(tmp_path):
+    """gh-178 review #6: a no-default create-arg (capacity) is REQUIRED — the
+    old all-optional `|` let `Ring()` build with a 0 capacity (NULL handle)."""
+    Ring = _build_ring_so(tmp_path).Ring
+    with pytest.raises(TypeError):
+        Ring()  # missing required capacity
+    assert Ring(4).cap == 4  # positional required arg still works
+
+
+def test_reinit_releases_prior_handle(tmp_path):
+    """gh-178 review #9: a second __init__() on a live object releases the old
+    handle and rebuilds — no double-free, no crash, fresh state."""
+    Ring = _build_ring_so(tmp_path).Ring
+    r = Ring(capacity=4)
+    r.push(np.array([1, 2, 3], dtype=np.float32))
+    assert r.used == 3
+
+    # re-init: old handle torn down, new one built. State is fresh, the object
+    # still works (a leaked/double-freed handle would crash here).
+    r.__init__(capacity=8)
+    assert r.used == 0 and r.cap == 8
+    assert r.push(np.arange(5, dtype=np.float32)) == 5
+    assert r.used == 5
 
 
 def test_writable_property_and_execute_shape(tmp_path):

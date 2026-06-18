@@ -240,6 +240,27 @@ class TestTypeAndInit:
         assert "int sample_type;" in s  # struct field
         assert "self->sample_type = _arg_sample_type;" in s  # stash assign
 
+    def test_no_default_arg_is_required(self):
+        # gh-178 review #6: a create-arg with no `default` parses as REQUIRED —
+        # the `|` separates it from the defaulted args, not before everything
+        # (which let ZmqSink() build with a NULL endpoint and crash).
+        s = _wsrc()
+        # path (no default) is required; the defaulted args follow the `|`.
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "O&|ssd", kwlist,' in s
+
+    def test_reinit_releases_prior_handle(self):
+        # gh-178 review #9: a second __init__() must tear down the live handle
+        # before overwriting it, else it leaks. The teardown precedes the
+        # create_fn call and guards on the (closed, h) state.
+        s = _wsrc()
+        teardown = s.index("if (!self->closed && self->h) {")
+        create = s.index("self->h = wfm_writer_open(")
+        assert teardown < create
+        # the teardown closes and re-marks closed so create_fn can re-init.
+        seg = s[teardown:create]
+        assert "wfm_writer_close(self->h);" in seg
+        assert "self->h = NULL;" in seg
+
 
 class TestMethods:
     def test_array_in_scalar_return(self):
@@ -317,6 +338,46 @@ class TestRAII:
         assert (
             '{"__exit__", (PyCFunction)Writer_exit, METH_VARARGS, NULL}' in s
         )
+
+
+class TestCloseStatus:
+    """gh-178 review #5: when close_fn reports a status code, close() captures
+    it and raises on a non-zero result; tp_dealloc stays silent (can't raise)."""
+
+    def test_close_raises_on_nonzero_rc(self):
+        cfg = _writer_cfg()
+        cfg["module"]["wfm_writer"]["close_returns"] = "int"
+        s = _handle.render_ext(cfg, "wfm_writer")
+        # close() captures the rc and raises RuntimeError on non-zero.
+        assert "int _rc = wfm_writer_close(self->h);" in s
+        assert "PyErr_Format(PyExc_RuntimeError,\n" in s
+        assert '"wfm_writer_close failed (rc=%d)", (int)_rc);' in s
+        # the handle is torn down + marked closed before raising (one-shot).
+        ci = s.index("Writer_close(WriterObject *self")
+        seg = s[ci : s.index("\nstatic ", ci)]
+        assert "self->closed = 1;" in seg
+        assert "return NULL;" in seg
+
+    def test_dealloc_stays_silent(self):
+        cfg = _writer_cfg()
+        cfg["module"]["wfm_writer"]["close_returns"] = "int"
+        s = _handle.render_ext(cfg, "wfm_writer")
+        di = s.index("Writer_dealloc(WriterObject *self)")
+        seg = s[
+            di : s.index("\nstatic ", di) if "\nstatic " in s[di:] else len(s)
+        ]
+        # dealloc never captures the rc or raises — it just calls close_fn.
+        assert "wfm_writer_close(self->h);" in seg
+        assert "PyErr_Format" not in seg
+
+    def test_void_close_unchanged(self):
+        # default (no close_returns): the silent close stays as before.
+        s = _wsrc()
+        assert "int _rc =" not in s
+        ci = s.index("Writer_close(WriterObject *self")
+        seg = s[ci : s.index("\nstatic ", ci)]
+        assert "wfm_writer_close(self->h);" in seg
+        assert "PyErr_Format" not in seg
 
 
 class TestOptionalBackend:
@@ -413,9 +474,34 @@ class TestMixedArgMethod:
             ],
         }
         s = _handle._emit_method(_writer_cfg(), "wfm_writer", m)
-        assert 'PyArg_ParseTuple(args, "Odd", &x_obj, &fs, &fc)' in s
+        # Trailing scalars parse with keywords (gh-178 review #6) so they can
+        # carry defaults; the array name leads the kwlist.
+        assert (
+            "Writer_send(WriterObject *self, PyObject *args, PyObject *kwds)"
+            in s
+        )
+        assert 'static char *kwlist[] = {"iq", "fs", "fc", NULL};' in s
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "Odd", kwlist,' in s
+        assert "&x_obj, &fs, &fc" in s
         assert "double fs;" in s and "double fc;" in s
         assert "wfm_zmq_sink_send(self->h, in_data, n_in, fs, fc)" in s
+
+    def test_array_plus_scalar_default(self):
+        """gh-178 review #6: a trailing scalar `default` inserts the `|` split
+        and shows as `= ...` in the stub — the hand-written send had an fc
+        default the old positional parse dropped."""
+        m = {
+            "name": "send",
+            "fn": "wfm_zmq_sink_send",
+            "args": [
+                {"name": "iq", "type": "float _Complex[]"},
+                {"name": "fs", "type": "double"},
+                {"name": "fc", "type": "double", "default": "0.0"},
+            ],
+        }
+        s = _handle._emit_method(_writer_cfg(), "wfm_writer", m)
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "Od|d", kwlist,' in s
+        assert "double fc = 0.0;" in s
 
     def test_more_than_one_array_arg_is_unsupported(self):
         m = {

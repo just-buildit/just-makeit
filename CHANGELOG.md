@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Handle codegen gaps from the doppler#179 review (gh-178)** — four fixes to
+    the generators, batched:
+    - **Realtime `stream()` paces with the GIL held (review #1)** —
+        `Composer.stream(realtime=fs)` slept the per-block pace under the GIL,
+        freezing every other Python thread (e.g. a `ZmqSink` consumer). The
+        blocking pace now runs inside `Py_BEGIN_ALLOW_THREADS` /
+        `Py_END_ALLOW_THREADS`, matching a `nogil` handle method.
+    - **`close()` discards `close_fn`'s status code (review #5)** — a handle
+        whose destructor reports an `int` rc (e.g. `wfm_writer_close` patches the
+        BLUE `data_size` on close and can fail on a short write) silently dropped
+        it. A new `close_returns` key makes the generated `close()` / `__exit__`
+        capture the rc and raise `RuntimeError` on a non-zero result; the handle
+        is still torn down and marked closed before raising (one-shot, no
+        double-free). `tp_dealloc` stays silent — a destructor must not raise.
+    - **A no-default create-arg parsed as optional (review #6)** — the handle
+        `tp_init` emitted an all-optional `|...` format, so a required arg with no
+        manifest `default` (`ZmqSink(endpoint)`) parsed as `NULL` and crashed.
+        Required args now precede the `|`. A handle method's trailing scalars
+        (the `send(iq, fs, fc=…)` shape) likewise parse with keywords + defaults
+        instead of positional-only, so a `default` is honoured.
+    - **Re-`__init__()` leaks the prior handle (review #9)** — a second
+        `__init__()` on a live object overwrote `self->h` without releasing the
+        old handle. `tp_init` now tears the prior handle down (mirroring
+        `tp_dealloc`) before rebuilding; a no-op on the first construction.
+
 ## [0.19.25] — 2026-06-18
 
 ### Fixed
