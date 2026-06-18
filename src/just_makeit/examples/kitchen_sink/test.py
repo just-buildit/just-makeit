@@ -623,6 +623,12 @@ def run(root: Path) -> None:
         "-B",
         str(build),
         "-DBUILD_PYTHON=ON",
+        # Pin the interpreter to the one running the test (mirrors the
+        # generated Makefile's -DPython3_EXECUTABLE=$(PYTHON)). Configuring
+        # cmake directly, FindPython3 would otherwise pick the newest Python
+        # on the box, which on a mixed-version machine can be a headerless
+        # system Python that fails Development.Module / NumPy discovery.
+        f"-DPython3_EXECUTABLE={sys.executable}",
     ]
     if doppler_prefix:
         cmake_args.append(f"-DDoppler_DIR={_doppler_dir(doppler_prefix)}")
