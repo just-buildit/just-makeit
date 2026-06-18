@@ -802,6 +802,8 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         functions,
         extra_files,
         extra_types=C.extra_types(cfg, module),
+        # gh-353: a module function's enum param needs the SSOT enum tables.
+        enums=C.enums(cfg),
     )
     _write(ext_c_path, aggregator, "update")
 

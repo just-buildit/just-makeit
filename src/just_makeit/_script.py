@@ -177,7 +177,20 @@ def _function_flags(fn: dict, module: str) -> list[str]:
     parts: list[str] = [_flag("--module", module)]
 
     for p in fn.get("params", []):
-        val = f"{p['name']}:{p['type']}"
+        # gh-353: reconstruct the path / enum --param syntax.
+        #   path arg  -> name:path
+        #   enum arg  -> name:enum:<ename>[=<default>]   (type is "int")
+        # A plain scalar with a default round-trips as name:type=<default>.
+        if p["type"] == "path":
+            val = f"{p['name']}:path"
+        elif p.get("enum"):
+            val = f"{p['name']}:enum:{p['enum']}"
+            if p.get("default") not in (None, ""):
+                val += f"={p['default']}"
+        else:
+            val = f"{p['name']}:{p['type']}"
+            if p.get("default") not in (None, ""):
+                val += f"={p['default']}"
         parts.append(_flag("--param", val))
 
     rt = fn.get("return_type", "")

@@ -187,6 +187,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # carry it rather than the `new` default.
     tcfg = C.load(temp_root)
     tcfg["project"]["version"] = C.project_version(cfg)
+    # gh-353: carry the top-level [[enum]] SSOT into the temp manifest so a
+    # replayed `jm function` with an enum param validates the name (and renders
+    # the enum tables) against the same declared enums as the real project.
+    if cfg.get("enum"):
+        tcfg["enum"] = cfg["enum"]
     C.save(temp_root, tcfg)
 
     # `new` with no objects writes the minimal package __init__.py; the
@@ -420,10 +425,16 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 params=[
                     # gh-170: `mutable` is accepted as a synonym for `out` —
                     # both drop the `const` on a writable array param.
+                    # gh-353: replay the 5-tuple including `default` and `enum`
+                    # so path/enum/defaulted params survive `jm apply`
+                    # regeneration (the rendered _ext.c keeps its enum/path
+                    # handling, otherwise these would silently drop).
                     (
                         p["name"],
                         p["type"],
                         bool(p.get("out") or p.get("mutable")),
+                        p.get("default", ""),
+                        p.get("enum", ""),
                     )
                     for p in fn.get("params", [])
                 ],

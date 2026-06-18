@@ -6,6 +6,25 @@ import sys
 from pathlib import Path
 
 
+def _required_after_default_ok(
+    fn_params: list[tuple], pname: str, pdefault: str
+) -> bool:
+    """Enforce the PyArg ``|`` ordering rule: a required param may not follow a
+    defaulted one (gh-240). Returns True if OK; prints + returns False if not.
+
+    Shared by the scalar, path, and enum (gh-353) ``--param`` paths so all three
+    obey the same "defaulted params come last" constraint.
+    """
+    if not pdefault and any(len(fp) > 3 and fp[3] for fp in fn_params):
+        print(
+            f"error: required param '{pname}' cannot follow a"
+            f" defaulted param; defaulted params must come last.",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def run(args: list[str]) -> None:
     if len(args) < 1:
         print("error: 'function' requires a function name.", file=sys.stderr)
@@ -57,6 +76,39 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             pname, ptype = val.split(":", 1)
+            # gh-353: two new arg kinds, handled BEFORE the scalar/array type
+            # validation below (which would reject them). They mirror the handle
+            # generator's path/enum semantics.
+            #   --param name:path        -> str | os.PathLike, const char *
+            #   --param name:enum:<e>    -> str validated to int via _enum_index
+            # Both may take a trailing `=<default>` like a plain scalar; an
+            # enum's default is its choice string, a path's a quoted literal.
+            if ptype == "path" and not is_out_flag:
+                if not _required_after_default_ok(fn_params, pname, ""):
+                    sys.exit(1)
+                fn_params.append((pname, "path", False, "", ""))
+                i += 1
+                continue
+            if ptype.startswith("enum:") and not is_out_flag:
+                ename = ptype[len("enum:") :]
+                edefault = ""
+                if "=" in ename:
+                    ename, edefault = ename.split("=", 1)
+                if not ename:
+                    print(
+                        f"error: {tok} '{val}' must be name:enum:<enum_name>",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                if not _required_after_default_ok(fn_params, pname, edefault):
+                    sys.exit(1)
+                # type stays "int" (the C function receives a plain int); the
+                # enum name rides in the 5th tuple slot. Name validity against
+                # the declared [[enum]] tables is checked in _function.run()
+                # (the CLI parser has no loaded cfg here).
+                fn_params.append((pname, "int", False, edefault, ename))
+                i += 1
+                continue
             # gh-240: an optional `=default` suffix makes a scalar param
             # omittable (the binding applies the default when the caller leaves
             # it out). Scoped to plain scalars: arrays, out-params, and complex
