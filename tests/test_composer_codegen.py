@@ -941,3 +941,81 @@ class TestRealtimeStream:
         assert "self->realtime" not in s
         assert "->clk" not in s
         assert 'ParseTupleAndKeywords(args, kwds, "|n", kwlist, &block))' in s
+
+
+class TestDelegatedSerializers:
+    """gh-317 feature 2 / gh-313: `[[module.X.serializers]]` generates additional
+    delegated serializers (to_sigmf, …) — a `<Composer>.<name>(params) -> str`
+    that coerces leading scalar/enum params and calls the project's C serializer
+    `fn(<params>, segs, n)` over the resolved segments. The sanctioned path for
+    domain wire formats jm generates none of."""
+
+    def _cfg(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["serializers"] = [
+            {
+                "name": "to_sigmf",
+                "fn": "wfm_sigmf_meta_json",
+                "returns": "str",
+                "params": [
+                    {
+                        "name": "kind",
+                        "type": "int",
+                        "enum": "wfm_type",
+                        "default": "tone",
+                    },
+                    {"name": "fs", "type": "double", "default": "1e6"},
+                    {"name": "fc", "type": "double", "default": "0.0"},
+                ],
+            }
+        ]
+        return cfg
+
+    def test_serializer_method_codegen(self):
+        s = _composer.render_composer_type(self._cfg(), "wfm_compose")
+        assert (
+            "Composer_to_sigmf(ComposerObject *self, "
+            "PyObject *args, PyObject *kwds)" in s
+        )
+        # leading params parse (enum as string, scalars), with defaults.
+        assert 'static char *kwlist[] = {"kind", "fs", "fc", NULL};' in s
+        assert 'ParseTupleAndKeywords(args, kwds, "|sdd"' in s
+        # enum param validates to its SSOT int.
+        assert "int _e_kind = _enum_index(_enum_wfm_type, kind);" in s
+        # fetch the resolved segments, then delegate: fn(<params>, segs, n).
+        assert "wfm_compose_segments(self->state, &_n, &_rep, &_cont);" in s
+        assert "wfm_sigmf_meta_json(_e_kind, fs, fc, segs, _n);" in s
+        assert "PyUnicode_FromString(_js);" in s
+        # registered in the method table.
+        assert '{"to_sigmf",' in s
+        assert "METH_VARARGS | METH_KEYWORDS" in s
+
+    def test_round_trips_through_toml(self, tmp_path):
+        from just_makeit import _config as C
+
+        C.save(tmp_path, self._cfg())
+        sers = C.composer_serializers(C.load(tmp_path), "wfm_compose")
+        assert sers and sers[0]["name"] == "to_sigmf"
+        assert sers[0]["fn"] == "wfm_sigmf_meta_json"
+        assert sers[0]["params"][0]["enum"] == "wfm_type"
+        assert sers[0]["params"][1]["name"] == "fs"
+
+    def test_pyi_exposes_serializer(self):
+        pyi = _composer.render_pyi(self._cfg(), "wfm_compose")
+        assert (
+            "def to_sigmf(self, kind: str = ..., fs: float = ..., "
+            "fc: float = ...) -> str: ..." in pyi
+        )
+
+    def test_no_params_serializer_is_noargs(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["serializers"] = [
+            {"name": "to_blue", "fn": "wfm_blue_meta"}
+        ]
+        s = _composer.render_composer_type(cfg, "wfm_compose")
+        assert (
+            "Composer_to_blue(ComposerObject *self, "
+            "PyObject *Py_UNUSED(ignored))" in s
+        )
+        assert "wfm_blue_meta(segs, _n);" in s
+        assert '{"to_blue", (PyCFunction)Composer_to_blue,' in s

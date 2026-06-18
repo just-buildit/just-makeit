@@ -79,6 +79,12 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
             e = f.get("enum")
             if e and e not in seen:
                 seen.append(e)
+    # gh-317: delegated serializers' enum params need their SSOT tables too.
+    for s in C.composer_serializers(cfg, module):
+        for p in s.get("params", []):
+            e = p.get("enum")
+            if e and e not in seen:
+                seen.append(e)
     return seen
 
 
@@ -1100,6 +1106,103 @@ static PyTypeObject {type_obj} = {{
 """
 
 
+def render_serializers(
+    cfg: dict,
+    module: str,
+    cname: str,
+    obj: str,
+    seg_struct: str,
+    segments_fn: str,
+) -> tuple[str, str]:
+    """Emit the ``[[module.X.serializers]]`` delegated serializer methods (gh-317).
+
+    Each is a ``<Composer>.<name>(<params>) -> str`` that coerces its leading
+    scalar/enum params (enums validate to their SSOT int), fetches the resolved
+    segments, and delegates to the project's C serializer ``fn(<params>, segs,
+    n)``. This is the sanctioned path for domain wire formats jm generates none
+    of (SigMF / BLUE; see gh-313). Returns ``(funcs, method_rows)``."""
+    sers = C.composer_serializers(cfg, module)
+    if not sers:
+        return "", ""
+    funcs: list[str] = []
+    rows: list[str] = []
+    for s in sers:
+        name, fn = s["name"], s["fn"]
+        returns = s.get("returns", "str")
+        params = list(s.get("params", []))
+        decls, kwl, addrs, enum_val, call = [], [], [], [], []
+        fmt, barred = "", False
+        for p in params:
+            pn, pt = p["name"], p["type"]
+            kwl.append(f'"{pn}"')
+            bar = "|" if (p.get("default") is not None and not barred) else ""
+            if bar:
+                barred = True
+            addrs.append(f"&{pn}")
+            if p.get("enum"):
+                e = p["enum"]
+                decls.append(
+                    f'    const char *{pn} = "{p.get("default", "")}";'
+                )
+                fmt += bar + "s"
+                enum_val.append(
+                    f"    int _e_{pn} = _enum_index(_enum_{e}, {pn});\n"
+                    f"    if (_e_{pn} < 0) {{\n"
+                    f"        PyErr_Format(PyExc_ValueError,"
+                    f" \"invalid {pn} '%s'\", {pn});\n"
+                    f"        return NULL;\n    }}"
+                )
+                call.append(f"_e_{pn}")
+            else:
+                decls.append(f"    {pt} {pn} = {p.get('default', '0')};")
+                fmt += bar + _FMT.get(pt, "i")
+                call.append(pn)
+        decls_s = "\n".join(decls)
+        enum_s = ("\n".join(enum_val) + "\n") if enum_val else ""
+        call_prefix = (", ".join(call) + ", ") if call else ""
+        if params:
+            py_sig = "PyObject *args, PyObject *kwds"
+            parse = (
+                f"    static char *kwlist[] = {{{', '.join(kwl)}, NULL}};\n"
+                f"    if (!PyArg_ParseTupleAndKeywords("
+                f'args, kwds, "{fmt}", kwlist,\n'
+                f"            {', '.join(addrs)}))\n        return NULL;\n"
+            )
+            flags = "METH_VARARGS | METH_KEYWORDS"
+            fnref = f"(PyCFunction)(void (*)(void)){cname}_{name}"
+        else:
+            py_sig = "PyObject *Py_UNUSED(ignored)"
+            parse = ""
+            flags = "METH_NOARGS"
+            fnref = f"(PyCFunction){cname}_{name}"
+        funcs.append(f"""static PyObject *
+{cname}_{name}({obj} *self, {py_sig})
+{{
+    if (self->destroyed) {{
+        PyErr_SetString(PyExc_RuntimeError, "composer already closed");
+        return NULL;
+    }}
+{decls_s}
+{parse}{enum_s}    size_t _n; int _rep = 0, _cont = 0;
+    const {seg_struct} *segs =
+        {segments_fn}(self->state, &_n, &_rep, &_cont);
+    char *_js = {fn}({call_prefix}segs, _n);
+    if (!_js) {{
+        PyErr_SetString(PyExc_RuntimeError, "{fn} failed");
+        return NULL;
+    }}
+    PyObject *_s = PyUnicode_FromString(_js);
+    free(_js);
+    return _s;
+}}
+""")
+        rows.append(
+            f'    {{"{name}", {fnref},\n'
+            f'     {flags}, "{name}(...) -> {returns}"}},\n'
+        )
+    return "\n".join(funcs), "".join(rows)
+
+
 # ── composer type (e.g. Composer) ────────────────────────────────────────────
 
 
@@ -1461,6 +1564,11 @@ fail:
             f'    {{"to_dict", (PyCFunction){cname}_to_dict, METH_NOARGS,\n'
             f'     "to_dict() -> dict (resolved repeat/continuous/segments)"}},\n'
         )
+
+    # gh-317: additional delegated serializers (to_sigmf, …) over the segments.
+    serializer_code, serializer_rows = render_serializers(
+        cfg, module, cname, obj, seg_struct, segments_fn
+    )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
@@ -1875,7 +1983,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
-{stream_code}{to_dict_code}static PyMethodDef {cname}_methods[] = {{
+{stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
     {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
      "execute(n) -> ndarray[complex64]"}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
@@ -1883,7 +1991,7 @@ static PyGetSetDef {cname}_getset[] = {{
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-{stream_row}{to_dict_row}{json_rows}    {{NULL, NULL, 0, NULL}}
+{stream_row}{to_dict_row}{serializer_rows}{json_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
@@ -2199,6 +2307,15 @@ def render_pyi(cfg: dict, module: str) -> str:
             if C.composer_stream(cfg, module).get("to_dict")
             else []
         ),
+        *[
+            f"    def {s['name']}(self"
+            + "".join(
+                f", {p['name']}: {_pyi_field_type(p)} = ..."
+                for p in s.get("params", [])
+            )
+            + f") -> {s.get('returns', 'str')}: ..."
+            for s in C.composer_serializers(cfg, module)
+        ],
         "    def close(self) -> None: ...",
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
