@@ -856,7 +856,13 @@ def composer_serializers(cfg: dict, module: str) -> list[dict]:
     none of (SigMF, BLUE, …): the project hand-writes the C serializer, jm
     generates the typed method over the resolved spec (gh-313 — the delegation
     is a deliberate carve-out, not drift). Each param is ``{name, type, enum?,
-    default?}`` (enums cross as validated SSOT strings)."""
+    default?}`` (enums cross as validated SSOT strings).
+
+    An optional ``header`` key (gh-343) is ``#include``-d in the generated
+    ``<module>_ext.c`` so the serializer ``fn``'s declaration is in scope — the
+    fn lives in an arbitrary project header, not an auto-included
+    ``<dep>_core.h``, so without it the call is an implicit declaration that
+    miscompiles."""
     v = cfg.get("module", {}).get(module, {}).get("serializers", [])
     return list(v) if isinstance(v, (list, tuple)) else []
 
@@ -2065,6 +2071,8 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         out.append(f'fn = "{s["fn"]}"')
         if s.get("returns"):
             out.append(f'returns = "{s["returns"]}"')
+        if s.get("header"):  # gh-343: #include for the serializer fn's decl
+            out.append(f'header = "{s["header"]}"')
         if s.get("params"):
             out.append(
                 "params = ["

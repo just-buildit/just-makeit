@@ -2054,6 +2054,17 @@ def render_ext(cfg: dict, module: str) -> str:
     _rt = C.composer_stream(cfg, module).get("realtime") or {}
     rt_includes = f'#include "{_rt["header"]}"\n' if _rt.get("header") else ""
 
+    # gh-343: a delegated serializer's C fn lives in an arbitrary project header
+    # (e.g. wfm/wfm_writer.h), not an auto-included <dep>_core.h — so emit each
+    # serializer's optional `header`, or its call is an implicit declaration
+    # that miscompiles (a str fn read as int). Deduped, in declaration order.
+    _ser_headers: list[str] = []
+    for _s in C.composer_serializers(cfg, module):
+        _h = _s.get("header")
+        if _h and _h not in _ser_headers:
+            _ser_headers.append(_h)
+    serializer_includes = "".join(f'#include "{h}"\n' for h in _ser_headers)
+
     gen = _source_generates(cfg, module)
     gen_includes = ""
     if gen:
@@ -2081,7 +2092,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include <string.h>
 
 #include "{header}"
-{gen_includes}{json_includes}{rt_includes}""",
+{gen_includes}{json_includes}{rt_includes}{serializer_includes}""",
         render_enum_tables(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
