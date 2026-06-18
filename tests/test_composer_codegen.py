@@ -1006,7 +1006,10 @@ class TestDelegatedSerializers:
         # gh-343: the _dump (no-tomlkit) writer must also emit `header`.
         from just_makeit import _config as C
 
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         rt = tomllib.loads(C._dump(self._cfg()))
         assert (
