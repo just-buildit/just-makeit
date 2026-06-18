@@ -1027,3 +1027,106 @@ class TestOutArrayParamNotConst:
         cfg = (out_param_fn / "just-makeit.toml").read_text(encoding="utf-8")
         # The dumped manifest preserves `out = true` for the output param.
         assert "out = true" in cfg
+
+
+class TestVariableOutputFunction:
+    """gh-318: a module function may allocate its OWN self-sized 1-D output
+    (variable_output=true) — distinct from sizing to an input array's length or
+    a caller-supplied `out=true` buffer. The length is an `out_size` C expr over
+    the args (incl. array `<name>_len`s); `out` is appended last to the call; a
+    size_t return trims, a void return keeps the full allocation. Keeps a
+    helper like rrc_taps(beta, sps, span) -> ndarray zero-Python."""
+
+    def _w(self, fn):
+        from just_makeit._render import make_functions_ctx
+
+        return make_functions_ctx("wfm", "Wfm", [fn])["function_wrappers"]
+
+    def test_scalar_args_self_sized_void(self):
+        w = self._w(
+            {
+                "name": "rrc_taps",
+                "return_type": "void",
+                "out_type": "float",
+                "variable_output": True,
+                "out_size": "rrc_ntaps(sps, span)",
+                "params": [
+                    {"name": "beta", "type": "double"},
+                    {"name": "sps", "type": "int"},
+                    {"name": "span", "type": "int"},
+                ],
+            }
+        )
+        # length from the out_size expr; allocate; out appended LAST; full return.
+        assert "npy_intp _dim = (npy_intp)(rrc_ntaps(sps, span));" in w
+        assert "PyArray_EMPTY(1, &_dim, NPY_FLOAT, 0)" in w
+        assert (
+            "rrc_taps(beta, sps, span, "
+            "(float *)PyArray_DATA((PyArrayObject *)_out));" in w
+        )
+        assert "return _out;" in w
+        assert "PyArray_DIMS" not in w  # void → no trim
+
+    def test_array_in_out_size_references_array_len(self):
+        w = self._w(
+            {
+                "name": "upsample",
+                "return_type": "void",
+                "out_type": "float",
+                "variable_output": True,
+                "out_size": "x_len * factor",
+                "params": [
+                    {"name": "x", "type": "float[]"},
+                    {"name": "factor", "type": "int"},
+                ],
+            }
+        )
+        # input array marshaled; out_size uses its `_len`; cleanup before return.
+        assert "size_t x_len = (size_t)PyArray_SIZE(x_arr);" in w
+        assert "npy_intp _dim = (npy_intp)(x_len * factor);" in w
+        assert (
+            "upsample(x, x_len, factor, "
+            "(float *)PyArray_DATA((PyArrayObject *)_out));" in w
+        )
+        assert "Py_DECREF(x_arr);" in w
+
+    def test_size_t_return_trims_to_count(self):
+        w = self._w(
+            {
+                "name": "compact",
+                "return_type": "size_t",
+                "out_type": "float",
+                "variable_output": True,
+                "out_size": "n",
+                "params": [{"name": "n", "type": "int"}],
+            }
+        )
+        # a counting fn: allocate the cap, then trim the array to the return.
+        assert "size_t _n = (size_t)compact(n, " in w
+        assert "PyArray_DIMS((PyArrayObject *)_out)[0] = (npy_intp)_n;" in w
+
+    def test_round_trips_through_toml(self, tmp_path):
+        # out_size survives save()->load() (the generic gh-257 path).
+        from just_makeit import _config as C
+
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "module": {
+                "wfm": {
+                    "functions": [
+                        {
+                            "name": "rrc_taps",
+                            "return_type": "void",
+                            "out_type": "float",
+                            "variable_output": True,
+                            "out_size": "rrc_ntaps(sps, span)",
+                            "params": [{"name": "sps", "type": "int"}],
+                        }
+                    ]
+                }
+            },
+        }
+        C.save(tmp_path, cfg)
+        fn = C.module_functions(C.load(tmp_path), "wfm")[0]
+        assert fn.get("variable_output") in (True, "true")
+        assert fn["out_size"] == "rrc_ntaps(sps, span)"
