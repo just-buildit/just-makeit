@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stale reexports pruned, so `jm status --check` catches the drift
+    (gh-329)** — the module `__init__.py` reexport merge was purely additive: a
+    name removed from `[module.X].objects` or from a `reexports` list stayed on
+    its `from .<sub> import …` line, and a whole reexported sibling dropped from
+    the manifest left its import line behind — an `ImportError` at runtime that
+    `status --check` reported as OK (status replays `apply`, which never pruned).
+    The merge is now authoritative: the module's own import line and each
+    reexport line carry exactly the manifest's current names (surviving order
+    kept, removed names dropped), stale glue lines for siblings no longer
+    reexported are swept, and duplicate generated import lines collapse. User
+    content — wrapper classes, hand-written imports without the `# noqa: E402`
+    glue marker — is preserved (the gh#1 contract). Because `status --check`
+    diffs the pruning `apply` against disk, a stale reexport now surfaces as
+    drift instead of silently passing the gate.
+
 ## [0.19.22] — 2026-06-18
 
 ### Added
