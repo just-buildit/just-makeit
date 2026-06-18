@@ -33,6 +33,7 @@ from pathlib import Path
 from . import _capsule
 from . import _composer
 from . import _config as C
+from . import _types as T
 
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
 
@@ -285,7 +286,7 @@ def _init_fsfree(args: list[dict]) -> str:
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
     """Emit one handle method calling ``fn(self->h, …)``.
 
-    Three shapes (the doppler archetype):
+    Four shapes (the doppler archetype):
       (a) scalar(s) → scalar return — ``track_clipping(on) -> None``;
       (b) array-in (+ optional trailing scalars) → scalar return — ``write(iq)
           -> size_t`` and ``send(iq, fs, fc) -> None`` (reuses the capsule
@@ -294,7 +295,11 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
       (c) int-in → array-out — ``read(n) -> ndarray`` (allocates an out array of
           size n, calls ``fn(h, out, n) -> actual``, returns an INDEPENDENT
           numpy-owned array trimmed to ``actual`` — never a dangling view; the
-          gh-219 grow-on-demand fix shape)."""
+          gh-219 grow-on-demand fix shape);
+      (d) array-in + writable array-out → array view — ``execute(x, out)``
+          (marshals a borrowed input and a writable exact-dtype output, calls
+          ``fn(h, in, n_in, out, max_out) -> n_out``, returns the zero-copy
+          ``out[:n_out]``; mirrors the capsule ``_emit_execute``, #311)."""
     tname = C.handle_type_name(cfg, module)
     obj = f"{tname}Object"
     name, fn = m["name"], m["fn"]
@@ -335,6 +340,69 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {gil_open}    got = {fn}(self->h, out, (size_t){cnt});
 {gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim */
     return arr;
+}}
+"""
+
+    # (d) array-in + writable array-out → out[:n_out] view (#311). A writable
+    # array arg + an array return marks a caller-buffer execute: marshal a
+    # borrowed input and a writable exact-dtype output (no silent cast — a cast
+    # would write into a temp copy, not the caller's buffer), call
+    # fn(h, in, n_in, out, max_out), and return the zero-copy view out[:n_out],
+    # which pins the caller's array (gh-219). Mirrors capsule _emit_execute.
+    writable_out = [a for a in array_in if a.get("writable")]
+    if writable_out and returns and str(returns).endswith("[]"):
+        o = writable_out[0]
+        ins = [a for a in array_in if not a.get("writable")]
+        if len(writable_out) > 1 or len(ins) != 1:
+            raise NotImplementedError(
+                f"handle method '{name}': shape (d) takes exactly one input "
+                "array and one writable output array"
+            )
+        a = ins[0]
+        xn, on = a["name"], o["name"]
+        in_elem, in_npy = _array_elem_npy(a["type"])
+        out_elem, out_npy = _array_elem_npy(o["type"])
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args)
+{{
+    PyObject *{xn}_obj, *{on}_obj;
+    if (!PyArg_ParseTuple(args, "OO", &{xn}_obj, &{on}_obj)) return NULL;
+{closed_guard}
+    PyArrayObject *{xn}_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        {xn}_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
+    if (!{xn}_arr) return NULL;
+
+    /* Require the exact output dtype — no silent cast (a cast writes into a
+     * temp copy instead of the caller's buffer). */
+    if (!PyArray_Check({on}_obj) ||
+        PyArray_TYPE((PyArrayObject *){on}_obj) != {out_npy} ||
+        !PyArray_ISWRITEABLE((PyArrayObject *){on}_obj)) {{
+        PyErr_SetString(PyExc_TypeError,
+            "{on} must be a writable ndarray of the output dtype");
+        Py_DECREF({xn}_arr);
+        return NULL;
+    }}
+    PyArrayObject *{on}_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        {on}_obj, {out_npy}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    if (!{on}_arr) {{ Py_DECREF({xn}_arr); return NULL; }}
+
+    size_t n_in    = (size_t)PyArray_SIZE({xn}_arr);
+    size_t max_out = (size_t)PyArray_SIZE({on}_arr);
+    const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA({xn}_arr);
+    {out_elem} *out_data = ({out_elem} *)PyArray_DATA({on}_arr);
+    size_t n_out;
+{gil_open}    n_out = {fn}(self->h, in_data, n_in, out_data, max_out);
+{gil_close}    Py_DECREF({xn}_arr);
+
+    /* Return {on}_arr[:n_out] — zero-copy view into the caller's buffer. */
+    PyObject *stop  = PyLong_FromSsize_t((Py_ssize_t)n_out);
+    PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;
+    Py_XDECREF(stop);
+    PyObject *view  = slice ? PyObject_GetItem((PyObject *){on}_arr, slice)
+                            : NULL;
+    Py_XDECREF(slice);
+    Py_DECREF({on}_arr);
+    return view;
 }}
 """
 
@@ -409,23 +477,33 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 # ── getsets (decoded-getter property — THE genuinely-new C) ───────────────────
 
 
-def _decode_field(g: dict, f: dict, tname: str) -> str:
-    """Decode one struct field of a getter's out-struct into a PyObject.
+def _scalar_out(g: dict) -> bool:
+    """True if a getter's ``out`` is a scalar C type (return-by-value) rather
+    than a struct filled through an out-pointer. A scalar getter ``T fn(h)``
+    (e.g. ``double ddcr_get_norm_freq(s)``) backs a single writable property;
+    a struct getter ``void fn(h, T *out)`` backs N decoded fields (#311)."""
+    return g["out"] in T._CTYPE_META
 
-    The genuinely-new transform menu:
-      plain   → ``_to_py(tmp.<from|name>)`` (reuses _CTYPE_META);
-      enum    → ``PyUnicode_FromString(_enum_<e>[tmp.<from>])`` (composer SSOT);
-      scale   → ``_to_py(tmp.<from> * <scale>)``;
-      expr    → the verbatim-C ``expr`` (may reference ``tmp.<f>`` + stashed
-                ``self-><init>``)."""
-    member = f.get("from", f["name"])
+
+def _decode_field(g: dict, f: dict, tname: str) -> str:
+    """Decode one field of a getter's result into a PyObject.
+
+    The access expression is ``tmp`` for a scalar getter (the whole returned
+    value) or ``tmp.<from|name>`` for a struct getter's named member. The
+    transform menu then applies:
+      plain   → ``_to_py(<acc>)`` (reuses _CTYPE_META);
+      enum    → ``PyUnicode_FromString(_enum_<e>[<acc>])`` (composer SSOT);
+      scale   → ``_to_py(<acc> * <scale>)``;
+      expr    → the verbatim-C ``expr`` (may reference ``tmp`` / ``tmp.<f>`` +
+                stashed ``self-><init>``)."""
+    acc = "tmp" if _scalar_out(g) else f"tmp.{f.get('from', f['name'])}"
     if f.get("expr"):
         return _to_py(f["type"], f["expr"])
     if f.get("enum"):
-        return f"PyUnicode_FromString(_enum_{f['enum']}[tmp.{member}])"
+        return f"PyUnicode_FromString(_enum_{f['enum']}[{acc}])"
     if "scale" in f:
-        return _to_py(f["type"], f"tmp.{member} * {f['scale']}")
-    return _to_py(f["type"], f"tmp.{member}")
+        return _to_py(f["type"], f"{acc} * {f['scale']}")
+    return _to_py(f["type"], acc)
 
 
 def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
@@ -441,18 +519,27 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     funcs: list[str] = []
     rows: list[str] = []
 
+    closed_get = f"""    if (self->closed) {{
+        PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
+        return NULL;
+    }}"""
+
     for gi, g in enumerate(C.handle_getters(cfg, module)):
         out_t = g["out"]
         cache = bool(g.get("cache"))
-        # cache=true reads the struct stashed in tp_init; live calls the getter.
+        scalar = _scalar_out(g)
+        # cache=true reads the value stashed in tp_init; live calls the getter.
+        # A scalar getter returns by value (tmp = fn(h)); a struct getter fills
+        # an out-pointer (fn(h, &tmp)).
         if cache:
             fetch = f"    {out_t} tmp = self->_g{gi};"
+        elif scalar:
+            fetch = f"""    {out_t} tmp;
+{closed_get}
+    tmp = {g["fn"]}(self->h);"""
         else:
             fetch = f"""    {out_t} tmp;
-    if (self->closed) {{
-        PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
-        return NULL;
-    }}
+{closed_get}
     {g["fn"]}(self->h, &tmp);"""
         for f in g.get("fields", []):
             n = f["name"]
@@ -464,9 +551,39 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     return {_decode_field(g, f, tname)};
 }}
 """)
-            rows.append(
-                f'    {{"{n}", (getter){tname}_get_{n}, NULL, NULL, NULL}},'
-            )
+            # A field naming a `writable_fn` also emits a (setter) slot calling
+            # set_fn(self->h, v) with v coerced from the PyObject (#311).
+            set_fn = f.get("writable_fn")
+            if set_fn:
+                fmt = _scalar_fmt(f["type"])
+                funcs.append(f"""static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    if (self->closed) {{
+        PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
+        return -1;
+    }}
+    if (value == NULL) {{
+        PyErr_SetString(PyExc_AttributeError,
+            "cannot delete '{n}'");
+        return -1;
+    }}
+    {f["type"]} v;
+    if (!PyArg_Parse(value, "{fmt}", &v)) return -1;
+    {set_fn}(self->h, v);
+    return 0;
+}}
+""")
+                rows.append(
+                    f'    {{"{n}", (getter){tname}_get_{n}, '
+                    f"(setter){tname}_set_{n}, NULL, NULL}},"
+                )
+            else:
+                rows.append(
+                    f'    {{"{n}", (getter){tname}_get_{n}, '
+                    f"NULL, NULL, NULL}},"
+                )
 
     table_name = f"{tname}_getset"
     table = (
@@ -484,7 +601,10 @@ def _cache_fetch(cfg: dict, module: str) -> str:
     out = []
     for gi, g in enumerate(C.handle_getters(cfg, module)):
         if g.get("cache"):
-            out.append(f"    {g['fn']}(self->h, &self->_g{gi});")
+            if _scalar_out(g):
+                out.append(f"    self->_g{gi} = {g['fn']}(self->h);")
+            else:
+                out.append(f"    {g['fn']}(self->h, &self->_g{gi});")
     return "\n".join(out)
 
 
@@ -769,29 +889,42 @@ def render_pyi(cfg: dict, module: str) -> str:
     ip = ", ".join(init_params)
     lines.append(f"    def __init__(self, {ip}) -> None: ...")
 
-    # methods.
+    # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):
         name = m["name"]
         margs = list(m.get("args", []))
         returns = m.get("returns")
-        if any(str(a.get("type", "")).endswith("[]") for a in margs):
-            sig = "self, x: NDArray[Any]"
+        arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+        writable_out = [a for a in arrays if a.get("writable")]
+        scalars = [a for a in margs if a not in arrays]
+        ret_arr = bool(returns) and str(returns).endswith("[]")
+        if writable_out and ret_arr:
+            # (d) execute(x, out) -> ndarray
+            sig = "self, x: NDArray[Any], out: NDArray[Any]"
+            ann = "NDArray[Any]"
+        elif ret_arr and not arrays:
+            # (c) read(n) -> ndarray
+            sig = "self, n: int"
+            ann = "NDArray[Any]"
+        elif arrays:
+            # (b) x[, scalars] -> scalar / None
+            parts = ["self", "x: NDArray[Any]"] + [
+                f"{s['name']}: {_pyi_scalar(s['type'])}" for s in scalars
+            ]
+            sig = ", ".join(parts)
+            ann = _pyi_scalar(returns) if returns else "None"
         elif margs:
+            # (a) scalars -> scalar / None
             sig = "self, " + ", ".join(
                 f"{a['name']}: {_pyi_scalar(a['type'])}" for a in margs
             )
+            ann = _pyi_scalar(returns) if returns else "None"
         else:
             sig = "self"
-        if returns and str(returns).endswith("[]"):
-            ann = "NDArray[Any]"
-            sig = "self, n: int"
-        elif returns:
-            ann = _pyi_scalar(returns)
-        else:
-            ann = "None"
+            ann = _pyi_scalar(returns) if returns else "None"
         lines.append(f"    def {name}({sig}) -> {ann}: ...")
 
-    # decoded-getter properties.
+    # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):
         for f in g.get("fields", []):
             if f.get("enum"):
@@ -800,6 +933,11 @@ def render_pyi(cfg: dict, module: str) -> str:
                 ann = _pyi_scalar(f["type"])
             lines.append("    @property")
             lines.append(f"    def {f['name']}(self) -> {ann}: ...")
+            if f.get("writable_fn"):
+                lines.append(f"    @{f['name']}.setter")
+                lines.append(
+                    f"    def {f['name']}(self, value: {ann}) -> None: ..."
+                )
 
     # RAII surface.
     lines.append("    def close(self) -> None: ...")
