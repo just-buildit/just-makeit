@@ -23,6 +23,7 @@ from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
+from just_makeit._status import run as status_run  # noqa: E402
 from just_makeit._object import (  # noqa: E402
     _merge_module_init,
     _fmt_from_import,
@@ -161,3 +162,87 @@ def test_fmt_all_is_single_line():
     long = _fmt_all([f"name_{i:02d}" for i in range(12)])
     assert "\n" not in long  # single-line canonical, even when long
     assert long.startswith('__all__ = ["name_00", ')
+
+
+# ── gh-329: stale reexports are pruned (apply) and caught (status) ───────────
+def test_merge_prunes_removed_module_export():
+    # an object dropped from the module must not linger on the import line
+    src = 'from .sig import Mix, Pan  # noqa: E402\n__all__ = ["Mix", "Pan"]\n'
+    out = _merge_module_init(src, "sig", ["Mix"])  # Pan removed
+    assert "from .sig import Mix  # noqa: E402" in out
+    assert "Pan" not in out
+
+
+def test_merge_prunes_removed_reexport_name_within_sub():
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .fn_api import a, b, old  # noqa: E402\n"
+        '__all__ = ["Mix", "a", "b", "old"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"], {"fn_api": ["a", "b"]})
+    assert "from .fn_api import a, b  # noqa: E402" in out
+    assert "old" not in out
+
+
+def test_merge_prunes_whole_reexport_sub_removed_from_manifest():
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .fn_api import a, b  # noqa: E402\n"
+        '__all__ = ["Mix", "a", "b"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"], {})  # reexports gone
+    assert "fn_api" not in out
+    assert '__all__ = ["Mix"]' in out
+
+
+def test_merge_drops_duplicate_bogus_import_line():
+    # the issue's repro: a bogus second `from .sig import ...` appended by hand
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        '__all__ = ["Mix"]\n'
+        "from .sig import NONEXISTENT  # noqa: E402\n"
+    )
+    out = _merge_module_init(src, "sig", ["Mix"])
+    assert "NONEXISTENT" not in out
+    assert out.count("from .sig import") == 1
+
+
+def test_merge_keeps_user_wrapper_and_handwritten_import():
+    # gh#1 contract: user content (lines without the generated glue marker)
+    # survives — only generated reexport lines are swept.
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .helpers import thing\n"
+        "class Fancy(Mix):\n    pass\n"
+        '__all__ = ["Mix"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"])
+    assert "from .helpers import thing" in out
+    assert "class Fancy(Mix):" in out
+
+
+def test_apply_prunes_dropped_reexport_and_status_catches_drift(
+    tmp_path, capsys
+):
+    dest = tmp_path / "dsp"
+    _scaffold(dest)
+    _declare_reexports(dest, NAMES)
+    _silent(apply_run, dest)
+    init = dest / "src/dsp/sig/__init__.py"
+    assert all(n in init.read_text(encoding="utf-8") for n in NAMES)
+
+    # Drop the last reexport name from the manifest, leaving disk stale.
+    _declare_reexports(dest, NAMES[:-1])
+    dropped = NAMES[-1]
+
+    # status --check must now SEE the drift (it replays the pruning apply).
+    count = status_run(dest, check=True)
+    capsys.readouterr()
+    assert count >= 1
+
+    # apply prunes the stale name; status is then clean.
+    _silent(apply_run, dest)
+    text = init.read_text(encoding="utf-8")
+    assert dropped not in text
+    assert all(n in text for n in NAMES[:-1])
+    assert status_run(dest, check=True) == 0

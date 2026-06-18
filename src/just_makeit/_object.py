@@ -393,7 +393,13 @@ def _merge_module_init(
     m = import_pat.search(existing)
     existing_names = _parse_import_names(m.group(0)) if m else []
 
-    merged: list[str] = list(existing_names)
+    # Authoritative: the module's own import line holds exactly its current
+    # C-extension exports. Keep surviving names in their existing order, drop
+    # any the manifest no longer declares (gh-329: a removed object must not
+    # linger as a stale `from .<module> import Old` → ImportError at runtime),
+    # then append newly added names.
+    export_set = set(all_exports)
+    merged: list[str] = [n for n in existing_names if n in export_set]
     seen = set(merged)
     for name in all_exports:
         if name not in seen:
@@ -406,7 +412,11 @@ def _merge_module_init(
     reexport_names: list[str] = []
     for sub, names in (reexports or {}).items():
         sm = _import_re(sub).search(existing)
-        sub_names = _parse_import_names(sm.group(0)) if sm else []
+        existing_sub = _parse_import_names(sm.group(0)) if sm else []
+        # Authoritative within the sub too (gh-329): drop names the manifest
+        # dropped from this reexport, keep surviving order, append the rest.
+        declared = set(names)
+        sub_names = [n for n in existing_sub if n in declared]
         sub_seen = set(sub_names)
         for n in names:
             if n not in sub_seen:
@@ -457,6 +467,26 @@ def _merge_module_init(
                 )
             else:
                 result = result.rstrip("\n") + f"\n{line}\n"
+
+    # 2b. Drop stale / duplicate generated import lines (gh-329). After the
+    # upserts, the one canonical line per managed submodule exists; sweep out
+    # any *other* generated `from .<sub> import … # noqa: E402` glue line whose
+    # submodule the manifest no longer reexports (a consolidated-away sibling
+    # left its line behind, breaking `import <pkg>.<module>`), and any
+    # duplicate of a managed line. Only the generated glue marker is targeted —
+    # hand-written imports (no `# noqa: E402`) and user wrapper classes survive.
+    managed = {module} | set(reexports or {})
+    seen_subs: set[str] = set()
+    kept: list[str] = []
+    for line in result.split("\n"):
+        gm = re.match(r"from \.(\w+) import .*#[ \t]*noqa: E402\s*$", line)
+        if gm:
+            sub = gm.group(1)
+            if sub not in managed or sub in seen_subs:
+                continue
+            seen_subs.add(sub)
+        kept.append(line)
+    result = "\n".join(kept)
 
     # 3. Upsert __all__ (module exports followed by reexported names).
     new_all = _fmt_all(all_names)
