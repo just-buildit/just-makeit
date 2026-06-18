@@ -846,6 +846,21 @@ def composer_json(cfg: dict, module: str) -> bool:
     )
 
 
+def composer_serializers(cfg: dict, module: str) -> list[dict]:
+    """Return a composer's ``[[module.X.serializers]]`` — additional **delegated**
+    serializers (gh-317). Each is ``{name, fn, returns?, params?[]}`` and emits a
+    ``<Composer>.<name>(<params>) -> <returns>`` method that calls the C
+    ``fn(<params>, segs, n)`` over the composer's resolved segments.
+
+    This is the sanctioned mechanism for **domain wire formats** jm generates
+    none of (SigMF, BLUE, …): the project hand-writes the C serializer, jm
+    generates the typed method over the resolved spec (gh-313 — the delegation
+    is a deliberate carve-out, not drift). Each param is ``{name, type, enum?,
+    default?}`` (enums cross as validated SSOT strings)."""
+    v = cfg.get("module", {}).get(module, {}).get("serializers", [])
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
 def functions_in_core(cfg: dict, module: str) -> bool:
     """Return True if the module's free functions live in ``<module>_core.c``
     as one translation unit, rather than one ``.c`` per function (gh-247).
@@ -2038,6 +2053,22 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
             out.append(
                 "to_json_trailing = ["
                 + ", ".join(f'"{x}"' for x in js["to_json_trailing"])
+                + "]"
+            )
+        out.append("")
+
+    # gh-317: delegated serializers (to_sigmf, …) — each a [[X.serializers]]
+    # table with an inline-table `params` array.
+    for s in data.get("serializers", []):
+        out.append(f"[[module.{mk}.serializers]]")
+        out.append(f'name = "{s["name"]}"')
+        out.append(f'fn = "{s["fn"]}"')
+        if s.get("returns"):
+            out.append(f'returns = "{s["returns"]}"')
+        if s.get("params"):
+            out.append(
+                "params = ["
+                + ", ".join(_inline_field(p) for p in s["params"])
                 + "]"
             )
         out.append("")
