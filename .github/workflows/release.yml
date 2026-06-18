@@ -6,26 +6,52 @@ on:
       - "v*"
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-
+  # A release tag must point at a commit `main` already certified green: ci.yml's
+  # "CI passed" aggregator runs on every push to main, so re-running the full
+  # 6x2 matrix here is a redundant third run (PR CI + main-push CI + this one).
+  # Instead, gate on that commit's existing "CI passed" check — strictly safer
+  # than re-running and hoping for parity, since it asserts the exact tree was
+  # certified. If the tag is not on a green main commit, this fails the release.
+  verify-ci:
+    name: Verify CI already passed for this commit
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-
-      - uses: astral-sh/setup-uv@v8.1.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - run: uv tool install .
-      - run: jm-install-deps ${{ runner.temp }}/jm-venv
-      - run: jm-run-tests
+      - name: Require a green "CI passed" check for the tagged SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # The merge that produced this commit may still be running its
+          # main-push matrix, so poll until "CI passed" concludes (up to ~20
+          # min), then require success.
+          for i in $(seq 1 60); do
+            runs="$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate \
+              --jq '.check_runs[] | select(.name == "CI passed")
+                    | "\(.status) \(.conclusion)"' | head -n1)"
+            status="${runs%% *}"
+            conclusion="${runs#* }"
+            if [[ -z "$status" ]]; then
+              echo "No 'CI passed' check yet for $SHA (attempt $i/60); waiting..."
+            elif [[ "$status" != "completed" ]]; then
+              echo "'CI passed' is $status for $SHA (attempt $i/60); waiting..."
+            elif [[ "$conclusion" == "success" ]]; then
+              echo "'CI passed' is green for $SHA — proceeding to release."
+              exit 0
+            else
+              echo "::error::'CI passed' concluded '$conclusion' for $SHA — refusing to release a tree CI did not certify."
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "::error::Timed out waiting for 'CI passed' on $SHA. Tag a commit merged to main that CI certified green."
+          exit 1
 
   build:
-    needs: test
+    needs: verify-ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -41,8 +67,52 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  # Smoke-test the actual built wheel BEFORE publish, so a broken artifact never
+  # reaches PyPI. Installs the wheel into a fresh venv, asserts the version, and
+  # runs a bundled example end-to-end (scaffold -> cmake build -> test) — the
+  # real "does the shipped artifact work" check the dropped matrix used to cover.
+  smoke:
+    name: Smoke test the wheel
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: System build deps (cmake + C compiler)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config patchelf
+
+      - name: Install the built wheel (+ numpy) into a fresh venv
+        run: |
+          wheel="$(ls dist/*.whl)"
+          uv venv .smoke
+          uv pip install --python .smoke numpy "$wheel"
+
+      - name: Version matches the tag
+        run: |
+          source .smoke/bin/activate
+          got="$(just-makeit --version)"
+          echo "installed: $got"
+          case "$got" in
+            *"${GITHUB_REF_NAME#v}"*) ;;
+            *) echo "::error::version mismatch (want ${GITHUB_REF_NAME#v}, got '$got')"; exit 1 ;;
+          esac
+
+      - name: End-to-end bundled example (scaffold -> build -> test)
+        run: |
+          source .smoke/bin/activate
+          just-makeit example fir_filter
+
+  publish:
+    needs: smoke
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
