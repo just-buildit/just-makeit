@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.24] — 2026-06-18
+
 ### Fixed
 
 - **Reexport reconcile no longer corrupts a mixed hand/generated
