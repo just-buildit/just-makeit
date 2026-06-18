@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Module functions accept `path` and `enum` argument types (gh-353)** —
+    `jm function --param p:path` takes a `str | os.PathLike` (coerced via
+    `os.fspath` → `PyUnicode_FSConverter`, presented to C as `const char *`),
+    and `jm function --param sample_type:enum:stype[=cf32]` takes a choice
+    string validated against a `[[enum]]` SSOT and passed to C as the enum's
+    `int` index. Both reuse the machinery the handle/composer generators already
+    had; the borrowed-`PyBytes` file-handler coercion is now a single shared
+    pattern (`_coerce`) the handle generator and the module-function generator
+    both route through, so they cannot drift. Unblocks generating I/O helpers
+    like a path + string-enum writer as a `jm function` instead of hand C.
+
 ## [0.19.26] — 2026-06-18
 
 ### Fixed

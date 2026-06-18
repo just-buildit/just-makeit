@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _capsule
+from . import _coerce
 from . import _composer
 from . import _config as C
 from . import _types as T
@@ -125,7 +126,7 @@ def _arg_decl(a: dict) -> str:
     """C local decl for one create-arg, with its manifest default."""
     n = a["name"]
     if a.get("type") == "path":
-        return f"    PyObject *{n} = NULL;  /* fspath -> bytes */"
+        return "    " + _coerce.path_decl(n)
     if a.get("enum"):
         default = a.get("default", "")
         return f'    const char *{n} = "{default}";'
@@ -136,7 +137,7 @@ def _arg_decl(a: dict) -> str:
 def _arg_fmt(a: dict) -> str:
     """PyArg_ParseTupleAndKeywords format char for one create-arg."""
     if a.get("type") == "path":
-        return "O&"  # PyUnicode_FSConverter
+        return _coerce.path_fmt()
     if a.get("enum"):
         return "s"
     return _scalar_fmt(a["type"])
@@ -146,7 +147,7 @@ def _arg_addr(a: dict) -> str:
     """The ``&target`` (or converter+target) PyArg address fragment."""
     n = a["name"]
     if a.get("type") == "path":
-        return f"PyUnicode_FSConverter, &{n}"
+        return _coerce.path_addr(n)
     return f"&{n}"
 
 
@@ -154,8 +155,7 @@ def _create_call_arg(a: dict) -> str:
     """The expression passed to ``create_fn`` for one create-arg."""
     n = a["name"]
     if a.get("type") == "path":
-        # PyUnicode_FSConverter yields a PyBytes; the C side copies the path.
-        return f"PyBytes_AS_STRING({n})"
+        return _coerce.path_call_expr(n)
     if a.get("enum"):
         return f"_arg_{n}"  # validated enum index local
     return n
@@ -228,7 +228,9 @@ def render_tp_init(cfg: dict, module: str) -> str:
     call_args = ", ".join(_create_call_arg(a) for a in args)
     # path borrows must be DECREF'd only after create_fn copies them (gh-219).
     fs_args = [a for a in args if a.get("type") == "path"]
-    fs_decref = "".join(f"    Py_XDECREF({a['name']});\n" for a in fs_args)
+    fs_decref = "".join(
+        f"    {_coerce.path_release(a['name'])}\n" for a in fs_args
+    )
 
     # create_post setters (optional `when` guard + verbatim-C `arg`).
     post = []
@@ -330,7 +332,9 @@ def _init_fsfree(args: list[dict]) -> str:
     fs = [a for a in args if a.get("type") == "path"]
     if not fs:
         return ""
-    return "\n" + "".join(f"        Py_XDECREF({a['name']});" for a in fs)
+    return "\n" + "".join(
+        f"        {_coerce.path_release(a['name'])}" for a in fs
+    )
 
 
 # ── tp_methods (scalar / array-in / int-in→array-out; reuses capsule numpy) ───

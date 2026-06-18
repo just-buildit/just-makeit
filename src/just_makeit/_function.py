@@ -27,16 +27,20 @@ from ._object import _regenerate_module
 
 # A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
 # array output param (``--out-param``), where a truthy third element renders the
-# C binding as a non-const ``T *`` + writable NumPy view (gh-197/#221); or
+# C binding as a non-const ``T *`` + writable NumPy view (gh-197/#221);
 # ``(name, type, is_out, default)`` where a non-empty fourth element makes a
-# scalar param optional with that default (gh-240).  ``Union`` (not ``A | B``)
-# because this is a runtime module-level value, and ``GenericAlias |
+# scalar param optional with that default (gh-240); or
+# ``(name, type, is_out, default, enum)`` where a non-empty fifth element names
+# the ``[[enum]]`` an ``enum`` param validates against (gh-353; ``type`` is
+# ``"int"`` for an enum, ``"path"`` for a filesystem-path arg).  ``Union`` (not
+# ``A | B``) because this is a runtime module-level value, and ``GenericAlias |
 # GenericAlias`` raises on Python 3.9 (`from __future__ import annotations` only
 # defers annotations).
 FnParam = Union[
     tuple[str, str],
     tuple[str, str, bool],
     tuple[str, str, bool, str],
+    tuple[str, str, bool, str, str],
 ]
 
 
@@ -195,6 +199,23 @@ def run(
         )
         sys.exit(1)
 
+    # gh-353: an enum param (5th tuple element) must name a declared [[enum]].
+    # The CLI parser has no cfg, so the name is validated here against the
+    # project's enum SSOT (C.enums) with a clear error.
+    _declared_enums = C.enums(cfg)
+    for p in params or []:
+        ename = p[4] if len(p) > 4 else ""
+        if ename and ename not in _declared_enums:
+            print(
+                f"error: --param enum '{ename}' is not a declared [[enum]].\n"
+                f"Declared enums: "
+                f"{', '.join(sorted(_declared_enums)) or '(none)'}\n"
+                f"Add it to {C.FILENAME} first:\n"
+                f'  [[enum]]\n  name = "{ename}"\n  values = [...]',
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     pkg = C.project_name(cfg)
     print(
         f"just-makeit: adding function '{fn_name}' to module '{module}' "
@@ -310,6 +331,11 @@ def run(
                 entry["out"] = True
             if len(p) > 3 and p[3]:
                 entry["default"] = p[3]
+            # gh-353: an enum param stores its [[enum]] name (type stays "int")
+            # so the binding validates the choice string to its SSOT index. The
+            # 5th tuple element is "" for non-enum params.
+            if len(p) > 4 and p[4]:
+                entry["enum"] = p[4]
             _entries.append(entry)
         fn_entry["params"] = _entries
     if return_type != "void":

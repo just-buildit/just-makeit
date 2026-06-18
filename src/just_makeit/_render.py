@@ -20,6 +20,7 @@ from ._types import (
     is_array_param_type,
     parse_out_type,
 )
+from . import _coerce
 from . import _config as C
 
 _TMPL_DIR = Path(__file__).parent / "templates"
@@ -235,7 +236,7 @@ MODULE_EXT_C_HEADER = """\
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 #include <complex.h>
-
+<<module_extra_includes>>
 <<module_core_include>>"""
 
 MODULE_EXT_C_FOOTER = """\
@@ -281,7 +282,13 @@ def _fn_c_params(
     for p in params:
         n, t = p[0], p[1]
         is_out = bool(p[2]) if len(p) > 2 else False
-        if is_array_param_type(t):
+        if t == "path":
+            # gh-353: a path arg crosses as a borrowed PyBytes (the binding
+            # coerces with PyUnicode_FSConverter); the C function receives a
+            # plain `const char *` it copies during the call (gh-219 UAF).
+            c_parts.append(f"{_coerce.PATH_C_TYPE}{n}")
+            suppress_parts.append(f"(void){n};")
+        elif is_array_param_type(t):
             elem_disp = _ctype_display(array_elem_ctype(t))
             qual = "" if is_out else "const "
             c_parts.append(f"{qual}{elem_disp} *{n}")
@@ -294,6 +301,19 @@ def _fn_c_params(
     c_param_str = ", ".join(c_parts) if c_parts else "void"
     suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
     return c_param_str, suppress
+
+
+def _scalar_c_param(p: tuple) -> str:
+    """C declaration for one non-array param (out_type / result_fields paths).
+
+    gh-353: a ``path`` arg crosses as a borrowed ``const char *`` (the binding
+    coerces it with ``PyUnicode_FSConverter``); an enum arg is already typed
+    ``int`` in the manifest, so it needs no special case here.
+    """
+    n, t = p[0], p[1]
+    if t == "path":
+        return f"{_coerce.PATH_C_TYPE}{n}"
+    return f"{_ctype_display(t)} {n}"
 
 
 def fn_c_decl(
@@ -344,8 +364,7 @@ def fn_c_decl(
         if not variable_output:
             c_parts.append(f"{out_disp} *out")
         for p in scl_p:
-            n, t = p[0], p[1]
-            c_parts.append(f"{_ctype_display(t)} {n}")
+            c_parts.append(_scalar_c_param(p))
         if variable_output:
             c_parts.append(f"{out_disp} *out")
         full_params = ", ".join(c_parts) if c_parts else "void"
@@ -468,8 +487,8 @@ def fn_c_stub(
             c_parts.append(f"{out_disp} *out")
             suppress_parts.append("(void)out;")
         for p in scl_p:
-            n, t = p[0], p[1]
-            c_parts.append(f"{_ctype_display(t)} {n}")
+            n = p[0]
+            c_parts.append(_scalar_c_param(p))
             suppress_parts.append(f"(void){n};")
         if variable_output:
             c_parts.append(f"{out_disp} *out")
@@ -528,12 +547,52 @@ def _build_params_parse(
     arr_acq: list[str] = []  # array acquisition lines (after ParseTuple)
     call_args: list[str] = []  # final C args to pass
     arr_names: list[str] = []  # arr variable names for Py_DECREF cleanup
+    # gh-353: borrowed path PyBytes (from PyUnicode_FSConverter). DECREF'd only
+    # AFTER the C call (the C side copies the string during the call — gh-219
+    # UAF), and on every pre-call error path before returning NULL.
+    path_names: list[str] = []
 
     for p in params:
         pname = p["name"]
         ptype = p["type"]
 
-        if is_array_param_type(ptype):
+        if ptype == "path":
+            # gh-353: the shared file-handler pattern (_coerce) — a
+            # str | os.PathLike coerces with O& + PyUnicode_FSConverter into a
+            # borrowed PyBytes; pass PyBytes_AS_STRING to the const char * arg.
+            # Same primitives the handle generator uses for a `path` create-arg.
+            decl_lines.append("    " + _coerce.path_decl(pname))
+            fmt_chars.append(_coerce.path_fmt())
+            addr_exprs.append(_coerce.path_addr(pname))
+            path_names.append(pname)
+            call_args.append(_coerce.path_call_expr(pname))
+        elif p.get("enum"):
+            # gh-353 (mirrors _handle's enum-validate in render_tp_init): parse
+            # the choice string with `s`, validate to its SSOT int via
+            # _enum_index; a `< 0` raises ValueError after cleaning up any
+            # arrays / path objects acquired so far, then pass the validated int.
+            ename = p["enum"]
+            fmt_chars.append("s")
+            # gh-240/gh-353: a defaulted enum is optional — its C local seeds to
+            # the default choice string so an omitted arg validates to that
+            # choice's index. A required enum seeds to "" (an invalid choice,
+            # but PyArg fills it before _enum_index runs).
+            _edflt = p.get("default") or ""
+            decl_lines.append(f'    const char *{pname} = "{_edflt}";')
+            addr_exprs.append(f"&{pname}")
+            prior = "".join(f" Py_DECREF({a});" for a in arr_names) + "".join(
+                f" {_coerce.path_release(n)}" for n in path_names
+            )
+            conv_lines.append(
+                f"    int _arg_{pname} = _enum_index(_enum_{ename}, {pname});\n"
+                f"    if (_arg_{pname} < 0) {{\n"
+                f'        PyErr_Format(PyExc_ValueError, "invalid {pname}'
+                f" '%s'\", {pname});{prior}\n"
+                f"        return NULL;\n"
+                f"    }}"
+            )
+            call_args.append(f"_arg_{pname}")
+        elif is_array_param_type(ptype):
             elem_ct = array_elem_ctype(ptype)
             npy_enum = _CTYPE_TO_NPY[elem_ct]
             elem_disp = _ctype_display(elem_ct)
@@ -544,8 +603,11 @@ def _build_params_parse(
             fmt_chars.append("O")
             addr_exprs.append(f"&{obj_var}")
 
-            # Build error path: decref all arrays acquired so far.
-            prior_decrefs = "".join(f" Py_DECREF({a});" for a in arr_names)
+            # Build error path: decref all arrays + path objects (gh-353)
+            # acquired so far.
+            prior_decrefs = "".join(
+                f" Py_DECREF({a});" for a in arr_names
+            ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
             is_out = bool(p.get("out"))
             npy_flags = (
                 "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE"
@@ -604,18 +666,33 @@ def _build_params_parse(
     # rarely the innermost loop. The per-sample hot path (step/steps) stays
     # positional-only.
     kwnames = "".join(f'"{p["name"]}", ' for p in params)
+    # gh-353: a parse failure may have already converted some O& path args (and
+    # FSConverter sets the target on success), so XDECREF every path object on
+    # the parse-fail path before returning NULL. The multi-statement cleanup is
+    # braced (the no-path form keeps the bare `return NULL;` — zero churn).
+    parse_fail = (
+        "        return NULL;"
+        if not path_names
+        else "    {\n"
+        + "".join(f"        {_coerce.path_release(n)}\n" for n in path_names)
+        + "        return NULL;\n    }"
+    )
     lines = (
         [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
         + decl_lines
         + [
             f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_str}",',
             f"            _kwlist, {addr_str}))",
-            "        return NULL;",
+            parse_fail,
         ]
         + conv_lines
         + arr_acq
     )
-    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names)
+    # The final cleanup (emitted by callers AFTER the C call): array DECREFs +
+    # path XDECREFs (gh-353 — the C side has copied the string by now).
+    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names) + "".join(
+        f"    {_coerce.path_release(n)}\n" for n in path_names
+    )
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
@@ -775,8 +852,22 @@ def _py_wrapper_for_function(
             f"    return _out;"
         )
     elif ret_meta:
-        ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
-        ret_line = f"{cleanup}    return {ret_expr};"
+        # gh-353: a path arg borrows a PyBytes that the C call copies, so the
+        # path XDECREF in `cleanup` must run AFTER the call, not before. Capture
+        # the C result into a temp, clean up, then convert + return. (Without a
+        # path arg `cleanup` is array-only and order is immaterial — the legacy
+        # one-line form is kept so enum-free output is byte-identical.)
+        _has_path = any(p["type"] == "path" for p in params)
+        if _has_path and cleanup:
+            _rt_disp = _ctype_display(return_type)
+            ret_line = (
+                f"    {_rt_disp} _r = {fn_name}({call_args});\n"
+                f"{cleanup}"
+                f"    return {ret_meta['to_py']('_r')};"
+            )
+        else:
+            ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
+            ret_line = f"{cleanup}    return {ret_expr};"
     else:
         call_line = (
             f"    {fn_name}({call_args});" if params else f"    {fn_name}();"
@@ -791,8 +882,52 @@ def _py_wrapper_for_function(
     )
 
 
+def _functions_enums_used(
+    functions: list[dict],
+) -> list[str]:
+    """Ordered, de-duplicated enum names referenced by any function param.
+
+    gh-353: a module function's enum arg carries ``{enum: "<name>"}`` (mirrors
+    the handle convention). The ``_ext.c`` emits the per-enum tables + the
+    shared ``_enum_index`` helper only for the enums actually referenced, so an
+    enum-free module renders byte-identical output (no helper, no tables).
+    """
+    seen: list[str] = []
+    for fn in functions:
+        for p in fn.get("params", []):
+            e = p.get("enum")
+            if e and e not in seen:
+                seen.append(e)
+    return seen
+
+
+def _render_function_enum_tables(
+    functions: list[dict], enums: dict[str, list[str]]
+) -> str:
+    """Emit the per-enum ``_enum_<name>[]`` tables + the shared ``_enum_index``
+    for the enums a module's functions reference (gh-353).
+
+    Reuses the composer's enum SSOT exactly (``_composer._ENUM_INDEX_FN`` and
+    the "order is the C int" table layout) — the same contract the handle
+    generator's :func:`_handle.render_enum_tables` follows."""
+    from ._composer import _ENUM_INDEX_FN
+
+    parts = [_ENUM_INDEX_FN]
+    for name in _functions_enums_used(functions):
+        values = enums.get(name, [])
+        items = "".join(f'    "{v}",\n' for v in values)
+        parts.append(f"static const char *const _enum_{name}[] = {{")
+        parts.append(items + "    NULL,")
+        parts.append("};")
+        parts.append("")
+    return "\n".join(parts)
+
+
 def make_functions_ctx(
-    module: str, Module: str, functions: list[dict]
+    module: str,
+    Module: str,
+    functions: list[dict],
+    enums: "dict[str, list[str]] | None" = None,
 ) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
@@ -800,6 +935,10 @@ def make_functions_ctx(
       function_wrappers  — static _bind_<fn> functions (inserted after header)
       module_methods_def — static PyMethodDef array block, or ''
       module_m_methods   — '{module}_module_methods' or 'NULL'
+      function_enum_tables — the _enum_index helper + per-enum tables (gh-353),
+                             or '' when no function param uses an enum
+      function_uses_enum — True when any function param references an enum (the
+                           ext.c then also #includes <string.h> for strcmp)
 
     The module-level table is named ``{module}_module_methods`` (not
     ``{Module}_methods``) so it never collides with an object's own
@@ -813,6 +952,8 @@ def make_functions_ctx(
             "function_wrappers": "",
             "module_methods_def": "",
             "module_m_methods": "NULL",
+            "function_enum_tables": "",
+            "function_uses_enum": False,
         }
     wrappers: list[str] = []
     entries: list[str] = []
@@ -851,10 +992,21 @@ def make_functions_ctx(
         f"static PyMethodDef {module}_module_methods[] = "
         f"{{\n{array_body}\n}};\n\n"
     )
+    # gh-353: when a function param references a [[enum]], emit the SSOT
+    # _enum_index helper + per-enum tables BEFORE the _bind_ wrappers (which
+    # call _enum_index). Enum-free modules get an empty string (no churn).
+    enums_used = _functions_enums_used(functions)
+    enum_tables = (
+        _render_function_enum_tables(functions, enums or {})
+        if enums_used
+        else ""
+    )
     return {
         "function_wrappers": "\n".join(wrappers),
         "module_methods_def": methods_def,
         "module_m_methods": f"{module}_module_methods",
+        "function_enum_tables": enum_tables,
+        "function_uses_enum": bool(enums_used),
     }
 
 
@@ -862,12 +1014,15 @@ def render_module_ext_c(
     module: str,
     comp_ctxs: list[dict],
     functions: list[dict] = (),
+    enums: "dict[str, list[str]] | None" = None,
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
     Each ctx must contain 'module' = module_name and 'Component' = the type name.
     Pass functions (from config module_functions()) to wire up module-level
     PyMethodDef entries; Python wrappers are emitted inline (not via #include).
+    Pass enums (from ``C.enums(cfg)``) so a function's ``enum`` param emits the
+    SSOT ``_enum_index`` helper + per-enum tables (gh-353).
 
     ``module`` may be a dotted id (``dsp.filters``); the C identifiers /
     file-name prefixes use the cname form (``dsp_filters``) while the
@@ -880,7 +1035,7 @@ def render_module_ext_c(
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
-    fn_ctx = make_functions_ctx(module, Module, list(functions))
+    fn_ctx = make_functions_ctx(module, Module, list(functions), enums)
     # Only include the module-level core header when there are module functions
     # that use it.  Objects have their own per-component includes in
     # COMPONENT_TYPE_SECTION; the module_core.h is only needed when module-
@@ -894,9 +1049,15 @@ def render_module_ext_c(
         "Module": Module,
         "object_list": object_list,
         "module_core_include": module_core_include,
+        # gh-353: an enum param's _enum_index uses strcmp.
+        "module_extra_includes": (
+            "#include <string.h>\n" if fn_ctx.get("function_uses_enum") else ""
+        ),
     }
     parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
 
+    if fn_ctx.get("function_enum_tables"):
+        parts.append(fn_ctx["function_enum_tables"] + "\n")
     if fn_ctx["function_wrappers"]:
         parts.append(fn_ctx["function_wrappers"] + "\n")
 
@@ -964,6 +1125,7 @@ def render_module_ext_aggregator(
     functions: list[dict] = (),
     extra_files: "set[str] | frozenset[str]" = frozenset(),
     extra_types: "list[str] | None" = None,
+    enums: "dict[str, list[str]] | None" = None,
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -991,7 +1153,7 @@ def render_module_ext_aggregator(
     module = mp.cname
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
-    fn_ctx = make_functions_ctx(module, Module, list(functions))
+    fn_ctx = make_functions_ctx(module, Module, list(functions), enums)
     has_module_fns = bool(functions)
     module_core_include = (
         f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
@@ -1001,6 +1163,10 @@ def render_module_ext_aggregator(
         "Module": Module,
         "object_list": object_list,
         "module_core_include": module_core_include,
+        # gh-353: an enum param's _enum_index uses strcmp.
+        "module_extra_includes": (
+            "#include <string.h>\n" if fn_ctx.get("function_uses_enum") else ""
+        ),
     }
     parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
     # Replace the "Objects: ..." comment to clarify this is the aggregator.
@@ -1026,6 +1192,8 @@ def render_module_ext_aggregator(
             f'#include "{mod_extra}"  /* hand-written — jm never modifies */'
         )
     parts.append("\n" + "\n".join(include_parts) + "\n")
+    if fn_ctx.get("function_enum_tables"):
+        parts.append("\n" + fn_ctx["function_enum_tables"] + "\n")
     if fn_ctx["function_wrappers"]:
         parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
     _extra_types = extra_types or []

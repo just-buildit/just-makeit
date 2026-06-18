@@ -774,9 +774,20 @@ def _fn_stub(fn: dict) -> str:
     # (`name: type = <default>`) so type-checkers and readers see the default.
     parts = []
     for p in params:
-        part = f"{p['name']}: {_py(p['type'])}"
+        # gh-353: a path arg accepts str | os.PathLike; an enum arg (type "int"
+        # with an `enum` name) accepts the choice string.
+        if p["type"] == "path":
+            ann = "str | os.PathLike"
+        elif p.get("enum"):
+            ann = "str"
+        else:
+            ann = _py(p["type"])
+        part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):
-            part += f" = {p['default']}"
+            # An enum default is a choice string — quote it; scalar defaults are
+            # C literals shown verbatim (gh-240 behavior).
+            dflt = repr(p["default"]) if p.get("enum") else p["default"]
+            part += f" = {dflt}"
         parts.append(part)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     one_liner = (
@@ -804,6 +815,18 @@ def _uses_literal(cfg: dict, module: str) -> bool:
     for obj in C.module_objects(cfg, module):
         for param in C.init_params(cfg, obj):
             if param[1].startswith("string_enum:"):
+                return True
+    return False
+
+
+def _uses_os(cfg: dict, module: str) -> bool:
+    """Return True if any module function has a ``path`` param (gh-353).
+
+    A path param annotates as ``str | os.PathLike``, so the stub must
+    ``import os``."""
+    for fn in C.module_functions(cfg, module):
+        for p in fn.get("params", []):
+            if p["type"] == "path":
                 return True
     return False
 
@@ -863,6 +886,7 @@ def make_module_pyi(cfg: dict, module: str) -> str:
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
     needs_any = _uses_any(cfg, module)
+    needs_os = _uses_os(cfg, module)  # gh-353: a path param -> os.PathLike
     # gh-203: a streamable object's stub references Callable + Iterator.
     needs_stream = any(_obj_stream_pyi(cfg, o) for o in objects)
     parts: list[str] = [
@@ -881,6 +905,8 @@ def make_module_pyi(cfg: dict, module: str) -> str:
             if x
         )
         parts.append(f"from typing import {typing_imports}")
+    if needs_os:
+        parts.append("import os")
     if needs_numpy:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
