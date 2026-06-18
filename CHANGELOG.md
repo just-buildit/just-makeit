@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.23] — 2026-06-18
+
 ### Fixed
 
 - **Stale reexports pruned, so `jm status --check` catches the drift
