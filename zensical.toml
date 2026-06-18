@@ -25,6 +25,7 @@ nav = [
     { "library"    = "templates/library.md"  },
   ]},
   { "Feature tour"       = "feature-tour.md" },
+  { "Feature map"        = "feature-index.md" },
   { "Commands" = [
     { "Scaffold"    = "commands/scaffold.md" },
     { "Extend"      = "commands/extend.md"   },
@@ -60,6 +61,7 @@ nav = [
     { "Stream chunker"     = "examples/stream_chunker.md"    },
     { "pytest style"       = "examples/pytest_style.md"      },
     { "Full workflow"      = "examples/full_workflow.md"      },
+    { "Composites"         = "examples/composites.md"          },
   ]},
   { "C library"          = "c-library.md"         },
   { "For Developers" = [
