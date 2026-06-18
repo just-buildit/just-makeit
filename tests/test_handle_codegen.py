@@ -556,6 +556,7 @@ class TestPerFieldGetter:
                                 "name": "peak_dbfs",
                                 "getter": "wr_peak",
                                 "type": "double",
+                                "returns": "double",  # gh-333: explicit
                                 "expr": "tmp > 0 ? 20*log10(tmp) : -INFINITY",
                             },
                         ],
@@ -575,6 +576,60 @@ class TestPerFieldGetter:
         assert "tmp > 0 ? 20*log10(tmp) : -INFINITY" in s
         # no struct out-pointer fill (the shim this removes).
         assert ", &tmp)" not in s
+
+    def test_per_field_expr_without_returns_raises(self):
+        # gh-333: a per-field getter with an `expr` but no `returns` is the
+        # silent-truncation trap (the getter's value is cast to the field type
+        # BEFORE the expr). Require `returns` rather than guess.
+        cfg = _handle_cfg(
+            {
+                "kind": "handle",
+                "backing": "wr",
+                "type_name": "W",
+                "create_fn": "wr_open",
+                "close_fn": "wr_close",
+                "getters": [
+                    {
+                        "fields": [
+                            {
+                                "name": "clipped",
+                                "getter": "wr_peak",
+                                "type": "bool",
+                                "expr": "tmp > 1.0",  # no `returns`
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        with pytest.raises(ValueError, match="returns"):
+            _handle.render_ext(cfg, "m")
+
+    def test_per_field_plain_getter_no_returns_ok(self):
+        # a plain per-field getter (no expr) needs no `returns` — the getter
+        # returns the field type directly.
+        cfg = _handle_cfg(
+            {
+                "kind": "handle",
+                "backing": "wr",
+                "type_name": "W",
+                "create_fn": "wr_open",
+                "close_fn": "wr_close",
+                "getters": [
+                    {
+                        "fields": [
+                            {
+                                "name": "rate",
+                                "getter": "wr_rate",
+                                "type": "double",
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        s = _handle.render_ext(cfg, "m")
+        assert "double tmp;" in s and "tmp = wr_rate(self->h);" in s
 
     def test_tmp_typed_by_getter_return_not_field_type(self):
         # gh-326: `tmp` is the GETTER's return type (`returns`), not the field's

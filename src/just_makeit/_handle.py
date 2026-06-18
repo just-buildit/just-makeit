@@ -600,11 +600,26 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             if field_getter:
                 # #314: a field with its own scalar getter `T fn(h)` — fetch
                 # per field (live, return-by-value), decode `tmp` as a scalar.
-                # `tmp` is typed by the GETTER's return type (`returns`, default
-                # the field type), not the field's decoded type — so a derived
-                # `expr` whose result type differs from the accessor's return
-                # (a bool `clipped` over a double peak) keeps full precision and
-                # the right C type (gh-326).
+                # `tmp` is typed by the GETTER's return type (`returns`), not the
+                # field's decoded type — so a derived `expr` whose result type
+                # differs from the accessor's return (a bool `clipped` over a
+                # double peak) keeps full precision and the right C type (gh-326).
+                #
+                # gh-333: when the field has an `expr`, the getter's return type
+                # is (almost always) NOT the decoded `type` — defaulting `tmp` to
+                # `type` would truncate the getter's value BEFORE the expr runs,
+                # silently (it compiles since gh-330 added <stdbool.h>). Require
+                # `returns` for an expr field rather than guess.
+                if f.get("expr") and "returns" not in f:
+                    raise ValueError(
+                        f"handle '{C.handle_type_name(cfg, module)}': "
+                        f"per-field getter '{f['name']}' has an `expr` but no "
+                        f"`returns` — declare the C return type of getter "
+                        f"'{field_getter}' (the expr operates on `tmp` of that "
+                        f"type, then decodes to '{f['type']}'). Without it the "
+                        f"getter value is silently truncated to '{f['type']}' "
+                        f"before the expr."
+                    )
                 gtype = f.get("returns", f["type"])
                 fetch = f"""    {gtype} tmp;
 {closed_get}
