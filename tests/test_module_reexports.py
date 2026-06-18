@@ -184,27 +184,36 @@ def test_merge_prunes_removed_reexport_name_within_sub():
     assert "old" not in out
 
 
-def test_merge_prunes_whole_reexport_sub_removed_from_manifest():
+def test_merge_leaves_whole_removed_reexport_sub_untouched():
+    # gh-342: a `from .<sub> import …` line for a sibling no longer in the
+    # manifest is NOT deleted — jm can't prove it generated it vs a hand
+    # import, and a line sweep corrupts adjacent multi-line hand imports. The
+    # line is left for the user to remove; __all__ still drops the sub's names
+    # (matching pre-0.19.23 behaviour).
     src = (
         "from .sig import Mix  # noqa: E402\n"
         "from .fn_api import a, b  # noqa: E402\n"
         '__all__ = ["Mix", "a", "b"]\n'
     )
     out = _merge_module_init(src, "sig", ["Mix"], {})  # reexports gone
-    assert "fn_api" not in out
+    assert "from .fn_api import a, b  # noqa: E402" in out  # left untouched
     assert '__all__ = ["Mix"]' in out
 
 
-def test_merge_drops_duplicate_bogus_import_line():
-    # the issue's repro: a bogus second `from .sig import ...` appended by hand
+def test_merge_leaves_hand_appended_import_untouched():
+    # gh-342: a hand-appended `from .sig import NONEXISTENT` is left alone — the
+    # reconcile only rewrites the single canonical module import line (the
+    # gh-329 prune), never a second statement it doesn't own.
     src = (
         "from .sig import Mix  # noqa: E402\n"
         '__all__ = ["Mix"]\n'
         "from .sig import NONEXISTENT  # noqa: E402\n"
     )
     out = _merge_module_init(src, "sig", ["Mix"])
-    assert "NONEXISTENT" not in out
-    assert out.count("from .sig import") == 1
+    assert "from .sig import Mix  # noqa: E402" in out  # canonical line pruned
+    assert (
+        "from .sig import NONEXISTENT  # noqa: E402" in out
+    )  # hand line kept
 
 
 def test_merge_keeps_user_wrapper_and_handwritten_import():
@@ -246,3 +255,75 @@ def test_apply_prunes_dropped_reexport_and_status_catches_drift(
     assert dropped not in text
     assert all(n in text for n in NAMES[:-1])
     assert status_run(dest, check=True) == 0
+
+
+# ── gh-342: reexport reconcile must not corrupt mixed hand/generated init ─────
+def _declare_extra_types(dest, names):
+    cfg = C.load(dest)
+    cfg["module"]["sig"]["extra_types"] = list(names)
+    C.save(dest, cfg)
+
+
+def test_merge_keeps_extra_types_in_import_and_all():
+    # gh-342 bug 1: extra_types are names jm emits into the module import line;
+    # the prune must keep them (not strip declared public types).
+    src = (
+        "from .sig import Mix, ExtraA, ExtraB  # noqa: E402\n"
+        '__all__ = ["Mix", "ExtraA", "ExtraB"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix", "ExtraA", "ExtraB"])
+    assert "from .sig import Mix, ExtraA, ExtraB  # noqa: E402" in out
+    assert '"ExtraA"' in out and '"ExtraB"' in out
+
+
+def test_merge_preserves_adjacent_multiline_hand_import():
+    # gh-342 bug 2: a trailing multi-line hand import must survive byte-for-byte
+    # (the 0.19.23 sweep sheared its opener → IndentationError).
+    import ast
+
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .cic_design import (  # noqa: E402\n"
+        "    a,\n"
+        "    b,\n"
+        ")\n"
+        '__all__ = ["Mix"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"])
+    ast.parse(out)  # still valid python
+    assert "from .cic_design import (  # noqa: E402\n    a,\n    b,\n)" in out
+
+
+def test_merge_preserves_hand_added_reexport():
+    # gh-342 bug 3: a hand-added reexport of a non-manifest sibling stays.
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .iq import ADCIQ  # noqa: E402\n"
+        '__all__ = ["Mix"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"])
+    assert "from .iq import ADCIQ  # noqa: E402" in out
+
+
+def test_apply_extra_types_and_hand_init_survive_roundtrip(tmp_path):
+    # End-to-end: extra_types + a multi-line hand import + a hand reexport all
+    # survive `jm apply`, and the file stays importable (gh-342).
+    import ast
+
+    dest = tmp_path / "dsp"
+    _scaffold(dest)
+    _declare_extra_types(dest, ["ExtraA", "ExtraB"])
+    _silent(apply_run, dest)
+    init = dest / "src/dsp/sig/__init__.py"
+    init.write_text(
+        init.read_text(encoding="utf-8")
+        + "from .cic_design import (  # noqa: E402\n    a,\n    b,\n)\n"
+        + "from .iq import ADCIQ  # noqa: E402\n",
+        encoding="utf-8",
+    )
+    _silent(apply_run, dest)  # the operation that corrupted in 0.19.23
+    out = init.read_text(encoding="utf-8")
+    ast.parse(out)
+    assert "ExtraA" in out and "ExtraB" in out
+    assert "from .cic_design import (  # noqa: E402\n    a,\n    b,\n)" in out
+    assert "from .iq import ADCIQ  # noqa: E402" in out
