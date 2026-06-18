@@ -29,7 +29,7 @@ A module-level C function
 
 An extra method on an existing object  ─→  jm method <obj> <method>
 A Python @property on an object        ─→  jm property <obj> <prop>
-Another state field on an object       ─→  jm add <obj> <var> --type T
+Another state field on an object       ─→  jm add --state <var>:T [--object <obj>]
 
 Performance hot-path retrofit
   (JM_HOT, JM_FORCEINLINE,
@@ -40,7 +40,7 @@ A shippable app from a component
   ├── Python console script?         ─→  jm app --target console
   └── PEP 723 inline script?         ─→  jm app --target pep723
 
-Delete generated code + TOML wiring   ─→  jm remove <name>
+Delete generated code + TOML wiring   ─→  jm remove <kind> <name>
 Materialize TOML edits / fragments    ─→  jm apply [fragment.toml]
 Refresh a component from the manifest  ─→  jm regenerate <name>
   (keeps TOML, deletes + rebuilds files)
@@ -154,12 +154,12 @@ ______________________________________________________________________
 | Read-only Python property         | `jm property <obj> <prop>`                              |
 | Read-write Python property        | `jm property <obj> <prop> --writable`                   |
 | Aliased property (existing field) | `jm property <obj> <prop> --field` (same name as state) |
-| Add a state field later           | `jm add <obj> <var> --type T --default V`               |
+| Add a state field later           | `jm add --state <var>:T:V [--object <obj>]`             |
 | SIMD batch dispatch / `JM_HOT`    | scaffold with `--perf`, or `jm perf` later              |
 | Standalone C executable           | `jm app --target c`                                     |
 | Python CLI from your obj          | `jm app --target console`                               |
 | PEP 723 single-file script        | `jm app --target pep723`                                |
-| Drop generated files **and** TOML | `jm remove <name>`                                      |
+| Drop generated files **and** TOML | `jm remove <kind> <name>`                               |
 | Materialize TOML changes (glue)   | `jm apply`                                              |
 | Compose a fragment file           | `jm apply <fragment.toml>`                              |
 | Refresh a component, keep TOML    | `jm regenerate <name>`                                  |

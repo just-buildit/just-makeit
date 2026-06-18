@@ -23,7 +23,7 @@ ______________________________________________________________________
 
 Click the badge to launch a pre-built sandbox in your browser — no install, no
 compiler, no Docker required. You'll land in a GitHub Codespaces environment
-with `just-makeit` installed, all twenty bundled examples already scaffolded and
+with `just-makeit` installed, dozens of bundled examples already scaffolded and
 compiled, and a terminal ready to go. Run an example end-to-end, browse the
 generated C and Python source, or start a fresh project with
 `just-makeit new`.
@@ -31,6 +31,10 @@ generated C and Python source, or start a fresh project with
 ______________________________________________________________________
 
 ## Quickstart
+
+`install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
+into a Python venv (default `/tmp/jm-venv`, or pass your own path). Run
+`just-makeit install-deps --help` for the full reference.
 
 **curl (auto-installs dependencies, creates and activates venv):**
 
@@ -41,13 +45,13 @@ ______________________________________________________________________
 **pip:**
 
 ```sh
-pip install just-makeit && just-makeit install-deps [-- path]
+pip install just-makeit && just-makeit install-deps [path]
 ```
 
 **uv:**
 
 ```sh
-uv tool install just-makeit && just-makeit install-deps [-- path]
+uv tool install just-makeit && just-makeit install-deps [path]
 ```
 
 **Docker (no install needed):**

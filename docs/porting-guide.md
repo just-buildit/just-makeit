@@ -260,7 +260,7 @@ but the struct body and `step()` inline body are never touched.
 | -------------------- | ------------------------------------------------------------------------------------------------------ |
 | `jm apply`           | Additive — injects missing declarations, regenerates glue, never deletes                               |
 | `jm regenerate COMP` | Delete all COMP files and rebuild from manifest (discards `_core.c` bodies — record `impl_file` first) |
-| `jm status`          | Read-only drift table: OK / MISSING / MODIFIED per file                                                |
+| `jm status`          | Read-only drift table: OK / MISSING / STALE per file                                                   |
 
 Use `jm apply` for day-to-day additions. Use `jm regenerate` only when you
 intentionally want to discard a body — for example, after a signature change
@@ -453,15 +453,16 @@ python -c "from myproject import Engine; e = Engine(1.0); print(e.step(0.5))"
 
 `jm status` column meanings:
 
-| Status   | Meaning                                                                 |
-| -------- | ----------------------------------------------------------------------- |
-| OK       | File exists and matches what `apply` would generate                     |
-| MISSING  | File declared in manifest but not on disk — run `jm apply`              |
-| MODIFIED | File differs from generated — expected for sacred files; drift for glue |
+| Status  | Meaning                                                              |
+| ------- | -------------------------------------------------------------------- |
+| OK      | File exists and matches what `apply` would generate                  |
+| MISSING | File declared in manifest but not on disk — run `jm apply`           |
+| STALE   | File differs from what the manifest would generate; `apply` rewrites |
 
-MODIFIED on a glue file (`_ext.c`, `.pyi`, `CMakeLists.txt`) means a manual
-edit that will be overwritten on next `jm apply`. Move the change into the
-manifest instead.
+`jm status` only reports glue files (`_ext.c`, `.pyi`, `CMakeLists.txt`); your
+sacred `_core.c` is never compared. A STALE glue file means a manual edit that
+will be overwritten on the next `jm apply` — move the change into the manifest
+instead.
 
 ______________________________________________________________________
 

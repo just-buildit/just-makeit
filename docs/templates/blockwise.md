@@ -18,20 +18,22 @@ for free.
 ## Command
 
 ```sh
-jm new my_dsp --object my_xform --preset blockwise --state gain:float:1.0f
+jm new my_dsp
 cd my_dsp
+jm object my_xform --preset blockwise --state gain:float:1.0f
 ```
 
-The default element type is `float _Complex` (complex64). Override with
-explicit `--arg-type` and `--return-type` flags:
+`--preset` is a `jm object` flag, not a `jm new` one, so scaffold the project
+first, then add the object. The default element type is `float _Complex`
+(complex64). Override with explicit `--arg-type` and `--return-type` flags:
 
 ```sh
 # real-valued blockwise transform: float[] → float[]
-jm new my_dsp --object my_filter --preset blockwise \
+jm object my_filter --preset blockwise \
     --arg-type "float[]" --return-type "float[]"
 
 # heterogeneous: raw int16 in, normalised float out
-jm new my_dsp --object my_conv --preset blockwise \
+jm object my_conv --preset blockwise \
     --arg-type "int16_t[]" --return-type "float[]"
 ```
 

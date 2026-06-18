@@ -240,15 +240,18 @@ After updating the TOML, run `jm apply` to refresh the declaration in
 
 ______________________________________________________________________
 
-## `--return-type "T[]"` is rejected
+## `--return-type "T[]"` requires an array `--arg-type`
 
-**Symptom:** `just-makeit object x --return-type "float[]"` exits with an error
-about array return types.
+**Symptom:** `just-makeit object x --return-type "float[]"` with a scalar (or
+`void`) input type exits with: `array return type 'float[]' requires an array
+arg type (--arg-type 'T[]')`.
 
-**Cause:** array *return* ("blockwise", `T[] -> T[]`) is not yet supported.
-The error is deliberate — earlier versions crashed instead.
+**Cause:** an array return only makes sense for a blockwise transform — array
+in, array out of the same length. A scalar input paired with an array return
+has no defined output length, so it is rejected.
 
-**Fix:** array *input* works (`--arg-type "float[]"`), and the result is a
-single sample. If you need block-out, return into an `out=` buffer via a
-`multi_output` method, or emit through a `variable_output` method. There is no
-`blockwise` preset for the same reason.
+**Fix:** for a blockwise transform, pass an array `--arg-type` too:
+`just-makeit object x --arg-type "float[]" --return-type "float[]"` (or use the
+`blockwise` preset). For a reduction (array in → one value), use a scalar
+return type. To emit a variable-length block, use a `--multi-output` or
+`--variable-output` method.

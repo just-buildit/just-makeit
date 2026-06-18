@@ -101,8 +101,7 @@ ______________________________________________________________________
 ## Sink: `--return-type void`
 
 ```sh
-just-makeit object iq_writer --return-type void \
-    --state filename:const_char_p
+just-makeit object iq_writer --return-type void
 ```
 
 A sink consumes input but produces no output. Pass `--return-type void` to

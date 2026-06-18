@@ -42,7 +42,7 @@ generated code to match.
 # just-makeit.toml — thin manifest
 [project]
 name = "doppler"
-schema = "6"
+schema = "7"
 
 [module.spectral]
 objects = ["fft", "fft2d"]
