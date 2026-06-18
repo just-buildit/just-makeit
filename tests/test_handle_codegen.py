@@ -576,6 +576,39 @@ class TestPerFieldGetter:
         # no struct out-pointer fill (the shim this removes).
         assert ", &tmp)" not in s
 
+    def test_tmp_typed_by_getter_return_not_field_type(self):
+        # gh-326: `tmp` is the GETTER's return type (`returns`), not the field's
+        # decoded type — a bool `clipped` derived from a double peak keeps full
+        # precision; `<stdbool.h>` is included so `bool` compiles.
+        cfg = _handle_cfg(
+            {
+                "kind": "handle",
+                "backing": "wr",
+                "type_name": "W",
+                "create_fn": "wr_open",
+                "close_fn": "wr_close",
+                "getters": [
+                    {
+                        "fields": [
+                            {
+                                "name": "clipped",
+                                "getter": "wr_peak",
+                                "type": "bool",
+                                "returns": "double",
+                                "expr": "tmp > 1.0",
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        s = _handle.render_ext(cfg, "m")
+        assert "    double tmp;" in s  # getter return type, not `bool tmp;`
+        assert "bool tmp;" not in s
+        assert "tmp = wr_peak(self->h);" in s
+        assert "PyBool_FromLong((long)(tmp > 1.0))" in s  # decoded to bool
+        assert "#include <stdbool.h>" in s
+
 
 class TestMethodKwargs:
     """#319: scalar method args honor default + keyword passing."""

@@ -600,7 +600,13 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             if field_getter:
                 # #314: a field with its own scalar getter `T fn(h)` — fetch
                 # per field (live, return-by-value), decode `tmp` as a scalar.
-                fetch = f"""    {f["type"]} tmp;
+                # `tmp` is typed by the GETTER's return type (`returns`, default
+                # the field type), not the field's decoded type — so a derived
+                # `expr` whose result type differs from the accessor's return
+                # (a bool `clipped` over a double peak) keeps full precision and
+                # the right C type (gh-326).
+                gtype = f.get("returns", f["type"])
+                fetch = f"""    {gtype} tmp;
 {closed_get}
     tmp = {field_getter}(self->h);"""
                 f_scalar = True
@@ -845,6 +851,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include <numpy/arrayobject.h>
 #include <complex.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 

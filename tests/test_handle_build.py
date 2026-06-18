@@ -182,6 +182,17 @@ def _ringbuf_module() -> dict:
                         "getter": "ringbuf_head",
                         "type": "size_t",
                     },
+                    {
+                        # gh-326: a bool derived from a float getter. `tmp` must
+                        # be the getter's return type (float), not the field type
+                        # (bool) — else gain truncates to 0/1 and `tmp > 1.0` is
+                        # always false. Also needs <stdbool.h> to compile.
+                        "name": "loud",
+                        "getter": "ringbuf_get_gain",
+                        "type": "bool",
+                        "returns": "float",
+                        "expr": "tmp > 1.0",
+                    },
                 ],
             },
             {
@@ -421,6 +432,13 @@ def test_per_field_getter_and_method_default(tmp_path):
     r.push(np.array([1, 2, 3], dtype=np.float32))
     r.pop(2)
     assert r.head_pos == 2  # head advanced by the 2 pops
+
+    # gh-326: `loud` is a bool derived from the float gain getter. With `tmp`
+    # mis-typed as bool the float truncates and this is always False.
+    r.gain = 3.0
+    assert r.loud is True
+    r.gain = 0.5
+    assert r.loud is False
 
     # #319: reset_gain(to=...) — positional, keyword, and omitted (default).
     r.gain = 9.0
