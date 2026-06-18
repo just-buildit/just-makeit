@@ -27,7 +27,7 @@ into a Python venv, creating and activating it for you.
 
 
     ```sh
-    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) [-- path]
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     ```
 
 === "pip"
@@ -46,8 +46,9 @@ ______________________________________________________________________
 
 !!! note
 
-     The venv is created at `/tmp/jm-venv` by default. Pass the optional
-     `path` in the command above to put it elsewhere.
+     The venv is created at `/tmp/jm-venv` by default. To put it elsewhere,
+     append the path to any of the commands above — e.g.
+     `. <(curl -fsSL …/install.sh) ~/my-venv`.
 
 
 !!! info

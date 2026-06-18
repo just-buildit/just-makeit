@@ -69,6 +69,7 @@ for arg in "$@"; do
     case "$arg" in
         -h|--help)  print_help; exit 0 ;;
         --check)    CHECK=1 ;;
+        --)         ;;  # end-of-options separator: ignore (path follows)
         *)          VENV_DIR="$arg" ;;
     esac
 done
@@ -186,11 +187,13 @@ _fetch() {
 }
 
 info "Creating venv at ${VENV_DIR}"
-if "$SYSTEM_PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
+# --clear so a reused dir from a different Python is rebuilt clean, not layered
+# into an inconsistent venv (mismatched bin/python vs lib site-packages).
+if "$SYSTEM_PYTHON" -m venv --clear "$VENV_DIR" >/dev/null 2>&1; then
     ok "venv created"
 else
     warn "ensurepip unavailable — bootstrapping pip via get-pip.py"
-    "$SYSTEM_PYTHON" -m venv --without-pip "$VENV_DIR"
+    "$SYSTEM_PYTHON" -m venv --clear --without-pip "$VENV_DIR"
     _fetch https://bootstrap.pypa.io/get-pip.py | "${VENV_DIR}/bin/python"
     ok "venv created (pip bootstrapped)"
 fi
@@ -203,7 +206,13 @@ VENV_PIP="${VENV_DIR}/bin/pip"
 info "Installing numpy and just-makeit"
 "$VENV_PIP" install --quiet --upgrade pip
 "$VENV_PIP" install --quiet numpy just-makeit
-ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
+# Verify the installs actually import — a pip that "succeeds" into a mismatched
+# tree would otherwise be reported ok with an empty version.
+_np=$("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)' 2>/dev/null) \
+    || die "numpy did not install into ${VENV_DIR}"
+ok "numpy ${_np}"
+"$VENV_PYTHON" -c 'import just_makeit' 2>/dev/null \
+    || die "just-makeit did not install into ${VENV_DIR}"
 ok "just-makeit installed"
 
 # ── 4. Activate ───────────────────────────────────────────────────────────────
