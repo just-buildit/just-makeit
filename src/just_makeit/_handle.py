@@ -179,6 +179,8 @@ def render_tp_init(cfg: dict, module: str) -> str:
     tname = C.handle_type_name(cfg, module)
     obj = f"{tname}Object"
     create_fn = C.handle_create_fn(cfg, module)
+    init_fn = C.handle_init_fn(cfg, module)
+    htype = C.handle_type(cfg, module)
     args = C.handle_create_args(cfg, module)
     opt_backend = C.handle_optional_backend(cfg, module)
 
@@ -248,6 +250,23 @@ def render_tp_init(cfg: dict, module: str) -> str:
 
     parse_fail = f"{fs_decref}        return -1;"
 
+    # Construct the handle: either create_fn (allocates + returns it) or, for an
+    # init-in-place API (gh-315), jm mallocs sizeof(handle) and calls init_fn on
+    # it. init_fn returns void, so the only failure to check is the malloc.
+    if init_fn:
+        construct = f"""    self->h = ({htype} *)malloc(sizeof({htype}));
+{fs_decref}    if (!self->h) {{
+        PyErr_NoMemory();
+        return -1;
+    }}
+    {init_fn}(self->h{(", " + call_args) if call_args else ""});"""
+    else:
+        construct = f"""    self->h = {create_fn}({call_args});
+{fs_decref}    if (!self->h) {{
+        PyErr_SetString(PyExc_RuntimeError, "{create_fn} failed");
+        return -1;
+    }}"""
+
     return f"""static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -258,11 +277,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
 {parse_fail}
     }}
 {enum_validate_s}
-    self->h = {create_fn}({call_args});
-{fs_decref}    if (!self->h) {{
-        PyErr_SetString(PyExc_RuntimeError, "{create_fn} failed");
-        return -1;
-    }}
+{construct}
     self->closed = 0;
 {stash_s}
 {post_s}
@@ -281,6 +296,18 @@ def _init_fsfree(args: list[dict]) -> str:
 
 
 # ── tp_methods (scalar / array-in / int-in→array-out; reuses capsule numpy) ───
+
+
+def _method_kwargs(m: dict) -> bool:
+    """True if a method takes keyword/default args (#319): a scalar-arg method
+    (shape (a)) with at least one arg. Such methods parse with
+    ``PyArg_ParseTupleAndKeywords`` and register as ``METH_VARARGS |
+    METH_KEYWORDS`` so ``track_clipping(on=True)`` and a ``default`` both work;
+    the array shapes (b)-(d) stay positional ``METH_VARARGS``."""
+    margs = m.get("args", [])
+    if not margs:
+        return False
+    return not any(str(a.get("type", "")).endswith("[]") for a in margs)
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -448,16 +475,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (a) scalar(s) → scalar / None.
-    decls = "".join(f"    {a['type']} {a['name']};\n" for a in margs)
-    fmt = "".join(_scalar_fmt(a["type"]) for a in margs)
-    addrs = "".join(f", &{a['name']}" for a in margs)
+    # (a) scalar(s) → scalar / None. With args, support keyword passing +
+    # defaults (#319) via PyArg_ParseTupleAndKeywords (mirrors tp_init and
+    # module functions); a no-arg method stays a plain METH_VARARGS stub.
     call = ", ".join(["self->h"] + [a["name"] for a in margs])
-    parse = (
-        f'    if (!PyArg_ParseTuple(args, "{fmt}"{addrs})) return NULL;\n'
-        if margs
-        else "    (void)args;\n"
-    )
     if returns:
         ret = f"""    {returns} r;
 {gil_open}    r = {fn}({call});
@@ -465,10 +486,38 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     else:
         ret = f"""{gil_open}    {fn}({call});
 {gil_close}    Py_RETURN_NONE;"""
+
+    if margs:
+        decls = ""
+        fmt_parts = []
+        inserted = False
+        for a in margs:
+            d = a.get("default")
+            init = f" = {d}" if d is not None else ""
+            decls += f"    {a['type']} {a['name']}{init};\n"
+            if d is not None and not inserted:
+                fmt_parts.append("|")  # everything after is optional
+                inserted = True
+            fmt_parts.append(_scalar_fmt(a["type"]))
+        fmt = "".join(fmt_parts)
+        kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
+        addrs = ", ".join(f"&{a['name']}" for a in margs)
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)
+{{
+    static char *kwlist[] = {{{kwlist}, NULL}};
+{decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
+            {addrs})) return NULL;
+{closed_guard}
+{ret}
+}}
+"""
+
     return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
-{decls}{parse}{closed_guard}
+    (void)args;
+{closed_guard}
 {ret}
 }}
 """
@@ -481,22 +530,23 @@ def _scalar_out(g: dict) -> bool:
     """True if a getter's ``out`` is a scalar C type (return-by-value) rather
     than a struct filled through an out-pointer. A scalar getter ``T fn(h)``
     (e.g. ``double ddcr_get_norm_freq(s)``) backs a single writable property;
-    a struct getter ``void fn(h, T *out)`` backs N decoded fields (#311)."""
-    return g["out"] in T._CTYPE_META
+    a struct getter ``void fn(h, T *out)`` backs N decoded fields (#311).
+    ``.get`` not ``[]`` so a per-field-getter table (no ``out``) is safe (#314)."""
+    return g.get("out", "") in T._CTYPE_META
 
 
-def _decode_field(g: dict, f: dict, tname: str) -> str:
-    """Decode one field of a getter's result into a PyObject.
+def _decode_field(f: dict, scalar: bool) -> str:
+    """Decode one field's value (held in the C local ``tmp``) into a PyObject.
 
-    The access expression is ``tmp`` for a scalar getter (the whole returned
-    value) or ``tmp.<from|name>`` for a struct getter's named member. The
-    transform menu then applies:
+    The access expression is ``tmp`` for a scalar value (a scalar struct-getter
+    ``out``, or a per-field ``getter``) or ``tmp.<from|name>`` for a struct
+    getter's named member. The transform menu then applies:
       plain   → ``_to_py(<acc>)`` (reuses _CTYPE_META);
       enum    → ``PyUnicode_FromString(_enum_<e>[<acc>])`` (composer SSOT);
       scale   → ``_to_py(<acc> * <scale>)``;
       expr    → the verbatim-C ``expr`` (may reference ``tmp`` / ``tmp.<f>`` +
                 stashed ``self-><init>``)."""
-    acc = "tmp" if _scalar_out(g) else f"tmp.{f.get('from', f['name'])}"
+    acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
     if f.get("expr"):
         return _to_py(f["type"], f["expr"])
     if f.get("enum"):
@@ -525,30 +575,44 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     }}"""
 
     for gi, g in enumerate(C.handle_getters(cfg, module)):
-        out_t = g["out"]
-        cache = bool(g.get("cache"))
-        scalar = _scalar_out(g)
-        # cache=true reads the value stashed in tp_init; live calls the getter.
-        # A scalar getter returns by value (tmp = fn(h)); a struct getter fills
-        # an out-pointer (fn(h, &tmp)).
-        if cache:
-            fetch = f"    {out_t} tmp = self->_g{gi};"
-        elif scalar:
-            fetch = f"""    {out_t} tmp;
+        # A table with a shared `fn` fills one `tmp` per access (struct), or
+        # returns it by value (scalar out), or reads the cached tmp (cache=true).
+        # A table whose fields each name their own `getter` has no shared fetch
+        # (#314); each field call sites its own scalar getter below.
+        table_fetch = ""
+        scalar = False
+        if g.get("fn"):
+            out_t = g["out"]
+            scalar = _scalar_out(g)
+            if g.get("cache"):
+                table_fetch = f"    {out_t} tmp = self->_g{gi};"
+            elif scalar:
+                table_fetch = f"""    {out_t} tmp;
 {closed_get}
     tmp = {g["fn"]}(self->h);"""
-        else:
-            fetch = f"""    {out_t} tmp;
+            else:
+                table_fetch = f"""    {out_t} tmp;
 {closed_get}
     {g["fn"]}(self->h, &tmp);"""
         for f in g.get("fields", []):
             n = f["name"]
+            field_getter = f.get("getter")
+            if field_getter:
+                # #314: a field with its own scalar getter `T fn(h)` — fetch
+                # per field (live, return-by-value), decode `tmp` as a scalar.
+                fetch = f"""    {f["type"]} tmp;
+{closed_get}
+    tmp = {field_getter}(self->h);"""
+                f_scalar = True
+            else:
+                fetch = table_fetch
+                f_scalar = scalar
             funcs.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
 {fetch}
-    return {_decode_field(g, f, tname)};
+    return {_decode_field(f, f_scalar)};
 }}
 """)
             # A field naming a `writable_fn` also emits a (setter) slot calling
@@ -643,11 +707,21 @@ def render_type(cfg: dict, module: str) -> str:
 """
 
     # RAII — idempotent close + context-manager + dealloc (composer pattern).
+    # For an init-in-place handle (gh-315) jm owns the malloc, so it free()s the
+    # struct (after an optional close_fn that finalizes owned members); a
+    # create_fn handle is released by close_fn alone.
+    init_fn = C.handle_init_fn(cfg, module)
+    if init_fn:
+        finalize = f"{close_fn}(self->h); " if close_fn else ""
+        destroy = f"{finalize}free(self->h);"
+    else:
+        destroy = f"{close_fn}(self->h);"
+
     close = f"""static PyObject *
 {tname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->closed && self->h) {{
-        {close_fn}(self->h);
+        {destroy}
         self->closed = 1;
     }}
     Py_RETURN_NONE;
@@ -678,8 +752,9 @@ static PyObject *
     dealloc = f"""static void
 {tname}_dealloc({obj} *self)
 {{
-    if (!self->closed && self->h)
-        {close_fn}(self->h);
+    if (!self->closed && self->h) {{
+        {destroy}
+    }}
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """
@@ -691,9 +766,14 @@ static PyObject *
 
     method_rows = []
     for m in C.handle_methods(cfg, module):
+        flags = (
+            "METH_VARARGS | METH_KEYWORDS"
+            if _method_kwargs(m)
+            else "METH_VARARGS"
+        )
         method_rows.append(
             f'    {{"{m["name"]}", (PyCFunction){tname}_{m["name"]}, '
-            f"METH_VARARGS, NULL}},"
+            f"{flags}, NULL}},"
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
@@ -914,9 +994,11 @@ def render_pyi(cfg: dict, module: str) -> str:
             sig = ", ".join(parts)
             ann = _pyi_scalar(returns) if returns else "None"
         elif margs:
-            # (a) scalars -> scalar / None
+            # (a) scalars -> scalar / None; a `default` shows as `= ...` (#319).
             sig = "self, " + ", ".join(
-                f"{a['name']}: {_pyi_scalar(a['type'])}" for a in margs
+                f"{a['name']}: {_pyi_scalar(a['type'])}"
+                + (" = ..." if a.get("default") is not None else "")
+                for a in margs
             )
             ann = _pyi_scalar(returns) if returns else "None"
         else:

@@ -930,6 +930,18 @@ def handle_create_fn(cfg: dict, module: str) -> str:
     )
 
 
+def handle_init_fn(cfg: dict, module: str) -> str:
+    """Return a handle's **init-in-place** constructor, if any (gh-315).
+
+    An alternative to ``create_fn``: instead of ``T *create_fn(args)`` that
+    allocates and returns the handle, ``void init_fn(T *obj, args…)`` inits a
+    caller-allocated struct. When set, ``tp_init`` mallocs ``sizeof(<handle_type>)``,
+    calls ``init_fn(self->h, args…)``, and ``close``/``tp_dealloc`` ``free`` it
+    (after an optional ``close_fn`` that finalizes owned members). Mutually
+    exclusive with ``create_fn``; unset by default."""
+    return cfg.get("module", {}).get(module, {}).get("init_fn", "")
+
+
 def handle_create_args(cfg: dict, module: str) -> list[dict]:
     """Return a handle's ``[[module.X.create_args]]`` — the ``create_fn`` args.
 
@@ -1896,8 +1908,12 @@ def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
 
     for g in data.get("getters", []):
         out.append(f"[[module.{mk}.getters]]")
-        out.append(f'fn = "{g["fn"]}"')
-        out.append(f'out = "{g["out"]}"')
+        # fn/out are absent for a per-field-getter table (gh-314); each field
+        # then carries its own `getter` (dumped inline via _inline_dict).
+        if g.get("fn"):
+            out.append(f'fn = "{g["fn"]}"')
+        if g.get("out"):
+            out.append(f'out = "{g["out"]}"')
         if g.get("cache"):
             out.append("cache = true")
         if g.get("fields"):
@@ -2068,6 +2084,7 @@ def _dump(cfg: dict) -> str:
                 for _hk in (
                     "type_name",
                     "create_fn",
+                    "init_fn",
                     "close_fn",
                     "handle_type",
                     "optional_backend",

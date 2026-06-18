@@ -484,3 +484,133 @@ class TestWritableProperty:
         assert "@gain.setter" in pyi
         assert "def gain(self, value: float) -> None: ..." in pyi
         assert "def scale(self, x: NDArray[Any], out: NDArray[Any])" in pyi
+
+
+def _handle_cfg(mod):
+    return {"project": {"name": "p", "version": "0.1.0"}, "module": {"m": mod}}
+
+
+class TestInitInPlace:
+    """#315: init_fn over a caller-allocated struct — jm mallocs + inits + frees
+    (vs create_fn, which allocates and returns the handle)."""
+
+    def _cfg(self, close_fn=None):
+        mod = {
+            "kind": "handle",
+            "type_name": "Clock",
+            "handle_type": "dp_sample_clock_t",
+            "init_fn": "dp_sample_clock_init",
+            "create_args": [
+                {"name": "fs", "type": "double"},
+                {"name": "resync", "type": "int", "default": "0"},
+            ],
+        }
+        if close_fn:
+            mod["close_fn"] = close_fn
+        return _handle_cfg(mod)
+
+    def test_tp_init_mallocs_and_inits(self):
+        s = _handle.render_ext(self._cfg(), "m")
+        assert (
+            "self->h = (dp_sample_clock_t *)malloc(sizeof(dp_sample_clock_t));"
+            in s
+        )
+        assert "PyErr_NoMemory();" in s
+        assert "dp_sample_clock_init(self->h, fs, resync);" in s
+        # init_fn returns void — no create_fn "failed" path.
+        assert "failed" not in s
+
+    def test_close_and_dealloc_free(self):
+        s = _handle.render_ext(self._cfg(), "m")
+        # jm owns the malloc: both close and dealloc free it.
+        assert s.count("free(self->h);") >= 2
+        assert "<stdlib.h>" in s  # malloc/free available
+
+    def test_close_fn_finalizes_before_free(self):
+        s = _handle.render_ext(self._cfg(close_fn="dp_sample_clock_fini"), "m")
+        # a declared close_fn finalizes owned members, then jm frees the struct.
+        assert "dp_sample_clock_fini(self->h); free(self->h);" in s
+
+
+class TestPerFieldGetter:
+    """#314: each field names its own scalar getter `T fn(h)` — no struct shim."""
+
+    def _cfg(self):
+        return _handle_cfg(
+            {
+                "kind": "handle",
+                "backing": "wr",
+                "type_name": "W",
+                "create_fn": "wr_open",
+                "close_fn": "wr_close",
+                "getters": [
+                    {
+                        # no `fn`/`out` — per-field scalar getters.
+                        "fields": [
+                            {
+                                "name": "clip_fraction",
+                                "getter": "wr_clip_fraction",
+                                "type": "double",
+                            },
+                            {
+                                "name": "peak_dbfs",
+                                "getter": "wr_peak",
+                                "type": "double",
+                                "expr": "tmp > 0 ? 20*log10(tmp) : -INFINITY",
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+    def test_per_field_scalar_getters(self):
+        s = _handle.render_ext(self._cfg(), "m")
+        assert "tmp = wr_clip_fraction(self->h);" in s
+        assert "tmp = wr_peak(self->h);" in s
+        assert "W_get_clip_fraction(WObject *self" in s
+        assert "W_get_peak_dbfs(WObject *self" in s
+        # expr references the scalar as `tmp` (standardized w/ the scalar-out
+        # path), not the issue's draft `x`.
+        assert "tmp > 0 ? 20*log10(tmp) : -INFINITY" in s
+        # no struct out-pointer fill (the shim this removes).
+        assert ", &tmp)" not in s
+
+
+class TestMethodKwargs:
+    """#319: scalar method args honor default + keyword passing."""
+
+    def _cfg(self):
+        return _handle_cfg(
+            {
+                "kind": "handle",
+                "backing": "w",
+                "type_name": "W",
+                "create_fn": "w_open",
+                "close_fn": "w_close",
+                "methods": [
+                    {
+                        "name": "track_clipping",
+                        "fn": "w_track_clipping",
+                        "args": [
+                            {"name": "on", "type": "int", "default": "1"}
+                        ],
+                    }
+                ],
+            }
+        )
+
+    def test_keyword_and_default_parse(self):
+        s = _handle.render_ext(self._cfg(), "m")
+        assert (
+            "W_track_clipping(WObject *self, PyObject *args, PyObject *kwds)"
+            in s
+        )
+        assert 'static char *kwlist[] = {"on", NULL};' in s
+        assert "int on = 1;" in s  # default
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist,' in s
+        # the method table registers keywords so on= works.
+        assert (
+            '{"track_clipping", (PyCFunction)W_track_clipping, '
+            "METH_VARARGS | METH_KEYWORDS, NULL}" in s
+        )
