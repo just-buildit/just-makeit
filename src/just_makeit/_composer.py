@@ -1366,11 +1366,18 @@ static PyObject *
             if has_rt
             else ""
         )
+        # gh-343-review #1: the pace sleeps (to the block's ideal deadline), so
+        # release the GIL around it — exactly like a `nogil` handle method —
+        # or every other Python thread (e.g. a sink consumer) freezes for the
+        # full per-block sleep. The clock create touches `self`, so it stays
+        # under the GIL; only the blocking pace is wrapped.
         rt_pace_code = (
             f"""    if (self->realtime > 0.0) {{
         if (!self->clk)
             self->clk = {rt_create}(self->realtime, 0);
+        Py_BEGIN_ALLOW_THREADS
         {rt_pace}(self->clk, (size_t)n);
+        Py_END_ALLOW_THREADS
     }}
 """
             if has_rt
