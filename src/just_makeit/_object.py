@@ -393,20 +393,28 @@ def _merge_module_init(
     m = import_pat.search(existing)
     existing_names = _parse_import_names(m.group(0)) if m else []
 
-    merged: list[str] = list(existing_names)
+    # gh-329: the import line is glue, not user content — it must equal the
+    # manifest's exports. Keep existing names that are STILL exported (stable
+    # order) and append new ones, but PRUNE names no longer in the manifest, so
+    # a symbol removed from the .so doesn't linger as a broken import.
+    canonical = set(all_exports)
+    merged: list[str] = [n for n in existing_names if n in canonical]
     seen = set(merged)
     for name in all_exports:
         if name not in seen:
             merged.append(name)
             seen.add(name)
 
-    # Reexports from sibling submodules: merge declared names with any already
-    # present in that submodule's import line, in declaration order.
+    # Reexports from sibling submodules: the declared names are canonical (a
+    # name dropped from the manifest is pruned, gh-329); keep the existing order
+    # for stability and append any newly declared.
     reexport_lines: dict[str, str] = {}
     reexport_names: list[str] = []
     for sub, names in (reexports or {}).items():
         sm = _import_re(sub).search(existing)
-        sub_names = _parse_import_names(sm.group(0)) if sm else []
+        existing_sub = _parse_import_names(sm.group(0)) if sm else []
+        declared = set(names)
+        sub_names = [n for n in existing_sub if n in declared]
         sub_seen = set(sub_names)
         for n in names:
             if n not in sub_seen:

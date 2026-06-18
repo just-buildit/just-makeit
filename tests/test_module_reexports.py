@@ -148,6 +148,51 @@ def test_merge_reexports_merges_existing_line():
     assert out.count("from .fn_api import") == 1  # not duplicated
 
 
+def test_status_catches_and_apply_prunes_stale_reexport(tmp_path):
+    # gh-329: dropping a reexported name from the manifest must (1) be pruned by
+    # apply and (2) be caught by status --check (which runs apply on a copy, so
+    # the pruning surfaces as drift — the gate no longer passes a broken import).
+    from just_makeit import _status
+
+    dest = tmp_path / "dsp"
+    _scaffold(dest)
+    _declare_reexports(dest, NAMES)
+    _silent(apply_run, dest)
+    init = dest / "src/dsp/sig/__init__.py"
+    assert NAMES[-1] in init.read_text(encoding="utf-8")
+
+    _declare_reexports(dest, NAMES[:-1])  # consolidation drops the last name
+    assert _silent(_status.run, dest) >= 1  # drift now detected
+    _silent(apply_run, dest)
+    assert NAMES[-1] not in init.read_text(encoding="utf-8")  # pruned
+    assert _silent(_status.run, dest) == 0  # clean after apply
+
+
+def test_merge_prunes_removed_module_export(tmp_path):
+    # gh-329: a symbol removed from the module's exports is pruned from the
+    # import line and __all__, not left as a stale (broken) import.
+    src = (
+        "from .sig import Mix, OldGone  # noqa: E402\n"
+        '__all__ = ["Mix", "OldGone"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"])
+    assert "from .sig import Mix  # noqa: E402" in out
+    assert "OldGone" not in out
+    assert '__all__ = ["Mix"]' in out
+
+
+def test_merge_prunes_removed_reexport(tmp_path):
+    # gh-329: a name dropped from a reexport submodule's manifest list is pruned.
+    src = (
+        "from .sig import Mix  # noqa: E402\n"
+        "from .fn_api import a, dead  # noqa: E402\n"
+        '__all__ = ["Mix", "a", "dead"]\n'
+    )
+    out = _merge_module_init(src, "sig", ["Mix"], {"fn_api": ["a"]})
+    assert "from .fn_api import a  # noqa: E402" in out
+    assert "dead" not in out
+
+
 def test_no_reexports_is_unchanged_behaviour():
     src = 'from .sig import Mix  # noqa: E402\n__all__ = ["Mix"]\n'
     out = _merge_module_init(src, "sig", ["Mix", "Pan"])
