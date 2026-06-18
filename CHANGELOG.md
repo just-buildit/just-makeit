@@ -31,6 +31,17 @@
     dangling former-module fragment (naming the object and how to resolve it)
     rather than clobbering. A genuine standalone object, or a fresh one with no
     native dir yet, materializes unchanged.
+- **`jm apply` honors `variable_output` / `out_size` for module functions
+    (gh-335)** — #318's self-sizing output was dropped on the `apply` replay:
+    `_function.run` never accepted the two fields, so the re-saved manifest entry
+    lost them and the regenerated binding fell into the plain-`out_type` path
+    (`out` inserted first, `_dim` sized from `1` / the first array's length, the
+    `out_size` expression ignored), under-allocating the array → the C kernel
+    overran it (heap corruption / segfault). `_function.run` now persists both
+    fields, `apply`'s replay forwards them, and `fn_c_decl` / `fn_c_stub` append
+    `out` LAST (matching the binding's call) instead of after the array params.
+    The `jm function` CLI also gains `--variable-output` / `--out-size` so these
+    can be authored without hand-editing the manifest.
 
 ## [0.19.22] — 2026-06-18
 

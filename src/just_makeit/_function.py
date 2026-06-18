@@ -49,6 +49,7 @@ def _write_function_c(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
     impl_body: str | None = None,
 ) -> None:
     """Write the standalone <fn_name>.c for a module-level function.
@@ -63,6 +64,7 @@ def _write_function_c(
         out_type=out_type,
         result_fields=result_fields,
         max_results_param=max_results_param,
+        variable_output=variable_output,
     )
     if impl_body is not None:
         from . import _impl as I
@@ -89,6 +91,7 @@ def _inject_into_core_h(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
 ) -> None:
     decl = T.fn_c_decl(
         fn_name,
@@ -97,6 +100,7 @@ def _inject_into_core_h(
         out_type=out_type,
         result_fields=result_fields,
         max_results_param=max_results_param,
+        variable_output=variable_output,
     )
     existing = path.read_text(encoding="utf-8")
     # Inject inside the extern "C" block so the declaration has C linkage in
@@ -152,6 +156,8 @@ def run(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
+    out_size: str = "",
     inline: bool = False,
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
@@ -239,6 +245,7 @@ def run(
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
+            variable_output=variable_output,
         )
         if impl_body is not None:
             from . import _impl as I
@@ -258,6 +265,7 @@ def run(
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
+            variable_output=variable_output,
         )
     else:
         # Each function gets its own sacred <fn_name>.c translation unit.
@@ -270,6 +278,7 @@ def run(
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
+            variable_output=variable_output,
             impl_body=impl_body,
         )
 
@@ -283,6 +292,7 @@ def run(
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
+            variable_output=variable_output,
         )
 
     # Update config
@@ -310,6 +320,16 @@ def run(
         fn_entry["result_fields"] = result_fields
     if max_results_param:
         fn_entry["max_results_param"] = max_results_param
+    # #318 / gh-335: a stateless self-sizing output. The C stub/decl place
+    # `out` LAST (above, via variable_output) and the binding appends the
+    # self-allocated buffer last with `_dim = out_size`; both must agree. These
+    # fields must round-trip through the manifest unchanged — apply replays this
+    # run() and would otherwise drop them, sending make_functions_ctx down the
+    # wrong (out-first, _dim = first array length) branch and under-allocating.
+    if variable_output:
+        fn_entry["variable_output"] = True
+    if out_size:
+        fn_entry["out_size"] = out_size
     if inline:
         fn_entry["inline"] = True
     C.add_module_function(cfg, module, fn_entry)

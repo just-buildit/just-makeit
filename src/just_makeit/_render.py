@@ -303,11 +303,16 @@ def fn_c_decl(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
 ) -> str:
     """One-line C declaration: 'return_type fn_name(c_params);'
 
     out_type: if set, inserts '{out_type} *out' after array params and
     forces the return type to void (output is returned via the pointer).
+
+    variable_output: when set (a #318 self-sizing output), '{out_type} *out'
+    is appended LAST instead of after the array params, so the C signature
+    matches the binding's call (which appends the self-allocated buffer last).
 
     result_fields: if set, forces return type to size_t (count) and
     appends '{return_type} *result' (plus 'size_t max_results' when
@@ -336,10 +341,13 @@ def fn_c_decl(
             qual = "" if (len(p) > 2 and p[2]) else "const "
             c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
             c_parts.append(f"size_t {n}_len")
-        c_parts.append(f"{out_disp} *out")
+        if not variable_output:
+            c_parts.append(f"{out_disp} *out")
         for p in scl_p:
             n, t = p[0], p[1]
             c_parts.append(f"{_ctype_display(t)} {n}")
+        if variable_output:
+            c_parts.append(f"{out_disp} *out")
         full_params = ", ".join(c_parts) if c_parts else "void"
         return f"void {fn_name}({full_params});\n"
     ret_disp = _ctype_display(return_type)
@@ -410,11 +418,12 @@ def fn_c_stub(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
 ) -> str:
     """C implementation stub for <module>_core.c (public, no _impl suffix).
 
-    out_type and result_fields extend the signature in the same way as
-    fn_c_decl; see that function's docstring for the semantics.
+    out_type, variable_output, and result_fields extend the signature in the
+    same way as fn_c_decl; see that function's docstring for the semantics.
     """
     result_fields = result_fields or []
     if result_fields:
@@ -455,12 +464,16 @@ def fn_c_stub(
             c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
             c_parts.append(f"size_t {n}_len")
             suppress_parts += [f"(void){n};", f"(void){n}_len;"]
-        c_parts.append(f"{out_disp} *out")
-        suppress_parts.append("(void)out;")
+        if not variable_output:
+            c_parts.append(f"{out_disp} *out")
+            suppress_parts.append("(void)out;")
         for p in scl_p:
             n, t = p[0], p[1]
             c_parts.append(f"{_ctype_display(t)} {n}")
             suppress_parts.append(f"(void){n};")
+        if variable_output:
+            c_parts.append(f"{out_disp} *out")
+            suppress_parts.append("(void)out;")
         full_params = ", ".join(c_parts) if c_parts else "void"
         suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
         return (
