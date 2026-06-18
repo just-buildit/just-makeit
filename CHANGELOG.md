@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.19.20] — 2026-06-18
+
+### Added
+
+`kind = "handle"` gains the shapes a streaming/resource handle needs beyond the
+initial I/O archetype — each driven by the doppler transport adoption and proven
+end-to-end by a real compile (a second `init_fn` backing now joins the toy
+`ringbuf` in the build harness).
+
+- **Caller-buffer execute method, shape (d) (gh-311)** — an array-in arg plus a
+    `writable = true` array arg with an array `returns` marshals a borrowed input
+    and a writable **exact-dtype** output (no silent cast), calls
+    `fn(h, in, n_in, out, max_out)` under optional `nogil`, and returns the
+    zero-copy `out[:n_out]` view (which pins the caller's array). Mirrors the
+    capsule execute on the typed handle.
+- **Writable scalar property (gh-311)** — a scalar (return-by-value) getter whose
+    field names a `writable_fn` emits the getset `(setter)` slot, coercing the
+    value via `PyArg_Parse` and calling `set_fn(self->h, v)`.
+- **Per-field scalar getters (gh-314)** — a getters table whose fields each name
+    their own `getter = "T fn(h)"` (no shared `fn`/`out`), so a project drops the
+    hand-C struct shim that existed only to bundle scalar getters into the
+    one-struct-getter decode. The same `enum` / `scale` / `expr` transform menu
+    applies (the scalar is `tmp`).
+- **Init-in-place constructor (gh-315)** — `init_fn = "void init_fn(T*, args…)"`
+    over a caller-allocated struct: jm `malloc`s `sizeof(<handle_type>)`, calls
+    `init_fn`, and `free`s on `close` / `tp_dealloc` (after an optional `close_fn`
+    finalizer). Mutually exclusive with `create_fn`; drops the malloc/init/free
+    shim around a public struct.
+- **Keyword / default args on handle methods (gh-319)** — scalar-arg methods parse
+    with `PyArg_ParseTupleAndKeywords` (a `|` before the defaulted tail) and
+    register `METH_VARARGS | METH_KEYWORDS`, so `m(on=True)` and a `default` both
+    work instead of forcing positional calls.
+
 ## [0.19.19] — 2026-06-17
 
 ### Added
