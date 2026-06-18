@@ -39,6 +39,7 @@ def _cmake_lint(cmake_files: list[Path]) -> subprocess.CompletedProcess:
         + [str(f) for f in cmake_files],
         capture_output=True,
         text=True,
+        timeout=600,
     )
 
 

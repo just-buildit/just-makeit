@@ -73,13 +73,23 @@ def run(root: Path) -> None:
 
     # Build
     r = subprocess.run(
-        ["make"], cwd=dest, env=env, capture_output=True, text=True
+        ["make"],
+        cwd=dest,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert r.returncode == 0, f"make failed:\n{r.stderr}"
 
     # C tests
     r = subprocess.run(
-        ["make", "test"], cwd=dest, env=env, capture_output=True, text=True
+        ["make", "test"],
+        cwd=dest,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert r.returncode == 0, f"make test failed:\n{r.stdout}\n{r.stderr}"
 
@@ -105,6 +115,7 @@ print("ok")
         cwd=dest,
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert r.returncode == 0, (
         f"Python smoke test failed:\n{r.stdout}\n{r.stderr}"

@@ -276,7 +276,9 @@ def _compile_import(
         "-o",
         str(so),
     ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    subprocess.run(
+        cmd, check=True, capture_output=True, text=True, timeout=600
+    )
 
     spec = importlib.util.spec_from_file_location(mod_name, so)
     mod = importlib.util.module_from_spec(spec)

@@ -575,6 +575,7 @@ class TestNewBuild:
             cwd=root,
             capture_output=True,
             text=True,
+            timeout=600,
         )
         assert r.returncode == 0, f"cmake configure failed:\n{r.stderr}"
 
@@ -583,6 +584,7 @@ class TestNewBuild:
             cwd=root,
             capture_output=True,
             text=True,
+            timeout=600,
         )
         assert r.returncode == 0, f"cmake build failed:\n{r.stderr}"
 
@@ -609,6 +611,7 @@ class TestNewBuild:
             cwd=built_project,
             capture_output=True,
             text=True,
+            timeout=600,
         )
         assert r.returncode == 0, f"CTest failed:\n{r.stdout}\n{r.stderr}"
 
@@ -624,6 +627,7 @@ class TestNewBuild:
             },
             capture_output=True,
             text=True,
+            timeout=600,
         )
         assert r.returncode == 0, f"pytest failed:\n{r.stdout}\n{r.stderr}"
 

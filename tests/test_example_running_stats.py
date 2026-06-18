@@ -24,7 +24,14 @@ PYTHON = sys.executable
 
 
 def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, **kw)
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        **kw,
+    )
 
 
 def _require(name: str) -> None:
@@ -163,5 +170,6 @@ def test_readme_up_to_date():
         / "running_stats",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert r.returncode == 0, "README.md is stale — run: python3 assemble.py"

@@ -259,12 +259,14 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
         ["cmake", "-S", str(dest), "-B", str(dest / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, cfg.stderr
     bld = subprocess.run(
         ["cmake", "--build", str(dest / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, (
         "collocated composing object failed to link "
@@ -480,6 +482,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
         ["cmake", "-S", str(dest), "-B", str(dest / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, cfg.stderr
     bld = subprocess.run(
@@ -492,6 +495,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
         ],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, (
         "test_tone_core failed to link a depends_on added post-scaffold "

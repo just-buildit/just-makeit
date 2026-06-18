@@ -38,6 +38,7 @@ def _cli(*args, cwd):
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
         text=True,
+        timeout=600,
     )
 
 
@@ -186,11 +187,13 @@ def test_formatted_project_builds(tmp_path):
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, cfg.stderr
     bld = subprocess.run(
         ["cmake", "--build", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, f"{bld.stdout}\n{bld.stderr}"

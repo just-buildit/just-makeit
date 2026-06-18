@@ -21,7 +21,9 @@ def _make_env():
 
 
 def _cmd(args, cwd, **kw):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kw)
+    r = subprocess.run(
+        args, cwd=cwd, capture_output=True, text=True, timeout=600, **kw
+    )
     if r.returncode != 0:
         raise AssertionError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"
@@ -280,6 +282,7 @@ print("accumulator: all checks passed")
         cwd=dest,
         capture_output=True,
         text=True,
+        timeout=600,
     )
     if result.returncode != 0:
         raise AssertionError(

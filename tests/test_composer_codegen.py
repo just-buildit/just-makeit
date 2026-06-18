@@ -1146,5 +1146,6 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
         check=True,
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert obj.exists()

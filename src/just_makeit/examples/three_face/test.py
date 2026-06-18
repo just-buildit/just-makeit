@@ -28,7 +28,11 @@ from pathlib import Path
 
 def _cmd(args, cwd):
     r = subprocess.run(
-        [str(a) for a in args], cwd=cwd, capture_output=True, text=True
+        [str(a) for a in args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     if r.returncode != 0:
         raise AssertionError(
@@ -117,6 +121,7 @@ def run(root: Path) -> None:
         input=raw,
         capture_output=True,
         cwd=proj,
+        timeout=600,
     )
     assert r.returncode == 0, f"C binary failed: {r.stderr!r}"
     c_out = _floats(r.stdout)
@@ -127,6 +132,7 @@ def run(root: Path) -> None:
         input=raw,
         capture_output=True,
         cwd=src,
+        timeout=600,
     )
     assert r.returncode == 0, (
         f"Python CLI failed: {r.stderr.decode(errors='replace')}"
@@ -145,6 +151,7 @@ def run(root: Path) -> None:
         capture_output=True,
         text=True,
         cwd=src,
+        timeout=600,
     )
     assert r.returncode == 0, f"module API failed: {r.stderr}"
     mod_out = [float(t) for t in r.stdout.split()]

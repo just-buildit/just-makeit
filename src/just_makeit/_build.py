@@ -39,7 +39,7 @@ def _cmake_configure(
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
     ]
     print(f"just-makeit: {shlex.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd=str(root))
+    result = subprocess.run(cmd, cwd=str(root), timeout=600)
     if result.returncode != 0:
         sys.exit(result.returncode)
 
@@ -49,7 +49,7 @@ def _cmake_build(root: Path, build_dir: Path) -> None:
     nproc = os.cpu_count() or 4
     cmd = [cmake, "--build", str(build_dir), "--parallel", str(nproc)]
     print(f"just-makeit: {shlex.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd=str(root))
+    result = subprocess.run(cmd, cwd=str(root), timeout=600)
     if result.returncode != 0:
         sys.exit(result.returncode)
 
@@ -86,6 +86,7 @@ def _has_pytest() -> bool:
     r = subprocess.run(
         [sys.executable, "-c", "import pytest"],
         capture_output=True,
+        timeout=600,
     )
     return r.returncode == 0
 
@@ -107,7 +108,7 @@ def _run_python_tests(root: Path, extra: list[str]) -> bool:
         label = "unittest discover"
 
     print(f"just-makeit: {label}: {shlex.join(cmd)}", flush=True)
-    return subprocess.run(cmd, cwd=str(root)).returncode == 0
+    return subprocess.run(cmd, cwd=str(root), timeout=600).returncode == 0
 
 
 def cmd_test(rest: list[str]) -> None:
@@ -120,7 +121,7 @@ def cmd_test(rest: list[str]) -> None:
     ctest = _require("ctest")
     ctest_cmd = [ctest, "--test-dir", str(build_dir), "--output-on-failure"]
     print(f"just-makeit: {shlex.join(ctest_cmd)}", flush=True)
-    r = subprocess.run(ctest_cmd, cwd=str(root))
+    r = subprocess.run(ctest_cmd, cwd=str(root), timeout=600)
     ctest_ok = r.returncode == 0
 
     pytest_ok = _run_python_tests(root, rest)

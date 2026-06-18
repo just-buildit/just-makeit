@@ -127,6 +127,7 @@ PyMODINIT_FUNC PyInit_wfm(void) {{
         check=True,
         capture_output=True,
         text=True,
+        timeout=600,
     )
     spec = importlib.util.spec_from_file_location("wfm", so)
     mod = importlib.util.module_from_spec(spec)

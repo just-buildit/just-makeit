@@ -29,7 +29,14 @@ _MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 
 def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, **kw)
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        **kw,
+    )
 
 
 def _require(name: str) -> None:

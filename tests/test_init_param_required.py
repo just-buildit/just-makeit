@@ -160,10 +160,14 @@ def test_required_raises_typeerror_at_runtime(tmp_path):
         ["cmake", "-S", str(dest), "-B", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, cfg.stderr
     bld = subprocess.run(
-        ["cmake", "--build", str(build)], capture_output=True, text=True
+        ["cmake", "--build", str(build)],
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, f"{bld.stdout}\n{bld.stderr}"
 
@@ -190,6 +194,7 @@ def test_required_raises_typeerror_at_runtime(tmp_path):
         ],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert check.returncode == 0, f"{check.stdout}\n{check.stderr}"
     assert "ok" in check.stdout

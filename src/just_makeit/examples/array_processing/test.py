@@ -21,7 +21,9 @@ HERE = Path(__file__).parent
 
 
 def _cmd(args, cwd):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run(
+        args, cwd=cwd, capture_output=True, text=True, timeout=600
+    )
     if r.returncode != 0:
         raise AssertionError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"

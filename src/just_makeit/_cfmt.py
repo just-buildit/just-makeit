@@ -84,6 +84,7 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
         ],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     if proc.returncode != 0:
         print(

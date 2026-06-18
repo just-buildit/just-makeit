@@ -38,6 +38,7 @@ def run_tests() -> None:
             "pytest",
             "-v",
             *sys.argv[1:],
-        ]
+        ],
+        timeout=600,
     )
     sys.exit(result.returncode)

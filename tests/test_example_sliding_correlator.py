@@ -30,7 +30,12 @@ STEPS = (
 
 def _run(cmd, cwd=None, env=None):
     return subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True, env=env
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
     )
 
 
