@@ -184,6 +184,16 @@ def _function_flags(fn: dict, module: str) -> list[str]:
     if rt:
         parts.append(_flag("--return-type", rt))
 
+    # gh-318/gh-335: a self-sizing output. Emit these so the reconstructed
+    # command regenerates the out-last / out_size-sized binding rather than the
+    # plain-out_type path (which would under-allocate).
+    if fn.get("out_type"):
+        parts.append(_flag("--out-type", fn["out_type"]))
+    if fn.get("variable_output"):
+        parts.append(_bool_flag("--variable-output"))
+    if fn.get("out_size"):
+        parts.append(_flag("--out-size", fn["out_size"]))
+
     if fn.get("doc"):
         parts.append(_flag("--doc", fn["doc"]))
 

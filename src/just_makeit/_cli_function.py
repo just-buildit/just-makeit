@@ -19,6 +19,8 @@ def run(args: list[str]) -> None:
     fn_params: list[tuple] = []
     fn_return_type = "void"
     fn_out_type: str = ""
+    fn_variable_output = False
+    fn_out_size: str = ""
     fn_result_fields: list[dict] = []
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
@@ -144,6 +146,21 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             fn_out_type = val
             i += 1
+        elif tok == "--variable-output":
+            # #318 / gh-335: the function allocates its own 1-D output (sized by
+            # --out-size); `out` is appended last to the C call.
+            fn_variable_output = True
+            i += 1
+        elif tok == "--out-size":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --out-size requires a C size expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_out_size = remaining[i]
+            i += 1
         elif tok == "--result-field":
             i += 1
             if i >= len(remaining):
@@ -198,6 +215,23 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-335: --out-size only makes sense for a self-sizing output, and a
+    # self-sizing output needs a type to allocate. Reject the half-specified
+    # forms rather than silently ignoring a flag.
+    if fn_out_size and not fn_variable_output:
+        print(
+            "error: --out-size requires --variable-output.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if fn_variable_output and not fn_out_type:
+        print(
+            "error: --variable-output requires --out-type (the element type"
+            " of the allocated output array).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     impl_body_f: str | None = None
     if impl_spec_f is not None:
         from . import _impl as _I
@@ -214,4 +248,6 @@ def run(args: list[str]) -> None:
         inline=fn_inline,
         out_type=fn_out_type,
         result_fields=fn_result_fields or None,
+        variable_output=fn_variable_output,
+        out_size=fn_out_size,
     )

@@ -238,6 +238,28 @@ class TestFunctionFlags:
         flags = _script._function_flags({}, "dsp")
         assert not any("--return-type" in f for f in flags)
 
+    def test_variable_output_self_sizing_flags(self):
+        # gh-335: a self-sizing module function round-trips
+        # --out-type/--variable-output/--out-size so the replayed command
+        # regenerates the out-last, out_size-sized binding.
+        fn = {
+            "name": "rrc_taps",
+            "out_type": "float",
+            "variable_output": True,
+            "out_size": "2 * sps * span + 1",
+            "params": [{"name": "sps", "type": "int"}],
+        }
+        joined = "".join(_script._function_flags(fn, "wfm"))
+        assert "--out-type float" in joined
+        assert "--variable-output" in joined
+        assert '--out-size "2 * sps * span + 1"' in joined
+
+    def test_plain_function_omits_self_sizing_flags(self):
+        joined = "".join(_script._function_flags({"name": "setup"}, "wfm"))
+        assert "--variable-output" not in joined
+        assert "--out-size" not in joined
+        assert "--out-type" not in joined
+
 
 # ── run() ─────────────────────────────────────────────────────────────────────
 
