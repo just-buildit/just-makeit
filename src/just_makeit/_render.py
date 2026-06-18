@@ -613,6 +613,8 @@ def _py_wrapper_for_function(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    variable_output: bool = False,
+    out_size: str = "",
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
@@ -673,6 +675,52 @@ def _py_wrapper_for_function(
             f"    free(_results);\n"
             f"    return _lst;"
         )
+    elif variable_output and out_type:
+        # #318: stateless self-sizing output — the function allocates its own
+        # 1-D output (no caller buffer, no cached instance buffer). Its length
+        # is `out_size` (a verbatim-C expr over the args + array `<name>_len`s,
+        # e.g. "wfm_rrc_ntaps(sps, span)" or "x_len * factor"), or the first
+        # array param's length. `out` is appended LAST to the call. If the fn
+        # reports a size_t count, trim to it (the runtime-sized shape); a void
+        # fn returns the full allocation. Keeps a `rrc_taps(...) -> ndarray`
+        # zero-Python (the helper used to allocate internally in hand-Python).
+        _base_ctype, _ = parse_out_type(out_type)
+        out_npy = _CTYPE_TO_NPY[_base_ctype]
+        out_disp = _ctype_display(_base_ctype)
+        if out_size:
+            len_expr = out_size
+        else:
+            first_arr = next(
+                (p["name"] for p in params if is_array_param_type(p["type"])),
+                None,
+            )
+            len_expr = f"{first_arr}_len" if first_arr else "1"
+        _out_ptr = f"({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
+        _call_with_out = f"{call_args}, {_out_ptr}" if call_args else _out_ptr
+        _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        _trim = bool(ret_meta) and ret_meta.get("kind") == "int"
+        _alloc = (
+            f"    npy_intp _dim = (npy_intp)({len_expr});\n"
+            f"    PyObject *_out ="
+            f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
+            f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
+        )
+        if _trim:
+            ret_line = (
+                _alloc
+                + f"    size_t _n = (size_t){fn_name}({_call_with_out});\n"
+                + cleanup
+                + "    PyArray_DIMS((PyArrayObject *)_out)[0] ="
+                " (npy_intp)_n;\n"
+                "    return _out;"
+            )
+        else:
+            ret_line = (
+                _alloc
+                + f"    {fn_name}({_call_with_out});\n"
+                + cleanup
+                + "    return _out;"
+            )
     elif out_type:
         # Allocate output array, insert after array args, before scalars.
         # out_type may carry a [param_name] suffix naming the scalar that
@@ -779,6 +827,8 @@ def make_functions_ctx(
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
+                variable_output=bool(fn.get("variable_output")),
+                out_size=fn.get("out_size", ""),
             )
         )
         entries.append(f'    {{"{name}", {fn_ref}, {flags}, "{doc}"}},')
