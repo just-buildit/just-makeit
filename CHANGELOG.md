@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.19.19] — 2026-06-17
+
+### Added
+
+The `kind = "handle"` generator (gh-306) — a typed CPython class over an
+**opaque hand-C resource handle** (a file writer, socket, clock, session). It is
+the *intersection* of the `kind = "capsule"` generator (opaque backing +
+lifecycle + numpy marshaling) and the `kind = "composer"` generator (typed-class
+face): one `PyTypeObject` with a constructor, methods, decoded-from-a-getter
+properties, and an RAII (`close()` / context-manager) protocol. Like the other
+generators it materializes a self-contained `.so` from the manifest alone, with
+a take-it-or-leave-it `.pyi`, and carries a non-waveform `ringbuf` example
+proving zero domain coupling.
+
+- **The typed handle class** — `tp_init` coerces `create_args` (enum-string →
+    index via the `[[enum]]` SSOT, `os.fspath` for a `path` arg, scalar casts),
+    calls the backing `create_fn`, and runs an optional conditional `create_post`
+    setter. Methods map `name → fn(self->h, …)`: scalar args, an array-in arg
+    (numpy-marshaled like the capsule path), or an int-in → independent
+    numpy-owned array-out.
+- **Decoded-getter properties** — one shared C getter fills an out-struct; each
+    property decodes a named field with a `plain` / `enum` / `scale` / verbatim-C
+    `expr` transform. A `cache = true` getter is resolved once in `tp_init`.
+- **Array + trailing scalar methods (gh-308)** — a method with an array arg
+    followed by scalars (`send(iq, fs, fc)`) marshals the array and threads the
+    scalars through to `fn(h, in, n, …)`; more than one array arg fails loud.
+- **Real-compile CI harness** — `test_handle_build.py` scaffolds, runs
+    `jm apply`, compiles the generated binding against a real C backing, imports
+    it, and exercises the type — the first real compile of handle output in CI.
+
+### Fixed
+
+- **`cache = true` handle getters** were never resolved in the constructor (the
+    cache fetch was defined but not emitted into `tp_init`), so a cached property
+    returned a zero-initialized value instead of the getter's output. `tp_init`
+    now resolves every `cache = true` getter after `create_fn` / `create_post`.
+
 ## [0.19.18] — 2026-06-17
 
 ### Added
