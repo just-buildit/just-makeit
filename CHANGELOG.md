@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.19.22] — 2026-06-18
+
+### Added
+
+- **Composer delegated serializers (gh-317 / gh-313)** — a
+    `[[module.X.serializers]]` table generates additional serializer methods on a
+    composer: each is a `<Composer>.<name>(<params>) -> str` that coerces its
+    leading scalar/enum params (enums validate to the SSOT string) and delegates
+    to the project's C serializer `fn(<params>, segs, n)` over the resolved
+    segments. The sanctioned mechanism for **domain wire formats jm generates
+    none of** (SigMF, BLUE, …) — generalizing the one-off `to_json_fn` hatch into
+    a first-class, documented carve-out. The generated SSOT `to_json` (gh-287)
+    stays the default for the regular case.
+
+### Fixed
+
+- **`kind = "handle"` per-field scalar getter (gh-326)** — `tmp` was typed as the
+    field's decoded `type` rather than the getter function's return type, so a
+    derived `expr` whose result type differs from the backing accessor (a `bool`
+    property over a `double` getter) truncated the value and missed
+    `<stdbool.h>`. `tmp` now uses the getter's return type via an optional field
+    `returns` (default the field type), and the extension always includes
+    `<stdbool.h>`.
+
 ## [0.19.21] — 2026-06-18
 
 ### Added
