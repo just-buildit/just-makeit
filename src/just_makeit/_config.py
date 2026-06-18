@@ -2152,6 +2152,10 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'return_type = "{fn["return_type"]}"')
             if fn.get("out_type"):
                 lines.append(f'out_type = "{fn["out_type"]}"')
+            if fn.get("variable_output"):
+                lines.append("variable_output = true")
+            if fn.get("out_size"):
+                lines.append(f'out_size = "{fn["out_size"]}"')
             if fn.get("max_results_param"):
                 lines.append(
                     f'max_results_param = "{fn["max_results_param"]}"'
