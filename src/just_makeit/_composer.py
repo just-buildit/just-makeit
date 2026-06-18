@@ -1246,19 +1246,60 @@ static PyObject *
     # so a project drops its hand-written `for blk in c.stream(n):` wrapper.
     stream_code = stream_row = ""
     if C.composer_stream(cfg, module).get("stream"):
+        # gh-317 feature 1: an optional `realtime = fs` that paces the iterator
+        # to an fs-Hz clock between blocks, IN the .so — so a project drops its
+        # hand-written `paced()` helper over a SampleClock. The clock is opaque
+        # (void *), created lazily on the first block, paced by sample count,
+        # and destroyed with the iterator. Only emitted when the `realtime`
+        # sub-table names the clock create/pace/destroy fns.
+        rt = C.composer_stream(cfg, module).get("realtime") or {}
+        rt_create = rt.get("clock_create", "")
+        rt_pace = rt.get("pace", "")
+        rt_destroy = rt.get("destroy", "")
+        has_rt = bool(rt_create and rt_pace and rt_destroy)
+        rt_fields = "    double realtime;\n    void *clk;\n" if has_rt else ""
+        rt_dealloc = (
+            f"    if (self->clk)\n        {rt_destroy}(self->clk);\n"
+            if has_rt
+            else ""
+        )
+        rt_pace_code = (
+            f"""    if (self->realtime > 0.0) {{
+        if (!self->clk)
+            self->clk = {rt_create}(self->realtime, 0);
+        {rt_pace}(self->clk, (size_t)n);
+    }}
+"""
+            if has_rt
+            else ""
+        )
+        rt_kw = '"block", "realtime", NULL' if has_rt else '"block", NULL'
+        rt_decl = "    double realtime = 0.0;\n" if has_rt else ""
+        rt_fmt = "|nd" if has_rt else "|n"
+        rt_addr = ", &realtime" if has_rt else ""
+        rt_init = (
+            "    it->realtime = realtime;\n    it->clk = NULL;\n"
+            if has_rt
+            else ""
+        )
+        rt_doc = (
+            "stream(block=4096, realtime=0.0) -> iterator (realtime=fs paces)"
+            if has_rt
+            else "stream(block=4096) -> iterator of complex64 blocks"
+        )
         stream_code = f"""/* Iterator returned by {cname}.stream(): drains execute() into blocks. */
 typedef struct {{
     PyObject_HEAD
     PyObject  *composer; /* strong ref to the {cname} */
     Py_ssize_t block;
-}} {cname}StreamObject;
+{rt_fields}}} {cname}StreamObject;
 
 static PyTypeObject {cname}StreamType;
 
 static void
 {cname}Stream_dealloc({cname}StreamObject *self)
 {{
-    Py_XDECREF(self->composer);
+{rt_dealloc}    Py_XDECREF(self->composer);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
@@ -1285,7 +1326,7 @@ static PyObject *
         Py_DECREF(blk);
         return NULL;
     }}
-    return blk;
+{rt_pace_code}    return blk;
 }}
 
 static PyTypeObject {cname}StreamType = {{
@@ -1302,9 +1343,10 @@ static PyTypeObject {cname}StreamType = {{
 static PyObject *
 {cname}_stream({obj} *self, PyObject *args, PyObject *kwds)
 {{
-    static char *kwlist[] = {{"block", NULL}};
+    static char *kwlist[] = {{{rt_kw}}};
     Py_ssize_t block = 4096;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|n", kwlist, &block))
+{rt_decl}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{rt_fmt}", kwlist,
+            &block{rt_addr}))
         return NULL;
     if (block <= 0) {{
         PyErr_SetString(PyExc_ValueError, "block must be > 0");
@@ -1317,14 +1359,14 @@ static PyObject *
     Py_INCREF(self);
     it->composer = (PyObject *)self;
     it->block = block;
-    return (PyObject *)it;
+{rt_init}    return (PyObject *)it;
 }}
 
 """
         stream_row = (
             f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
             f"     METH_VARARGS | METH_KEYWORDS,\n"
-            f'     "stream(block=4096) -> iterator of complex64 blocks"}},\n'
+            f'     "{rt_doc}"}},\n'
         )
 
     # Feature 5 — a generic `to_dict()`: serialize the *resolved* composition
@@ -1900,6 +1942,10 @@ def render_ext(cfg: dict, module: str) -> str:
 
     # Standalone generation pulls in the composed generator's header and the
     # project's straight-C bridge declaration (source config -> generator state).
+    # gh-317: the realtime stream's clock fns need their header.
+    _rt = C.composer_stream(cfg, module).get("realtime") or {}
+    rt_includes = f'#include "{_rt["header"]}"\n' if _rt.get("header") else ""
+
     gen = _source_generates(cfg, module)
     gen_includes = ""
     if gen:
@@ -1927,7 +1973,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include <string.h>
 
 #include "{header}"
-{gen_includes}{json_includes}""",
+{gen_includes}{json_includes}{rt_includes}""",
         render_enum_tables(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
@@ -2137,8 +2183,13 @@ def render_pyi(cfg: dict, module: str) -> str:
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]: ...",
         *(
             [
-                "    def stream(self, block: int = ...)"
-                " -> Iterator[NDArray[np.complex64]]: ..."
+                "    def stream(self, block: int = ..."
+                + (
+                    ", realtime: float = ..."
+                    if C.composer_stream(cfg, module).get("realtime")
+                    else ""
+                )
+                + ") -> Iterator[NDArray[np.complex64]]: ..."
             ]
             if C.composer_stream(cfg, module).get("stream")
             else []
