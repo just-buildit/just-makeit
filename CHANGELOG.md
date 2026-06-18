@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.25] — 2026-06-18
+
 ### Fixed
 
 - **Composer serializer header `#include` (gh-343)** — a
