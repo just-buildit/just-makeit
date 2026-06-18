@@ -20,11 +20,11 @@ Also runnable directly: python3 examples/nco_tone/test.py [--doppler-prefix PATH
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -41,6 +41,11 @@ _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
 )
+# Overall wall-clock cap on the tarball download. urlopen(timeout=...) is only a
+# per-read socket timeout, so a server that trickles bytes never trips it; this
+# bounds the whole transfer. The asset is ~2 MB (a normal fetch is well under a
+# second), so this only fires on a genuine stall — and the caller then skips.
+_DOWNLOAD_DEADLINE_S = 120
 
 
 def _cmd(args, cwd, env=None):
@@ -118,7 +123,15 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
             urllib.request.urlopen(url, timeout=60) as resp,
             open(tarball, "wb") as fh,
         ):
-            shutil.copyfileobj(resp, fh)
+            # Bounded copy: urlopen's timeout is per-read only, so enforce an
+            # overall deadline to abort a trickling/stalled transfer.
+            deadline = time.monotonic() + _DOWNLOAD_DEADLINE_S
+            while chunk := resp.read(1 << 16):
+                fh.write(chunk)
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        f"doppler download exceeded {_DOWNLOAD_DEADLINE_S}s"
+                    )
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         print(
             f"nco_tone: doppler auto-download failed ({exc}); "
