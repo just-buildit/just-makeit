@@ -139,6 +139,17 @@ def _ring_cfg():
                 "returns": "float[]",
                 "args": [{"name": "n", "type": "size_t"}],
             },
+            {
+                # #311 shape (d): array-in + writable array-out.
+                "name": "scale",
+                "fn": "ringbuf_scale",
+                "returns": "float[]",
+                "nogil": True,
+                "args": [
+                    {"name": "x", "type": "float[]"},
+                    {"name": "out", "type": "float[]", "writable": True},
+                ],
+            },
             {"name": "clear", "fn": "ringbuf_clear"},
         ],
         "getters": [
@@ -155,7 +166,19 @@ def _ring_cfg():
                         "(double)tmp.used / (double)self->capacity : 0.0",
                     },
                 ],
-            }
+            },
+            {
+                # #311 writable scalar property (scalar return-by-value getter).
+                "fn": "ringbuf_get_gain",
+                "out": "float",
+                "fields": [
+                    {
+                        "name": "gain",
+                        "type": "float",
+                        "writable_fn": "ringbuf_set_gain",
+                    },
+                ],
+            },
         ],
     }
     return {
@@ -242,8 +265,11 @@ class TestMethods:
         assert "PyArray_SimpleNew(1, dims, NPY_FLOAT)" in s
         assert "got = ringbuf_pop(self->h, out, (size_t)n);" in s
         assert "PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got" in s
-        # no zero-copy slice/view of a grow-on-demand buffer here.
-        assert "PySlice_New" not in s
+        # no zero-copy slice/view *in pop* (the grow-on-demand shape returns an
+        # owned array; the caller-buffer execute shape (d) legitimately does).
+        i = s.index("Ring_pop(RingObject")
+        pop_fn = s[i : s.index("\nstatic ", i)]
+        assert "PySlice_New" not in pop_fn
 
 
 class TestDecodedGetters:
@@ -402,3 +428,59 @@ class TestMixedArgMethod:
         }
         with pytest.raises(NotImplementedError):
             _handle._emit_method(_writer_cfg(), "wfm_writer", m)
+
+
+class TestExecuteShape:
+    """#311 shape (d): array-in + writable array-out -> out[:n_out] view."""
+
+    def test_caller_buffer_execute(self):
+        m = {
+            "name": "execute",
+            "fn": "ddcr_execute",
+            "returns": "float _Complex[]",
+            "nogil": True,
+            "args": [
+                {"name": "x", "type": "float[]"},
+                {"name": "out", "type": "float _Complex[]", "writable": True},
+            ],
+        }
+        s = _handle._emit_method(_writer_cfg(), "wfm_writer", m)
+        # both arrays parse; input is marshaled, output is validated not cast.
+        assert 'PyArg_ParseTuple(args, "OO", &x_obj, &out_obj)' in s
+        assert "must be a writable ndarray of the output dtype" in s
+        assert "NPY_ARRAY_WRITEABLE" in s
+        # exact call into the caller buffer, under nogil, returning the view.
+        assert "ddcr_execute(self->h, in_data, n_in, out_data, max_out)" in s
+        assert "Py_BEGIN_ALLOW_THREADS" in s
+        assert "PySlice_New(NULL, stop, NULL)" in s  # out[:n_out]
+
+    def test_writable_out_in_ring_cfg_compiles_text(self):
+        s = _rsrc()
+        assert "Ring_scale(RingObject *self" in s
+        assert "ringbuf_scale(self->h, in_data, n_in, out_data, max_out)" in s
+
+
+class TestWritableProperty:
+    """#311 writable scalar property: a scalar return-by-value getter whose
+    field names a setter emits the (setter) slot + a PyArg_Parse coercion."""
+
+    def test_scalar_getter_and_setter_slot(self):
+        s = _rsrc()
+        # scalar getter: return-by-value, not an out-pointer fill.
+        assert "tmp = ringbuf_get_gain(self->h);" in s
+        assert "PyFloat_FromDouble((double)tmp)" in s
+        # the setter coerces the scalar and calls set_fn.
+        assert "Ring_set_gain(RingObject *self, PyObject *value" in s
+        assert 'PyArg_Parse(value, "f", &v)' in s
+        assert "ringbuf_set_gain(self->h, v);" in s
+        # getset row wires both slots.
+        assert (
+            '{"gain", (getter)Ring_get_gain, '
+            "(setter)Ring_set_gain, NULL, NULL}" in s
+        )
+
+    def test_pyi_exposes_setter(self):
+        pyi = _handle.render_pyi(_ring_cfg(), "ringbuf")
+        assert "@gain.setter" in pyi
+        assert "def gain(self, value: float) -> None: ..." in pyi
+        assert "def scale(self, x: NDArray[Any], out: NDArray[Any])" in pyi

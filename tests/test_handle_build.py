@@ -37,7 +37,8 @@ pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 # A real FIFO ring buffer — the hand-C backing the generated glue wraps. The
 # `push_gain` method is the #308 array+scalar shape; `stats` fills a struct
 # (a live getter); `info` fills the fixed-metadata struct a cache=true getter
-# resolves once at construction.
+# resolves once at construction; `scale` is the #311 array-in→writable-array-out
+# execute shape; `gain` is the #311 writable scalar property.
 _RINGBUF_H = """\
 #ifndef RINGBUF_H
 #define RINGBUF_H
@@ -53,13 +54,17 @@ size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
 void ringbuf_clear(ringbuf_t *r);
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
 void ringbuf_info(const ringbuf_t *r, ringbuf_info_t *out);
+size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
+                     float *out, size_t max_out);
+float ringbuf_get_gain(const ringbuf_t *r);
+void ringbuf_set_gain(ringbuf_t *r, float gain);
 #endif
 """
 
 _RINGBUF_C = """\
 #include "ringbuf/ringbuf.h"
 #include <stdlib.h>
-struct ringbuf { float *buf; size_t cap, used, head; };
+struct ringbuf { float *buf; size_t cap, used, head; float gain; };
 ringbuf_t *ringbuf_open(size_t capacity) {
     if (!capacity) return NULL;
     ringbuf_t *r = calloc(1, sizeof *r);
@@ -67,6 +72,7 @@ ringbuf_t *ringbuf_open(size_t capacity) {
     r->buf = malloc(capacity * sizeof *r->buf);
     if (!r->buf) { free(r); return NULL; }
     r->cap = capacity;
+    r->gain = 1.0f;
     return r;
 }
 void ringbuf_close(ringbuf_t *r) { if (r) { free(r->buf); free(r); } }
@@ -102,6 +108,14 @@ void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out) {
 void ringbuf_info(const ringbuf_t *r, ringbuf_info_t *out) {
     out->capacity = r->cap;
 }
+size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
+                     float *out, size_t max_out) {
+    size_t k = 0;
+    for (; k < n_in && k < max_out; k++) out[k] = in[k] * r->gain;
+    return k;
+}
+float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
+void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
 """
 
 
@@ -137,6 +151,17 @@ def _ringbuf_module() -> dict:
                 "returns": "float[]",
                 "args": [{"name": "n", "type": "size_t"}],
             },
+            {
+                # #311 shape (d): array-in + writable array-out -> out[:n_out]
+                "name": "scale",
+                "fn": "ringbuf_scale",
+                "returns": "float[]",
+                "nogil": True,
+                "args": [
+                    {"name": "x", "type": "float[]"},
+                    {"name": "out", "type": "float[]", "writable": True},
+                ],
+            },
             {"name": "clear", "fn": "ringbuf_clear"},
         ],
         "getters": [
@@ -163,6 +188,19 @@ def _ringbuf_module() -> dict:
                 "cache": True,
                 "fields": [
                     {"name": "cap", "from": "capacity", "type": "size_t"},
+                ],
+            },
+            {
+                # #311 writable scalar property: a scalar (return-by-value)
+                # getter whose field names a setter -> a read/write `gain`.
+                "fn": "ringbuf_get_gain",
+                "out": "float",
+                "fields": [
+                    {
+                        "name": "gain",
+                        "type": "float",
+                        "writable_fn": "ringbuf_set_gain",
+                    },
                 ],
             },
         ],
@@ -247,6 +285,35 @@ def test_mixed_array_scalar_method_passes_scalars(tmp_path):
     r = Ring(capacity=8)
     assert r.push_gain(np.array([1, 2, 3], dtype=np.float32), 10.0) == 3
     assert r.pop(3).tolist() == [10.0, 20.0, 30.0]
+
+
+def test_writable_property_and_execute_shape(tmp_path):
+    """#311: a writable scalar property + the array-in→writable-array-out shape.
+
+    `gain` is a read/write property (scalar return-by-value getter + setter);
+    `scale(x, out)` marshals a borrowed input and a writable exact-dtype output,
+    writes in place, and returns the zero-copy view `out[:n_out]`."""
+    Ring = _build_ring_so(tmp_path).Ring
+    r = Ring(capacity=8)
+
+    # writable scalar property: default, then set -> get round-trip.
+    assert r.gain == 1.0
+    r.gain = 3.0
+    assert r.gain == 3.0
+
+    # shape (d): execute into the caller's buffer; returns out[:n_out] view.
+    out = np.zeros(4, dtype=np.float32)
+    y = r.scale(np.array([1, 2, 3, 4], dtype=np.float32), out)
+    assert y.tolist() == [3.0, 6.0, 9.0, 12.0]
+    assert out.tolist() == [3.0, 6.0, 9.0, 12.0]  # written in place
+    assert y.base is out  # zero-copy view, not a copy
+
+    # exact-dtype enforcement: a wrong-dtype out is rejected, not silently cast.
+    with pytest.raises(TypeError):
+        r.scale(
+            np.array([1, 2], dtype=np.float32),
+            np.zeros(2, dtype=np.float64),
+        )
 
 
 def test_cache_true_getter_resolved_in_tp_init(tmp_path):
