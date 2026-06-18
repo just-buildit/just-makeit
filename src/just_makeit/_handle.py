@@ -185,7 +185,19 @@ def render_tp_init(cfg: dict, module: str) -> str:
     opt_backend = C.handle_optional_backend(cfg, module)
 
     kwlist = ", ".join(f'"{a["name"]}"' for a in args)
-    fmt = "|" + "".join(_arg_fmt(a) for a in args)
+    # gh-178 review #6: a no-default create-arg is REQUIRED — it goes before the
+    # `|`, not after. The old all-optional `|...` let `ZmqSink()` parse with a
+    # NULL endpoint and crash. An arg is optional iff it carries a manifest
+    # `default` (mirrors the module-fn / shape-(a) split). Required args must
+    # precede optional ones in the manifest, same as a Python signature.
+    fmt_parts: list[str] = []
+    opt_started = False
+    for a in args:
+        if a.get("default") is not None and not opt_started:
+            fmt_parts.append("|")
+            opt_started = True
+        fmt_parts.append(_arg_fmt(a))
+    fmt = "".join(fmt_parts)
     decls = "\n".join(_arg_decl(a) for a in args)
     addrs = ", ".join(_arg_addr(a) for a in args)
 
@@ -250,6 +262,17 @@ def render_tp_init(cfg: dict, module: str) -> str:
 
     parse_fail = f"{fs_decref}        return -1;"
 
+    # gh-178 review #9: a second __init__() call on a live object would overwrite
+    # self->h and leak the prior handle. Release it first (mirrors tp_dealloc)
+    # now that args parsed and validated, i.e. we are committed to rebuilding.
+    # On the first init the struct is zeroed (tp_new), so this is a no-op.
+    reinit = f"""    if (!self->closed && self->h) {{
+        {_destroy_silent(cfg, module)}
+        self->h = NULL;
+        self->closed = 1;
+    }}
+"""
+
     # Construct the handle: either create_fn (allocates + returns it) or, for an
     # init-in-place API (gh-315), jm mallocs sizeof(handle) and calls init_fn on
     # it. init_fn returns void, so the only failure to check is the malloc.
@@ -277,7 +300,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
 {parse_fail}
     }}
 {enum_validate_s}
-{construct}
+{reinit}{construct}
     self->closed = 0;
 {stash_s}
 {post_s}
@@ -285,6 +308,21 @@ def render_tp_init(cfg: dict, module: str) -> str:
     return 0;
 }}
 """
+
+
+def _destroy_silent(cfg: dict, module: str) -> str:
+    """The teardown statement releasing a live handle — ``close_fn(self->h)``
+    then, for an init-in-place handle (gh-315), ``free(self->h)``.
+
+    The ``close_fn`` return value is discarded here: this drives ``tp_dealloc``
+    and the re-``__init__`` teardown (gh-178 review #9), neither of which may
+    raise. The status-checking variant lives inline in ``close()``
+    (:func:`render_type`, gh-178 review #5)."""
+    close_fn = C.handle_close_fn(cfg, module)
+    if C.handle_init_fn(cfg, module):
+        finalize = f"{close_fn}(self->h); " if close_fn else ""
+        return f"{finalize}free(self->h);"
+    return f"{close_fn}(self->h);"
 
 
 def _init_fsfree(args: list[dict]) -> str:
@@ -299,15 +337,29 @@ def _init_fsfree(args: list[dict]) -> str:
 
 
 def _method_kwargs(m: dict) -> bool:
-    """True if a method takes keyword/default args (#319): a scalar-arg method
-    (shape (a)) with at least one arg. Such methods parse with
-    ``PyArg_ParseTupleAndKeywords`` and register as ``METH_VARARGS |
-    METH_KEYWORDS`` so ``track_clipping(on=True)`` and a ``default`` both work;
-    the array shapes (b)-(d) stay positional ``METH_VARARGS``."""
+    """True if a method parses with ``PyArg_ParseTupleAndKeywords`` and so
+    registers as ``METH_VARARGS | METH_KEYWORDS`` (the 3-arg C signature).
+
+    Mirrors the shape dispatch in :func:`_emit_method`:
+      (a) scalar args → keywords (``track_clipping(on=True)``, #319);
+      (b) array-in **with** trailing scalars → keywords (so ``send(iq, fs,
+          fc=…)`` keeps its default, gh-178 review #6); a bare ``write(iq)``
+          stays positional;
+      (c) int-in → array-out and (d) array-in + writable-out → positional.
+    A no-arg method is a plain ``METH_VARARGS`` stub."""
     margs = m.get("args", [])
     if not margs:
         return False
-    return not any(str(a.get("type", "")).endswith("[]") for a in margs)
+    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+    returns = m.get("returns")
+    ret_arr = bool(returns) and str(returns).endswith("[]")
+    if ret_arr and not arrays:
+        return False  # (c) int-in -> array-out
+    if any(a.get("writable") for a in arrays) and ret_arr:
+        return False  # (d) array-in + writable array-out
+    if arrays:
+        return len(arrays) != len(margs)  # (b) only when trailing scalars
+    return True  # (a) scalar args
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -446,9 +498,6 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 f"handle method '{name}': more than one array arg is "
                 "unsupported"
             )
-        scal_decls = "".join(f"    {s['type']} {s['name']};\n" for s in others)
-        scal_fmt = "".join(_scalar_fmt(s["type"]) for s in others)
-        scal_addrs = "".join(f", &{s['name']}" for s in others)
         scal_call = "".join(f", {s['name']}" for s in others)
         ret_to_py = (
             _to_py(returns, "r")
@@ -457,13 +506,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         )
         ret_decl = f"    {returns} r;\n" if returns else ""
         assign = "r = " if returns else ""
-        return f"""static PyObject *
-{tname}_{name}({obj} *self, PyObject *args)
-{{
-    PyObject *x_obj;
-{scal_decls}    if (!PyArg_ParseTuple(args, "O{scal_fmt}", &x_obj{scal_addrs}))
-        return NULL;
-{closed_guard}
+        body_tail = f"""{closed_guard}
     PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(
         x_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
     if (!x_arr) return NULL;
@@ -471,7 +514,44 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
 {ret_decl}{gil_open}    {assign}{fn}(self->h, in_data, n_in{scal_call});
 {gil_close}    Py_DECREF(x_arr);
-    return {ret_to_py};
+    return {ret_to_py};"""
+        # Trailing scalars parse with keywords + defaults (gh-178 review #6: the
+        # hand-written send(iq, fs, fc=…) had an fc default the old positional
+        # PyArg_ParseTuple dropped); a `default` inserts the `|` optional split,
+        # same as shape (a). With no trailing scalars it stays positional `O`.
+        if others:
+            scal_decls = ""
+            fmt_parts = ["O"]
+            inserted = False
+            for s in others:
+                d = s.get("default")
+                init = f" = {d}" if d is not None else ""
+                scal_decls += f"    {s['type']} {s['name']}{init};\n"
+                if d is not None and not inserted:
+                    fmt_parts.append("|")
+                    inserted = True
+                fmt_parts.append(_scalar_fmt(s["type"]))
+            fmt_b = "".join(fmt_parts)
+            kwnames = [a["name"]] + [s["name"] for s in others]
+            kwlist_b = ", ".join(f'"{n}"' for n in kwnames)
+            scal_addrs = "".join(f", &{s['name']}" for s in others)
+            return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)
+{{
+    static char *kwlist[] = {{{kwlist_b}, NULL}};
+    PyObject *x_obj;
+{scal_decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_b}", kwlist,
+            &x_obj{scal_addrs}))
+        return NULL;
+{body_tail}
+}}
+"""
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args)
+{{
+    PyObject *x_obj;
+    if (!PyArg_ParseTuple(args, "O", &x_obj)) return NULL;
+{body_tail}
 }}
 """
 
@@ -732,18 +812,34 @@ def render_type(cfg: dict, module: str) -> str:
     # struct (after an optional close_fn that finalizes owned members); a
     # create_fn handle is released by close_fn alone.
     init_fn = C.handle_init_fn(cfg, module)
-    if init_fn:
-        finalize = f"{close_fn}(self->h); " if close_fn else ""
-        destroy = f"{finalize}free(self->h);"
+    destroy = _destroy_silent(cfg, module)
+
+    # gh-178 review #5: when close_fn reports a status code (close_returns set),
+    # close() captures it and raises RuntimeError on a non-zero result — the
+    # hand-written close did (wfm_writer_close patches the BLUE data_size and can
+    # fail on a short write). The handle is still torn down and marked closed
+    # before raising (one-shot), so the error never double-closes. tp_dealloc
+    # keeps the silent teardown — a destructor must not raise.
+    close_ret = C.handle_close_returns(cfg, module)
+    if close_ret:
+        free_s = "        free(self->h);\n" if init_fn else ""
+        close_body = f"""        {close_ret} _rc = {close_fn}(self->h);
+{free_s}        self->h = NULL;
+        self->closed = 1;
+        if (_rc != 0) {{
+            PyErr_Format(PyExc_RuntimeError,
+                "{close_fn} failed (rc=%d)", (int)_rc);
+            return NULL;
+        }}"""
     else:
-        destroy = f"{close_fn}(self->h);"
+        close_body = f"""        {destroy}
+        self->closed = 1;"""
 
     close = f"""static PyObject *
 {tname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->closed && self->h) {{
-        {destroy}
-        self->closed = 1;
+{close_body}
     }}
     Py_RETURN_NONE;
 }}
@@ -1009,9 +1105,12 @@ def render_pyi(cfg: dict, module: str) -> str:
             sig = "self, n: int"
             ann = "NDArray[Any]"
         elif arrays:
-            # (b) x[, scalars] -> scalar / None
+            # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
+            # `= ...` (gh-178 review #6).
             parts = ["self", "x: NDArray[Any]"] + [
-                f"{s['name']}: {_pyi_scalar(s['type'])}" for s in scalars
+                f"{s['name']}: {_pyi_scalar(s['type'])}"
+                + (" = ..." if s.get("default") is not None else "")
+                for s in scalars
             ]
             sig = ", ".join(parts)
             ann = _pyi_scalar(returns) if returns else "None"
