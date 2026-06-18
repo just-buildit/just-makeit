@@ -468,25 +468,17 @@ def _merge_module_init(
             else:
                 result = result.rstrip("\n") + f"\n{line}\n"
 
-    # 2b. Drop stale / duplicate generated import lines (gh-329). After the
-    # upserts, the one canonical line per managed submodule exists; sweep out
-    # any *other* generated `from .<sub> import … # noqa: E402` glue line whose
-    # submodule the manifest no longer reexports (a consolidated-away sibling
-    # left its line behind, breaking `import <pkg>.<module>`), and any
-    # duplicate of a managed line. Only the generated glue marker is targeted —
-    # hand-written imports (no `# noqa: E402`) and user wrapper classes survive.
-    managed = {module} | set(reexports or {})
-    seen_subs: set[str] = set()
-    kept: list[str] = []
-    for line in result.split("\n"):
-        gm = re.match(r"from \.(\w+) import .*#[ \t]*noqa: E402\s*$", line)
-        if gm:
-            sub = gm.group(1)
-            if sub not in managed or sub in seen_subs:
-                continue
-            seen_subs.add(sub)
-        kept.append(line)
-    result = "\n".join(kept)
+    # gh-342: deliberately NO whole-line sweep here. A `from .<sub> import …`
+    # line whose submodule is no longer in the manifest cannot be reliably
+    # distinguished from a hand-written import — the noqa glue marker is not
+    # jm-exclusive (doppler hand-writes it), and a line-based filter shears
+    # the opener off an adjacent multi-line `from .x import ( … )`, leaving an
+    # orphaned body (IndentationError). The reconcile therefore only ever
+    # rewrites the statements it owns (the module's own line and the manifest's
+    # *current* reexport lines, both handled above and multi-line-safe via
+    # _import_re); it never deletes a statement jm cannot prove it generated.
+    # The cost is that a fully-removed reexport sibling leaves a stale line for
+    # the user to delete — strictly better than corrupting hand content.
 
     # 3. Upsert __all__ (module exports followed by reexported names).
     new_all = _fmt_all(all_names)
@@ -990,7 +982,11 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # user-written wrapper classes and docstrings are not destroyed.
     Components = [ctx["Component"] for ctx in comp_ctxs]
     fn_names = [f["name"] for f in functions]
-    all_exports = Components + fn_names
+    # gh-342: extra_types are names jm itself emits into the `from .<module>
+    # import …` line (types from a hand-written sibling compiled into the same
+    # .so). They must be in the keep-set or the gh-329 prune strips them from
+    # both the import and __all__ (data loss of declared public types).
+    all_exports = Components + fn_names + list(C.extra_types(cfg, module))
     reexports = C.module_reexports(cfg, module)
     # Nested module: ensure the intermediate packages exist, then write under
     # the nested pypath.

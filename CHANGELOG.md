@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reexport reconcile no longer corrupts a mixed hand/generated
+    `__init__.py` (gh-342, regression from gh-329/0.19.23)** — three breakages
+    when a reconciled module's `__init__.py` mixed generated reexports with hand
+    content: (1) the prune stripped `extra_types` (declared public types jm
+    emits into the `from .<module> import …` line) from both the import and
+    `__all__`; (2) a line-based stale-sweep sheared the opener off an adjacent
+    multi-line hand `from .x import ( … )`, leaving an orphaned body
+    (`IndentationError`); (3) it deleted hand-added reexports of non-manifest
+    siblings. `extra_types` are now in the prune's keep-set, and the stale-line
+    sweep is removed entirely — the reconcile only ever rewrites the statements
+    it owns (the module's own import line and the manifest's *current* reexport
+    lines, both multi-line-safe), never deleting a line it cannot prove it
+    generated (the `# noqa: E402` marker is not jm-exclusive). A fully-removed
+    reexport sibling now leaves a stale line for the user to delete rather than
+    risking hand content. The gh-329 prune of a removed object from the module's
+    own line (and `status --check` catching it) is retained.
+
 ## [0.19.23] — 2026-06-18
 
 ### Fixed
