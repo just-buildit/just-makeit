@@ -58,6 +58,7 @@ size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
                      float *out, size_t max_out);
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
+size_t ringbuf_head(const ringbuf_t *r);
 #endif
 """
 
@@ -116,6 +117,7 @@ size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
 }
 float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
 void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
+size_t ringbuf_head(const ringbuf_t *r) { return r->head; }
 """
 
 
@@ -162,9 +164,26 @@ def _ringbuf_module() -> dict:
                     {"name": "out", "type": "float[]", "writable": True},
                 ],
             },
+            {
+                # #319: a method with a default scalar arg, callable
+                # positionally, by keyword, or omitted (reuses ringbuf_set_gain).
+                "name": "reset_gain",
+                "fn": "ringbuf_set_gain",
+                "args": [{"name": "to", "type": "float", "default": "1.0f"}],
+            },
             {"name": "clear", "fn": "ringbuf_clear"},
         ],
         "getters": [
+            {
+                # #314: per-field scalar getter — no shared struct/shim.
+                "fields": [
+                    {
+                        "name": "head_pos",
+                        "getter": "ringbuf_head",
+                        "type": "size_t",
+                    },
+                ],
+            },
             {
                 "fn": "ringbuf_stats",
                 "out": "ringbuf_stats_t",
@@ -207,23 +226,20 @@ def _ringbuf_module() -> dict:
     }
 
 
-def _build_ring_so(tmp: Path):
-    """Scaffold → apply → compile the generated ringbuf .so; import + return it."""
-    new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
-    cfg = C.load(tmp)
-    cfg.setdefault("module", {})["ringbuf"] = _ringbuf_module()
-    C.save(tmp, cfg)
-    apply_run(tmp)
-
-    inc = tmp / "native" / "inc" / "ringbuf"
+def _compile_import(
+    tmp: Path, mod_name: str, header_src: str, backing_src: str
+):
+    """Compile a materialized handle module's binding + its C backing into a
+    ``.so`` and import it. The init symbol is ``PyInit_<mod_name>``, so the spec
+    name must match (not an arbitrary alias)."""
+    inc = tmp / "native" / "inc" / mod_name
     inc.mkdir(parents=True, exist_ok=True)
-    (inc / "ringbuf.h").write_text(_RINGBUF_H)
-    (tmp / "native" / "src" / "ringbuf" / "ringbuf.c").write_text(_RINGBUF_C)
-
-    ext_c = tmp / "native" / "src" / "ringbuf" / "ringbuf_ext.c"
-    backing_c = tmp / "native" / "src" / "ringbuf" / "ringbuf.c"
+    (inc / f"{mod_name}.h").write_text(header_src)
+    backing_c = tmp / "native" / "src" / mod_name / f"{mod_name}.c"
+    backing_c.write_text(backing_src)
+    ext_c = tmp / "native" / "src" / mod_name / f"{mod_name}_ext.c"
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-    so = tmp / f"ringbuf{suffix}"
+    so = tmp / f"{mod_name}{suffix}"
 
     link = (
         ["-bundle", "-undefined", "dynamic_lookup"]
@@ -249,12 +265,69 @@ def _build_ring_so(tmp: Path):
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-    # The init symbol is PyInit_<final name component>, so the spec name must
-    # match the generated PyInit_ringbuf (not an arbitrary alias).
-    spec = importlib.util.spec_from_file_location("ringbuf", so)
+    spec = importlib.util.spec_from_file_location(mod_name, so)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _build_ring_so(tmp: Path):
+    """Scaffold → apply → compile the generated ringbuf .so; import + return it."""
+    new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
+    cfg = C.load(tmp)
+    cfg.setdefault("module", {})["ringbuf"] = _ringbuf_module()
+    C.save(tmp, cfg)
+    apply_run(tmp)
+    return _compile_import(tmp, "ringbuf", _RINGBUF_H, _RINGBUF_C)
+
+
+# A second backing: an init-in-place struct (#315) with no heap members — jm
+# mallocs sizeof(ticks_t), calls ticks_init, and free()s on close (no destroy
+# fn needed). `value` is a #314 per-field getter; `bump` a no-arg method.
+_TICKS_H = """\
+#ifndef TICKS_H
+#define TICKS_H
+typedef struct { int n; } ticks_t;
+void ticks_init(ticks_t *t, int start);
+void ticks_bump(ticks_t *t);
+int ticks_value(const ticks_t *t);
+#endif
+"""
+
+_TICKS_C = """\
+#include "ticks/ticks.h"
+void ticks_init(ticks_t *t, int start) { t->n = start; }
+void ticks_bump(ticks_t *t) { t->n++; }
+int ticks_value(const ticks_t *t) { return t->n; }
+"""
+
+
+def _ticks_module() -> dict:
+    return {
+        "kind": "handle",
+        "type_name": "Ticks",
+        "handle_type": "ticks_t",
+        "header": "ticks/ticks.h",
+        "init_fn": "ticks_init",  # #315: init-in-place; jm mallocs + frees
+        "create_args": [{"name": "start", "type": "int", "default": "0"}],
+        "methods": [{"name": "bump", "fn": "ticks_bump"}],
+        "getters": [
+            {
+                "fields": [
+                    {"name": "value", "getter": "ticks_value", "type": "int"}
+                ]
+            }
+        ],
+    }
+
+
+def _build_ticks_so(tmp: Path):
+    new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
+    cfg = C.load(tmp)
+    cfg.setdefault("module", {})["ticks"] = _ticks_module()
+    C.save(tmp, cfg)
+    apply_run(tmp)
+    return _compile_import(tmp, "ticks", _TICKS_H, _TICKS_C)
 
 
 def test_generated_handle_so_compiles_imports_and_runs(tmp_path):
@@ -335,3 +408,44 @@ def test_context_manager_and_closed_guard(tmp_path):
     # after __exit__ the handle is closed; property access raises
     with pytest.raises(RuntimeError):
         _ = r.used
+
+
+def test_per_field_getter_and_method_default(tmp_path):
+    """#314 per-field scalar getter (`head_pos` via its own getter) + #319 a
+    method honoring a default / keyword arg (`reset_gain`)."""
+    Ring = _build_ring_so(tmp_path).Ring
+    r = Ring(capacity=4)
+
+    # #314: head_pos reads ringbuf_head directly (no struct shim).
+    assert r.head_pos == 0
+    r.push(np.array([1, 2, 3], dtype=np.float32))
+    r.pop(2)
+    assert r.head_pos == 2  # head advanced by the 2 pops
+
+    # #319: reset_gain(to=...) — positional, keyword, and omitted (default).
+    r.gain = 9.0
+    r.reset_gain()  # default to=1.0
+    assert r.gain == 1.0
+    r.reset_gain(to=2.5)  # keyword
+    assert r.gain == 2.5
+    r.reset_gain(4.0)  # positional still works
+    assert r.gain == 4.0
+
+
+def test_init_in_place_handle(tmp_path):
+    """#315: an init_fn handle — jm mallocs the struct, runs init_fn, frees on
+    close. (Also exercises a no-arg method and a #314 per-field getter.)"""
+    Ticks = _build_ticks_so(tmp_path).Ticks
+
+    t = Ticks(start=5)
+    assert t.value == 5  # init_fn ran over the jm-malloc'd struct
+    t.bump()
+    t.bump()
+    assert t.value == 7
+
+    assert Ticks().value == 0  # default start=0
+
+    # close frees the struct; the closed guard then fires (no use-after-free).
+    t.close()
+    with pytest.raises(RuntimeError):
+        _ = t.value
