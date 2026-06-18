@@ -1295,6 +1295,47 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     return dest
 
 
+def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
+    """Objects defined in the manifest, referenced by no module, whose native
+    sources are still in *module-object* shape (gh-327).
+
+    An object section listed in no ``[module.X].objects`` is normally a
+    standalone object — apply gives it its own ``.so``. But when an object is
+    *removed* from its module and its ``objects/<obj>.toml`` fragment is left
+    behind, it looks identical to a standalone object, so apply silently
+    promotes it: it scaffolds a standalone module *over* the object's existing
+    native dir, clobbering any hand-written ``<obj>_core`` lib that lived there
+    (doppler's ``ddcr_core`` composed vendored sources — apply overwrote its
+    CMakeLists).
+
+    The two are distinguishable on disk: a real standalone object's
+    ``native/src/<obj>/CMakeLists.txt`` builds its own extension
+    (``Python3_add_library(<obj> MODULE …)``); a module object's carries only
+    the ``<obj>_core`` OBJECT lib (its ``.so`` is the module's). So an object
+    referenced by no module whose existing CMakeLists lacks that extension
+    target is a *dangling* former-module fragment, not a standalone object.
+
+    A brand-new standalone object (no native dir yet) has nothing to clobber and
+    is materialized normally — only an existing module-shaped dir trips this.
+    """
+    module_owned = {
+        o for m in C.modules(cfg) for o in C.module_objects(cfg, m)
+    }
+    dangling: list[str] = []
+    for comp in C.components(cfg):
+        if comp in module_owned:
+            continue
+        cml = root / "native" / "src" / comp / "CMakeLists.txt"
+        if not cml.exists():
+            continue
+        text = cml.read_text(encoding="utf-8")
+        if not re.search(
+            rf"Python3_add_library\(\s*{re.escape(comp)}\s+MODULE", text
+        ):
+            dangling.append(comp)
+    return dangling
+
+
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -1329,6 +1370,27 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-327: refuse to silently promote a former module object — whose
+    # fragment was left behind after `objects = [...]` dropped it — into a
+    # standalone module over its existing (possibly hand-owned) native dir.
+    # Scoped to a full apply; `--only X` never touches unrelated objects.
+    if only is None:
+        dangling = _dangling_object_fragments(root, cfg)
+        if dangling:
+            lines = [
+                f"error: object '{o}' is defined but not listed in any "
+                f"[module.X].objects, and native/src/{o}/ already holds a "
+                f"module-style core lib.\n"
+                f"  Promoting it to a standalone module would overwrite those "
+                f"files. Resolve by either:\n"
+                f"    - add '{o}' back to a module's objects list, or\n"
+                f"    - remove the objects/{o}.toml fragment (and its "
+                f"native/src/{o}/ dir) if the object is gone."
+                for o in dangling
+            ]
+            print("\n".join(lines), file=sys.stderr)
+            sys.exit(1)
 
     # Resolve --only to (only_mod, only_comp).  A module name produces
     # only_mod with only_comp=None (full splice for that module).  A

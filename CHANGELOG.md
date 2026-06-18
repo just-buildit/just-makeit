@@ -18,6 +18,19 @@
     glue marker — is preserved (the gh#1 contract). Because `status --check`
     diffs the pruning `apply` against disk, a stale reexport now surfaces as
     drift instead of silently passing the gate.
+- **`jm apply` no longer silently promotes a dangling object fragment
+    (gh-327)** — an object section listed in no `[module.X].objects` was treated
+    as a standalone object and given its own `.so`. When an object was *removed*
+    from its module but its `objects/<obj>.toml` fragment (and `native/src/<obj>/`
+    dir) was left behind, apply scaffolded a standalone module *over* it,
+    overwriting any hand-written `<obj>_core` lib (doppler's `ddcr_core` composed
+    vendored sources — apply clobbered its CMakeLists). apply now distinguishes
+    the two on disk — a real standalone object's `native/src/<obj>/CMakeLists.txt`
+    builds its own extension (`Python3_add_library(<obj> MODULE …)`), a module
+    object's carries only the `<obj>_core` OBJECT lib — and **errors** on a
+    dangling former-module fragment (naming the object and how to resolve it)
+    rather than clobbering. A genuine standalone object, or a fresh one with no
+    native dir yet, materializes unchanged.
 
 ## [0.19.22] — 2026-06-18
 
