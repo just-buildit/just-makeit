@@ -432,6 +432,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
+                # gh-335: without these the replayed function loses its
+                # self-sizing shape and apply emits the plain out_type binding
+                # (under-allocates → the C kernel overruns it → segfault).
+                variable_output=bool(fn.get("variable_output")),
+                out_size=fn.get("out_size", ""),
             )
 
 

@@ -1130,3 +1130,59 @@ class TestVariableOutputFunction:
         fn = C.module_functions(C.load(tmp_path), "wfm")[0]
         assert fn.get("variable_output") in (True, "true")
         assert fn["out_size"] == "rrc_ntaps(sps, span)"
+
+
+class TestApplyHonorsVariableOutput:
+    """gh-335: `jm apply` must replay variable_output/out_size into the temp
+    project so the generated binding self-sizes — the render helper honored it
+    (gh-318) but the apply replay dropped the keys, emitting the plain out_type
+    path (under-allocates → the C kernel overruns it → segfault)."""
+
+    def _apply(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+        from just_makeit import _config as C
+
+        proj = tmp_path / "p"
+        new_run("p", proj)
+        cfg = C.load(proj)
+        cfg.setdefault("module", {})["wfm"] = {
+            "functions": [
+                {
+                    "name": "rrc_taps",
+                    "return_type": "void",
+                    "out_type": "float",
+                    "variable_output": True,
+                    "out_size": "2 * sps * span + 1",
+                    "params": [
+                        {"name": "beta", "type": "double"},
+                        {"name": "sps", "type": "int"},
+                        {"name": "span", "type": "int"},
+                    ],
+                }
+            ]
+        }
+        C.save(proj, cfg)
+        apply_run(proj)
+        return (proj / "native/src/wfm/wfm_ext.c").read_text(encoding="utf-8")
+
+    def test_binding_self_sizes(self, tmp_path):
+        ext = self._apply(tmp_path)
+        # out_size drives the allocation; out is appended last to the call.
+        assert "(npy_intp)(2 * sps * span + 1)" in ext
+        assert (
+            "rrc_taps(beta, sps, span, (float *)PyArray_DATA"
+            "((PyArrayObject *)_out))" in ext
+        )
+        # NOT the plain out_type fallback (out first, _dim sized to 1).
+        assert "npy_intp _dim = (npy_intp)1;" not in ext
+
+    def test_variable_output_round_trips_via_apply(self, tmp_path):
+        # apply re-saves the temp manifest; the keys must survive the replay.
+        from just_makeit import _config as C
+
+        self._apply(tmp_path)  # materialize once
+        proj = tmp_path / "p"
+        fn = C.module_functions(C.load(proj), "wfm")[0]
+        assert fn.get("variable_output") in (True, "true")
+        assert fn["out_size"] == "2 * sps * span + 1"

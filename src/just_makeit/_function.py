@@ -153,6 +153,8 @@ def run(
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
     inline: bool = False,
+    variable_output: bool = False,
+    out_size: str = "",
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -306,6 +308,10 @@ def run(
         fn_entry["return_type"] = return_type
     if out_type:
         fn_entry["out_type"] = out_type
+    if variable_output:
+        fn_entry["variable_output"] = True
+    if out_size:
+        fn_entry["out_size"] = out_size
     if result_fields:
         fn_entry["result_fields"] = result_fields
     if max_results_param:
