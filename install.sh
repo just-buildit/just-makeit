@@ -10,11 +10,13 @@
 #   curl -fsSL https://just-buildit.github.io/just-makeit/install.sh | sh
 #   source /tmp/jm-venv/bin/activate
 #
-# ── Options (append after --):
+# ── Options (append to the command):
 #
-#   . <(curl -fsSL ...) -- ~/my-venv     # custom venv path
-#   . <(curl -fsSL ...) -- --check       # report what would change, no writes
-#   . <(curl -fsSL ...) -- --force       # reinstall even if up to date
+#   . <(curl -fsSL ...) ~/my-venv     # custom venv path
+#   . <(curl -fsSL ...) --check       # report what would change, no writes
+#   . <(curl -fsSL ...) --force       # reinstall even if up to date
+#
+# A leading `--` end-of-options separator is accepted and ignored.
 #
 set -euo pipefail
 
@@ -29,6 +31,7 @@ for arg in "$@"; do
     case "$arg" in
         --check) CHECK=1 ;;
         --force) FORCE=1 ;;
+        --)      ;;  # end-of-options separator: ignore (path follows)
         -*)      printf 'Unknown flag: %s\n' "$arg" >&2; return 1 2>/dev/null || exit 1 ;;
         *)       VENV_DIR="$arg" ;;
     esac
@@ -198,8 +201,10 @@ if [[ $JM_CURRENT -eq 0 ]]; then
         # ensurepip (bundled pip) is split into a separate package on
         # Debian/Ubuntu; if the default venv fails, create it without pip and
         # bootstrap from get-pip.py — no sudo or distro package needed.
-        if ! "$PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
-            "$PYTHON" -m venv --without-pip "$VENV_DIR"
+        # --clear so a reused dir from a different Python is rebuilt clean,
+        # not layered into an inconsistent venv (mismatched bin/python vs libs).
+        if ! "$PYTHON" -m venv --clear "$VENV_DIR" >/dev/null 2>&1; then
+            "$PYTHON" -m venv --clear --without-pip "$VENV_DIR"
             curl -fsSL https://bootstrap.pypa.io/get-pip.py \
                 | "${VENV_DIR}/bin/python"
         fi
@@ -210,9 +215,15 @@ if [[ $JM_CURRENT -eq 0 ]]; then
     _spin "Setting up venv at ${VENV_DIR}" _setup_venv
 
     VENV_PYTHON="${VENV_DIR}/bin/python"
-    ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
-    ok "just-makeit $("$VENV_PYTHON" -c \
-        'from importlib.metadata import version; print(version("just-makeit"))')"
+    # Verify the installs actually import — a pip that "succeeds" into a
+    # mismatched tree would otherwise be reported ok with an empty version.
+    _np=$("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)' 2>/dev/null) \
+        || die "numpy did not install into ${VENV_DIR}"
+    ok "numpy ${_np}"
+    _jm=$("$VENV_PYTHON" -c \
+        'from importlib.metadata import version; print(version("just-makeit"))' \
+        2>/dev/null) || die "just-makeit did not install into ${VENV_DIR}"
+    ok "just-makeit ${_jm}"
 fi
 
 # ── 7. Activate (only works when sourced; print hint otherwise) ───────────────
