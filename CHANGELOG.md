@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.26] — 2026-06-18
+
 ### Fixed
 
 - **Handle codegen gaps from the doppler#179 review (gh-178)** — four fixes to
