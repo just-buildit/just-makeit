@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.19.21] — 2026-06-18
+
+### Added
+
+- **Stateless `variable_output` module functions (gh-318)** — a module function
+    may allocate its OWN self-sized 1-D output, distinct from sizing to an input
+    array's length or a caller `out = true` buffer. `variable_output = true` +
+    `out_type = "<elem>"` allocates a 1-D array whose length is `out_size` (a
+    verbatim-C expr over the args + array `<name>_len`s, e.g.
+    `"wfm_rrc_ntaps(sps, span)"` or `"x_len * factor"`); `out` is appended last to
+    the call; a void fn returns the full allocation, a `size_t`-returning fn trims
+    to the count. Keeps a helper like `rrc_taps(beta, sps, span) -> ndarray`
+    zero-Python.
+- **Realtime-paced composer `stream()` (gh-317)** — a `[module.X.composer]   realtime = {clock_create, pace, destroy, header}` sub-table paces the
+    generated `stream()` iterator to an `fs`-Hz clock **in the `.so`**
+    (`for blk in c.stream(4096, realtime=1e6): …`), so a project drops its
+    hand-written `paced()` helper. The iterator holds an opaque clock created
+    lazily on the first block and destroyed with the iterator; off (and the plain
+    `stream()` byte-for-byte unchanged) when the sub-table is absent.
+
 ## [0.19.20] — 2026-06-18
 
 ### Added
