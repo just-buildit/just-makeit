@@ -1374,3 +1374,61 @@ class TestApplySacredGlueSplit:
         refreshed = core_h.read_text(encoding="utf-8")
         assert "eng_reset_gain" in refreshed  # declarations refreshed
         assert "USER_STEP_SENTINEL" in refreshed  # step() body preserved
+
+
+class TestApplyPreservesHandObjectCMake:
+    """gh-327: a standalone object whose per-object CMakeLists carries
+    hand-written build wiring jm never generates (a vendored core lib that
+    shares the object's name — the footgun when a consolidation leaves a
+    dangling objects/<name>.toml fragment) must NOT be clobbered. apply is
+    add-only."""
+
+    def _scaffold(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._new import run as new_run
+
+        proj = tmp_path / "proj"
+        new_run("proj", proj)
+        (proj / "objects").mkdir()
+        (proj / "objects" / "agc.toml").write_text(
+            '[agc]\narg_type = "float _Complex"\n'
+            'return_type = "float _Complex"\nmutable = "false"\n'
+            'no_state = "false"\nno_step = "false"\n\n'
+            '[[agc.state]]\nname = "gain"\ntype = "float"\n'
+            'default = "1.0f"\n'
+        )
+        manifest = proj / "just-makeit.toml"
+        manifest.write_text(
+            'include = ["objects/*.toml"]\n\n'
+            + manifest.read_text(encoding="utf-8")
+        )
+        apply_run(proj)  # generates native/src/agc/CMakeLists.txt
+        return proj, apply_run
+
+    def test_hand_owned_object_cmake_is_preserved(self, tmp_path):
+        proj, apply_run = self._scaffold(tmp_path)
+        cmake = proj / "native" / "src" / "agc" / "CMakeLists.txt"
+        # Make it hand-owned: a vendored source compiled into agc_core (a build
+        # rule the manifest cannot express — gh-275 signal).
+        hand = (
+            "# hand-written core lib\n"
+            "add_library(agc_core OBJECT agc_core.c vendored_fft.c)\n"
+            "target_include_directories(agc_core PUBLIC ${CMAKE_SOURCE_DIR}"
+            "/native/inc)\n"
+        )
+        cmake.write_text(hand)
+
+        apply_run(proj)  # second apply must not clobber it
+
+        assert cmake.read_text(encoding="utf-8") == hand
+        assert "vendored_fft.c" in cmake.read_text(encoding="utf-8")
+
+    def test_plain_glue_object_cmake_still_regenerates(self, tmp_path):
+        # A normal (jm-shaped) per-object CMakeLists is still glue — a manifest
+        # edit must reach it (the guard only spares hand-owned files).
+        proj, apply_run = self._scaffold(tmp_path)
+        cmake = proj / "native" / "src" / "agc" / "CMakeLists.txt"
+        # truncate it; apply regenerates the glue (not hand-owned).
+        cmake.write_text("# stale\nadd_library(agc_core OBJECT agc_core.c)\n")
+        apply_run(proj)
+        assert "Python3_add_library" in cmake.read_text(encoding="utf-8")

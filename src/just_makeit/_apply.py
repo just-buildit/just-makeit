@@ -1070,8 +1070,30 @@ def _sync_aggregates(
             f"native/src/{comp}/CMakeLists.txt",
             f"src/{pkg}/{comp}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel):
-                updated.append(root / rel)
+            real = root / rel
+            # gh-327: apply is add-only and must never clobber a hand-written
+            # file. A per-object CMakeLists carrying bespoke build wiring jm
+            # never generates (a vendored core lib that happens to share this
+            # object's name — the footgun when a consolidation leaves a
+            # dangling objects/<name>.toml fragment) is NOT glue. Leave it
+            # untouched, mirroring the module-object reconcile's gh-275 guard,
+            # and tell the user so the collision is visible rather than silent.
+            if (
+                rel.endswith("CMakeLists.txt")
+                and real.exists()
+                and _is_hand_owned_object_cmake(
+                    real.read_text(encoding="utf-8"), comp
+                )
+            ):
+                print(
+                    f"  preserved  {rel} (hand-written build wiring; jm apply "
+                    f"will not overwrite it — if '{comp}' is a dangling object "
+                    f"fragment, delete objects/{comp}.toml)",
+                    file=sys.stderr,
+                )
+                continue
+            if _overwrite_if_changed(real, temp_root / rel):
+                updated.append(real)
         # _core.h is a hybrid: the inline step() body and the state struct
         # are sacred; the function declarations are glue. Apply injects any
         # TOML-declared prototype the header is missing (a new method/property
@@ -1108,6 +1130,11 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
             continue
         text = cmake_path.read_text(encoding="utf-8")
         if f"bench_{comp}_core" in text:
+            continue
+        # gh-327: never append to a hand-owned core lib's CMakeLists (a
+        # bench_<comp>_core target over a bench source that doesn't exist would
+        # break its build) — apply is add-only for hand files.
+        if _is_hand_owned_object_cmake(text, comp):
             continue
         bench_block = (
             f"\nadd_executable(bench_{comp}_core\n"
