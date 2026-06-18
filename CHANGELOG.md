@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Composer serializer header `#include` (gh-343)** — a
+    `[[module.X.serializers]]` delegated serializer (gh-317, e.g. `to_sigmf`)
+    generated a correct call to the project's C serializer `fn`, but
+    `<module>_ext.c` never `#include`-d the header that declares it, so the TU
+    failed to compile (an implicit declaration whose `int` result decays to the
+    `char *` return). A serializer entry now takes an optional `header` key,
+    `#include`-d in the generated binding — mirroring `composer.realtime.header`.
+    Headers are deduped, in declaration order; absent the key nothing is emitted.
+    Closes the test gap that let it through: a new compile probe builds jm's
+    *actual emitted* include + a generated-style call with implicit declarations
+    a hard error (the gh-343 miscompile), alongside the compiler-free unit gate.
+
 ## [0.19.24] — 2026-06-18
 
 ### Fixed

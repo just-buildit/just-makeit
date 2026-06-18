@@ -957,6 +957,7 @@ class TestDelegatedSerializers:
                 "name": "to_sigmf",
                 "fn": "wfm_sigmf_meta_json",
                 "returns": "str",
+                "header": "wfm/wfm_writer.h",
                 "params": [
                     {
                         "name": "kind",
@@ -999,6 +1000,53 @@ class TestDelegatedSerializers:
         assert sers[0]["fn"] == "wfm_sigmf_meta_json"
         assert sers[0]["params"][0]["enum"] == "wfm_type"
         assert sers[0]["params"][1]["name"] == "fs"
+        assert sers[0]["header"] == "wfm/wfm_writer.h"  # gh-343
+
+    def test_header_round_trips_through_dump_fallback(self):
+        # gh-343: the _dump (no-tomlkit) writer must also emit `header`.
+        from just_makeit import _config as C
+
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
+
+        rt = tomllib.loads(C._dump(self._cfg()))
+        assert (
+            rt["module"]["wfm_compose"]["serializers"][0]["header"]
+            == "wfm/wfm_writer.h"
+        )
+
+    # ── gh-343: the serializer fn's header is #include-d into <module>_ext.c ──
+    def test_render_ext_emits_serializer_header(self):
+        s = _composer.render_ext(self._cfg(), "wfm_compose")
+        assert '#include "wfm/wfm_writer.h"' in s
+        # it precedes the serializer call (so the decl is in scope, not implicit)
+        assert s.index('#include "wfm/wfm_writer.h"') < s.index(
+            "wfm_sigmf_meta_json("
+        )
+
+    def test_render_ext_omits_serializer_include_without_header(self):
+        cfg = self._cfg()
+        del cfg["module"]["wfm_compose"]["serializers"][0]["header"]
+        s = _composer.render_ext(cfg, "wfm_compose")
+        # the call is still rendered, but no spurious include is invented
+        assert "wfm_sigmf_meta_json(" in s
+        assert '#include "wfm/wfm_writer.h"' not in s
+
+    def test_serializer_headers_deduped(self):
+        cfg = self._cfg()
+        cfg["module"]["wfm_compose"]["serializers"].append(
+            {
+                "name": "to_blob",
+                "fn": "wfm_blob_meta",
+                "returns": "str",
+                "header": "wfm/wfm_writer.h",  # same header as to_sigmf
+                "params": [],
+            }
+        )
+        s = _composer.render_ext(cfg, "wfm_compose")
+        assert s.count('#include "wfm/wfm_writer.h"') == 1
 
     def test_pyi_exposes_serializer(self):
         pyi = _composer.render_pyi(self._cfg(), "wfm_compose")
@@ -1019,3 +1067,76 @@ class TestDelegatedSerializers:
         )
         assert "wfm_blue_meta(segs, _n);" in s
         assert '{"to_blue", (PyCFunction)Composer_to_blue,' in s
+
+
+# ── gh-343: compile-check that the emitted serializer include resolves the
+#    fn's declaration (the gap the compiler-free unit gate above misses — this
+#    is the exact implicit-declaration miscompile doppler hit). ────────────────
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+
+
+@pytest.mark.skipif(_CC is None, reason="no C compiler available")
+def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
+    """Compile jm's *actual emitted* serializer ``#include`` plus a
+    generated-style call to the str-returning fn, with implicit declarations a
+    hard error. Without the include the call is an implicit declaration whose
+    ``int`` result decays to ``char *`` — exactly the gh-343 miscompile."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["serializers"] = [
+        {
+            "name": "to_probe",
+            "fn": "probe_serialize",
+            "returns": "str",
+            "header": "probehdr/probehdr.h",
+            "params": [{"name": "fs", "type": "double", "default": "1e6"}],
+        }
+    ]
+    ext = _composer.render_ext(cfg, "wfm_compose")
+    emitted = [
+        ln
+        for ln in ext.splitlines()
+        if ln.strip() == '#include "probehdr/probehdr.h"'
+    ]
+    assert emitted, "serializer header not emitted into _ext.c"
+
+    hdr_dir = tmp_path / "probehdr"
+    hdr_dir.mkdir()
+    (hdr_dir / "probehdr.h").write_text(
+        "#ifndef PROBEHDR_H\n#define PROBEHDR_H\n#include <stddef.h>\n"
+        "char *probe_serialize(double fs, const void *segs, size_t n);\n"
+        "#endif\n"
+    )
+    # The TU embeds jm's emitted include verbatim, then makes the generated-
+    # style str call. -Werror on implicit decls / int->pointer reproduces the bug.
+    probe = tmp_path / "probe.c"
+    probe.write_text(
+        f"{emitted[0]}\n"
+        "#include <stddef.h>\n"
+        "char *use(double fs, const void *segs, size_t n) {\n"
+        "    return probe_serialize(fs, segs, n);\n"
+        "}\n"
+    )
+    obj = tmp_path / "probe.o"
+    subprocess.run(
+        [
+            _CC,
+            "-c",
+            "-std=c11",
+            "-Werror=implicit-function-declaration",
+            "-Werror=int-conversion",
+            "-I",
+            str(tmp_path),
+            str(probe),
+            "-o",
+            str(obj),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert obj.exists()
