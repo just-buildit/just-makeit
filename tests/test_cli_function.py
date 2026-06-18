@@ -224,3 +224,46 @@ class TestCliFunction:
         # const char * has no canonical numpy dtype — rejected.
         with pytest.raises(SystemExit):
             _run(["fn", "--module", "dsp", "--out-type", "const char *"])
+
+    # ── gh-335: --variable-output / --out-size ───────────────────────────────
+    def test_variable_output_and_out_size_forwarded(self):
+        with patch("just_makeit._function.run") as mock_run:
+            _run(
+                [
+                    "rrc_taps",
+                    "--module",
+                    "wfm",
+                    "--param",
+                    "sps:int",
+                    "--out-type",
+                    "float",
+                    "--variable-output",
+                    "--out-size",
+                    "2 * sps + 1",
+                ]
+            )
+            _, kwargs = mock_run.call_args
+            assert kwargs.get("variable_output") is True
+            assert kwargs.get("out_size") == "2 * sps + 1"
+
+    def test_out_size_missing_value_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "wfm", "--out-size"])
+
+    def test_out_size_without_variable_output_exits(self):
+        with pytest.raises(SystemExit):
+            _run(
+                [
+                    "fn",
+                    "--module",
+                    "wfm",
+                    "--out-type",
+                    "float",
+                    "--out-size",
+                    "n",
+                ]
+            )
+
+    def test_variable_output_without_out_type_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fn", "--module", "wfm", "--variable-output"])
