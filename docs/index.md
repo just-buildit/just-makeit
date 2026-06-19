@@ -14,6 +14,37 @@ tedious, exacting work that repeats on every project.
 Python binding, CMake build system, and full test coverage — all passing before
 you write a single line of your algorithm.
 
+!!! success "One command in — a tested C + Python package out"
+
+    ```console
+    $ just-makeit new my_project --object my_object
+      create  native/inc/my_object/my_object_core.h
+      create  native/src/my_object/my_object_core.c
+      create  native/src/my_object/my_object_ext.c
+      create  native/tests/test_my_object_core.c
+      create  src/my_project/my_object.pyi
+      create  src/my_project/tests/test_my_object.py
+      …  (+ CMakeLists, Makefile, benchmarks, pkg-config, docs)
+
+    $ cd my_project && make && make test
+      [100%] Linking C shared module src/my_project/my_object.…-linux-gnu.so
+      [100%] Built target my_object
+      1/1 Test #1: test_my_object_core ..............   Passed    0.00 sec
+      100% tests passed, 0 tests failed out of 1
+
+      test_create ... ok
+      test_step_runs ... ok
+      test_steps_shape_dtype ... ok
+      …
+      Ran 8 tests in 0.026s
+
+      OK
+    ```
+
+    A complete, green C library **and** Python extension — its C *and* Python
+    tests passing — before you write a line of your algorithm. Fill in `step()`
+    and ship.
+
 ______________________________________________________________________
 
 ## Quickstart
