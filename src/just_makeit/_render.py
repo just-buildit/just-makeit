@@ -705,6 +705,7 @@ def _py_wrapper_for_function(
     max_results_param: str = "",
     variable_output: bool = False,
     out_size: str = "",
+    check_return: bool = False,
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
@@ -851,6 +852,24 @@ def _py_wrapper_for_function(
             f"{cleanup}"
             f"    return _out;"
         )
+    elif check_return:
+        # gh-363: the C function reports an int status (0 = success); raise on a
+        # non-zero result instead of returning it, so the Python surface is a
+        # "succeeds or raises" None — the module-function analog of the handle
+        # generator's `close_returns`. Covers both a failed primitive and a
+        # NULL/neg sentinel the C fn returns on an open/alloc failure. Capture
+        # the rc first, run any array/path cleanup, then check + raise.
+        _rt_disp = _ctype_display(return_type)
+        ret_line = (
+            f"    {_rt_disp} _rc = {fn_name}({call_args});\n"
+            f"{cleanup}"
+            f"    if (_rc != 0) {{\n"
+            f"        PyErr_Format(PyExc_RuntimeError,\n"
+            f'            "{fn_name} failed (rc=%d)", (int)_rc);\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    Py_RETURN_NONE;"
+        )
     elif ret_meta:
         # gh-353: a path arg borrows a PyBytes that the C call copies, so the
         # path XDECREF in `cleanup` must run AFTER the call, not before. Capture
@@ -983,6 +1002,7 @@ def make_functions_ctx(
                 max_results_param=fn.get("max_results_param", ""),
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
+                check_return=bool(fn.get("check_return")),
             )
         )
         entries.append(f'    {{"{name}", {fn_ref}, {flags}, "{doc}"}},')

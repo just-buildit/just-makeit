@@ -760,7 +760,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 def _fn_stub(fn: dict) -> str:
     name = fn["name"]
     out_type = fn.get("out_type")
-    if out_type:
+    if fn.get("check_return"):
+        # gh-363: the int status is consumed by a raise-on-non-zero; the Python
+        # surface is "succeeds or raises", i.e. returns None.
+        ret = "None"
+    elif out_type:
         # Strip optional [param_name] length suffix (e.g. "float64[M]" → "float64")
         _ot_base = _re.sub(r"\[[A-Za-z_][A-Za-z_0-9]*\]$", "", out_type)
         # Resolve numpy dtype aliases (e.g. "float64" → "double") for _py().

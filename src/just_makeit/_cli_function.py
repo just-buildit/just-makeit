@@ -39,6 +39,7 @@ def run(args: list[str]) -> None:
     fn_return_type = "void"
     fn_out_type: str = ""
     fn_variable_output = False
+    fn_check_return = False
     fn_out_size: str = ""
     fn_result_fields: list[dict] = []
     impl_spec_f: str | None = None
@@ -203,6 +204,12 @@ def run(args: list[str]) -> None:
             # --out-size); `out` is appended last to the C call.
             fn_variable_output = True
             i += 1
+        elif tok == "--check-return":
+            # gh-363: the C fn returns an int status (0 = ok); the binding raises
+            # RuntimeError on non-zero instead of returning it (-> None). The
+            # module-function analog of the handle generator's close_returns.
+            fn_check_return = True
+            i += 1
         elif tok == "--out-size":
             i += 1
             if i >= len(remaining):
@@ -283,6 +290,24 @@ def run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-363: --check-return raises on a non-zero int return, so the function
+    # must return an integer status and have no array output to return instead.
+    if fn_check_return:
+        meta = T._CTYPE_META.get(fn_return_type)
+        if fn_out_type or fn_variable_output or fn_result_fields:
+            print(
+                "error: --check-return is for a status-returning function;"
+                " it cannot combine with an array/result output.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not meta or meta.get("kind") != "int":
+            print(
+                "error: --check-return requires --return-type to be an integer"
+                f" status type (got '{fn_return_type}').",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     impl_body_f: str | None = None
     if impl_spec_f is not None:
@@ -302,4 +327,5 @@ def run(args: list[str]) -> None:
         result_fields=fn_result_fields or None,
         variable_output=fn_variable_output,
         out_size=fn_out_size,
+        check_return=fn_check_return,
     )

@@ -206,6 +206,8 @@ def _function_flags(fn: dict, module: str) -> list[str]:
         parts.append(_bool_flag("--variable-output"))
     if fn.get("out_size"):
         parts.append(_flag("--out-size", fn["out_size"]))
+    if fn.get("check_return"):
+        parts.append(_bool_flag("--check-return"))
 
     if fn.get("doc"):
         parts.append(_flag("--doc", fn["doc"]))
