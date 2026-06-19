@@ -21,11 +21,13 @@ Usage in Markdown — inline color markup within any line:
 
 Color markers (wrap any fragment of a line):
 
-    {g}text{/g}   bold green  — jm "Done!", cmake "Linking", ctest "passed", "OK"
-    {G}text{/G}   green       — cmake "Building ..."
-    {c}text{/c}   bold cyan   — jm cmd hint, file paths
-    {b}text{/b}   bold blue   — cmake "Copy extension module"
-    {d}text{/d}   dim gray    — header/comment lines, separators
+    {g}text{/g}    bold green  — jm "Done!", cmake "Linking", ctest "passed", "OK"
+    {G}text{/G}    green       — cmake "Building ..."
+    {c}text{/c}    bold cyan   — jm cmd hint, file paths
+    {b}text{/b}    bold blue   — cmake "Copy extension module"
+    {y}text{/y}    bold yellow — warnings, highlights
+    {mark}t{/mark} amber       — installer "–→" pointer, callout arrows
+    {d}text{/d}    dim gray    — header/comment lines, separators
 
 Lines starting with ``$ `` animate as typed input.
 Lines starting with ``# `` render as comments (no typing animation).
@@ -40,10 +42,12 @@ _COLORS = {
     "G": "ty-green",
     "c": "ty-cyan-bold",
     "b": "ty-blue-bold",
+    "y": "ty-yellow-bold",
+    "mark": "ty-amber",
     "d": "ty-dim",
 }
 
-_MARKUP_RE = re.compile(r"\{([gGcbd])\}(.*?)\{/\1\}", re.DOTALL)
+_MARKUP_RE = re.compile(r"\{(g|G|c|b|y|mark|d)\}(.*?)\{/\1\}", re.DOTALL)
 
 
 def _colorize(text: str) -> str:

@@ -10,6 +10,21 @@ Turning it into shippable code — a tested C library, a Python binding, a build
 system, packaging, and a public C API that Rust or C++ can also link — is the
 tedious, exacting work that repeats on every project.
 
+```termynal
+$ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+    {g}ok{/g}  Python 3.12
+    {g}ok{/g}  cmake 4.2.3  (already installed)
+    {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
+  {mark}-->{/mark}   just-makeit  (/tmp/jm-venv)
+{b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
+    {g}ok{/g}  numpy 2.4.6
+    {g}ok{/g}  just-makeit 0.19.27
+
+{b}==> Venv activated — just-makeit is ready:{/b}
+
+    just-new my_project --object my_object
+```
+
 `just-makeit new` scaffolds the whole thing in one command: core C library, thin
 Python binding, CMake build system, and full test coverage — all passing before
 you write a single line of your algorithm.
