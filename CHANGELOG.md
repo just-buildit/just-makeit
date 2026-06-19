@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.28] — 2026-06-19
+
 ### Added
 
 - **Module functions: `--check-return` raises on a non-zero status (gh-363)** —
