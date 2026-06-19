@@ -743,6 +743,80 @@ jm function magnitude_db \
 <td>
 
 ```python
+# Path + enum args; raises on failure
+def write_header(
+    path: str | os.PathLike,
+    total: int,
+    sample_type: str = "cf32",
+    endian: str = "le",
+    fs: float = 1e6,
+) -> None: ...
+```
+
+</td>
+<td>
+
+```toml
+# just-makeit.toml — declare the enum first
+[[enum]]
+name   = "stype"
+values = ["cf32", "cf64", "ci32"]
+
+[[module.io.functions]]
+name         = "write_header"
+return_type  = "int"
+check_return = true
+
+[[module.io.functions.params]]
+name = "path"
+type = "path"
+
+[[module.io.functions.params]]
+name = "total"
+type = "size_t"
+
+[[module.io.functions.params]]
+name    = "sample_type"
+type    = "int"
+enum    = "stype"
+default = "cf32"
+
+[[module.io.functions.params]]
+name    = "endian"
+type    = "int"
+enum    = "endian"
+default = "le"
+
+[[module.io.functions.params]]
+name    = "fs"
+type    = "double"
+default = "1e6"
+```
+
+</td>
+<td>
+
+```sh
+jm function write_header \
+  --module io \
+  --param path:path \
+  --param total:size_t \
+  --param \
+    sample_type:enum:stype=cf32 \
+  --param \
+    endian:enum:endian=le \
+  --param fs:double=1e6 \
+  --return-type int \
+  --check-return
+```
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+```python
 # Output length from scalar param
 def ciccompmf(
     N: int,
