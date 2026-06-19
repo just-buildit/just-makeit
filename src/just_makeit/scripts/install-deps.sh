@@ -69,6 +69,7 @@ for arg in "$@"; do
     case "$arg" in
         -h|--help)  print_help; exit 0 ;;
         --check)    CHECK=1 ;;
+        --)         ;;  # end-of-options separator: ignore (path follows)
         *)          VENV_DIR="$arg" ;;
     esac
 done

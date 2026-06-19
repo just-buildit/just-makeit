@@ -10,11 +10,13 @@
 #   curl -fsSL https://just-buildit.github.io/just-makeit/install.sh | sh
 #   source /tmp/jm-venv/bin/activate
 #
-# ── Options (append after --):
+# ── Options (append to the command):
 #
-#   . <(curl -fsSL ...) -- ~/my-venv     # custom venv path
-#   . <(curl -fsSL ...) -- --check       # report what would change, no writes
-#   . <(curl -fsSL ...) -- --force       # reinstall even if up to date
+#   . <(curl -fsSL ...) ~/my-venv     # custom venv path
+#   . <(curl -fsSL ...) --check       # report what would change, no writes
+#   . <(curl -fsSL ...) --force       # reinstall even if up to date
+#
+# A leading `--` end-of-options separator is accepted and ignored.
 #
 set -euo pipefail
 
@@ -29,6 +31,7 @@ for arg in "$@"; do
     case "$arg" in
         --check) CHECK=1 ;;
         --force) FORCE=1 ;;
+        --)      ;;  # end-of-options separator: ignore (path follows)
         -*)      printf 'Unknown flag: %s\n' "$arg" >&2; return 1 2>/dev/null || exit 1 ;;
         *)       VENV_DIR="$arg" ;;
     esac
