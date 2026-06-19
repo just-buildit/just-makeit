@@ -18,14 +18,15 @@ single-pole low-pass filter as the worked example.
 
 ```sh
 jm new my_dsp \
-    --object my_filter --preset processor \
+    --object my_filter \
     --arg-type "float _Complex" \
     --return-type "float _Complex" \
     --state gain:float:1.0f
 ```
 
-`--preset processor` is the default shape, so the flag is optional —
-it just documents intent.
+`processor` is the default shape, so no `--preset` is needed. (`--preset` is a
+`jm object` flag, not a `jm new` one; on `jm object` you can pass
+`--preset processor` to document intent — it expands to nothing.)
 
 ## What you get
 

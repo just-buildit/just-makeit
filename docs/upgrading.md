@@ -15,11 +15,11 @@ Every `just-makeit.toml` carries a `schema` version number:
 [project]
 name    = "my_dsp"
 version = "0.1.0"
-schema  = "6"
+schema  = "7"
 ```
 
-When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances (it is `6`
-as of v0.14). If your project's schema is behind, `just-makeit` will remind
+When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances (it is `7`
+currently). If your project's schema is behind, `just-makeit` will remind
 you whenever you run a command that modifies the project:
 
 ```

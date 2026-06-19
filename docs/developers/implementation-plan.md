@@ -36,7 +36,7 @@ ______________________________________________________________________
 
 The load-bearing primitives nothing replaces:
 
-- **Renderer** (`_render.py` + the 49 templates under
+- **Renderer** (`_render.py` + the templates under
     `src/just_makeit/templates/`). Already covers every shape we
     ship; both the TOML flow and `jm bind` feed it the same
     `context: dict[str, str]`.

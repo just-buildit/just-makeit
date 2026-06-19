@@ -28,12 +28,13 @@ ______________________________________________________________________
 
 ## What it demonstrates
 
-- `just-makeit app --target c` — a C `main()` that constructs the object from
-    command-line arguments, reads stdin, and writes stdout
+- `just-makeit app --target c` — a complete C `main()` that constructs the
+    object from command-line arguments, reads stdin, and writes stdout
 - `just-makeit app --target console` — a Python console script (`cli.py`) with
     `argparse` flags wired to each constructor parameter
-- `just-makeit app --target pep723` — a PEP 723 inline-script block
-    (`app.py`) that declares its own dependencies and runs without a virtualenv
+- `just-makeit app --target pep723` — a PEP 723 inline-script (`my_ema.py` at
+    the project root) that declares its own dependencies and runs without a
+    virtualenv
 - How each target wires its constructor parameters to command-line flags
 
 ______________________________________________________________________
@@ -65,77 +66,128 @@ ______________________________________________________________________
 
 ## 3. What was created
 
-**C executable** (`native/src/ema/ema_app.c`):
+Because `ema`'s `step(x) -> y` is a scalar transform, all three targets are
+generated as *complete, working* sample-stream tools — a real argument parser
+(one `--flag` per constructor state var, plus `--input`/`--output`) and a
+read → `step()` → write loop. No hand-editing is required.
+
+**C executable** (`native/src/app/my_ema.c`):
 
 ```c
-/* Reads doubles from stdin, one per line.
-   Usage: ema_app [--alpha ALPHA] [--prev PREV] */
-int main(int argc, char **argv) { /* TODO: implement */ }
+int
+main(int argc, char *argv[])
+{
+    /* --- parse args --- */
+    double alpha = 0.1;
+    double prev = 0.0;
+    const char *in_path = NULL;
+    const char *out_path = NULL;
+    /* ...strcmp loop over argv for --alpha/--prev/--input/--output... */
+
+    FILE *in = in_path ? fopen(in_path, "rb") : stdin;
+    FILE *out = out_path ? fopen(out_path, "wb") : stdout;
+
+    /* --- create --- */
+    ema_state_t *state = ema_create(alpha, prev);
+
+    /* --- process --- */
+    double x;
+    while (fread(&x, sizeof x, 1, in) == 1) {
+        double y = ema_step(state, x);
+        fwrite(&y, sizeof y, 1, out);
+    }
+
+    /* --- cleanup --- */
+    ema_destroy(state);
+    return 0;
+}
 ```
 
-CMake wires the new `ema_app` target to link the same `ema_core` OBJECT
+CMake wires the new `my_ema` target to link the same `ema_core` OBJECT
 library the Python extension uses — one implementation, two consumers.
 
 **Python console script** (`src/my_ema/cli.py`):
 
 ```python
-#!/usr/bin/env python3
-"""EMA command-line interface."""
 import argparse
-from my_ema import Ema
+import sys
 
-def main():
-    p = argparse.ArgumentParser()
+import numpy as np
+
+from . import Ema
+
+
+def _make_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="my_ema")
+    p.add_argument("--input", "-i", default=None)
+    p.add_argument("--output", "-o", default=None)
     p.add_argument("--alpha", type=float, default=0.1)
     p.add_argument("--prev", type=float, default=0.0)
-    args = p.parse_args()
-    ema = Ema(alpha=args.alpha, prev=args.prev)
-    # TODO: read input, run, write output
+    return p
+
+
+def main() -> None:
+    args = _make_parser().parse_args()
+    if args.input:
+        data = np.fromfile(args.input, dtype=np.float64)
+    else:
+        data = np.frombuffer(sys.stdin.buffer.read(), dtype=np.float64)
+    obj = Ema(alpha=args.alpha, prev=args.prev)
+    out = np.array([obj.step(x) for x in data], dtype=np.float64)
+    if args.output:
+        out.tofile(args.output)
+    else:
+        sys.stdout.buffer.write(out.tobytes())
 ```
 
-Registered in `pyproject.toml` under `[project.scripts]`:
+Registered in `pyproject.toml` under `[project.scripts]` (the script name
+defaults to the project name, since no `--name` was passed):
 
 ```toml
 [project.scripts]
-ema-cli = "my_ema.cli:main"
+my_ema = "my_ema.cli:main"
 ```
 
-**PEP 723 inline script** (`src/my_ema/app.py`):
+**PEP 723 inline script** (`my_ema.py`, at the project root):
 
 ```python
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["my-ema"]
+# dependencies = ["my_ema==0.1.0", "numpy"]
 # ///
-"""EMA standalone script — run with: uv run app.py"""
+"""my_ema standalone script (PEP 723)."""
+import argparse
+import sys
+
+import numpy as np
+
 from my_ema import Ema
 
-ema = Ema(alpha=0.1)
-# TODO: read input, run, write output
+# ...same _make_parser() and main() as the console script above...
 ```
 
 Run without a virtualenv:
 
 ```sh
-uv run src/my_ema/app.py
+uv run my_ema.py
 ```
 
 ______________________________________________________________________
 
-## 4. Implement and run
+## 4. Build and run
 
-Fill in the `main()` body of whichever target you need, then:
+Each target works as generated — pick whichever you need and run it:
 
 ```sh
 # C executable
-make && ./build/ema_app --alpha 0.2
+make && ./build/my_ema --alpha 0.2
 
 # Console script (after pip install)
 pip install -e .
-ema-cli --alpha 0.2
+my_ema --alpha 0.2
 
 # PEP 723 script
-uv run src/my_ema/app.py
+uv run my_ema.py --alpha 0.2
 ```
 
 ______________________________________________________________________

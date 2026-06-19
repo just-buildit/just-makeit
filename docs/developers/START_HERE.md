@@ -36,7 +36,9 @@ just-makeit/
 │   ├── _object.py            # `object` command — add a type (standalone or in-module)
 │   ├── _init.py              # internal: standalone object file generation
 │   ├── _module.py            # `module` command — scaffold empty extension module
-│   ├── _method.py            # `method` / `property` / `function` commands
+│   ├── _method.py            # `method` command — named execute variants
+│   ├── _property.py          # `property` command — Python properties
+│   ├── _function.py          # `function` command — module-level C functions
 │   ├── _add.py               # `add` command — append state vars to existing object
 │   ├── _perf.py              # `perf` command — add performance annotations
 │   ├── _impl.py              # `--impl` body lifting (funcname or line range)
@@ -49,7 +51,7 @@ just-makeit/
 │   ├── _render.py            # render engine + template constants loaded from templates/
 │   ├── _context/             # make_*_ctx() context builders
 │   ├── templates/            # the real template files (c/, cmake/, py/, make/, toml/, …)
-│   ├── _scripts.py           # entry points for jm-install-deps and jm-docker-e2e
+│   ├── _scripts.py           # entry points: jm-install-deps, jm-run-tests, jm-docker-e2e
 │   └── scripts/              # bundled shell utilities (shipped in wheel)
 │       ├── install-deps.sh   # OS-aware dep installer + venv setup
 │       └── docker-e2e.sh     # Docker end-to-end smoke test
@@ -67,15 +69,12 @@ just-makeit/
 │   ├── developers/           # this directory
 │   ├── examples/             # per-example walkthroughs
 │   └── *.md                  # commands, workflow, types, perf, c-library
-├── examples/                 # complete worked examples (shipped in repo)
-│   ├── running_stats/        # introductory walkthrough
-│   ├── fir_filter/           # perf annotations, array state
-│   ├── sliding_correlator/   # JM_DEFINE_STEPS
-│   ├── sliding_power/        # --return-type, simd
-│   ├── dsp_toolkit/          # multi-object standalone workflow
-│   └── filter_module/        # module + object workflow
+├── examples/                 # repo-root README only; the worked examples
+│                             #   now live in src/just_makeit/examples/ (dozens,
+│                             #   bundled in the wheel as package data)
 ├── scripts/
-│   └── copy_examples.py      # copies example sources into docs/
+│   ├── copy_examples.py      # copies example sources into docs/
+│   └── sync_version.py       # keeps version strings in sync across files
 ├── .github/workflows/
 │   ├── ci.yml                # runs tests on every push to main / PR
 │   ├── release.yml           # triggered by v* tag: test → build → publish to PyPI

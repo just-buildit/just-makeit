@@ -180,20 +180,21 @@ A preset is a shorthand for a common flag combination — nothing more. It
 expands before the normal parser runs, so every preset is equivalent to
 typing its flags out, and you can still pass any of them directly.
 
-| Preset      | Expands to                                     | Shape                                                 |
-| ----------- | ---------------------------------------------- | ----------------------------------------------------- |
-| `processor` | (none)                                         | Default: scalar in → scalar out.                      |
-| `generator` | `--arg-type void`                              | No input; produces output.                            |
-| `consumer`  | `--return-type void`                           | Consumes input; no output.                            |
-| `reader`    | `--no-step --init-param filepath:const char *` | No auto-`step()`; add custom methods via `jm method`. |
+| Preset      | Expands to                                                       | Shape                                                 |
+| ----------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
+| `processor` | (none)                                                           | Default: scalar in → scalar out.                      |
+| `blockwise` | `--arg-type "float _Complex[]" --return-type "float _Complex[]"` | Array in → array out of the same length.              |
+| `generator` | `--arg-type void`                                                | No input; produces output.                            |
+| `consumer`  | `--return-type void`                                             | Consumes input; no output.                            |
+| `reader`    | `--no-step --init-param filepath:const char *`                   | No auto-`step()`; add custom methods via `jm method`. |
 
 ```sh
 just-makeit object osc --preset generator
 ```
 
-`--preset` is not repeatable. A `blockwise` (array-in, array-out) preset is
-intentionally **not** offered: array *return* types are not yet supported,
-so it would always error (array *input* via `--arg-type "T[]"` does work).
+`--preset` is not repeatable. The `blockwise` preset pairs an array input with
+an array output of the same length; override the element types by passing your
+own `--arg-type "T[]" --return-type "T[]"`.
 
 Each `--state name:type[:default]` generates:
 

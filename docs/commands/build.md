@@ -297,11 +297,11 @@ just-makeit status
 
 Prints a table of files with one of three states:
 
-| Status     | Meaning                                                      |
-| ---------- | ------------------------------------------------------------ |
-| `OK`       | File matches what the manifest would generate.               |
-| `MISSING`  | File is declared in the manifest but does not exist on disk. |
-| `MODIFIED` | File exists but differs from the manifest-generated content. |
+| Status    | Meaning                                                      |
+| --------- | ------------------------------------------------------------ |
+| `OK`      | File matches what the manifest would generate.               |
+| `MISSING` | File is declared in the manifest but does not exist on disk. |
+| `STALE`   | File exists but differs from the manifest-generated content. |
 
 `status` never writes anything; it is always safe to run. Use it to confirm
 that `jm apply` is a no-op before a release, or to see what changed after a

@@ -55,8 +55,8 @@ the user only writes the DSP algorithm.
 | `_color.py`         | ANSI color helpers; respects `NO_COLOR` and non-TTY fallback                                                                                                               |
 | `_types.py`         | **Type system**: `_CTYPE_META` dict, all type-query helpers (`is_valid_type`, `array_elem_ctype`, etc.)                                                                    |
 | `_context/`         | **Context builders** (package): `_sample`, `_state`, `_step`, `_methods`, `_types`, `_parse` — all `make_*_ctx()` functions                                                |
-| `_render.py`        | **Render engine**: `render()`, 49 template constants loaded from files at import, `fn_c_stub/decl`, `render_module_ext_*`                                                  |
-| `templates/`        | **Template files**: `c/inc/`, `c/src/`, `cmake/`, `py/`, `make/`, `toml/`, `doc/`, `misc/` — 49 files; C/H use `/*<<token>>*/` placeholders for clang-format compatibility |
+| `_render.py`        | **Render engine**: `render()`, template constants loaded from files at import, `fn_c_stub/decl`, `render_module_ext_*`                                                       |
+| `templates/`        | **Template files**: `c/inc/`, `c/src/`, `cmake/`, `py/`, `make/`, `toml/`, `doc/`, `misc/`; C/H use `/*<<token>>*/` placeholders for clang-format compatibility |
 | `_config.py`        | Read/write `just-makeit.toml`; all project state lives here                                                                                                                |
 | `_new.py`           | `just-makeit new` — creates a new empty project scaffold                                                                                                                   |
 | `_init.py`          | Low-level file writers shared by `object`, `module`, and `new`                                                                                                             |

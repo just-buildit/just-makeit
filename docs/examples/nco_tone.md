@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **`find_package` integration** — `jm new --find-package Doppler` wires
     `find_package(Doppler REQUIRED)` into the root `CMakeLists.txt`
 - **`extra_link_libs`** — link the component's OBJECT library against a
-    `find_package`-resolved target (`doppler::doppler_lib`)
+    `find_package`-resolved target (`doppler::doppler-static`)
 - **Opaque state holding a library handle** — `nco_state_t *` from Doppler is
     declared opaque; `create_impl` initialises it, `destroy_impl` tears it down
 - **`-DDoppler_DIR` on the cmake configure line** — pointing CMake at an
@@ -50,34 +50,33 @@ ______________________________________________________________________
 ```toml
 # tone.toml
 [tone]
-arg_type         = "void"
-return_type      = "float _Complex"
-mutable          = "true"
-extra_link_libs  = ["doppler::doppler_lib"]
-create_impl      = """
-obj->nco = dp_nco_create(freq_hz, sample_rate_hz);
+arg_type        = "void"
+return_type     = "float _Complex"
+mutable         = "true"
+extra_link_libs = ["doppler::doppler-static"]
+create_impl     = """
+obj->nco = nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
 """
-destroy_impl     = "dp_nco_destroy(state->nco);"
+destroy_impl    = """
+nco_destroy(state->nco);
+"""
 
-[[tone.init_params]]
-name    = "freq_hz"
+[[tone.state]]
+name    = "norm_freq"
 type    = "double"
-default = "1000.0"
-
-[[tone.init_params]]
-name    = "sample_rate_hz"
-type    = "double"
-default = "48000.0"
+default = "0.0"
 
 [[tone.state]]
 name   = "nco"
-type   = "dp_nco_t *"
+type   = "nco_state_t *"
 opaque = true
 ```
 
-The `dp_nco_t *` field is invisible to Python — it is created in `create_impl`,
-updated in `step()`, and released in `destroy_impl`.
+`norm_freq` is the normalized frequency (cycles/sample) passed to the
+constructor; `create_impl` forwards it to `nco_create`. The `nco_state_t *`
+field is invisible to Python — it is created in `create_impl`, updated in
+`step()`, and released in `destroy_impl`.
 
 ______________________________________________________________________
 
@@ -111,16 +110,33 @@ ______________________________________________________________________
 
 ## 4. Implement step()
 
+First make Doppler's NCO header and `<math.h>` visible by adding them after
+the always-present `clib_common.h` include:
+
 ```c
 /* native/inc/tone/tone_core.h */
+#include "clib_common.h"
+#include "nco/nco_core.h"
+#include <math.h>
+```
+
+Then fill in `step()` — advance the NCO one sample and map its phase
+accumulator to a unit-magnitude complex exponential:
+
+```c
 static inline float _Complex
 tone_step(tone_state_t *state)
 {
-    return dp_nco_step(state->nco);
+    uint32_t phase;
+    nco_steps_u32(state->nco, 1, &phase);
+    /* phase in [0, 2^32) maps to angle in [0, 2*pi) */
+    float angle = (float)phase
+        * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
+    return cosf(angle) + I * sinf(angle);
 }
 ```
 
-The entire algorithm is delegated to the Doppler NCO — just-makeit owns the
+The phase generation is delegated to the Doppler NCO — just-makeit owns the
 Python binding glue.
 
 ______________________________________________________________________
@@ -135,8 +151,8 @@ pip install -e .
 import numpy as np
 from tone_demo import Tone
 
-# 1 kHz sine at 48 kHz sample rate
-osc = Tone(freq_hz=1000.0, sample_rate_hz=48000.0)
+# 0.25 cycles/sample — a quarter turn of the unit circle each step
+osc = Tone(norm_freq=0.25)
 
 # Generate 1024 complex samples
 buf = osc.steps(1024)
@@ -145,6 +161,9 @@ print(buf.shape)    # (1024,)
 
 # Power check: |e^{jωt}| = 1
 print(abs(buf).mean())  # ≈ 1.0
+
+# Four quarter-circle steps cycle through 1, j, -1, -j
+print([osc.step() for _ in range(4)])  # ≈ [1, 1j, -1, -1j]
 ```
 
 ______________________________________________________________________
@@ -152,18 +171,18 @@ ______________________________________________________________________
 ## Key concepts
 
 **`extra_link_libs` links the OBJECT library to a CMake target.** The component's
-CMake block grows a `target_link_libraries(tone_core ... doppler::doppler_lib)`
-line, making the Doppler headers and shared library available during compilation
+CMake block grows a `target_link_libraries(tone_core ... doppler::doppler-static)`
+line, making the Doppler headers and static library available during compilation
 and linking.
 
 **`find_package` at the project level, linking at the component level.** The
-project-level `find_package(Doppler REQUIRED)` makes the `doppler::doppler_lib`
+project-level `find_package(Doppler REQUIRED)` makes the `doppler::doppler-static`
 import target available. The component-level `extra_link_libs` consumes it.
 Other components in the same project that don't use Doppler are unaffected.
 
-**Opaque state delegates lifetime to the library.** The `dp_nco_t *` is
-created and destroyed by Doppler's own API (`dp_nco_create` /
-`dp_nco_destroy`); just-makeit's `create_impl` / `destroy_impl` are the
+**Opaque state delegates lifetime to the library.** The `nco_state_t *` is
+created and destroyed by Doppler's own API (`nco_create` /
+`nco_destroy`); just-makeit's `create_impl` / `destroy_impl` are the
 bridge. Python never sees the handle.
 
 ## See also

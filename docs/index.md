@@ -20,7 +20,8 @@ ______________________________________________________________________
 
 ### Get it
 
-Automatically install any missing requirements, create and activate venv
+`install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
+into a Python venv, creating and activating it for you.
 
 === "curl"
 
@@ -32,25 +33,21 @@ Automatically install any missing requirements, create and activate venv
 === "pip"
 
     ```sh
-    pip install just-makeit && just-makeit install-deps [-- path]
+    pip install just-makeit && just-makeit install-deps [path]
     ```
 
 === "uv"
 
     ```sh
-    uv tool install just-makeit && just-makeit install-deps [-- path]
+    uv tool install just-makeit && just-makeit install-deps [path]
     ```
 
 ______________________________________________________________________
 
 !!! note
 
-     Project virtual environments are created in: 
-     
-     - `/tmp/jm-venv` (Linux/macOS) 
-     - `%LOCALAPPDATA%\jm-venv` (Windows) 
-     
-     Customize by providing the optional `path` in the command above.
+     The venv is created at `/tmp/jm-venv` by default. Pass the optional
+     `path` in the command above to put it elsewhere.
 
 
 !!! info
