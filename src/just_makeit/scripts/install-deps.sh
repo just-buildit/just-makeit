@@ -187,11 +187,13 @@ _fetch() {
 }
 
 info "Creating venv at ${VENV_DIR}"
-if "$SYSTEM_PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
+# --clear so a reused dir from a different Python is rebuilt clean, not layered
+# into an inconsistent venv (mismatched bin/python vs lib site-packages).
+if "$SYSTEM_PYTHON" -m venv --clear "$VENV_DIR" >/dev/null 2>&1; then
     ok "venv created"
 else
     warn "ensurepip unavailable — bootstrapping pip via get-pip.py"
-    "$SYSTEM_PYTHON" -m venv --without-pip "$VENV_DIR"
+    "$SYSTEM_PYTHON" -m venv --clear --without-pip "$VENV_DIR"
     _fetch https://bootstrap.pypa.io/get-pip.py | "${VENV_DIR}/bin/python"
     ok "venv created (pip bootstrapped)"
 fi

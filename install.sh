@@ -201,8 +201,10 @@ if [[ $JM_CURRENT -eq 0 ]]; then
         # ensurepip (bundled pip) is split into a separate package on
         # Debian/Ubuntu; if the default venv fails, create it without pip and
         # bootstrap from get-pip.py — no sudo or distro package needed.
-        if ! "$PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
-            "$PYTHON" -m venv --without-pip "$VENV_DIR"
+        # --clear so a reused dir from a different Python is rebuilt clean,
+        # not layered into an inconsistent venv (mismatched bin/python vs libs).
+        if ! "$PYTHON" -m venv --clear "$VENV_DIR" >/dev/null 2>&1; then
+            "$PYTHON" -m venv --clear --without-pip "$VENV_DIR"
             curl -fsSL https://bootstrap.pypa.io/get-pip.py \
                 | "${VENV_DIR}/bin/python"
         fi
