@@ -1,0 +1,162 @@
+site_name: just-makeit
+site_description: Python C extensions the easy way.
+site_url: https://just-buildit.github.io/just-makeit/
+repo_url: https://github.com/just-buildit/just-makeit
+copyright: "Copyright &copy; 2026 just-buildit contributors — MIT License"
+
+docs_dir: docs
+site_dir: site
+
+nav:
+  - Home: index.md
+  - Workflow: workflow.md
+  - Decision tree: decision-tree.md
+  - Template gallery:
+    - Overview: templates/index.md
+    - Processor: templates/processor.md
+    - Blockwise: templates/blockwise.md
+    - Generator: templates/generator.md
+    - Consumer: templates/consumer.md
+    - Reader: templates/reader.md
+    - Function: templates/function.md
+  - Feature tour: feature-tour.md
+  - Feature map: feature-index.md
+  - Commands:
+    - Scaffold: commands/scaffold.md
+    - Extend: commands/extend.md
+    - Build & Run: commands/build.md
+  - Artifacts: artifacts.md
+  - Configuration: configuration.md
+  - Quick reference: quick-reference.md
+  - Object-of-objects (capsule & composer): object-of-objects.md
+  - Declarative scaffolding: declarative-scaffolding.md
+  - Upgrading: upgrading.md
+  - Porting guide: porting-guide.md
+  - Stateful vs Pure: pure.md
+  - Performance: perf.md
+  - Arguments (positional vs keyword): arguments.md
+  - State Types: types.md
+  - Template Reference: template.md
+  - Customization: customization.md
+  - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
+  - Glossary: glossary.md
+  - Roadmap: roadmap.md
+  - Examples:
+    - Overview: examples/index.md
+    - Running stats: examples/running_stats.md
+    - FIR filter: examples/fir_filter.md
+    - Sliding power: examples/sliding_power.md
+    - Sliding correlator: examples/sliding_correlator.md
+    - Array processing: examples/array_processing.md
+    - DSP toolkit: examples/dsp_toolkit.md
+    - Filter module: examples/filter_module.md
+    - IQ file: examples/iqfile.md
+    - Stream chunker: examples/stream_chunker.md
+    - pytest style: examples/pytest_style.md
+    - Full workflow: examples/full_workflow.md
+    - App scaffolding: examples/jm_app.md
+    - NCO tone: examples/nco_tone.md
+    - Module functions: examples/jm_function.md
+    - Composites: examples/composites.md
+  - C library: c-library.md
+  - For Developers:
+    - Start Here: developers/START_HERE.md
+    - Test philosophy: developers/testing.md
+    - pkg-config & CMake: developers/pkg-config.md
+    - Declarative scaffolding design: developers/declarative-scaffolding.md
+    - Bind design (proposal): developers/bind-design.md
+    - Release checklist: developers/release-checklist.md
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  language: en
+  features:
+    - announce.dismiss
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
+    - content.footnote.tooltips
+    - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.path
+    - navigation.prune
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+extra_css:
+  - assets/mermaid-zoom.css
+  - assets/termynal.css
+
+extra_javascript:
+  - assets/mermaid-zoom.js
+  - assets/termynal.js
+  - assets/termynal-init.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+        - name: termynal
+          class: termynal
+          format: !!python/name:termynal_fence.termynal_fence
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/just-buildit/just-makeit
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/just-makeit/

@@ -14,36 +14,39 @@ tedious, exacting work that repeats on every project.
 Python binding, CMake build system, and full test coverage — all passing before
 you write a single line of your algorithm.
 
-!!! success "One command in — a tested C + Python package out"
+```termynal
+$ just-makeit new my_project --object my_object
+{d}just-makeit: creating project 'my_project'{/d}
 
-    ```console
-    $ just-makeit new my_project --object my_object
-      create  native/inc/my_object/my_object_core.h
-      create  native/src/my_object/my_object_core.c
-      create  native/src/my_object/my_object_ext.c
-      create  native/tests/test_my_object_core.c
-      create  src/my_project/my_object.pyi
-      create  src/my_project/tests/test_my_object.py
-      …  (+ CMakeLists, Makefile, benchmarks, pkg-config, docs)
+  create  native/inc/my_object/my_object_core.h
+  create  native/src/my_object/my_object_core.c
+  create  native/src/my_object/my_object_ext.c
+  create  native/tests/test_my_object_core.c
+  create  src/my_project/my_object.pyi
+  create  src/my_project/tests/test_my_object.py
+  create  CMakeLists.txt  Makefile  pyproject.toml  …
 
-    $ cd my_project && make && make test
-      [100%] Linking C shared module src/my_project/my_object.…-linux-gnu.so
-      [100%] Built target my_object
-      1/1 Test #1: test_my_object_core ..............   Passed    0.00 sec
-      100% tests passed, 0 tests failed out of 1
+{g}Done!{/g}  {c}cd my_project && make && make test{/c}
+$ cd my_project && make && make test
+{G}[ 27%] Building C object my_object_core.c.o{/G}
+{g}[ 72%] Linking C shared library libmy_project.so{/g}
+{g}[100%] Linking C shared module my_object.cpython-312.so{/g}
+{b}Copy my_object extension module{/b}
+[100%] Built target my_object
 
-      test_create ... ok
-      test_step_runs ... ok
-      test_steps_shape_dtype ... ok
-      …
-      Ran 8 tests in 0.026s
+1/1 Test #1: test_my_object_core ....   {g}Passed{/g}    0.00 sec
+{g}100% tests passed{/g}, 0 tests failed out of 1
 
-      OK
-    ```
+test_create ... {g}ok{/g}
+test_step_runs ... {g}ok{/g}
+test_steps_shape_dtype ... {g}ok{/g}
+{d}----------------------------------------------------------------------{/d}
+Ran 8 tests in 0.026s
+{g}OK{/g}
+```
 
-    A complete, green C library **and** Python extension — its C *and* Python
-    tests passing — before you write a line of your algorithm. Fill in `step()`
-    and ship.
+A complete, green C library **and** Python extension — C *and* Python tests
+passing — before you write a line of your algorithm. Fill in `step()` and ship.
 
 ______________________________________________________________________
 
@@ -113,240 +116,16 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## Next steps
 
-### Use it - Quick Examples
-
-#### Simple standalone extension
-
-Create a complete working project with a single command, build and test:
-
-```sh
-just-makeit new my_project --object engine --state gain:double:1.0
-cd my_project && make && make test
-```
-
-!!! success "That's it! The project is installed and ready to customize."
-
-
-**What you get:**
-
-Each top-level object creates a stand-alone (shared object: `.so` on Linux) extension.
-
-```
-my_project/
-├── native/
-│   ├── benchmarks/
-│   │   └── bench_engine_core.c     # C-level benchmark
-│   ├── inc/
-│   │   ├── clib_common.h           # common C99 types
-│   │   ├── pyex_common.h           # Python extension includes
-│   │   ├── my_project.h            # umbrella header
-│   │   └── engine/
-│   │       └── engine_core.h       # public C API + inline step()
-│   ├── src/
-│   │   ├── my_project_lib.c        # combined C library stub (version symbol)
-│   │   └── engine/
-│   │       ├── CMakeLists.txt
-│   │       ├── engine_core.c       # block processor + lifecycle
-│   │       └── engine_ext.c        # thin Python binding
-│   └── tests/
-│       └── test_engine_core.c      # CTest
-├── cmake/
-│   └── my-project.pc.in            # pkg-config template
-├── src/
-│   └── my_project/                 # Python package — import my_project
-│       ├── __init__.py
-│       ├── engine.pyi              # type stub
-│       ├── benchmarks/
-│       │   ├── __init__.py
-│       │   └── bench_engine.py     # Python benchmark
-│       └── tests/
-│           ├── __init__.py
-│           └── test_engine.py      # pytest / unittest
-├── CMakeLists.txt
-├── Makefile
-├── pyproject.toml
-├── compile_commands.json
-└── just-makeit.toml
-```
-
-#### Module subpackage — multiple types share one `.so`:
-
-```sh
-just-makeit new my_filters --module filter
-cd my_filters
-just-makeit object fir    --module filter \
-    --state "coeffs:float[16]" --state "delay:float _Complex[16]" --state "gain:float:1.0"
-just-makeit object biquad --module filter \
-    --arg-type float --return-type float \
-    --state "b0:double:1.0" --state "b1:double:0.0" --state "a1:double:0.0"
-make && make test
-```
-
-```python
-from my_filters.filter import Fir, Biquad   # one .so, one import
-```
-
-**What you get** (Python package layer):
-
-```
-src/
-└── my_filters/
-    ├── __init__.py
-    └── filter/
-        ├── __init__.py        # from .filter import Fir, Biquad
-        └── filter.pyi         # type stub for filter.so
-```
-
-One `.pyi` per `.so`, named to match the compiled extension.
-
-______________________________________________________________________
-
-## C conventions
-
-Generated code follows a consistent lifecycle pattern:
-
-```c
-// Constructor — parameters match your --state declarations
-engine_state_t *engine_create(double gain);
-
-// Destructor
-void engine_destroy(engine_state_t *state);
-
-// Reset — restores every variable to its declared default
-void engine_reset(engine_state_t *state);
-
-// Single sample (inlined, pass-through stub — implement your algorithm here)
-static inline float complex
-engine_step(const engine_state_t *state, float complex x);
-
-// Block processor
-void engine_steps(
-    engine_state_t *state,
-    const float complex *input,
-    float complex       *output,
-    size_t               n);
-
-// Generator object (--arg-type void): no input parameter
-static inline float
-nco_step(const nco_state_t *state);
-
-void nco_steps(nco_state_t *state, float *output, size_t n);
-
-// Getter / setter for each --state variable
-double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double val);
-```
-
-______________________________________________________________________
-
-## Python API
-
-**Standalone object** (`just-makeit object`):
-
-```python
-from my_project import Engine
-import numpy as np
-
-obj = Engine(gain=1.0)   # explicit
-obj = Engine()           # uses declared defaults
-
-# single sample
-y: complex = obj.step(1.0 + 0.5j)
-
-# block processing
-x = np.ones(1024, dtype=np.complex64)
-y = obj.steps(x)            # allocates and returns complex64 ndarray
-obj.steps(x, out=y)         # zero-copy: writes into y, returns y
-
-# getters / setters
-obj.get_gain()
-obj.set_gain(2.0)
-
-# reset restores declared defaults
-obj.reset()
-
-# context manager
-with Engine() as e:
-    y = e.steps(x)
-```
-
-**Module subpackage** (`just-makeit module` + `just-makeit object`):
-
-```python
-from my_filters.filter import Fir, Biquad   # one .so, clean subpackage import
-
-fir = Fir(gain=1.0)
-bq  = Biquad(b0=1.0)
-```
-
-Types within a module are fully independent — separate lifecycles, each with
-its own `step`, `steps`, `reset`, getters/setters, and context manager.
-
-______________________________________________________________________
-
-## Multiple state variables
-
-```sh
-just-makeit new my_project \
-    --object engine \
-    --state center_freq:double:1000.0 \
-    --state bandwidth:double:200.0 \
-    --state order:int:4
-```
-
-Each `--state name:type:default` becomes a struct field, a constructor parameter
-(optional in Python, required in C), getter/setter pair, and reset target — in
-both C and Python.
-
-______________________________________________________________________
-
-## Integrations
-
-- **CMake** — `Python3_add_library` with `WITH_SOABI`; `.so` lands in `src/` for zero-install dev workflow
-- **GNU Make** — convenience wrapper with `build`, `test`, and `just-build` targets
-- **NumPy buffer protocol** — `steps()` accepts and returns typed ndarrays matching your declared state types
-- **pytest** — tests generated covering create, step, steps, getters/setters, reset, context manager, and destroy
-- **CTest** — C-level test for the core lifecycle
-- **just-buildit** — PEP 517 backend; `pip install .` and `pip install -e .` work out of the box
-
-______________________________________________________________________
-
-## Packaging
-
-The generated project uses [just-buildit](https://github.com/just-buildit/just-buildit)
-as its PEP 517 build backend.
-
-```sh
-# Build and install
-pip install .
-
-# Development install (no rebuild needed after editing Python files)
-pip install -e .
-
-# Build a wheel manually
-just-makeit build
-```
-
-______________________________________________________________________
-
-## Design principles
-
-**Your C code runs everywhere.** Core logic lives in `*_core.c` / `*_core.h`,
-compiled once as a CMake OBJECT library and linked into both the Python
-extension and a distributable `lib<project>.so`.  C, C++, and Rust consumers
-link the same binary.  The Python binding in `*_ext.c` is a thin adapter —
-argument parsing, array wrapping, and nothing more.
-
-**Tests from day one.** Every generated project ships C tests (CTest) and
-Python tests (pytest/unittest) that pass before you've written a line of your
-algorithm.  Adding state variables, methods, and properties keeps the tests in
-sync automatically.
-
-**Standard packaging.** The generated `pyproject.toml` uses
-[just-buildit](https://github.com/just-buildit/just-buildit) as the PEP 517
-build backend.  `pip install .` builds and installs.  `just-makeit build`
-produces a wheel.
+| Goal | Page |
+| ---- | ---- |
+| Scaffold → implement → test loop | [Workflow](workflow.md) |
+| All generated file layouts | [Artifacts](artifacts.md) |
+| Tour every feature in one project | [Feature tour](feature-tour.md) |
+| Runnable bundled examples | [Examples](examples/index.md) |
+| Generated C and Python API reference | [Workflow → Generated C API](workflow.md#generated-c-api) |
+| Command options | [Commands → Scaffold](commands/scaffold.md) |
 
 ______________________________________________________________________
 
