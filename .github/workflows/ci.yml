@@ -4,6 +4,10 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  # Run the full suite on the merge queue's batched commit, so the required
+  # "CI passed" check is satisfied by testing the exact would-be-merged tree —
+  # GitHub enforces up-to-date by construction, no per-PR rebase needed.
+  merge_group:
   workflow_dispatch:
 
 jobs:

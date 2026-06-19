@@ -45,7 +45,8 @@ git add pyproject.toml CHANGELOG.md jb.toml uv.lock
 git commit -m "chore: bump to X.Y.Z"
 git push -u origin chore/bump-X.Y.Z
 gh pr create --fill
-# squash-merge once CI is green
+# once CI is green, add the PR to the merge queue ("Merge when ready"):
+# the queue rebases it, re-runs CI on the batched commit, and squash-merges it
 ```
 
 > **Pre-commit will rewrite files and abort the first commit.** The
