@@ -23,7 +23,10 @@ UV         = uv
 PYTEST          = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
 PYTEST_B        = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
 PYTEST_EXAMPLES = $(UV) run --with pytest --with numpy pytest
-ZENSICAL   = $(UV) run --group dev zensical
+MKDOCS_RUN = PYTHONPATH=. $(UV) run --no-project \
+             --with "mkdocs-material>=9.7" \
+             --with "mkdocstrings-python>=2.0" \
+             --with "mkdocs-minify-plugin>=0.8"
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
 .PHONY: all test test-fast test-examples bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help
@@ -70,11 +73,11 @@ build:
 
 docs:
 	$(PYTHON) scripts/copy_examples.py
-	$(UV) run --no-project --with "zensical>=0.0.29" zensical build --clean
+	$(MKDOCS_RUN) mkdocs build --clean
 
 docs-serve:
 	$(PYTHON) scripts/copy_examples.py
-	$(UV) run --no-project --with "zensical>=0.0.29" zensical serve
+	$(MKDOCS_RUN) mkdocs serve
 
 # ── Dev install ───────────────────────────────────────────────────────────────
 

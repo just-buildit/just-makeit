@@ -32,8 +32,15 @@ jobs:
       - name: Copy example READMEs into docs/
         run: python3 scripts/copy_examples.py
 
-      - name: Build Zensical site
-        run: uv run --no-project --with "zensical>=0.0.29" zensical build --clean
+      - name: Build MkDocs site
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          uv run --no-project \
+            --with "mkdocs-material>=9.7" \
+            --with "mkdocstrings-python>=2.0" \
+            --with "mkdocs-minify-plugin>=0.8" \
+            mkdocs build --clean
 
       - name: Copy install.sh into site root
         run: cp install.sh site/install.sh
