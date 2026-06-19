@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Module functions: `--check-return` raises on a non-zero status (gh-363)** —
+    a `jm function` over a C function that returns an `int` status (0 = success)
+    can mark it `--check-return` (manifest `check_return = true`); the generated
+    binding captures the result, raises `RuntimeError` on a non-zero code, and
+    returns `None` on success — a "succeeds or raises" surface. It is the
+    module-function analog of the handle generator's `close_returns` and composes
+    with the gh-353 `path`/`enum` args (the path borrow is released before the
+    check). Requires an integer `--return-type`; rejects array/result outputs.
+    Lets an I/O helper like a path + string-enum header writer be a generated
+    function that still raises on failure, instead of hand-written C.
+
 ## [0.19.27] — 2026-06-19
 
 ### Added

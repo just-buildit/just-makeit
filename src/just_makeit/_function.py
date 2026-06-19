@@ -163,6 +163,7 @@ def run(
     variable_output: bool = False,
     out_size: str = "",
     inline: bool = False,
+    check_return: bool = False,
 ) -> None:
     if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
         print(
@@ -358,6 +359,8 @@ def run(
         fn_entry["out_size"] = out_size
     if inline:
         fn_entry["inline"] = True
+    if check_return:
+        fn_entry["check_return"] = True
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

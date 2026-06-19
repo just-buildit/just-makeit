@@ -449,6 +449,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # length) → heap overrun in the C kernel.
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
+                check_return=bool(fn.get("check_return")),
             )
 
 
