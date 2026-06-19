@@ -91,7 +91,7 @@ dev = [
     "pytest",
     "pytest-benchmark",
     "pytest-cov>=7.1.0",
-    # Docs tooling gated to 3.10+ to keep the dev-dep floor compatible.
-    "mkdocs-material>=9.7; python_version >= '3.10'",
-    "mkdocs-minify-plugin>=0.8; python_version >= '3.10'",
+    # Docs tooling; zensical requires >=3.10, so gate it to keep dev deps
+    # resolvable on the 3.9 floor.
+    "zensical>=0.0.29; python_version >= '3.10'",
 ]
