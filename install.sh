@@ -215,9 +215,15 @@ if [[ $JM_CURRENT -eq 0 ]]; then
     _spin "Setting up venv at ${VENV_DIR}" _setup_venv
 
     VENV_PYTHON="${VENV_DIR}/bin/python"
-    ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
-    ok "just-makeit $("$VENV_PYTHON" -c \
-        'from importlib.metadata import version; print(version("just-makeit"))')"
+    # Verify the installs actually import — a pip that "succeeds" into a
+    # mismatched tree would otherwise be reported ok with an empty version.
+    _np=$("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)' 2>/dev/null) \
+        || die "numpy did not install into ${VENV_DIR}"
+    ok "numpy ${_np}"
+    _jm=$("$VENV_PYTHON" -c \
+        'from importlib.metadata import version; print(version("just-makeit"))' \
+        2>/dev/null) || die "just-makeit did not install into ${VENV_DIR}"
+    ok "just-makeit ${_jm}"
 fi
 
 # ── 7. Activate (only works when sourced; print hint otherwise) ───────────────

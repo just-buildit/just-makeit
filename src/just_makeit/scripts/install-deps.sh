@@ -206,7 +206,13 @@ VENV_PIP="${VENV_DIR}/bin/pip"
 info "Installing numpy and just-makeit"
 "$VENV_PIP" install --quiet --upgrade pip
 "$VENV_PIP" install --quiet numpy just-makeit
-ok "numpy $("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)')"
+# Verify the installs actually import — a pip that "succeeds" into a mismatched
+# tree would otherwise be reported ok with an empty version.
+_np=$("$VENV_PYTHON" -c 'import numpy; print(numpy.__version__)' 2>/dev/null) \
+    || die "numpy did not install into ${VENV_DIR}"
+ok "numpy ${_np}"
+"$VENV_PYTHON" -c 'import just_makeit' 2>/dev/null \
+    || die "just-makeit did not install into ${VENV_DIR}"
 ok "just-makeit installed"
 
 # ── 4. Activate ───────────────────────────────────────────────────────────────
