@@ -376,19 +376,22 @@ capability is ~free unless keywords are actually used — see
 
 **Arguments**
 
-| Argument                    | Description                                                                                                                                                    |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                      | Snake-case function name.                                                                                                                                      |
-| `--module mod`              | Module the function belongs to (required).                                                                                                                     |
-| `--param name:type`         | Named typed scalar parameter. Repeatable.                                                                                                                      |
-| `--param name:type=default` | Optional scalar parameter — omitting it yields `default` (e.g. `gain:double=1.0`). Optional params must come after required ones; plain scalars only (gh-240). |
-| `--param name:type[]`       | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                 |
-| `--return-type TYPE`        | C return type (default: `void`).                                                                                                                               |
-| `--inline`                  | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                             |
-| `--doc "text"`              | Python docstring for the function.                                                                                                                             |
-| `--impl file::funcname`     | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                             |
-| `--impl file::N:M`          | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.                                                               |
-| `--replace old::new`        | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                        |
+| Argument                        | Description                                                                                                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                          | Snake-case function name.                                                                                                                                      |
+| `--module mod`                  | Module the function belongs to (required).                                                                                                                     |
+| `--param name:type`             | Named typed scalar parameter. Repeatable.                                                                                                                      |
+| `--param name:type=default`     | Optional scalar parameter — omitting it yields `default` (e.g. `gain:double=1.0`). Optional params must come after required ones; plain scalars only (gh-240). |
+| `--param name:type[]`           | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                 |
+| `--param name:path`             | Filesystem path parameter. Python accepts `str \| os.PathLike`; C receives `const char *` via `PyUnicode_FSConverter` (gh-353).                                |
+| `--param name:enum:<ename>[=d]` | String-choice parameter validated against the named `[[enum]]` SSOT; C receives the `int` index; optional default `d` is the string value (gh-353).            |
+| `--return-type TYPE`            | C return type (default: `void`).                                                                                                                               |
+| `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                  |
+| `--inline`                      | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                             |
+| `--doc "text"`                  | Python docstring for the function.                                                                                                                             |
+| `--impl file::funcname`         | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                             |
+| `--impl file::N:M`              | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.                                                               |
+| `--replace old::new`            | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                        |
 
 **Example — no parameters:**
 
@@ -458,4 +461,71 @@ just-makeit function apply_window \
     --module fft \
     --param data:"float _Complex[]" \
     --return-type void
+```
+
+**Path parameters** (`name:path`) accept a `str | os.PathLike` from Python,
+coerce it to bytes via `PyUnicode_FSConverter`, and forward `const char *` to C
+— the same coercion used by the handle generator:
+
+```sh
+just-makeit function load_calibration \
+    --module dsp \
+    --param path:path \
+    --return-type void
+```
+
+Python call:
+
+```python
+from pathlib import Path
+import my_pkg.dsp as dsp
+dsp.load_calibration(Path("/data/cal.bin"))
+dsp.load_calibration("/data/cal.bin")        # str also works
+```
+
+**Enum parameters** (`name:enum:<ename>[=default]`) accept a choice string,
+validate it against the `[[enum]]` SSOT in `just-makeit.toml`, and forward
+the `int` index to C. Requires a `[[enum]]` with the matching `name` to be
+declared in `just-makeit.toml` first.
+
+```toml
+# just-makeit.toml
+[[enum]]
+name = "color_space"
+values = ["rgb", "hsv", "lab"]
+```
+
+```sh
+just-makeit function convert_image \
+    --module img \
+    --param path:path \
+    --param src_cs:enum:color_space=rgb \
+    --param dst_cs:enum:color_space \
+    --return-type int \
+    --check-return
+```
+
+**`--check-return`** makes the generated binding treat a non-zero `int`
+return value as a failure: it captures the result, raises `RuntimeError` on
+a non-zero code, and returns `None` on success. Requires `--return-type` to
+be an integer type (`int`, `size_t`, …). It is the module-function analog of
+the handle generator's `close_returns` and composes naturally with path and
+enum args.
+
+```python
+from my_pkg import img
+img.convert_image("input.png", dst_cs="lab")   # → None, or raises RuntimeError
+```
+
+C stub (`native/src/img/convert_image.c` — yours to implement):
+
+```c
+#include "img/img_core.h"
+
+int
+convert_image(const char *path, int src_cs, int dst_cs)
+{
+    /* <<IMPLEMENT: convert_image>> */
+    return 0;
+}
 ```
