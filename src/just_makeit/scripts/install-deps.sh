@@ -143,7 +143,7 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
-_install_apt()    { info "apt"; $SUDO apt-get update -qq && $SUDO apt-get install -y cmake gcc pkg-config patchelf; }
+_install_apt()    { info "apt"; $SUDO apt-get -o Acquire::Retries=3 update -qq && $SUDO apt-get -o Acquire::Retries=3 install -y cmake gcc pkg-config patchelf; }
 _install_dnf()    { info "${MGR}"; $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config patchelf; }
 _install_pacman() { info "pacman"; $SUDO pacman -Sy --noconfirm cmake gcc pkgconf patchelf; }
 _install_zypper() { info "zypper"; $SUDO zypper install -y cmake gcc pkgconfig patchelf; }
