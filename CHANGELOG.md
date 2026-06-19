@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.27] — 2026-06-19
 
 ### Added
 
@@ -14,6 +14,15 @@
     pattern (`_coerce`) the handle generator and the module-function generator
     both route through, so they cannot drift. Unblocks generating I/O helpers
     like a path + string-enum writer as a `jm function` instead of hand C.
+
+### Fixed
+
+- **Installer hardening** — the sourced `install.sh` one-liner no longer shows a
+    `[-- path]` placeholder (pasted verbatim it became the venv directory and
+    broke CMake's path parsing); both `install.sh` and `install-deps` now accept
+    and ignore a bare `--` separator, rebuild the venv with `--clear` so a reused
+    directory created by a different Python can't corrupt it, and fail loudly if
+    `numpy` or `just-makeit` don't import after install (#352).
 
 ## [0.19.26] — 2026-06-18
 
