@@ -5,29 +5,14 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 
-Getting an algorithm right is paramount.  Yet it's rarely the bottleneck.
-Turning it into shippable code — a tested C library, a Python binding, a build
-system, packaging, and a public C API that Rust or C++ can also link — is the
-tedious, exacting work that repeats on every project.
+The algorithm is the interesting part. The scaffolding around it — C library,
+Python bindings, CMake, tests, and packaging — is the same boilerplate every
+project needs and nobody wants to write again.
 
-```termynal
-$ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-    {g}ok{/g}  Python 3.12
-    {g}ok{/g}  cmake 4.2.3  (already installed)
-    {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
-  {mark}-->{/mark}   just-makeit  (/tmp/jm-venv)
-{b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
-    {g}ok{/g}  numpy 2.4.6
-    {g}ok{/g}  just-makeit 0.19.27
+<code class="jm-green">just-makeit new</code> generates all of it in one command,
+tested and passing, so you can start on the algorithm immediately.
 
-{b}==> Venv activated — just-makeit is ready:{/b}
-
-    just-new my_project --object my_object
-```
-
-`just-makeit new` scaffolds the whole thing in one command: core C library, thin
-Python binding, CMake build system, and full test coverage — all passing before
-you write a single line of your algorithm.
+<div class="jm-card" markdown>
 
 ```termynal
 $ just-makeit new my_project --object my_object
@@ -60,14 +45,15 @@ Ran 8 tests in 0.026s
 {g}OK{/g}
 ```
 
-A complete, green C library **and** Python extension — C *and* Python tests
-passing — before you write a line of your algorithm. Fill in `step()` and ship.
+A complete C library and Python extension — both tested and passing — before
+you write a line of your algorithm. Fill in `step()` and ship.
 
-______________________________________________________________________
+</div>
 
-## Quickstart
 
-### Get it
+<div class="jm-card" markdown>
+
+**Get it**{ .jm-card-title }
 
 `install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
 into a Python venv, creating and activating it for you.
@@ -91,7 +77,23 @@ into a Python venv, creating and activating it for you.
     uv tool install just-makeit && just-makeit install-deps [path]
     ```
 
-______________________________________________________________________
+```termynal
+$ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+    {g}ok{/g}  Python 3.12
+    {g}ok{/g}  cmake 4.2.3  (already installed)
+    {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
+  {y}-->{/y}   just-makeit  (/tmp/jm-venv)
+{b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
+    {g}ok{/g}  numpy 2.4.6
+    {g}ok{/g}  just-makeit 0.19.27
+
+{b}==> Venv activated — just-makeit is ready:{/b}
+
+    just-new my_project --object my_object
+```
+
+</div>
+
 
 !!! note
 
@@ -109,7 +111,6 @@ ______________________________________________________________________
     |--------------|------------------------------------------------------------|
     | **Linux**    | apt · dnf · pacman · zypper · apk                          |
     | **macOS**    | Homebrew                                                   |
-
 
 ______________________________________________________________________
 
