@@ -195,7 +195,14 @@ fi
 
 if [[ $JM_CURRENT -eq 0 ]]; then
     _setup_venv() {
-        "$PYTHON" -m venv "$VENV_DIR"
+        # ensurepip (bundled pip) is split into a separate package on
+        # Debian/Ubuntu; if the default venv fails, create it without pip and
+        # bootstrap from get-pip.py — no sudo or distro package needed.
+        if ! "$PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
+            "$PYTHON" -m venv --without-pip "$VENV_DIR"
+            curl -fsSL https://bootstrap.pypa.io/get-pip.py \
+                | "${VENV_DIR}/bin/python"
+        fi
         "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
         "${VENV_DIR}/bin/pip" install --quiet numpy
         "${VENV_DIR}/bin/pip" install --quiet --upgrade just-makeit

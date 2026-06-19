@@ -1,34 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-_HELP=$(cat <<'EOF'
-Usage: just-makeit install-deps [OPTIONS] [VENV_DIR]
-       jm-install-deps [OPTIONS] [VENV_DIR]
+# ── Colors ────────────────────────────────────────────────────────────────────
+# Honor NO_COLOR (https://no-color.org) and fall back to plain text when stdout
+# is not a terminal, so piped/CI output stays free of escape codes.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m';   C_DIM=$'\033[2m'
+    C_BLUE=$'\033[1;34m'; C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'
+    C_RED=$'\033[1;31m';  C_CYAN=$'\033[1;36m'
+else
+    C_RESET=''; C_BOLD=''; C_DIM=''
+    C_BLUE=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_CYAN=''
+fi
 
-Install cmake, a C compiler, and numpy into a Python venv.
+# ── Help ──────────────────────────────────────────────────────────────────────
 
-Arguments:
-  VENV_DIR   Path for the Python virtual environment.
-             Default: /tmp/jm-venv  (Linux/macOS)
+print_help() {
+    cat <<EOF
+${C_BOLD}just-makeit install-deps${C_RESET} — install build dependencies into a Python venv
 
-Options:
-  --check    Report what is installed/missing; exit 1 if anything is
-             missing, 0 if everything is present. No changes are made.
-  -h, --help Show this message and exit.
+${C_YELLOW}USAGE${C_RESET}
+  ${C_CYAN}just-makeit install-deps${C_RESET} [OPTIONS] [VENV_DIR]
+  ${C_CYAN}jm-install-deps${C_RESET}          [OPTIONS] [VENV_DIR]
 
-What it installs:
-  System:  cmake + C compiler + patchelf (Linux only)
-             Linux:   apt · dnf · pacman · zypper · apk (auto-detected)
-             macOS:   Homebrew
-  Python:  numpy + just-makeit  (inside the venv)
+${C_YELLOW}ARGUMENTS${C_RESET}
+  ${C_BOLD}VENV_DIR${C_RESET}    Path for the Python virtual environment.
+              Default: ${C_DIM}/tmp/jm-venv${C_RESET}
 
-Examples:
-  just-makeit install-deps                  # default venv at /tmp/jm-venv
-  just-makeit install-deps ~/my-venv        # custom venv path
-  just-makeit install-deps --check          # dry-run status report
-  source $(which jm-install-deps)           # install + activate in current shell
+${C_YELLOW}OPTIONS${C_RESET}
+  ${C_BOLD}--check${C_RESET}     Report what is installed/missing and make no changes.
+              Exit 1 if anything is missing, 0 if everything is present.
+  ${C_BOLD}-h, --help${C_RESET}  Show this message and exit.
+
+${C_YELLOW}WHAT IT INSTALLS${C_RESET}
+  ${C_BOLD}System${C_RESET} (auto-detected per platform):
+    cmake, a C compiler (gcc/clang), pkg-config, and patchelf (Linux).
+    ${C_DIM}Uses your distro's package manager on Linux, Homebrew on macOS.${C_RESET}
+  ${C_BOLD}Python${C_RESET} (inside VENV_DIR):
+    numpy and just-makeit.
+
+${C_YELLOW}ENVIRONMENT${C_RESET}
+  ${C_BOLD}SYSTEM_PYTHON${C_RESET}   Interpreter used to create the venv. Default: ${C_DIM}python3${C_RESET}
+  ${C_BOLD}NO_COLOR${C_RESET}        Set to any value to disable colored output.
+
+${C_YELLOW}EXIT STATUS${C_RESET}
+  ${C_BOLD}0${C_RESET}   Success, or --check found everything present.
+  ${C_BOLD}1${C_RESET}   --check found missing dependencies, or an install step failed.
+
+${C_YELLOW}EXAMPLES${C_RESET}
+  ${C_DIM}# default venv at /tmp/jm-venv${C_RESET}
+  just-makeit install-deps
+  ${C_DIM}# custom venv path${C_RESET}
+  just-makeit install-deps ~/my-venv
+  ${C_DIM}# dry-run status report, no changes${C_RESET}
+  just-makeit install-deps --check
+  ${C_DIM}# pick the Python interpreter${C_RESET}
+  SYSTEM_PYTHON=python3.12 jm-install-deps
+  ${C_DIM}# install and activate the venv in the current shell${C_RESET}
+  source \$(which jm-install-deps)
 EOF
-)
+}
 
 CHECK=0
 VENV_DIR="/tmp/jm-venv"
@@ -36,18 +67,18 @@ SYSTEM_PYTHON="${SYSTEM_PYTHON:-python3}"
 
 for arg in "$@"; do
     case "$arg" in
-        -h|--help)  printf '%s\n' "$_HELP"; exit 0 ;;
+        -h|--help)  print_help; exit 0 ;;
         --check)    CHECK=1 ;;
         *)          VENV_DIR="$arg" ;;
     esac
 done
 
-info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
-ok()    { printf '\033[1;32m    ok\033[0m  %s\n' "$*"; }
-skip()  { printf '\033[1;32m    ok\033[0m  %s  \033[2m(already installed)\033[0m\n' "$*"; }
-will()  { printf '\033[1;33m  --> \033[0m  %s\n' "$*"; }
-warn()  { printf '\033[1;33m warn\033[0m  %s\n' "$*"; }
-die()   { printf '\033[1;31merror\033[0m  %s\n' "$*" >&2; exit 1; }
+info()  { printf '%s==> %s%s\n' "$C_BLUE" "$*" "$C_RESET"; }
+ok()    { printf '%s    ok%s  %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+skip()  { printf '%s    ok%s  %s  %s(already installed)%s\n' "$C_GREEN" "$C_RESET" "$*" "$C_DIM" "$C_RESET"; }
+will()  { printf '%s  --> %s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
+warn()  { printf '%s warn%s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
+die()   { printf '%serror%s  %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
 # ── Detect package manager ────────────────────────────────────────────────────
 
@@ -142,10 +173,27 @@ if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
 fi
 
 # ── 2. Create venv ────────────────────────────────────────────────────────────
+#
+# `python -m venv` normally bundles pip via ensurepip. Debian/Ubuntu ship
+# ensurepip in a separate package, so if the default path fails, create the
+# venv without pip and bootstrap it from get-pip.py — no sudo or distro
+# package required (the script already needs the network to fetch numpy).
+
+_fetch() {
+    if   command -v curl >/dev/null 2>&1; then curl -fsSL "$1"
+    elif command -v wget >/dev/null 2>&1; then wget -qO- "$1"
+    else die "curl or wget is required to bootstrap pip into the venv."; fi
+}
 
 info "Creating venv at ${VENV_DIR}"
-"$SYSTEM_PYTHON" -m venv "$VENV_DIR"
-ok "venv created"
+if "$SYSTEM_PYTHON" -m venv "$VENV_DIR" >/dev/null 2>&1; then
+    ok "venv created"
+else
+    warn "ensurepip unavailable — bootstrapping pip via get-pip.py"
+    "$SYSTEM_PYTHON" -m venv --without-pip "$VENV_DIR"
+    _fetch https://bootstrap.pypa.io/get-pip.py | "${VENV_DIR}/bin/python"
+    ok "venv created (pip bootstrapped)"
+fi
 
 VENV_PYTHON="${VENV_DIR}/bin/python"
 VENV_PIP="${VENV_DIR}/bin/pip"
