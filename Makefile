@@ -23,7 +23,7 @@ UV         = uv
 PYTEST          = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
 PYTEST_B        = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
 PYTEST_EXAMPLES = $(UV) run --with pytest --with numpy pytest
-ZENSICAL_RUN = PYTHONPATH=. $(UV) run --no-project --with "zensical>=0.0.29" --with "mkdocstrings-python>=2.0"
+ZENSICAL_RUN = $(UV) run --group dev
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
 .PHONY: all test test-fast test-examples bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help

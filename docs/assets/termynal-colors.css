@@ -1,0 +1,39 @@
+/* ── termynal color spans ──────────────────────────────────────────────────── */
+/* Mirrors the ANSI colors emitted by the real CLI and build tools.             */
+/* Scoped to .jm-termy (our superfence class, avoids termynal.js auto-init) */
+.jm-termy .ty-green-bold  { color: #4ade80; font-weight: bold; }   /* \e[1;32m */
+.jm-termy .ty-green       { color: #86efac; }                      /* \e[32m   */
+.jm-termy .ty-cyan-bold   { color: #22d3ee; font-weight: bold; }   /* \e[1;36m */
+.jm-termy .ty-blue-bold   { color: #60a5fa; font-weight: bold; }   /* \e[1;34m */
+.jm-termy .ty-dim         { color: var(--color-text-subtle, #6b7280); }
+.jm-termy .ty-yellow-bold { color: #facc15; font-weight: bold; }   /* \e[1;33m */
+.jm-termy .ty-amber       { color: #fb923c; }
+
+/* ── jm-card ───────────────────────────────────────────────────────────────── */
+.md-typeset .jm-card {
+    border: 1px solid var(--md-default-fg-color--lightest);
+    border-radius: 0.3rem;
+    padding: 1rem 1.5rem;
+    box-shadow: var(--md-shadow-z1);
+    margin: 1rem 0;
+}
+
+/* ── jm-card title ─────────────────────────────────────────────────────────── */
+.md-typeset .jm-card-title {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--md-default-fg-color--lightest);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.8rem;
+}
+
+/* ── global color utilities ────────────────────────────────────────────────── */
+/* Same palette usable anywhere in .md-typeset prose.                           */
+.md-typeset .jm-green      { color: #4ade80; font-weight: bold; }
+.md-typeset .jm-green-dim  { color: #86efac; }
+.md-typeset .jm-cyan       { color: #22d3ee; font-weight: bold; }
+.md-typeset .jm-blue       { color: #60a5fa; font-weight: bold; }
+.md-typeset .jm-yellow     { color: #facc15; font-weight: bold; }
+.md-typeset .jm-amber      { color: #fb923c; }
+.md-typeset .jm-dim        { color: #6b7280; }

@@ -144,6 +144,6 @@ always add teardown.
 
 ## See also
 
-- [Declarative scaffolding — opaque state fields](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
+- [Declarative scaffolding — opaque state fields](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
 - [delay_line example](delay_line.md) — a realistic circular buffer using the same pattern
 - [Types reference — state variable types](../types.md#state-variable-types)

@@ -120,4 +120,4 @@ state struct, scalar-in/scalar-out `step()`). See
 [`just-makeit bind`](commands/build.md#just-makeit-bind-component) for usage
 and `--check` (CI gate). Expansion to methods, init_params, opaque state, and
 variable-output is the active work on the
-[roadmap](roadmap.md#now--write-it-in-c-get-python-jm-bind).
+[roadmap](roadmap.md#now-write-it-in-c-get-python-jm-bind).

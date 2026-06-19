@@ -104,7 +104,7 @@ extra_args  = [{name = "dump_now", type = "bool"}]
 ```
 
 Supported scalar types for extra args are the same as for state fields (see
-the [type mapping table](configuration.md#type-mapping)).
+the [type mapping table](types.md#supported-types)).
 
 ______________________________________________________________________
 

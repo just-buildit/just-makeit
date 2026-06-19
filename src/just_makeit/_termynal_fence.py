@@ -83,7 +83,7 @@ def termynal_fence(source, language, css_class, options, md, **kwargs):
             spans.append(f"<span data-ty>{out}</span>")
     inner = "\n    ".join(spans)
     return (
-        '<div class="termynal" data-termynal'
-        ' data-ty-typeDelay="40" data-ty-lineDelay="200">\n    '
+        '<div class="jm-termy" data-termynal data-ty-macos'
+        ' data-ty-typeDelay="40" data-ty-lineDelay="400">\n    '
         f"{inner}\n</div>"
     )

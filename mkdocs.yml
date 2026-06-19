@@ -67,6 +67,7 @@ nav:
     - Declarative scaffolding design: developers/declarative-scaffolding.md
     - Bind design (proposal): developers/bind-design.md
     - Release checklist: developers/release-checklist.md
+    - Why zensical: developers/why-zensical.md
 
 theme:
   name: material
@@ -110,6 +111,7 @@ theme:
 extra_css:
   - assets/mermaid-zoom.css
   - assets/termynal.css
+  - assets/termynal-colors.css
 
 extra_javascript:
   - assets/mermaid-zoom.js
@@ -150,7 +152,7 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
         - name: termynal
           class: termynal
-          format: !!python/name:termynal_fence.termynal_fence
+          format: !!python/name:just_makeit._termynal_fence.termynal_fence
   - pymdownx.tabbed:
       alternate_style: true
 

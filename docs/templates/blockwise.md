@@ -135,7 +135,7 @@ The body of the `for` loop in `steps()`. Common shapes:
 DSP libraries with heavy construction (FFTW plans, pocketfft plans, vendor
 opaque handles) fit blockwise cleanly — heavy work in `create_impl`, hot path
 stays a `steps()` call. The plan is an
-[opaque pointer](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
+[opaque pointer](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
 in the state struct.
 
 ```toml
@@ -192,6 +192,6 @@ fft_steps(fft_state_t        *state,
 ## See also
 
 - [Types reference — array element types](../types.md#array-element-types)
-- [Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
+- [Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
 - [array_processing example](../examples/array_processing.md) — array input with scalar output (reduction shape)
 - [Template gallery index](index.md)
