@@ -1,0 +1,40 @@
+[project]
+c_deps = ["ringbuf"]
+
+[module.ring]
+kind = "handle"
+backing = "ringbuf"
+header = "ringbuf/ringbuf.h"
+package = "."
+type_name = "Ring"
+context_manager = true
+create_fn = "ringbuf_open"
+close_fn = "ringbuf_close"
+depends_on = [{ name = "ringbuf", link = true }]
+create_args = [{ name = "capacity", type = "size_t" }]
+
+[[module.ring.methods]]
+name = "push"
+fn = "ringbuf_push"
+returns = "size_t"
+args = [{ name = "x", type = "float[]" }]
+
+[[module.ring.methods]]
+name = "pop"
+fn = "ringbuf_pop"
+returns = "float[]"
+args = [{ name = "n", type = "size_t" }]
+
+[[module.ring.getters]]
+fn = "ringbuf_stats"
+out = "ringbuf_stats_t"
+cache = false
+fields = [
+  { name = "used", from = "used", type = "size_t" },
+  { name = "fill_fraction", type = "double", expr = "self->capacity ? (double)tmp.used / (double)self->capacity : 0.0" },
+]
+
+[[module.ring.getters]]
+fn = "ringbuf_get_gain"
+out = "float"
+fields = [{ name = "gain", type = "float", writable_fn = "ringbuf_set_gain" }]
