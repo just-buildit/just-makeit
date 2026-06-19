@@ -47,7 +47,9 @@ HERE = Path(__file__).parent
 
 
 def _cmd(args, cwd, env=None):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
+    r = subprocess.run(
+        args, cwd=cwd, capture_output=True, text=True, env=env, timeout=600
+    )
     if r.returncode != 0:
         raise AssertionError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"

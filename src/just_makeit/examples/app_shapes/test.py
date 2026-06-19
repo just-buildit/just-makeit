@@ -16,7 +16,11 @@ from pathlib import Path
 
 def _cmd(args, cwd):
     r = subprocess.run(
-        [str(a) for a in args], cwd=cwd, capture_output=True, text=True
+        [str(a) for a in args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     if r.returncode != 0:
         raise AssertionError(
@@ -81,6 +85,7 @@ def run(root: Path) -> None:
         [str(_exe(bw, "scaletool")), "--g", "3"],
         input=struct.pack("<4f", 1, 2, 3, 4),
         capture_output=True,
+        timeout=600,
     )
     assert r.returncode == 0, r.stderr
     assert list(struct.unpack("<4f", r.stdout)) == [3.0, 6.0, 9.0, 12.0]
@@ -107,6 +112,7 @@ def run(root: Path) -> None:
     r = subprocess.run(
         [str(_exe(gen, "ramptool")), "--inc", "2", "--count", "5"],
         capture_output=True,
+        timeout=600,
     )
     assert r.returncode == 0, r.stderr
     assert list(struct.unpack("<5f", r.stdout)) == [0.0, 2.0, 4.0, 6.0, 8.0]
@@ -130,6 +136,7 @@ def run(root: Path) -> None:
         [str(_exe(fn, "addtool")), "--a", "2", "--b", "3"],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "5"
@@ -171,9 +178,15 @@ def run(root: Path) -> None:
     exe = _exe(multi, "cmdtool")
     # A declared subcommand exits 0 (stub body); no command prints usage (2).
     assert (
-        subprocess.run([str(exe), "encode", "--rate", "44100"]).returncode == 0
+        subprocess.run(
+            [str(exe), "encode", "--rate", "44100"], timeout=600
+        ).returncode
+        == 0
     )
-    assert subprocess.run([str(exe)], capture_output=True).returncode == 2
+    assert (
+        subprocess.run([str(exe)], capture_output=True, timeout=600).returncode
+        == 2
+    )
 
 
 if __name__ == "__main__":

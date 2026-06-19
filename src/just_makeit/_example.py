@@ -72,5 +72,7 @@ def run(name: str | None) -> None:
     print(f"just-makeit: running example '{name}'")
     print(f"  source: {example_dir}")
     print(flush=True)
-    r = subprocess.run([sys.executable, str(example_dir / "test.py")])
+    r = subprocess.run(
+        [sys.executable, str(example_dir / "test.py")], timeout=600
+    )
     sys.exit(r.returncode)

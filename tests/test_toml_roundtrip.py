@@ -36,6 +36,7 @@ def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
         env={**os.environ, "PYTHONPATH": str(SRC)},
         capture_output=True,
         text=True,
+        timeout=600,
     )
 
 

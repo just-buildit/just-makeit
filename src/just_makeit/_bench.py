@@ -83,11 +83,11 @@ def _ensure_built(root: Path, build_dir: Path, python: str) -> None:
             f"-DPython3_EXECUTABLE={python}",
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         ]
-        if subprocess.run(cfg, cwd=str(root)).returncode != 0:
+        if subprocess.run(cfg, cwd=str(root), timeout=600).returncode != 0:
             sys.exit(1)
     nproc = os.cpu_count() or 4
     build = [cmake, "--build", str(build_dir), "--parallel", str(nproc)]
-    if subprocess.run(build, cwd=str(root)).returncode != 0:
+    if subprocess.run(build, cwd=str(root), timeout=600).returncode != 0:
         sys.exit(1)
 
 
@@ -105,7 +105,13 @@ def _build_bench_target(root: Path, build_dir: Path, comp: str) -> None:
         "--parallel",
         str(nproc),
     ]
-    r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True)
+    r = subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     if r.returncode != 0:
         # Surface the error verbosely so the user knows what went wrong.
         print(r.stderr, file=sys.stderr)
@@ -165,7 +171,11 @@ def _commit_info() -> dict:
 
     def _git(*args: str) -> str:
         return (
-            subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL)
+            subprocess.check_output(
+                ["git", *args],
+                stderr=subprocess.DEVNULL,
+                timeout=600,
+            )
             .decode()
             .strip()
         )
@@ -218,7 +228,7 @@ def _collect_c(root: Path, build_dir: Path, comps: list[str]) -> dict | None:
             if binary is None:
                 continue
             print(f"  run        bench_{comp}_core", flush=True)
-            subprocess.run([str(binary.resolve())], cwd=tmp)
+            subprocess.run([str(binary.resolve())], cwd=tmp, timeout=600)
             jf = tmpd / f"bench_{comp}_core.json"
             if not jf.exists():
                 continue
@@ -250,6 +260,7 @@ def _has_pytest_benchmark(python: str) -> bool:
         subprocess.run(
             [python, "-c", "import pytest_benchmark"],
             capture_output=True,
+            timeout=600,
         ).returncode
         == 0
     )
@@ -279,7 +290,7 @@ def _run_python(root: Path, python: str) -> dict | None:
             "-q",
         ]
         print("  run        pytest --benchmark-only", flush=True)
-        subprocess.run(cmd, cwd=str(root))
+        subprocess.run(cmd, cwd=str(root), timeout=600)
         # No JSON => no pytest-benchmark plugin, or no benchmarks collected.
         if not report.exists():
             return None

@@ -32,7 +32,9 @@ HERE = Path(__file__).parent
 
 
 def _cmd(args, cwd, **kw):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kw)
+    r = subprocess.run(
+        args, cwd=cwd, capture_output=True, text=True, timeout=600, **kw
+    )
     if r.returncode != 0:
         raise AssertionError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"
@@ -66,6 +68,7 @@ def _try_coverage(proj: Path, package: str) -> None:
     r = subprocess.run(
         [sys.executable, "-c", "import pytest_cov"],
         capture_output=True,
+        timeout=600,
     )
     if r.returncode != 0:
         print(
@@ -164,6 +167,7 @@ def _try_docs(proj: Path) -> None:
     r = subprocess.run(
         [sys.executable, "-c", "import mkdocstrings"],
         capture_output=True,
+        timeout=600,
     )
     if r.returncode != 0:
         print(
@@ -286,6 +290,7 @@ p.write_text(src)
         subprocess.run(
             [sys.executable, "-c", "import pytest"],
             capture_output=True,
+            timeout=600,
         ).returncode
         == 0
     )
@@ -295,6 +300,7 @@ p.write_text(src)
             cwd=proj,
             capture_output=True,
             text=True,
+            timeout=600,
         )
         if r.returncode not in (0, 5):
             raise AssertionError(
@@ -336,6 +342,7 @@ p.write_text(src)
     r = subprocess.run(
         [sys.executable, "-c", "import pytest_benchmark"],
         capture_output=True,
+        timeout=600,
     )
     if r.returncode == 0:
         _cmd(

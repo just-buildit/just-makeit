@@ -283,12 +283,14 @@ def test_controllable_override_e2e(amp):
         ["cmake", "-S", str(amp), "-B", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, f"configure failed:\n{cfg.stderr}"
     bld = subprocess.run(
         ["cmake", "--build", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, f"build failed:\n{bld.stdout}\n{bld.stderr}"
 
@@ -311,6 +313,7 @@ def test_controllable_override_e2e(amp):
         cwd=amp / "src",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert run.returncode == 0, f"runtime check failed:\n{run.stderr}"
     assert "E2E OK" in run.stdout
@@ -341,12 +344,14 @@ def _cmake_build(root):
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, f"configure failed:\n{cfg.stderr}"
     bld = subprocess.run(
         ["cmake", "--build", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, f"build failed:\n{bld.stdout}\n{bld.stderr}"
 
@@ -429,6 +434,7 @@ class TestOutUnification:
             cwd=root / "src",
             capture_output=True,
             text=True,
+            timeout=600,
         )
         assert run.returncode == 0, run.stderr
         assert "OUT KW OK" in run.stdout
@@ -467,6 +473,7 @@ def test_scalar_controllable_e2e(scalar):
         cwd=scalar / "src",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert run.returncode == 0, f"runtime check failed:\n{run.stderr}"
     assert "SCALAR E2E OK" in run.stdout
@@ -523,6 +530,7 @@ def test_step_controllable_perf_before_after(tmp_path, capsys):
         cwd=root / "src",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert out.returncode == 0, out.stderr
     base, omit, pas = (float(v) for v in out.stdout.split())
@@ -644,6 +652,7 @@ def test_pr1b_shape_e2e(tmp_path, comp, at, rt, patch_old, patch_new, checks):
         cwd=root / "src",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert run.returncode == 0, f"{comp} runtime failed:\n{run.stderr}"
     assert "PR1B OK" in run.stdout
@@ -720,6 +729,7 @@ def test_perf_controllable_macro_e2e(tmp_path):
         cwd=root / "src",
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert run.returncode == 0, f"runtime failed:\n{run.stderr}"
     assert "PERF MACRO OK" in run.stdout

@@ -102,6 +102,7 @@ def _cmake_lint_check(root: Path) -> None:
         + [str(f) for f in cmake_files],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert r.returncode == 0, (
         f"cmake-lint found violations in generated project:\n{r.stdout}"

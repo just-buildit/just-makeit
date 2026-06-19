@@ -155,12 +155,14 @@ def test_functions_in_core_builds_with_shared_static(tmp_path):
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, cfg.stderr
     bld = subprocess.run(
         ["cmake", "--build", str(root / "build")],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, (
         f"functions-in-core build failed (gh-247):\n{bld.stdout}\n{bld.stderr}"

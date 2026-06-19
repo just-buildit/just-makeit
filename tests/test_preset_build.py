@@ -49,6 +49,7 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
         ["cmake", "-S", str(root), "-B", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, f"cmake configure failed:\n{cfg.stderr}"
 
@@ -56,6 +57,7 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
         ["cmake", "--build", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     # A clean build (compile + link) is the foot-gun #1 regression signal:
     # the bug was a destroy() arg-count mismatch that failed to *compile*.
@@ -109,12 +111,14 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
         ["cmake", "-S", str(root), "-B", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert cfg.returncode == 0, f"cmake configure failed:\n{cfg.stderr}"
     bld = subprocess.run(
         ["cmake", "--build", str(build)],
         capture_output=True,
         text=True,
+        timeout=600,
     )
     assert bld.returncode == 0, (
         f"array-return variable_output build failed:\n{bld.stdout}\n{bld.stderr}"
