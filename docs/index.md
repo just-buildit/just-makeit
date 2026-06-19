@@ -9,10 +9,8 @@ The algorithm is the interesting part. The scaffolding around it — C library,
 Python bindings, CMake, tests, and packaging — is the same boilerplate every
 project needs and nobody wants to write again.
 
-<code class="jm-green">just-makeit new</code> generates all of it in one command,
-tested and passing, so you can start on the algorithm immediately.
-
-<div class="jm-card" markdown>
+<div class="jm-card" markdown>**<code class="jm-green">just-makeit new</code> generates all of it in one command,
+tested and passing, so you can start on the algorithm immediately.**{ .jm-card-title }
 
 ```termynal
 $ just-makeit new my_project --object my_object
@@ -27,6 +25,7 @@ $ just-makeit new my_project --object my_object
   create  CMakeLists.txt  Makefile  pyproject.toml  …
 
 {g}Done!{/g}  {c}cd my_project && make && make test{/c}
+
 $ cd my_project && make && make test
 {G}[ 27%] Building C object my_object_core.c.o{/G}
 {g}[ 72%] Linking C shared library libmy_project.so{/g}
@@ -51,12 +50,7 @@ you write a line of your algorithm. Fill in `step()` and ship.
 </div>
 
 
-<div class="jm-card" markdown>
-
-**Get it**{ .jm-card-title }
-
-`install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
-into a Python venv, creating and activating it for you.
+## Get it
 
 === "curl"
 
@@ -92,14 +86,12 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     just-new my_project --object my_object
 ```
 
-</div>
-
 
 !!! note
-
-     The venv is created at `/tmp/jm-venv` by default. To put it elsewhere,
-     append the path to any of the commands above — e.g.
-     `. <(curl -fsSL …/install.sh) ~/my-venv`.
+    `install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
+    into a Python venv, creating and activating it for you. The venv is created at 
+    `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the 
+    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`.
 
 
 !!! info
