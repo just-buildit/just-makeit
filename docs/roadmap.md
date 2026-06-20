@@ -44,7 +44,7 @@ per-component fragment layout
 module function lives in its own sacred translation unit.
 
 The version-by-version history lives in
-[CHANGELOG.md](../CHANGELOG.md). This page is only about what's ahead.
+[CHANGELOG.md](https://github.com/just-buildit/just-makeit/blob/main/CHANGELOG.md). This page is only about what's ahead.
 
 The question for what's next isn't "what features are missing." It's **"where
 does the plumbing still show?"**
@@ -89,4 +89,4 @@ ______________________________________________________________________
 A line here is an intention, not a commitment. Priorities follow the problems
 people actually run into — so the surest way to move something up is to open
 an issue describing where the plumbing got in your way. For what has already
-shipped, and exactly when, see [CHANGELOG.md](../CHANGELOG.md).
+shipped, and exactly when, see [CHANGELOG.md](https://github.com/just-buildit/just-makeit/blob/main/CHANGELOG.md).

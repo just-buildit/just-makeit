@@ -277,7 +277,7 @@ raises an error before touching any files.
 the committed `_ext.c` never silently drifts from the header it was generated
 from. Green means byte-identical; non-zero exit means regenerate and commit.
 
-Shapes not yet supported (see [roadmap](../roadmap.md#now--write-it-in-c-get-python-jm-bind)):
+Shapes not yet supported (see [roadmap](../roadmap.md#now-write-it-in-c-get-python-jm-bind)):
 methods, init_params, opaque state, variable-output, result-structs.
 
 | Flag      | Description                                                                   |

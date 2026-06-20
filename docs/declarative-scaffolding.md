@@ -10,13 +10,13 @@ workflow end to end.
 > A runnable end-to-end demo is bundled as `just-makeit example declarative_scaffold`.
 
 > **New to just-makeit?** Install it first — see the
-> [Quickstart on the home page](index.md#quickstart) for the one-liner.
+> [Quickstart on the home page](index.md#get-it) for the one-liner.
 
 ______________________________________________________________________
 
 ## TL;DR
 
-> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
+> Reminder: [install just-makeit](index.md#get-it) if you haven't already.
 
 ```sh
 just-makeit new demo                      # bare project
@@ -721,7 +721,7 @@ ______________________________________________________________________
 
 ## Migrating an existing project
 
-> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
+> Reminder: [install just-makeit](index.md#get-it) if you haven't already.
 
 ```sh
 just-makeit migrate-to-fragments
@@ -746,7 +746,7 @@ ______________________________________________________________________
 
 ## See it work
 
-> Reminder: [install just-makeit](index.md#quickstart) if you haven't already.
+> Reminder: [install just-makeit](index.md#get-it) if you haven't already.
 
 ```sh
 just-makeit example declarative_scaffold

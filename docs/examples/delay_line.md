@@ -170,10 +170,10 @@ auto-generated getters and constructor params as normal.
 scalar field but does not touch the `taps` allocation. If you need runtime
 resize, expose a custom `resize` method that `realloc`s the buffer and updates
 `length` and `idx` atomically. See the pitfall examples in
-[Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles).
+[Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles).
 
 ## See also
 
 - [opaque_counter example](opaque_counter.md) — the minimal "hello world" of opaque fields
-- [Declarative scaffolding — opaque state fields](../declarative-scaffolding.md#opaque-state-fields--pointers-and-handles)
-- [Declarative scaffolding — custom destroy() body](../declarative-scaffolding.md#custom-destroy-body--destroy_impl)
+- [Declarative scaffolding — opaque state fields](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
+- [Declarative scaffolding — custom destroy() body](../declarative-scaffolding.md#custom-destroy-body-destroy_impl)

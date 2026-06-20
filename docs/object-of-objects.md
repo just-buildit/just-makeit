@@ -21,12 +21,12 @@ ______________________________________________________________________
     - [2.1 Three shapes: capsule, composer, handle](#21-three-shapes-capsule-composer-handle)
     - [2.2 The generated-vs-hand-written seam](#22-the-generated-vs-hand-written-seam)
     - [2.3 The enum SSOT](#23-the-enum-ssot)
-- [3. The capsule generator (`kind = "capsule"`)](#3-the-capsule-generator-kind--capsule)
+- [3. The capsule generator (`kind = "capsule"`)](#3-the-capsule-generator-kind-capsule)
     - [3.1 What it generates](#31-what-it-generates)
     - [3.2 Manifest schema](#32-manifest-schema)
-    - [3.3 Capsule mechanics & lifetime](#33-capsule-mechanics--lifetime)
+    - [3.3 Capsule mechanics & lifetime](#33-capsule-mechanics-lifetime)
     - [3.4 Worked example: `ddc_fn`](#34-worked-example-ddc_fn)
-- [4. The composer generator (`kind = "composer"`)](#4-the-composer-generator-kind--composer)
+- [4. The composer generator (`kind = "composer"`)](#4-the-composer-generator-kind-composer)
     - [4.1 Overview: the four OO types](#41-overview-the-four-oo-types)
     - [4.2 Manifest schema](#42-manifest-schema)
     - [4.3 The source type](#43-the-source-type)
@@ -36,16 +36,16 @@ ______________________________________________________________________
     - [4.7 JSON faces (generated vs delegated)](#47-json-faces-generated-vs-delegated)
     - [4.8 The CLI face](#48-the-cli-face)
     - [4.9 apply materialization](#49-apply-materialization)
-- [5. The handle generator (`kind = "handle"`)](#5-the-handle-generator-kind--handle)
+- [5. The handle generator (`kind = "handle"`)](#5-the-handle-generator-kind-handle)
     - [5.1 What it generates](#51-what-it-generates)
     - [5.2 The decoded-getter property](#52-the-decoded-getter-property)
-    - [5.3 RAII, optional backends & the UAF rule](#53-raii-optional-backends--the-uaf-rule)
+    - [5.3 RAII, optional backends & the UAF rule](#53-raii-optional-backends-the-uaf-rule)
     - [5.4 Worked example: doppler's transport layer](#54-worked-example-dopplers-transport-layer)
-- [6. Lifecycle & memory invariants](#6-lifecycle--memory-invariants)
+- [6. Lifecycle & memory invariants](#6-lifecycle-memory-invariants)
 - [7. Validation discipline: reference-first](#7-validation-discipline-reference-first)
 - [8. Manifest reference](#8-manifest-reference)
 - [9. When to use which](#9-when-to-use-which)
-- [10. Gaps & roadmap](#10-gaps--roadmap)
+- [10. Gaps & roadmap](#10-gaps-roadmap)
 - [11. Appendix: the build arc](#11-appendix-the-build-arc)
 
 ______________________________________________________________________
@@ -389,7 +389,7 @@ nested dict, the generic primitive any sidecar format is built from). With a
 so a project drops its hand-written `paced()` helper (gh-317).
 
 The transient `<segment_struct>[]` **aliases** each source's `bits` pointer;
-`<backing>_create` deep-copies (see [§6](#6-lifecycle--memory-invariants)), so
+`<backing>_create` deep-copies (see [§6](#6-lifecycle-memory-invariants)), so
 the transient arrays are freed straight after and ownership stays with the
 `Synth` objects.
 

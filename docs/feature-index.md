@@ -58,9 +58,9 @@ ______________________________________________________________________
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Module-level C function                     | [Module functions](examples/jm_function.md)                                                                                |
 | Inline function (in the header)             | [Module functions](examples/jm_function.md)                                                                                |
-| Filesystem path argument (`name:path`)      | [Extend command](commands/extend.md#just-makeit-function-name---module-mod---param-nametype---return-type-type---doc-text) |
-| Enum argument (`name:enum:<ename>`)         | [Extend command](commands/extend.md#just-makeit-function-name---module-mod---param-nametype---return-type-type---doc-text) |
-| Raise on non-zero return (`--check-return`) | [Extend command](commands/extend.md#just-makeit-function-name---module-mod---param-nametype---return-type-type---doc-text) |
+| Filesystem path argument (`name:path`)      | [Extend command](commands/extend.md#just-makeit-function-name-module-mod-param-nametype-return-type-type-doc-text) |
+| Enum argument (`name:enum:<ename>`)         | [Extend command](commands/extend.md#just-makeit-function-name-module-mod-param-nametype-return-type-type-doc-text) |
+| Raise on non-zero return (`--check-return`) | [Extend command](commands/extend.md#just-makeit-function-name-module-mod-param-nametype-return-type-type-doc-text) |
 | Writable property                           | [Feature tour](feature-tour.md)                                                                                            |
 | Field-backed property                       | [IQ file](examples/iqfile.md)                                                                                              |
 
