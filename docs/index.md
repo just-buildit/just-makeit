@@ -9,8 +9,11 @@ The algorithm is the interesting part. The scaffolding around it — C library,
 Python bindings, CMake, tests, and packaging — is the same boilerplate every
 project needs and nobody wants to write again.
 
-<div class="jm-card" markdown>**<code class="jm-green">just-makeit new</code> generates all of it in one command,
-tested and passing, so you can start on the algorithm immediately.**{ .jm-card-title }
+<div class="jm-card" markdown>
+
+**<code class="jm-green">just-makeit new</code>**{ .jm-card-title }
+
+Generates everything, tested and passing, so you can start on the algorithm immediately.
 
 ```termynal
 $ just-makeit new my_project --object my_object
