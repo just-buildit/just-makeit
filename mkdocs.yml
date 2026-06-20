@@ -111,6 +111,7 @@ theme:
 extra_css:
   - assets/mermaid-zoom.css
   - assets/termynal.css
+  - assets/termynal-colors.css
 
 extra_javascript:
   - assets/mermaid-zoom.js
