@@ -10,7 +10,7 @@
 (function () {
     function initTermynal() {
         document
-            .querySelectorAll('.termy[data-termynal]:not([data-ty-inited])')
+            .querySelectorAll('.jm-termy[data-termynal]:not([data-ty-inited])')
             .forEach(function (node) {
                 node.setAttribute('data-ty-inited', 'true');
                 new Termynal(node, { lineDelay: 400 });
