@@ -13,7 +13,7 @@
             .querySelectorAll('.jm-termy[data-termynal]:not([data-ty-inited])')
             .forEach(function (node) {
                 node.setAttribute('data-ty-inited', 'true');
-                new Termynal(node, { lineDelay: 400 });
+                new Termynal(node, { typeDelay: 65, lineDelay: 35 });
             });
     }
 
