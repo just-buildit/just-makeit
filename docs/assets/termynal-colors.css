@@ -28,6 +28,14 @@
     margin-bottom: 0.8rem;
 }
 
+/* ── mobile: shrink padding and font so blocks don't overflow ──────────────── */
+@media (max-width: 600px) {
+    [data-termynal] {
+        font-size: 11px;
+        padding: 50px 16px 20px;
+    }
+}
+
 /* ── global color utilities ────────────────────────────────────────────────── */
 /* Same palette usable anywhere in .md-typeset prose.                           */
 .md-typeset .jm-green      { color: #4ade80; font-weight: bold; }
