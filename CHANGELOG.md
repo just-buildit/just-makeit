@@ -17,7 +17,11 @@
     `jm-amber`, `jm-dim`) make the same palette available to prose. The
     `mkdocs.yml` replaces `zensical.toml`; zensical reads `mkdocs.yml` directly
     as a drop-in (no `zensical.toml` required), so the build tool stays
-    `zensical>=0.0.29` with `mkdocstrings-python>=2.0` alongside it.
+    `zensical>=0.0.29` with `mkdocstrings-python>=2.0` alongside it. MkDocs 1.x
+    is now unmaintained and MkDocs 2.0 removes the plugin system, breaking
+    mkdocs-material entirely; the Material team recommends zensical as the
+    maintained successor for MkDocs 1.x sites
+    (https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/).
 
 ## [0.19.28] — 2026-06-19
 
