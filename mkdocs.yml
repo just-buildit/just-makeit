@@ -67,6 +67,7 @@ nav:
     - Declarative scaffolding design: developers/declarative-scaffolding.md
     - Bind design (proposal): developers/bind-design.md
     - Release checklist: developers/release-checklist.md
+    - Why zensical: developers/why-zensical.md
 
 theme:
   name: material
