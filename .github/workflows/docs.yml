@@ -33,9 +33,7 @@ jobs:
         run: python3 scripts/copy_examples.py
 
       - name: Build docs site
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: uv run --no-project --with "zensical>=0.0.29" --with "mkdocstrings-python>=2.0" zensical build --clean
+        run: uv run --group dev zensical build --clean
 
       - name: Copy install.sh into site root
         run: cp install.sh site/install.sh

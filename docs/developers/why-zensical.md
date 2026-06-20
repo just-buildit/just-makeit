@@ -63,34 +63,29 @@ The following are active in `mkdocs.yml` and verified working under zensical
 | `pymdownx.superfences` | custom fences (see below) |
 | `pymdownx.tabbed` | `=== "Tab"` content tabs (`alternate_style: true`) |
 
-**Custom superfences** (both require `PYTHONPATH=.` at build time)
+**Custom superfences**
 
 | Fence name | Handler | Notes |
 |------------|---------|-------|
 | `mermaid` | `pymdownx.superfences.fence_code_format` | diagram blocks |
-| `termynal` | `termynal_fence.termynal_fence` | animated terminal widget |
+| `termynal` | `just_makeit._termynal_fence.termynal_fence` | animated terminal widget |
 
 ## How we use it
 
 ```sh
 # local build
-PYTHONPATH=. uv run --no-project \
-  --with "zensical>=0.0.29" \
-  --with "mkdocstrings-python>=2.0" \
-  zensical build --clean
+uv run --group dev zensical build --clean
 
 # live reload
-PYTHONPATH=. uv run --no-project \
-  --with "zensical>=0.0.29" \
-  --with "mkdocstrings-python>=2.0" \
-  zensical serve
+uv run --group dev zensical serve
 ```
 
 Or just `make docs` / `make docs-serve`.
 
-`PYTHONPATH=.` is required so that `termynal_fence.py` (at the project root) is
-importable at config-parse time — zensical resolves `!!python/name:` entries in
-`mkdocs.yml` during startup, before the build begins.
+The custom `termynal` superfence formatter lives at
+`src/just_makeit/_termynal_fence.py` and is referenced in `mkdocs.yml` as
+`just_makeit._termynal_fence.termynal_fence`. Because just-makeit is installed
+into the dev venv, the module is importable without any `PYTHONPATH` tricks.
 
 ## Dev dependencies
 
@@ -109,15 +104,5 @@ dev-dep floor resolvable.
 
 ```yaml
 - name: Build docs site
-  env:
-    PYTHONPATH: ${{ github.workspace }}
-  run: |
-    uv run --no-project \
-      --with "zensical>=0.0.29" \
-      --with "mkdocstrings-python>=2.0" \
-      zensical build --clean
+  run: uv run --group dev zensical build --clean
 ```
-
-`PYTHONPATH` is set as an environment variable rather than a prefix because
-GitHub Actions does not expand shell variable prefixes in the `run:` block the
-same way a login shell does.
