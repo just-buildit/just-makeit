@@ -86,7 +86,7 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
 {b}==> Venv activated — just-makeit is ready:{/b}
 
-    just-new my_project --object my_object
+    jm new my_project --object my_object
 ```
 
 
