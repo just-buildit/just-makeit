@@ -17,7 +17,9 @@
     `jm-amber`, `jm-dim`) make the same palette available to prose. The
     `mkdocs.yml` replaces `zensical.toml`; zensical reads `mkdocs.yml` directly
     as a drop-in (no `zensical.toml` required), so the build tool stays
-    `zensical>=0.0.29` with `mkdocstrings-python>=2.0` alongside it.
+    `zensical>=0.0.29` with `mkdocstrings-python>=2.0` alongside it. Keeping
+    `mkdocs.yml` as the canonical config future-proofs the site: switching to
+    plain `mkdocs build` requires no config changes.
 
 ## [0.19.28] — 2026-06-19
 
