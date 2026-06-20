@@ -30,19 +30,18 @@ $ just-makeit new my_project --object my_object
 {g}Done!{/g}  {c}cd my_project && make && make test{/c}
 
 $ cd my_project && make && make test
-{G}[ 27%] Building C object my_object_core.c.o{/G}
-{g}[ 72%] Linking C shared library libmy_project.so{/g}
-{g}[100%] Linking C shared module my_object.cpython-312.so{/g}
-{b}Copy my_object extension module{/b}
+{G}[ 27%] Building C object ...core.c.o{/G}
+{g}[ 72%] Linking C shared library ...{/g}
+{g}[100%] Linking C shared module my_object.so{/g}
 [100%] Built target my_object
 
-1/1 Test #1: test_my_object_core ....   {g}Passed{/g}    0.00 sec
+1/1 Test #1: test_my_object_core ... {g}Passed{/g}  0.00 sec
 {g}100% tests passed{/g}, 0 tests failed out of 1
 
 test_create ... {g}ok{/g}
 test_step_runs ... {g}ok{/g}
 test_steps_shape_dtype ... {g}ok{/g}
-{d}----------------------------------------------------------------------{/d}
+{d}--------------------------------------------{/d}
 Ran 8 tests in 0.026s
 {g}OK{/g}
 ```
