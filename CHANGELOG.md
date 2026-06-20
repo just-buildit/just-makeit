@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.19.29] — 2026-06-19
+
+### Changed
+
+- **Docs site migrated from zensical to mkdocs-material with animated terminal
+    demos** — the landing page now features two `termynal` animated terminal
+    widgets: an install-script walkthrough and a `jm new` / `make` / `make test`
+    session with real ANSI-matched colors (bold green for passing tests, cyan for
+    hints, blue for cmake copy steps). A custom `termynal_fence.py` superfences
+    formatter enables ` ```termynal ``` ` blocks with `{g}`, `{G}`, `{c}`, `{b}`,
+    `{y}`, `{mark}`, `{d}` inline color markup anywhere in the docs. Global
+    `.jm-*` CSS utility classes (`jm-green`, `jm-cyan`, `jm-blue`, `jm-yellow`,
+    `jm-amber`, `jm-dim`) make the same palette available to prose. The
+    `mkdocs.yml` replaces `zensical.toml`; zensical reads `mkdocs.yml` directly
+    as a drop-in (no `zensical.toml` required), so the build tool stays
+    `zensical>=0.0.29` with `mkdocstrings-python>=2.0` alongside it.
+
 ## [0.19.28] — 2026-06-19
 
 ### Added
