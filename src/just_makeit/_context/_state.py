@@ -1286,8 +1286,13 @@ def make_state_ctx(
     for name, ct, dflt in ctor_scalars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
+            # gh-377: seed the _raw local from dflt, not parse_zero — mirrors
+            # _build_no_state_init_ctx._emit_scalar's `dflt_raw or dflt or
+            # meta["parse_zero"]` logic. Required scalars carry empty dflt so
+            # parse_zero still fires for them (their value comes from PyArg).
+            raw_init = dflt or meta["parse_zero"]
             local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};"
+                f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")
