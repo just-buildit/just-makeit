@@ -4,14 +4,43 @@ on:
   push:
     branches: ["main"]
   pull_request:
-  # Run the full suite on the merge queue's batched commit, so the required
-  # "CI passed" check is satisfied by testing the exact would-be-merged tree —
-  # GitHub enforces up-to-date by construction, no per-PR rebase needed.
   merge_group:
   workflow_dispatch:
 
 jobs:
+  # Detect whether the commit touches anything beyond CHANGELOG.md /
+  # pyproject.toml.  Pure version-bump commits skip the full matrix so a
+  # release branch doesn't burn ~60 min of CI for a two-line diff.
+  # On push to main we always run — release.yml's verify-ci polls for "CI
+  # passed" on the exact merged SHA, so that check must always fire on main.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.check.outputs.src }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 2
+
+      - id: check
+        run: |
+          # Non-PR events (push, merge_group, workflow_dispatch) always run.
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "src=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base" HEAD 2>/dev/null \
+                    || git diff --name-only HEAD^ HEAD)
+          if echo "$changed" | grep -qvE '^(CHANGELOG\.md|pyproject\.toml)$'; then
+            echo "src=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "src=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -32,6 +61,8 @@ jobs:
 
   examples:
     name: Examples (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -75,6 +106,8 @@ jobs:
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -106,6 +139,8 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -152,10 +187,12 @@ jobs:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [test, examples, install-deps-smoke, coverage]
+    needs: [changes, test, examples, install-deps-smoke, coverage]
     if: always()
     steps:
       - run: |
+          # Bump-only PRs skip the matrix (src=false) — that is expected and green.
+          if [[ "${{ needs.changes.outputs.src }}" == "false" ]]; then exit 0; fi
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
             exit 1
           fi
