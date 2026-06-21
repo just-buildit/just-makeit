@@ -1048,16 +1048,82 @@ def _pyi_scalar(ctype: str) -> str:
     return _capsule._pyi_scalar(ctype)
 
 
-def render_pyi(cfg: dict, module: str) -> str:
-    """Render a thin class-shaped ``<leaf>.pyi`` for a handle module.
+def _pyi_arg_ann(a: dict) -> str:
+    """Python annotation for a handle create_arg (path, enum, or scalar)."""
+    if a.get("type") == "path":
+        return "str"
+    if a.get("enum"):
+        return "str"
+    return _pyi_scalar(a.get("type", "int"))
 
-    The class, its ``__init__`` signature (from ``create_args``), each method,
-    each decoded-getter property, and (when enabled) ``__enter__`` / ``__exit__``
-    / ``close``. Signatures only — header-derived docstrings are a follow-up,
-    same as the capsule stub."""
+
+def _pyi_class_docstring(
+    tname: str,
+    create_args: list,
+    enum_reg: dict[str, list[str]],
+) -> list[str]:
+    """Indented lines (4-space) for the class-level numpy-style docstring.
+
+    Emits a ``Parameters`` block from *create_args* with default values and
+    enum choices surfaced — the content hidden by ``= ...`` in the signature.
+    Without header-parsed prose, enum choice lists and default values are the
+    only content we can synthesize from the manifest (gh-374)."""
+    if not create_args:
+        return [f'    """{tname} handle."""']
+    lines: list[str] = [f'    """{tname} handle.', ""]
+    lines += ["    Parameters", "    ----------"]
+    for a in create_args:
+        n = a["name"]
+        ann = _pyi_arg_ann(a)
+        type_line = f"    {n} : {ann}"
+        if "default" in a:
+            dv = a["default"]
+            # Numeric defaults bare; string / enum defaults quoted.
+            if ann in ("float", "int", "bool"):
+                type_line += f", default {dv}"
+            else:
+                type_line += f', default ``"{dv}"``'
+        lines.append(type_line)
+        if a.get("enum"):
+            choices = enum_reg.get(a["enum"], [])
+            if choices:
+                choice_str = ", ".join(f'``"{c}"``' for c in choices)
+                lines.append(f"        One of {choice_str}.")
+    lines.append('    """')
+    return lines
+
+
+def _pyi_prop_doc(
+    fname: str,
+    ann: str,
+    enum_name: str | None,
+    enum_reg: dict[str, list[str]],
+) -> str:
+    """One-line property docstring text (no surrounding quotes).
+
+    Includes enum choices when *enum_name* is set — the only content
+    derivable without header parsing."""
+    if enum_name:
+        choices = enum_reg.get(enum_name, [])
+        if choices:
+            choice_str = ", ".join(f'``"{c}"``' for c in choices)
+            return f"{fname} ({ann}); one of {choice_str}."
+    return f"{fname} ({ann})."
+
+
+def render_pyi(cfg: dict, module: str) -> str:
+    """Render a class-shaped ``<leaf>.pyi`` for a handle module.
+
+    Emits the class, its ``__init__`` signature (from ``create_args``), each
+    method, each decoded-getter property, and (when enabled) ``__enter__`` /
+    ``__exit__`` / ``close`` — all with numpy-style docstrings synthesized
+    from the manifest (gh-306/gh-374). Defaults and enum choices are surfaced
+    in the class ``Parameters`` block; header-derived prose is a follow-up."""
     tname = C.handle_type_name(cfg, module)
     C.handle_backing(cfg, module)
     mp = C.module_paths(module)
+    enum_reg = C.enums(cfg)
+    create_args = C.handle_create_args(cfg, module)
 
     lines = [
         f"# {mp.leaf}.pyi — type stubs for the {module} handle extension.",
@@ -1074,20 +1140,17 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"class {tname}:",
     ]
 
-    # __init__ from create_args.
+    # Class-level docstring: Parameters block — defaults + enum choices.
+    lines.extend(_pyi_class_docstring(tname, create_args, enum_reg))
+
+    # __init__ from create_args (docstring lives on the class above).
     init_params = []
-    for a in C.handle_create_args(cfg, module):
-        n = a["name"]
-        if a.get("type") == "path":
-            ann = "str"
-        elif a.get("enum"):
-            ann = "str"
-        else:
-            ann = _pyi_scalar(a["type"])
+    for a in create_args:
+        ann = _pyi_arg_ann(a)
         if "default" in a or a.get("kwonly"):
-            init_params.append(f"{n}: {ann} = ...")
+            init_params.append(f"{a['name']}: {ann} = ...")
         else:
-            init_params.append(f"{n}: {ann}")
+            init_params.append(f"{a['name']}: {ann}")
     ip = ", ".join(init_params)
     lines.append(f"    def __init__(self, {ip}) -> None: ...")
 
@@ -1104,10 +1167,12 @@ def render_pyi(cfg: dict, module: str) -> str:
             # (d) execute(x, out) -> ndarray
             sig = "self, x: NDArray[Any], out: NDArray[Any]"
             ann = "NDArray[Any]"
+            doc_call = f"{name}(x, out)"
         elif ret_arr and not arrays:
             # (c) read(n) -> ndarray
             sig = "self, n: int"
             ann = "NDArray[Any]"
+            doc_call = f"{name}(n)"
         elif arrays:
             # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
             # `= ...` (gh-178 review #6).
@@ -1118,6 +1183,14 @@ def render_pyi(cfg: dict, module: str) -> str:
             ]
             sig = ", ".join(parts)
             ann = _pyi_scalar(returns) if returns else "None"
+            # Inline actual scalar defaults in the docstring summary.
+            scalar_doc = ["x"] + [
+                f"{s['name']}={s['default']}"
+                if s.get("default") is not None
+                else s["name"]
+                for s in scalars
+            ]
+            doc_call = f"{name}({', '.join(scalar_doc)})"
         elif margs:
             # (a) scalars -> scalar / None; a `default` shows as `= ...` (#319).
             sig = "self, " + ", ".join(
@@ -1126,20 +1199,29 @@ def render_pyi(cfg: dict, module: str) -> str:
                 for a in margs
             )
             ann = _pyi_scalar(returns) if returns else "None"
+            arg_doc = [
+                f"{a['name']}={a['default']}"
+                if a.get("default") is not None
+                else a["name"]
+                for a in margs
+            ]
+            doc_call = f"{name}({', '.join(arg_doc)})"
         else:
             sig = "self"
             ann = _pyi_scalar(returns) if returns else "None"
-        lines.append(f"    def {name}({sig}) -> {ann}: ...")
+            doc_call = f"{name}()"
+        lines.append(f"    def {name}({sig}) -> {ann}:")
+        lines.append(f'        """{doc_call} -> {ann}."""')
 
     # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):
         for f in g.get("fields", []):
-            if f.get("enum"):
-                ann = "str"
-            else:
-                ann = _pyi_scalar(f["type"])
+            enum_name: str | None = f.get("enum")
+            ann = "str" if enum_name else _pyi_scalar(f["type"])
+            doc = _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
             lines.append("    @property")
-            lines.append(f"    def {f['name']}(self) -> {ann}: ...")
+            lines.append(f"    def {f['name']}(self) -> {ann}:")
+            lines.append(f'        """{doc}"""')
             if f.get("writable_fn"):
                 lines.append(f"    @{f['name']}.setter")
                 lines.append(
@@ -1147,10 +1229,13 @@ def render_pyi(cfg: dict, module: str) -> str:
                 )
 
     # RAII surface.
-    lines.append("    def close(self) -> None: ...")
+    lines.append("    def close(self) -> None:")
+    lines.append('        """Release the handle and free resources."""')
     if C.handle_context(cfg, module):
-        lines.append(f"    def __enter__(self) -> {tname}: ...")
-        lines.append("    def __exit__(self, *exc: Any) -> None: ...")
+        lines.append(f"    def __enter__(self) -> {tname}:")
+        lines.append('        """Enter context; return self."""')
+        lines.append("    def __exit__(self, *exc: Any) -> None:")
+        lines.append('        """Exit context and close the handle."""')
     lines.append("")
     return "\n".join(lines)
 
