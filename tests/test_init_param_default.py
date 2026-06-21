@@ -105,3 +105,14 @@ class TestCtorScalarsParseTypeDefault:
         )
         assert "unsigned long long dwell_raw = 1;" in ctx["init_locals"]
         assert "int nthreads = 1;" in ctx["init_locals"]
+
+    def test_complex_state_var_uses_struct_zero(self):
+        # Py_complex is a struct — "0.0 + 0.0*I" is not a valid initializer.
+        # The ctor_scalars path must fall back to parse_zero ("{0.0, 0.0}").
+        ctx = make_state_ctx(
+            "acc",
+            "Acc",
+            state_vars=[("acc", "double _Complex", "0.0 + 0.0 * I")],
+        )
+        assert "Py_complex acc_raw = {0.0, 0.0};" in ctx["init_locals"]
+        assert "0.0 + 0.0 * I;" not in ctx["init_locals"]
