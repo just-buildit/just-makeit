@@ -2228,12 +2228,44 @@ def _pyi_field_sig(fields: list[dict]) -> str:
     )
 
 
+def _pyi_doc_lines(
+    type_name: str,
+    fields: list[dict],
+    enum_reg: dict[str, list[str]],
+) -> list[str]:
+    """4-space-indented numpy-style class docstring from a field list (gh-375)."""
+    if not fields:
+        return [f'    """{type_name}."""']
+    out: list[str] = [f'    """{type_name}.', ""]
+    out += ["    Parameters", "    ----------"]
+    for f in fields:
+        ann = _pyi_field_type(f)
+        type_line = f"    {f['name']} : {ann}"
+        if "default" in f:
+            dv = f["default"]
+            if ann in ("float", "int"):
+                type_line += f", default {dv}"
+            else:
+                type_line += f', default ``"{dv}"``'
+        elif f.get("bytes"):
+            type_line += ", default None"
+        out.append(type_line)
+        if f.get("enum"):
+            choices = enum_reg.get(f["enum"], [])
+            if choices:
+                choice_str = ", ".join(f'``"{c}"``' for c in choices)
+                out.append(f"        One of {choice_str}.")
+    out.append('    """')
+    return out
+
+
 def render_pyi(cfg: dict, module: str) -> str:
     """Render a typed ``.pyi`` stub for the composer's OO surface.
 
-    Signatures only (rich docstrings are a header-derived follow-up, as with the
-    capsule). Covers the source / segment / timeline / composer types, the
-    factories, and — when enabled — the JSON faces."""
+    Covers the source / segment / timeline / composer types, the factories,
+    and — when enabled — the JSON faces. Docstrings include defaults and enum
+    choices from the manifest (gh-375)."""
+    enum_reg = C.enums(cfg)
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -2241,10 +2273,16 @@ def render_pyi(cfg: dict, module: str) -> str:
     seg_t = seg["type_name"]
     tl_t = C.composer_timeline(cfg, module).get("type_name")
     cname = oo.get("composer_type_name", "Composer")
-    src_sig = _pyi_field_sig(src.get("fields", []))
-    seg_scalar_sig = _pyi_field_sig(seg.get("fields", []))
+    src_fields = src.get("fields", [])
+    seg_fields = seg.get("fields", [])
+    src_sig = _pyi_field_sig(src_fields)
+    seg_scalar_sig = _pyi_field_sig(seg_fields)
     has_stream = bool(C.composer_stream(cfg, module).get("stream"))
     typing_imports = "Any, Iterator" if has_stream else "Any"
+
+    # The fs segment field also appears at the end of Synth.__init__.
+    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
+    synth_doc_fields = src_fields + ([fs_field] if fs_field else [])
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
@@ -2254,19 +2292,25 @@ def render_pyi(cfg: dict, module: str) -> str:
         "from numpy.typing import NDArray",
         "",
         f"class {src_t}:",
+    ]
+    lines.extend(_pyi_doc_lines(src_t, synth_doc_fields, enum_reg))
+    lines += [
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
         "    def __getattr__(self, name: str) -> Any: ...",
     ]
     if _source_generates(cfg, module):
         lines += [
-            "    def steps(self, n: int) -> NDArray[np.complex64]: ...",
-            "    def step(self) -> complex: ...",
-            "    def reset(self) -> None: ...",
+            "    def steps(self, n: int) -> NDArray[np.complex64]:",
+            '        """Generate *n* complex samples."""',
+            "    def step(self) -> complex:",
+            '        """Generate one complex sample."""',
+            "    def reset(self) -> None:",
+            '        """Reset to initial state."""',
         ]
+    lines += ["", f"class {seg_t}:"]
+    lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
     lines += [
-        "",
-        f"class {seg_t}:",
         f"    sources: list[{src_t}]",
         # Feature 4 — flat single-source accessors (read-only; AttributeError on
         # a multi-source segment).
@@ -2277,16 +2321,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         f"{seg_scalar_sig}) -> None: ...",
         "    @classmethod",
-        f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}: ...",
+        f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}:",
+        f'        """Combine *sources* into a single {seg_t}."""',
     ]
     if tl_t:
-        lines.append(f"    def add(self, *others: {seg_t}) -> {tl_t}: ...")
         lines += [
+            f"    def add(self, *others: {seg_t}) -> {tl_t}:",
+            f'        """Append segments; return a {tl_t}."""',
             "",
             f"class {tl_t}:",
+            f'    """{tl_t}."""',
             f"    segments: list[{seg_t}]",
             f"    def __init__(self, segments: list[{seg_t}]) -> None: ...",
-            f"    def add(self, *segments: {seg_t}) -> {tl_t}: ...",
+            f"    def add(self, *segments: {seg_t}) -> {tl_t}:",
+            '        """Append and return self."""',
             "    def __iter__(self): ...",
             "    def __len__(self) -> int: ...",
             "    def __getitem__(self, i): ...",
@@ -2299,42 +2347,57 @@ def render_pyi(cfg: dict, module: str) -> str:
     lines += [
         "",
         f"class {cname}:",
+        f'    """{cname}.',
+        "",
+        "    Parameters",
+        "    ----------",
+        f"    segments : {seg_or_tl}, default None",
+        "        Initial segment list.",
+        "    repeat : bool, default False",
+        "        Loop the sequence after the last segment.",
+        "    continuous : bool, default False",
+        "        Never finish; execute always returns the requested count.",
+        '    """',
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
         "repeat: bool = ..., continuous: bool = ..., **segment_kwargs"
         ") -> None: ...",
-        "    def execute(self, n: int) -> NDArray[np.complex64]: ...",
-        "    def compose(self, block: int = ...) -> NDArray[np.complex64]: ...",
-        *(
-            [
-                "    def stream(self, block: int = ..."
-                + (
-                    ", realtime: float = ..."
-                    if C.composer_stream(cfg, module).get("realtime")
-                    else ""
-                )
-                + ") -> Iterator[NDArray[np.complex64]]: ..."
-            ]
-            if C.composer_stream(cfg, module).get("stream")
-            else []
-        ),
-        *(
-            ["    def to_dict(self) -> dict: ..."]
-            if C.composer_stream(cfg, module).get("to_dict")
-            else []
-        ),
-        *[
-            f"    def {s['name']}(self"
-            + "".join(
-                f", {p['name']}: {_pyi_field_type(p)} = ..."
-                for p in s.get("params", [])
-            )
-            + f") -> {s.get('returns', 'str')}: ..."
-            for s in C.composer_serializers(cfg, module)
-        ],
-        "    def close(self) -> None: ...",
+        "    def execute(self, n: int) -> NDArray[np.complex64]:",
+        '        """Execute for *n* samples."""',
+        "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
+        '        """Compose the full sequence into one array."""',
+    ]
+    if C.composer_stream(cfg, module).get("stream"):
+        rt_arg = (
+            ", realtime: float = ..."
+            if C.composer_stream(cfg, module).get("realtime")
+            else ""
+        )
+        lines += [
+            f"    def stream(self, block: int = ...{rt_arg})"
+            " -> Iterator[NDArray[np.complex64]]:",
+            '        """Iterate the sequence in blocks."""',
+        ]
+    if C.composer_stream(cfg, module).get("to_dict"):
+        lines += [
+            "    def to_dict(self) -> dict:",
+            '        """Serialise the composer state to a dict."""',
+        ]
+    for s in C.composer_serializers(cfg, module):
+        sig = "".join(
+            f", {p['name']}: {_pyi_field_type(p)} = ..."
+            for p in s.get("params", [])
+        )
+        ret = s.get("returns", "str")
+        lines += [
+            f"    def {s['name']}(self{sig}) -> {ret}:",
+            f'        """Serialise as {s["name"]}."""',
+        ]
+    lines += [
+        "    def close(self) -> None:",
+        '        """Release native resources."""',
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
     ]
@@ -2347,9 +2410,11 @@ def render_pyi(cfg: dict, module: str) -> str:
             "    def to_json(self) -> str: ...",
         ]
     lines.append("")
-    # factories
     for fac in oo.get("factories", []):
-        lines.append(f"def {fac}(**kw: Any) -> {src_t}: ...")
+        lines += [
+            f"def {fac}(**kw: Any) -> {src_t}:",
+            f'    """Return a {src_t} configured as a *{fac}* source."""',
+        ]
     lines.append("")
     return "\n".join(lines)
 

@@ -51,7 +51,7 @@ jobs:
 
       - name: Install jbx
         run: |
-          _JBS="https://raw.githubusercontent.com/just-buildit/just-bashit/main/src"
+          _JBS="https://just-buildit.github.io"
           mkdir -p "$HOME/.local/bin"
           curl -fsSL "${_JBS}/just-runit" -o "$HOME/.local/bin/just-runit"
           chmod +x "$HOME/.local/bin/just-runit"

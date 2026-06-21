@@ -519,8 +519,8 @@ class TestSourceGenerates:
 
     def test_pyi_declares_generation_methods(self):
         pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
-        assert "def steps(self, n: int) -> NDArray[np.complex64]: ..." in pyi
-        assert "def step(self) -> complex: ..." in pyi
+        assert "def steps(self, n: int) -> NDArray[np.complex64]:" in pyi
+        assert "def step(self) -> complex:" in pyi
         # absent without generates
         assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
 
@@ -635,7 +635,7 @@ class TestComposerStream:
         pyi = _composer.render_pyi(_stream_cfg(), "wfm_compose")
         assert (
             "def stream(self, block: int = ...)"
-            " -> Iterator[NDArray[np.complex64]]: ..." in pyi
+            " -> Iterator[NDArray[np.complex64]]:" in pyi
         )
         assert "from typing import Any, Iterator" in pyi
         # absent without the table — and Iterator is not imported
@@ -854,7 +854,7 @@ class TestComposerToDict:
 
     def test_pyi_declares_to_dict(self):
         pyi = _composer.render_pyi(_to_dict_cfg(), "wfm_compose")
-        assert "    def to_dict(self) -> dict: ..." in pyi
+        assert "    def to_dict(self) -> dict:" in pyi
         assert "def to_dict(" not in _composer.render_pyi(
             _cfg(), "wfm_compose"
         )
@@ -1060,7 +1060,7 @@ class TestDelegatedSerializers:
         pyi = _composer.render_pyi(self._cfg(), "wfm_compose")
         assert (
             "def to_sigmf(self, kind: str = ..., fs: float = ..., "
-            "fc: float = ...) -> str: ..." in pyi
+            "fc: float = ...) -> str:" in pyi
         )
 
     def test_no_params_serializer_is_noargs(self):
@@ -1075,6 +1075,71 @@ class TestDelegatedSerializers:
         )
         assert "wfm_blue_meta(segs, _n);" in s
         assert '{"to_blue", (PyCFunction)Composer_to_blue,' in s
+
+
+# ── gh-375: numpy-style docstrings in composer .pyi ─────────────────────────
+
+
+class TestPyiDocstrings:
+    """render_pyi emits numpy-style class docstrings with defaults and enum
+    choices sourced from the manifest (gh-375)."""
+
+    def test_synth_class_docstring_parameters(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Synth.' in pyi
+        assert "    Parameters" in pyi
+        assert "    ----------" in pyi
+        # enum field: annotation + default + choices
+        assert '    type : str, default ``"tone"``' in pyi
+        assert (
+            '        One of ``"tone"``, ``"noise"``, ``"pn"``,'
+            ' ``"bpsk"``, ``"qpsk"``.' in pyi
+        )
+        # numeric float default
+        assert "    freq : float, default 0.0" in pyi
+        # int default
+        assert "    seed : int, default 1" in pyi
+        # bytes field — no explicit default, always None
+        assert "    bits : bytes | None, default None" in pyi
+        # fs field from segment appears in Synth docstring
+        assert "    fs : float, default 1e6" in pyi
+
+    def test_segment_class_docstring_parameters(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Segment.' in pyi
+        # source fields are included
+        assert pyi.count("    freq : float, default 0.0") == 2
+        # segment-only scalar fields
+        assert "    num_samples : int, default 1024" in pyi
+        assert "    off_samples : int, default 0" in pyi
+
+    def test_composer_class_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Composer.' in pyi
+        assert "    repeat : bool, default False" in pyi
+        assert "    continuous : bool, default False" in pyi
+        # segments type includes seg_or_tl
+        assert "    segments : " in pyi
+
+    def test_generation_method_docstrings(self):
+        pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
+        assert '        """Generate *n* complex samples."""' in pyi
+        assert '        """Generate one complex sample."""' in pyi
+        assert '        """Reset to initial state."""' in pyi
+
+    def test_factory_docstrings(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert 'def tone(**kw: Any) -> Synth:' in pyi
+        assert '    """Return a Synth configured as a *tone* source."""' in pyi
+        assert 'def qpsk(**kw: Any) -> Synth:' in pyi
+
+    def test_close_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '        """Release native resources."""' in pyi
+
+    def test_sum_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '        """Combine *sources* into a single Segment."""' in pyi
 
 
 # ── gh-343: compile-check that the emitted serializer include resolves the
