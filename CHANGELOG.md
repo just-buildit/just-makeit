@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [0.19.30] — 2026-06-21
+
+### Added
+
+- **numpy-style docstrings in handle `.pyi` stubs (gh-374)** — `render_pyi` in
+    `_handle.py` now emits a class-level `Parameters` docstring sourced from the
+    manifest, surfacing default values and enum choices that were previously
+    invisible behind `= ...` in the stub. Methods get one-liner summaries with
+    actual defaults inlined (e.g. `send(x, fc=0.0) -> int`); properties show
+    enum choices; RAII methods (`open`, `close`, `__enter__`, `__exit__`) get
+    static one-liners. Three new helpers — `_pyi_arg_ann`, `_pyi_class_docstring`,
+    `_pyi_prop_doc` — cover all cases.
+
+- **numpy-style docstrings in composer `.pyi` stubs (gh-375)** — the same
+    docstring treatment now applies to `_composer.py`. `Synth`, `Segment`, and
+    `Composer` classes get `Parameters` blocks with defaults and enum choices;
+    factory functions (`tone`, `noise`, etc.) get one-liner summaries. New helper
+    `_pyi_doc_lines` mirrors the handle pattern.
+
+### Fixed
+
+- **`size_t` (and other `parse_type`) defaults silently zeroed in constructor
+    (gh-377)** — the `ctor_scalars` loop in `make_state_ctx` always initialised
+    the `_raw` local for `parse_type` scalars (e.g. `unsigned long long` for
+    `size_t`) from `parse_zero`, ignoring the state variable's declared default.
+    Fixed: use the declared default when it is a valid initializer for the
+    `parse_type`. `Py_complex` struct initializers (whose `parse_zero` starts
+    with `{`) fall back to `parse_zero` correctly, fixing the accumulator example
+    which uses a `double _Complex` state variable.
+
+- **`Install jbx` CI step 404** — the `_JBS` base URL in `ci.yml` and
+    `artifact.yml` now points to the stable Pages CDN
+    (`https://just-buildit.github.io`) instead of the raw.githubusercontent path
+    that 404s after the just-bashit repo reorganised its source tree.
+
 ## [0.19.29] — 2026-06-19
 
 ### Changed
