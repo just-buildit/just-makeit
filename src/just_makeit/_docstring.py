@@ -101,26 +101,32 @@ def group_paragraphs(lines: list[str]) -> list[str]:
 
 # A C declaration line we can attribute a preceding comment to. Captures the
 # function name from ``[qualifiers] ret  name(...)``. Deliberately loose: we
-# only need the identifier immediately before the '('.
+# only need the identifier immediately before the '('. The terminator is `;`
+# (a prototype) OR `{` (an inline definition in the header, e.g. a
+# JM_FORCEINLINE step()/execute body) — gh-385.
 _DECL_NAME_RE = re.compile(
-    r"^[^/{}#]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*;",
+    r"^[^/{}#]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*[;{]",
     re.MULTILINE | re.DOTALL,
 )
 
 # A SINGLE comment block (the inner pattern forbids ``*/`` so it can't bridge
 # across an intervening block — e.g. the file-level ``@file`` header) that is
-# immediately followed by a declaration (whitespace only between, and the decl
-# must not itself start a comment).
+# immediately followed by a function declaration *or* an inline definition
+# (whitespace only between; the decl must not itself start a comment). The
+# trailing `[;{]` matches a prototype's `;` or an inline body's opening `{`
+# (gh-385); the `(…)` requirement before it keeps `typedef struct { … }` and
+# other brace blocks without a parameter list from matching.
 _BLOCK_THEN_DECL_RE = re.compile(
     r"/\*\*(?P<block>(?:(?!\*/)[\s\S])*?)\*/\s*"
-    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*;)",
+    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*[;{])",
     re.DOTALL,
 )
 
 
 def _decl_name(decl: str) -> str | None:
     """Extract the function identifier from a C declaration fragment."""
-    m = _DECL_NAME_RE.search(decl if decl.endswith(";") else decl + ";")
+    terminated = decl if decl[-1:] in ";{" else decl + ";"
+    m = _DECL_NAME_RE.search(terminated)
     return m.group(1) if m else None
 
 

@@ -683,8 +683,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_py_return_type = m.get("py_return_type", "")
 
         param_parts: list[str] = []
+        # gh-385: a variable_output method consumes a *block* of arg_type
+        # elements — its generated binding parses a numpy array (PyArray_FROM_
+        # OTF) and passes PyArray_DATA as the input block, and its output is
+        # already rendered as an NDArray below — so a non-array (element)
+        # arg_type means an array input here, not a scalar.
+        _x_ann = ""
         if m_arg != "void":
-            param_parts.append(f"x: {_py(m_arg)}")
+            _x_ann = (
+                f"NDArray[{_np(m_arg)}]"
+                if (m_var and not m_arg.endswith("[]"))
+                else _py(m_arg)
+            )
+            param_parts.append(f"x: {_x_ann}")
         for p in m_params:
             # gh-240: a defaulted param renders as an optional kwarg.
             pann = f"{p['name']}: {_py(p['type'])}"
@@ -717,7 +728,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # (name, annotation) for the Python-facing args, for the doc builder.
         _py_params: list[tuple[str, str]] = []
         if m_arg != "void":
-            _py_params.append(("x", _py(m_arg)))
+            _py_params.append(("x", _x_ann))
         for p in m_params:
             _py_params.append((p["name"], _py(p["type"])))
         _doc = _method_doc_lines(

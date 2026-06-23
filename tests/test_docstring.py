@@ -120,6 +120,35 @@ class TestExtractDocBlocks:
         header = "double ddc_get_rate(const ddc_state_t *state);\n"
         assert extract_doc_blocks(header) == {}
 
+    def test_inline_definition_extracted(self):
+        # gh-385: a function *defined* inline in the header (body in `{ ... }`
+        # instead of a `;`-terminated prototype, e.g. a JM_FORCEINLINE
+        # cic_decimate / step()) must still have its Doxygen extracted.
+        header = (
+            "/**\n"
+            " * @brief Decimate a block of samples.\n"
+            " * @param state The state.\n"
+            " */\n"
+            "JM_FORCEINLINE JM_HOT size_t\n"
+            "cic_decimate(cic_state_t *state, const float complex *in,\n"
+            "             size_t n_in, float complex *out)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+        blocks = extract_doc_blocks(header)
+        assert "cic_decimate" in blocks
+        assert (
+            parse_doxygen_block(blocks["cic_decimate"]).brief
+            == "Decimate a block of samples."
+        )
+
+    def test_brace_block_without_params_is_not_matched(self):
+        # The `{`-terminator allowance must not pick up a braced block that has
+        # no parameter list — e.g. a documented `typedef struct { ... }`.
+        header = "/** A state struct. */\ntypedef struct { int n; } foo_t;\n"
+        assert extract_doc_blocks(header) == {}
+
 
 class TestRenderNumpyMethodDoc:
     def test_drops_c_only_params_keeps_python_args(self):
