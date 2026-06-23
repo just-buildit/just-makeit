@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.19.31] — 2026-06-23
+
+### Fixed
+
+- **module free-function `.pyi` docstrings now synthesize from header Doxygen
+    (gh-384)** — object methods derive their stub docstring (brief + Parameters +
+    a runnable numpy `Examples` doctest from `@code`) from the sacred
+    `<obj>_core.h`, but module-level free functions (`[[module.X.functions]]`)
+    fell back to a name-derived one-liner (e.g. `kaiser_enbw` →
+    `"""Kaiser enbw."""`), dropping the brief and the `@code` doctest even when
+    the header carried them. New `_object._load_module_doc_blocks()` parses
+    `<module>_core.h` for free-function Doxygen; `_stubs.make_module_pyi()`
+    threads it through via the project `root` (no `cfg` mutation), and a new
+    shared `_numpy_doc_lines(…, indent=)` renders methods (8-space) and free
+    functions (4-space) identically. A function with **no** header block (a fresh
+    scaffold injects a declaration only) keeps the historical one-line stub, so a
+    manifest-only rebuild is unchanged — zero `.pyi` churn for projects without
+    function Doxygen. Re-applying a project with documented module functions now
+    surfaces their `@code` examples in the `.pyi`, where `pytest
+    --doctest-glob='*.pyi'` exercises them.
+
 ## [0.19.30] — 2026-06-21
 
 ### Added
