@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.19.32] — 2026-06-23
+
+### Fixed
+
+- **inline-function Doxygen now extracted (gh-385)** — a function *defined*
+    inline in the header (body in `{ … }` rather than a `;`-terminated
+    prototype — e.g. a `JM_FORCEINLINE` block kernel or a `step()` body) was
+    never matched by `extract_doc_blocks`, so its `@brief`/`@code` were dropped
+    and the method/function fell back to a name stub. `_BLOCK_THEN_DECL_RE` /
+    `_DECL_NAME_RE` now accept `{` as well as `;` after the parameter list; the
+    `(…)`-before-terminator requirement keeps `typedef struct { … }` from
+    false-matching.
+
+- **`variable_output` method with an element `arg_type` rendered a scalar
+    `.pyi` input (gh-385)** — the documented blockwise shape
+    (`--arg-type 'float _Complex' --variable-output`) consumes a *block*: the
+    generated binding parses a numpy array (`PyArray_FROM_OTF`) and the output
+    already renders as `NDArray`, but the stub annotated `x: complex`,
+    contradicting the API jm itself emits. `_obj_stub` now renders
+    `x: NDArray[<dtype>]` for a `variable_output` method whose `arg_type` is a
+    non-array element type.
+
+  Together these fix a hand-bound inline block method (e.g. a CIC `decimate`):
+  it went from `def decimate(self, x: complex)` + `"""Decimate."""` to
+  `def decimate(self, x: NDArray[np.complex64]) -> NDArray[np.complex64]` with
+  the full header brief + `@code` doctest.
+
 ## [0.19.31] — 2026-06-23
 
 ### Fixed
