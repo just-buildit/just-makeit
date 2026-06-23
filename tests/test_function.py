@@ -1194,3 +1194,42 @@ class TestModuleFunctionDocstring:
         assert ">>> 1 + 1" in pyi
         # No root -> historical one-line stub (back-compat / idempotence).
         assert "Examples" not in make_module_pyi(load(root), "dsp")
+
+
+class TestVariableOutputArraySignature:
+    """gh-385: a variable_output object method declared with an *element*
+    arg_type — the documented blockwise shape, ``--arg-type 'float _Complex'
+    --variable-output`` — consumes a *block*. Its generated binding parses a
+    numpy array (PyArray_FROM_OTF) and its output already renders as NDArray,
+    so the .pyi input annotation must be NDArray[...], not the scalar element
+    (which the binding does not accept)."""
+
+    def test_pyi_input_is_ndarray(self, tmp_path):
+        from just_makeit._method import run as method_run
+
+        root = tmp_path / "blk"
+        new_run("blk", root, modules=["dsp"])
+        object_run(
+            root,
+            "proc",
+            module="dsp",
+            no_state=True,
+            no_step=True,
+            class_name="Proc",
+        )
+        method_run(
+            root,
+            "proc",
+            "execute",
+            "dsp",
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            variable_output=True,
+            multi_output=[],
+        )
+        pyi = (root / "src/blk/dsp/dsp.pyi").read_text(encoding="utf-8")
+        assert (
+            "def execute(self, x: NDArray[np.complex64])"
+            " -> NDArray[np.complex64]:" in pyi
+        )
+        assert "x: complex" not in pyi
