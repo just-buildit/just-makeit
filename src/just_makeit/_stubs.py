@@ -305,23 +305,28 @@ def _build_class_docstring(
     return lines
 
 
-def _method_doc_lines(
+def _numpy_doc_lines(
     block,
-    m_name: str,
+    name: str,
     py_params: list[tuple[str, str]],
     ret_ann: str,
     override: str = "",
+    *,
+    indent: int = 8,
 ) -> list[str]:
-    """Return indented `.pyi` docstring lines for a method.
+    """Return `.pyi` numpy-docstring lines, indented by *indent* spaces.
 
-    Summary precedence: *override* (TOML ``doc``) > the Doxygen *block*'s
-    ``@brief`` > name fallback. With an override or a block, emit a
-    numpy-style docstring (summary + Parameters + Returns); otherwise fall
+    Shared by object methods (``indent=8``, inside a class) and module-level
+    free functions (``indent=4``, top level). Summary precedence: *override*
+    (TOML ``doc``) > the Doxygen *block*'s ``@brief`` > name fallback. With an
+    override or a block, emit a numpy-style docstring (summary + Parameters +
+    Returns + a runnable ``Examples`` doctest from ``@code``); otherwise fall
     back to the historical one-line name-based stub.
     """
-    fallback = f'        """{m_name.replace("_", " ").capitalize()}."""'
+    pad = " " * indent
+    pad2 = " " * (indent + 4)
     if block is None and not override:
-        return [fallback]
+        return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
     from ._docstring import _wrap, render_numpy_method_doc
 
     if block is not None:
@@ -332,33 +337,46 @@ def _method_doc_lines(
         summary, body, descs, ret, examples = "", [], {}, "", []
     summary = override or summary
     if not summary:
-        summary = m_name.replace("_", " ").capitalize() + "."
-    out = [f'        """{summary}']
+        summary = name.replace("_", " ").capitalize() + "."
+    out = [f'{pad}"""{summary}']
     for para in body:  # extended description — flowing, wrapped paragraphs
         out.append("")
-        out += [f"        {w}" for w in _wrap(para, 72)]
+        out += [f"{pad}{w}" for w in _wrap(para, 72)]
     if py_params:
-        out += ["", "        Parameters", "        ----------"]
+        out += ["", f"{pad}Parameters", f"{pad}----------"]
         for pname, ann in py_params:
-            out.append(f"        {pname} : {ann}")
-            out.append(f"            {descs.get(pname) or 'Input.'}")
+            out.append(f"{pad}{pname} : {ann}")
+            out.append(f"{pad2}{descs.get(pname) or 'Input.'}")
     if ret_ann != "None":
         out += [
             "",
-            "        Returns",
-            "        -------",
-            f"        {ret_ann}",
-            f"            {ret or 'Output.'}",
+            f"{pad}Returns",
+            f"{pad}-------",
+            f"{pad}{ret_ann}",
+            f"{pad2}{ret or 'Output.'}",
         ]
     if examples:  # @code ... @endcode -> runnable doctest
-        out += ["", "        Examples", "        --------"]
-        out += [f"        {ex}".rstrip() for ex in examples]
+        out += ["", f"{pad}Examples", f"{pad}--------"]
+        out += [f"{pad}{ex}".rstrip() for ex in examples]
         # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
         # text file, where expected output runs until a blank line — without
         # this the closing `"""` is swallowed into the last example's output.
         out.append("")
-    out.append('        """')
+    out.append(f'{pad}"""')
     return out
+
+
+def _method_doc_lines(
+    block,
+    m_name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
+) -> list[str]:
+    """Return indented `.pyi` docstring lines for an object method."""
+    return _numpy_doc_lines(
+        block, m_name, py_params, ret_ann, override, indent=8
+    )
 
 
 def _obj_stream_pyi(cfg: dict, obj: str) -> str:
@@ -757,7 +775,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 # ── module-level function stub ────────────────────────────────────────────────
 
 
-def _fn_stub(fn: dict) -> str:
+def _fn_stub(fn: dict, block=None) -> str:
     name = fn["name"]
     out_type = fn.get("out_type")
     if fn.get("check_return"):
@@ -777,6 +795,7 @@ def _fn_stub(fn: dict) -> str:
     # gh-240: a param with a `default` is optional — surface it in the stub
     # (`name: type = <default>`) so type-checkers and readers see the default.
     parts = []
+    py_params: list[tuple[str, str]] = []
     for p in params:
         # gh-353: a path arg accepts str | os.PathLike; an enum arg (type "int"
         # with an `enum` name) accepts the choice string.
@@ -786,6 +805,7 @@ def _fn_stub(fn: dict) -> str:
             ann = "str"
         else:
             ann = _py(p["type"])
+        py_params.append((p["name"], ann))
         part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):
             # An enum default is a choice string — quote it; scalar defaults are
@@ -794,6 +814,15 @@ def _fn_stub(fn: dict) -> str:
             part += f" = {dflt}"
         parts.append(part)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
+    # gh-384: when the module header carries Doxygen for this free function,
+    # synthesize the full numpy docstring (brief + params + a runnable Examples
+    # doctest from @code), same as object methods. With no block, keep the
+    # historical one-line stub so a manifest-only/scaffold rebuild is unchanged.
+    if block is not None:
+        doc_lines = _numpy_doc_lines(
+            block, name, py_params, ret, override=doc, indent=4
+        )
+        return f"{sig}\n" + "\n".join(doc_lines)
     one_liner = (
         doc.split("\n")[0]
         if doc
@@ -861,7 +890,7 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
 # ── public entry point ────────────────────────────────────────────────────────
 
 
-def make_module_pyi(cfg: dict, module: str) -> str:
+def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     """Return the full __init__.pyi content for *module*.
 
     Example output (module='dsp', objects=['filt'], functions=['apply'])::
@@ -915,6 +944,21 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
     functions = C.module_functions(cfg, module)
+    # gh-384: header Doxygen for free functions, stashed transiently on cfg by
+    # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
+    # the module has no header / hand-written function comments.
+    # gh-384: synthesize free-function docstrings (incl. @code Examples) from
+    # the module header Doxygen, same as object methods. Only when a project
+    # root is supplied (the apply/regenerate path); direct callers without a
+    # root keep the historical one-line stubs. Local import avoids a cycle
+    # (_object imports _stubs); the loader honours _object's apply-replay
+    # _DOC_ROOT_OVERRIDE just like the per-object blocks.
+    if root is not None:
+        from ._object import _load_module_doc_blocks
+
+        fn_doc_blocks = _load_module_doc_blocks(root, module)
+    else:
+        fn_doc_blocks = {}
 
     if objects:
         parts.append("")
@@ -923,7 +967,7 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         parts.append("")
 
     for fn in functions:
-        parts.append(_fn_stub(fn))
+        parts.append(_fn_stub(fn, fn_doc_blocks.get(fn["name"])))
         parts.append("")
 
     # strip trailing blank line

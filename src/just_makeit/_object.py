@@ -69,6 +69,35 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     return out
 
 
+def _load_module_doc_blocks(root: Path, module: str) -> dict:
+    """Parse Doxygen for a module's free functions from ``<module>_core.h``.
+
+    Mirrors :func:`_load_doc_blocks` but for ``[[module.X.functions]]``
+    declarations, whose Doxygen lives in
+    ``native/inc/<module>/<module>_core.h`` keyed by the **bare** function
+    name (no ``<obj>_`` prefix). Returns ``{c_function_name: DoxyBlock}``, or
+    ``{}`` when the header is absent or carries no usable comments — so a
+    freshly scaffolded function (jm injects only a bare declaration, no
+    Doxygen) falls back to the name-based stub, preserving idempotence.
+    """
+    doc_root = _DOC_ROOT_OVERRIDE or root
+    header = doc_root / "native" / "inc" / module / f"{module}_core.h"
+    if not header.exists():
+        return {}
+    raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
+    out: dict = {}
+    for cname, block_text in raw.items():
+        parsed = parse_doxygen_block(block_text, name=cname)
+        if parsed is None:
+            continue
+        # The obj-lifecycle scaffold templates never match a free-function
+        # brief, so this is a harmless guard against any boilerplate.
+        if _is_scaffold_brief(module, cname, parsed):
+            continue
+        out[cname] = parsed
+    return out
+
+
 def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
@@ -1018,7 +1047,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # Type stubs — regenerated in full every time the module changes.
     _write(
         pkg_module_dir / f"{mp.leaf}.pyi",
-        S.make_module_pyi(cfg, module),
+        S.make_module_pyi(cfg, module, root),
         "update",
     )
 
