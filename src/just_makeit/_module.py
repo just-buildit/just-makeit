@@ -134,7 +134,10 @@ def run(
         pkg_module_dir / "__init__.py",
         T.render(T.MODULE_INIT_PY_EMPTY, mod_slots),
     )
-    _write(pkg_module_dir / f"{mp.leaf}.pyi", S.make_module_pyi(cfg, module))
+    _write(
+        pkg_module_dir / f"{mp.leaf}.pyi",
+        S.make_module_pyi(cfg, module, root),
+    )
 
     # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
     cmake_path = root / "CMakeLists.txt"
