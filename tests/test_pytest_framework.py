@@ -299,6 +299,77 @@ class TestPytestArgTypes:
         assert "def test_bench_steps_64k(benchmark, obj):" in bench
 
 
+# ── [project.bench] block_sizes (gh-390) ──────────────────────────────────────
+
+
+class TestBenchBlockSizes:
+    """`[project.bench] block_sizes` controls the generated bench suites."""
+
+    def test_default_is_1k_and_64k(self):
+        from just_makeit._config import project_bench_block_sizes
+
+        assert project_bench_block_sizes({}) == [1024, 65536]
+
+    def test_custom_dedup_sorted_filtered(self):
+        from just_makeit._config import project_bench_block_sizes
+
+        cfg = {"project": {"bench": {"block_sizes": [65536, 1024, 1024, -1]}}}
+        assert project_bench_block_sizes(cfg) == [1024, 65536]
+
+    def test_empty_falls_back_to_default(self):
+        from just_makeit._config import project_bench_block_sizes
+
+        cfg = {"project": {"bench": {"block_sizes": []}}}
+        assert project_bench_block_sizes(cfg) == [1024, 65536]
+
+    def test_block_sizes_round_trip_through_dump(self, tmp_path):
+        # The `[project.bench]` sub-table must survive a config save/load
+        # (jm rewrites just-makeit.toml on every mutating command).
+        from just_makeit._config import project_bench_block_sizes
+
+        dest = tmp_path / "proj"
+        new_run("proj", dest, pytest_benchmark_=True)
+        cfg = load(dest)
+        cfg.setdefault("project", {})["bench"] = {"block_sizes": [65536]}
+        save(dest, cfg)
+        assert project_bench_block_sizes(load(dest)) == [65536]
+
+    def test_scaffold_honors_single_block_size(self, tmp_path):
+        # A project that benches only 64k blocks must not get the _1k suite
+        # (or its now-unused BLOCK_1K constant) reintroduced on scaffold.
+        dest = tmp_path / "proj"
+        new_run("proj", dest, pytest_benchmark_=True)
+        cfg = load(dest)
+        cfg.setdefault("project", {})["bench"] = {"block_sizes": [65536]}
+        save(dest, cfg)
+        init_run(
+            dest,
+            "gain",
+            [("level", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        bench = (
+            dest / "src" / "proj" / "benchmarks" / "bench_gain.py"
+        ).read_text(encoding="utf-8")
+        assert "BLOCK_64K = 65_536" in bench
+        assert "BLOCK_1K" not in bench
+        assert "def test_bench_steps_64k(benchmark, obj):" in bench
+        assert "def test_bench_steps_1k" not in bench
+
+    def test_non_power_of_1024_label_is_literal(self):
+        from just_makeit._context import make_sample_ctx
+
+        ctx = make_sample_ctx("float", "float", [256, 4096])
+        # 4096 collapses to a k-suffix; 256 keeps its literal label.
+        assert "BLOCK_256 = 256" in ctx["bench_block_consts"]
+        assert "BLOCK_4K" in ctx["bench_block_consts"]
+        assert (
+            "def test_bench_steps_256(benchmark, obj):" in ctx["bm_steps_py"]
+        )
+        assert "def test_bench_steps_4k(benchmark, obj):" in ctx["bm_steps_py"]
+
+
 # ── module objects inherit project flags ─────────────────────────────────────
 
 

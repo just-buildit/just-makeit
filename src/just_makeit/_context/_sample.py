@@ -17,6 +17,61 @@ from ._parse import _step_parse_block
 
 
 # ---------------------------------------------------------------------------
+# Benchmark block sizes
+# ---------------------------------------------------------------------------
+#
+# The generated Python benchmarks time steps() at one or more block sizes. The
+# set defaults to [1024, 65536] (the historical _1k + _64k suites) but a
+# project can override it via `[project.bench] block_sizes` — see
+# _config.project_bench_block_sizes. Keeping the default here means a scaffold
+# with no `[project.bench]` table is byte-identical to the pre-feature output.
+
+_DEFAULT_BENCH_BLOCK_SIZES = [1024, 65536]
+
+
+def _block_label(n: int) -> str:
+    """Short suffix for a block size: 1024->"1k", 65536->"64k", else literal.
+
+    Powers-of-1024 collapse to a k/m/g suffix (matching the historical
+    BLOCK_1K / BLOCK_64K naming); anything else falls back to the integer.
+    """
+    for div, suf in ((1024**3, "g"), (1024**2, "m"), (1024, "k")):
+        if n >= div and n % div == 0:
+            return f"{n // div}{suf}"
+    return str(n)
+
+
+def _block_const(n: int) -> str:
+    """Module-level constant name for a block size, e.g. ``BLOCK_64K``."""
+    return f"BLOCK_{_block_label(n).upper()}"
+
+
+def _block_consts(sizes: "list[int]") -> str:
+    """Render the ``BLOCK_*`` constant assignments block (no trailing NL).
+
+    The ``=`` columns are aligned to the widest name so the default
+    [1024, 65536] reproduces the historical two-line block exactly.
+    """
+    names = [_block_const(n) for n in sizes]
+    width = max(len(nm) for nm in names) + 1
+    return "\n".join(f"{nm:<{width}}= {n:_}" for nm, n in zip(names, sizes))
+
+
+def _block_reps_div(n: int) -> int:
+    """REPS divisor for the standalone (`make bench`) timer at block size n.
+
+    Bigger blocks run fewer reps. Calibrated so 1024->10 and 65536->100
+    (one extra decade of reps shed per extra decade of block size).
+    """
+    return max(10, 10 ** (len(str(n)) - 3))
+
+
+def _block_unit(n: int) -> "tuple[str, str]":
+    """(scale, unit) for the standalone timer print: small->µs, large->ms."""
+    return ("1e3", "ms") if n >= 16384 else ("1e6", "µs")
+
+
+# ---------------------------------------------------------------------------
 # Benchmark helpers
 # ---------------------------------------------------------------------------
 
@@ -59,16 +114,56 @@ def _test_arr_4_init(sample_type: str, samp: dict) -> str:
     return "{1, 2, 3, 4}"
 
 
+def _bench_timed_lines(
+    label_tmpl: str,
+    call: str,
+    in_np_dtype: str,
+    is_void_return: bool,
+    sizes: "list[int]",
+    *,
+    with_buffer: bool,
+) -> str:
+    """Render the per-size standalone (`make bench`) timing lines.
+
+    label_tmpl  — printed label with a ``{lbl}`` slot (e.g. ``"steps {lbl}"``)
+    call        — the call expression, with ``{arg}`` for the per-size argument
+                  (a buffer var like ``x1k`` when with_buffer, else the const)
+    with_buffer — allocate ``x<lbl> = np.ones(<const>, …)`` before timing
+    The MSa/s annotation is appended unless the op returns void.
+    """
+    out = []
+    for n in sizes:
+        lbl = _block_label(n)
+        const = _block_const(n)
+        var = f"x{lbl}"
+        arg = var if with_buffer else const
+        div = _block_reps_div(n)
+        scale, unit = _block_unit(n)
+        label = label_tmpl.format(lbl=lbl)
+        msa = "" if is_void_return else f"  ({{{const} / dt / 1e6:.1f}} MSa/s)"
+        if with_buffer:
+            out.append(f"    {var} = np.ones({const}, dtype={in_np_dtype})\n")
+        out.append(
+            f'    dt = _bench("{label}", {call.format(arg=arg)},'
+            f" reps=max(1, REPS // {div}))\n"
+            f"    print(f\"  {{'{label}':<22}} {{dt * {scale}:9.3f}}"
+            f' {unit}{msa}")\n'
+        )
+    return "".join(out)
+
+
 def _bench_py_blocks(
     arg_type: str,
     in_py_test_val: str,
     in_np_dtype: str,
     is_void_return: bool,
+    sizes: "list[int]" = _DEFAULT_BENCH_BLOCK_SIZES,
 ) -> tuple[str, str]:
     """Return (bench_step_py, bench_steps_py) indented blocks for BENCH_PY.
 
     bench_step_py   — lines that time a single step() call
-    bench_steps_py  — lines that time steps() at 1k and 64k (may be empty)
+    bench_steps_py  — lines that time steps() at each configured block size
+                      (may be empty)
     Both blocks are already indented with 4 spaces.
     """
     # step() timing block
@@ -91,48 +186,33 @@ def _bench_py_blocks(
 
     # steps() timing block
     if arg_type == "void":
-        steps_py = (
-            '    dt = _bench("steps 1k", obj.steps, BLOCK_1K,'
-            " reps=max(1, REPS // 10))\n"
-            "    print(f\"  {'steps 1k':<22} {dt * 1e6:9.3f} µs/call\")\n"
-            '    dt = _bench("steps 64k", obj.steps, BLOCK_64K,'
-            " reps=max(1, REPS // 100))\n"
-            "    print(f\"  {'steps 64k':<22} {dt * 1e3:9.3f} ms/call\")\n"
+        # Generator: steps(count) takes the block size directly, prints /call.
+        steps_py = "".join(
+            f'    dt = _bench("steps {_block_label(n)}", obj.steps,'
+            f" {_block_const(n)},"
+            f" reps=max(1, REPS // {_block_reps_div(n)}))\n"
+            f"    print(f\"  {{'steps {_block_label(n)}':<22}}"
+            f' {{dt * {_block_unit(n)[0]}:9.3f}} {_block_unit(n)[1]}/call")\n'
+            for n in sizes
         )
     elif arg_type.endswith("[]"):
-        # No steps(); bench buffer-arg step() with larger arrays instead
-        _msa1 = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
-        _msa64 = (
-            "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
-        )
-        steps_py = (
-            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
-            '    dt = _bench("step 1k buf", obj.step, x1k,'
-            " reps=max(1, REPS // 10))\n"
-            f"    print(f\"  {{'step 1k buf':<22}} {{dt * 1e6:9.3f}}"
-            f' µs{_msa1}")\n'
-            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
-            '    dt = _bench("step 64k buf", obj.step, x64k,'
-            " reps=max(1, REPS // 100))\n"
-            f"    print(f\"  {{'step 64k buf':<22}} {{dt * 1e3:9.3f}}"
-            f' ms{_msa64}")\n'
+        # No steps(); bench the buffer-arg step() with larger arrays instead.
+        steps_py = _bench_timed_lines(
+            "step {lbl} buf",
+            "obj.step, {arg}",
+            in_np_dtype,
+            is_void_return,
+            sizes,
+            with_buffer=True,
         )
     else:
-        _msa1 = "" if is_void_return else "  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)"
-        _msa64 = (
-            "" if is_void_return else "  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)"
-        )
-        steps_py = (
-            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
-            '    dt = _bench("steps 1k", obj.steps, x1k,'
-            " reps=max(1, REPS // 10))\n"
-            f"    print(f\"  {{'steps 1k':<22}} {{dt * 1e6:9.3f}}"
-            f' µs{_msa1}")\n'
-            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
-            '    dt = _bench("steps 64k", obj.steps, x64k,'
-            " reps=max(1, REPS // 100))\n"
-            f"    print(f\"  {{'steps 64k':<22}} {{dt * 1e3:9.3f}}"
-            f' ms{_msa64}")\n'
+        steps_py = _bench_timed_lines(
+            "steps {lbl}",
+            "obj.steps, {arg}",
+            in_np_dtype,
+            is_void_return,
+            sizes,
+            with_buffer=True,
         )
 
     return step_py, steps_py
@@ -142,34 +222,31 @@ def _pytest_bm_blocks(
     arg_type: str,
     in_py_test_val: str,
     in_np_dtype: str,
+    sizes: "list[int]" = _DEFAULT_BENCH_BLOCK_SIZES,
 ) -> tuple[str, str]:
     """Return (bm_step_py, bm_steps_py) top-level function defs for pytest-bm.
 
     bm_step_py  — benchmark function(s) for a single step() call
-    bm_steps_py — benchmark function(s) for steps() or larger buffers
+    bm_steps_py — one benchmark function per configured block size, for
+                  steps() (or the buffer-arg step() of an array object)
     """
     if arg_type == "void":
         bm_step = (
             "\ndef test_bench_step(benchmark, obj):\n    benchmark(obj.step)\n"
         )
-        bm_steps = (
-            "\n"
-            "def test_bench_steps_1k(benchmark, obj):\n"
-            "    benchmark(obj.steps, BLOCK_1K)\n"
-            "\n"
-            "def test_bench_steps_64k(benchmark, obj):\n"
-            "    benchmark(obj.steps, BLOCK_64K)\n"
+        # Generator: steps(count) takes the block size directly.
+        bm_steps = "\n" + "\n".join(
+            f"def test_bench_steps_{_block_label(n)}(benchmark, obj):\n"
+            f"    benchmark(obj.steps, {_block_const(n)})\n"
+            for n in sizes
         )
     elif arg_type.endswith("[]"):
-        bm_step = (
-            "\n"
-            "def test_bench_step_1k(benchmark, obj):\n"
-            f"    x = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+        # No steps(); bench the buffer-arg step() at each block size.
+        bm_step = "\n" + "\n".join(
+            f"def test_bench_step_{_block_label(n)}(benchmark, obj):\n"
+            f"    x = np.ones({_block_const(n)}, dtype={in_np_dtype})\n"
             "    benchmark(obj.step, x)\n"
-            "\n"
-            "def test_bench_step_64k(benchmark, obj):\n"
-            f"    x = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
-            "    benchmark(obj.step, x)\n"
+            for n in sizes
         )
         bm_steps = ""
     else:
@@ -178,15 +255,11 @@ def _pytest_bm_blocks(
             "def test_bench_step(benchmark, obj):\n"
             f"    benchmark(obj.step, {in_py_test_val})\n"
         )
-        bm_steps = (
-            "\n"
-            "def test_bench_steps_1k(benchmark, obj):\n"
-            f"    x = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
+        bm_steps = "\n" + "\n".join(
+            f"def test_bench_steps_{_block_label(n)}(benchmark, obj):\n"
+            f"    x = np.ones({_block_const(n)}, dtype={in_np_dtype})\n"
             "    benchmark(obj.steps, x)\n"
-            "\n"
-            "def test_bench_steps_64k(benchmark, obj):\n"
-            f"    x = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
-            "    benchmark(obj.steps, x)\n"
+            for n in sizes
         )
     return bm_step, bm_steps
 
@@ -232,6 +305,7 @@ def resolve_return_type(arg_type: str, return_type: str | None) -> str:
 def make_sample_ctx(
     arg_type: str = "float _Complex",
     return_type: str | None = None,
+    block_sizes: "list[int] | None" = None,
 ) -> dict[str, str]:
     """Return template context keys derived from step() arg/return types.
 
@@ -242,9 +316,19 @@ def make_sample_ctx(
                   arg_type, or "float _Complex" when arg_type is "void").
                   Pass "void" for sink/processor objects whose step()
                   performs side effects only.
+    block_sizes — block sizes for the generated Python benchmarks. None
+                  (the default) means [1024, 65536]; a project overrides it
+                  via ``[project.bench] block_sizes`` (see
+                  _config.project_bench_block_sizes). Drives both the
+                  ``BLOCK_*`` constants (``bench_block_consts``) and the
+                  per-size bench functions.
     """
     return_type = resolve_return_type(arg_type, return_type)
     is_void_return = return_type == "void"
+    sizes = (
+        list(block_sizes) if block_sizes else list(_DEFAULT_BENCH_BLOCK_SIZES)
+    )
+    bench_block_consts = _block_consts(sizes)
 
     # Blockwise: array-in / array-out  (T[] → U[])
     # Both arg_type and return_type are array types. Build and return a
@@ -278,18 +362,16 @@ def make_sample_ctx(
         out_np_dtype = out_samp["py_type"]
         in_np_enum = _NP_ENUM[in_np_dtype]
         out_np_enum = _NP_ENUM[out_np_dtype]
-        # Python bench blocks (steps(x) — same API as scalar steps())
-        _bw_steps_py = (
-            f"    x1k = np.ones(BLOCK_1K, dtype={in_np_dtype})\n"
-            '    dt = _bench("steps 1k", obj.steps, x1k,'
-            " reps=max(1, REPS // 10))\n"
-            "    print(f\"  {'steps 1k':<22} {dt * 1e6:9.3f} µs"
-            '  ({BLOCK_1K / dt / 1e6:.1f} MSa/s)")\n'
-            f"    x64k = np.ones(BLOCK_64K, dtype={in_np_dtype})\n"
-            '    dt = _bench("steps 64k", obj.steps, x64k,'
-            " reps=max(1, REPS // 100))\n"
-            "    print(f\"  {'steps 64k':<22} {dt * 1e3:9.3f} ms"
-            '  ({BLOCK_64K / dt / 1e6:.1f} MSa/s)")\n'
+        # Python bench blocks (steps(x) — same API as scalar steps()). A
+        # blockwise op always returns an array, so the MSa/s annotation is
+        # always emitted (is_void_return=False).
+        _bw_steps_py = _bench_timed_lines(
+            "steps {lbl}",
+            "obj.steps, {arg}",
+            in_np_dtype,
+            False,
+            sizes,
+            with_buffer=True,
         )
         _bw_step_py = (
             f"    x_step = np.zeros(4, dtype={in_np_dtype})\n"
@@ -363,6 +445,7 @@ def make_sample_ctx(
             "bench_steps_py": _bw_steps_py,
             "bm_step_py": "",
             "bm_steps_py": _bw_bm_steps,
+            "bench_block_consts": bench_block_consts,
         }
 
     # Skip scalar validation for array arg — the [] path handles return type
@@ -474,18 +557,19 @@ def make_sample_ctx(
             "pure_x_parse_arg": "",
             "pure_x_to_c": "",
             "pyi_steps_stub": _pyi_steps,
+            "bench_block_consts": bench_block_consts,
             **dict(
                 zip(
                     ("bench_step_py", "bench_steps_py"),
                     _bench_py_blocks(
-                        "void", "1", out_np_dtype, is_void_return
+                        "void", "1", out_np_dtype, is_void_return, sizes
                     ),
                 )
             ),
             **dict(
                 zip(
                     ("bm_step_py", "bm_steps_py"),
-                    _pytest_bm_blocks("void", "1", out_np_dtype),
+                    _pytest_bm_blocks("void", "1", out_np_dtype, sizes),
                 )
             ),
         }
@@ -556,6 +640,7 @@ def make_sample_ctx(
             "pure_x_parse_arg": "",
             "pure_x_to_c": "",
             "pyi_steps_stub": "",  # no steps() for array arg
+            "bench_block_consts": bench_block_consts,
             **dict(
                 zip(
                     ("bench_step_py", "bench_steps_py"),
@@ -564,6 +649,7 @@ def make_sample_ctx(
                         f"np.zeros(4, dtype={in_np_dtype})",
                         in_np_dtype,
                         is_void_return,
+                        sizes,
                     ),
                 )
             ),
@@ -574,6 +660,7 @@ def make_sample_ctx(
                         arg_type,
                         f"np.zeros(4, dtype={in_np_dtype})",
                         in_np_dtype,
+                        sizes,
                     ),
                 )
             ),
@@ -662,6 +749,7 @@ def make_sample_ctx(
             f"\n    def steps(self, x: NDArray[{in_np_dtype}]) -> None:\n"
             '        """Process a block of input samples."""\n'
         ),
+        "bench_block_consts": bench_block_consts,
         **dict(
             zip(
                 ("bench_step_py", "bench_steps_py"),
@@ -670,6 +758,7 @@ def make_sample_ctx(
                     _KIND_PY_TEST_VAL[samp["kind"]],
                     in_np_dtype,
                     is_void_return,
+                    sizes,
                 ),
             )
         ),
@@ -680,6 +769,7 @@ def make_sample_ctx(
                     arg_type,
                     _KIND_PY_TEST_VAL[samp["kind"]],
                     in_np_dtype,
+                    sizes,
                 ),
             )
         ),

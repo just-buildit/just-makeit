@@ -180,6 +180,7 @@ def _make_object_ctx(
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable: list[tuple[str, str]] = (),
     doc_blocks: dict | None = None,
+    block_sizes: "list[int] | None" = None,
 ) -> dict:
     """Build the render ctx for an object."""
     ctx = _make_component_ctx(component)
@@ -196,7 +197,7 @@ def _make_object_ctx(
             "version": version,
         }
     )
-    ctx.update(Ctx.make_sample_ctx(arg_type, return_type))
+    ctx.update(Ctx.make_sample_ctx(arg_type, return_type, block_sizes))
     ctx.update(
         Ctx.make_state_ctx(
             ctx["component"],
@@ -712,6 +713,7 @@ def build_component_ctxs(
             no_ctor_names=C.no_ctor_names(cfg, obj),
             controllable=C.controllable_state_vars(cfg, obj),
             doc_blocks=_doc_blocks,
+            block_sizes=C.project_bench_block_sizes(cfg),
         )
         ctx.update(
             Ctx.make_methods_ctx(
@@ -1215,6 +1217,7 @@ def run(
         controllable=[
             (n, ct) for n, ct, _ in vars_ if n in controllable_names
         ],
+        block_sizes=C.project_bench_block_sizes(cfg),
     )
     ctx.update(
         Ctx.make_methods_ctx(
