@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.33] — 2026-06-25
+
 ### Added
 
 - **Configurable benchmark block sizes (gh-390)** — the generated Python
