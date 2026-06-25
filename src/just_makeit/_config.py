@@ -1585,6 +1585,33 @@ def is_windows_target(cfg: dict) -> bool:
     return "windows" in (p.lower() for p in project_platforms(cfg))
 
 
+_DEFAULT_BENCH_BLOCK_SIZES = [1024, 65536]
+
+
+def project_bench_block_sizes(cfg: dict) -> list[int]:
+    """Block sizes for the generated Python benchmarks (``[project.bench]
+    block_sizes``).
+
+    Defaults to ``[1024, 65536]`` — the historical ``_1k`` + ``_64k`` suites
+    — when unset, so existing scaffolds are byte-identical. A project that
+    only benches large blocks declares e.g.::
+
+        [project.bench]
+        block_sizes = [65536]
+
+    and ``jm`` stops reintroducing the ``_1k`` suite on every scaffold /
+    reconcile. Sizes are de-duplicated, sorted ascending, and any
+    non-positive entry is dropped; an empty / malformed value falls back to
+    the default. Only the Python ``bench_<obj>.py`` files honour this — the
+    C ``bench_<obj>_core.c`` uses a single fixed block and is unaffected.
+    """
+    v = cfg.get("project", {}).get("bench", {}).get("block_sizes")
+    if not isinstance(v, (list, tuple)) or not v:
+        return list(_DEFAULT_BENCH_BLOCK_SIZES)
+    sizes = sorted({int(n) for n in v if int(n) > 0})
+    return sizes or list(_DEFAULT_BENCH_BLOCK_SIZES)
+
+
 def c_style(cfg: dict) -> str:
     """C-output style declared under ``[project] c_style`` (gh-265).
 
@@ -2103,12 +2130,33 @@ def _dump(cfg: dict) -> str:
     proj = cfg.get("project", {})
     if proj:
         lines.append("[project]")
+        # Nested sub-tables (e.g. `bench`) must follow the scalar keys in TOML,
+        # so collect them and emit `[project.<name>]` blocks after this loop.
+        subtables = {}
         for k, v in proj.items():
-            if k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
+            if isinstance(v, dict):
+                subtables[k] = v
+            elif k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
                 items_str = ", ".join(f'"{x}"' for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')
+        for name, sub in subtables.items():
+            lines.append("")
+            lines.append(f"[project.{name}]")
+            for k, v in sub.items():
+                if isinstance(v, (list, tuple)):
+                    items_str = ", ".join(
+                        str(x) if isinstance(x, (int, float)) else f'"{x}"'
+                        for x in v
+                    )
+                    lines.append(f"{k} = [{items_str}]")
+                elif isinstance(v, bool):
+                    lines.append(f"{k} = {str(v).lower()}")
+                elif isinstance(v, (int, float)):
+                    lines.append(f"{k} = {v}")
+                else:
+                    lines.append(f'{k} = "{v}"')
         lines.append("")
 
     # [[enum]] SSOT tables (top-level, manifest-owned) — render before modules.

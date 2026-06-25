@@ -7,8 +7,7 @@ import numpy as np
 
 from <<package>> import <<Component>>
 
-BLOCK_1K  = 1_024
-BLOCK_64K = 65_536
+<<bench_block_consts>>
 
 
 @pytest.fixture

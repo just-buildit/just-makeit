@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable benchmark block sizes (gh-390)** — the generated Python
+    benchmarks (`bench_<obj>.py`) timed `steps()` at a hardcoded `_1k` and
+    `_64k`. A project that standardizes on a different set (e.g. dropping the
+    small-block suite, since 1 k blocks are dominated by call overhead) had to
+    hand-delete the `_1k` functions after every `jm apply`, which `apply` then
+    fought. Block sizes are now declarative:
+
+    ```toml
+    [project.bench]
+    block_sizes = [65536]   # default: [1024, 65536]
+    ```
+
+    jm emits one `BLOCK_<label>` constant and one `test_bench_steps_<label>`
+    function per configured size (labels: `1024 → 1k`, `65536 → 64k`,
+    powers-of-1024 collapse to a `k`/`m`/`g` suffix, anything else the literal
+    integer). Sizes are de-duplicated, sorted, and non-positive entries
+    dropped; an unset/empty table falls back to `[1024, 65536]`, so existing
+    scaffolds are **byte-identical**. Only the Python benches honour this — the
+    C `bench_<obj>_core.c` uses a single fixed block and is unchanged.
+
 ## [0.19.32] — 2026-06-23
 
 ### Fixed
@@ -24,10 +46,10 @@
     `x: NDArray[<dtype>]` for a `variable_output` method whose `arg_type` is a
     non-array element type.
 
-  Together these fix a hand-bound inline block method (e.g. a CIC `decimate`):
-  it went from `def decimate(self, x: complex)` + `"""Decimate."""` to
-  `def decimate(self, x: NDArray[np.complex64]) -> NDArray[np.complex64]` with
-  the full header brief + `@code` doctest.
+    Together these fix a hand-bound inline block method (e.g. a CIC `decimate`):
+    it went from `def decimate(self, x: complex)` + `"""Decimate."""` to
+    `def decimate(self, x: NDArray[np.complex64]) -> NDArray[np.complex64]` with
+    the full header brief + `@code` doctest.
 
 ## [0.19.31] — 2026-06-23
 
@@ -47,8 +69,7 @@
     scaffold injects a declaration only) keeps the historical one-line stub, so a
     manifest-only rebuild is unchanged — zero `.pyi` churn for projects without
     function Doxygen. Re-applying a project with documented module functions now
-    surfaces their `@code` examples in the `.pyi`, where `pytest
-    --doctest-glob='*.pyi'` exercises them.
+    surfaces their `@code` examples in the `.pyi`, where `pytest   --doctest-glob='*.pyi'` exercises them.
 
 ## [0.19.30] — 2026-06-21
 
@@ -94,7 +115,7 @@
     widgets: an install-script walkthrough and a `jm new` / `make` / `make test`
     session with real ANSI-matched colors (bold green for passing tests, cyan for
     hints, blue for cmake copy steps). A custom `termynal_fence.py` superfences
-    formatter enables ` ```termynal ``` ` blocks with `{g}`, `{G}`, `{c}`, `{b}`,
+    formatter enables ```` ```termynal ``` ```` blocks with `{g}`, `{G}`, `{c}`, `{b}`,
     `{y}`, `{mark}`, `{d}` inline color markup anywhere in the docs. Global
     `.jm-*` CSS utility classes (`jm-green`, `jm-cyan`, `jm-blue`, `jm-yellow`,
     `jm-amber`, `jm-dim`) make the same palette available to prose. The

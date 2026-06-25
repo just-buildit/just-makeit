@@ -643,7 +643,9 @@ def run(
         }
     )
 
-    sample_ctx = Ctx.make_sample_ctx(arg_type, return_type)
+    sample_ctx = Ctx.make_sample_ctx(
+        arg_type, return_type, C.project_bench_block_sizes(cfg)
+    )
     ctx.update(sample_ctx)
 
     ctx.update(
