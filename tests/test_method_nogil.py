@@ -137,3 +137,44 @@ def test_make_methods_ctx_nogil_on_wraps_kernel():
     m["nogil"] = True
     ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
     assert "Py_BEGIN_ALLOW_THREADS" in ctx["extra_methods_c"]
+
+
+# ── result_fields (multi-result "push") honours nogil too ────────────────────
+# Regression: the max_results/result_fields binding hardcoded the kernel call
+# and ignored `nogil`, so detector-style push methods ran holding the GIL.
+_PUSH_METHOD = {
+    "name": "push",
+    "arg_type": "float _Complex",
+    "return_type": "rec_t",
+    "max_results": 64,
+    "result_fields": [
+        {"name": "lag", "type": "size_t"},
+        {"name": "stat", "type": "float"},
+    ],
+}
+
+
+def test_make_methods_ctx_result_fields_nogil_off_is_plain():
+    ctx = make_methods_ctx(
+        "dec", "Dec", [dict(_PUSH_METHOD)], pkg="p", no_state=True
+    )
+    c = ctx["extra_methods_c"]
+    assert "Py_BEGIN_ALLOW_THREADS" not in c
+    assert "size_t n_out = dec_push(" in c  # plain kernel call
+
+
+def test_make_methods_ctx_result_fields_nogil_wraps_kernel():
+    m = dict(_PUSH_METHOD)
+    m["nogil"] = True
+    ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
+    c = ctx["extra_methods_c"]
+    assert "Py_BEGIN_ALLOW_THREADS" in c
+    assert "Py_END_ALLOW_THREADS" in c
+    b = c.index("Py_BEGIN_ALLOW_THREADS")
+    e = c.index("Py_END_ALLOW_THREADS")
+    # numpy accessor hoisted above the block; none runs while the GIL is dropped
+    assert "_ng0" in c and c.index("_ng0") < b
+    assert "PyArray_" not in c[b:e]
+    # the results[] buffer is declared before the block; DECREF stays after it
+    assert c.index("results[64]") < b
+    assert c.index("Py_DECREF(in_arr)") > e

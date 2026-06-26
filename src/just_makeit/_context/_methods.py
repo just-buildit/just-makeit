@@ -1476,21 +1476,23 @@ def make_methods_ctx(
                 )
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
-                    f"    size_t n_out ="
-                    f" {component}_{name}(self->handle,\n"
-                    f"        (const {arg_disp} *)"
-                    f"PyArray_DATA(in_arr),"
-                    f" n_in,\n"
-                    f"        results, {max_results});\n"
-                    f"    Py_DECREF(in_arr);\n"
+                    + _kernel_call_block(
+                        f"{component}_{name}(self->handle, "
+                        f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
+                        f"results, {max_results})",
+                        nogil,
+                    )
+                    + "    Py_DECREF(in_arr);\n"
                 )
             else:
                 _rf_parse = ""
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
-                    f"    size_t n_out ="
-                    f" {component}_{name}(self->handle,\n"
-                    f"        results, {max_results});\n"
+                    + _kernel_call_block(
+                        f"{component}_{name}(self->handle, "
+                        f"results, {max_results})",
+                        nogil,
+                    )
                 )
             wrapper = (
                 f"static PyObject *\n"
