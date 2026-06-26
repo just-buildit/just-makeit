@@ -192,6 +192,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # the enum tables) against the same declared enums as the real project.
     if cfg.get("enum"):
         tcfg["enum"] = cfg["enum"]
+    # gh-393: carry [project.bench] so the replayed scaffold honours the
+    # project's configured benchmark block_sizes (#390) — otherwise a new
+    # object materialised by `jm apply` reintroduces the default _1k suite.
+    bench = cfg.get("project", {}).get("bench")
+    if bench:
+        tcfg["project"]["bench"] = bench
     C.save(temp_root, tcfg)
 
     # `new` with no objects writes the minimal package __init__.py; the

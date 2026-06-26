@@ -357,6 +357,37 @@ class TestBenchBlockSizes:
         assert "def test_bench_steps_64k(benchmark, obj):" in bench
         assert "def test_bench_steps_1k" not in bench
 
+    def test_apply_honors_block_sizes(self, tmp_path):
+        # gh-393: `jm apply` re-materialises a missing bench by replaying the
+        # scaffold into a temp project. That temp manifest must carry
+        # [project.bench], or the replay reintroduces the default _1k suite.
+        import contextlib
+        import io
+
+        from just_makeit._apply import run as apply_run
+
+        dest = tmp_path / "proj"
+        new_run("proj", dest, pytest_benchmark_=True)
+        cfg = load(dest)
+        cfg.setdefault("project", {})["bench"] = {"block_sizes": [65536]}
+        save(dest, cfg)
+        init_run(
+            dest,
+            "gain",
+            [("level", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        bench_path = dest / "src" / "proj" / "benchmarks" / "bench_gain.py"
+        # Drop the bench so apply must regenerate it via the replay path.
+        bench_path.unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_run(dest)
+        bench = bench_path.read_text(encoding="utf-8")
+        assert "BLOCK_64K = 65_536" in bench
+        assert "BLOCK_1K" not in bench
+        assert "def test_bench_steps_1k" not in bench
+
     def test_non_power_of_1024_label_is_literal(self):
         from just_makeit._context import make_sample_ctx
 

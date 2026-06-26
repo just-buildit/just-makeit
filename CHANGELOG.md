@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` now honours `[project.bench] block_sizes` (gh-393)** — applying a
+    new object replays the scaffold into a temp project, but the temp manifest
+    only carried `version` and `[[enum]]`, not `[project.bench]`. So a project
+    that configured e.g. `block_sizes = [65536]` (#390) still got the default
+    `_1k` + `_64k` suite reintroduced whenever `jm apply` materialised an object
+    — the exact drift #390 removes on the `jm object` path. `_apply._replay` now
+    carries `[project.bench]` into the temp manifest alongside the enum SSOT.
+
 ## [0.19.33] — 2026-06-25
 
 ### Added
