@@ -2,8 +2,20 @@
 
 ## [Unreleased]
 
+## [0.19.34] — 2026-06-26
+
 ### Fixed
 
+- **`nogil` now honoured on `max_results`/`result_fields` ("push") methods
+    (gh-395)** — the result-array binding (`return_type` = a result struct +
+    `max_results` + `result_fields`, the detector-style `push`) hardcoded its
+    kernel call and ignored the method's `nogil` flag, so it ran holding the GIL
+    — unlike the `variable_output` path. Both branches now route through
+    `_kernel_call_block`, which hoists the numpy accessors above
+    `Py_BEGIN_ALLOW_THREADS` and wraps the call (the `results[]` buffer is
+    declared before the block and `Py_DECREF(in_arr)` runs after, under the GIL).
+    Unblocks GIL-released thread-per-shard scaling for detector-style streaming
+    objects.
 - **`jm apply` now honours `[project.bench] block_sizes` (gh-393)** — applying a
     new object replays the scaffold into a temp project, but the temp manifest
     only carried `version` and `[[enum]]`, not `[project.bench]`. So a project
