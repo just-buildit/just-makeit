@@ -281,8 +281,8 @@ class TestAddComponentFlags:
         )
         result = init_params(cfg, "gen")
         assert result == [
-            ("n", "int", "16", "", "", "", False, "", False),
-            ("order", "int", "4", "", "", "", False, "", False),
+            ("n", "int", "16", "", "", "", False, "", False, ""),
+            ("order", "int", "4", "", "", "", False, "", False, ""),
         ]
 
 

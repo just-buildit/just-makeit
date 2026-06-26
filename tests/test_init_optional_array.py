@@ -241,6 +241,7 @@ class TestOptionalArrayToml:
             True,
             "Resamp_create_custom",
             False,
+            "",
         )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
@@ -258,7 +259,7 @@ class TestOptionalArrayToml:
             init_params_=[("n", "int", "16")],
         )
         result = init_params(cfg, "gen")
-        assert result == [("n", "int", "16", "", "", "", False, "", False)]
+        assert result == [("n", "int", "16", "", "", "", False, "", False, "")]
 
 
 # ── CLI parser ────────────────────────────────────────────────────────────────

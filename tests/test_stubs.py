@@ -781,3 +781,49 @@ def test_method_examples_end_with_blank_before_closing_quote():
     out = _method_doc_lines(block, "go", [], "int")
     assert out[-1].strip() == '"""'
     assert out[-2].strip() == ""  # blank line precedes the closer
+
+
+class TestInitParamDocs:
+    """init-param descriptions: manifest doc= > create @param > stub."""
+
+    def _ip(self, name, ctype, dflt, doc=""):
+        # 10-tuple: (name,type,default,default_raw,real_type,real_create_fn,
+        #            optional,create_fn,required,doc)
+        return (name, ctype, dflt, "", "", "", False, "", False, doc)
+
+    def test_resolves_param_precedence(self):
+        from just_makeit._docstring import DoxyBlock
+        from just_makeit._stubs import _build_class_docstring
+
+        blk = DoxyBlock(
+            brief="Make a thing.",
+            params=[
+                ("sf", "Chips per segment (>= 1)."),
+                ("ny", "Header description for ny."),
+            ],
+        )
+        ip = [
+            self._ip("sf", "size_t", "1"),  # from create @param
+            self._ip("ny", "size_t", "16", doc="Manifest override."),  # doc=
+            self._ip("zz", "size_t", "0"),  # neither -> stub
+        ]
+        doc = "\n".join(
+            _build_class_docstring(
+                "Thing", [], True, ip, "", "", brief=blk.brief, create_blk=blk
+            )
+        )
+        assert "Chips per segment (>= 1)." in doc  # @param
+        assert "Manifest override." in doc  # doc= wins over @param
+        assert "Header description for ny." not in doc
+        assert "zz constructor parameter." in doc  # stub fallback
+
+    def test_no_create_block_falls_back_to_stub(self):
+        from just_makeit._stubs import _build_class_docstring
+
+        ip = [self._ip("sf", "size_t", "1")]
+        doc = "\n".join(
+            _build_class_docstring(
+                "Thing", [], True, ip, "", "", create_blk=None
+            )
+        )
+        assert "sf constructor parameter." in doc

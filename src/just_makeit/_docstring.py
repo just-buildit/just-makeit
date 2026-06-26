@@ -45,6 +45,18 @@ def extract_doctests(text: str) -> list[str]:
     return out
 
 
+def _strip_doxy_inline(text: str) -> str:
+    """Reduce Doxygen inline word-references to the bare word.
+
+    ``@p name`` / ``@c name`` / ``@a name`` / ``@e name`` / ``@b name`` and
+    ``@ref name`` are parameter/code/emphasis references that read as noise in a
+    Python docstring (``"length @p code_len"`` → ``"length code_len"``).  Only
+    the single-word form is touched; other ``@``-tags are left alone.
+    """
+    text = re.sub(r"@ref\s+(\w+)", r"\1", text)
+    return re.sub(r"@[pcaeb]\s+(\w+)", r"\1", text)
+
+
 @dataclass
 class DoxyBlock:
     """Structured contents of one Doxygen ``/** ... */`` comment.
@@ -71,7 +83,11 @@ class DoxyBlock:
     examples: list[str] = field(default_factory=list)
 
     def param_desc(self, name: str) -> str | None:
-        """Return the description for parameter *name*, or ``None``."""
+        """Return the description for parameter *name*, or ``None``.
+
+        Descriptions are already cleaned of Doxygen inline word-references at
+        parse time (see ``_strip_doxy_inline``).
+        """
         for pname, desc in self.params:
             if pname == name:
                 return desc
@@ -297,11 +313,14 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     # trim trailing blank lines from the captured example
     while example_lines and not example_lines[-1].strip():
         example_lines.pop()
+    # Reduce Doxygen inline word-references (@p/@c/@ref name) to the bare word
+    # so the synthesized Python docstrings read cleanly. Examples are left as-is
+    # (they are verbatim @code blocks).
     block = DoxyBlock(
-        brief=brief,
-        body=body_lines,
-        params=[(n, d) for n, d in params],
-        returns=returns,
+        brief=_strip_doxy_inline(brief),
+        body=[_strip_doxy_inline(b) for b in body_lines],
+        params=[(n, _strip_doxy_inline(d)) for n, d in params],
+        returns=_strip_doxy_inline(returns),
         examples=example_lines,
     )
 
