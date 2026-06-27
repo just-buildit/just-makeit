@@ -672,6 +672,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
+            serializable=C.is_serializable(cfg, obj),
         )
     )
     ctx.update(

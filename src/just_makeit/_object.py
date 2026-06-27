@@ -723,6 +723,7 @@ def build_component_ctxs(
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
+                serializable=C.is_serializable(cfg, obj),
                 doc_blocks=_doc_blocks,
             )
         )
@@ -1067,6 +1068,7 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
+    serializable: bool = False,
     streamable: bool = False,
     async_stream: bool = False,
     stream_block_default: int | None = None,
@@ -1124,6 +1126,7 @@ def run(
             no_step=no_step,
             mutable=mutable,
             step_delegates=step_delegates,
+            serializable=serializable,
             streamable=streamable,
             async_stream=async_stream,
             stream_block_default=stream_block_default,
@@ -1227,6 +1230,7 @@ def run(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
+            serializable=serializable,
         )
     )
 
@@ -1376,6 +1380,7 @@ def run(
         no_step_=no_step,
         mutable_=mutable,
         step_delegates_=step_delegates,
+        serializable_=serializable,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,

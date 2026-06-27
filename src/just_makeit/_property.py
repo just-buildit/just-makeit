@@ -192,6 +192,7 @@ def run(
                 pkg=pkg,
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, object_name),
+                serializable=C.is_serializable(cfg, object_name),
             )
         )
         ctx.update(

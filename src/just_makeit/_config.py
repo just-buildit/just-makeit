@@ -1772,6 +1772,7 @@ def add_component(
     no_step_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
+    serializable_: bool = False,
     streamable_: bool = False,
     async_stream_: bool = False,
     stream_block_default_: "int | None" = None,
@@ -1816,6 +1817,8 @@ def add_component(
     # non-streamable objects produce no golden-output churn.
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
+    if serializable_:
+        entry["serializable"] = "true"
     if streamable_:
         entry["streamable"] = "true"
     if async_stream_:
@@ -2347,6 +2350,7 @@ def _dump(cfg: dict) -> str:
             "no_state",
             "no_step",
             "step_delegates_to_steps",
+            "serializable",
             "streamable",
             "async_stream",
             "stream_block_default",
