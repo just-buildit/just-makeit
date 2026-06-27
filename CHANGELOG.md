@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.19.37] — 2026-06-27
+
+### Fixed
+
+- **`serializable` triplet now emitted in the module-object `.pyi`** (gh-400
+    follow-up) — a module object's stub is assembled by `_stubs._object_stub`,
+    a separate path from `make_methods_ctx`'s `pyi_extra_methods` (which only
+    drives the standalone `COMPONENT_PYI`). 0.19.36 emitted the runtime binding
+    + standalone stub but skipped the **module** stub, so a module object's
+    `state_bytes`/`get_state`/`set_state` existed at runtime yet were missing
+    from its type stub. `_stubs` now emits the triplet too, gated on
+    `is_serializable`. Surfaced adopting the flag on doppler's `LO`/`CIC`/`FIR`
+    (module objects under `source`/`resample`/`filter`).
+
 ## [0.19.36] — 2026-06-27
 
 ### Added
