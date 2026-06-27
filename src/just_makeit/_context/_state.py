@@ -40,6 +40,7 @@ def _build_no_state_init_ctx(
     params: list[tuple],
     array_args: list[tuple[str, str]] = (),
     init_post_parse_impl: str = "",
+    create_blk=None,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -575,11 +576,24 @@ def _build_no_state_init_ctx(
                 for oname, oact, ondim, _, oalt_fn in opt_arr_ip
             )
         )
+    # Constructor-param description: manifest doc= override, then the create
+    # @param, then a generic stub. (Mirrors the .pyi path in _stubs.py.)
+    _manifest_doc = {p[0]: (p[9] if len(p) > 9 else "") for p in params}
+
+    def _pdoc(name: str, required: bool) -> str:
+        stub = (
+            f"{name} constructor parameter (required)."
+            if required
+            else f"{name} constructor parameter."
+        )
+        hdr = create_blk.param_desc(name) if create_blk else None
+        return _manifest_doc.get(name) or hdr or stub
+
     if req_scalar_ip:
         pyi_doc_sections.append(
             "\n".join(
                 f"    {name} : {_CTYPE_META[ct]['py_type']}\n"
-                f"        {name} constructor parameter (required)."
+                f"        {_pdoc(name, True)}"
                 for name, ct, *_ in req_scalar_ip
             )
         )
@@ -588,7 +602,7 @@ def _build_no_state_init_ctx(
             "\n".join(
                 f"    {name} : {_CTYPE_META[ct]['py_type']},"
                 f" default {_py_default(ct, dflt)}\n"
-                f"        {name} constructor parameter."
+                f"        {_pdoc(name, False)}"
                 for name, ct, dflt, *_ in opt_scalar_ip
             )
         )
@@ -1291,9 +1305,7 @@ def make_state_ctx(
             # parse_zero starts with "{") cannot accept a C99 expression like
             # "0.0 + 0.0 * I" — fall back to parse_zero for those.
             pz = meta["parse_zero"]
-            raw_init = (
-                dflt if (dflt and not pz.startswith("{")) else pz
-            )
+            raw_init = dflt if (dflt and not pz.startswith("{")) else pz
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )

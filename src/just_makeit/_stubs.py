@@ -182,15 +182,29 @@ def _build_class_docstring(
     py_create_args: str,
     brief: str = "",
     custom_reset: bool = False,
+    create_blk=None,
 ) -> list[str]:
     """Return lines for a numpy-style class docstring (indented 4 spaces).
 
     *brief* — when supplied (from the create()'s ``@brief`` in the sacred
     header) — becomes the summary line in place of the generic
     ``"<Component> component."``.
+
+    *create_blk* — the parsed create() ``DocBlock``; its ``@param`` descriptions
+    document each init-param.  Per-param precedence is the manifest ``doc=``
+    override, then the create ``@param``, then a generic stub.
     """
     summary = brief or f"{Component} component."
     lines: list[str] = [f'    """{summary}', ""]
+
+    def _pdesc(name: str, manifest_doc: str, required: bool) -> str:
+        stub = (
+            f"{name} constructor parameter (required)."
+            if required
+            else f"{name} constructor parameter."
+        )
+        hdr = create_blk.param_desc(name) if create_blk else None
+        return manifest_doc or hdr or stub
 
     # Parameters section. init_params win when present (they are what create()
     # actually takes — the #69 contract); state vars are documented only for a
@@ -200,6 +214,7 @@ def _build_class_docstring(
         for name, ctype, dflt, *rest in init_params:
             optional = rest[4] if len(rest) >= 5 else False
             required = rest[5] if len(rest) >= 6 else False
+            manifest_doc = rest[6] if len(rest) >= 7 else ""
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
@@ -207,7 +222,7 @@ def _build_class_docstring(
                 # gh-266: no default — document it as a required parameter.
                 param_lines += [
                     f"    {name} : {py_t}",
-                    f"        {name} constructor parameter (required).",
+                    f"        {_pdesc(name, manifest_doc, True)}",
                 ]
                 continue
             if ctype.startswith("string_enum:"):
@@ -216,7 +231,7 @@ def _build_class_docstring(
                 py_d = _py_default_stub(ctype, dflt)
             param_lines += [
                 f"    {name} : {py_t}, default {py_d}",
-                f"        {name} constructor parameter.",
+                f"        {_pdesc(name, manifest_doc, False)}",
             ]
     elif state_vars and not no_state:
         for name, ctype, dflt in state_vars:
@@ -500,6 +515,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # zeroed by reset(). Skip the "reset restores defaults" demo there.
         # (init_params survive the apply-path cfg; reset_impl/create_impl don't.)
         custom_reset=bool(ip),
+        create_blk=_create_blk,
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
 

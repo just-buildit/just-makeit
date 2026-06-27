@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.19.35] — 2026-06-26
+
+### Added
+
+- **Constructor parameter docs from the create function's `@param`** — the
+    generated class docstring's `Parameters` section now documents each
+    init-param with its real description, resolved per param as: an optional
+    manifest `doc=` override, then the create function's parsed `@param`, then
+    the previous `"{name} constructor parameter."` stub. The descriptions
+    already live in the sacred `<obj>_core.h` create function (whose `@brief`
+    jm already used for the class summary); jm now reads its `@param` too. Both
+    the `.pyi` (`_build_class_docstring`) and the no-state runtime context honour
+    the resolution. Init-params gain an optional `doc` field (10th `init_params`
+    tuple element) that round-trips through `jm apply` / `_dump`.
+
+### Fixed
+
+- **Doxygen inline word-references stripped from synthesized docstrings** —
+    `@p name` / `@c name` / `@a`/`@e`/`@b name` / `@ref name` in `@param`,
+    `@brief`, and body text are reduced to the bare word at parse time
+    (`"length @p code_len"` → `"length code_len"`), so the numpy docstrings read
+    cleanly. `@code` example blocks are left verbatim.
+
 ## [0.19.34] — 2026-06-26
 
 ### Fixed

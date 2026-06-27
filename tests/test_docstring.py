@@ -7,10 +7,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._docstring import (  # noqa: E402
     DoxyBlock,
+    _strip_doxy_inline,
     extract_doc_blocks,
     parse_doxygen_block,
     render_numpy_method_doc,
 )
+
+
+class TestStripDoxyInline:
+    def test_param_reference(self):
+        assert (
+            _strip_doxy_inline("length @p code_len; must equal @p sf")
+            == "length code_len; must equal sf"
+        )
+
+    def test_code_and_ref(self):
+        assert (
+            _strip_doxy_inline("see @c foo and @ref bar") == "see foo and bar"
+        )
+
+    def test_leaves_other_tags(self):
+        # @brief/@param are line tags, not inline; @pre is not a single-word ref
+        assert _strip_doxy_inline("@pre x > 0") == "@pre x > 0"
+
+    def test_parse_strips_param_and_body(self):
+        b = parse_doxygen_block(
+            "/**\n"
+            " * @brief Do a thing with @p n samples.\n"
+            " * @param n Count of @p x items.\n"
+            " */"
+        )
+        assert "@p" not in b.brief
+        assert "@p" not in b.param_desc("n")
+        assert b.param_desc("n") == "Count of x items."
 
 
 # Real-shaped block from doppler's ddc_core.h (ddc_execute).
