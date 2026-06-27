@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.19.36] — 2026-06-27
+
+### Added
+
+- **`serializable = true` object flag → generated state-blob binding (gh-400)**
+    — an object that declares a hand-written C state triplet (sibling to
+    `reset`, no struct knowledge required by jm):
+
+    ```c
+    size_t <c>_state_bytes(const T *);            /* serialized size */
+    void   <c>_get_state(const T *, void *blob);  /* serialize       */
+    int    <c>_set_state(T *, const void *blob);  /* restore (0 ok)  */
+    ```
+
+    now gets the matching Python binding generated for free — the "elastic /
+    pure-transducer" face for snapshotting and resuming an object's mutable
+    state across threads, processes, or pods:
+
+    - `state_bytes() -> int`
+    - `get_state() -> bytes`
+    - `set_state(blob: bytes) -> None` (raises `ValueError` on a size mismatch
+        or a core-rejected blob, `TypeError` on a non-`bytes` argument)
+
+    `make_methods_ctx(serializable=True)` emits the three wrappers into the
+    `_ext.c` method table + the `.pyi`, calling the triplet over `self->handle`.
+    The flag is settable in the manifest (`serializable = "true"`) or via
+    `jm object … --serializable`, persists through `_dump`'s scalar whitelist,
+    and replays idempotently through `jm apply` / `jm status --check` — verified
+    end to end. Off by default, so existing manifests stay byte-identical.
+
 ## [0.19.35] — 2026-06-26
 
 ### Added

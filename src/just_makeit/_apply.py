@@ -114,6 +114,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "no_state": C.is_no_state(cfg, comp),
         "no_step": C.is_no_step(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
+        "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
         "stream_block_default": (

@@ -34,6 +34,7 @@ import re
 import sys
 from pathlib import Path
 
+from . import _config as C
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
@@ -471,6 +472,7 @@ def _build_ctx(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=is_opaque,
+            serializable=C._truthy(parsed.get("serializable")),
         )
     )
     ctx.update(
