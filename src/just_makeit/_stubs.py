@@ -757,6 +757,21 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         )
         lines += ["", header, *_doc]
 
+    # serializable (gh-400): state-blob triplet, sibling to reset. The module
+    # .pyi is assembled here independently of make_methods_ctx's
+    # pyi_extra_methods (which drives the standalone COMPONENT_PYI), so the
+    # triplet must be emitted in both paths to keep the type stub complete.
+    if C.is_serializable(cfg, obj):
+        lines += [
+            "",
+            "    def state_bytes(self) -> int:",
+            '        """Serialized state size in bytes."""',
+            "    def get_state(self) -> bytes:",
+            '        """Serialize the engine\'s mutable state to bytes."""',
+            "    def set_state(self, blob: bytes) -> None:",
+            '        """Restore mutable state from a get_state() blob."""',
+        ]
+
     # properties
     for prop in obj_props:
         p_name = prop["name"]

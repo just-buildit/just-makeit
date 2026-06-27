@@ -19,6 +19,7 @@ from just_makeit._config import (
     load,
     save,
 )
+from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 
@@ -141,3 +142,48 @@ class TestApplyReplay:
         (root / "native/src/osc/osc_ext.c").unlink()
         _silent(apply_run, root)
         assert "osc_state_bytes(self->handle)" in _ext(root)
+
+
+# ── module object: the .pyi is assembled by _stubs, a separate path ───────────
+
+
+class TestModuleObject:
+    """A module object's .pyi comes from _stubs (not COMPONENT_PYI), so the
+    triplet must be emitted there too — else the runtime methods exist but the
+    type stub omits them (the gap fixed alongside doppler's LO/CIC/FIR adoption).
+    """
+
+    def _scaffold_module(self, tmp_path, *, serializable=True):
+        root = tmp_path / "p"
+        _silent(new_run, "p", root)
+        _silent(module_run, root, "sig")
+        _silent(
+            object_run,
+            root,
+            "mix",
+            module="sig",
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+            serializable=serializable,
+        )
+        return root
+
+    def test_module_pyi_has_triplet(self, tmp_path):
+        root = self._scaffold_module(tmp_path)
+        pyi = (root / "src/p/sig/sig.pyi").read_text(encoding="utf-8")
+        assert "def state_bytes(self) -> int:" in pyi
+        assert "def get_state(self) -> bytes:" in pyi
+        assert "def set_state(self, blob: bytes) -> None:" in pyi
+
+    def test_module_fragment_has_triplet(self, tmp_path):
+        root = self._scaffold_module(tmp_path)
+        frag = (root / "native/src/sig/sig_ext_mix.c").read_text(
+            encoding="utf-8"
+        )
+        assert "mix_state_bytes(self->handle)" in frag
+
+    def test_module_pyi_no_triplet_when_off(self, tmp_path):
+        root = self._scaffold_module(tmp_path, serializable=False)
+        pyi = (root / "src/p/sig/sig.pyi").read_text(encoding="utf-8")
+        assert "state_bytes" not in pyi
