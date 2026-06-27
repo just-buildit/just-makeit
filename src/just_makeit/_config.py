@@ -547,6 +547,21 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def is_serializable(cfg: dict, component: str) -> bool:
+    """Return True if the component exposes a serializable-state triplet.
+
+    The C core is assumed to provide (hand-written, sibling to reset):
+
+        size_t <comp>_state_bytes(const <comp>_state_t *);
+        void   <comp>_get_state(const <comp>_state_t *, void *blob);
+        int    <comp>_set_state(<comp>_state_t *, const void *blob);
+
+    jm then generates the Python binding (state_bytes/get_state/set_state) and
+    a uniform round-trip CI test — the "elastic / pure-transducer" face.
+    """
+    return _truthy(cfg.get(component, {}).get("serializable"))
+
+
 def step_delegates(cfg: dict, component: str) -> bool:
     """Return True if step() should be generated as a delegator to steps().
 
