@@ -317,6 +317,46 @@ def transplant_docs(existing: str, reference: str, fallback: str) -> str:
     return out
 
 
+def transplant_state_triplet(
+    existing: str, c_funcs: list[str], pmd_rows: str
+) -> str:
+    """Inject the serializable state triplet into a sacred fragment (gh-404).
+
+    When a `serializable` object's per-object `_ext_<obj>.c` fragment is
+    hand-owned (created once, never regenerated), the `state_bytes`/`get_state`/
+    `set_state` wrappers + ``PyMethodDef`` rows are missing.  Inject them:
+    *c_funcs* (the three wrapper bodies) before the ``static PyMethodDef``
+    array, and *pmd_rows* before the array's ``{NULL}`` sentinel.
+
+    Idempotent: if the array already has a ``"state_bytes"`` entry, return
+    *existing* unchanged.  Hand-written bindings are never touched — only the
+    two insertions are made.  Both *c_funcs*/*pmd_rows* come from
+    :func:`_context._methods.serializable_triplet_parts`, so the injected glue
+    is byte-identical to the regenerate path.
+    """
+    mask = _code_mask(existing)
+    m = _METHODS_RE.search(mask)
+    if not m:
+        return existing
+    open_brace = m.end() - 1
+    close_brace = _match_brace(mask, open_brace)
+    if close_brace == -1:
+        return existing
+    # Idempotent: the triplet row is present iff "state_bytes" appears as an
+    # entry-name string inside the array body (quotes survive in the source).
+    if '"state_bytes"' in existing[open_brace:close_brace]:
+        return existing
+    # Insert rows before the {NULL ...} sentinel (scan the mask so a brace
+    # hidden in a string/comment can't be mistaken for it).
+    sent = re.search(r"\{\s*NULL", mask[open_brace:close_brace])
+    rows_at = open_brace + sent.start() if sent else open_brace + 1
+    funcs_text = "\n\n".join(c_funcs) + "\n\n"
+    # Apply right-to-left so the earlier (funcs) offset stays valid.
+    out = existing[:rows_at] + pmd_rows + existing[rows_at:]
+    out = out[: m.start()] + funcs_text + out[m.start() :]
+    return out
+
+
 def refresh_module_fragment_docs(
     root: Path, cfg: dict, *, only_mod: str | None = None
 ) -> list[Path]:
@@ -353,6 +393,20 @@ def refresh_module_fragment_docs(
             reference = R.render_module_ext_fragment(ctx)
             fb = R.render_module_ext_fragment(fallback[comp])
             updated = transplant_docs(existing, reference, fb)
+            # gh-404: a serializable object whose sacred fragment predates the
+            # flag (or was hand-written) lacks the state triplet — inject it.
+            if C.is_serializable(cfg, comp):
+                from ._context._methods import serializable_triplet_parts
+
+                wp = (
+                    f"{ctx['Component']}Obj"
+                    if C.is_no_state(cfg, comp)
+                    else ctx["Component"]
+                )
+                c_funcs, pmd, _ = serializable_triplet_parts(
+                    comp, ctx["Component"], wp
+                )
+                updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:
                 frag.write_text(updated, encoding="utf-8")
                 changed.append(frag)
