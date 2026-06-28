@@ -558,8 +558,16 @@ def is_serializable(cfg: dict, component: str) -> bool:
 
     jm then generates the Python binding (state_bytes/get_state/set_state) and
     a uniform round-trip CI test — the "elastic / pure-transducer" face.
+
+    Works for both an object (top-level ``cfg[component]``) and a
+    ``kind="handle"`` module (``cfg["module"][component]``, gh-403); the two
+    namespaces never collide, so checking both is unambiguous.
     """
-    return _truthy(cfg.get(component, {}).get("serializable"))
+    if _truthy(cfg.get(component, {}).get("serializable")):
+        return True
+    return _truthy(
+        cfg.get("module", {}).get(component, {}).get("serializable")
+    )
 
 
 def step_delegates(cfg: dict, component: str) -> bool:
@@ -2216,6 +2224,7 @@ def _dump(cfg: dict) -> str:
                     "close_fn",
                     "handle_type",
                     "optional_backend",
+                    "serializable",  # gh-403: state triplet over the handle
                 ):
                     if data.get(_hk):
                         lines.append(f'{_hk} = "{data[_hk]}"')
