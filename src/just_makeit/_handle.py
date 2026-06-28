@@ -900,6 +900,69 @@ static PyObject *
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
         '"close() -> None"},'
     )
+
+    # ── serializable: state-blob triplet over the backing handle (gh-403) ─────
+    # Mirrors the object binding (_context/_methods.py), but over self->h with
+    # the closed guard and the module's `backing` C prefix.  The backing core
+    # must provide the hand-written triplet (size_t <b>_state_bytes(const T*);
+    # void <b>_get_state(const T*, void*); int <b>_set_state(T*, const void*)).
+    state_methods = ""
+    if C.is_serializable(cfg, module):
+        backing = C.handle_backing(cfg, module)
+        guard = (
+            f"    if (self->closed) {{\n"
+            f"        PyErr_SetString(PyExc_RuntimeError,"
+            f' "{tname} is closed");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+        )
+        state_methods = f"""static PyObject *
+{tname}_state_bytes({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+{guard}    return PyLong_FromSize_t({backing}_state_bytes(self->h));
+}}
+
+static PyObject *
+{tname}_get_state({obj} *self, PyObject *Py_UNUSED(ignored))
+{{
+{guard}    size_t _n = {backing}_state_bytes(self->h);
+    PyObject *_b = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)_n);
+    if (!_b)
+        return NULL;
+    {backing}_get_state(self->h, PyBytes_AS_STRING(_b));
+    return _b;
+}}
+
+static PyObject *
+{tname}_set_state({obj} *self, PyObject *arg)
+{{
+{guard}    if (!PyBytes_Check(arg)) {{
+        PyErr_SetString(PyExc_TypeError, "set_state expects bytes");
+        return NULL;
+    }}
+    if ((size_t)PyBytes_GET_SIZE(arg) != {backing}_state_bytes(self->h)) {{
+        PyErr_SetString(PyExc_ValueError, "state blob size mismatch");
+        return NULL;
+    }}
+    if ({backing}_set_state(self->h, PyBytes_AS_STRING(arg)) != 0) {{
+        PyErr_SetString(PyExc_ValueError, "set_state rejected the blob");
+        return NULL;
+    }}
+    Py_RETURN_NONE;
+}}
+"""
+        method_rows.append(
+            f'    {{"state_bytes", (PyCFunction){tname}_state_bytes,'
+            ' METH_NOARGS, "Serialized state size in bytes."},'
+        )
+        method_rows.append(
+            f'    {{"get_state", (PyCFunction){tname}_get_state, METH_NOARGS,'
+            ' "Serialize the handle\'s mutable state to bytes."},'
+        )
+        method_rows.append(
+            f'    {{"set_state", (PyCFunction){tname}_set_state, METH_O,'
+            ' "Restore mutable state from a get_state() blob."},'
+        )
     method_table = "\n".join(method_rows)
 
     return f"""{struct}
@@ -908,7 +971,7 @@ static PyObject *
 {getsets}
 {close}
 {ctx}{dealloc}
-static PyMethodDef {tname}_methods[] = {{
+{state_methods}static PyMethodDef {tname}_methods[] = {{
 {method_table}
 {ctx_rows}    {{NULL, NULL, 0, NULL}}
 }};
@@ -1227,6 +1290,19 @@ def render_pyi(cfg: dict, module: str) -> str:
                 lines.append(
                     f"    def {f['name']}(self, value: {ann}) -> None: ..."
                 )
+
+    # serializable state triplet (gh-403).
+    if C.is_serializable(cfg, module):
+        lines.append("    def state_bytes(self) -> int:")
+        lines.append('        """Serialized state size in bytes."""')
+        lines.append("    def get_state(self) -> bytes:")
+        lines.append(
+            '        """Serialize the handle\'s mutable state to bytes."""'
+        )
+        lines.append("    def set_state(self, blob: bytes) -> None:")
+        lines.append(
+            '        """Restore mutable state from a get_state() blob."""'
+        )
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
