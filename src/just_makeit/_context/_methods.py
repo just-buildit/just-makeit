@@ -261,6 +261,95 @@ def _bench_method_block(component: str, m: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def serializable_triplet_parts(
+    component: str, Component: str, wrapper_prefix: str
+) -> tuple[list[str], str, str]:
+    """The gh-400 state-blob binding for one object, as reusable text.
+
+    Returns ``(c_funcs, pymethoddef_rows, pyi_stubs)``: the three
+    ``state_bytes``/``get_state``/``set_state`` CPython wrapper functions, the
+    three ``PyMethodDef`` rows, and the ``.pyi`` stub block. Shared by the
+    regenerate path (:func:`make_methods_ctx`) and the sacred-fragment
+    transplant (:mod:`_docsync`, gh-404) so both emit byte-identical glue.
+
+    ``wrapper_prefix`` is the Python function-name prefix (e.g. ``FooObj``);
+    the C calls use ``component`` (``foo_state_bytes`` over ``self->handle``).
+    """
+    _W = wrapper_prefix
+    guard = (
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+    c_funcs = [
+        (
+            f"static PyObject *\n"
+            f"{_W}_state_bytes"
+            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n{guard}"
+            f"    return PyLong_FromSize_t("
+            f"{component}_state_bytes(self->handle));\n"
+            f"}}"
+        ),
+        (
+            f"static PyObject *\n"
+            f"{_W}_get_state"
+            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n{guard}"
+            f"    size_t _n = {component}_state_bytes(self->handle);\n"
+            f"    PyObject *_b = PyBytes_FromStringAndSize"
+            f"(NULL, (Py_ssize_t)_n);\n"
+            f"    if (!_b)\n"
+            f"        return NULL;\n"
+            f"    {component}_get_state(self->handle, PyBytes_AS_STRING(_b));\n"
+            f"    return _b;\n"
+            f"}}"
+        ),
+        (
+            f"static PyObject *\n"
+            f"{_W}_set_state({Component}Object *self, PyObject *arg)\n"
+            f"{{\n{guard}"
+            f"    if (!PyBytes_Check(arg)) {{\n"
+            f"        PyErr_SetString(PyExc_TypeError,"
+            f' "set_state expects bytes");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    if ((size_t)PyBytes_GET_SIZE(arg)"
+            f" != {component}_state_bytes(self->handle)) {{\n"
+            f"        PyErr_SetString(PyExc_ValueError,"
+            f' "state blob size mismatch");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    if ({component}_set_state(self->handle,"
+            f" PyBytes_AS_STRING(arg)) != 0) {{\n"
+            f"        PyErr_SetString(PyExc_ValueError,"
+            f' "set_state rejected the blob");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    Py_RETURN_NONE;\n"
+            f"}}"
+        ),
+    ]
+    pmd = (
+        f'    {{"state_bytes", (PyCFunction){_W}_state_bytes, METH_NOARGS,\n'
+        f'     "Serialized state size in bytes."}},\n'
+        f'    {{"get_state", (PyCFunction){_W}_get_state, METH_NOARGS,\n'
+        f'     "Serialize the engine\'s mutable state to bytes."}},\n'
+        f'    {{"set_state", (PyCFunction){_W}_set_state, METH_O,\n'
+        f'     "Restore mutable state from a get_state() blob."}},\n'
+    )
+    pyi = (
+        "    def state_bytes(self) -> int:\n"
+        '        """Serialized state size in bytes."""\n'
+        "    def get_state(self) -> bytes:\n"
+        '        """Serialize the engine\'s mutable state to bytes."""\n'
+        "    def set_state(self, blob: bytes) -> None:\n"
+        '        """Restore mutable state from a get_state() blob."""'
+    )
+    return c_funcs, pmd, pyi
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -1843,68 +1932,12 @@ def make_methods_ctx(
     # <c>_get_state(const T*, void*); int <c>_set_state(T*, const void*)) — the
     # elastic / pure-transducer face, sibling to reset.
     if serializable:
-        _W = wrapper_prefix
-        method_c_parts.append(
-            f"static PyObject *\n"
-            f"{_W}_state_bytes"
-            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
-            f"{{\n{guard}"
-            f"    return PyLong_FromSize_t({component}_state_bytes(self->handle));\n"
-            f"}}"
+        _c_funcs, _pmd, _pyi = serializable_triplet_parts(
+            component, Component, wrapper_prefix
         )
-        method_c_parts.append(
-            f"static PyObject *\n"
-            f"{_W}_get_state"
-            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
-            f"{{\n{guard}"
-            f"    size_t _n = {component}_state_bytes(self->handle);\n"
-            f"    PyObject *_b = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)_n);\n"
-            f"    if (!_b)\n"
-            f"        return NULL;\n"
-            f"    {component}_get_state(self->handle, PyBytes_AS_STRING(_b));\n"
-            f"    return _b;\n"
-            f"}}"
-        )
-        method_c_parts.append(
-            f"static PyObject *\n"
-            f"{_W}_set_state({Component}Object *self, PyObject *arg)\n"
-            f"{{\n{guard}"
-            f"    if (!PyBytes_Check(arg)) {{\n"
-            f"        PyErr_SetString(PyExc_TypeError,"
-            f' "set_state expects bytes");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    if ((size_t)PyBytes_GET_SIZE(arg)"
-            f" != {component}_state_bytes(self->handle)) {{\n"
-            f"        PyErr_SetString(PyExc_ValueError,"
-            f' "state blob size mismatch");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    if ({component}_set_state(self->handle,"
-            f" PyBytes_AS_STRING(arg)) != 0) {{\n"
-            f"        PyErr_SetString(PyExc_ValueError,"
-            f' "set_state rejected the blob");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    Py_RETURN_NONE;\n"
-            f"}}"
-        )
-        pmd_lines.append(
-            f'    {{"state_bytes", (PyCFunction){_W}_state_bytes, METH_NOARGS,\n'
-            f'     "Serialized state size in bytes."}},\n'
-            f'    {{"get_state", (PyCFunction){_W}_get_state, METH_NOARGS,\n'
-            f'     "Serialize the engine\'s mutable state to bytes."}},\n'
-            f'    {{"set_state", (PyCFunction){_W}_set_state, METH_O,\n'
-            f'     "Restore mutable state from a get_state() blob."}},\n'
-        )
-        pyi_lines.append(
-            "    def state_bytes(self) -> int:\n"
-            '        """Serialized state size in bytes."""\n'
-            "    def get_state(self) -> bytes:\n"
-            '        """Serialize the engine\'s mutable state to bytes."""\n'
-            "    def set_state(self, blob: bytes) -> None:\n"
-            '        """Restore mutable state from a get_state() blob."""'
-        )
+        method_c_parts.extend(_c_funcs)
+        pmd_lines.append(_pmd)
+        pyi_lines.append(_pyi)
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
