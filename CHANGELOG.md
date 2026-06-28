@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-27
+
+### Added
+
+- **`serializable = "true"` for `kind="handle"` modules (gh-403)** — the state
+    triplet (`state_bytes()` / `get_state() -> bytes` / `set_state(bytes)`) is
+    now generated for a handle module too, over the opaque handle (`self->h`,
+    closed-guarded) calling the backing core's `<backing>_state_bytes/get_state/
+    set_state`. Byte-identical to the object binding (gh-400), plus the `.pyi`
+    stubs. `is_serializable` now resolves the module namespace
+    (`cfg["module"][name]`) and the handle dumper preserves the flag.
+
+- **`jm apply` transplants the state triplet into sacred fragments (gh-404)** —
+    a `serializable` object whose per-object `<mod>_ext_<obj>.c` fragment is
+    hand-owned (created once, never regenerated) previously had no way to gain
+    the triplet from the flag. The post-sync `_docsync` pass now injects the
+    three wrapper functions + `PyMethodDef` rows into the existing fragment,
+    modeled on the docstring transplant: idempotent (skips when a `state_bytes`
+    entry is present), and hand-written bindings are left byte-for-byte intact.
+    The gh-400 triplet generator is factored into the shared
+    `_context._methods.serializable_triplet_parts`, so the regenerate and
+    transplant paths emit identical glue.
+
+    Together with gh-403, `serializable = "true"` is now the entire Python
+    binding story for **every** object kind — regenerable, handle, and
+    sacred-fragment — so a downstream never hand-writes the triplet.
+
 ## [0.19.37] — 2026-06-27
 
 ### Fixed
