@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-06-29
+
+### Added
+
+- **Ranged numeric composer fields** — a composer source/segment field declared
+    `ranged` accepts a `(lo, hi)` pair in addition to a scalar, and the composer
+    redraws it uniformly at the start of each repeat (epoch). Declare per table:
+
+    ```toml
+    [module.wfm_compose.source]
+    ranged = [{ name = "freq", flag = "WFM_RANGE_FREQ" }, …]
+    [module.wfm_compose.segment]
+    ranged = [{ name = "off_samples", flag = "WFM_RANGE_OFF_SAMPLES" }, …]
+    ```
+
+    The backing struct carries a `<name>_hi` companion and a `ranged` bitmask;
+    jm emits the float-or-`(lo, hi)` parse in the source/segment `tp_init`, a
+    range-aware getset (returns a tuple when the bit is set), the
+    `float | tuple[float, float]` (and `int | tuple[int, int]`) `.pyi`
+    annotation, the OO ⇄ struct copy of the bitmask + companions (so a draw
+    survives `to_json`/`from_json`), and `[lo, hi]` array (de)serialization in
+    the generic SSOT JSON path — so a looped/`continuous` stream can vary
+    Doppler, level, arrival gap, … burst-to-burst, and `--record` round-trips
+    the range. A scalar field is byte-identical to before (the `O` parse and
+    companions are emitted only for declared `ranged` fields).
+
 ## [0.20.0] — 2026-06-27
 
 ### Added
@@ -9,8 +35,7 @@
 - **`serializable = "true"` for `kind="handle"` modules (gh-403)** — the state
     triplet (`state_bytes()` / `get_state() -> bytes` / `set_state(bytes)`) is
     now generated for a handle module too, over the opaque handle (`self->h`,
-    closed-guarded) calling the backing core's `<backing>_state_bytes/get_state/
-    set_state`. Byte-identical to the object binding (gh-400), plus the `.pyi`
+    closed-guarded) calling the backing core's `<backing>_state_bytes/get_state/   set_state`. Byte-identical to the object binding (gh-400), plus the `.pyi`
     stubs. `is_serializable` now resolves the module namespace
     (`cfg["module"][name]`) and the handle dumper preserves the flag.
 
@@ -37,11 +62,11 @@
     follow-up) — a module object's stub is assembled by `_stubs._object_stub`,
     a separate path from `make_methods_ctx`'s `pyi_extra_methods` (which only
     drives the standalone `COMPONENT_PYI`). 0.19.36 emitted the runtime binding
-    + standalone stub but skipped the **module** stub, so a module object's
-    `state_bytes`/`get_state`/`set_state` existed at runtime yet were missing
-    from its type stub. `_stubs` now emits the triplet too, gated on
-    `is_serializable`. Surfaced adopting the flag on doppler's `LO`/`CIC`/`FIR`
-    (module objects under `source`/`resample`/`filter`).
+    - standalone stub but skipped the **module** stub, so a module object's
+        `state_bytes`/`get_state`/`set_state` existed at runtime yet were missing
+        from its type stub. `_stubs` now emits the triplet too, gated on
+        `is_serializable`. Surfaced adopting the flag on doppler's `LO`/`CIC`/`FIR`
+        (module objects under `source`/`resample`/`filter`).
 
 ## [0.19.36] — 2026-06-27
 

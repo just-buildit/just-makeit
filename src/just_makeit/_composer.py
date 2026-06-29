@@ -40,6 +40,8 @@ _FMT = {
 
 
 def _field_fmt(field: dict) -> str:
+    if field.get("_ranged"):
+        return "O"  # scalar or (lo, hi) — decoded post-parse
     if field.get("enum"):
         return "s"
     if field.get("bytes"):
@@ -126,8 +128,83 @@ def render_enum_tables(cfg: dict, module: str) -> str:
 # ── source type (e.g. Synth) ─────────────────────────────────────────────────
 
 
+def _ranged_map(table: dict) -> dict[str, str]:
+    """``{field_name: WFM_RANGE_* flag macro}`` for a composer source/segment
+    ``ranged`` table. A ranged field accepts a ``(lo, hi)`` pair in addition to
+    a scalar; the composer redraws it uniformly each repeat. Declared as
+    ``ranged = [{name = "freq", flag = "WFM_RANGE_FREQ"}, …]`` — the backing
+    struct must carry a ``<name>_hi`` companion and a ``ranged`` flag field."""
+    return {r["name"]: r["flag"] for r in table.get("ranged", [])}
+
+
+def _annotate_ranged(fields: list[dict], rmap: dict[str, str]) -> list[dict]:
+    """Tag each field dict with ``_ranged`` (its flag macro) when rangeable."""
+    return [
+        {**f, "_ranged": rmap[f["name"]]} if f["name"] in rmap else f
+        for f in fields
+    ]
+
+
+def _has_ranged(cfg: dict, module: str) -> bool:
+    """True when any source or segment field is rangeable (so the shared
+    ``_jm_parse_range`` helper is emitted)."""
+    return bool(
+        _ranged_map(C.composer_source(cfg, module))
+        or _ranged_map(C.composer_segment(cfg, module))
+    )
+
+
+# Shared scalar-or-(lo, hi) parser for ranged composer fields. Returns lo/hi as
+# doubles + a flag; the caller casts to the field's C type. A scalar leaves
+# *is_range 0; a 2-sequence (not str/bytes) sets it. Reproducible draws happen
+# in the composer core — this only records the bounds the user passed.
+_RANGE_PARSE_FN = "\n".join(
+    [
+        "static int",
+        "_jm_parse_range(PyObject *o, double *lo, double *hi, int *is_range)",
+        "{",
+        "    if (PySequence_Check(o) && !PyUnicode_Check(o)",
+        "        && !PyBytes_Check(o)) {",
+        "        if (PySequence_Size(o) != 2) {",
+        "            PyErr_SetString(PyExc_ValueError,",
+        '                            "range must be a (low, high) pair");',
+        "            return 0;",
+        "        }",
+        "        PyObject *a = PySequence_GetItem(o, 0);",
+        "        PyObject *b = PySequence_GetItem(o, 1);",
+        "        double dlo = a ? PyFloat_AsDouble(a) : -1.0;",
+        "        double dhi = b ? PyFloat_AsDouble(b) : -1.0;",
+        "        Py_XDECREF(a);",
+        "        Py_XDECREF(b);",
+        "        if (PyErr_Occurred())",
+        "            return 0;",
+        "        *lo = dlo;",
+        "        *hi = dhi;",
+        "        *is_range = 1;",
+        "        return 1;",
+        "    }",
+        "    {",
+        "        double v = PyFloat_AsDouble(o);",
+        "        if (PyErr_Occurred())",
+        "            return 0;",
+        "        *lo = v;",
+        "        *is_range = 0;",
+        "    }",
+        "    return 1;",
+        "}",
+        "",
+    ]
+)
+
+
+def render_range_helper(cfg: dict, module: str) -> str:
+    """Emit the shared ranged-field parser once, when the module uses ranges."""
+    return _RANGE_PARSE_FN if _has_ranged(cfg, module) else ""
+
+
 def _source_fields(cfg: dict, module: str) -> list[dict]:
-    return list(C.composer_source(cfg, module).get("fields", []))
+    tbl = C.composer_source(cfg, module)
+    return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
 
 
 def _source_generates(cfg: dict, module: str) -> dict | None:
@@ -235,7 +312,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             default = f.get("default", "")
             decls.append(f'    const char *{n} = "{default}";')
             addrs.append(f"&{n}")
-        elif f.get("bytes"):
+        elif f.get("bytes") or f.get("_ranged"):
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
@@ -264,6 +341,25 @@ def render_source_type(cfg: dict, module: str) -> str:
         elif f.get("bytes"):
             assign.append(f"""    if (!_attach_bytes(&self->src, {n}))
         return -1;""")
+        elif f.get("_ranged"):
+            flag = f["_ranged"]
+            ct = f["type"]
+            default = f.get("default", "0")
+            assign.append(f"""    if ({n} != NULL) {{
+        double _lo, _hi;
+        int    _r;
+        if (!_jm_parse_range({n}, &_lo, &_hi, &_r))
+            return -1;
+        self->src.{n} = ({ct})_lo;
+        if (_r) {{
+            self->src.{n}_hi = ({ct})_hi;
+            self->src.ranged |= {flag};
+        }} else {{
+            self->src.ranged &= ~(unsigned){flag};
+        }}
+    }} else {{
+        self->src.{n} = ({ct}){default};
+    }}""")
         else:
             assign.append(f"    self->src.{n} = {n};")
     assign_s = "\n".join(assign)
@@ -476,6 +572,41 @@ static int
 {{
     (void)closure;
     return _attach_bytes(&self->src, value) ? 0 : -1;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+        elif f.get("_ranged"):
+            # scalar, or (lo, hi) when the field's ranged bit is set.
+            flag = f["_ranged"]
+            ct = f["type"]
+            to_py = _to_py_scalar(ct, f"self->src.{n}")
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->src.ranged & {flag})
+        return Py_BuildValue("(dd)", (double)self->src.{n},
+                             (double)self->src.{n}_hi);
+    return {to_py};
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    double _lo, _hi;
+    int    _r;
+    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
+        return -1;
+    self->src.{n} = ({ct})_lo;
+    if (_r) {{
+        self->src.{n}_hi = ({ct})_hi;
+        self->src.ranged |= {flag};
+    }} else {{
+        self->src.ranged &= ~(unsigned){flag};
+    }}
+    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -697,7 +828,8 @@ def _from_py_scalar(ctype: str, obj: str) -> str:
 
 
 def _segment_fields(cfg: dict, module: str) -> list[dict]:
-    return list(C.composer_segment(cfg, module).get("fields", []))
+    tbl = C.composer_segment(cfg, module)
+    return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
 
 
 def _segment_flat_fields(cfg: dict, module: str) -> list[dict]:
@@ -746,7 +878,16 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # Segment, so it is forward-declared here.
     tl_tname = C.composer_timeline(cfg, module).get("type_name")
 
+    # Ranged segment fields (e.g. off_samples) carry a <name>_hi companion and
+    # share one `ranged` bitmask — mirroring the backing wfm_segment_t — so a
+    # (lo, hi) draw survives into the built struct and back through from_json.
+    ranged_fields = [f for f in fields if f.get("_ranged")]
     members = "".join(f"    {f['type']} {f['name']};\n" for f in fields)
+    if ranged_fields:
+        members += "    unsigned ranged;\n"
+        members += "".join(
+            f"    {f['type']} {f['name']}_hi;\n" for f in ranged_fields
+        )
     parts: list[str] = []
     # Forward declaration — the `sum` classmethod (emitted before the type
     # definition) allocates via the type object.
@@ -774,24 +915,43 @@ def render_segment_type(cfg: dict, module: str) -> str:
         return "0"
 
     set_defaults = "\n".join(
-        f"    self->{f['name']} = {_default(f)};" for f in fields
+        [f"    self->{f['name']} = {_default(f)};" for f in fields]
+        + (["    self->ranged = 0;"] if ranged_fields else [])
+        + [f"    self->{f['name']}_hi = 0;" for f in ranged_fields]
     )
 
     # extract a segment field from a kwargs dict; *delete* (init) or leave
-    # (sum). Shared body emitted as a macro-free inline block per field.
+    # (sum). Shared body emitted as a macro-free inline block per field. A
+    # ranged field accepts a scalar or a (lo, hi) pair (→ ranged bit + _hi).
     def _extract_block(f, *, delete: bool):
         n, ct = f["name"], f["type"]
-        conv = _from_py_scalar(ct, "_o")
         dele = (
             f'        if (PyDict_DelItemString(kw, "{n}") < 0) goto fail;\n'
             if delete
             else ""
         )
+        if f.get("_ranged"):
+            flag = f["_ranged"]
+            body = (
+                "            double _lo, _hi;\n"
+                "            int    _r;\n"
+                "            if (!_jm_parse_range(_o, &_lo, &_hi, &_r))\n"
+                "                goto fail;\n"
+                f"            self->{n} = ({ct})_lo;\n"
+                f"            if (_r) {{ self->{n}_hi = ({ct})_hi;"
+                f" self->ranged |= {flag}; }}\n"
+                f"            else {{ self->ranged &= ~(unsigned){flag}; }}\n"
+            )
+        else:
+            conv = _from_py_scalar(ct, "_o")
+            body = (
+                f"            self->{n} = {conv};\n"
+                "            if (PyErr_Occurred()) goto fail;\n"
+            )
         return (
             f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
             f"        if (_o) {{\n"
-            f"            self->{n} = {conv};\n"
-            f"            if (PyErr_Occurred()) goto fail;\n"
+            f"{body}"
             f"{dele}        }}\n    }}"
         )
 
@@ -885,6 +1045,41 @@ fail:
     for f in fields:
         n, ct = f["name"], f["type"]
         to_py = _to_py_scalar(ct, f"self->{n}")
+        if f.get("_ranged"):
+            # scalar, or (lo, hi) when the field's ranged bit is set. Segment
+            # ranged fields are integer counts → build/parse via Py_ssize_t.
+            flag = f["_ranged"]
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->ranged & {flag})
+        return Py_BuildValue("(nn)", (Py_ssize_t)self->{n},
+                             (Py_ssize_t)self->{n}_hi);
+    return {to_py};
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    double _lo, _hi;
+    int    _r;
+    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
+        return -1;
+    self->{n} = ({ct})_lo;
+    if (_r) {{
+        self->{n}_hi = ({ct})_hi;
+        self->ranged |= {flag};
+    }} else {{
+        self->ranged &= ~(unsigned){flag};
+    }}
+    return 0;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+            continue
         store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
@@ -1240,12 +1435,45 @@ def render_composer_type(cfg: dict, module: str) -> str:
     segments_fn = f"{backing}_segments"
     destroy_fn = f"{backing}_destroy"
 
-    # segment scalar field copy lines (both directions).
-    fwd = "\n".join(
-        f"        segs[i].{f['name']} = seg->{f['name']};" for f in seg_fields
+    # segment scalar field copy lines (both directions). Ranged segment fields
+    # also carry their `ranged` bitmask + <name>_hi companion across, so a
+    # (lo, hi) draw survives the OO ⇄ struct conversion and from_json round-trip.
+    seg_ranged = [f for f in _segment_fields(cfg, module) if f.get("_ranged")]
+    fwd_extra = (
+        "".join(
+            ["\n        segs[i].ranged = seg->ranged;"]
+            + [
+                f"\n        segs[i].{f['name']}_hi = seg->{f['name']}_hi;"
+                for f in seg_ranged
+            ]
+        )
+        if seg_ranged
+        else ""
     )
-    back = "\n".join(
-        f"        sg->{f['name']} = src[i].{f['name']};" for f in seg_fields
+    back_extra = (
+        "".join(
+            ["\n        sg->ranged = src[i].ranged;"]
+            + [
+                f"\n        sg->{f['name']}_hi = src[i].{f['name']}_hi;"
+                for f in seg_ranged
+            ]
+        )
+        if seg_ranged
+        else ""
+    )
+    fwd = (
+        "\n".join(
+            f"        segs[i].{f['name']} = seg->{f['name']};"
+            for f in seg_fields
+        )
+        + fwd_extra
+    )
+    back = (
+        "\n".join(
+            f"        sg->{f['name']} = src[i].{f['name']};"
+            for f in seg_fields
+        )
+        + back_extra
     )
 
     # JSON faces (gh-287 C2.3): from_json / from_file classmethods + to_json.
@@ -2101,6 +2329,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include "{header}"
 {gen_includes}{json_includes}{rt_includes}{serializer_includes}""",
         render_enum_tables(cfg, module),
+        render_range_helper(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
     ]
@@ -2216,9 +2445,10 @@ def _pyi_field_type(f: dict) -> str:
         return "str"
     if f.get("bytes"):
         return "bytes | None"
-    if f["type"] in ("double", "float"):
-        return "float"
-    return "int"
+    scalar = "float" if f["type"] in ("double", "float") else "int"
+    if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
+        return f"{scalar} | tuple[{scalar}, {scalar}]"
+    return scalar
 
 
 def _pyi_field_sig(fields: list[dict]) -> str:
@@ -2273,8 +2503,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     seg_t = seg["type_name"]
     tl_t = C.composer_timeline(cfg, module).get("type_name")
     cname = oo.get("composer_type_name", "Composer")
-    src_fields = src.get("fields", [])
-    seg_fields = seg.get("fields", [])
+    # Annotated so ranged fields render `float | tuple[float, float]`.
+    src_fields = _source_fields(cfg, module)
+    seg_fields = _segment_fields(cfg, module)
     src_sig = _pyi_field_sig(src_fields)
     seg_scalar_sig = _pyi_field_sig(seg_fields)
     has_stream = bool(C.composer_stream(cfg, module).get("stream"))
@@ -2472,6 +2703,47 @@ def _default_literal(f: dict) -> str:
     return d if d not in (None, "") else "0"
 
 
+def _ser_ranged(jobj: str, cobj: str, name: str, flag: str) -> str:
+    """Generic-JSON serialize for a ranged field: a [lo, hi] array when the
+    field's ranged bit is set, else a plain number."""
+    return (
+        f"        if ({cobj}->ranged & {flag}) {{\n"
+        f'            cJSON *_r = cJSON_AddArrayToObject({jobj}, "{name}");\n'
+        f"            cJSON_AddItemToArray(_r,"
+        f" cJSON_CreateNumber((double){cobj}->{name}));\n"
+        f"            cJSON_AddItemToArray(_r,"
+        f" cJSON_CreateNumber((double){cobj}->{name}_hi));\n"
+        f"        }} else {{\n"
+        f'            cJSON_AddNumberToObject({jobj}, "{name}",'
+        f" (double){cobj}->{name});\n"
+        f"        }}"
+    )
+
+
+def _parse_ranged(
+    jobj: str, cobj: str, name: str, ct: str, flag: str, default: str
+) -> str:
+    """Generic-JSON parse for a ranged field: a two-element [lo, hi] array sets
+    the ranged bit + companion; a scalar (or absence) is the constant."""
+    return (
+        f"        {{\n"
+        f"            const cJSON *_it ="
+        f' cJSON_GetObjectItemCaseSensitive({jobj}, "{name}");\n'
+        f"            if (cJSON_IsArray(_it)"
+        f" && cJSON_GetArraySize(_it) == 2) {{\n"
+        f"                {cobj}->{name} = ({ct})cJSON_GetNumberValue("
+        f"cJSON_GetArrayItem(_it, 0));\n"
+        f"                {cobj}->{name}_hi = ({ct})cJSON_GetNumberValue("
+        f"cJSON_GetArrayItem(_it, 1));\n"
+        f"                {cobj}->ranged |= {flag};\n"
+        f"            }} else {{\n"
+        f'                {cobj}->{name} = ({ct})_json_num({jobj}, "{name}",'
+        f" {default});\n"
+        f"            }}\n"
+        f"        }}"
+    )
+
+
 def render_json_funcs(cfg: dict, module: str) -> str:
     """Emit a GENERIC, SSOT-driven ``to_json`` / ``from_json`` / ``from_file``
     for a composer — no hand-written wire schema, reusable by any composer
@@ -2490,8 +2762,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     oo = C.composer_oo(cfg, module)
     seg_struct = seg["struct"]
     src_struct = src["struct"]
-    seg_fields = list(seg.get("fields", []))
-    src_fields = list(src.get("fields", []))
+    seg_fields = _segment_fields(cfg, module)
+    src_fields = _source_fields(cfg, module)
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
@@ -2516,6 +2788,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             for (size_t bi = 0; bi < src->n_bits; bi++)
                 cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->bits[bi]));
         }}""")
+        elif f.get("_ranged"):
+            src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
         else:
             src_ser.append(
                 f'        cJSON_AddNumberToObject(so, "{n}", '
@@ -2524,8 +2798,12 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_ser_s = "\n".join(src_ser)
 
     seg_ser = "\n".join(
-        f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
-        f"(double)g->{f['name']});"
+        _ser_ranged("sj", "g", f["name"], f["_ranged"])
+        if f.get("_ranged")
+        else (
+            f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
+            f"(double)g->{f['name']});"
+        )
         for f in seg_fields
     )
 
@@ -2556,6 +2834,17 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 src->n_bits = _nb;
             }}
         }}""")
+        elif f.get("_ranged"):
+            src_parse.append(
+                _parse_ranged(
+                    "so",
+                    "src",
+                    n,
+                    f["type"],
+                    f["_ranged"],
+                    _default_literal(f),
+                )
+            )
         else:
             ct = f["type"]
             src_parse.append(
@@ -2565,8 +2854,14 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_parse_s = "\n".join(src_parse)
 
     seg_parse = "\n".join(
-        f'        sg->{f["name"]} = ({f["type"]})_json_num(sj, "{f["name"]}", '
-        f"{_default_literal(f)});"
+        _parse_ranged(
+            "sj", "sg", f["name"], f["type"], f["_ranged"], _default_literal(f)
+        )
+        if f.get("_ranged")
+        else (
+            f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
+            f'"{f["name"]}", {_default_literal(f)});'
+        )
         for f in seg_fields
     )
 
