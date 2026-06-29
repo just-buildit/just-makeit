@@ -1129,9 +1129,9 @@ class TestPyiDocstrings:
 
     def test_factory_docstrings(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
-        assert 'def tone(**kw: Any) -> Synth:' in pyi
+        assert "def tone(**kw: Any) -> Synth:" in pyi
         assert '    """Return a Synth configured as a *tone* source."""' in pyi
-        assert 'def qpsk(**kw: Any) -> Synth:' in pyi
+        assert "def qpsk(**kw: Any) -> Synth:" in pyi
 
     def test_close_docstring(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
@@ -1214,3 +1214,72 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
         timeout=600,
     )
     assert obj.exists()
+
+
+def _ranged_cfg():
+    """A composer cfg with a ranged source field (freq) and a ranged segment
+    field (off_samples) — the (lo, hi) per-repeat uniform-draw interface."""
+    import copy
+
+    cfg = copy.deepcopy(_cfg())
+    mod = cfg["module"]["wfm_compose"]
+    mod["source"]["ranged"] = [{"name": "freq", "flag": "WFM_RANGE_FREQ"}]
+    mod["segment"]["ranged"] = [
+        {"name": "off_samples", "flag": "WFM_RANGE_OFF_SAMPLES"}
+    ]
+    return cfg
+
+
+class TestRangedFields:
+    """A numeric field declared ``ranged`` accepts a scalar or a (lo, hi) pair
+    drawn uniformly each repeat (gh — ranged composer fields)."""
+
+    def test_helper_emitted_only_when_used(self):
+        assert "_jm_parse_range" in _composer.render_range_helper(
+            _ranged_cfg(), "wfm_compose"
+        )
+        assert _composer.render_range_helper(_cfg(), "wfm_compose") == ""
+
+    def test_source_init_parses_range(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        # freq crosses as an object (O) and is decoded post-parse.
+        assert "PyObject *freq = NULL;" in s
+        assert "_jm_parse_range(freq, &_lo, &_hi, &_r)" in s
+        assert "self->src.ranged |= WFM_RANGE_FREQ;" in s
+        assert "self->src.freq_hi = (double)_hi;" in s
+
+    def test_source_getset_round_trips_range(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        assert "if (self->src.ranged & WFM_RANGE_FREQ)" in s
+        assert 'Py_BuildValue("(dd)"' in s
+
+    def test_non_ranged_field_unchanged(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        # seed is a plain uint32 scalar, still parsed directly into the struct.
+        assert "self->src.seed = seed;" in s
+
+    def test_segment_carries_range_companions(self):
+        s = _composer.render_segment_type(_ranged_cfg(), "wfm_compose")
+        assert "unsigned ranged;" in s
+        assert "size_t off_samples_hi;" in s
+        assert "_jm_parse_range(_o, &_lo, &_hi, &_r)" in s
+        assert "self->ranged |= WFM_RANGE_OFF_SAMPLES;" in s
+        assert 'Py_BuildValue("(nn)"' in s
+
+    def test_pyi_uses_union_type(self):
+        pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")
+        assert "freq: float | tuple[float, float]" in pyi
+        assert "off_samples: int | tuple[int, int]" in pyi
+
+    def test_generic_serializer_round_trips_range(self):
+        # The generic SSOT-driven JSON path (no to_json_fn) emits/parses ranged
+        # fields as [lo, hi] arrays — so --record round-trips for any composer.
+        import copy
+
+        cfg = copy.deepcopy(_ranged_cfg())
+        cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+        s = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert "src->ranged & WFM_RANGE_FREQ" in s  # source serialize
+        assert "src->ranged |= WFM_RANGE_FREQ" in s  # source parse
+        assert "g->ranged & WFM_RANGE_OFF_SAMPLES" in s  # segment serialize
+        assert "sg->ranged |= WFM_RANGE_OFF_SAMPLES" in s  # segment parse
