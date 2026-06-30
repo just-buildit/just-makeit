@@ -1,8 +1,8 @@
 /**
  * clib_common.h — common C99 types for /*<<package>>*/.
  */
-#ifndef CLIB_COMMON_H
-#define CLIB_COMMON_H
+#ifndef /*<<PACKAGE>>*/_CLIB_COMMON_H
+#define /*<<PACKAGE>>*/_CLIB_COMMON_H
 
 #include <complex.h>
 #include <stdbool.h>
@@ -11,4 +11,4 @@
 #include <stdlib.h>
 #include <string.h>
 
-#endif /* CLIB_COMMON_H */
+#endif /* /*<<PACKAGE>>*/_CLIB_COMMON_H */

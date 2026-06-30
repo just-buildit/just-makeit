@@ -21,6 +21,14 @@
 
 ### Fixed
 
+- **Scaffolded `clib_common.h` used a non-namespaced include guard.** The guard
+    was the generic `CLIB_COMMON_H`, so a generated package's `clib_common.h`
+    collided with a *dependency's* same-named header (e.g. doppler's): whichever
+    was included first won the guard and the other's body — including its
+    `DP_OK`/error-code defines — was silently skipped, breaking the dependent
+    build (`'DP_OK' undeclared`). The guard is now package-namespaced
+    (`<PACKAGE>_CLIB_COMMON_H`), matching `umbrella.h`. Surfaced by the
+    `nco_tone` static-doppler example.
 - **Ranged numeric composer fields rendered their docstring default quoted.** A
     field with a `float | tuple[float, float]` (or `int | tuple[int, int]`)
     annotation showed a quoted `"0.0"` default in the `.pyi` because the union
