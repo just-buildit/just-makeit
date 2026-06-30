@@ -1271,6 +1271,27 @@ class TestRangedFields:
         assert "freq: float | tuple[float, float]" in pyi
         assert "off_samples: int | tuple[int, int]" in pyi
 
+    def test_pyi_ranged_default_is_unquoted(self):
+        """A ranged numeric field's docstring default is bare (``0.0``), not a
+        quoted string — its union annotation must not trip the string branch."""
+        pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")
+        assert "    freq : float | tuple[float, float], default 0.0" in pyi
+        assert "    off_samples : int | tuple[int, int], default 0" in pyi
+        # the regression: never the quoted form for a numeric field
+        assert 'default ``"0.0"``' not in pyi
+
+    def test_pyi_field_doc_rendered(self):
+        """An optional ``doc =`` on a source/segment field renders as the
+        numpy parameter description line."""
+        import copy
+
+        cfg = copy.deepcopy(_ranged_cfg())
+        for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+            if f["name"] == "freq":
+                f["doc"] = "Carrier frequency in Hz (normalised when fs=1)."
+        pyi = _composer.render_pyi(cfg, "wfm_compose")
+        assert "        Carrier frequency in Hz (normalised when fs=1)." in pyi
+
     def test_generic_serializer_round_trips_range(self):
         # The generic SSOT-driven JSON path (no to_json_fn) emits/parses ranged
         # fields as [lo, hi] arrays — so --record round-trips for any composer.

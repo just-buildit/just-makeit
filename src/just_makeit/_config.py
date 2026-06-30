@@ -808,7 +808,10 @@ def composer_source(cfg: dict, module: str) -> dict:
     ``enum_fields``  ``{field: enum_name}`` — int fields serialized as strings
                      via the ``[[enum]]`` SSOT (gh-285);
     ``extra_fields`` ``[{name, type, default?}, …]`` — scalar add-ons (level, snr);
-    ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``)."""
+    ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``).
+
+    A ``[[….source.fields]]`` entry also accepts an optional ``doc`` string,
+    rendered as the field's numpy-parameter description in the ``.pyi``."""
     return dict(cfg.get("module", {}).get(module, {}).get("source", {}))
 
 
