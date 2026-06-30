@@ -44,9 +44,16 @@ def _field_fmt(field: dict) -> str:
         return "O"  # scalar or (lo, hi) — decoded post-parse
     if field.get("enum"):
         return "s"
-    if field.get("bytes"):
-        return "O"
+    if field.get("bytes") or field.get("complex"):
+        return "O"  # opaque: a bytes buffer / a numpy complex64 array
     return _FMT[field["type"]]
+
+
+def _field_is_buffer(field: dict) -> bool:
+    """An owned heap array crossing as a Python object — a ``bytes`` pattern or
+    a ``complex`` (complex64) stream. Both store ``src-><name>`` /
+    ``src->n_<name>`` and need a free in dealloc."""
+    return bool(field.get("bytes") or field.get("complex"))
 
 
 def _field_is_enum(field: dict) -> bool:
@@ -287,17 +294,22 @@ def render_source_type(cfg: dict, module: str) -> str:
 }} {obj};
 """)
 
-    # dealloc — destroy any built generator, then free the owned bits buffer.
+    # dealloc — destroy any built generator, then free every owned buffer
+    # field (a bytes pattern and/or a complex stream).
     gen_dtor = (
         f"    if (self->_gen) {gen['destroy_fn']}(self->_gen);\n"
         if gen
         else ""
     )
+    free_bufs = "".join(
+        f"    free(self->src.{f['name']});\n"
+        for f in fields
+        if _field_is_buffer(f)
+    )
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-{gen_dtor}    free(self->src.bits);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{gen_dtor}{free_bufs}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
 
@@ -312,7 +324,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             default = f.get("default", "")
             decls.append(f'    const char *{n} = "{default}";')
             addrs.append(f"&{n}")
-        elif f.get("bytes") or f.get("_ranged"):
+        elif _field_is_buffer(f) or f.get("_ranged"):
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
@@ -340,6 +352,9 @@ def render_source_type(cfg: dict, module: str) -> str:
     }}""")
         elif f.get("bytes"):
             assign.append(f"""    if (!_attach_bytes(&self->src, {n}))
+        return -1;""")
+        elif f.get("complex"):
+            assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
         return -1;""")
         elif f.get("_ranged"):
             flag = f["_ranged"]
@@ -498,6 +513,39 @@ def render_source_type(cfg: dict, module: str) -> str:
         parse_fail = "        return -1;"
         parse_ok = ""
 
+    # One _attach_<name> per complex64 stream field — coerce a numpy complex64
+    # array (or None) into an owned src-><name> / src->n_<name>.
+    for f in fields:
+        if not f.get("complex"):
+            continue
+        cn = f["name"]
+        parts.append(f"""/* Copy a numpy complex64 array (or None) into \
+src->{cn} (owned). */
+static int
+_attach_{cn}({struct} *src, PyObject *obj)
+{{
+    free(src->{cn});
+    src->{cn}   = NULL;
+    src->n_{cn} = 0;
+    if (!obj || obj == Py_None)
+        return 1;
+    PyArrayObject *_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_FORCECAST);
+    if (!_arr)
+        return 0;
+    Py_ssize_t _n = PyArray_SIZE(_arr);
+    if (_n <= 0) {{ Py_DECREF(_arr); return 1; }}
+    float _Complex *_buf
+        = (float _Complex *)malloc((size_t)_n * sizeof *_buf);
+    if (!_buf) {{ Py_DECREF(_arr); PyErr_NoMemory(); return 0; }}
+    memcpy(_buf, PyArray_DATA(_arr), (size_t)_n * sizeof *_buf);
+    Py_DECREF(_arr);
+    src->{cn}   = _buf;
+    src->n_{cn} = (size_t)_n;
+    return 1;
+}}
+""")
+
     parts.append(f"""/* {attach_doc} (owned). */
 static int
 _attach_bytes({struct} *src, PyObject *obj)
@@ -572,6 +620,31 @@ static int
 {{
     (void)closure;
     return _attach_bytes(&self->src, value) ? 0 : -1;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+        elif f.get("complex"):
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->src.{n} && self->src.n_{n}) {{
+        npy_intp _d[1] = {{(npy_intp)self->src.n_{n}}};
+        PyObject *_a = PyArray_SimpleNew(1, _d, NPY_COMPLEX64);
+        if (!_a) return NULL;
+        memcpy(PyArray_DATA((PyArrayObject *)_a), self->src.{n},
+               self->src.n_{n} * sizeof(float _Complex));
+        return _a;
+    }}
+    Py_RETURN_NONE;
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    return _attach_{n}(&self->src, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -2442,9 +2515,9 @@ target_include_directories({prog} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
 def _field_is_numeric(f: dict) -> bool:
     """A source/segment field whose value is numeric (a scalar ``float``/``int``
     or a ranged ``… | tuple`` of them) — i.e. anything that is not an enum
-    string or a ``bytes`` buffer. Used to decide whether a docstring default is
-    rendered bare (``0.0``) or quoted (``"tone"``)."""
-    return not f.get("enum") and not f.get("bytes")
+    string, a ``bytes`` buffer, or a ``complex`` stream. Used to decide whether
+    a docstring default is rendered bare (``0.0``) or quoted (``"tone"``)."""
+    return not f.get("enum") and not f.get("bytes") and not f.get("complex")
 
 
 def _pyi_field_type(f: dict) -> str:
@@ -2453,6 +2526,8 @@ def _pyi_field_type(f: dict) -> str:
         return "str"
     if f.get("bytes"):
         return "bytes | None"
+    if f.get("complex"):
+        return "NDArray[np.complex64] | None"
     scalar = "float" if f["type"] in ("double", "float") else "int"
     if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
         return f"{scalar} | tuple[{scalar}, {scalar}]"
@@ -2487,7 +2562,7 @@ def _pyi_doc_lines(
                 type_line += f", default {dv}"
             else:
                 type_line += f', default ``"{dv}"``'
-        elif f.get("bytes"):
+        elif f.get("bytes") or f.get("complex"):
             type_line += ", default None"
         out.append(type_line)
         # Optional per-field description (manifest ``doc =``), then — for an
@@ -2790,6 +2865,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_ser = []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
             src_ser.append(
@@ -2825,6 +2902,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_parse = []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
             src_parse.append(f"""        {{
@@ -3106,6 +3185,8 @@ def render_cli(cfg: dict, module: str) -> str:
     decls, parse, assign = [], [], []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams can't cross a generated CLI flag
         if f.get("enum"):
             decls.append(f'    const char *{n} = "{f.get("default", "")}";')
             parse.append(
