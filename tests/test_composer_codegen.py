@@ -576,6 +576,55 @@ class TestBitPatternCoercion:
         assert "PyUnicode_Check" not in s
 
 
+def _complex_cfg():
+    """_cfg() with a complex64 stream field (symbols) alongside bits."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["fields"].append(
+        {"name": "symbols", "type": "float _Complex*", "complex": True}
+    )
+    return cfg
+
+
+class TestComplexField:
+    """A ``complex = true`` source/segment field accepts a numpy complex64
+    array, stored as an owned src-><name> / src->n_<name> pair."""
+
+    def test_attach_helper_emitted(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "_attach_symbols(wfm_source_t *src, PyObject *obj)" in s
+        assert "PyArray_FROM_OTF(" in s and "NPY_COMPLEX64" in s
+        assert "NPY_ARRAY_FORCECAST" in s  # accept complex128 too
+        assert "src->symbols   = _buf;" in s
+        assert "src->n_symbols = (size_t)_n;" in s
+
+    def test_init_attaches_and_dealloc_frees(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "if (!_attach_symbols(&self->src, symbols))" in s
+        # dealloc frees every owned buffer — bits AND symbols
+        assert "free(self->src.bits);" in s
+        assert "free(self->src.symbols);" in s
+
+    def test_getset_returns_complex64_array(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "Synth_get_symbols(SynthObject *self, void *closure)" in s
+        assert "PyArray_SimpleNew(1, _d, NPY_COMPLEX64)" in s
+        assert "return _attach_symbols(&self->src, value) ? 0 : -1;" in s
+
+    def test_pyi_annotation(self):
+        pyi = _composer.render_pyi(_complex_cfg(), "wfm_compose")
+        assert "symbols: NDArray[np.complex64] | None" in pyi
+        assert "symbols : NDArray[np.complex64] | None, default None" in pyi
+
+    def test_complex_skipped_in_generic_json(self):
+        """A complex field is omitted from the generic cJSON serializer (it
+        crosses via the OO getset / a to_json_fn, not generic JSON)."""
+        cfg = _complex_cfg()
+        # force the generic JSON path (no to_json_fn)
+        cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+        funcs = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert '"symbols"' not in funcs
+
+
 def _stream_cfg():
     """_cfg() with the composer declaring a generated ``stream()`` (feature 3)."""
     cfg = _cfg()

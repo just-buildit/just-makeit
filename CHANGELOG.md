@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-06-30
+
+### Added
+
+- **Complex-array composer input field** — a `[[module.X.source.fields]]` /
+    `[[….segment.fields]]` entry with `complex = true` (C type `float _Complex*`)
+    takes a numpy **complex64** array, stored as an owned `src-><name>` /
+    `src->n_<name>` pair. It is the complex analog of a `bytes` field: jm
+    generates an `_attach_<name>` coercion (`PyArray_FROM_OTF` with
+    `NPY_ARRAY_FORCECAST`, so complex128 is accepted), the `tp_init` attach, a
+    getset returning a fresh complex64 array, and the dealloc free.
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "symbols"
+    type = "float _Complex*"
+    complex = true
+    ```
+
+    The dealloc now frees **every** owned buffer field (bytes and/or complex),
+    not just `bits`. Complex fields are excluded from the generic cJSON
+    serializer / generated CLI (they cross via the getset or a `to_json_fn`);
+    `.pyi` annotates them `NDArray[np.complex64] | None`.
+
 ## [0.22.0] — 2026-06-30
 
 ### Added

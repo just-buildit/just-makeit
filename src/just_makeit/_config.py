@@ -811,7 +811,11 @@ def composer_source(cfg: dict, module: str) -> dict:
     ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``).
 
     A ``[[….source.fields]]`` entry also accepts an optional ``doc`` string,
-    rendered as the field's numpy-parameter description in the ``.pyi``."""
+    rendered as the field's numpy-parameter description in the ``.pyi``. A field
+    with ``complex = true`` (C type ``float _Complex*``) takes a numpy complex64
+    array, stored as an owned ``src-><name>`` / ``src->n_<name>`` pair — the
+    complex analog of a ``bytes`` field (excluded from the generic JSON/CLI; it
+    crosses via the getset or a ``to_json_fn``)."""
     return dict(cfg.get("module", {}).get(module, {}).get("source", {}))
 
 
