@@ -2439,6 +2439,14 @@ target_include_directories({prog} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
 """
 
 
+def _field_is_numeric(f: dict) -> bool:
+    """A source/segment field whose value is numeric (a scalar ``float``/``int``
+    or a ranged ``… | tuple`` of them) — i.e. anything that is not an enum
+    string or a ``bytes`` buffer. Used to decide whether a docstring default is
+    rendered bare (``0.0``) or quoted (``"tone"``)."""
+    return not f.get("enum") and not f.get("bytes")
+
+
 def _pyi_field_type(f: dict) -> str:
     """The ``.pyi`` annotation type for a source/segment field."""
     if f.get("enum"):
@@ -2473,13 +2481,19 @@ def _pyi_doc_lines(
         type_line = f"    {f['name']} : {ann}"
         if "default" in f:
             dv = f["default"]
-            if ann in ("float", "int"):
+            # A numeric field (incl. a ranged ``float | tuple[float, float]``)
+            # renders its default bare; only string/enum defaults are quoted.
+            if _field_is_numeric(f):
                 type_line += f", default {dv}"
             else:
                 type_line += f', default ``"{dv}"``'
         elif f.get("bytes"):
             type_line += ", default None"
         out.append(type_line)
+        # Optional per-field description (manifest ``doc =``), then — for an
+        # enum field — its choice list.
+        if f.get("doc"):
+            out.append(f"        {f['doc']}")
         if f.get("enum"):
             choices = enum_reg.get(f["enum"], [])
             if choices:

@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-30
+
+### Added
+
+- **Per-field docstrings in the composer `.pyi`** — a `[[module.X.source.fields]]`
+    or `[[….segment.fields]]` entry now accepts an optional `doc` string, rendered
+    as that parameter's numpy description line in the generated source/segment
+    class docstring (alongside the existing default + enum-choice rendering):
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "level"
+    type = "double"
+    default = "0.0"
+    doc = "Source power in dBFS (<=0); only applies when summed in a Segment."
+    ```
+
+### Fixed
+
+- **Ranged numeric composer fields rendered their docstring default quoted.** A
+    field with a `float | tuple[float, float]` (or `int | tuple[int, int]`)
+    annotation showed a quoted `"0.0"` default in the `.pyi` because the union
+    type missed the bare `("float", "int")` numeric check — plain scalars
+    rendered an unquoted `0.0`. Numeric fields (scalar or ranged) now always
+    render a bare default; only enum/string defaults stay quoted.
+
 ## [0.21.0] — 2026-06-29
 
 ### Added
