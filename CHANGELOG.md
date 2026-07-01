@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-01
+
+### Fixed
+
+- **Keyword arguments for `variable_output` methods with named params
+    (gh-412).** A `variable_output` method declared with `arg_type="void"` +
+    `params` (e.g. doppler's `Farrow.delay(x, mu)`) generated a positional-only
+    `METH_VARARGS` binding, so `obj.delay(x, mu=0.3)` raised `TypeError` even
+    though its generated `.pyi` advertised `mu` as a keyword. Keyword parsing is
+    now **decoupled from the `out=` buffer feature** (they were conflated in one
+    predicate): such a method emits `PyArg_ParseTupleAndKeywords` with a kwlist
+    built from the param names and `METH_VARARGS | METH_KEYWORDS`, matching both
+    the stub and the fixed-output path. The `.pyi` is unchanged — it was already
+    keyword-shaped, so only the binding becomes truthful. Positional calls still
+    work; the method still gets no `out=` buffer (that stays arg-only).
+
 ## [0.23.0] — 2026-06-30
 
 ### Added
