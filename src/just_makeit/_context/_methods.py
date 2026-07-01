@@ -904,6 +904,13 @@ def make_methods_ctx(
         # with blockwise steps(x, out=).  Multi-output and multi-param execute
         # keep their positional-only signatures for now.
         _enable_out = variable_output and not multi_output and not has_params
+        # gh-412: keyword parsing is independent of the `out=` buffer feature.
+        # A variable_output method with named params (e.g. Farrow.delay(x, mu))
+        # is positional-OR-keyword — matching its `.pyi` and the fixed-output
+        # path — even though it gets no `out=` buffer. Previously such methods
+        # fell through to a positional-only PyArg_ParseTuple, so `delay(x,
+        # mu=0.3)` raised TypeError despite the stub advertising the keyword.
+        _enable_kw = _enable_out or (variable_output and has_params)
         if variable_output:
             if has_arg:
                 if _enable_out:
@@ -997,9 +1004,15 @@ def make_methods_ctx(
                         if _first_scalar is None:
                             _first_scalar = _pn
                 _cd_parts.append(f"self->_{name}_buf")
+                # gh-412: positional-OR-keyword (kwlist from the param names),
+                # so `obj.method(x, mu=…)` works and matches the .pyi.
+                _kwnames = "".join(f'"{_p["name"]}", ' for _p in params)
                 parse_block = (
-                    "\n".join(_pb_lines) + "\n"
-                    f'    if (!PyArg_ParseTuple(args, "{_fmt}", '
+                    f"    static char *_kwlist[] = {{{_kwnames}NULL}};\n"
+                    + "\n".join(_pb_lines) + "\n"
+                    + f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, '
+                    + f'"{_fmt}",\n'
+                    + "            _kwlist, "
                     + ", ".join(_fmt_args)
                     + "))\n"
                     "        return NULL;\n"
@@ -1246,7 +1259,14 @@ def make_methods_ctx(
                     )
                 else:
                     _out_branch = ""
-                    _vo_sig = f"({Component}Object *self, PyObject *args)\n"
+                    # gh-412: params methods still take kwds (keyword parsing)
+                    # even without the out= buffer branch.
+                    _vo_sig = (
+                        f"({Component}Object *self,"
+                        f" PyObject *args, PyObject *kwds)\n"
+                        if _enable_kw
+                        else f"({Component}Object *self, PyObject *args)\n"
+                    )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
@@ -1311,7 +1331,7 @@ def make_methods_ctx(
             ]
             _vo_flags = (
                 "METH_VARARGS | METH_KEYWORDS"
-                if _enable_out
+                if _enable_kw
                 else "METH_VARARGS"
             )
             pmd_lines.append(

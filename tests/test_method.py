@@ -517,6 +517,53 @@ class TestMethodOutKwarg:
         assert '"execute_cf32_max_out"' not in ext
 
 
+class TestVariableOutputParamsKeywords:
+    """gh-412: a variable_output method with named params is positional-OR-
+    keyword (kwlist built from the param names), matching its `.pyi`. It gets
+    no `out=` buffer, but keyword parsing is independent of that feature —
+    previously such a method fell through to a positional-only
+    PyArg_ParseTuple, so `obj.delay(x, mu=0.3)` raised TypeError."""
+
+    def _ext(self, project):
+        # Farrow.delay-shaped: variable_output, an array input + a scalar.
+        method_run(
+            project,
+            "nco",
+            "delay",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]"), ("mu", "double")],
+        )
+        return (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_binding_is_keyword_capable(self, project):
+        ext = self._ext(project)
+        assert "METH_VARARGS | METH_KEYWORDS" in ext
+        assert "PyArg_ParseTupleAndKeywords(args, kwds," in ext
+        assert '{"x", "mu", NULL}' in ext
+        # positional-only parse must be gone for this method
+        assert 'PyArg_ParseTuple(args, "Od"' not in ext
+
+    def test_wrapper_signature_takes_kwds(self, project):
+        ext = self._ext(project)
+        assert (
+            "Nco_delay(NcoObject *self, PyObject *args, PyObject *kwds)"
+            in ext
+        )
+
+    def test_no_out_buffer_kwarg(self, project):
+        # keyword-capable, but a params method still gets no `out=` feature:
+        # no `<verb>_max_out()` sibling is exposed for delay (that marks the
+        # gh-219 out= buffer path, which a params method does not take).
+        ext = self._ext(project)
+        assert '"delay_max_out"' not in ext
+
+
 class TestMethodDeferredFree:
     """gh-219: the default zero-copy path must be use-after-free safe. On grow
     the old buffer is retired to a freelist (malloc-new, never
