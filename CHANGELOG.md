@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-07-01
+
+### Added
+
+- **`kind="handle"`: a `string` arg + a handle-length array-out method shape.**
+    Two cohesive additions unlock *"construct from a spec string, evaluate at
+    parameter points, get a sized array"* handle objects (doppler's `Plan`
+    stimulus engine is the first customer):
+    - **`type = "string"`** — usable in `create_args` and `methods.args`; parses
+        a Python `str` via `"s"` to a borrowed `const char *` (like `path`, but an
+        in-memory string, not an fspath — the `create_fn`/method must consume it
+        before returning). Renders `.pyi` as `str`.
+    - **`out_len_fn` array-out shape** — a method that returns an array, takes no
+        input array, and declares `out_len_fn` sizes its output from
+        `out_len_fn(self->h)` (the handle), not from an argument: it allocates an
+        independent numpy-owned array of that length, parses its declared args
+        (scalars and/or one `string`, safe-width via each type's `parse_type`),
+        calls `fn(self->h, args…, out)`, and trims to the returned count. Serves
+        both `render(overrides_json) -> cf32[]` and a scalar fast-path
+        `at(snr, seed) -> cf32[]`. Positional (`METH_VARARGS`); honours `nogil`.
+
 ## [0.24.0] — 2026-07-01
 
 ### Fixed
