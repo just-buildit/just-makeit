@@ -883,3 +883,91 @@ class TestMethodKwargs:
             '{"track_clipping", (PyCFunction)W_track_clipping, '
             "METH_VARARGS | METH_KEYWORDS, NULL}" in s
         )
+
+
+# ── string create-arg + handle-length array-out (gh: wfm_plan feature) ────────
+#
+# A Plan-like handle: constructed from a JSON spec STRING, exposing render(json)
+# and a scalar fast-path at(snr, seed), both returning a cf32 array whose length
+# comes from the handle via out_len_fn (not from an arg). Exercises F1 (a
+# `string` create/method arg) and F2 (the `out_len_fn` array-out method shape).
+
+
+def _plan_cfg():
+    return {
+        "project": {"name": "doppler", "version": "0.1.0"},
+        "module": {
+            "wfm_plan": {
+                "kind": "handle",
+                "backing": "wfm_plan",
+                "package": "wfm",
+                "header": "wfm/wfm_plan.h",
+                "type_name": "Plan",
+                "context_manager": True,
+                "close_fn": "wfm_plan_destroy",
+                "create_fn": "wfm_plan_prepare",
+                "create_args": [{"name": "spec_json", "type": "string"}],
+                "methods": [
+                    {
+                        "name": "render",
+                        "fn": "wfm_plan_render",
+                        "returns": "float _Complex[]",
+                        "out_len_fn": "wfm_plan_len",
+                        "nogil": True,
+                        "args": [{"name": "overrides_json", "type": "string"}],
+                    },
+                    {
+                        "name": "at",
+                        "fn": "wfm_plan_at",
+                        "returns": "float _Complex[]",
+                        "out_len_fn": "wfm_plan_len",
+                        "nogil": True,
+                        "args": [
+                            {"name": "snr", "type": "double"},
+                            {"name": "seed", "type": "uint64_t"},
+                        ],
+                    },
+                ],
+            }
+        },
+    }
+
+
+class TestStringArgAndLenArray:
+    def test_string_create_arg_parses_as_s(self):
+        s = _handle.render_ext(_plan_cfg(), "wfm_plan")
+        # F1: the JSON spec crosses as a borrowed const char * via "s".
+        assert "const char *spec_json = NULL;" in s
+        assert '"s"' in s  # the tp_init format string carries the string arg
+        assert "wfm_plan_prepare(spec_json)" in s
+
+    def test_render_string_in_len_out(self):
+        m = _plan_cfg()["module"]["wfm_plan"]["methods"][0]
+        s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
+        # F2: string arg parsed, output sized from the handle, trimmed, nogil.
+        assert 'PyArg_ParseTuple(args, "s", &overrides_json)' in s
+        assert "PyArray_SimpleNew(1, &_n, NPY_COMPLEX64)" in s
+        assert "wfm_plan_len(self->h)" in s
+        assert "wfm_plan_render(self->h, overrides_json, _out)" in s
+        assert "Py_BEGIN_ALLOW_THREADS" in s
+        assert "/* trim */" in s
+
+    def test_at_scalar_fast_path_safe_width(self):
+        m = _plan_cfg()["module"]["wfm_plan"]["methods"][1]
+        s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
+        # safe-width parse: uint64_t via unsigned long long _raw + cast; "dK".
+        assert 'PyArg_ParseTuple(args, "dK", &snr_raw, &seed_raw)' in s
+        assert "unsigned long long seed_raw = 0;" in s
+        assert "wfm_plan_at(self->h, snr_raw, (uint64_t)seed_raw, _out)" in s
+
+    def test_len_out_method_is_positional(self):
+        # shape (e) registers as plain METH_VARARGS (no keywords).
+        s = _handle.render_ext(_plan_cfg(), "wfm_plan")
+        assert '{"render", (PyCFunction)Plan_render, METH_VARARGS, NULL}' in s
+        assert '{"at", (PyCFunction)Plan_at, METH_VARARGS, NULL}' in s
+
+    def test_pyi_annotations(self):
+        pyi = _handle.render_pyi(_plan_cfg(), "wfm_plan")
+        assert "def __init__(self, spec_json: str) -> None: ..." in pyi
+        assert "def render(self, overrides_json: str) -> NDArray[Any]:" in pyi
+        assert "def at(self, snr: float, seed: int) -> NDArray[Any]:" in pyi

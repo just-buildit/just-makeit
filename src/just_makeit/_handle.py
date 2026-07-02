@@ -111,8 +111,8 @@ def _stash_inits(cfg: dict, module: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for a in C.handle_create_args(cfg, module):
         n = a["name"]
-        if a.get("type") == "path":
-            continue
+        if a.get("type") in ("path", "string"):
+            continue  # not a stashable scalar
         if f"self->{n}" in exprs:
             ctype = "int" if a.get("enum") else a["type"]
             out.append((n, ctype))
@@ -127,6 +127,11 @@ def _arg_decl(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return "    " + _coerce.path_decl(n)
+    if a.get("type") == "string":
+        # A borrowed const char * from PyArg "s" (NUL-terminated UTF-8). Like a
+        # path but NOT an fspath — an in-memory string (e.g. a JSON spec). The
+        # create_fn MUST copy/consume it before returning (borrowed, gh-219).
+        return f"    const char *{n} = NULL;"
     if a.get("enum"):
         default = a.get("default", "")
         return f'    const char *{n} = "{default}";'
@@ -138,7 +143,7 @@ def _arg_fmt(a: dict) -> str:
     """PyArg_ParseTupleAndKeywords format char for one create-arg."""
     if a.get("type") == "path":
         return _coerce.path_fmt()
-    if a.get("enum"):
+    if a.get("enum") or a.get("type") == "string":
         return "s"
     return _scalar_fmt(a["type"])
 
@@ -398,6 +403,55 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     }}"""
 
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+
+    # (e) scalar/string args → HANDLE-length array-out. When a method returns an
+    # array, takes no input array, and declares `out_len_fn`, the output length
+    # comes from the handle (not from an arg): allocate `out_len_fn(self->h)`,
+    # parse the declared args (scalars and/or a `string`), call
+    # `fn(self->h, args…, out)`, and trim to the returned count (an independent
+    # numpy-owned array — gh-219). Serves both `render(overrides_json)->cf32[]`
+    # (one string arg) and the scalar fast-path `at(snr, seed)->cf32[]`.
+    # Positional (METH_VARARGS) — _method_kwargs() returns False for it.
+    out_len_fn = m.get("out_len_fn")
+    if returns and str(returns).endswith("[]") and not array_in and out_len_fn:
+        out_elem, out_npy = _array_elem_npy(returns)
+        decls, fmt_parts, addrs, calls = "", [], [], []
+        for a in margs:
+            an = a["name"]
+            if a.get("type") == "string":
+                decls += f"    const char *{an} = NULL;\n"
+                fmt_parts.append("s")
+                addrs.append(f"&{an}")
+                calls.append(an)
+            else:
+                meta = T._CTYPE_META[a["type"]]
+                pt = meta.get("parse_type", a["type"])  # safe-width parse target
+                to_c = meta.get("to_c")
+                decls += f"    {pt} {an}_raw = 0;\n"
+                fmt_parts.append(meta["fmt"])
+                addrs.append(f"&{an}_raw")
+                calls.append(to_c(an) if to_c else f"{an}_raw")
+        parse = (
+            f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
+            f'{", ".join(addrs)}))\n        return NULL;\n'
+            if margs
+            else "    (void)args;\n"
+        )
+        call_args = "".join(f", {c}" for c in calls)
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args)
+{{
+{decls}{parse}{closed_guard}
+    npy_intp _n = (npy_intp){out_len_fn}(self->h);
+    PyObject *arr = PyArray_SimpleNew(1, &_n, {out_npy});
+    if (!arr) return NULL;
+    {out_elem} *_out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
+    size_t _got;
+{gil_open}    _got = {fn}(self->h{call_args}, _out);
+{gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)_got; /* trim */
+    return arr;
+}}
+"""
 
     # (c) int-in → array-out: an array return with a single integer arg.
     if returns and str(returns).endswith("[]") and not array_in:
@@ -1112,8 +1166,8 @@ def _pyi_scalar(ctype: str) -> str:
 
 
 def _pyi_arg_ann(a: dict) -> str:
-    """Python annotation for a handle create_arg (path, enum, or scalar)."""
-    if a.get("type") == "path":
+    """Python annotation for a handle create_arg (path, string, enum, scalar)."""
+    if a.get("type") in ("path", "string"):
         return "str"
     if a.get("enum"):
         return "str"
@@ -1231,6 +1285,15 @@ def render_pyi(cfg: dict, module: str) -> str:
             sig = "self, x: NDArray[Any], out: NDArray[Any]"
             ann = "NDArray[Any]"
             doc_call = f"{name}(x, out)"
+        elif ret_arr and not arrays and m.get("out_len_fn"):
+            # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
+            sig = "self, " + ", ".join(
+                f"{a['name']}: "
+                + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
+                for a in margs
+            )
+            ann = "NDArray[Any]"
+            doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
         elif ret_arr and not arrays:
             # (c) read(n) -> ndarray
             sig = "self, n: int"
