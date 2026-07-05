@@ -529,6 +529,18 @@ def make_methods_ctx(
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
+        # gh-219 follow-up: a method's primary array input is sometimes
+        # declared as the sole entry in `params` (arg_type="void" +
+        # params=[{array}]) rather than via `arg_type` directly -- doppler's
+        # universal idiom for this shape. That's functionally the same as
+        # `has_arg` for the purposes of the optional `out=` buffer feature;
+        # only genuine *extra* params (e.g. Farrow.delay(x, mu)) should stay
+        # ineligible (gh-412 kept those positional-or-keyword, no `out=`).
+        _single_array_param = (
+            not has_arg
+            and len(params) == 1
+            and is_array_param_type(params[0]["type"])
+        )
         if has_arg:
             _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
             # gh-139: a block method's input is `const <elem> *in`. Use the
@@ -903,7 +915,9 @@ def make_methods_ctx(
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
         # with blockwise steps(x, out=).  Multi-output and multi-param execute
         # keep their positional-only signatures for now.
-        _enable_out = variable_output and not multi_output and not has_params
+        _enable_out = variable_output and not multi_output and (
+            not has_params or _single_array_param
+        )
         # gh-412: keyword parsing is independent of the `out=` buffer feature.
         # A variable_output method with named params (e.g. Farrow.delay(x, mu))
         # is positional-OR-keyword — matching its `.pyi` and the fixed-output
@@ -1007,6 +1021,17 @@ def make_methods_ctx(
                 # gh-412: positional-OR-keyword (kwlist from the param names),
                 # so `obj.method(x, mu=…)` works and matches the .pyi.
                 _kwnames = "".join(f'"{_p["name"]}", ' for _p in params)
+                if _enable_out:
+                    # gh-219 follow-up: the single-array-param case is
+                    # otherwise identical to the has_arg out= branch below —
+                    # extend the same optional out= kwarg. _fmt is exactly
+                    # "O" here (one required array param, nothing else, by
+                    # the _single_array_param definition), so "|O" makes
+                    # `out` the first optional argument.
+                    _pb_lines.append("    PyObject *out_obj = NULL;")
+                    _fmt += "|O"
+                    _fmt_args.append("&out_obj")
+                    _kwnames += '"out", '
                 parse_block = (
                     f"    static char *_kwlist[] = {{{_kwnames}NULL}};\n"
                     + "\n".join(_pb_lines) + "\n"
@@ -1918,8 +1943,12 @@ def make_methods_ctx(
         else:
             ret_ann = _pyi_scalar(return_type)
         # gh-219: single-output variable_output methods take an optional
-        # `out=` buffer and expose a <verb>_max_out() sibling.
-        _stub_enable_out = m_var and not m_multi and not params
+        # `out=` buffer and expose a <verb>_max_out() sibling. A
+        # single-array-param method (params=[{array}], no other params) is
+        # eligible too -- see _single_array_param above.
+        _stub_enable_out = m_var and not m_multi and (
+            not params or _single_array_param
+        )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)

@@ -585,6 +585,95 @@ class TestVariableOutputParamsKeywords:
         assert '"delay_max_out"' not in ext
 
 
+class TestVariableOutputSingleArrayParam:
+    """gh-219 follow-up: a variable_output method whose primary array input
+    is declared via `params=[{array}]` (arg_type="void", one array param,
+    nothing else -- doppler's universal idiom for this shape, e.g.
+    Despreader.steps(x)/BurstDemod.demod(x)/Specan.execute(x)) is otherwise
+    identical to the bare-arg_type case for the purposes of `out=`. Before
+    this fix, `has_params` blanket-excluded it, so `out=` never reached any
+    real doppler object using this idiom."""
+
+    def _ext(self, project, name="steps"):
+        method_run(
+            project,
+            "nco",
+            name,
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]")],
+        )
+        return (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_gets_out_kwarg(self, project):
+        ext = self._ext(project)
+        assert '"x", "out", NULL' in ext
+        assert '"O|O"' in ext
+        assert "PyObject *out_obj = NULL;" in ext
+
+    def test_out_branch_present_with_max_of_max_out_and_call_size(
+        self, project
+    ):
+        ext = self._ext(project)
+        assert "if (out_obj && out_obj != Py_None) {" in ext
+        assert "nco_steps_max_out(self->handle)" in ext
+        assert "size_t _min_cap = _omax > (size_t)PyArray_SIZE(x_arr)" in ext
+        assert "if (_cap < _min_cap) {" in ext
+
+    def test_max_out_method_exposed(self, project):
+        ext = self._ext(project)
+        assert '"steps_max_out"' in ext
+        assert "PyLong_FromSize_t(" in ext
+
+    def test_pyi_has_out_param_and_max_out(self, project):
+        self._ext(project)
+        pyi = (project / "src" / "dsp" / "nco.pyi").read_text(
+            encoding="utf-8"
+        )
+        assert "out:" in pyi and "| None = None" in pyi
+        assert "def steps_max_out(self) -> int:" in pyi
+
+    def test_returned_view_pinned_to_callers_array(self, project):
+        ext = self._ext(project)
+        assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
+        assert "(PyObject *)out_arr)" in ext
+
+    def test_genuine_multi_param_method_still_excluded(self, project):
+        # Farrow.delay-shaped (x + mu): must NOT gain out= just because this
+        # fix touched the has_params branch it also uses.
+        method_run(
+            project,
+            "nco",
+            "delay",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]"), ("mu", "double")],
+        )
+        ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"delay_max_out"' not in ext
+        # the delay-specific kwlist (2 params) stays as-is; the assertion
+        # must be scoped to it -- nco's *default* scaffolded steps()/
+        # execute() blockwise method separately has its own unrelated
+        # {"x", "out", NULL} kwlist (gh-222's fixed 1:1 case) in this same
+        # file, so a bare substring check would false-fail here.
+        assert '_kwlist[] = {"x", "mu", NULL}' in ext
+        assert '_kwlist[] = {"x", "mu", "out", NULL}' not in ext
+
+    def test_no_placeholders(self, project):
+        self._ext(project)
+        _check_no_placeholders(project)
+
+
 class TestMethodDeferredFree:
     """gh-219: the default zero-copy path must be use-after-free safe. On grow
     the old buffer is retired to a freelist (malloc-new, never
