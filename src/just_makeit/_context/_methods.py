@@ -1230,11 +1230,22 @@ def make_methods_ctx(
                         f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                         f"        size_t _omax ="
                         f" {component}_{name}_max_out(self->handle);\n"
-                        f"        if (_cap < _omax) {{\n"
+                        # gh-219 follow-up: max_out() alone is not always a
+                        # true call-independent upper bound — some kernels
+                        # (e.g. a generator's steps(count)) write exactly the
+                        # caller's requested size, which can exceed max_out.
+                        # Require capacity for whichever is larger, mirroring
+                        # the internal buffer-growth path's own fallback
+                        # (`if (!_max || _max < _need) _max = _need;`) so the
+                        # two paths agree instead of the out= path silently
+                        # under-validating and overflowing the caller's array.
+                        f"        size_t _min_cap = _omax > {_lazy_fallback}"
+                        f" ? _omax : ({_lazy_fallback});\n"
+                        f"        if (_cap < _min_cap) {{\n"
                         f"            PyErr_Format(PyExc_ValueError,\n"
                         f'                "out has %zu elements,'
-                        f' need >= %zu ({name}_max_out)",\n'
-                        f"                _cap, _omax);\n"
+                        f' need >= %zu",\n'
+                        f"                _cap, _min_cap);\n"
                         f"            Py_DECREF(out_arr);"
                         f" {_decref_early_vo}return NULL;\n"
                         f"        }}\n"
