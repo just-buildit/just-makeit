@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`variable_output` `out=` validation ignored the caller-requested size
+    (gh-219 follow-up).** The generated check was `_cap < _omax` (the
+    object's `*_max_out(state)` hint) alone — `max_out()` is not always a
+    true call-independent upper bound (a generator's `steps(count)` writes
+    exactly `count` samples, which can exceed `max_out()`), so an undersized
+    `out=` buffer passed validation and then overflowed in the kernel call.
+    Now requires capacity for `max(max_out(), <caller's requested size>)`,
+    mirroring the internal buffer-growth path's own fallback.
+
 ## [0.25.0] — 2026-07-01
 
 ### Added
