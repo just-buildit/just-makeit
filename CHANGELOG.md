@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.26.0] — 2026-07-05
+
+### Added
+
+- **`out=` for `variable_output` methods with a single array param
+    (gh-219 follow-up).** `has_params = bool(params)` blanket-excluded any
+    `variable_output` method from the `out=` buffer feature whenever its
+    array input was declared via `params=[{array}]` (`arg_type="void"`)
+    rather than bare `arg_type=<T>` — the idiom a `variable_output` method
+    uses when its array input needs a name other than the generic `x`
+    (or simply follows the `params`-declaration style consistently with a
+    project's other methods). A method with exactly one array-typed param
+    and nothing else is now eligible for `out=` and `<name>_max_out()`,
+    exactly like the bare-`arg_type` case. A genuine multi-param method
+    (e.g. `delay(x, mu)`, gh-412) stays correctly excluded — only a single,
+    sole array param qualifies.
+
 ## [0.25.1] — 2026-07-05
 
 ### Fixed
