@@ -66,18 +66,37 @@ def _scaffold_with_execute(dest: Path, nogil: bool):
 
 # ── (a) nogil generates the GIL-released kernel call ─────────────────────────
 def test_nogil_generates_allow_threads(tmp_path):
+    # gh-219 follow-up: _EXEC_METHOD's single-array-param shape is now
+    # out=-eligible, so this fragment has TWO nogil-wrapped kernel-call
+    # sites: the out= branch's (no realloc needed -- it writes into the
+    # caller's buffer directly) and the default path's (realloc-before-nogil
+    # for the internal grow-on-demand buffer). Check both independently
+    # rather than assuming there's only one.
     frag = _scaffold_with_execute(tmp_path / "p", nogil=True)
-    assert "Py_BEGIN_ALLOW_THREADS" in frag
-    assert "Py_END_ALLOW_THREADS" in frag
-    # numpy accessors are hoisted BEFORE the block...
-    b = frag.index("Py_BEGIN_ALLOW_THREADS")
-    e = frag.index("Py_END_ALLOW_THREADS")
-    assert frag.index("_ng0") < b
-    # ...and nothing Python-C-API runs while the GIL is dropped.
-    assert "PyArray_" not in frag[b:e]
-    assert "Py_" not in frag[b + len("Py_BEGIN_ALLOW_THREADS") : e]
-    # the realloc / error path stays above the block (under the GIL).
-    assert frag.index("realloc(") < b
+    assert frag.count("Py_BEGIN_ALLOW_THREADS") == 2
+    assert frag.count("Py_END_ALLOW_THREADS") == 2
+    begins = [
+        i
+        for i in range(len(frag))
+        if frag.startswith("Py_BEGIN_ALLOW_THREADS", i)
+    ]
+    ends = [
+        i for i in range(len(frag)) if frag.startswith("Py_END_ALLOW_THREADS", i)
+    ]
+    out_b, default_b = begins
+    out_e, default_e = ends
+    assert out_b < out_e < default_b < default_e
+    # nothing Python-C-API runs while the GIL is dropped, in either block.
+    for b, e in ((out_b, out_e), (default_b, default_e)):
+        assert "PyArray_" not in frag[b:e]
+        assert "Py_" not in frag[b + len("Py_BEGIN_ALLOW_THREADS") : e]
+    # numpy accessors are hoisted BEFORE the default block...
+    assert frag.index("_ng0") < default_b
+    # ...and its realloc / error path stays above it (under the GIL).
+    assert frag.index("realloc(") < default_b
+    # the out= branch is genuinely zero-alloc: no realloc between its own
+    # begin/end markers (it validates+writes into the caller's buffer).
+    assert "realloc(" not in frag[out_b:out_e]
 
 
 # ── (b) without nogil the binding is unchanged (no regression) ───────────────
