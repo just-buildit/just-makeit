@@ -489,6 +489,27 @@ class TestMethodOutKwarg:
         assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
         assert "(PyObject *)out_arr)" in ext
 
+    def test_out_validation_requires_max_of_max_out_and_call_size(self, project):
+        """Follow-up to gh-219: `max_out()` is not always a true
+        call-independent upper bound — a generator's `steps(count)` writes
+        exactly `count` samples, which can exceed `max_out()`. Validating
+        `out` against `max_out()` alone (no `max(max_out(), count)`) let an
+        undersized `out=` buffer pass validation and then overflow in the
+        kernel call. Both call shapes that reach the out= branch (an array
+        arg, and a void-arg/no-params generator with an implicit `count`)
+        must require capacity for whichever is larger."""
+        ext = self._add(project, arg="float _Complex")
+        assert "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);" in ext
+        assert "if (_cap < _min_cap) {" in ext
+        assert "_cap, _min_cap);" in ext
+
+        gen_ext = self._add(project, name="steps_ctrl", arg="void")
+        assert (
+            "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);"
+            in gen_ext
+        )
+        assert "if (_cap < _min_cap) {" in gen_ext
+
     def test_max_out_method_exposed(self, project):
         ext = self._add(project, arg="void")
         assert '{"execute_cf32_max_out"' in ext
