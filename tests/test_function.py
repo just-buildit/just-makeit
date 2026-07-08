@@ -1228,8 +1228,12 @@ class TestVariableOutputArraySignature:
             multi_output=[],
         )
         pyi = (root / "src/blk/dsp/dsp.pyi").read_text(encoding="utf-8")
+        # gh-423: this shape (bare arg_type, variable_output, no params, no
+        # multi_output) is also `out=`-eligible (gh-219), so the module
+        # aggregator's stub carries the optional `out=` buffer param.
         assert (
-            "def execute(self, x: NDArray[np.complex64])"
+            "def execute(self, x: NDArray[np.complex64],"
+            " out: NDArray[np.complex64] | None = None)"
             " -> NDArray[np.complex64]:" in pyi
         )
         assert "x: complex" not in pyi
