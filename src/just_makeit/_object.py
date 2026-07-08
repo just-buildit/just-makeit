@@ -1048,9 +1048,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     _write(init_path, merged, "update" if existed else "create")
 
     # Type stubs — regenerated in full every time the module changes.
+    pyi_path = pkg_module_dir / f"{mp.leaf}.pyi"
+    old_pyi = pyi_path.read_text(encoding="utf-8") if pyi_path.exists() else ""
+    new_pyi = S.make_module_pyi(cfg, module, root)
+    # gh-428: preserve any manual_stub method's hand-written text across
+    # the otherwise-blind regen above.
     _write(
-        pkg_module_dir / f"{mp.leaf}.pyi",
-        S.make_module_pyi(cfg, module, root),
+        pyi_path,
+        S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
         "update",
     )
 

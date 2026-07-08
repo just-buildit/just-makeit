@@ -1906,6 +1906,7 @@ _KNOWN_METHOD_KEYS = frozenset(
         "arg_type",
         "return_type",
         "varargs",
+        "manual_stub",
         "variable_output",
         "pass_capacity",
         "nogil",
@@ -2474,6 +2475,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'return_type = "{m["return_type"]}"')
             if m.get("varargs"):
                 lines.append("varargs = true")
+            if m.get("manual_stub"):
+                lines.append("manual_stub = true")
             if m.get("variable_output"):
                 lines.append("variable_output = true")
             if m.get("pass_capacity"):

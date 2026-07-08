@@ -22,6 +22,7 @@ doctests:  ``python -m doctest -v src/<pkg>/<module>/<module>.pyi``
 
 from __future__ import annotations
 
+import ast
 import re as _re
 
 from . import _config as C
@@ -112,6 +113,119 @@ def _np(ctype: str) -> str:
 
 def _title(name: str) -> str:
     return "".join(w.title() for w in name.split("_"))
+
+
+# ── manual_stub splice engine (gh-428) ──────────────────────────────────────
+#
+# A `manual_stub = true` method's C binding is entirely hand-owned (spliced
+# directly into a sacred `_ext_<obj>_extra.c` fragment jm never created), so
+# jm's .pyi codegen only ever knows to emit a generic placeholder for it. This
+# mirrors `_status.py::_pyi_symbols` (gh-426) -- a .pyi is valid Python, so
+# `ast.parse` gives exact method text for free -- but extracts source text
+# instead of just names, then splices the old hand-written text back over the
+# freshly rendered placeholder, the same way `_object.py`'s
+# `_extract_c_function_bodies`/`_restore_c_function_bodies` preserve `_ext.c`
+# function bodies by name across regen.
+
+
+def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
+    """Absolute (start, end) character offsets for *node* within *text*.
+
+    ``ast``'s ``col_offset``/``end_col_offset`` are UTF-8 *byte* offsets
+    within their line, not character offsets -- a non-ASCII character
+    earlier on the line (e.g. an em dash in a docstring) throws off a naive
+    character-index computation, silently swallowing or duplicating text
+    after it. Each line's byte column is re-decoded back to a character
+    column before combining with the (character-based) line start offset.
+    """
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+
+    def _char_offset(lineno: int, byte_col: int) -> int:
+        line = lines[lineno - 1]
+        char_col = len(line.encode("utf-8")[:byte_col].decode("utf-8"))
+        return starts[lineno - 1] + char_col
+
+    return (
+        _char_offset(node.lineno, node.col_offset),
+        _char_offset(node.end_lineno, node.end_col_offset),
+    )
+
+
+def _pyi_method_bodies(text: str) -> dict[tuple[str, str], str]:
+    """Map ``(ClassName, method_name) -> exact source text`` for every method
+    def in a `.pyi` source. Best-effort: unparsable text yields an empty map
+    rather than raising."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return {}
+    bodies: dict[tuple[str, str], str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                start, end = _node_span(text, item)
+                bodies[(node.name, item.name)] = text[start:end]
+    return bodies
+
+
+def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
+    """``{(ClassName, method_name)}`` for every ``manual_stub = true`` entry
+    declared anywhere in the manifest (standalone or module object)."""
+    pairs: set[tuple[str, str]] = set()
+    for comp in C.components(cfg):
+        Component = C.class_name(cfg, comp) or _title(comp)
+        for m in C.methods(cfg, comp):
+            if m.get("manual_stub"):
+                pairs.add((Component, m["name"]))
+    return pairs
+
+
+def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
+    """Replace freshly rendered ``manual_stub`` placeholders in *new_text*
+    with the verbatim hand-written bodies found in *old_text*.
+
+    Only a ``(ClassName, method_name)`` pair that is BOTH flagged
+    ``manual_stub`` in the manifest AND already present in *old_text*
+    is replaced -- a first-ever apply (no prior body) or a renamed
+    method/component (no matching old body) leaves the freshly rendered
+    placeholder as-is, same limitation the `_ext.c` splicer already accepts
+    for renames.
+    """
+    pairs = _manual_stub_pairs(cfg)
+    if not pairs:
+        return new_text
+    old_bodies = _pyi_method_bodies(old_text)
+    if not old_bodies:
+        return new_text
+    try:
+        tree = ast.parse(new_text)
+    except SyntaxError:
+        return new_text
+    replacements: list[tuple[int, int, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for item in node.body:
+            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            key = (node.name, item.name)
+            if key not in pairs or key not in old_bodies:
+                continue
+            start, end = _node_span(new_text, item)
+            replacements.append((start, end, old_bodies[key]))
+    if not replacements:
+        return new_text
+    # Back-to-front so earlier offsets stay valid across replacements.
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    out = new_text
+    for start, end, body in replacements:
+        out = out[:start] + body + out[end:]
+    return out
 
 
 _ARRAY_RE = _re.compile(r"^([\w\s_]+)\[(\d+)\]$")
@@ -690,6 +804,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f'        """{_va_doc}"""',
             ]
             continue
+        if m.get("manual_stub"):
+            lines += [
+                "",
+                f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
+                '        """<<MANUAL_STUB>> hand-write this signature/'
+                "docstring in the .pyi — jm preserves it verbatim on"
+                ' future regens."""',
+            ]
+            continue
         m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg = m.get("arg_type", "void")
@@ -899,10 +1022,11 @@ def _fn_stub(fn: dict, block=None) -> str:
 
 
 def _uses_any(cfg: dict, module: str) -> bool:
-    """Return True if any object in this module has a varargs method."""
+    """True if any object in this module has a varargs/manual_stub method
+    (gh-428) — both render a ``(*args: Any, **kwargs: Any) -> Any`` stub."""
     for obj in C.module_objects(cfg, module):
         for m in C.methods(cfg, obj):
-            if m.get("varargs"):
+            if m.get("varargs") or m.get("manual_stub"):
                 return True
     return False
 
