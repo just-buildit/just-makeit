@@ -163,13 +163,20 @@ Commands:
   status [OPTIONS]              Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
                                 the manifest (stale). Your _core.c is never
-                                touched. Exits 1 on non-allowed drift.
+                                touched. Exits 1 on non-allowed drift. A stale
+                                .pyi with a class/method/function that has zero
+                                manifest trace and would vanish on regen is
+                                additionally reported as DROPPED — never
+                                suppressed by --allow / status_allow (gh-426).
     --allow PATH                Treat PATH (exact or fnmatch glob) as a known
                                 deviation: reported but not counted. Repeatable;
-                                combines with [project] status_allow.
-    --json                      Emit a structured report ({path, state, allowed}).
+                                combines with [project] status_allow. Does not
+                                suppress a DROPPED symbol on that path.
+    --json                      Emit a structured report ({path, state, allowed,
+                                dropped_symbols}).
     --diff                      Print a unified diff per stale file.
-    --check                     One-line summary only (exit code still set).
+    --check                     One-line summary only (exit code still set);
+                                DROPPED entries still print in full.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
