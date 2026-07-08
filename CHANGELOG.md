@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.27.0] — 2026-07-08
+
+### Added
+
+- **`manual_stub = true` preserves hand-written `.pyi` methods across
+    regen (gh-428).** gh-426 found that jm's `.pyi` generators are pure
+    functions of the manifest: a hand-written method stub with zero
+    manifest declaration (e.g. a CPython overload spliced directly into a
+    sacred `_ext_<obj>_extra.c` fragment) silently vanished on every
+    `jm apply`. A `[[obj.methods]]` entry can now set `manual_stub = true`
+    (or `jm method ... --manual-stub`): jm emits no C-side declaration for
+    it — the binding is already hand-owned — and only a placeholder `.pyi`
+    entry, which a new `ast`-based splice engine preserves verbatim across
+    every regen path, including `jm apply`'s own reconciliation step.
+
 ## [0.26.1] — 2026-07-08
 
 ### Fixed
