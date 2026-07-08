@@ -25,6 +25,9 @@ def run(args: list[str]) -> None:
     pass_capacity = False
     nogil = False
     varargs = False
+    manual_stub = False
+    arg_type_explicit = False
+    return_type_explicit = False
     single = False
     record_name = ""
     record_module = ""
@@ -66,6 +69,12 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--varargs":
             varargs = True
+            i += 1
+        elif tok == "--manual-stub":
+            # gh-428: the method's C binding already lives, hand-written, in
+            # a sacred _ext_<obj>_extra.c fragment -- jm declares nothing for
+            # it and only preserves its .pyi placeholder verbatim on regen.
+            manual_stub = True
             i += 1
         elif tok == "--single":
             # gh-244: with --result-field, return ONE named record
@@ -285,8 +294,10 @@ def run(args: list[str]) -> None:
             # method; validate it post-loop (once --result-field is known).
             if tok == "--arg-type":
                 arg_type = val
+                arg_type_explicit = True
             else:
                 return_type = val
+                return_type_explicit = True
             i += 1
         elif tok == "--py-return-type":
             i += 1
@@ -342,6 +353,25 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
+    # with any flag that drives jm's own C-side codegen is nonsensical --
+    # silently ignoring the extra flag would be a footgun.
+    if manual_stub and (
+        arg_type_explicit
+        or return_type_explicit
+        or variable_output
+        or method_params
+        or multi_output
+    ):
+        print(
+            "error: --manual-stub cannot be combined with --arg-type, "
+            "--return-type, --variable-output, --param/--extra-arg, or "
+            "--multi-output -- its C binding is hand-written and jm emits "
+            "nothing for it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     impl_body_m: str | None = None
     if impl_spec_m is not None:
         from . import _impl as _I
@@ -369,6 +399,7 @@ def run(args: list[str]) -> None:
         record_name=record_name,
         record_module=record_module,
         varargs=varargs,
+        manual_stub=manual_stub,
         pass_capacity=pass_capacity,
         nogil=nogil,
         doc=doc,

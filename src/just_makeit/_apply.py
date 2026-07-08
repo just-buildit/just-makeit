@@ -33,6 +33,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _stubs as S
 from ._init import _to_title
 
 
@@ -390,6 +391,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 py_return_type=m.get("py_return_type", ""),
                 max_out=int(m.get("max_out", 0)),
                 varargs=bool(m.get("varargs")),
+                manual_stub=bool(m.get("manual_stub")),
                 pass_capacity=bool(m.get("pass_capacity")),
                 nogil=bool(m.get("nogil")),
                 doc=m.get("doc", ""),
@@ -712,13 +714,32 @@ def _merge_module_init_file(
     return False
 
 
-def _overwrite_if_changed(real: Path, temp: Path) -> bool:
-    """Overwrite *real* with *temp*'s bytes if they differ."""
+def _overwrite_if_changed(
+    real: Path, temp: Path, cfg: dict | None = None
+) -> bool:
+    """Overwrite *real* with *temp*'s bytes if they differ.
+
+    For a ``.pyi`` target, *cfg* (if given) is used to splice any
+    manual_stub method's hand-written text from *real* back over the
+    freshly rendered placeholder in *temp* before comparing (gh-428) —
+    without this, this reconcile step is exactly what silently clobbers a
+    hand-written manual_stub stub on every plain `jm apply`.
+    """
     if not real.exists() or not temp.exists():
         return False
-    if real.read_bytes() == temp.read_bytes():
+    new_bytes = temp.read_bytes()
+    if cfg is not None and real.suffix == ".pyi":
+        try:
+            new_bytes = S._splice_manual_stub_bodies(
+                cfg,
+                real.read_text(encoding="utf-8"),
+                new_bytes.decode("utf-8"),
+            ).encode("utf-8")
+        except UnicodeDecodeError:
+            pass
+    if real.read_bytes() == new_bytes:
         return False
-    real.write_bytes(temp.read_bytes())
+    real.write_bytes(new_bytes)
     return True
 
 
@@ -1001,7 +1022,7 @@ def _sync_aggregates(
             ).get("enabled"):
                 glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
             for rel in glue:
-                if _overwrite_if_changed(root / rel, temp_root / rel):
+                if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
                     updated.append(root / rel)
             continue
         # Nested-module forms: cname (flat native dir), pypath (nested Python
@@ -1029,7 +1050,7 @@ def _sync_aggregates(
             f"native/src/{mp.cname}/CMakeLists.txt",
             f"src/{pkg}/{mp.pypath}/{mp.leaf}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel):
+            if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
                 updated.append(root / rel)
         # Module function bodies live in their own sacred <fn>.c (create-only
         # via _sync_missing), so <mod>_core.c is just the include scaffold —
@@ -1095,7 +1116,7 @@ def _sync_aggregates(
             f"native/src/{comp}/CMakeLists.txt",
             f"src/{pkg}/{comp}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel):
+            if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
                 updated.append(root / rel)
         # _core.h is a hybrid: the inline step() body and the state struct
         # are sacred; the function declarations are glue. Apply injects any

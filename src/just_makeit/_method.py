@@ -24,6 +24,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
@@ -543,6 +544,7 @@ def run(
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
+    manual_stub: bool = False,
     pass_capacity: bool = False,
     nogil: bool = False,
     doc: str = "",
@@ -598,7 +600,13 @@ def run(
 
     # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
-    if varargs:
+    if manual_stub:
+        # manual_stub (gh-428): the C binding already exists, hand-written,
+        # inside the user's already-sacred _ext_<obj>_extra.c fragment -- jm
+        # never created it and must declare nothing for it (unlike varargs,
+        # which owns and creates a fresh <comp>_<name>_core.c stub file).
+        pass
+    elif varargs:
         # Varargs methods live in a sacred per-method file compiled into the
         # Python extension DSO (not the pure-C OBJECT lib) so they can use
         # Python.h.  No _core.c or _core.h changes needed.
@@ -668,7 +676,7 @@ def run(
     # Varargs methods have no typed C prototype — their binding is Python-aware
     # and lives in the sacred binding .c file, not _core.h.
     proto_lines: list[str] = []
-    if not varargs:
+    if not varargs and not manual_stub:
         proto_lines = _build_method_prototype(
             object_name,
             method_name,
@@ -728,6 +736,8 @@ def run(
         method_entry["doc"] = doc
     if varargs:
         method_entry["varargs"] = True
+    if manual_stub:
+        method_entry["manual_stub"] = True
     if params:
         # gh-240: a 3-tuple param carries an optional `default`; persist it so a
         # defaulted scalar round-trips and renders as an optional kwarg.
@@ -898,7 +908,14 @@ def run(
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
         if pyi_path.exists():
-            pyi_path.write_text(r(R.COMPONENT_PYI), encoding="utf-8")
+            old_pyi = pyi_path.read_text(encoding="utf-8")
+            new_pyi = r(R.COMPONENT_PYI)
+            # gh-428: preserve any manual_stub method's hand-written text
+            # across the otherwise-blind regen above.
+            pyi_path.write_text(
+                S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+                encoding="utf-8",
+            )
             print(f"  update  {pyi_path}")
         # Surgical splice: when a varargs binding file was just added,
         # insert it into the Python3_add_library line in CMakeLists.txt.

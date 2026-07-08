@@ -471,6 +471,19 @@ def make_methods_ctx(
             )
             continue
 
+        # ── manual_stub method (hand-written C binding, jm emits nothing
+        # C-side; only a placeholder .pyi entry the splice engine preserves
+        # verbatim across regen — gh-428) ─────────────────────────────────
+        if m.get("manual_stub"):
+            pyi_lines.append(
+                f"    def {name}(self, *args: Any, **kwargs: Any)"
+                f" -> Any:\n"
+                f'        """<<MANUAL_STUB>> hand-write this signature/'
+                f"docstring in the .pyi — jm preserves it verbatim on"
+                f' future regens."""\n'
+            )
+            continue
+
         arg_type: str = m.get("arg_type", "void")
         return_type: str = m.get("return_type", "float _Complex")
         variable_output: bool = m.get("variable_output", False)

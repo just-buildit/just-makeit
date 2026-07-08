@@ -21,6 +21,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from ._init import (
     _make_component_ctx,
     _to_title,
@@ -723,7 +724,14 @@ def _regenerate_object_bindings(
         print(f"  update  {ext_c}")
     pyi = root / "src" / pkg / f"{obj}.pyi"
     if pyi.exists():
-        pyi.write_text(R.render(R.COMPONENT_PYI, ctx), encoding="utf-8")
+        old_pyi = pyi.read_text(encoding="utf-8")
+        new_pyi = R.render(R.COMPONENT_PYI, ctx)
+        # gh-428: preserve a sibling manual_stub method's hand-written text
+        # across the regen triggered by removing a different method/property.
+        pyi.write_text(
+            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+            encoding="utf-8",
+        )
         print(f"  update  {pyi}")
     bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
     if bench_c.exists():
