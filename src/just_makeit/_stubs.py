@@ -740,6 +740,21 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             ret_ann = _py(m_ret)
 
+        # gh-423: mirror make_methods_ctx's _enable_out/_single_array_param
+        # (gh-219) here -- this loop is a separate stub generator for the
+        # module-aggregated .pyi and was never taught the out=/_max_out()
+        # shape, so it kept emitting the pre-#219 signature after that fix.
+        _m_single_array_param = (
+            m_arg == "void"
+            and len(m_params) == 1
+            and m_params[0]["type"].endswith("[]")
+        )
+        _stub_enable_out = (
+            m_var and not m_multi and (not m_params or _m_single_array_param)
+        )
+        if _stub_enable_out:
+            param_parts.append(f"out: {ret_ann} | None = None")
+
         sig = ", ".join(param_parts)
         # (name, annotation) for the Python-facing args, for the doc builder.
         _py_params: list[tuple[str, str]] = []
@@ -756,6 +771,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else f"    def {m_name}(self) -> {ret_ann}:"
         )
         lines += ["", header, *_doc]
+        if _stub_enable_out:
+            lines += [
+                "",
+                f"    def {m_name}_max_out(self) -> int:",
+                f'        """Max output length {m_name}() can produce'
+                f' for the current state."""',
+            ]
 
     # serializable (gh-400): state-blob triplet, sibling to reset. The module
     # .pyi is assembled here independently of make_methods_ctx's

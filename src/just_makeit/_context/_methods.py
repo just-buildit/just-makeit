@@ -915,8 +915,10 @@ def make_methods_ctx(
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
         # with blockwise steps(x, out=).  Multi-output and multi-param execute
         # keep their positional-only signatures for now.
-        _enable_out = variable_output and not multi_output and (
-            not has_params or _single_array_param
+        _enable_out = (
+            variable_output
+            and not multi_output
+            and (not has_params or _single_array_param)
         )
         # gh-412: keyword parsing is independent of the `out=` buffer feature.
         # A variable_output method with named params (e.g. Farrow.delay(x, mu))
@@ -970,7 +972,6 @@ def make_methods_ctx(
                 _fmt = ""
                 _fmt_args: list[str] = []
                 _first_arr: str | None = None
-                _first_scalar: str | None = None
                 for _p in params:
                     _pn = _p["name"]
                     _pt = _p["type"]
@@ -1015,8 +1016,6 @@ def make_methods_ctx(
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
-                        if _first_scalar is None:
-                            _first_scalar = _pn
                 _cd_parts.append(f"self->_{name}_buf")
                 # gh-412: positional-OR-keyword (kwlist from the param names),
                 # so `obj.method(x, mu=…)` works and matches the .pyi.
@@ -1034,8 +1033,9 @@ def make_methods_ctx(
                     _kwnames += '"out", '
                 parse_block = (
                     f"    static char *_kwlist[] = {{{_kwnames}NULL}};\n"
-                    + "\n".join(_pb_lines) + "\n"
-                    + f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, '
+                    + "\n".join(_pb_lines)
+                    + "\n"
+                    + "    if (!PyArg_ParseTupleAndKeywords(args, kwds, "
                     + f'"{_fmt}",\n'
                     + "            _kwlist, "
                     + ", ".join(_fmt_args)
@@ -1065,12 +1065,16 @@ def make_methods_ctx(
                 )
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
+                # gh-421: with no array param to size from, a scalar param
+                # (e.g. Delay.push_ptr(x), where x is the value being pushed,
+                # not a count) has no "count" semantics jm can derive from its
+                # raw value -- casting it as one silently mis-sizes the
+                # buffer. Fall back to the method's own <name>_max_out(),
+                # always available per the standard variable_output triplet.
                 _lazy_fallback = (
                     f"(size_t)PyArray_SIZE({_first_arr}_arr)"
                     if _first_arr is not None
-                    else f"(size_t){_first_scalar}"
-                    if _first_scalar is not None
-                    else "1"
+                    else f"{component}_{name}_max_out(self->handle)"
                 )
             else:
                 if _enable_out:
@@ -1946,8 +1950,8 @@ def make_methods_ctx(
         # `out=` buffer and expose a <verb>_max_out() sibling. A
         # single-array-param method (params=[{array}], no other params) is
         # eligible too -- see _single_array_param above.
-        _stub_enable_out = m_var and not m_multi and (
-            not params or _single_array_param
+        _stub_enable_out = (
+            m_var and not m_multi and (not params or _single_array_param)
         )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
