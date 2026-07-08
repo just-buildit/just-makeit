@@ -15,6 +15,19 @@
     entry, which a new `ast`-based splice engine preserves verbatim across
     every regen path, including `jm apply`'s own reconciliation step.
 
+### Fixed
+
+- **`jm status` silently missed a hand-written `.pyi` symbol vanishing
+    with no manifest trace (gh-426).** Since `.pyi` generators are pure
+    functions of the manifest, a class/method/function present on disk but
+    undeclared anywhere in `just-makeit.toml` disappeared on the next
+    `apply` with no signal beyond routine-looking STALE drift. `status`
+    now `ast.parse`s the before/after `.pyi` text on every stale file and
+    reports a dedicated **DROPPED** section for any symbol that vanishes —
+    printed even under `--check`, included in `--json`, and never
+    suppressed by `--allow`/`status_allow` since it's real content loss,
+    not routine drift.
+
 ## [0.26.1] — 2026-07-08
 
 ### Fixed
