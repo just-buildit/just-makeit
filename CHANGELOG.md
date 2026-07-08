@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.26.1] — 2026-07-08
+
+### Fixed
+
+- **Module-aggregated `.pyi` stub missing `out=`/`<name>_max_out()` for
+    `variable_output` methods (gh-423).** `_stubs.py`'s `make_module_pyi`
+    (used for `--module` objects) is a separate stub generator from
+    `_context/_methods.py`'s per-object context builder (used for standalone
+    objects) and never learned the gh-219 `out=`/`<name>_max_out()` shape —
+    a `variable_output` method on a module object kept emitting the
+    pre-gh-219 stub signature even though its `.c` binding was already
+    correct. Mirrors the same eligibility rule into the module aggregator.
+- **Constructor codegen sorted `string_enum` init_params ahead of their
+    declared position (gh-422).** The kwlist / `PyArg_ParseTupleAndKeywords`
+    format string / parse-args / `.pyi` `__init__` signature / doctest
+    example call were built by concatenating fixed type-based buckets
+    (arrays, required scalars, string-enums, optional arrays, optional
+    scalars) instead of the params' declared TOML order — a `string_enum`
+    always landed right after required scalars, ahead of every other
+    optional scalar, even when declared last. Any positional construction
+    matching the manifest order broke. Each param's declared index is now
+    preserved through every consumer of the required/optional groups.
+- **`variable_output` growth fallback cast a scalar param's value as a
+    count (gh-421).** For a method whose sole param is a scalar (not an
+    array) — e.g. `Delay.push_ptr(x)`, where `x` is the value being pushed,
+    not a count — the buffer-growth fallback cast that scalar to `size_t`
+    and used it as a capacity estimate. Falls back to the method's own
+    `<name>_max_out()` instead, always available per the standard
+    `variable_output` triplet.
+
 ## [0.26.0] — 2026-07-05
 
 ### Added
