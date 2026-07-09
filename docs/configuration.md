@@ -472,6 +472,7 @@ One entry per `just-makeit method` call.
 | `variable_output` | bool                    | `--variable-output`                                       |
 | `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)      |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)  |
+| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
 | `batch`           | bool                    | `--batch`                                                 |
 | `multi_output`    | array of strings        | `--multi-output` types                                    |
 | `out_type`        | string                  | `--out-type`                                              |
@@ -483,6 +484,40 @@ first), so a thread-per-shard worker — one object + output buffer per thread �
 scales across cores instead of serialising on the GIL. Opt-in: it is sound
 only when the object is not shared across threads concurrently (one object per
 stream).
+
+#### Capsule-typed params (gh-432)
+
+A param may carry `capsule = "<name>"` (and optionally
+`header = "path/hdr.h"`): its C type is a **foreign pointer** that crosses
+the Python boundary as a named PyCapsule. Manifest-authored (no CLI flag
+yet):
+
+```toml
+[[agc.methods]]
+name          = "set_telemetry"
+arg_type      = "void"
+return_type   = "int"
+status_return = true
+params = [
+  { name = "tlm",    type = "dp_tlm_t *",
+    capsule = "doppler.telemetry.dp_tlm",
+    header  = "telemetry/telemetry.h" },
+  { name = "prefix", type = "const char *" },
+  { name = "decim",  type = "uint32_t", default = "1" },
+]
+```
+
+Generated binding semantics: `None` maps to `NULL` (the C-side detach
+idiom); a PyCapsule is name-checked with `PyCapsule_GetPointer`; any other
+object is unwrapped through its `_capsule` attribute first, so callers pass
+the friendly wrapper (`obj.set_telemetry(tlm, "agc")`), not the capsule.
+The `.pyi` annotates the param `object | None`. The `header` key injects
+`#include "path/hdr.h"` into the object's `_core.h` alongside the gh-170
+`depends_on` includes (skipped when the file doesn't exist under
+`native/inc`). `status_return = true` binds the C `int` status as
+`-> None`, raising `ValueError` on non-zero — the same contract as the
+`serializable` `set_state` glue. Module functions accept capsule params
+too (same parse builder); `status_return` is methods-only for now.
 
 ### `[[<object>.properties]]`
 

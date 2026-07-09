@@ -547,6 +547,7 @@ def run(
     manual_stub: bool = False,
     pass_capacity: bool = False,
     nogil: bool = False,
+    status_return: bool = False,
     doc: str = "",
     from_apply: bool = False,
 ) -> None:
@@ -597,6 +598,20 @@ def run(
 
     params = params or []
     result_fields = result_fields or []
+    # gh-432: accept dict params (the apply replay's full-fidelity form,
+    # preserving per-param keys like capsule/header/out) alongside the CLI's
+    # (name, type[, default]) tuples; normalise to dicts once so every
+    # downstream use is uniform.
+    _norm_params: list[dict] = []
+    for _p in params:
+        if isinstance(_p, dict):
+            _norm_params.append(dict(_p))
+        else:
+            _entry = {"name": _p[0], "type": _p[1]}
+            if len(_p) > 2 and _p[2]:
+                _entry["default"] = _p[2]
+            _norm_params.append(_entry)
+    params = _norm_params
 
     # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
@@ -642,7 +657,7 @@ def run(
                 arg_type,
                 return_type,
                 multi_output,
-                params=[(p[0], p[1]) for p in params],
+                params=[(p["name"], p["type"]) for p in params],
                 out_type=out_type,
                 max_out=max_out,
                 pass_capacity=pass_capacity,
@@ -656,7 +671,7 @@ def run(
                 multi_output,
                 # The C stub signature ignores the optional `default` (a
                 # binding concern); project to (name, type) (gh-240).
-                [(p[0], p[1]) for p in params],
+                [(p["name"], p["type"]) for p in params],
                 out_type,
                 batch=batch,
             )
@@ -684,7 +699,7 @@ def run(
             return_type,
             variable_output,
             multi_output,
-            [(p[0], p[1]) for p in params],
+            [(p["name"], p["type"]) for p in params],
             out_type,
             pass_capacity=pass_capacity,
             batch=batch,
@@ -739,21 +754,19 @@ def run(
     if manual_stub:
         method_entry["manual_stub"] = True
     if params:
-        # gh-240: a 3-tuple param carries an optional `default`; persist it so a
-        # defaulted scalar round-trips and renders as an optional kwarg.
-        _mp: list[dict] = []
-        for p in params:
-            entry = {"name": p[0], "type": p[1]}
-            if len(p) > 2 and p[2]:
-                entry["default"] = p[2]
-            _mp.append(entry)
-        method_entry["params"] = _mp
+        # Params were normalised to dicts on entry (gh-240 default carried
+        # as a key; gh-432 capsule/header/out keys preserved verbatim).
+        method_entry["params"] = [dict(p) for p in params]
     if variable_output:
         method_entry["variable_output"] = True
     if pass_capacity:
         method_entry["pass_capacity"] = True
     if nogil:
         method_entry["nogil"] = True
+    if status_return:
+        # gh-432: int return is a status code — binds -> None, ValueError
+        # on non-zero.
+        method_entry["status_return"] = True
     if none_on_empty:
         method_entry["none_on_empty"] = True
     if batch:

@@ -1412,6 +1412,23 @@ def add_method(cfg: dict, component: str, method: dict) -> dict:
     return cfg
 
 
+def param_headers(cfg: dict, component: str) -> list[str]:
+    """Headers declared on method params (gh-432), deduped, declaration order.
+
+    A capsule-typed param's foreign C type may live in a header outside the
+    ``<dep>/<dep>_core.h`` convention (e.g. ``telemetry/telemetry.h``); the
+    per-param ``header`` key names it and this collects every such header for
+    the component so the include-injection paths can reach it.
+    """
+    out: list[str] = []
+    for m in methods(cfg, component):
+        for p in m.get("params") or []:
+            h = p.get("header")
+            if h and h not in out:
+                out.append(h)
+    return out
+
+
 def properties(cfg: dict, component: str) -> list[dict]:
     """Return declared Python properties for component (empty list if none)."""
     return list(cfg.get(component, {}).get("properties", []))
@@ -2316,6 +2333,12 @@ def _dump(cfg: dict) -> str:
                     # gh-240: an optional scalar default round-trips as a string.
                     if p.get("default") not in (None, ""):
                         base += f', default = "{p["default"]}"'
+                    # gh-432: capsule-typed params round-trip their capsule
+                    # name and foreign header.
+                    if p.get("capsule"):
+                        base += f', capsule = "{p["capsule"]}"'
+                    if p.get("header"):
+                        base += f', header = "{p["header"]}"'
                     _emit.append("{" + base + "}")
                 lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
@@ -2499,6 +2522,14 @@ def _dump(cfg: dict) -> str:
                     # gh-240: an optional scalar default round-trips as a string.
                     if p.get("default") not in (None, ""):
                         s += f', default = "{p["default"]}"'
+                    # gh-432: capsule-typed params — the capsule name and the
+                    # foreign type's header must survive save()/load(); the
+                    # gh-257 generic passthrough covers only method-level
+                    # scalar keys, not per-param keys.
+                    if p.get("capsule"):
+                        s += f', capsule = "{p["capsule"]}"'
+                    if p.get("header"):
+                        s += f', header = "{p["header"]}"'
                     return "{" + s + "}"
 
                 parts = ", ".join(_param_inline(p) for p in _ea)

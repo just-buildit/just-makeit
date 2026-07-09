@@ -836,6 +836,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             )
             param_parts.append(f"x: {_x_ann}")
         for p in m_params:
+            # gh-432: a capsule param takes the named PyCapsule, a wrapper
+            # exposing `_capsule`, or None (detach).
+            if p.get("capsule"):
+                param_parts.append(f"{p['name']}: object | None")
+                continue
             # gh-240: a defaulted param renders as an optional kwarg.
             pann = f"{p['name']}: {_py(p['type'])}"
             if p.get("default"):
@@ -844,6 +849,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
         if m_py_return_type:
             ret_ann = m_py_return_type
+        elif m.get("status_return"):
+            # gh-432: status returns bind as None (raise on failure).
+            ret_ann = "None"
         elif m_result_fields:
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             # gh-244: a `single` method returns ONE record, not a list of them.
@@ -884,7 +892,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if m_arg != "void":
             _py_params.append(("x", _x_ann))
         for p in m_params:
-            _py_params.append((p["name"], _py(p["type"])))
+            _py_params.append(
+                (
+                    p["name"],
+                    "object | None" if p.get("capsule") else _py(p["type"]),
+                )
+            )
         _doc = _method_doc_lines(
             _blk, m_name, _py_params, ret_ann, override=m.get("doc", "")
         )

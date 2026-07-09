@@ -1278,14 +1278,19 @@ def run(
     # gh-170: include each depends_on component's header so opaque fields of
     # its types compile (mirrors the standalone path in _init.run). Only deps
     # with a real header are included — a bare link target like `lo_core` is
-    # skipped.
+    # skipped. gh-432: method params' `header` keys (a capsule param's
+    # foreign type) are included the same way when the header exists.
     from ._init import _dep_header_includes
 
+    _inc_root = root / "native" / "inc"
     ctx["depends_includes"] = "".join(
         "\n" + inc
-        for inc in _dep_header_includes(
-            root / "native" / "inc", C.dep_names(depends_on)
-        )
+        for inc in _dep_header_includes(_inc_root, C.dep_names(depends_on))
+        + [
+            f'#include "{h}"'
+            for h in C.param_headers(cfg, object_name)
+            if (_inc_root / h).exists()
+        ]
     )
 
     def r(tmpl):

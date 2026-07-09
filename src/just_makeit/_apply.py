@@ -374,8 +374,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 m.get("return_type", "float _Complex"),
                 bool(m.get("variable_output")),
                 list(m.get("multi_output", [])),
+                # gh-432: pass params through as full dicts — the old
+                # (name, type, default) tuple flattening silently dropped
+                # every other per-param key (capsule, header, out) on the
+                # replay path, the same failure mode gh-257 fixed for
+                # method-level keys.
                 params=[
-                    (p["name"], p["type"], p.get("default", ""))
+                    dict(p)
                     for p in (m.get("extra_args") or m.get("params", []))
                 ],
                 out_type=m.get("out_type"),
@@ -394,6 +399,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 manual_stub=bool(m.get("manual_stub")),
                 pass_capacity=bool(m.get("pass_capacity")),
                 nogil=bool(m.get("nogil")),
+                status_return=bool(m.get("status_return")),
                 doc=m.get("doc", ""),
                 from_apply=True,
             )
@@ -1069,7 +1075,10 @@ def _sync_aggregates(
         for obj in C.module_objects(cfg, mod):
             obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
             if _inject_includes_into_core_h(
-                obj_h, obj, C.depends_on(cfg, obj)
+                obj_h,
+                obj,
+                C.depends_on(cfg, obj),
+                extra=C.param_headers(cfg, obj),
             ):
                 updated.append(obj_h)
             # gh-271: a non-collocated module object's OBJECT-core CMakeLists is
@@ -1132,7 +1141,10 @@ def _sync_aggregates(
         from ._init import _inject_includes_into_core_h
 
         if _inject_includes_into_core_h(
-            root / rel, comp, C.depends_on(cfg, comp)
+            root / rel,
+            comp,
+            C.depends_on(cfg, comp),
+            extra=C.param_headers(cfg, comp),
         ):
             changed = True
         if changed:
