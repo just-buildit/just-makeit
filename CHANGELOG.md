@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.28.0] — 2026-07-09
+
+### Added
+
+- **Capsule-typed method params (gh-432).** A method (or module-function)
+    param may declare `capsule = "<name>"`: its C type is a foreign pointer
+    (e.g. `dp_tlm_t *`) crossing the Python boundary as a named PyCapsule.
+    The generated glue maps `None` to `NULL` (the C-side detach idiom),
+    name-checks a capsule via `PyCapsule_GetPointer`, and unwraps any other
+    object through its `_capsule` attribute first — so callers pass the
+    friendly wrapper object, not the capsule. The optional per-param
+    `header = "path/hdr.h"` names the foreign type's header, injected into
+    the object's `_core.h` alongside the gh-170 `depends_on` includes on
+    every scaffold/apply path (skipped when the file doesn't exist under
+    `native/inc`). `.pyi` annotates the param `object | None` in both stub
+    generators. Motivating consumer: doppler's telemetry attach face
+    (`agc.set_telemetry(tlm, "agc", decim=1)` declared fully in TOML).
+- **`status_return = true` on a method (gh-432).** Binds a C `int` status
+    return (0 = OK) as `-> None`, raising `ValueError` on non-zero — the
+    `serializable` `set_state` contract, generalized to any declared
+    method.
+
+### Fixed
+
+- **`jm apply` dropped per-param keys on the method replay (gh-432).** The
+    replay flattened each param to a `(name, type, default)` tuple and
+    rebuilt the dict from it, silently stripping every other per-param key
+    (`out`, and now `capsule`/`header`) on every apply — the gh-257 failure
+    mode one layer deeper. Params now flow through the replay as full
+    dicts; tuples remain the CLI form.
+- **Defaulted `parse_type` scalar params ignored their default (gh-432).**
+    A param like `decim: uint32_t = 1` seeded its raw parse local with
+    `parse_zero`, so an omitted argument parsed as 0 instead of the
+    declared default. Both param builders now seed the raw local from the
+    gh-240 default.
+
 ## [0.27.0] — 2026-07-08
 
 ### Added
