@@ -628,6 +628,44 @@ def _build_params_parse(
             )
             arr_names.append(arr_var)
             call_args.extend([pname, f"{pname}_len"])
+        elif p.get("capsule"):
+            # gh-432: a foreign C pointer crossing as a named PyCapsule —
+            # mirrors _context/_parse.py's branch (this builder is the
+            # module-function copy). None -> NULL; a non-capsule object is
+            # unwrapped via its `_capsule` attribute. Unwrap errors happen
+            # in conv_lines, before any array/path acquisition, so the
+            # early returns need no cleanup.
+            cname = p["capsule"]
+            disp = _ctype_display(ptype)
+            if not disp.endswith("*"):
+                disp += " "
+            obj_var = f"{pname}_obj"
+            decl_lines.append(f"    PyObject *{obj_var} = Py_None;")
+            fmt_chars.append("O")
+            addr_exprs.append(f"&{obj_var}")
+            # Error paths release any O&-converted path objects (mirrors the
+            # enum branch): ParseTuple has already run when conv executes.
+            _cap_prior = "".join(
+                f" {_coerce.path_release(n)}" for n in path_names
+            )
+            conv_lines.append(
+                f"    {disp}{pname} = NULL;\n"
+                f"    if ({obj_var} != Py_None) {{\n"
+                f"        PyObject *{pname}_cap = {obj_var};\n"
+                f"        Py_INCREF({pname}_cap);\n"
+                f"        if (!PyCapsule_CheckExact({pname}_cap)) {{\n"
+                f"            Py_DECREF({pname}_cap);\n"
+                f"            {pname}_cap = PyObject_GetAttrString(\n"
+                f'                {obj_var}, "_capsule");\n'
+                f"            if (!{pname}_cap) {{{_cap_prior} return NULL; }}\n"
+                f"        }}\n"
+                f"        {pname} = ({disp})PyCapsule_GetPointer(\n"
+                f'            {pname}_cap, "{cname}");\n'
+                f"        Py_DECREF({pname}_cap);\n"
+                f"        if (!{pname}) {{{_cap_prior} return NULL; }}\n"
+                f"    }}"
+            )
+            call_args.append(pname)
         else:
             meta = _CTYPE_META[ptype]
             disp = _ctype_display(ptype)
@@ -635,8 +673,13 @@ def _build_params_parse(
 
             if "parse_type" in meta:
                 raw = f"{pname}_raw"
+                # gh-432 drive-by: seed the raw local with the gh-240
+                # default (not parse_zero) so an omitted defaulted arg
+                # yields the default — previously only the non-parse_type
+                # branch honoured `default` (mirrors _context/_parse.py).
+                _raw_init = p.get("default") or meta["parse_zero"]
                 decl_lines.append(
-                    f"    {meta['parse_type']} {raw} = {meta['parse_zero']};"
+                    f"    {meta['parse_type']} {raw} = {_raw_init};"
                 )
                 addr_exprs.append(f"&{raw}")
                 conv_lines.append(

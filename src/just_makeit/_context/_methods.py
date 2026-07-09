@@ -507,6 +507,11 @@ def make_methods_ctx(
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
         nogil: bool = m.get("nogil", False)
+        # gh-432: the C `int` return is a status code (0 = OK, non-zero =
+        # failure) — bound as `-> None`, raising ValueError on failure (the
+        # same contract the serializable set_state glue emits). Fixed-output
+        # methods only.
+        status_return: bool = m.get("status_return", False)
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -1746,7 +1751,20 @@ def make_methods_ctx(
                 )
                 meth_flags = "METH_NOARGS"
 
-            if multi_output:
+            if status_return:
+                # gh-432: status-code return — 0 = OK -> None, non-zero
+                # raises ValueError carrying the method name and rc.
+                ret_body = (
+                    f"    int _rc = {component}_{name}({call_args_c});\n"
+                    f"{_p_cleanup}"
+                    f"    if (_rc != 0) {{\n"
+                    f"        PyErr_Format(PyExc_ValueError,\n"
+                    f'                     "{name} failed (rc=%d)", _rc);\n'
+                    f"        return NULL;\n"
+                    f"    }}\n"
+                    f"    Py_RETURN_NONE;\n"
+                )
+            elif multi_output:
                 extra_decls = "".join(
                     f"    {_ctype_display(rt)} out{i + 1}"
                     f" = {_CTYPE_META[rt]['zero']};\n"
@@ -1929,6 +1947,10 @@ def make_methods_ctx(
             pt = p["type"]
             if pt.endswith("[]"):
                 param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
+            elif p.get("capsule"):
+                # gh-432: a capsule-typed param takes the named PyCapsule,
+                # any wrapper exposing `_capsule`, or None (detach).
+                param_parts.append(f"{p['name']}: object | None")
             else:
                 # gh-240: a defaulted scalar renders as an optional kwarg.
                 _suffix = (
@@ -1937,7 +1959,10 @@ def make_methods_ctx(
                     else ""
                 )
                 param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
-        if result_fields and single_record:
+        if status_return:
+            # gh-432: status returns bind as None (raise on failure).
+            ret_ann = "None"
+        elif result_fields and single_record:
             # gh-244: one named record — a PyStructSequence (a tuple subclass).
             # Type it as a tuple of the field types: unpacking type-checks and
             # named attribute access works at runtime. (A full NamedTuple stub
