@@ -911,11 +911,21 @@ def make_methods_ctx(
                     f"    size_t _{name}_retired_n;\n"
                     f"    size_t _{name}_retired_cap;\n"
                 )
+                # gh-437: weakref to the last returned view.  While the
+                # caller still holds that view, the next call must not
+                # reuse the buffer in place (a same-size call would
+                # silently overwrite the caller's data) — it retires the
+                # buffer instead, exactly like a grow.
+                buf_fields.append(
+                    f"    PyObject *_{name}_view_ref;"
+                    f"  /* gh-437 last returned view */\n"
+                )
                 buf_free.append(
                     f"    for (size_t _i = 0;"
                     f" _i < self->_{name}_retired_n; _i++)\n"
                     f"        free(self->_{name}_retired[_i]);\n"
                     f"    free(self->_{name}_retired);\n"
+                    f"    Py_XDECREF(self->_{name}_view_ref);\n"
                 )
             buf_alloc.append(
                 f"    {{\n"
@@ -1200,10 +1210,29 @@ def make_methods_ctx(
                 # until dealloc.  Reserve the retired slot before allocating
                 # the new buffer, so an OOM leaves the live buffer untouched
                 # (no use-after-free, no leak).
+                # gh-437: a still-referenced view of _buf forbids
+                # in-place reuse — a same-size call would overwrite the
+                # caller's array. Probe the weakref and, when the view is
+                # alive, retire + allocate fresh exactly like a grow.
                 _lazy_alloc_vo = (
                     f"    size_t _need = {_lazy_fallback};\n"
+                    f"    int _view_live = 0;\n"
+                    f"    if (self->_{name}_view_ref) {{\n"
+                    f"#if PY_VERSION_HEX >= 0x030D0000\n"
+                    f"        PyObject *_lv = NULL;\n"
+                    f"        if (PyWeakref_GetRef("
+                    f"self->_{name}_view_ref, &_lv) == 1) {{\n"
+                    f"            Py_DECREF(_lv);\n"
+                    f"            _view_live = 1;\n"
+                    f"        }}\n"
+                    f"#else\n"
+                    f"        _view_live = PyWeakref_GetObject("
+                    f"self->_{name}_view_ref) != Py_None;\n"
+                    f"#endif\n"
+                    f"    }}\n"
                     f"    if (!self->_{name}_buf"
-                    f" || self->_{name}_buf_cap < _need) {{\n"
+                    f" || self->_{name}_buf_cap < _need"
+                    f" || _view_live) {{\n"
                     f"        size_t _max ="
                     f" {component}_{name}_max_out(self->handle);\n"
                     f"        if (!_max || _max < _need) _max = _need;\n"
@@ -1344,6 +1373,15 @@ def make_methods_ctx(
                     f"    PyArray_SetBaseObject("
                     f"(PyArrayObject *)arr, (PyObject *)self);\n"
                     f"    Py_INCREF(self);\n"
+                    f"    /* gh-437: remember this view — while the caller"
+                    f" holds it the next\n"
+                    f"     * call retires the buffer instead of reusing it"
+                    f" in place. */\n"
+                    f"    Py_XDECREF(self->_{name}_view_ref);\n"
+                    f"    self->_{name}_view_ref ="
+                    f" PyWeakref_NewRef(arr, NULL);\n"
+                    f"    if (!self->_{name}_view_ref) {{"
+                    f" Py_DECREF(arr); return NULL; }}\n"
                     f"{decref_in}"
                     f"    return arr;\n"
                     f"}}"
@@ -1376,7 +1414,10 @@ def make_methods_ctx(
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
-                _brief or "Zero-copy view into pre-allocated output buffer.",
+                _brief
+                or "Zero-copy view into an internally managed buffer;"
+                " safe to keep across calls (a still-referenced buffer is"
+                " retired, never reused in place).",
                 "",
                 "    >>> import numpy as np",
                 *_from_line,

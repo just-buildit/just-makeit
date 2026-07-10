@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`variable_output` view aliasing across same-size calls (gh-437).** The
+    default zero-copy return handed out a view of the internal
+    grow-on-demand buffer but retired the buffer only on *growth* — a
+    same-size (or smaller) next call reused it in place, silently
+    overwriting any outstanding view from the previous call (any caller
+    accumulating returned chunks got the last call's data in every early
+    chunk). The binding now keeps a weakref to the last returned view and,
+    when that view is still alive at the next call, retires the buffer and
+    allocates fresh exactly like a grow. The drain-immediately streaming
+    pattern keeps its zero-alloc in-place reuse (the weakref is dead by
+    then); accumulate-chunks callers get independent buffers with no copy.
+    Uses `PyWeakref_GetRef` on 3.13+ (`PyWeakref_GetObject` earlier).
+    Verified end-to-end on doppler's MPSK receiver: the regenerated
+    fragment passes the block-size-invariance aliasing repro that
+    previously required a hand-patched copy-out, and the in-place fast
+    path still reuses the same buffer address when no view is held.
+
 ## [0.28.0] — 2026-07-09
 
 ### Added
