@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-07-10
+
 ### Fixed
 
 - **`variable_output` view aliasing across same-size calls (gh-437).** The
