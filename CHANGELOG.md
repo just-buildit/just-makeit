@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.28.8] — 2026-07-11
+
+### Fixed
+
+- **Segment fields now support enums end to end (gh-460).** Declaring an
+    enum **segment** field (e.g. a `gap_noise = "auto"|"off"` policy)
+    generated broken/inconsistent code while the same declaration on a
+    source field worked fully: the manifest default was emitted verbatim
+    (`self->gap_noise = auto;` — not C), the kwarg parsed as an int while
+    the generated `.pyi` promised a string, the getset returned the raw
+    int, and the generic JSON face serialized a number against its
+    documented SSOT-string contract. `render_segment_type`'s
+    default/extract/getset paths and `render_json_funcs`' segment loops
+    simply predated any enum segment field existing; they now get the
+    identical `_field_is_enum` treatment source fields have had since
+    gh-285 — codegen-time index-mapped defaults, validated-string kwarg
+    parse through the shared `_enum_index`/`_enum_<name>` tables, string
+    getset round-trip, and SSOT-string generic JSON.
+
 ## [0.28.7] — 2026-07-11
 
 ### Fixed
