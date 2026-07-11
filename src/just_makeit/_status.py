@@ -203,8 +203,16 @@ def run(
         # Run apply on the copy so we observe its real reconciliation
         # (glue regenerated, _core.h merged, _core.c preserved). Suppress
         # its progress output — status prints its own report.
+        # honor_status_allow=False (gh-441): apply itself now skips
+        # status_allow-matched files so a real `jm apply` never clobbers
+        # hand-maintained content, but this throwaway replay must still
+        # regenerate them to compute the genuine before/after diff below —
+        # otherwise every allowed file would look up-to-date (never
+        # written) instead of classified ALLOWED, and the gh-426
+        # dropped-symbol check would go blind for exactly the files it
+        # exists to guard.
         with contextlib.redirect_stdout(io.StringIO()):
-            _apply.run(scratch)
+            _apply.run(scratch, honor_status_allow=False)
 
         for rel in _walk_managed(scratch):
             real = root / rel
