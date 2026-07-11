@@ -1569,6 +1569,18 @@ def run(
     for path in updated + bench_updated + frag_doc_updated:
         print(f"  update  {path}")
 
+    # gh-442: non-fatal — jm has no way to know which side (manifest or
+    # hand-written header doc) is the stale one, so it warns rather than
+    # failing the apply. `jm status --check` promotes this to a CI-gating
+    # DRIFT section for projects that want it enforced.
+    for obj in C.components(cfg):
+        for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
+            print(
+                f"  warning: {obj}.{name} default mismatch: "
+                f"manifest={m_dflt!r} header={h_dflt!r} "
+                f"(native/inc/{obj}/{obj}_core.h) — one of these is stale"
+            )
+
     print()
     total = (
         len(created)

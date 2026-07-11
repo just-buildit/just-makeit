@@ -32,7 +32,7 @@ from ._init import (
     _write_compile_commands,
     ensure_parent_packages,
 )
-from ._docstring import extract_doc_blocks, parse_doxygen_block
+from ._docstring import extract_doc_blocks, header_default, parse_doxygen_block
 from ._context._parse import _build_ml_doc
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
@@ -67,6 +67,41 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
             continue
         out[cname] = parsed
     return out
+
+
+def init_param_drift(
+    cfg: dict, root: Path, obj: str
+) -> list[tuple[str, str, str]]:
+    """Init-params whose manifest default disagrees with the header's own.
+
+    Returns ``(name, manifest_default, header_default)`` for every
+    ``init_params`` entry whose manifest ``default`` and the sacred
+    ``<obj>_core.h`` create()'s ``@param name ... (default: X)`` numerically
+    disagree (gh-442) — jm juxtaposes both sources when building the ``.pyi``
+    docstring, so an out-of-band edit to just one of them (a manifest default
+    retuned, or hand doc left stale, or vice versa) silently reads as
+    corruption in the generated stub with no other signal. Best-effort:
+    either side missing, or not parseable as a number, is skipped rather than
+    reported — a false negative here is fine, a false positive is not.
+    """
+    doc_blocks = _load_doc_blocks(root, obj)
+    create_blk = doc_blocks.get(f"{obj}_create")
+    if create_blk is None:
+        return []
+    drift: list[tuple[str, str, str]] = []
+    for name, _ctype, dflt, *_rest in C.init_params(cfg, obj):
+        if not dflt:
+            continue
+        hdr_dflt = header_default(create_blk.param_desc(name))
+        if hdr_dflt is None:
+            continue
+        try:
+            if float(dflt) == float(hdr_dflt):
+                continue
+        except ValueError:
+            continue
+        drift.append((name, dflt, hdr_dflt))
+    return drift
 
 
 def _load_module_doc_blocks(root: Path, module: str) -> dict:
