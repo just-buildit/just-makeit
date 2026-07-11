@@ -987,8 +987,17 @@ def render_segment_type(cfg: dict, module: str) -> str:
 }}
 """)
 
-    # defaults applied before extraction.
+    # defaults applied before extraction. An enum default is a string in
+    # the manifest ("auto"); the struct member is the SSOT int, so map it
+    # at codegen time (gh-460 — segment fields can be enums, like source
+    # fields always could).
+    enums = C.enums(cfg)
+
     def _default(f):
+        if _field_is_enum(f):
+            values = enums.get(f["enum"], [])
+            d = f.get("default", "")
+            return str(values.index(d)) if d in values else "0"
         if f.get("default") not in (None, ""):
             return f["default"]
         return "0"
@@ -1009,7 +1018,20 @@ def render_segment_type(cfg: dict, module: str) -> str:
             if delete
             else ""
         )
-        if f.get("_ranged"):
+        if _field_is_enum(f):
+            e = f["enum"]
+            body = (
+                "            const char *_s = PyUnicode_AsUTF8(_o);\n"
+                "            if (!_s) goto fail;\n"
+                f"            int _i = _enum_index(_enum_{e}, _s);\n"
+                "            if (_i < 0) {\n"
+                "                PyErr_Format(PyExc_ValueError,\n"
+                f'                             "invalid {n} \'%s\'", _s);\n'
+                "                goto fail;\n"
+                "            }\n"
+                f"            self->{n} = _i;\n"
+            )
+        elif f.get("_ranged"):
             flag = f["_ranged"]
             body = (
                 "            double _lo, _hi;\n"
@@ -1152,6 +1174,33 @@ static int
     }} else {{
         self->ranged &= ~(unsigned){flag};
     }}
+    return 0;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+            continue
+        if _field_is_enum(f):
+            e = f["enum"]
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    return PyUnicode_FromString(_enum_{e}[self->{n}]);
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    const char *s = PyUnicode_AsUTF8(value);
+    if (!s) return -1;
+    int _i = _enum_index(_enum_{e}, s);
+    if (_i < 0) {{
+        PyErr_Format(PyExc_ValueError, "invalid {n} '%s'", s);
+        return -1;
+    }}
+    self->{n} = _i;
     return 0;
 }}""")
             getset_rows.append(
@@ -2898,7 +2947,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         _ser_ranged("sj", "g", f["name"], f["_ranged"])
         if f.get("_ranged")
         else (
-            f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
+            f'        cJSON_AddStringToObject(sj, "{f["name"]}", '
+            f"_enum_{f['enum']}[g->{f['name']}]);"
+            if f.get("enum")
+            else f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
             f"(double)g->{f['name']});"
         )
         for f in seg_fields
@@ -2958,7 +3010,15 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         )
         if f.get("_ranged")
         else (
-            f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
+            f"""        {{
+            const char *_s = cJSON_GetStringValue(
+                cJSON_GetObjectItemCaseSensitive(sj, "{f['name']}"));
+            int _v = _enum_index(_enum_{f['enum']},
+                                 _s ? _s : "{f.get('default', '')}");
+            sg->{f['name']} = _v < 0 ? 0 : _v;
+        }}"""
+            if f.get("enum")
+            else f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
             f'"{f["name"]}", {_default_literal(f)});'
         )
         for f in seg_fields
