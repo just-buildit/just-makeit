@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.28.7] — 2026-07-11
+
+### Fixed
+
+- **A composer source with multiple `bytes=true` fields clobbered them all
+    into `bits` (gh-457).** The composer source-type codegen generated one
+    `_attach_bytes` helper hard-wired to `src->bits`/`n_bits`, and every
+    `bytes=true` field's init marshal and getset setter called it — with the
+    getter likewise reading `self->src.bits`. A source with more than one
+    bytes field (e.g. a DSSS burst's `acq_code`/`data_code`/`sync` alongside
+    the payload `bits`) silently clobbered everything into `bits`, last
+    kwarg winning. The shared coercer is now parameterized as
+    `_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)` — the same
+    per-field-destination shape the `complex=true` fields already use — and
+    each field's init assign and getset point at its own struct arrays.
+    Single-bytes-field modules regenerate to behaviorally identical code.
+
 ## [0.28.6] — 2026-07-11
 
 ### Added
