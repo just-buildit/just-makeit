@@ -18,6 +18,7 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import io
 import os
 import re
@@ -721,7 +722,11 @@ def _merge_module_init_file(
 
 
 def _overwrite_if_changed(
-    real: Path, temp: Path, cfg: dict | None = None
+    real: Path,
+    temp: Path,
+    cfg: dict | None = None,
+    rel: str = "",
+    honor_status_allow: bool = True,
 ) -> bool:
     """Overwrite *real* with *temp*'s bytes if they differ.
 
@@ -730,9 +735,26 @@ def _overwrite_if_changed(
     freshly rendered placeholder in *temp* before comparing (gh-428) —
     without this, this reconcile step is exactly what silently clobbers a
     hand-written manual_stub stub on every plain `jm apply`.
+
+    *rel* — the project-relative posix path of *real* — is checked against
+    ``[project] status_allow`` when *honor_status_allow* is true (gh-441): a
+    hand-maintained file `jm status --check` already treats as allowed
+    drift must never be silently overwritten by apply's reconcile step, so
+    a match skips the write entirely rather than only suppressing the
+    status warning. `_status.py` sets *honor_status_allow* false for its
+    internal throwaway replay, which must keep computing the real diff
+    (allowed files still need genuine before/after content to classify as
+    ALLOWED rather than OK, and gh-426 dropped-symbol detection must see
+    them too) instead of silently matching by never having written it.
     """
     if not real.exists() or not temp.exists():
         return False
+    if honor_status_allow and cfg is not None and rel:
+        allow_patterns = C.status_allow(cfg)
+        if any(
+            rel == pat or fnmatch.fnmatch(rel, pat) for pat in allow_patterns
+        ):
+            return False
     new_bytes = temp.read_bytes()
     if cfg is not None and real.suffix == ".pyi":
         try:
@@ -939,6 +961,7 @@ def _sync_aggregates(
     *,
     only_mod: str | None = None,
     only_comp: str | None = None,
+    honor_status_allow: bool = True,
 ) -> list[Path]:
     """Reconcile wiring files that already exist on disk and so are
     skipped by _sync_missing but need to absorb newly-materialized
@@ -1028,7 +1051,13 @@ def _sync_aggregates(
             ).get("enabled"):
                 glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
             for rel in glue:
-                if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
+                if _overwrite_if_changed(
+                    root / rel,
+                    temp_root / rel,
+                    cfg,
+                    rel=rel,
+                    honor_status_allow=honor_status_allow,
+                ):
                     updated.append(root / rel)
             continue
         # Nested-module forms: cname (flat native dir), pypath (nested Python
@@ -1056,7 +1085,13 @@ def _sync_aggregates(
             f"native/src/{mp.cname}/CMakeLists.txt",
             f"src/{pkg}/{mp.pypath}/{mp.leaf}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
+            if _overwrite_if_changed(
+                root / rel,
+                temp_root / rel,
+                cfg,
+                rel=rel,
+                honor_status_allow=honor_status_allow,
+            ):
                 updated.append(root / rel)
         # Module function bodies live in their own sacred <fn>.c (create-only
         # via _sync_missing), so <mod>_core.c is just the include scaffold —
@@ -1125,7 +1160,13 @@ def _sync_aggregates(
             f"native/src/{comp}/CMakeLists.txt",
             f"src/{pkg}/{comp}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel, cfg):
+            if _overwrite_if_changed(
+                root / rel,
+                temp_root / rel,
+                cfg,
+                rel=rel,
+                honor_status_allow=honor_status_allow,
+            ):
                 updated.append(root / rel)
         # _core.h is a hybrid: the inline step() body and the state struct
         # are sacred; the function declarations are glue. Apply injects any
@@ -1398,6 +1439,8 @@ def run(
     root: Path,
     fragment: Path | None = None,
     only: str | None = None,
+    *,
+    honor_status_allow: bool = True,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -1501,6 +1544,7 @@ def run(
             cfg,
             only_mod=only_mod,
             only_comp=only_comp,
+            honor_status_allow=honor_status_allow,
         )
 
     bench_updated = _reconcile_bench_cmake(root, cfg)

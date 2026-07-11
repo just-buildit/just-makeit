@@ -326,7 +326,12 @@ def _build_class_docstring(
     param_lines: list[str] = []
     if init_params:
         for name, ctype, dflt, *rest in init_params:
-            optional = rest[4] if len(rest) >= 5 else False
+            # init_params 10-tuple minus (name, type, default) leaves rest =
+            # (default_raw, real_type, real_create_fn, optional, create_fn,
+            # required, doc) — optional lives at rest[3], not rest[4] (that
+            # was create_fn, always falsy for a plain scalar so the "or None"
+            # annotation was only silently wrong for an optional-array param).
+            optional = rest[3] if len(rest) >= 4 else False
             required = rest[5] if len(rest) >= 6 else False
             manifest_doc = rest[6] if len(rest) >= 7 else ""
             py_t = _py(ctype)
