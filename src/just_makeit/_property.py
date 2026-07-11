@@ -22,6 +22,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
@@ -223,6 +224,17 @@ def run(
                 R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8"
             )
             print(f"  update  {ext_c}")
+        pyi_path = root / "src" / pkg / f"{object_name}.pyi"
+        if pyi_path.exists():
+            old_pyi = pyi_path.read_text(encoding="utf-8")
+            new_pyi = R.render(R.COMPONENT_PYI, ctx)
+            # gh-428: preserve any manual_stub method's hand-written text
+            # across the otherwise-blind regen above.
+            pyi_path.write_text(
+                S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+                encoding="utf-8",
+            )
+            print(f"  update  {pyi_path}")
 
     print()
     rw = "read/write" if writable else "read-only"
