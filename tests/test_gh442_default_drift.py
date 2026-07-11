@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._new import run as new_run
 from just_makeit._object import init_param_drift, run as object_run
 from just_makeit._apply import run as apply_run
+from just_makeit._docstring import header_default
 from just_makeit import _config as C
 from just_makeit import _status
 
@@ -117,6 +118,39 @@ class TestInitParamDrift:
         _retune_manifest_default(dest, "0.01")
         cfg = C.load(dest)
         assert init_param_drift(cfg, dest, "burst") == []
+
+    def test_no_false_positive_when_manifest_default_is_empty(self, tmp_path):
+        # A required init_param (no default) has nothing to compare —
+        # skipped rather than treated as a mismatch against 0.05.
+        dest = _scaffold(tmp_path)
+        _hand_document_create(dest)
+        cfg = C.load(dest)
+        cfg["burst"]["init_params"][0]["default"] = ""
+        C.save(dest, cfg)
+        cfg = C.load(dest)
+        assert init_param_drift(cfg, dest, "burst") == []
+
+    def test_no_false_positive_when_header_default_is_not_numeric(
+        self, tmp_path
+    ):
+        # A recognizable (default: X) suffix whose X isn't a number (e.g.
+        # a symbolic/expression default) can't be compared — skipped.
+        dest = _scaffold(tmp_path)
+        _hand_document_create(dest, default_text="M_PI / 4")
+        cfg = C.load(dest)
+        assert init_param_drift(cfg, dest, "burst") == []
+
+
+class TestHeaderDefault:
+    def test_none_for_missing_description(self):
+        assert header_default(None) is None
+        assert header_default("") is None
+
+    def test_none_for_description_without_default_suffix(self):
+        assert header_default("Carrier offset in Hz.") is None
+
+    def test_extracts_the_default_value(self):
+        assert header_default("Initial carrier (default: 0.05).") == "0.05"
 
 
 class TestApplyWarns:
