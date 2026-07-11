@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.28.4] — 2026-07-11
+
+### Fixed
+
+- **`const char *` params rendered as `Any` in module-grouped `.pyi` stubs
+    (gh-450).** `_stubs.py::make_module_pyi` — the separate stub generator
+    used for module-owned objects (gh-423) — keeps its own
+    `_CTYPE_TO_PY` scalar-type table rather than sharing `_types.py`'s
+    `_CTYPE_META`, and that table never got a `"const char *"` entry, so
+    any `const char *` param fell through to the `Any` fallback. Looked
+    capsule-related because the only regression test covering this
+    generator (gh-432) happened to pair a `const char *` param with a
+    capsule param but never asserted on the plain param's own type — a
+    bare `const char *` param on a module-owned object hit the same bug
+    with no capsule in sight. Standalone objects use a different
+    generator (`_context/_methods.py`) that was never affected.
+
 ## [0.28.3] — 2026-07-11
 
 ### Added
