@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.28.6] — 2026-07-11
+
+### Added
+
+- **Lint init_param default drift between the manifest and the header doc
+    (gh-442).** `jm apply` already juxtaposes two sources when rendering a
+    `.pyi`'s constructor docstring — the manifest's `init_params[].default`
+    for the numpydoc signature line, and the sacred header's own
+    `@param name ... (default: X)` prose for the description — so when only
+    one side gets edited out-of-band, the stub silently reads as a
+    scale/corruption bug even though each half is individually correct for
+    its own source of truth (the actual root cause behind gh-441's original
+    report). `jm apply` now warns (non-fatal — jm has no way to know which
+    side is stale) on every numeric disagreement; `jm status`/`jm status
+    --check` promote the same check to an always-shown, CI-gating `DRIFT`
+    section, mirroring the gh-426 `DROPPED`-symbol precedent (never
+    suppressed by `--allow`/`status_allow`). Scoped to `init_params` for v1.
+    Best-effort: a header `@param` with no recognizable `(default: X)`
+    suffix is silently skipped rather than misparsed, and a freshly
+    scaffolded header (no human-authored doc yet) never fires — `jm`'s own
+    boilerplate `@brief`/`@param` text is filtered out the same way the
+    docstring generator already ignores it.
+
 ## [0.28.5] — 2026-07-11
 
 ### Fixed
