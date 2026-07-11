@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.28.5] — 2026-07-11
+
+### Fixed
+
+- **Standalone objects never got a `.pyi` stub for a newly added property
+    (gh-446).** `_property.py::run()`'s standalone branch updated
+    `_core.h`/`_ext.c` but never wrote the `.pyi` at all. Because `jm
+    apply`'s replay and `jm status --check` both materialize properties by
+    calling this same `_property.run()` internally, the gap was invisible
+    on three fronts: immediately after `jm property`, after a follow-up
+    `jm apply`, and to `jm status --check` itself, which reported clean
+    since its own scratch-copy replay hit the identical gap. A deeper
+    issue surfaced during the fix: even a direct write wasn't enough,
+    since the standalone `.pyi` template's getter/setter placeholder was
+    populated purely from state-variable get/set *methods*
+    (`make_state_ctx`) with no notion of a manifest property at all — a
+    manifest property is a `PyGetSetDef`-backed `@property` descriptor,
+    not a get/set method pair, and had no template placeholder of its
+    own. `make_properties_ctx` now also emits `@property`/`@x.setter`
+    stubs (reusing `_CTYPE_META`-driven type inference rather than a new
+    hardcoded table — the same drift class gh-450 just fixed), wired into
+    the template and every render site.
+
 ## [0.28.4] — 2026-07-11
 
 ### Fixed
