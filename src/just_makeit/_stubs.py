@@ -115,17 +115,30 @@ def _title(name: str) -> str:
     return "".join(w.title() for w in name.split("_"))
 
 
-# ── manual_stub splice engine (gh-428) ──────────────────────────────────────
+# ── member-level merge / manual_stub splice engine (gh-428) ─────────────────
 #
 # A `manual_stub = true` method's C binding is entirely hand-owned (spliced
 # directly into a sacred `_ext_<obj>_extra.c` fragment jm never created), so
-# jm's .pyi codegen only ever knows to emit a generic placeholder for it. This
-# mirrors `_status.py::_pyi_symbols` (gh-426) -- a .pyi is valid Python, so
-# `ast.parse` gives exact method text for free -- but extracts source text
-# instead of just names, then splices the old hand-written text back over the
-# freshly rendered placeholder, the same way `_object.py`'s
+# jm's .pyi codegen only ever knows to emit a generic placeholder for it.
+# Separately, a `# jm:hand` comment directly above any class member (method
+# or property, manifest-derived or not) marks that member as hand-owned with
+# zero manifest declaration required -- the field-data case that motivated
+# gh-428's re-scope (doppler's `Fft.execute_ci16`, a hand-added CPython
+# overload with no representable manifest entry at all).
+#
+# Both mechanisms funnel through the same splice: this mirrors
+# `_status.py::_pyi_symbols` (gh-426) -- a .pyi is valid Python, so
+# `ast.parse` gives exact member text for free -- but extracts source text
+# instead of just names, then transplants the old hand-written text back
+# over (or, for a `# jm:hand` member with no manifest counterpart, appends
+# it after) the freshly rendered class body, the same way `_object.py`'s
 # `_extract_c_function_bodies`/`_restore_c_function_bodies` preserve `_ext.c`
-# function bodies by name across regen.
+# function bodies by name across regen. A property's getter/setter share a
+# Python name (`@property def x` / `@x.setter def x`) and are always treated
+# as one unit -- splicing only the getter and leaving a stale setter behind
+# would be worse than not splicing at all.
+
+_HAND_MARKER = "# jm:hand"
 
 
 def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
@@ -154,23 +167,64 @@ def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
     )
 
 
-def _pyi_method_bodies(text: str) -> dict[tuple[str, str], str]:
-    """Map ``(ClassName, method_name) -> exact source text`` for every method
-    def in a `.pyi` source. Best-effort: unparsable text yields an empty map
-    rather than raising."""
+def _member_start_node(node: ast.AST) -> ast.AST:
+    """*node* itself, or its first decorator when it has any -- a
+    decorator's own ``lineno``/``col_offset`` sit before the ``def`` line's,
+    so a property's ``@property``/``@x.setter`` line is only captured by
+    starting the span there instead of at the ``def`` keyword."""
+    decorators = getattr(node, "decorator_list", None)
+    return decorators[0] if decorators else node
+
+
+def _member_groups(text: str) -> dict[tuple[str, str], list[ast.AST]]:
+    """Map ``(ClassName, member_name) -> [FunctionDef, ...]`` for every
+    class-body method/property in a `.pyi` source. A property's getter and
+    setter share ``member_name`` and land in the same list -- callers must
+    treat the group as one atomic unit. Best-effort: unparsable text yields
+    an empty map rather than raising."""
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return {}
-    bodies: dict[tuple[str, str], str] = {}
+    groups: dict[tuple[str, str], list[ast.AST]] = {}
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
         for item in node.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                start, end = _node_span(text, item)
-                bodies[(node.name, item.name)] = text[start:end]
-    return bodies
+                groups.setdefault((node.name, item.name), []).append(item)
+    return groups
+
+
+def _group_span(text: str, nodes: list[ast.AST]) -> tuple[int, int]:
+    """Combined (start, end) offset spanning every node in *nodes* (a
+    property's getter + setter), decorators included."""
+    starts = [_node_span(text, _member_start_node(n))[0] for n in nodes]
+    ends = [_node_span(text, n)[1] for n in nodes]
+    return min(starts), max(ends)
+
+
+def _group_start_lineno(nodes: list[ast.AST]) -> int:
+    return min(_member_start_node(n).lineno for n in nodes)
+
+
+def _line_start_offset(text: str, lineno: int) -> int:
+    """Absolute character offset of the start of 1-indexed *lineno*."""
+    lines = text.splitlines(keepends=True)
+    return sum(len(line) for line in lines[: lineno - 1])
+
+
+def _hand_marker_start(lines: list[str], member_lineno: int) -> int | None:
+    """1-indexed line number of the ``# jm:hand`` marker immediately above
+    *member_lineno* (skipping at most one blank separator line), or None."""
+    idx = member_lineno - 2  # 0-indexed line just above the member
+    if idx < 0:
+        return None
+    if lines[idx].strip() == "":
+        idx -= 1
+        if idx < 0:
+            return None
+    return idx + 1 if lines[idx].strip() == _HAND_MARKER else None
 
 
 def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
@@ -186,45 +240,101 @@ def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
 
 
 def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
-    """Replace freshly rendered ``manual_stub`` placeholders in *new_text*
-    with the verbatim hand-written bodies found in *old_text*.
+    """Preserve every hand-owned member of *old_text* across *new_text*'s
+    fresh render.
 
-    Only a ``(ClassName, method_name)`` pair that is BOTH flagged
-    ``manual_stub`` in the manifest AND already present in *old_text*
-    is replaced -- a first-ever apply (no prior body) or a renamed
-    method/component (no matching old body) leaves the freshly rendered
-    placeholder as-is, same limitation the `_ext.c` splicer already accepts
-    for renames.
+    A ``(ClassName, member_name)`` group is hand-owned when it is EITHER
+    flagged ``manual_stub`` in the manifest OR marked with a ``# jm:hand``
+    comment directly above it in *old_text* -- the latter needs no manifest
+    entry at all (gh-428's re-scope: a hand-added CPython overload with
+    nothing to declare it against).
+
+    A hand-owned group whose name also exists in the freshly rendered
+    *new_text* (a manifest-derived member the user then hand-edited in
+    place) has its rendered span replaced -- verbatim old text, marker
+    comment included so the next regen still recognizes it. A hand-owned
+    group with **no** counterpart in *new_text* (no manifest entry
+    generates it at all) is instead appended after the last member of its
+    class, so a purely hand-written addition survives even though jm never
+    emits a placeholder for it to land on. Either way, a first apply (no
+    prior text) or a renamed member (no matching old group) leaves the
+    fresh render as-is, same limitation the `_ext.c` splicer already
+    accepts for renames.
     """
-    pairs = _manual_stub_pairs(cfg)
-    if not pairs:
+    old_groups = _member_groups(old_text)
+    if not old_groups:
         return new_text
-    old_bodies = _pyi_method_bodies(old_text)
-    if not old_bodies:
+    manifest_pairs = _manual_stub_pairs(cfg)
+    old_lines = old_text.splitlines()
+
+    def _block(key: tuple[str, str], nodes: list[ast.AST]) -> str:
+        """Old-text span to transplant for *key*, marker line included
+        when it was `# jm:hand`-marked (so the marker survives the
+        transplant and next apply still recognizes it).
+
+        Always anchored at the full start of its first line (never a
+        node's mid-line column offset) -- the target replacement below
+        anchors the same way, so the block supplies its own indentation
+        wholesale instead of stacking on top of what's already there.
+        """
+        _, end = _group_span(old_text, nodes)
+        member_lineno = _group_start_lineno(nodes)
+        marker_lineno = _hand_marker_start(old_lines, member_lineno)
+        start_lineno = (
+            member_lineno if marker_lineno is None else marker_lineno
+        )
+        start = _line_start_offset(old_text, start_lineno)
+        return old_text[start:end]
+
+    hand_owned: dict[tuple[str, str], str] = {}
+    for key, nodes in old_groups.items():
+        marked = (
+            _hand_marker_start(old_lines, _group_start_lineno(nodes))
+            is not None
+        )
+        if key in manifest_pairs or marked:
+            hand_owned[key] = _block(key, nodes)
+    if not hand_owned:
         return new_text
-    try:
-        tree = ast.parse(new_text)
-    except SyntaxError:
-        return new_text
+
+    new_groups = _member_groups(new_text)
     replacements: list[tuple[int, int, str]] = []
-    for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        for item in node.body:
-            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            key = (node.name, item.name)
-            if key not in pairs or key not in old_bodies:
-                continue
-            start, end = _node_span(new_text, item)
-            replacements.append((start, end, old_bodies[key]))
-    if not replacements:
-        return new_text
-    # Back-to-front so earlier offsets stay valid across replacements.
-    replacements.sort(key=lambda r: r[0], reverse=True)
+    append_by_class: dict[str, list[str]] = {}
+    for key, block in hand_owned.items():
+        cls, _name = key
+        if key in new_groups:
+            new_nodes = new_groups[key]
+            _, end = _group_span(new_text, new_nodes)
+            start = _line_start_offset(
+                new_text, _group_start_lineno(new_nodes)
+            )
+            replacements.append((start, end, block))
+        else:
+            append_by_class.setdefault(cls, []).append(block)
+
     out = new_text
-    for start, end, body in replacements:
-        out = out[:start] + body + out[end:]
+    if replacements:
+        # Back-to-front so earlier offsets stay valid across replacements.
+        replacements.sort(key=lambda r: r[0], reverse=True)
+        for start, end, block in replacements:
+            out = out[:start] + block + out[end:]
+
+    if append_by_class:
+        try:
+            tree = ast.parse(out)
+        except SyntaxError:
+            return out
+        insertions: list[tuple[int, str]] = []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name in append_by_class:
+                _, end = _node_span(out, node)
+                combined = "".join(
+                    f"\n\n{block}" for block in append_by_class[node.name]
+                )
+                insertions.append((end, combined))
+        insertions.sort(key=lambda r: r[0], reverse=True)
+        for offset, block in insertions:
+            out = out[:offset] + block + out[offset:]
     return out
 
 

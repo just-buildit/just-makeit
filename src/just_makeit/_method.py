@@ -942,7 +942,12 @@ def run(
             )
 
     print()
-    if varargs:
+    if manual_stub:
+        print(
+            f"Done!  Hand-write {method_name}()'s signature/docstring "
+            f"in the .pyi placeholder — jm emits no C-side code for it."
+        )
+    elif varargs:
         print(
             f"Done!  Implement {object_name}_{method_name}()"
             f" in {object_name}_{method_name}_core.c"
