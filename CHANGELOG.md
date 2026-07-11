@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.28.3] — 2026-07-11
+
+### Added
+
+- **`# jm:hand` marker for member-level `.pyi` merge (gh-428).** A comment
+    directly above any class member (method or property) opts it out of
+    regeneration with zero manifest entry required — extending the
+    `manual_stub = true` splice engine, which only covered a method with no
+    manifest-representable signature at all. A marked member that also
+    exists in the fresh render (a manifest-derived member hand-edited in
+    place) has its span replaced verbatim, marker included, so the next
+    regen still recognizes it. A marked member with no counterpart in the
+    fresh render (a wholly hand-added method) is appended after the class's
+    last member instead. A property's getter/setter share a Python name and
+    always move as one unit.
+- **Additive method/property splice into sacred `_ext_<obj>.c` fragments
+    (gh-440).** A fragment previously only adopted a manifest-derived method
+    or property added after it was last generated via deleting the whole
+    fragment and letting `jm apply` recreate it — discarding every other
+    hand patch the fragment carried. `jm apply` now diffs the
+    manifest-derived `PyMethodDef`/`PyGetSetDef` binding set against what
+    the fragment already implements, by entry name, and splices in only
+    what's missing; every existing binding, hand-patched or not, is left
+    byte-for-byte untouched. v1 is additive only — a fragment gaining a
+    method/property when it already has at least one of that kind splices
+    cleanly, but going from zero to one of a kind still needs the old
+    delete-and-recreate cycle.
+
 ## [0.28.2] — 2026-07-11
 
 ### Fixed
