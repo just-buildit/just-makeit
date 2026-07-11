@@ -351,8 +351,13 @@ def render_source_type(cfg: dict, module: str) -> str:
         self->src.{n} = _i;
     }}""")
         elif f.get("bytes"):
-            assign.append(f"""    if (!_attach_bytes(&self->src, {n}))
-        return -1;""")
+            # Per-field destination: several bytes fields on one source
+            # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
+            # each land in their own struct arrays, not all in `bits`.
+            assign.append(
+                f"    if (!_attach_bytes(&self->src.{n}, "
+                f"&self->src.n_{n}, {n}))\n        return -1;"
+            )
         elif f.get("complex"):
             assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
         return -1;""")
@@ -379,8 +384,8 @@ def render_source_type(cfg: dict, module: str) -> str:
             assign.append(f"    self->src.{n} = {n};")
     assign_s = "\n".join(assign)
 
-    store_bits = """    src->bits   = buf;
-    src->n_bits = (size_t)nb;
+    store_bits = """    *dst   = buf;
+    *n_dst = (size_t)nb;
     return 1;"""
     if bits_coerce:
         attach_doc = (
@@ -455,7 +460,7 @@ def render_source_type(cfg: dict, module: str) -> str:
 {store_bits}
     }}"""
     else:
-        attach_doc = "Copy a Python bytes (0/1 pattern) or None into src->bits"
+        attach_doc = "Copy a Python bytes (0/1 pattern) or None"
         attach_body = f"""    if (!PyBytes_Check(obj)) {{
         PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
         return 0;
@@ -546,13 +551,14 @@ _attach_{cn}({struct} *src, PyObject *obj)
 }}
 """)
 
-    parts.append(f"""/* {attach_doc} (owned). */
+    parts.append(f"""/* {attach_doc} into an owned *dst/*n_dst (one shared
+ * coercer; each bytes field passes its own struct destination). */
 static int
-_attach_bytes({struct} *src, PyObject *obj)
+_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {{
-    free(src->bits);
-    src->bits   = NULL;
-    src->n_bits = 0;
+    free(*dst);
+    *dst   = NULL;
+    *n_dst = 0;
     if (!obj || obj == Py_None)
         return 1;
 {attach_body}
@@ -610,16 +616,16 @@ static int
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    if (self->src.bits && self->src.n_bits)
+    if (self->src.{n} && self->src.n_{n})
         return PyBytes_FromStringAndSize(
-            (const char *)self->src.bits, (Py_ssize_t)self->src.n_bits);
+            (const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n});
     Py_RETURN_NONE;
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_bytes(&self->src, value) ? 0 : -1;
+    return _attach_bytes(&self->src.{n}, &self->src.n_{n}, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '

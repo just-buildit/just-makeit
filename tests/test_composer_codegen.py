@@ -144,8 +144,8 @@ class TestSourceType:
         assert "self->src.type = _i;" in s
         # scalar assigned directly
         assert "self->src.freq = freq;" in s
-        # bytes attached
-        assert "_attach_bytes(&self->src, bits)" in s
+        # bytes attached into its own field's destination
+        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -158,6 +158,33 @@ class TestSourceType:
     def test_dealloc_frees_bits(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert "free(self->src.bits);" in s
+
+    def test_multiple_bytes_fields_use_own_destinations(self):
+        # gh-457: with several bytes fields on one source (a DSSS burst's
+        # acq_code/data_code alongside the payload bits), each field's init
+        # marshal and getset must target its OWN struct arrays — the old
+        # codegen hard-wired every one to bits/n_bits, so the last kwarg
+        # silently clobbered the others.
+        cfg = _cfg()
+        fields = cfg["module"]["wfm_compose"]["source"]["fields"]
+        fields.append(
+            {"name": "acq_code", "type": "uint8_t*", "bytes": True}
+        )
+        fields.append(
+            {"name": "data_code", "type": "uint8_t*", "bytes": True}
+        )
+        s = _composer.render_source_type(cfg, "wfm_compose")
+        for n in ("bits", "acq_code", "data_code"):
+            assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
+            assert f"free(self->src.{n});" in s
+            # the getter reads its own field, not bits
+            assert (
+                f"(const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n}"
+                in s
+            )
+        # the shared coercer writes through the passed destination
+        assert "_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)" in s
+        assert "free(*dst);" in s
 
     def test_factories(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
