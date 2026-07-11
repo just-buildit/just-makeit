@@ -697,6 +697,16 @@ def run(
             serializable=serializable,
         )
     )
+    # No properties exist at creation time (jm property adds them later) —
+    # still call this so property_stubs_pyi resolves to "" rather than
+    # leaving <<property_stubs_pyi>> unrendered in the fresh .pyi (gh-446).
+    ctx.update(
+        Ctx.make_properties_ctx(
+            ctx["component"],
+            ctx["Component"],
+            [],
+        )
+    )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;
     # a later variable_output method re-points it (recomputed on every render).

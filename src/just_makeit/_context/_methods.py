@@ -19,6 +19,33 @@ from .._types import (
 )
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
+# Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
+# return stubs and make_properties_ctx's property stubs — keyed off
+# _CTYPE_META's "kind" rather than a parallel ctype table, so a new ctype
+# only needs its _CTYPE_META entry (see gh-450, where a second table in
+# _stubs.py drifted out of sync with this one).
+_KIND_TO_PY: dict[str, str] = {
+    "float": "float",
+    "int": "int",
+    "complex": "complex",
+    "str": "str",
+}
+
+
+def _pyi_scalar(ctype: str) -> str:
+    if ctype == "void":
+        return "None"
+    if ctype == "bool":
+        return "bool"
+    meta = _CTYPE_META.get(ctype)
+    return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
+
+
+def _pyi_ndarray(ctype: str) -> str:
+    elem = ctype[:-2] if ctype.endswith("[]") else ctype
+    meta = _CTYPE_META.get(elem)
+    return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
+
 
 # A cast-prefixed numpy buffer accessor inside a kernel call argument, e.g.
 # ``(const float *)PyArray_DATA(x_arr)`` or ``(size_t)PyArray_SIZE(x_arr)``.
@@ -375,25 +402,6 @@ def make_methods_ctx(
     to produce working doctests; omitting them produces functional but
     package-anonymous examples.
     """
-    _KIND_TO_PY: dict[str, str] = {
-        "float": "float",
-        "int": "int",
-        "complex": "complex",
-        "str": "str",
-    }
-
-    def _pyi_scalar(ctype: str) -> str:
-        if ctype == "void":
-            return "None"
-        if ctype == "bool":
-            return "bool"
-        meta = _CTYPE_META.get(ctype)
-        return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
-
-    def _pyi_ndarray(ctype: str) -> str:
-        elem = ctype[:-2] if ctype.endswith("[]") else ctype
-        meta = _CTYPE_META.get(elem)
-        return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
 
     _EMPTY: dict = {
         "method_decls": "",
@@ -2139,6 +2147,7 @@ def make_properties_ctx(
         "tp_getset_decl": "",
         "property_decls": "",
         "property_struct_fields": "",
+        "property_stubs_pyi": "",
     }
     if not properties:
         return _EMPTY
@@ -2154,6 +2163,7 @@ def make_properties_ctx(
     getset_entries: list[str] = []
     decl_lines: list[str] = []
     struct_field_lines: list[str] = []
+    pyi_parts: list[str] = []
 
     for p in properties:
         pname: str = p["name"]
@@ -2323,6 +2333,23 @@ def make_properties_ctx(
             f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
         )
 
+        # gh-446: standalone .pyi stubs for a manifest property (PyGetSetDef
+        # -> a real `@property` descriptor), independent of the getter/
+        # setter *methods* make_state_ctx stubs out for state vars.
+        py_t = _pyi_ndarray(ctype) if buf_field else _pyi_scalar(ctype)
+        pyi_block = [
+            "",
+            "    @property",
+            f"    def {pname}(self) -> {py_t}:",
+            f'        """{_pdoc}"""',
+        ]
+        if writable:
+            pyi_block += [
+                f"    @{pname}.setter",
+                f"    def {pname}(self, value: {py_t}) -> None: ...",
+            ]
+        pyi_parts.append("\n".join(pyi_block))
+
     getset_body = "\n".join(getter_parts)
     entries_str = "\n".join(getset_entries)
     getset_def = (
@@ -2337,10 +2364,12 @@ def make_properties_ctx(
     property_struct_fields = (
         "\n" + "\n".join(struct_field_lines) if struct_field_lines else ""
     )
+    property_stubs_pyi = "\n".join(pyi_parts) + "\n" if pyi_parts else ""
 
     return {
         "getset_def": getset_def,
         "tp_getset_decl": tp_getset_decl,
         "property_decls": property_decls,
         "property_struct_fields": property_struct_fields,
+        "property_stubs_pyi": property_stubs_pyi,
     }
