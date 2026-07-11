@@ -45,6 +45,7 @@ _CTYPE_TO_PY: dict[str, str] = {
     "uint32_t": "int",
     "uint64_t": "int",
     "size_t": "int",
+    "const char *": "str",
 }
 
 _CTYPE_TO_NP: dict[str, str] = {
