@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.28.2] — 2026-07-11
+
+### Fixed
+
+- **`jm apply` ignored `[project] status_allow` (gh-441).** Apply's
+    reconcile step unconditionally overwrote every glue file, including a
+    hand-maintained `.pyi` the manifest already marks as accepted drift for
+    `jm status --check` — so a bare `jm apply` could silently clobber
+    hand-written content status considered exempt. `_overwrite_if_changed`
+    now skips the write when the target's project-relative path matches a
+    `status_allow` entry (exact or glob); `jm status`'s internal throwaway
+    replay opts out of the skip so its ALLOWED/STALE classification (and
+    the gh-426 dropped-symbol check) still sees the genuine diff.
+- **Constructor docstring `optional` flag read from the wrong tuple offset
+    (gh-441 follow-up).** `_build_class_docstring` picked up `create_fn`
+    instead of the `optional` flag when deciding whether an init-param's
+    docstring type gets `| None` appended, so a non-optional param with a
+    `create_fn` set could wrongly render as optional.
+
 ## [0.28.1] — 2026-07-10
 
 ### Fixed
