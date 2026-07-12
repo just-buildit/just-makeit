@@ -187,6 +187,28 @@ class TestAddManifestGuarantee:
     longer exists.)
     """
 
+    def test_hand_edited_create_gets_fresh_body_not_stale_splice(
+        self, project
+    ):
+        """gh-267 regression: `jm regenerate`'s default hand-written-body
+        preservation must NOT fire here. `comp_create`'s pre-add signature
+        (one param) is stale the moment a field is added (two params) — if
+        the old body were spliced back under the new signature it would
+        either fail to compile or leave the new field uninitialized."""
+        core_c = project / "native" / "src" / "comp" / "comp_core.c"
+        text = core_c.read_text(encoding="utf-8")
+        core_c.write_text(
+            text.replace(
+                "obj->gain = gain;",
+                "obj->gain = gain; /* HAND_EDIT_STALE_SIG */",
+            ),
+            encoding="utf-8",
+        )
+        add_run(project, None, [("order", "int", "4")], force=True)
+        text = core_c.read_text(encoding="utf-8")
+        assert "HAND_EDIT_STALE_SIG" not in text
+        assert "obj->order = order;" in text
+
     def test_duplicate_add_leaves_manifest_unchanged(self, project):
         cfg_before = load(project)
         before = state_vars(cfg_before, "comp")
