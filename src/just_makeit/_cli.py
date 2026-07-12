@@ -149,8 +149,10 @@ Commands:
                                 _core.c. With a fragment path, copy it into objects/,
                                 add to include, then materialize.
   regenerate <component>        Delete a component's generated files and rebuild them
-                                from just-makeit.toml (discards _core.c edits — stash
-                                first). --force skips the confirmation.
+                                from just-makeit.toml, lifting hand-written _core.c/
+                                _core.h bodies back in afterward (--discard skips this
+                                for a clean reset; stash first regardless). --force
+                                skips the confirmation.
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
@@ -1007,20 +1009,24 @@ def main() -> None:
         from . import _regenerate
 
         force = False
+        discard = False
         names: list[str] = []
         for a in args[1:]:
             if a == "--force":
                 force = True
+            elif a == "--discard":
+                discard = True
             else:
                 names.append(a)
         if len(names) != 1:
             print(
                 "error: 'regenerate' takes exactly one component name.\n"
-                "Usage: just-makeit regenerate <component> [--force]",
+                "Usage: just-makeit regenerate <component> "
+                "[--force] [--discard]",
                 file=sys.stderr,
             )
             sys.exit(1)
-        _regenerate.run(Path.cwd(), names[0], force=force)
+        _regenerate.run(Path.cwd(), names[0], force=force, discard=discard)
 
     elif cmd == "ci":
         from . import _ci

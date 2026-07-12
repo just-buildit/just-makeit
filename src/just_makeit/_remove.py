@@ -467,10 +467,12 @@ def _remove_state(
     # Removing a field is structural (struct + create/reset change): rebuild
     # from the manifest rather than splicing.  The remove was already
     # confirmed above, so skip the regenerate prompt.  (Imported lazily —
-    # _regenerate imports helpers from this module.)
+    # _regenerate imports helpers from this module.) discard=True: the old
+    # body's signature predates the removed field — see _add.py's identical
+    # reasoning for the opposite (add) direction.
     from . import _regenerate
 
-    _regenerate.run(root, obj, force=True)
+    _regenerate.run(root, obj, force=True, discard=True)
     print()
     print(f"Done!  State field '{name}' removed.")
 
