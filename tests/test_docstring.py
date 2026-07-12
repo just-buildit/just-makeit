@@ -7,10 +7,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._docstring import (  # noqa: E402
     DoxyBlock,
+    _strip_doxy_inline,
     extract_doc_blocks,
     parse_doxygen_block,
     render_numpy_method_doc,
 )
+
+
+class TestStripDoxyInline:
+    def test_param_reference(self):
+        assert (
+            _strip_doxy_inline("length @p code_len; must equal @p sf")
+            == "length code_len; must equal sf"
+        )
+
+    def test_code_and_ref(self):
+        assert (
+            _strip_doxy_inline("see @c foo and @ref bar") == "see foo and bar"
+        )
+
+    def test_leaves_other_tags(self):
+        # @brief/@param are line tags, not inline; @pre is not a single-word ref
+        assert _strip_doxy_inline("@pre x > 0") == "@pre x > 0"
+
+    def test_parse_strips_param_and_body(self):
+        b = parse_doxygen_block(
+            "/**\n"
+            " * @brief Do a thing with @p n samples.\n"
+            " * @param n Count of @p x items.\n"
+            " */"
+        )
+        assert "@p" not in b.brief
+        assert "@p" not in b.param_desc("n")
+        assert b.param_desc("n") == "Count of x items."
 
 
 # Real-shaped block from doppler's ddc_core.h (ddc_execute).
@@ -118,6 +147,35 @@ class TestExtractDocBlocks:
 
     def test_undocumented_decl_absent(self):
         header = "double ddc_get_rate(const ddc_state_t *state);\n"
+        assert extract_doc_blocks(header) == {}
+
+    def test_inline_definition_extracted(self):
+        # gh-385: a function *defined* inline in the header (body in `{ ... }`
+        # instead of a `;`-terminated prototype, e.g. a JM_FORCEINLINE
+        # cic_decimate / step()) must still have its Doxygen extracted.
+        header = (
+            "/**\n"
+            " * @brief Decimate a block of samples.\n"
+            " * @param state The state.\n"
+            " */\n"
+            "JM_FORCEINLINE JM_HOT size_t\n"
+            "cic_decimate(cic_state_t *state, const float complex *in,\n"
+            "             size_t n_in, float complex *out)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+        blocks = extract_doc_blocks(header)
+        assert "cic_decimate" in blocks
+        assert (
+            parse_doxygen_block(blocks["cic_decimate"]).brief
+            == "Decimate a block of samples."
+        )
+
+    def test_brace_block_without_params_is_not_matched(self):
+        # The `{`-terminator allowance must not pick up a braced block that has
+        # no parameter list — e.g. a documented `typedef struct { ... }`.
+        header = "/** A state struct. */\ntypedef struct { int n; } foo_t;\n"
         assert extract_doc_blocks(header) == {}
 
 

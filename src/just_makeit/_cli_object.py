@@ -113,6 +113,7 @@ def run(args: list[str]) -> None:
     no_step = False
     mutable = False
     step_delegates = False
+    serializable = False
     streamable = False
     async_stream = False
     stream_block_default_obj: int | None = None
@@ -252,6 +253,9 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--step-delegates-to-steps":
             step_delegates = True
+            i += 1
+        elif tok == "--serializable":
+            serializable = True
             i += 1
         elif tok == "--init-param":
             ip_var, i = parse_init_param_flag(remaining, i)
@@ -428,6 +432,7 @@ def run(args: list[str]) -> None:
         no_step=no_step,
         mutable=mutable,
         step_delegates=step_delegates,
+        serializable=serializable,
         streamable=streamable,
         async_stream=async_stream,
         stream_block_default=stream_block_default_obj,

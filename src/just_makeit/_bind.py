@@ -34,8 +34,10 @@ import re
 import sys
 from pathlib import Path
 
+from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from . import _types as T
 from ._init import _make_component_ctx
 
@@ -471,6 +473,7 @@ def _build_ctx(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=is_opaque,
+            serializable=C._truthy(parsed.get("serializable")),
         )
     )
     ctx.update(
@@ -532,6 +535,17 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
         pyi = root / "src" / pkg / f"{component}.pyi"
         if pyi.exists() or (root / "src" / pkg).is_dir():
             pyi_text = R.render(R.COMPONENT_PYI, ctx)
+            # gh-428: bind derives its output purely from the header and
+            # otherwise never consults just-makeit.toml, but a manual_stub
+            # method's hand-written .pyi text has no header declaration for
+            # bind to reconstruct. Read the manifest (if any) only to learn
+            # which symbols to preserve verbatim across this regen.
+            if pyi.exists():
+                cfg_path = root / C.FILENAME
+                old_cfg = C.load(root) if cfg_path.exists() else {}
+                pyi_text = S._splice_manual_stub_bodies(
+                    old_cfg, pyi.read_text(encoding="utf-8"), pyi_text
+                )
             pyi.parent.mkdir(parents=True, exist_ok=True)
             verb = "update" if pyi.exists() else "create"
             pyi.write_text(pyi_text, encoding="utf-8")

@@ -45,6 +45,18 @@ def extract_doctests(text: str) -> list[str]:
     return out
 
 
+def _strip_doxy_inline(text: str) -> str:
+    """Reduce Doxygen inline word-references to the bare word.
+
+    ``@p name`` / ``@c name`` / ``@a name`` / ``@e name`` / ``@b name`` and
+    ``@ref name`` are parameter/code/emphasis references that read as noise in a
+    Python docstring (``"length @p code_len"`` → ``"length code_len"``).  Only
+    the single-word form is touched; other ``@``-tags are left alone.
+    """
+    text = re.sub(r"@ref\s+(\w+)", r"\1", text)
+    return re.sub(r"@[pcaeb]\s+(\w+)", r"\1", text)
+
+
 @dataclass
 class DoxyBlock:
     """Structured contents of one Doxygen ``/** ... */`` comment.
@@ -71,11 +83,35 @@ class DoxyBlock:
     examples: list[str] = field(default_factory=list)
 
     def param_desc(self, name: str) -> str | None:
-        """Return the description for parameter *name*, or ``None``."""
+        """Return the description for parameter *name*, or ``None``.
+
+        Descriptions are already cleaned of Doxygen inline word-references at
+        parse time (see ``_strip_doxy_inline``).
+        """
         for pname, desc in self.params:
             if pname == name:
                 return desc
         return None
+
+
+# jm's own scaffolder emits "@param name  Initial name (default: X)." — the
+# canonical shape (see _context/_state.py) a hand-edited header is expected
+# to preserve or update in place (gh-442).
+_HEADER_DEFAULT_RE = re.compile(r"\(default:\s*([^)]+?)\)\.?\s*$")
+
+
+def header_default(desc: str | None) -> str | None:
+    """Extract the trailing ``(default: X)`` value from a ``@param`` description.
+
+    Returns ``None`` when *desc* is absent or carries no recognizable
+    ``(default: ...)`` suffix — best-effort by design (gh-442): a header
+    that documents its default in some other shape is silently skipped
+    rather than misparsed.
+    """
+    if not desc:
+        return None
+    m = _HEADER_DEFAULT_RE.search(desc)
+    return m.group(1).strip() if m else None
 
 
 def group_paragraphs(lines: list[str]) -> list[str]:
@@ -101,26 +137,32 @@ def group_paragraphs(lines: list[str]) -> list[str]:
 
 # A C declaration line we can attribute a preceding comment to. Captures the
 # function name from ``[qualifiers] ret  name(...)``. Deliberately loose: we
-# only need the identifier immediately before the '('.
+# only need the identifier immediately before the '('. The terminator is `;`
+# (a prototype) OR `{` (an inline definition in the header, e.g. a
+# JM_FORCEINLINE step()/execute body) — gh-385.
 _DECL_NAME_RE = re.compile(
-    r"^[^/{}#]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*;",
+    r"^[^/{}#]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*[;{]",
     re.MULTILINE | re.DOTALL,
 )
 
 # A SINGLE comment block (the inner pattern forbids ``*/`` so it can't bridge
 # across an intervening block — e.g. the file-level ``@file`` header) that is
-# immediately followed by a declaration (whitespace only between, and the decl
-# must not itself start a comment).
+# immediately followed by a function declaration *or* an inline definition
+# (whitespace only between; the decl must not itself start a comment). The
+# trailing `[;{]` matches a prototype's `;` or an inline body's opening `{`
+# (gh-385); the `(…)` requirement before it keeps `typedef struct { … }` and
+# other brace blocks without a parameter list from matching.
 _BLOCK_THEN_DECL_RE = re.compile(
     r"/\*\*(?P<block>(?:(?!\*/)[\s\S])*?)\*/\s*"
-    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*;)",
+    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*[;{])",
     re.DOTALL,
 )
 
 
 def _decl_name(decl: str) -> str | None:
     """Extract the function identifier from a C declaration fragment."""
-    m = _DECL_NAME_RE.search(decl if decl.endswith(";") else decl + ";")
+    terminated = decl if decl[-1:] in ";{" else decl + ";"
+    m = _DECL_NAME_RE.search(terminated)
     return m.group(1) if m else None
 
 
@@ -291,11 +333,14 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     # trim trailing blank lines from the captured example
     while example_lines and not example_lines[-1].strip():
         example_lines.pop()
+    # Reduce Doxygen inline word-references (@p/@c/@ref name) to the bare word
+    # so the synthesized Python docstrings read cleanly. Examples are left as-is
+    # (they are verbatim @code blocks).
     block = DoxyBlock(
-        brief=brief,
-        body=body_lines,
-        params=[(n, d) for n, d in params],
-        returns=returns,
+        brief=_strip_doxy_inline(brief),
+        body=[_strip_doxy_inline(b) for b in body_lines],
+        params=[(n, _strip_doxy_inline(d)) for n, d in params],
+        returns=_strip_doxy_inline(returns),
         examples=example_lines,
     )
 

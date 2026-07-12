@@ -1130,3 +1130,110 @@ class TestVariableOutputFunction:
         fn = C.module_functions(C.load(tmp_path), "wfm")[0]
         assert fn.get("variable_output") in (True, "true")
         assert fn["out_size"] == "rrc_ntaps(sps, span)"
+
+
+class TestModuleFunctionDocstring:
+    """gh-384: a module free function whose sacred ``<module>_core.h`` carries
+    hand-written Doxygen (``@brief``/``@param``/``@code``) gets a full
+    synthesized ``.pyi`` docstring with a runnable ``Examples`` doctest — the
+    same treatment object methods get. With no header block (a fresh scaffold
+    injects a decl only) it keeps the historical one-line stub, so a
+    manifest-only rebuild is unchanged (idempotence)."""
+
+    def _scaffold(self, root):
+        new_run("dsp", root, modules=["dsp"])
+        function_run(
+            root,
+            "enbw",
+            "dsp",
+            params=[("a", "double")],
+            return_type="double",
+        )
+
+    def test_scaffold_function_keeps_name_stub(self, tmp_path):
+        from just_makeit._stubs import make_module_pyi
+
+        root = tmp_path / "dsp"
+        self._scaffold(root)
+        pyi = make_module_pyi(load(root), "dsp", root)
+        assert '"""Enbw."""' in pyi
+
+    def test_header_code_becomes_examples_doctest(self, tmp_path):
+        from just_makeit._stubs import make_module_pyi
+
+        root = tmp_path / "dsp"
+        self._scaffold(root)
+
+        # Prepend a hand-written Doxygen block before the injected declaration.
+        header = root / "native" / "inc" / "dsp" / "dsp_core.h"
+        text = header.read_text(encoding="utf-8")
+        doc_block = (
+            "/**\n"
+            " * @brief Equivalent noise bandwidth of a window.\n"
+            " * @param a A scalar input.\n"
+            " * @return ENBW in bins.\n"
+            " * @code\n"
+            " * >>> 1 + 1\n"
+            " * 2\n"
+            " *\n"
+            " * @endcode\n"
+            " */\n"
+        )
+        lines = text.splitlines(keepends=True)
+        for i, ln in enumerate(lines):
+            if "enbw(" in ln and ln.rstrip().endswith(";"):
+                lines.insert(i, doc_block)
+                break
+        else:  # pragma: no cover - the decl must exist after scaffold
+            raise AssertionError("could not find the enbw declaration")
+        header.write_text("".join(lines), encoding="utf-8")
+
+        pyi = make_module_pyi(load(root), "dsp", root)
+        assert "Equivalent noise bandwidth of a window." in pyi
+        assert "Examples" in pyi
+        assert ">>> 1 + 1" in pyi
+        # No root -> historical one-line stub (back-compat / idempotence).
+        assert "Examples" not in make_module_pyi(load(root), "dsp")
+
+
+class TestVariableOutputArraySignature:
+    """gh-385: a variable_output object method declared with an *element*
+    arg_type — the documented blockwise shape, ``--arg-type 'float _Complex'
+    --variable-output`` — consumes a *block*. Its generated binding parses a
+    numpy array (PyArray_FROM_OTF) and its output already renders as NDArray,
+    so the .pyi input annotation must be NDArray[...], not the scalar element
+    (which the binding does not accept)."""
+
+    def test_pyi_input_is_ndarray(self, tmp_path):
+        from just_makeit._method import run as method_run
+
+        root = tmp_path / "blk"
+        new_run("blk", root, modules=["dsp"])
+        object_run(
+            root,
+            "proc",
+            module="dsp",
+            no_state=True,
+            no_step=True,
+            class_name="Proc",
+        )
+        method_run(
+            root,
+            "proc",
+            "execute",
+            "dsp",
+            arg_type="float _Complex",
+            return_type="float _Complex",
+            variable_output=True,
+            multi_output=[],
+        )
+        pyi = (root / "src/blk/dsp/dsp.pyi").read_text(encoding="utf-8")
+        # gh-423: this shape (bare arg_type, variable_output, no params, no
+        # multi_output) is also `out=`-eligible (gh-219), so the module
+        # aggregator's stub carries the optional `out=` buffer param.
+        assert (
+            "def execute(self, x: NDArray[np.complex64],"
+            " out: NDArray[np.complex64] | None = None)"
+            " -> NDArray[np.complex64]:" in pyi
+        )
+        assert "x: complex" not in pyi

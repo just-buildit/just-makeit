@@ -547,6 +547,29 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def is_serializable(cfg: dict, component: str) -> bool:
+    """Return True if the component exposes a serializable-state triplet.
+
+    The C core is assumed to provide (hand-written, sibling to reset):
+
+        size_t <comp>_state_bytes(const <comp>_state_t *);
+        void   <comp>_get_state(const <comp>_state_t *, void *blob);
+        int    <comp>_set_state(<comp>_state_t *, const void *blob);
+
+    jm then generates the Python binding (state_bytes/get_state/set_state) and
+    a uniform round-trip CI test — the "elastic / pure-transducer" face.
+
+    Works for both an object (top-level ``cfg[component]``) and a
+    ``kind="handle"`` module (``cfg["module"][component]``, gh-403); the two
+    namespaces never collide, so checking both is unambiguous.
+    """
+    if _truthy(cfg.get(component, {}).get("serializable")):
+        return True
+    return _truthy(
+        cfg.get("module", {}).get(component, {}).get("serializable")
+    )
+
+
 def step_delegates(cfg: dict, component: str) -> bool:
     """Return True if step() should be generated as a delegator to steps().
 
@@ -785,7 +808,14 @@ def composer_source(cfg: dict, module: str) -> dict:
     ``enum_fields``  ``{field: enum_name}`` — int fields serialized as strings
                      via the ``[[enum]]`` SSOT (gh-285);
     ``extra_fields`` ``[{name, type, default?}, …]`` — scalar add-ons (level, snr);
-    ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``)."""
+    ``bytes_field``  ``{name, c, len}`` — an owned byte buffer (``bits``).
+
+    A ``[[….source.fields]]`` entry also accepts an optional ``doc`` string,
+    rendered as the field's numpy-parameter description in the ``.pyi``. A field
+    with ``complex = true`` (C type ``float _Complex*``) takes a numpy complex64
+    array, stored as an owned ``src-><name>`` / ``src->n_<name>`` pair — the
+    complex analog of a ``bytes`` field (excluded from the generic JSON/CLI; it
+    crosses via the getset or a ``to_json_fn``)."""
     return dict(cfg.get("module", {}).get(module, {}).get("source", {}))
 
 
@@ -1324,10 +1354,10 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
 
 
 def init_params(cfg: dict, component: str) -> list[tuple]:
-    """Return --init-param entries as 9-tuples.
+    """Return --init-param entries as 10-tuples.
 
     ``(name, type, default, default_raw, real_type, real_create_fn, optional,
-    create_fn, required)``
+    create_fn, required, doc)``
 
     ``default_raw`` overrides the type's parse_zero for the raw C variable.
     ``real_type`` / ``real_create_fn`` enable dtype-dispatch: when the array
@@ -1339,9 +1369,11 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     with only the scalar params.  ``required`` (gh-266) marks a *scalar* param
     mandatory: it parses as a positional before the PyArg ``|`` so omitting it
     raises ``TypeError`` at the call boundary instead of passing the type's
-    zero through to a constructor that returns NULL.  All fields default to
-    ``""`` / ``False`` when absent.  Callers may unpack defensively with
-    ``param[:3]``.
+    zero through to a constructor that returns NULL.  ``doc`` is the optional
+    manifest override for the constructor-parameter description; when empty the
+    docstring generators fall back to the create function's ``@param`` and then
+    a stub.  All fields default to ``""`` / ``False`` when absent.  Callers may
+    unpack defensively with ``param[:3]``.
     """
     return [
         (
@@ -1354,6 +1386,7 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
             p.get("optional", False),
             p.get("create_fn", ""),
             p.get("required", False),
+            p.get("doc", ""),
         )
         for p in cfg.get(component, {}).get("init_params", [])
     ]
@@ -1377,6 +1410,23 @@ def add_method(cfg: dict, component: str, method: dict) -> dict:
     """Append a method entry to the component's methods list."""
     cfg.setdefault(component, {}).setdefault("methods", []).append(method)
     return cfg
+
+
+def param_headers(cfg: dict, component: str) -> list[str]:
+    """Headers declared on method params (gh-432), deduped, declaration order.
+
+    A capsule-typed param's foreign C type may live in a header outside the
+    ``<dep>/<dep>_core.h`` convention (e.g. ``telemetry/telemetry.h``); the
+    per-param ``header`` key names it and this collects every such header for
+    the component so the include-injection paths can reach it.
+    """
+    out: list[str] = []
+    for m in methods(cfg, component):
+        for p in m.get("params") or []:
+            h = p.get("header")
+            if h and h not in out:
+                out.append(h)
+    return out
 
 
 def properties(cfg: dict, component: str) -> list[dict]:
@@ -1585,6 +1635,33 @@ def is_windows_target(cfg: dict) -> bool:
     return "windows" in (p.lower() for p in project_platforms(cfg))
 
 
+_DEFAULT_BENCH_BLOCK_SIZES = [1024, 65536]
+
+
+def project_bench_block_sizes(cfg: dict) -> list[int]:
+    """Block sizes for the generated Python benchmarks (``[project.bench]
+    block_sizes``).
+
+    Defaults to ``[1024, 65536]`` — the historical ``_1k`` + ``_64k`` suites
+    — when unset, so existing scaffolds are byte-identical. A project that
+    only benches large blocks declares e.g.::
+
+        [project.bench]
+        block_sizes = [65536]
+
+    and ``jm`` stops reintroducing the ``_1k`` suite on every scaffold /
+    reconcile. Sizes are de-duplicated, sorted ascending, and any
+    non-positive entry is dropped; an empty / malformed value falls back to
+    the default. Only the Python ``bench_<obj>.py`` files honour this — the
+    C ``bench_<obj>_core.c`` uses a single fixed block and is unaffected.
+    """
+    v = cfg.get("project", {}).get("bench", {}).get("block_sizes")
+    if not isinstance(v, (list, tuple)) or not v:
+        return list(_DEFAULT_BENCH_BLOCK_SIZES)
+    sizes = sorted({int(n) for n in v if int(n) > 0})
+    return sizes or list(_DEFAULT_BENCH_BLOCK_SIZES)
+
+
 def c_style(cfg: dict) -> str:
     """C-output style declared under ``[project] c_style`` (gh-265).
 
@@ -1727,6 +1804,7 @@ def add_component(
     no_step_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
+    serializable_: bool = False,
     streamable_: bool = False,
     async_stream_: bool = False,
     stream_block_default_: "int | None" = None,
@@ -1771,6 +1849,8 @@ def add_component(
     # non-streamable objects produce no golden-output churn.
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
+    if serializable_:
+        entry["serializable"] = "true"
     if streamable_:
         entry["streamable"] = "true"
     if async_stream_:
@@ -1800,6 +1880,8 @@ def add_component(
                 rec["create_fn"] = p[7]
             if len(p) > 8 and p[8]:
                 rec["required"] = True
+            if len(p) > 9 and p[9]:
+                rec["doc"] = p[9]
             entry["init_params"].append(rec)
     if class_name_:
         entry["class_name"] = class_name_
@@ -1841,6 +1923,7 @@ _KNOWN_METHOD_KEYS = frozenset(
         "arg_type",
         "return_type",
         "varargs",
+        "manual_stub",
         "variable_output",
         "pass_capacity",
         "nogil",
@@ -2103,12 +2186,33 @@ def _dump(cfg: dict) -> str:
     proj = cfg.get("project", {})
     if proj:
         lines.append("[project]")
+        # Nested sub-tables (e.g. `bench`) must follow the scalar keys in TOML,
+        # so collect them and emit `[project.<name>]` blocks after this loop.
+        subtables = {}
         for k, v in proj.items():
-            if k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
+            if isinstance(v, dict):
+                subtables[k] = v
+            elif k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
                 items_str = ", ".join(f'"{x}"' for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')
+        for name, sub in subtables.items():
+            lines.append("")
+            lines.append(f"[project.{name}]")
+            for k, v in sub.items():
+                if isinstance(v, (list, tuple)):
+                    items_str = ", ".join(
+                        str(x) if isinstance(x, (int, float)) else f'"{x}"'
+                        for x in v
+                    )
+                    lines.append(f"{k} = [{items_str}]")
+                elif isinstance(v, bool):
+                    lines.append(f"{k} = {str(v).lower()}")
+                elif isinstance(v, (int, float)):
+                    lines.append(f"{k} = {v}")
+                else:
+                    lines.append(f'{k} = "{v}"')
         lines.append("")
 
     # [[enum]] SSOT tables (top-level, manifest-owned) — render before modules.
@@ -2145,6 +2249,7 @@ def _dump(cfg: dict) -> str:
                     "close_fn",
                     "handle_type",
                     "optional_backend",
+                    "serializable",  # gh-403: state triplet over the handle
                 ):
                     if data.get(_hk):
                         lines.append(f'{_hk} = "{data[_hk]}"')
@@ -2228,6 +2333,12 @@ def _dump(cfg: dict) -> str:
                     # gh-240: an optional scalar default round-trips as a string.
                     if p.get("default") not in (None, ""):
                         base += f', default = "{p["default"]}"'
+                    # gh-432: capsule-typed params round-trip their capsule
+                    # name and foreign header.
+                    if p.get("capsule"):
+                        base += f', capsule = "{p["capsule"]}"'
+                    if p.get("header"):
+                        base += f', header = "{p["header"]}"'
                     _emit.append("{" + base + "}")
                 lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
@@ -2279,6 +2390,7 @@ def _dump(cfg: dict) -> str:
             "no_state",
             "no_step",
             "step_delegates_to_steps",
+            "serializable",
             "streamable",
             "async_stream",
             "stream_block_default",
@@ -2364,6 +2476,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'create_fn = "{p["create_fn"]}"')
             if p.get("required"):
                 lines.append("required = true")
+            if p.get("doc"):
+                lines.append(_doc_assign(p["doc"]))
             lines.append("")
         if comp_data.get("init_post_parse"):
             ipp = (
@@ -2384,6 +2498,8 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'return_type = "{m["return_type"]}"')
             if m.get("varargs"):
                 lines.append("varargs = true")
+            if m.get("manual_stub"):
+                lines.append("manual_stub = true")
             if m.get("variable_output"):
                 lines.append("variable_output = true")
             if m.get("pass_capacity"):
@@ -2406,6 +2522,14 @@ def _dump(cfg: dict) -> str:
                     # gh-240: an optional scalar default round-trips as a string.
                     if p.get("default") not in (None, ""):
                         s += f', default = "{p["default"]}"'
+                    # gh-432: capsule-typed params — the capsule name and the
+                    # foreign type's header must survive save()/load(); the
+                    # gh-257 generic passthrough covers only method-level
+                    # scalar keys, not per-param keys.
+                    if p.get("capsule"):
+                        s += f', capsule = "{p["capsule"]}"'
+                    if p.get("header"):
+                        s += f', header = "{p["header"]}"'
                     return "{" + s + "}"
 
                 parts = ", ".join(_param_inline(p) for p in _ea)

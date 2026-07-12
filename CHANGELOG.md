@@ -2,6 +2,666 @@
 
 ## [Unreleased]
 
+## [0.28.9] — 2026-07-12
+
+### Fixed
+
+- **`jm bench`'s display table and Δ-vs-prev collided same-named benches
+    across components (gh-464).** `_bench_key` already preferred `fullname`
+    over the bare `name` for baseline↔current matching, but
+    `_display_table` — the function that prints `jm bench`'s terminal
+    summary — never got the same fix, reading `b["name"]` directly for both
+    the printed "Name" column and the `prev_ops` dict key used to compute
+    "Δ vs prev". Two components sharing a generic Python bench name (e.g.
+    `test_bench_steps_64k`) printed identically and could silently compare
+    against the wrong component's previous run. New `_qualify_python_names()`
+    prefixes each Python benchmark's `name` with its bench file's stem,
+    mirroring the C side's existing `f"{comp}::{entry_name}"` convention.
+- **`jm regenerate` discarded hand-written `_core.c`/`_core.h` bodies on
+    every rebuild (gh-267).** By default it now lifts create/destroy/reset/
+    `step()`/getter/setter/method bodies out of the sacred files by function
+    name before deleting them, and splices them back into the freshly
+    regenerated ones — reusing the same by-name extract/restore machinery
+    `jm apply` already uses to preserve hand-patched module `_ext.c` glue,
+    generalized to public (non-`static`) functions. Guards against a bare
+    prototype declaration false-matching and against splicing an old body
+    under a changed signature (e.g. `jm add` growing a lifecycle function's
+    parameter list) — in either case the fresh body is kept instead. `jm add`
+    / `jm remove --state` now pass `discard=True` explicitly, matching their
+    existing documented contract. New `--discard` flag restores the old
+    clean-reset behavior.
+
+## [0.28.8] — 2026-07-11
+
+### Fixed
+
+- **Segment fields now support enums end to end (gh-460).** Declaring an
+    enum **segment** field (e.g. a `gap_noise = "auto"|"off"` policy)
+    generated broken/inconsistent code while the same declaration on a
+    source field worked fully: the manifest default was emitted verbatim
+    (`self->gap_noise = auto;` — not C), the kwarg parsed as an int while
+    the generated `.pyi` promised a string, the getset returned the raw
+    int, and the generic JSON face serialized a number against its
+    documented SSOT-string contract. `render_segment_type`'s
+    default/extract/getset paths and `render_json_funcs`' segment loops
+    simply predated any enum segment field existing; they now get the
+    identical `_field_is_enum` treatment source fields have had since
+    gh-285 — codegen-time index-mapped defaults, validated-string kwarg
+    parse through the shared `_enum_index`/`_enum_<name>` tables, string
+    getset round-trip, and SSOT-string generic JSON.
+
+## [0.28.7] — 2026-07-11
+
+### Fixed
+
+- **A composer source with multiple `bytes=true` fields clobbered them all
+    into `bits` (gh-457).** The composer source-type codegen generated one
+    `_attach_bytes` helper hard-wired to `src->bits`/`n_bits`, and every
+    `bytes=true` field's init marshal and getset setter called it — with the
+    getter likewise reading `self->src.bits`. A source with more than one
+    bytes field (e.g. a DSSS burst's `acq_code`/`data_code`/`sync` alongside
+    the payload `bits`) silently clobbered everything into `bits`, last
+    kwarg winning. The shared coercer is now parameterized as
+    `_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)` — the same
+    per-field-destination shape the `complex=true` fields already use — and
+    each field's init assign and getset point at its own struct arrays.
+    Single-bytes-field modules regenerate to behaviorally identical code.
+
+## [0.28.6] — 2026-07-11
+
+### Added
+
+- **Lint init_param default drift between the manifest and the header doc
+    (gh-442).** `jm apply` already juxtaposes two sources when rendering a
+    `.pyi`'s constructor docstring — the manifest's `init_params[].default`
+    for the numpydoc signature line, and the sacred header's own
+    `@param name ... (default: X)` prose for the description — so when only
+    one side gets edited out-of-band, the stub silently reads as a
+    scale/corruption bug even though each half is individually correct for
+    its own source of truth (the actual root cause behind gh-441's original
+    report). `jm apply` now warns (non-fatal — jm has no way to know which
+    side is stale) on every numeric disagreement; `jm status`/`jm status   --check` promote the same check to an always-shown, CI-gating `DRIFT`
+    section, mirroring the gh-426 `DROPPED`-symbol precedent (never
+    suppressed by `--allow`/`status_allow`). Scoped to `init_params` for v1.
+    Best-effort: a header `@param` with no recognizable `(default: X)`
+    suffix is silently skipped rather than misparsed, and a freshly
+    scaffolded header (no human-authored doc yet) never fires — `jm`'s own
+    boilerplate `@brief`/`@param` text is filtered out the same way the
+    docstring generator already ignores it.
+
+## [0.28.5] — 2026-07-11
+
+### Fixed
+
+- **Standalone objects never got a `.pyi` stub for a newly added property
+    (gh-446).** `_property.py::run()`'s standalone branch updated
+    `_core.h`/`_ext.c` but never wrote the `.pyi` at all. Because `jm   apply`'s replay and `jm status --check` both materialize properties by
+    calling this same `_property.run()` internally, the gap was invisible
+    on three fronts: immediately after `jm property`, after a follow-up
+    `jm apply`, and to `jm status --check` itself, which reported clean
+    since its own scratch-copy replay hit the identical gap. A deeper
+    issue surfaced during the fix: even a direct write wasn't enough,
+    since the standalone `.pyi` template's getter/setter placeholder was
+    populated purely from state-variable get/set *methods*
+    (`make_state_ctx`) with no notion of a manifest property at all — a
+    manifest property is a `PyGetSetDef`-backed `@property` descriptor,
+    not a get/set method pair, and had no template placeholder of its
+    own. `make_properties_ctx` now also emits `@property`/`@x.setter`
+    stubs (reusing `_CTYPE_META`-driven type inference rather than a new
+    hardcoded table — the same drift class gh-450 just fixed), wired into
+    the template and every render site.
+
+## [0.28.4] — 2026-07-11
+
+### Fixed
+
+- **`const char *` params rendered as `Any` in module-grouped `.pyi` stubs
+    (gh-450).** `_stubs.py::make_module_pyi` — the separate stub generator
+    used for module-owned objects (gh-423) — keeps its own
+    `_CTYPE_TO_PY` scalar-type table rather than sharing `_types.py`'s
+    `_CTYPE_META`, and that table never got a `"const char *"` entry, so
+    any `const char *` param fell through to the `Any` fallback. Looked
+    capsule-related because the only regression test covering this
+    generator (gh-432) happened to pair a `const char *` param with a
+    capsule param but never asserted on the plain param's own type — a
+    bare `const char *` param on a module-owned object hit the same bug
+    with no capsule in sight. Standalone objects use a different
+    generator (`_context/_methods.py`) that was never affected.
+
+## [0.28.3] — 2026-07-11
+
+### Added
+
+- **`# jm:hand` marker for member-level `.pyi` merge (gh-428).** A comment
+    directly above any class member (method or property) opts it out of
+    regeneration with zero manifest entry required — extending the
+    `manual_stub = true` splice engine, which only covered a method with no
+    manifest-representable signature at all. A marked member that also
+    exists in the fresh render (a manifest-derived member hand-edited in
+    place) has its span replaced verbatim, marker included, so the next
+    regen still recognizes it. A marked member with no counterpart in the
+    fresh render (a wholly hand-added method) is appended after the class's
+    last member instead. A property's getter/setter share a Python name and
+    always move as one unit.
+- **Additive method/property splice into sacred `_ext_<obj>.c` fragments
+    (gh-440).** A fragment previously only adopted a manifest-derived method
+    or property added after it was last generated via deleting the whole
+    fragment and letting `jm apply` recreate it — discarding every other
+    hand patch the fragment carried. `jm apply` now diffs the
+    manifest-derived `PyMethodDef`/`PyGetSetDef` binding set against what
+    the fragment already implements, by entry name, and splices in only
+    what's missing; every existing binding, hand-patched or not, is left
+    byte-for-byte untouched. v1 is additive only — a fragment gaining a
+    method/property when it already has at least one of that kind splices
+    cleanly, but going from zero to one of a kind still needs the old
+    delete-and-recreate cycle.
+
+## [0.28.2] — 2026-07-11
+
+### Fixed
+
+- **`jm apply` ignored `[project] status_allow` (gh-441).** Apply's
+    reconcile step unconditionally overwrote every glue file, including a
+    hand-maintained `.pyi` the manifest already marks as accepted drift for
+    `jm status --check` — so a bare `jm apply` could silently clobber
+    hand-written content status considered exempt. `_overwrite_if_changed`
+    now skips the write when the target's project-relative path matches a
+    `status_allow` entry (exact or glob); `jm status`'s internal throwaway
+    replay opts out of the skip so its ALLOWED/STALE classification (and
+    the gh-426 dropped-symbol check) still sees the genuine diff.
+- **Constructor docstring `optional` flag read from the wrong tuple offset
+    (gh-441 follow-up).** `_build_class_docstring` picked up `create_fn`
+    instead of the `optional` flag when deciding whether an init-param's
+    docstring type gets `| None` appended, so a non-optional param with a
+    `create_fn` set could wrongly render as optional.
+
+## [0.28.1] — 2026-07-10
+
+### Fixed
+
+- **`variable_output` view aliasing across same-size calls (gh-437).** The
+    default zero-copy return handed out a view of the internal
+    grow-on-demand buffer but retired the buffer only on *growth* — a
+    same-size (or smaller) next call reused it in place, silently
+    overwriting any outstanding view from the previous call (any caller
+    accumulating returned chunks got the last call's data in every early
+    chunk). The binding now keeps a weakref to the last returned view and,
+    when that view is still alive at the next call, retires the buffer and
+    allocates fresh exactly like a grow. The drain-immediately streaming
+    pattern keeps its zero-alloc in-place reuse (the weakref is dead by
+    then); accumulate-chunks callers get independent buffers with no copy.
+    Uses `PyWeakref_GetRef` on 3.13+ (`PyWeakref_GetObject` earlier).
+    Verified end-to-end on doppler's MPSK receiver: the regenerated
+    fragment passes the block-size-invariance aliasing repro that
+    previously required a hand-patched copy-out, and the in-place fast
+    path still reuses the same buffer address when no view is held.
+
+## [0.28.0] — 2026-07-09
+
+### Added
+
+- **Capsule-typed method params (gh-432).** A method (or module-function)
+    param may declare `capsule = "<name>"`: its C type is a foreign pointer
+    (e.g. `dp_tlm_t *`) crossing the Python boundary as a named PyCapsule.
+    The generated glue maps `None` to `NULL` (the C-side detach idiom),
+    name-checks a capsule via `PyCapsule_GetPointer`, and unwraps any other
+    object through its `_capsule` attribute first — so callers pass the
+    friendly wrapper object, not the capsule. The optional per-param
+    `header = "path/hdr.h"` names the foreign type's header, injected into
+    the object's `_core.h` alongside the gh-170 `depends_on` includes on
+    every scaffold/apply path (skipped when the file doesn't exist under
+    `native/inc`). `.pyi` annotates the param `object | None` in both stub
+    generators. Motivating consumer: doppler's telemetry attach face
+    (`agc.set_telemetry(tlm, "agc", decim=1)` declared fully in TOML).
+- **`status_return = true` on a method (gh-432).** Binds a C `int` status
+    return (0 = OK) as `-> None`, raising `ValueError` on non-zero — the
+    `serializable` `set_state` contract, generalized to any declared
+    method.
+
+### Fixed
+
+- **`jm apply` dropped per-param keys on the method replay (gh-432).** The
+    replay flattened each param to a `(name, type, default)` tuple and
+    rebuilt the dict from it, silently stripping every other per-param key
+    (`out`, and now `capsule`/`header`) on every apply — the gh-257 failure
+    mode one layer deeper. Params now flow through the replay as full
+    dicts; tuples remain the CLI form.
+- **Defaulted `parse_type` scalar params ignored their default (gh-432).**
+    A param like `decim: uint32_t = 1` seeded its raw parse local with
+    `parse_zero`, so an omitted argument parsed as 0 instead of the
+    declared default. Both param builders now seed the raw local from the
+    gh-240 default.
+
+## [0.27.0] — 2026-07-08
+
+### Added
+
+- **`manual_stub = true` preserves hand-written `.pyi` methods across
+    regen (gh-428).** gh-426 found that jm's `.pyi` generators are pure
+    functions of the manifest: a hand-written method stub with zero
+    manifest declaration (e.g. a CPython overload spliced directly into a
+    sacred `_ext_<obj>_extra.c` fragment) silently vanished on every
+    `jm apply`. A `[[obj.methods]]` entry can now set `manual_stub = true`
+    (or `jm method ... --manual-stub`): jm emits no C-side declaration for
+    it — the binding is already hand-owned — and only a placeholder `.pyi`
+    entry, which a new `ast`-based splice engine preserves verbatim across
+    every regen path, including `jm apply`'s own reconciliation step.
+
+### Fixed
+
+- **`jm status` silently missed a hand-written `.pyi` symbol vanishing
+    with no manifest trace (gh-426).** Since `.pyi` generators are pure
+    functions of the manifest, a class/method/function present on disk but
+    undeclared anywhere in `just-makeit.toml` disappeared on the next
+    `apply` with no signal beyond routine-looking STALE drift. `status`
+    now `ast.parse`s the before/after `.pyi` text on every stale file and
+    reports a dedicated **DROPPED** section for any symbol that vanishes —
+    printed even under `--check`, included in `--json`, and never
+    suppressed by `--allow`/`status_allow` since it's real content loss,
+    not routine drift.
+
+## [0.26.1] — 2026-07-08
+
+### Fixed
+
+- **Module-aggregated `.pyi` stub missing `out=`/`<name>_max_out()` for
+    `variable_output` methods (gh-423).** `_stubs.py`'s `make_module_pyi`
+    (used for `--module` objects) is a separate stub generator from
+    `_context/_methods.py`'s per-object context builder (used for standalone
+    objects) and never learned the gh-219 `out=`/`<name>_max_out()` shape —
+    a `variable_output` method on a module object kept emitting the
+    pre-gh-219 stub signature even though its `.c` binding was already
+    correct. Mirrors the same eligibility rule into the module aggregator.
+- **Constructor codegen sorted `string_enum` init_params ahead of their
+    declared position (gh-422).** The kwlist / `PyArg_ParseTupleAndKeywords`
+    format string / parse-args / `.pyi` `__init__` signature / doctest
+    example call were built by concatenating fixed type-based buckets
+    (arrays, required scalars, string-enums, optional arrays, optional
+    scalars) instead of the params' declared TOML order — a `string_enum`
+    always landed right after required scalars, ahead of every other
+    optional scalar, even when declared last. Any positional construction
+    matching the manifest order broke. Each param's declared index is now
+    preserved through every consumer of the required/optional groups.
+- **`variable_output` growth fallback cast a scalar param's value as a
+    count (gh-421).** For a method whose sole param is a scalar (not an
+    array) — e.g. `Delay.push_ptr(x)`, where `x` is the value being pushed,
+    not a count — the buffer-growth fallback cast that scalar to `size_t`
+    and used it as a capacity estimate. Falls back to the method's own
+    `<name>_max_out()` instead, always available per the standard
+    `variable_output` triplet.
+
+## [0.26.0] — 2026-07-05
+
+### Added
+
+- **`out=` for `variable_output` methods with a single array param
+    (gh-219 follow-up).** `has_params = bool(params)` blanket-excluded any
+    `variable_output` method from the `out=` buffer feature whenever its
+    array input was declared via `params=[{array}]` (`arg_type="void"`)
+    rather than bare `arg_type=<T>` — the idiom a `variable_output` method
+    uses when its array input needs a name other than the generic `x`
+    (or simply follows the `params`-declaration style consistently with a
+    project's other methods). A method with exactly one array-typed param
+    and nothing else is now eligible for `out=` and `<name>_max_out()`,
+    exactly like the bare-`arg_type` case. A genuine multi-param method
+    (e.g. `delay(x, mu)`, gh-412) stays correctly excluded — only a single,
+    sole array param qualifies.
+
+## [0.25.1] — 2026-07-05
+
+### Fixed
+
+- **`variable_output` `out=` validation ignored the caller-requested size
+    (gh-219 follow-up).** The generated check was `_cap < _omax` (the
+    object's `*_max_out(state)` hint) alone — `max_out()` is not always a
+    true call-independent upper bound (a generator's `steps(count)` writes
+    exactly `count` samples, which can exceed `max_out()`), so an undersized
+    `out=` buffer passed validation and then overflowed in the kernel call.
+    Now requires capacity for `max(max_out(), <caller's requested size>)`,
+    mirroring the internal buffer-growth path's own fallback.
+
+## [0.25.0] — 2026-07-01
+
+### Added
+
+- **`kind="handle"`: a `string` arg + a handle-length array-out method shape.**
+    Two cohesive additions unlock *"construct from a spec string, evaluate at
+    parameter points, get a sized array"* handle objects (doppler's `Plan`
+    stimulus engine is the first customer):
+    - **`type = "string"`** — usable in `create_args` and `methods.args`; parses
+        a Python `str` via `"s"` to a borrowed `const char *` (like `path`, but an
+        in-memory string, not an fspath — the `create_fn`/method must consume it
+        before returning). Renders `.pyi` as `str`.
+    - **`out_len_fn` array-out shape** — a method that returns an array, takes no
+        input array, and declares `out_len_fn` sizes its output from
+        `out_len_fn(self->h)` (the handle), not from an argument: it allocates an
+        independent numpy-owned array of that length, parses its declared args
+        (scalars and/or one `string`, safe-width via each type's `parse_type`),
+        calls `fn(self->h, args…, out)`, and trims to the returned count. Serves
+        both `render(overrides_json) -> cf32[]` and a scalar fast-path
+        `at(snr, seed) -> cf32[]`. Positional (`METH_VARARGS`); honours `nogil`.
+
+## [0.24.0] — 2026-07-01
+
+### Fixed
+
+- **Keyword arguments for `variable_output` methods with named params
+    (gh-412).** A `variable_output` method declared with `arg_type="void"` +
+    `params` (e.g. doppler's `Farrow.delay(x, mu)`) generated a positional-only
+    `METH_VARARGS` binding, so `obj.delay(x, mu=0.3)` raised `TypeError` even
+    though its generated `.pyi` advertised `mu` as a keyword. Keyword parsing is
+    now **decoupled from the `out=` buffer feature** (they were conflated in one
+    predicate): such a method emits `PyArg_ParseTupleAndKeywords` with a kwlist
+    built from the param names and `METH_VARARGS | METH_KEYWORDS`, matching both
+    the stub and the fixed-output path. The `.pyi` is unchanged — it was already
+    keyword-shaped, so only the binding becomes truthful. Positional calls still
+    work; the method still gets no `out=` buffer (that stays arg-only).
+
+## [0.23.0] — 2026-06-30
+
+### Added
+
+- **Complex-array composer input field** — a `[[module.X.source.fields]]` /
+    `[[….segment.fields]]` entry with `complex = true` (C type `float _Complex*`)
+    takes a numpy **complex64** array, stored as an owned `src-><name>` /
+    `src->n_<name>` pair. It is the complex analog of a `bytes` field: jm
+    generates an `_attach_<name>` coercion (`PyArray_FROM_OTF` with
+    `NPY_ARRAY_FORCECAST`, so complex128 is accepted), the `tp_init` attach, a
+    getset returning a fresh complex64 array, and the dealloc free.
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "symbols"
+    type = "float _Complex*"
+    complex = true
+    ```
+
+    The dealloc now frees **every** owned buffer field (bytes and/or complex),
+    not just `bits`. Complex fields are excluded from the generic cJSON
+    serializer / generated CLI (they cross via the getset or a `to_json_fn`);
+    `.pyi` annotates them `NDArray[np.complex64] | None`.
+
+## [0.22.0] — 2026-06-30
+
+### Added
+
+- **Per-field docstrings in the composer `.pyi`** — a `[[module.X.source.fields]]`
+    or `[[….segment.fields]]` entry now accepts an optional `doc` string, rendered
+    as that parameter's numpy description line in the generated source/segment
+    class docstring (alongside the existing default + enum-choice rendering):
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "level"
+    type = "double"
+    default = "0.0"
+    doc = "Source power in dBFS (<=0); only applies when summed in a Segment."
+    ```
+
+### Fixed
+
+- **Scaffolded `clib_common.h` used a non-namespaced include guard.** The guard
+    was the generic `CLIB_COMMON_H`, so a generated package's `clib_common.h`
+    collided with a *dependency's* same-named header (e.g. doppler's): whichever
+    was included first won the guard and the other's body — including its
+    `DP_OK`/error-code defines — was silently skipped, breaking the dependent
+    build (`'DP_OK' undeclared`). The guard is now package-namespaced
+    (`<PACKAGE>_CLIB_COMMON_H`), matching `umbrella.h`. Surfaced by the
+    `nco_tone` static-doppler example.
+- **Ranged numeric composer fields rendered their docstring default quoted.** A
+    field with a `float | tuple[float, float]` (or `int | tuple[int, int]`)
+    annotation showed a quoted `"0.0"` default in the `.pyi` because the union
+    type missed the bare `("float", "int")` numeric check — plain scalars
+    rendered an unquoted `0.0`. Numeric fields (scalar or ranged) now always
+    render a bare default; only enum/string defaults stay quoted.
+
+## [0.21.0] — 2026-06-29
+
+### Added
+
+- **Ranged numeric composer fields** — a composer source/segment field declared
+    `ranged` accepts a `(lo, hi)` pair in addition to a scalar, and the composer
+    redraws it uniformly at the start of each repeat (epoch). Declare per table:
+
+    ```toml
+    [module.wfm_compose.source]
+    ranged = [{ name = "freq", flag = "WFM_RANGE_FREQ" }, …]
+    [module.wfm_compose.segment]
+    ranged = [{ name = "off_samples", flag = "WFM_RANGE_OFF_SAMPLES" }, …]
+    ```
+
+    The backing struct carries a `<name>_hi` companion and a `ranged` bitmask;
+    jm emits the float-or-`(lo, hi)` parse in the source/segment `tp_init`, a
+    range-aware getset (returns a tuple when the bit is set), the
+    `float | tuple[float, float]` (and `int | tuple[int, int]`) `.pyi`
+    annotation, the OO ⇄ struct copy of the bitmask + companions (so a draw
+    survives `to_json`/`from_json`), and `[lo, hi]` array (de)serialization in
+    the generic SSOT JSON path — so a looped/`continuous` stream can vary
+    Doppler, level, arrival gap, … burst-to-burst, and `--record` round-trips
+    the range. A scalar field is byte-identical to before (the `O` parse and
+    companions are emitted only for declared `ranged` fields).
+
+## [0.20.0] — 2026-06-27
+
+### Added
+
+- **`serializable = "true"` for `kind="handle"` modules (gh-403)** — the state
+    triplet (`state_bytes()` / `get_state() -> bytes` / `set_state(bytes)`) is
+    now generated for a handle module too, over the opaque handle (`self->h`,
+    closed-guarded) calling the backing core's `<backing>_state_bytes/get_state/   set_state`. Byte-identical to the object binding (gh-400), plus the `.pyi`
+    stubs. `is_serializable` now resolves the module namespace
+    (`cfg["module"][name]`) and the handle dumper preserves the flag.
+
+- **`jm apply` transplants the state triplet into sacred fragments (gh-404)** —
+    a `serializable` object whose per-object `<mod>_ext_<obj>.c` fragment is
+    hand-owned (created once, never regenerated) previously had no way to gain
+    the triplet from the flag. The post-sync `_docsync` pass now injects the
+    three wrapper functions + `PyMethodDef` rows into the existing fragment,
+    modeled on the docstring transplant: idempotent (skips when a `state_bytes`
+    entry is present), and hand-written bindings are left byte-for-byte intact.
+    The gh-400 triplet generator is factored into the shared
+    `_context._methods.serializable_triplet_parts`, so the regenerate and
+    transplant paths emit identical glue.
+
+    Together with gh-403, `serializable = "true"` is now the entire Python
+    binding story for **every** object kind — regenerable, handle, and
+    sacred-fragment — so a downstream never hand-writes the triplet.
+
+## [0.19.37] — 2026-06-27
+
+### Fixed
+
+- **`serializable` triplet now emitted in the module-object `.pyi`** (gh-400
+    follow-up) — a module object's stub is assembled by `_stubs._object_stub`,
+    a separate path from `make_methods_ctx`'s `pyi_extra_methods` (which only
+    drives the standalone `COMPONENT_PYI`). 0.19.36 emitted the runtime binding
+    - standalone stub but skipped the **module** stub, so a module object's
+        `state_bytes`/`get_state`/`set_state` existed at runtime yet were missing
+        from its type stub. `_stubs` now emits the triplet too, gated on
+        `is_serializable`. Surfaced adopting the flag on doppler's `LO`/`CIC`/`FIR`
+        (module objects under `source`/`resample`/`filter`).
+
+## [0.19.36] — 2026-06-27
+
+### Added
+
+- **`serializable = true` object flag → generated state-blob binding (gh-400)**
+    — an object that declares a hand-written C state triplet (sibling to
+    `reset`, no struct knowledge required by jm):
+
+    ```c
+    size_t <c>_state_bytes(const T *);            /* serialized size */
+    void   <c>_get_state(const T *, void *blob);  /* serialize       */
+    int    <c>_set_state(T *, const void *blob);  /* restore (0 ok)  */
+    ```
+
+    now gets the matching Python binding generated for free — the "elastic /
+    pure-transducer" face for snapshotting and resuming an object's mutable
+    state across threads, processes, or pods:
+
+    - `state_bytes() -> int`
+    - `get_state() -> bytes`
+    - `set_state(blob: bytes) -> None` (raises `ValueError` on a size mismatch
+        or a core-rejected blob, `TypeError` on a non-`bytes` argument)
+
+    `make_methods_ctx(serializable=True)` emits the three wrappers into the
+    `_ext.c` method table + the `.pyi`, calling the triplet over `self->handle`.
+    The flag is settable in the manifest (`serializable = "true"`) or via
+    `jm object … --serializable`, persists through `_dump`'s scalar whitelist,
+    and replays idempotently through `jm apply` / `jm status --check` — verified
+    end to end. Off by default, so existing manifests stay byte-identical.
+
+## [0.19.35] — 2026-06-26
+
+### Added
+
+- **Constructor parameter docs from the create function's `@param`** — the
+    generated class docstring's `Parameters` section now documents each
+    init-param with its real description, resolved per param as: an optional
+    manifest `doc=` override, then the create function's parsed `@param`, then
+    the previous `"{name} constructor parameter."` stub. The descriptions
+    already live in the sacred `<obj>_core.h` create function (whose `@brief`
+    jm already used for the class summary); jm now reads its `@param` too. Both
+    the `.pyi` (`_build_class_docstring`) and the no-state runtime context honour
+    the resolution. Init-params gain an optional `doc` field (10th `init_params`
+    tuple element) that round-trips through `jm apply` / `_dump`.
+
+### Fixed
+
+- **Doxygen inline word-references stripped from synthesized docstrings** —
+    `@p name` / `@c name` / `@a`/`@e`/`@b name` / `@ref name` in `@param`,
+    `@brief`, and body text are reduced to the bare word at parse time
+    (`"length @p code_len"` → `"length code_len"`), so the numpy docstrings read
+    cleanly. `@code` example blocks are left verbatim.
+
+## [0.19.34] — 2026-06-26
+
+### Fixed
+
+- **`nogil` now honoured on `max_results`/`result_fields` ("push") methods
+    (gh-395)** — the result-array binding (`return_type` = a result struct +
+    `max_results` + `result_fields`, the detector-style `push`) hardcoded its
+    kernel call and ignored the method's `nogil` flag, so it ran holding the GIL
+    — unlike the `variable_output` path. Both branches now route through
+    `_kernel_call_block`, which hoists the numpy accessors above
+    `Py_BEGIN_ALLOW_THREADS` and wraps the call (the `results[]` buffer is
+    declared before the block and `Py_DECREF(in_arr)` runs after, under the GIL).
+    Unblocks GIL-released thread-per-shard scaling for detector-style streaming
+    objects.
+- **`jm apply` now honours `[project.bench] block_sizes` (gh-393)** — applying a
+    new object replays the scaffold into a temp project, but the temp manifest
+    only carried `version` and `[[enum]]`, not `[project.bench]`. So a project
+    that configured e.g. `block_sizes = [65536]` (#390) still got the default
+    `_1k` + `_64k` suite reintroduced whenever `jm apply` materialised an object
+    — the exact drift #390 removes on the `jm object` path. `_apply._replay` now
+    carries `[project.bench]` into the temp manifest alongside the enum SSOT.
+
+## [0.19.33] — 2026-06-25
+
+### Added
+
+- **Configurable benchmark block sizes (gh-390)** — the generated Python
+    benchmarks (`bench_<obj>.py`) timed `steps()` at a hardcoded `_1k` and
+    `_64k`. A project that standardizes on a different set (e.g. dropping the
+    small-block suite, since 1 k blocks are dominated by call overhead) had to
+    hand-delete the `_1k` functions after every `jm apply`, which `apply` then
+    fought. Block sizes are now declarative:
+
+    ```toml
+    [project.bench]
+    block_sizes = [65536]   # default: [1024, 65536]
+    ```
+
+    jm emits one `BLOCK_<label>` constant and one `test_bench_steps_<label>`
+    function per configured size (labels: `1024 → 1k`, `65536 → 64k`,
+    powers-of-1024 collapse to a `k`/`m`/`g` suffix, anything else the literal
+    integer). Sizes are de-duplicated, sorted, and non-positive entries
+    dropped; an unset/empty table falls back to `[1024, 65536]`, so existing
+    scaffolds are **byte-identical**. Only the Python benches honour this — the
+    C `bench_<obj>_core.c` uses a single fixed block and is unchanged.
+
+## [0.19.32] — 2026-06-23
+
+### Fixed
+
+- **inline-function Doxygen now extracted (gh-385)** — a function *defined*
+    inline in the header (body in `{ … }` rather than a `;`-terminated
+    prototype — e.g. a `JM_FORCEINLINE` block kernel or a `step()` body) was
+    never matched by `extract_doc_blocks`, so its `@brief`/`@code` were dropped
+    and the method/function fell back to a name stub. `_BLOCK_THEN_DECL_RE` /
+    `_DECL_NAME_RE` now accept `{` as well as `;` after the parameter list; the
+    `(…)`-before-terminator requirement keeps `typedef struct { … }` from
+    false-matching.
+
+- **`variable_output` method with an element `arg_type` rendered a scalar
+    `.pyi` input (gh-385)** — the documented blockwise shape
+    (`--arg-type 'float _Complex' --variable-output`) consumes a *block*: the
+    generated binding parses a numpy array (`PyArray_FROM_OTF`) and the output
+    already renders as `NDArray`, but the stub annotated `x: complex`,
+    contradicting the API jm itself emits. `_obj_stub` now renders
+    `x: NDArray[<dtype>]` for a `variable_output` method whose `arg_type` is a
+    non-array element type.
+
+    Together these fix a hand-bound inline block method (e.g. a CIC `decimate`):
+    it went from `def decimate(self, x: complex)` + `"""Decimate."""` to
+    `def decimate(self, x: NDArray[np.complex64]) -> NDArray[np.complex64]` with
+    the full header brief + `@code` doctest.
+
+## [0.19.31] — 2026-06-23
+
+### Fixed
+
+- **module free-function `.pyi` docstrings now synthesize from header Doxygen
+    (gh-384)** — object methods derive their stub docstring (brief + Parameters +
+    a runnable numpy `Examples` doctest from `@code`) from the sacred
+    `<obj>_core.h`, but module-level free functions (`[[module.X.functions]]`)
+    fell back to a name-derived one-liner (e.g. `kaiser_enbw` →
+    `"""Kaiser enbw."""`), dropping the brief and the `@code` doctest even when
+    the header carried them. New `_object._load_module_doc_blocks()` parses
+    `<module>_core.h` for free-function Doxygen; `_stubs.make_module_pyi()`
+    threads it through via the project `root` (no `cfg` mutation), and a new
+    shared `_numpy_doc_lines(…, indent=)` renders methods (8-space) and free
+    functions (4-space) identically. A function with **no** header block (a fresh
+    scaffold injects a declaration only) keeps the historical one-line stub, so a
+    manifest-only rebuild is unchanged — zero `.pyi` churn for projects without
+    function Doxygen. Re-applying a project with documented module functions now
+    surfaces their `@code` examples in the `.pyi`, where `pytest   --doctest-glob='*.pyi'` exercises them.
+
+## [0.19.30] — 2026-06-21
+
+### Added
+
+- **numpy-style docstrings in handle `.pyi` stubs (gh-374)** — `render_pyi` in
+    `_handle.py` now emits a class-level `Parameters` docstring sourced from the
+    manifest, surfacing default values and enum choices that were previously
+    invisible behind `= ...` in the stub. Methods get one-liner summaries with
+    actual defaults inlined (e.g. `send(x, fc=0.0) -> int`); properties show
+    enum choices; RAII methods (`open`, `close`, `__enter__`, `__exit__`) get
+    static one-liners. Three new helpers — `_pyi_arg_ann`, `_pyi_class_docstring`,
+    `_pyi_prop_doc` — cover all cases.
+
+- **numpy-style docstrings in composer `.pyi` stubs (gh-375)** — the same
+    docstring treatment now applies to `_composer.py`. `Synth`, `Segment`, and
+    `Composer` classes get `Parameters` blocks with defaults and enum choices;
+    factory functions (`tone`, `noise`, etc.) get one-liner summaries. New helper
+    `_pyi_doc_lines` mirrors the handle pattern.
+
+### Fixed
+
+- **`size_t` (and other `parse_type`) defaults silently zeroed in constructor
+    (gh-377)** — the `ctor_scalars` loop in `make_state_ctx` always initialised
+    the `_raw` local for `parse_type` scalars (e.g. `unsigned long long` for
+    `size_t`) from `parse_zero`, ignoring the state variable's declared default.
+    Fixed: use the declared default when it is a valid initializer for the
+    `parse_type`. `Py_complex` struct initializers (whose `parse_zero` starts
+    with `{`) fall back to `parse_zero` correctly, fixing the accumulator example
+    which uses a `double _Complex` state variable.
+
+- **`Install jbx` CI step 404** — the `_JBS` base URL in `ci.yml` and
+    `artifact.yml` now points to the stable Pages CDN
+    (`https://just-buildit.github.io`) instead of the raw.githubusercontent path
+    that 404s after the just-bashit repo reorganised its source tree.
+
 ## [0.19.29] — 2026-06-19
 
 ### Changed
@@ -11,7 +671,7 @@
     widgets: an install-script walkthrough and a `jm new` / `make` / `make test`
     session with real ANSI-matched colors (bold green for passing tests, cyan for
     hints, blue for cmake copy steps). A custom `termynal_fence.py` superfences
-    formatter enables ` ```termynal ``` ` blocks with `{g}`, `{G}`, `{c}`, `{b}`,
+    formatter enables ```` ```termynal ``` ```` blocks with `{g}`, `{G}`, `{c}`, `{b}`,
     `{y}`, `{mark}`, `{d}` inline color markup anywhere in the docs. Global
     `.jm-*` CSS utility classes (`jm-green`, `jm-cyan`, `jm-blue`, `jm-yellow`,
     `jm-amber`, `jm-dim`) make the same palette available to prose. The

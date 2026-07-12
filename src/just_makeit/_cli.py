@@ -62,6 +62,9 @@ Commands:
     --step-delegates-to-steps   Generate step() as a thin delegator to steps()
                                 (one impl; step()==steps(..,1) byte-for-byte
                                 under -ffast-math). Scalar/void-arg objects only.
+    --serializable              Generate state_bytes()/get_state()/set_state()
+                                over a hand-written C triplet (the elastic /
+                                pure-transducer face) + a round-trip CI test.
     --init-param name:type[:default]  User-facing constructor param; repeatable.
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).
@@ -146,8 +149,10 @@ Commands:
                                 _core.c. With a fragment path, copy it into objects/,
                                 add to include, then materialize.
   regenerate <component>        Delete a component's generated files and rebuild them
-                                from just-makeit.toml (discards _core.c edits — stash
-                                first). --force skips the confirmation.
+                                from just-makeit.toml, lifting hand-written _core.c/
+                                _core.h bodies back in afterward (--discard skips this
+                                for a clean reset; stash first regardless). --force
+                                skips the confirmation.
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
@@ -160,13 +165,20 @@ Commands:
   status [OPTIONS]              Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
                                 the manifest (stale). Your _core.c is never
-                                touched. Exits 1 on non-allowed drift.
+                                touched. Exits 1 on non-allowed drift. A stale
+                                .pyi with a class/method/function that has zero
+                                manifest trace and would vanish on regen is
+                                additionally reported as DROPPED — never
+                                suppressed by --allow / status_allow (gh-426).
     --allow PATH                Treat PATH (exact or fnmatch glob) as a known
                                 deviation: reported but not counted. Repeatable;
-                                combines with [project] status_allow.
-    --json                      Emit a structured report ({path, state, allowed}).
+                                combines with [project] status_allow. Does not
+                                suppress a DROPPED symbol on that path.
+    --json                      Emit a structured report ({path, state, allowed,
+                                dropped_symbols}).
     --diff                      Print a unified diff per stale file.
-    --check                     One-line summary only (exit code still set).
+    --check                     One-line summary only (exit code still set);
+                                DROPPED entries still print in full.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
@@ -997,20 +1009,24 @@ def main() -> None:
         from . import _regenerate
 
         force = False
+        discard = False
         names: list[str] = []
         for a in args[1:]:
             if a == "--force":
                 force = True
+            elif a == "--discard":
+                discard = True
             else:
                 names.append(a)
         if len(names) != 1:
             print(
                 "error: 'regenerate' takes exactly one component name.\n"
-                "Usage: just-makeit regenerate <component> [--force]",
+                "Usage: just-makeit regenerate <component> "
+                "[--force] [--discard]",
                 file=sys.stderr,
             )
             sys.exit(1)
-        _regenerate.run(Path.cwd(), names[0], force=force)
+        _regenerate.run(Path.cwd(), names[0], force=force, discard=discard)
 
     elif cmd == "ci":
         from . import _ci

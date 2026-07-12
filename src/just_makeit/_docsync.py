@@ -317,6 +317,157 @@ def transplant_docs(existing: str, reference: str, fallback: str) -> str:
     return out
 
 
+def transplant_state_triplet(
+    existing: str, c_funcs: list[str], pmd_rows: str
+) -> str:
+    """Inject the serializable state triplet into a sacred fragment (gh-404).
+
+    When a `serializable` object's per-object `_ext_<obj>.c` fragment is
+    hand-owned (created once, never regenerated), the `state_bytes`/`get_state`/
+    `set_state` wrappers + ``PyMethodDef`` rows are missing.  Inject them:
+    *c_funcs* (the three wrapper bodies) before the ``static PyMethodDef``
+    array, and *pmd_rows* before the array's ``{NULL}`` sentinel.
+
+    Idempotent: if the array already has a ``"state_bytes"`` entry, return
+    *existing* unchanged.  Hand-written bindings are never touched — only the
+    two insertions are made.  Both *c_funcs*/*pmd_rows* come from
+    :func:`_context._methods.serializable_triplet_parts`, so the injected glue
+    is byte-identical to the regenerate path.
+    """
+    mask = _code_mask(existing)
+    m = _METHODS_RE.search(mask)
+    if not m:
+        return existing
+    open_brace = m.end() - 1
+    close_brace = _match_brace(mask, open_brace)
+    if close_brace == -1:
+        return existing
+    # Idempotent: the triplet row is present iff "state_bytes" appears as an
+    # entry-name string inside the array body (quotes survive in the source).
+    if '"state_bytes"' in existing[open_brace:close_brace]:
+        return existing
+    # Insert rows before the {NULL ...} sentinel (scan the mask so a brace
+    # hidden in a string/comment can't be mistaken for it).
+    sent = re.search(r"\{\s*NULL", mask[open_brace:close_brace])
+    rows_at = open_brace + sent.start() if sent else open_brace + 1
+    funcs_text = "\n\n".join(c_funcs) + "\n\n"
+    # Apply right-to-left so the earlier (funcs) offset stays valid.
+    out = existing[:rows_at] + pmd_rows + existing[rows_at:]
+    out = out[: m.start()] + funcs_text + out[m.start() :]
+    return out
+
+
+_ROW_FN_RE = re.compile(r"(\w+)\s*$")
+
+
+def _array_names(
+    text: str, mask: str, array_re: re.Pattern
+) -> dict[str, tuple[int, int]]:
+    """entry name -> (start, end) span for every named entry in the first
+    *array_re* match in *text* (``{}`` if the array itself is absent)."""
+    m = array_re.search(mask)
+    if not m:
+        return {}
+    open_idx = m.end() - 1
+    close_idx = _match_brace(mask, open_idx)
+    if close_idx == -1:
+        return {}
+    names: dict[str, tuple[int, int]] = {}
+    for s, e in _entry_spans(mask, open_idx + 1, close_idx):
+        name = _entry_name(text, mask, s, e)
+        if name is not None:
+            names[name] = (s, e)
+    return names
+
+
+def _row_fn_names(
+    text: str, mask: str, entry_span: tuple[int, int]
+) -> list[str]:
+    """Function-pointer identifiers referenced by an entry's non-name
+    fields: field[1] for a ``PyMethodDef`` row, fields[1:3] (getter and
+    setter) for a ``PyGetSetDef`` row. A ``NULL`` setter (read-only
+    property) contributes nothing."""
+    s, e = entry_span
+    names: list[str] = []
+    for fs, fe in _field_spans(mask, s, e)[1:3]:
+        field_text = text[fs:fe].strip()
+        if field_text in ("NULL", "0"):
+            continue
+        m = _ROW_FN_RE.search(field_text)
+        if m:
+            names.append(m.group(1))
+    return names
+
+
+def transplant_missing_bindings(existing: str, reference: str) -> str:
+    """Additively splice manifest-derived methods/properties missing from
+    *existing* in from *reference* (gh-440).
+
+    For each of ``PyMethodDef``/``PyGetSetDef``, an entry present in
+    *reference* but absent (by name) from *existing* is a genuinely new
+    binding — its wrapper function(s) (extracted from *reference* by name,
+    brace-matched) are inserted before the ``static`` array declaration, and
+    its row before the array's ``{NULL ...}`` sentinel. An entry already
+    present in *existing* (hand-patched or not) is never touched, matching
+    :func:`transplant_state_triplet`'s own idempotence.
+
+    v1 = additive only: if *existing* has no array of a given kind at all
+    (e.g. an object's very first property), there is no sentinel/decl to
+    splice against, and that array kind is left alone -- delete-and-adopt
+    is still needed to go from zero properties to one. Every other case
+    (new method or property on an object that already has at least one of
+    that kind) is spliced without touching anything else in the fragment.
+    """
+    from ._object import _extract_c_function_bodies
+
+    ref_funcs = _extract_c_function_bodies(reference)
+    ref_mask = _code_mask(reference)
+    out = existing
+    for array_re in (_METHODS_RE, _GETSET_RE):
+        ex_mask = _code_mask(out)
+        ex_names = _array_names(out, ex_mask, array_re)
+        ref_m = array_re.search(ref_mask)
+        if ref_m is None:
+            continue
+        ref_open = ref_m.end() - 1
+        ref_close = _match_brace(ref_mask, ref_open)
+        if ref_close == -1:
+            continue
+        missing_rows: list[str] = []
+        missing_fn_names: list[str] = []
+        for s, e in _entry_spans(ref_mask, ref_open + 1, ref_close):
+            name = _entry_name(reference, ref_mask, s, e)
+            if name is None or name in ex_names:
+                continue
+            missing_rows.append(reference[s : e + 1])
+            for fn in _row_fn_names(reference, ref_mask, (s, e)):
+                if fn not in missing_fn_names:
+                    missing_fn_names.append(fn)
+        if not missing_rows:
+            continue
+        decl_m = array_re.search(ex_mask)
+        if decl_m is None:
+            continue  # no array of this kind in *existing* -- v1 skip
+        open_idx = decl_m.end() - 1
+        close_idx = _match_brace(ex_mask, open_idx)
+        if close_idx == -1:
+            continue
+        sent = re.search(r"\{\s*NULL", ex_mask[open_idx:close_idx])
+        rows_at = open_idx + sent.start() if sent else open_idx + 1
+        rows_text = "".join(f"    {r},\n" for r in missing_rows)
+        funcs_text = "\n\n".join(
+            ref_funcs[n] for n in missing_fn_names if n in ref_funcs
+        )
+        if funcs_text:
+            funcs_text += "\n\n"
+        # Right-to-left: the rows offset always sits after the decl offset,
+        # so inserting there first leaves decl_m.start() valid for the
+        # second splice.
+        out = out[:rows_at] + rows_text + out[rows_at:]
+        out = out[: decl_m.start()] + funcs_text + out[decl_m.start() :]
+    return out
+
+
 def refresh_module_fragment_docs(
     root: Path, cfg: dict, *, only_mod: str | None = None
 ) -> list[Path]:
@@ -353,6 +504,27 @@ def refresh_module_fragment_docs(
             reference = R.render_module_ext_fragment(ctx)
             fb = R.render_module_ext_fragment(fallback[comp])
             updated = transplant_docs(existing, reference, fb)
+            # gh-440: a new method/property added to the manifest since this
+            # fragment was last generated is missing entirely -- splice it in
+            # additively rather than requiring delete-and-recreate.
+            updated = transplant_missing_bindings(updated, reference)
+            # gh-404: a serializable object whose sacred fragment predates the
+            # flag (or was hand-written) lacks the state triplet — inject it.
+            # (Usually already covered by the general splice above, since the
+            # triplet is part of the same rendered reference; kept as a
+            # redundant, idempotent safety net.)
+            if C.is_serializable(cfg, comp):
+                from ._context._methods import serializable_triplet_parts
+
+                wp = (
+                    f"{ctx['Component']}Obj"
+                    if C.is_no_state(cfg, comp)
+                    else ctx["Component"]
+                )
+                c_funcs, pmd, _ = serializable_triplet_parts(
+                    comp, ctx["Component"], wp
+                )
+                updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:
                 frag.write_text(updated, encoding="utf-8")
                 changed.append(frag)

@@ -24,6 +24,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
@@ -543,8 +544,10 @@ def run(
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
+    manual_stub: bool = False,
     pass_capacity: bool = False,
     nogil: bool = False,
+    status_return: bool = False,
     doc: str = "",
     from_apply: bool = False,
 ) -> None:
@@ -595,10 +598,30 @@ def run(
 
     params = params or []
     result_fields = result_fields or []
+    # gh-432: accept dict params (the apply replay's full-fidelity form,
+    # preserving per-param keys like capsule/header/out) alongside the CLI's
+    # (name, type[, default]) tuples; normalise to dicts once so every
+    # downstream use is uniform.
+    _norm_params: list[dict] = []
+    for _p in params:
+        if isinstance(_p, dict):
+            _norm_params.append(dict(_p))
+        else:
+            _entry = {"name": _p[0], "type": _p[1]}
+            if len(_p) > 2 and _p[2]:
+                _entry["default"] = _p[2]
+            _norm_params.append(_entry)
+    params = _norm_params
 
     # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
-    if varargs:
+    if manual_stub:
+        # manual_stub (gh-428): the C binding already exists, hand-written,
+        # inside the user's already-sacred _ext_<obj>_extra.c fragment -- jm
+        # never created it and must declare nothing for it (unlike varargs,
+        # which owns and creates a fresh <comp>_<name>_core.c stub file).
+        pass
+    elif varargs:
         # Varargs methods live in a sacred per-method file compiled into the
         # Python extension DSO (not the pure-C OBJECT lib) so they can use
         # Python.h.  No _core.c or _core.h changes needed.
@@ -634,7 +657,7 @@ def run(
                 arg_type,
                 return_type,
                 multi_output,
-                params=[(p[0], p[1]) for p in params],
+                params=[(p["name"], p["type"]) for p in params],
                 out_type=out_type,
                 max_out=max_out,
                 pass_capacity=pass_capacity,
@@ -648,7 +671,7 @@ def run(
                 multi_output,
                 # The C stub signature ignores the optional `default` (a
                 # binding concern); project to (name, type) (gh-240).
-                [(p[0], p[1]) for p in params],
+                [(p["name"], p["type"]) for p in params],
                 out_type,
                 batch=batch,
             )
@@ -668,7 +691,7 @@ def run(
     # Varargs methods have no typed C prototype — their binding is Python-aware
     # and lives in the sacred binding .c file, not _core.h.
     proto_lines: list[str] = []
-    if not varargs:
+    if not varargs and not manual_stub:
         proto_lines = _build_method_prototype(
             object_name,
             method_name,
@@ -676,7 +699,7 @@ def run(
             return_type,
             variable_output,
             multi_output,
-            [(p[0], p[1]) for p in params],
+            [(p["name"], p["type"]) for p in params],
             out_type,
             pass_capacity=pass_capacity,
             batch=batch,
@@ -728,22 +751,22 @@ def run(
         method_entry["doc"] = doc
     if varargs:
         method_entry["varargs"] = True
+    if manual_stub:
+        method_entry["manual_stub"] = True
     if params:
-        # gh-240: a 3-tuple param carries an optional `default`; persist it so a
-        # defaulted scalar round-trips and renders as an optional kwarg.
-        _mp: list[dict] = []
-        for p in params:
-            entry = {"name": p[0], "type": p[1]}
-            if len(p) > 2 and p[2]:
-                entry["default"] = p[2]
-            _mp.append(entry)
-        method_entry["params"] = _mp
+        # Params were normalised to dicts on entry (gh-240 default carried
+        # as a key; gh-432 capsule/header/out keys preserved verbatim).
+        method_entry["params"] = [dict(p) for p in params]
     if variable_output:
         method_entry["variable_output"] = True
     if pass_capacity:
         method_entry["pass_capacity"] = True
     if nogil:
         method_entry["nogil"] = True
+    if status_return:
+        # gh-432: int return is a status code — binds -> None, ValueError
+        # on non-zero.
+        method_entry["status_return"] = True
     if none_on_empty:
         method_entry["none_on_empty"] = True
     if batch:
@@ -837,6 +860,7 @@ def run(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, object_name),
+            serializable=C.is_serializable(cfg, object_name),
         )
         ctx.update(methods_ctx)
         # Preserve the stream generator (gh-201) across `jm method`: the
@@ -897,7 +921,14 @@ def run(
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
         if pyi_path.exists():
-            pyi_path.write_text(r(R.COMPONENT_PYI), encoding="utf-8")
+            old_pyi = pyi_path.read_text(encoding="utf-8")
+            new_pyi = r(R.COMPONENT_PYI)
+            # gh-428: preserve any manual_stub method's hand-written text
+            # across the otherwise-blind regen above.
+            pyi_path.write_text(
+                S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+                encoding="utf-8",
+            )
             print(f"  update  {pyi_path}")
         # Surgical splice: when a varargs binding file was just added,
         # insert it into the Python3_add_library line in CMakeLists.txt.
@@ -911,7 +942,12 @@ def run(
             )
 
     print()
-    if varargs:
+    if manual_stub:
+        print(
+            f"Done!  Hand-write {method_name}()'s signature/docstring "
+            f"in the .pyi placeholder — jm emits no C-side code for it."
+        )
+    elif varargs:
         print(
             f"Done!  Implement {object_name}_{method_name}()"
             f" in {object_name}_{method_name}_core.c"

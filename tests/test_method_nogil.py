@@ -66,18 +66,37 @@ def _scaffold_with_execute(dest: Path, nogil: bool):
 
 # ── (a) nogil generates the GIL-released kernel call ─────────────────────────
 def test_nogil_generates_allow_threads(tmp_path):
+    # gh-219 follow-up: _EXEC_METHOD's single-array-param shape is now
+    # out=-eligible, so this fragment has TWO nogil-wrapped kernel-call
+    # sites: the out= branch's (no realloc needed -- it writes into the
+    # caller's buffer directly) and the default path's (realloc-before-nogil
+    # for the internal grow-on-demand buffer). Check both independently
+    # rather than assuming there's only one.
     frag = _scaffold_with_execute(tmp_path / "p", nogil=True)
-    assert "Py_BEGIN_ALLOW_THREADS" in frag
-    assert "Py_END_ALLOW_THREADS" in frag
-    # numpy accessors are hoisted BEFORE the block...
-    b = frag.index("Py_BEGIN_ALLOW_THREADS")
-    e = frag.index("Py_END_ALLOW_THREADS")
-    assert frag.index("_ng0") < b
-    # ...and nothing Python-C-API runs while the GIL is dropped.
-    assert "PyArray_" not in frag[b:e]
-    assert "Py_" not in frag[b + len("Py_BEGIN_ALLOW_THREADS") : e]
-    # the realloc / error path stays above the block (under the GIL).
-    assert frag.index("realloc(") < b
+    assert frag.count("Py_BEGIN_ALLOW_THREADS") == 2
+    assert frag.count("Py_END_ALLOW_THREADS") == 2
+    begins = [
+        i
+        for i in range(len(frag))
+        if frag.startswith("Py_BEGIN_ALLOW_THREADS", i)
+    ]
+    ends = [
+        i for i in range(len(frag)) if frag.startswith("Py_END_ALLOW_THREADS", i)
+    ]
+    out_b, default_b = begins
+    out_e, default_e = ends
+    assert out_b < out_e < default_b < default_e
+    # nothing Python-C-API runs while the GIL is dropped, in either block.
+    for b, e in ((out_b, out_e), (default_b, default_e)):
+        assert "PyArray_" not in frag[b:e]
+        assert "Py_" not in frag[b + len("Py_BEGIN_ALLOW_THREADS") : e]
+    # numpy accessors are hoisted BEFORE the default block...
+    assert frag.index("_ng0") < default_b
+    # ...and its realloc / error path stays above it (under the GIL).
+    assert frag.index("realloc(") < default_b
+    # the out= branch is genuinely zero-alloc: no realloc between its own
+    # begin/end markers (it validates+writes into the caller's buffer).
+    assert "realloc(" not in frag[out_b:out_e]
 
 
 # ── (b) without nogil the binding is unchanged (no regression) ───────────────
@@ -137,3 +156,44 @@ def test_make_methods_ctx_nogil_on_wraps_kernel():
     m["nogil"] = True
     ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
     assert "Py_BEGIN_ALLOW_THREADS" in ctx["extra_methods_c"]
+
+
+# ── result_fields (multi-result "push") honours nogil too ────────────────────
+# Regression: the max_results/result_fields binding hardcoded the kernel call
+# and ignored `nogil`, so detector-style push methods ran holding the GIL.
+_PUSH_METHOD = {
+    "name": "push",
+    "arg_type": "float _Complex",
+    "return_type": "rec_t",
+    "max_results": 64,
+    "result_fields": [
+        {"name": "lag", "type": "size_t"},
+        {"name": "stat", "type": "float"},
+    ],
+}
+
+
+def test_make_methods_ctx_result_fields_nogil_off_is_plain():
+    ctx = make_methods_ctx(
+        "dec", "Dec", [dict(_PUSH_METHOD)], pkg="p", no_state=True
+    )
+    c = ctx["extra_methods_c"]
+    assert "Py_BEGIN_ALLOW_THREADS" not in c
+    assert "size_t n_out = dec_push(" in c  # plain kernel call
+
+
+def test_make_methods_ctx_result_fields_nogil_wraps_kernel():
+    m = dict(_PUSH_METHOD)
+    m["nogil"] = True
+    ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
+    c = ctx["extra_methods_c"]
+    assert "Py_BEGIN_ALLOW_THREADS" in c
+    assert "Py_END_ALLOW_THREADS" in c
+    b = c.index("Py_BEGIN_ALLOW_THREADS")
+    e = c.index("Py_END_ALLOW_THREADS")
+    # numpy accessor hoisted above the block; none runs while the GIL is dropped
+    assert "_ng0" in c and c.index("_ng0") < b
+    assert "PyArray_" not in c[b:e]
+    # the results[] buffer is declared before the block; DECREF stays after it
+    assert c.index("results[64]") < b
+    assert c.index("Py_DECREF(in_arr)") > e

@@ -13,6 +13,11 @@
 #   make docs              Build docs site into site/
 #   make docs-serve        Build and serve docs with live reload
 #   make install           Install package in editable mode
+#   make setup             One-time per clone: uv sync + pre-commit install
+#   make bump-version VERSION=  Update version in pyproject.toml
+#   make check-version VERSION= Verify version matches
+#   make release-branch VERSION= Create release branch + bump
+#   make tag-release VERSION=   Tag merged main + push
 #   make clean             Remove build artifacts
 #   make examples-clean    Remove build artifacts from all examples
 #   make help              Show this message
@@ -26,7 +31,10 @@ PYTEST_EXAMPLES = $(UV) run --with pytest --with numpy pytest
 ZENSICAL_RUN = $(UV) run --group dev
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-.PHONY: all test test-fast test-examples bench bench-save bench-compare lint build docs docs-serve install clean examples-clean help
+.PHONY: all test test-fast test-examples bench bench-save bench-compare \
+        lint build docs docs-serve install setup \
+        bump-version check-version release-branch tag-release \
+        clean examples-clean help
 
 all: test
 
@@ -57,6 +65,7 @@ bench-compare:
 # ── Lint ──────────────────────────────────────────────────────────────────────
 
 lint:
+	@test -f .git/hooks/pre-commit || pre-commit install
 	$(UV) run --group dev pre-commit run --all-files
 
 # ── Build ─────────────────────────────────────────────────────────────────────
@@ -80,6 +89,61 @@ docs-serve:
 
 install:
 	$(UV) sync --group dev
+
+setup:
+	$(UV) sync --group dev
+	pre-commit install
+
+# ── Release ───────────────────────────────────────────────────────────────────
+
+bump-version:
+ifndef VERSION
+	@echo "usage: make bump-version VERSION=<x.y.z>"
+	@exit 1
+endif
+	sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' pyproject.toml
+	@echo "Bumped to $(VERSION) in pyproject.toml"
+	@echo "Next: edit CHANGELOG.md, commit, push PR, merge, then:"
+	@echo "      git checkout main && git pull && make tag-release VERSION=$(VERSION)"
+
+check-version:
+ifndef VERSION
+	@echo "usage: make check-version VERSION=<x.y.z>"
+	@exit 1
+endif
+	@PY=$$(grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'); \
+	 if [ "$$PY" != "$(VERSION)" ]; then \
+	     echo "ERROR: pyproject.toml has $$PY, expected $(VERSION)"; exit 1; \
+	 fi; \
+	 echo "Version OK: $(VERSION)"
+
+release-branch:
+ifndef VERSION
+	@echo "usage: make release-branch VERSION=<x.y.z>"
+	@exit 1
+endif
+	git checkout -b chore/release-$(VERSION) origin/main
+	$(MAKE) bump-version VERSION=$(VERSION)
+	@echo "  - edit CHANGELOG.md ([Unreleased] -> [$(VERSION)] -- YYYY-MM-DD)"
+	@echo "  - git commit -am 'chore: release v$(VERSION)', push PR, merge"
+	@echo "  - then: git checkout main && git pull && make tag-release"
+
+tag-release:
+ifndef VERSION
+	@echo "usage: make tag-release VERSION=<x.y.z>"
+	@exit 1
+endif
+	@git fetch origin main
+	@CURRENT=$$(git rev-parse HEAD); \
+	 ORIGIN=$$(git rev-parse origin/main); \
+	 if [ "$$CURRENT" != "$$ORIGIN" ]; then \
+	     echo "ERROR: not at origin/main — checkout main and pull first"; \
+	     exit 1; \
+	 fi
+	$(MAKE) check-version VERSION=$(VERSION)
+	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	git push origin "v$(VERSION)"
+	@echo "Tagged v$(VERSION) — release workflow starting on GitHub"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
@@ -112,6 +176,11 @@ help:
 	@echo "  make docs          build docs → site/"
 	@echo "  make docs-serve    build and serve with live reload"
 	@echo "  make install       install dev dependencies (uv sync)"
+	@echo "  make setup         one-time: uv sync + pre-commit install"
+	@echo "  make bump-version VERSION=x.y.z  update version in pyproject.toml"
+	@echo "  make check-version VERSION=x.y.z verify version matches"
+	@echo "  make release-branch VERSION=x.y.z create release branch"
+	@echo "  make tag-release VERSION=x.y.z   tag + push to trigger release"
 	@echo "  make clean         remove build artifacts"
 	@echo "  make examples-clean  remove build artifacts from all examples"
 	@echo ""

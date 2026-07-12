@@ -186,12 +186,17 @@ def _find_doppler_prefix() -> str | None:
         Path.home() / "doppler" / "build",
     ]
     for prefix in candidates:
-        for rel in (
-            "doppler-config.cmake",
-            "lib/cmake/doppler/doppler-config.cmake",
-            "lib64/cmake/doppler/doppler-config.cmake",
-        ):
-            if (prefix / rel).exists():
+        for rel in (".", "lib/cmake/doppler", "lib64/cmake/doppler"):
+            d = prefix / rel
+            # gh-434: require the targets file NEXT TO the config. A doppler
+            # source build tree ships doppler-config.cmake but (pre
+            # doppler#380) no doppler-targets.cmake -- install(EXPORT) only
+            # materialises it at install time -- so a config-only directory
+            # is a false-positive prefix that hard-fails at cmake configure
+            # instead of falling through to the auto-download.
+            if (d / "doppler-config.cmake").exists() and (
+                d / "doppler-targets.cmake"
+            ).exists():
                 return str(prefix)
     # Local search came up empty; fall back to the auto-download.
     return _download_doppler()

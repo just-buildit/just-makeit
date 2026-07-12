@@ -179,14 +179,22 @@ manifest. The manifest itself is left untouched (unlike `jm remove`). Works
 for standalone and module objects. Must be run from the project root.
 
 ```sh
-git stash                          # regenerate discards hand-written bodies
+git stash                          # best-effort splice — stash first regardless
 just-makeit regenerate engine
-just-makeit regenerate engine --force   # skip the confirmation
+just-makeit regenerate engine --force            # skip the confirmation
+just-makeit regenerate engine --discard          # clean reset, no splice
 ```
 
-Because the rebuilt `_core.c` comes straight from the manifest, **any
-hand-written body in `<comp>_core.c` is discarded** — `git stash` or commit
-first. A single confirmation guards the deletion; `--force` skips it.
+By default, hand-written bodies in `<comp>_core.c`/`<comp>_core.h`
+(create/destroy/reset, `step()`, getters/setters, method implementations) are
+lifted before the sacred files are deleted and spliced back into the freshly
+regenerated ones, by function name. A signature change (e.g. from `jm add`
+growing a lifecycle function's parameter list) is detected and skipped in
+favor of the fresh body rather than force an incompatible splice. Pass
+`--discard` for the old behavior — a clean reset back to the template
+scaffold, with no preservation attempt. Either way, `git stash` or commit
+first — the splice is best-effort text matching, not a guarantee. A single
+confirmation guards the deletion; `--force` skips it.
 
 | Flag      | Description                     |
 | --------- | ------------------------------- |

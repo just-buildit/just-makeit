@@ -427,17 +427,111 @@ class TestPyi:
         pyi = _handle.render_pyi(_writer_cfg(), "wfm_writer")
         assert "class Writer:" in pyi
         assert "def __init__(self, path: str" in pyi
-        assert "def write(self, x: NDArray[Any]) -> int: ..." in pyi
+        # Methods, properties and RAII now have docstrings (gh-374).
+        assert "def write(self, x: NDArray[Any]) -> int:" in pyi
+        assert '"""write(x) -> int."""' in pyi
         assert "@property" in pyi
-        assert "def clip_fraction(self) -> float: ..." in pyi
-        assert "def __enter__(self) -> Writer: ..." in pyi
-        assert "def close(self) -> None: ..." in pyi
+        assert "def clip_fraction(self) -> float:" in pyi
+        assert "def __enter__(self) -> Writer:" in pyi
+        assert '"""Enter context; return self."""' in pyi
+        assert "def close(self) -> None:" in pyi
+        assert '"""Release the handle and free resources."""' in pyi
 
     def test_non_wfm_class_stub(self):
         pyi = _handle.render_pyi(_ring_cfg(), "ringbuf")
         assert "class Ring:" in pyi
-        assert "def pop(self, n: int) -> NDArray[Any]: ..." in pyi
-        assert "def fill_fraction(self) -> float: ..." in pyi
+        assert "def pop(self, n: int) -> NDArray[Any]:" in pyi
+        assert '"""pop(n) -> NDArray[Any]."""' in pyi
+        assert "def fill_fraction(self) -> float:" in pyi
+        assert '"""fill_fraction (float)."""' in pyi
+
+    def test_class_docstring_parameters(self):
+        """gh-374: class docstring exposes defaults and enum choices."""
+        pyi = _handle.render_pyi(_writer_cfg(), "wfm_writer")
+        # Class docstring Parameters block is present.
+        assert "Parameters" in pyi
+        assert "----------" in pyi
+        # Enum args show their default and choices.
+        assert 'file_type : str, default ``"raw"``' in pyi
+        assert '``"raw"``, ``"csv"``' in pyi
+        assert 'sample_type : str, default ``"cf32"``' in pyi
+        assert '``"cf32"``, ``"cf64"``, ``"ci16"``' in pyi
+        # Numeric defaults are bare (no quotes).
+        assert "headroom : float, default 0.0" in pyi
+
+    def test_class_docstring_no_args(self):
+        """A handle with no create_args gets a single-line class docstring."""
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "module": {
+                "tok": {
+                    "kind": "handle",
+                    "backing": "tok",
+                    "type_name": "Tok",
+                    "create_fn": "tok_open",
+                }
+            },
+        }
+        pyi = _handle.render_pyi(cfg, "tok")
+        assert '"""Tok handle."""' in pyi
+
+    def test_property_enum_choices(self):
+        """gh-374: enum getter fields show choices in their docstring."""
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "enum": [{"name": "ftype", "values": ["raw", "csv", "blue"]}],
+            "module": {
+                "rdr": {
+                    "kind": "handle",
+                    "backing": "rdr",
+                    "type_name": "Reader",
+                    "create_fn": "rdr_open",
+                    "create_args": [{"name": "path", "type": "path"}],
+                    "getters": [
+                        {
+                            "fn": "rdr_info",
+                            "out": "rdr_info_t",
+                            "fields": [
+                                {"name": "file_type", "type": "int", "enum": "ftype"},
+                                {"name": "fs", "type": "double"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        pyi = _handle.render_pyi(cfg, "rdr")
+        assert '"""file_type (str); one of ``"raw"``, ``"csv"``, ``"blue"``."""' in pyi
+        assert '"""fs (float)."""' in pyi
+
+    def test_method_scalar_default_in_docstring(self):
+        """gh-374: scalar method args with defaults are named in the doc call."""
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "module": {
+                "sink": {
+                    "kind": "handle",
+                    "backing": "sink",
+                    "type_name": "Sink",
+                    "create_fn": "sink_open",
+                    "create_args": [{"name": "addr", "type": "path"}],
+                    "methods": [
+                        {
+                            "name": "send",
+                            "fn": "sink_send",
+                            "returns": "size_t",
+                            "args": [
+                                {"name": "x", "type": "float _Complex[]"},
+                                {"name": "fs", "type": "double"},
+                                {"name": "fc", "type": "double", "default": "0.0"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        pyi = _handle.render_pyi(cfg, "sink")
+        assert '"""send(x, fs, fc=0.0) -> int."""' in pyi
 
 
 class TestWellFormedC:
@@ -568,6 +662,7 @@ class TestWritableProperty:
     def test_pyi_exposes_setter(self):
         pyi = _handle.render_pyi(_ring_cfg(), "ringbuf")
         assert "@gain.setter" in pyi
+        # Setter stays as a one-liner; getter now has a docstring (gh-374).
         assert "def gain(self, value: float) -> None: ..." in pyi
         assert "def scale(self, x: NDArray[Any], out: NDArray[Any])" in pyi
 
@@ -788,3 +883,91 @@ class TestMethodKwargs:
             '{"track_clipping", (PyCFunction)W_track_clipping, '
             "METH_VARARGS | METH_KEYWORDS, NULL}" in s
         )
+
+
+# ── string create-arg + handle-length array-out (gh: wfm_plan feature) ────────
+#
+# A Plan-like handle: constructed from a JSON spec STRING, exposing render(json)
+# and a scalar fast-path at(snr, seed), both returning a cf32 array whose length
+# comes from the handle via out_len_fn (not from an arg). Exercises F1 (a
+# `string` create/method arg) and F2 (the `out_len_fn` array-out method shape).
+
+
+def _plan_cfg():
+    return {
+        "project": {"name": "doppler", "version": "0.1.0"},
+        "module": {
+            "wfm_plan": {
+                "kind": "handle",
+                "backing": "wfm_plan",
+                "package": "wfm",
+                "header": "wfm/wfm_plan.h",
+                "type_name": "Plan",
+                "context_manager": True,
+                "close_fn": "wfm_plan_destroy",
+                "create_fn": "wfm_plan_prepare",
+                "create_args": [{"name": "spec_json", "type": "string"}],
+                "methods": [
+                    {
+                        "name": "render",
+                        "fn": "wfm_plan_render",
+                        "returns": "float _Complex[]",
+                        "out_len_fn": "wfm_plan_len",
+                        "nogil": True,
+                        "args": [{"name": "overrides_json", "type": "string"}],
+                    },
+                    {
+                        "name": "at",
+                        "fn": "wfm_plan_at",
+                        "returns": "float _Complex[]",
+                        "out_len_fn": "wfm_plan_len",
+                        "nogil": True,
+                        "args": [
+                            {"name": "snr", "type": "double"},
+                            {"name": "seed", "type": "uint64_t"},
+                        ],
+                    },
+                ],
+            }
+        },
+    }
+
+
+class TestStringArgAndLenArray:
+    def test_string_create_arg_parses_as_s(self):
+        s = _handle.render_ext(_plan_cfg(), "wfm_plan")
+        # F1: the JSON spec crosses as a borrowed const char * via "s".
+        assert "const char *spec_json = NULL;" in s
+        assert '"s"' in s  # the tp_init format string carries the string arg
+        assert "wfm_plan_prepare(spec_json)" in s
+
+    def test_render_string_in_len_out(self):
+        m = _plan_cfg()["module"]["wfm_plan"]["methods"][0]
+        s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
+        # F2: string arg parsed, output sized from the handle, trimmed, nogil.
+        assert 'PyArg_ParseTuple(args, "s", &overrides_json)' in s
+        assert "PyArray_SimpleNew(1, &_n, NPY_COMPLEX64)" in s
+        assert "wfm_plan_len(self->h)" in s
+        assert "wfm_plan_render(self->h, overrides_json, _out)" in s
+        assert "Py_BEGIN_ALLOW_THREADS" in s
+        assert "/* trim */" in s
+
+    def test_at_scalar_fast_path_safe_width(self):
+        m = _plan_cfg()["module"]["wfm_plan"]["methods"][1]
+        s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
+        # safe-width parse: uint64_t via unsigned long long _raw + cast; "dK".
+        assert 'PyArg_ParseTuple(args, "dK", &snr_raw, &seed_raw)' in s
+        assert "unsigned long long seed_raw = 0;" in s
+        assert "wfm_plan_at(self->h, snr_raw, (uint64_t)seed_raw, _out)" in s
+
+    def test_len_out_method_is_positional(self):
+        # shape (e) registers as plain METH_VARARGS (no keywords).
+        s = _handle.render_ext(_plan_cfg(), "wfm_plan")
+        assert '{"render", (PyCFunction)Plan_render, METH_VARARGS, NULL}' in s
+        assert '{"at", (PyCFunction)Plan_at, METH_VARARGS, NULL}' in s
+
+    def test_pyi_annotations(self):
+        pyi = _handle.render_pyi(_plan_cfg(), "wfm_plan")
+        assert "def __init__(self, spec_json: str) -> None: ..." in pyi
+        assert "def render(self, overrides_json: str) -> NDArray[Any]:" in pyi
+        assert "def at(self, snr: float, seed: int) -> NDArray[Any]:" in pyi

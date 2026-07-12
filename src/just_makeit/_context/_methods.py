@@ -19,6 +19,33 @@ from .._types import (
 )
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
+# Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
+# return stubs and make_properties_ctx's property stubs — keyed off
+# _CTYPE_META's "kind" rather than a parallel ctype table, so a new ctype
+# only needs its _CTYPE_META entry (see gh-450, where a second table in
+# _stubs.py drifted out of sync with this one).
+_KIND_TO_PY: dict[str, str] = {
+    "float": "float",
+    "int": "int",
+    "complex": "complex",
+    "str": "str",
+}
+
+
+def _pyi_scalar(ctype: str) -> str:
+    if ctype == "void":
+        return "None"
+    if ctype == "bool":
+        return "bool"
+    meta = _CTYPE_META.get(ctype)
+    return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
+
+
+def _pyi_ndarray(ctype: str) -> str:
+    elem = ctype[:-2] if ctype.endswith("[]") else ctype
+    meta = _CTYPE_META.get(elem)
+    return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
+
 
 # A cast-prefixed numpy buffer accessor inside a kernel call argument, e.g.
 # ``(const float *)PyArray_DATA(x_arr)`` or ``(size_t)PyArray_SIZE(x_arr)``.
@@ -261,6 +288,95 @@ def _bench_method_block(component: str, m: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def serializable_triplet_parts(
+    component: str, Component: str, wrapper_prefix: str
+) -> tuple[list[str], str, str]:
+    """The gh-400 state-blob binding for one object, as reusable text.
+
+    Returns ``(c_funcs, pymethoddef_rows, pyi_stubs)``: the three
+    ``state_bytes``/``get_state``/``set_state`` CPython wrapper functions, the
+    three ``PyMethodDef`` rows, and the ``.pyi`` stub block. Shared by the
+    regenerate path (:func:`make_methods_ctx`) and the sacred-fragment
+    transplant (:mod:`_docsync`, gh-404) so both emit byte-identical glue.
+
+    ``wrapper_prefix`` is the Python function-name prefix (e.g. ``FooObj``);
+    the C calls use ``component`` (``foo_state_bytes`` over ``self->handle``).
+    """
+    _W = wrapper_prefix
+    guard = (
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+    c_funcs = [
+        (
+            f"static PyObject *\n"
+            f"{_W}_state_bytes"
+            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n{guard}"
+            f"    return PyLong_FromSize_t("
+            f"{component}_state_bytes(self->handle));\n"
+            f"}}"
+        ),
+        (
+            f"static PyObject *\n"
+            f"{_W}_get_state"
+            f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
+            f"{{\n{guard}"
+            f"    size_t _n = {component}_state_bytes(self->handle);\n"
+            f"    PyObject *_b = PyBytes_FromStringAndSize"
+            f"(NULL, (Py_ssize_t)_n);\n"
+            f"    if (!_b)\n"
+            f"        return NULL;\n"
+            f"    {component}_get_state(self->handle, PyBytes_AS_STRING(_b));\n"
+            f"    return _b;\n"
+            f"}}"
+        ),
+        (
+            f"static PyObject *\n"
+            f"{_W}_set_state({Component}Object *self, PyObject *arg)\n"
+            f"{{\n{guard}"
+            f"    if (!PyBytes_Check(arg)) {{\n"
+            f"        PyErr_SetString(PyExc_TypeError,"
+            f' "set_state expects bytes");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    if ((size_t)PyBytes_GET_SIZE(arg)"
+            f" != {component}_state_bytes(self->handle)) {{\n"
+            f"        PyErr_SetString(PyExc_ValueError,"
+            f' "state blob size mismatch");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    if ({component}_set_state(self->handle,"
+            f" PyBytes_AS_STRING(arg)) != 0) {{\n"
+            f"        PyErr_SetString(PyExc_ValueError,"
+            f' "set_state rejected the blob");\n'
+            f"        return NULL;\n"
+            f"    }}\n"
+            f"    Py_RETURN_NONE;\n"
+            f"}}"
+        ),
+    ]
+    pmd = (
+        f'    {{"state_bytes", (PyCFunction){_W}_state_bytes, METH_NOARGS,\n'
+        f'     "Serialized state size in bytes."}},\n'
+        f'    {{"get_state", (PyCFunction){_W}_get_state, METH_NOARGS,\n'
+        f'     "Serialize the engine\'s mutable state to bytes."}},\n'
+        f'    {{"set_state", (PyCFunction){_W}_set_state, METH_O,\n'
+        f'     "Restore mutable state from a get_state() blob."}},\n'
+    )
+    pyi = (
+        "    def state_bytes(self) -> int:\n"
+        '        """Serialized state size in bytes."""\n'
+        "    def get_state(self) -> bytes:\n"
+        '        """Serialize the engine\'s mutable state to bytes."""\n'
+        "    def set_state(self, blob: bytes) -> None:\n"
+        '        """Restore mutable state from a get_state() blob."""'
+    )
+    return c_funcs, pmd, pyi
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -269,6 +385,7 @@ def make_methods_ctx(
     py_create_args: str = "",
     no_state: bool = False,
     doc_blocks: dict | None = None,
+    serializable: bool = False,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -285,25 +402,6 @@ def make_methods_ctx(
     to produce working doctests; omitting them produces functional but
     package-anonymous examples.
     """
-    _KIND_TO_PY: dict[str, str] = {
-        "float": "float",
-        "int": "int",
-        "complex": "complex",
-        "str": "str",
-    }
-
-    def _pyi_scalar(ctype: str) -> str:
-        if ctype == "void":
-            return "None"
-        if ctype == "bool":
-            return "bool"
-        meta = _CTYPE_META.get(ctype)
-        return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
-
-    def _pyi_ndarray(ctype: str) -> str:
-        elem = ctype[:-2] if ctype.endswith("[]") else ctype
-        meta = _CTYPE_META.get(elem)
-        return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
 
     _EMPTY: dict = {
         "method_decls": "",
@@ -316,7 +414,7 @@ def make_methods_ctx(
         "bench_methods_timing_block": "",
         "varargs_binding_files": [],
     }
-    if not methods:
+    if not methods and not serializable:
         return _EMPTY
 
     wrapper_prefix = f"{Component}Obj" if no_state else Component
@@ -381,6 +479,19 @@ def make_methods_ctx(
             )
             continue
 
+        # ── manual_stub method (hand-written C binding, jm emits nothing
+        # C-side; only a placeholder .pyi entry the splice engine preserves
+        # verbatim across regen — gh-428) ─────────────────────────────────
+        if m.get("manual_stub"):
+            pyi_lines.append(
+                f"    def {name}(self, *args: Any, **kwargs: Any)"
+                f" -> Any:\n"
+                f'        """<<MANUAL_STUB>> hand-write this signature/'
+                f"docstring in the .pyi — jm preserves it verbatim on"
+                f' future regens."""\n'
+            )
+            continue
+
         arg_type: str = m.get("arg_type", "void")
         return_type: str = m.get("return_type", "float _Complex")
         variable_output: bool = m.get("variable_output", False)
@@ -404,6 +515,11 @@ def make_methods_ctx(
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
         nogil: bool = m.get("nogil", False)
+        # gh-432: the C `int` return is a status code (0 = OK, non-zero =
+        # failure) — bound as `-> None`, raising ValueError on failure (the
+        # same contract the serializable set_state glue emits). Fixed-output
+        # methods only.
+        status_return: bool = m.get("status_return", False)
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -439,6 +555,18 @@ def make_methods_ctx(
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
+        # gh-219 follow-up: a method's primary array input is sometimes
+        # declared as the sole entry in `params` (arg_type="void" +
+        # params=[{array}]) rather than via `arg_type` directly -- doppler's
+        # universal idiom for this shape. That's functionally the same as
+        # `has_arg` for the purposes of the optional `out=` buffer feature;
+        # only genuine *extra* params (e.g. Farrow.delay(x, mu)) should stay
+        # ineligible (gh-412 kept those positional-or-keyword, no `out=`).
+        _single_array_param = (
+            not has_arg
+            and len(params) == 1
+            and is_array_param_type(params[0]["type"])
+        )
         if has_arg:
             _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
             # gh-139: a block method's input is `const <elem> *in`. Use the
@@ -791,11 +919,21 @@ def make_methods_ctx(
                     f"    size_t _{name}_retired_n;\n"
                     f"    size_t _{name}_retired_cap;\n"
                 )
+                # gh-437: weakref to the last returned view.  While the
+                # caller still holds that view, the next call must not
+                # reuse the buffer in place (a same-size call would
+                # silently overwrite the caller's data) — it retires the
+                # buffer instead, exactly like a grow.
+                buf_fields.append(
+                    f"    PyObject *_{name}_view_ref;"
+                    f"  /* gh-437 last returned view */\n"
+                )
                 buf_free.append(
                     f"    for (size_t _i = 0;"
                     f" _i < self->_{name}_retired_n; _i++)\n"
                     f"        free(self->_{name}_retired[_i]);\n"
                     f"    free(self->_{name}_retired);\n"
+                    f"    Py_XDECREF(self->_{name}_view_ref);\n"
                 )
             buf_alloc.append(
                 f"    {{\n"
@@ -813,7 +951,18 @@ def make_methods_ctx(
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
         # with blockwise steps(x, out=).  Multi-output and multi-param execute
         # keep their positional-only signatures for now.
-        _enable_out = variable_output and not multi_output and not has_params
+        _enable_out = (
+            variable_output
+            and not multi_output
+            and (not has_params or _single_array_param)
+        )
+        # gh-412: keyword parsing is independent of the `out=` buffer feature.
+        # A variable_output method with named params (e.g. Farrow.delay(x, mu))
+        # is positional-OR-keyword — matching its `.pyi` and the fixed-output
+        # path — even though it gets no `out=` buffer. Previously such methods
+        # fell through to a positional-only PyArg_ParseTuple, so `delay(x,
+        # mu=0.3)` raised TypeError despite the stub advertising the keyword.
+        _enable_kw = _enable_out or (variable_output and has_params)
         if variable_output:
             if has_arg:
                 if _enable_out:
@@ -859,7 +1008,6 @@ def make_methods_ctx(
                 _fmt = ""
                 _fmt_args: list[str] = []
                 _first_arr: str | None = None
-                _first_scalar: str | None = None
                 for _p in params:
                     _pn = _p["name"]
                     _pt = _p["type"]
@@ -904,12 +1052,28 @@ def make_methods_ctx(
                             _fmt += _fmt_char
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
-                        if _first_scalar is None:
-                            _first_scalar = _pn
                 _cd_parts.append(f"self->_{name}_buf")
+                # gh-412: positional-OR-keyword (kwlist from the param names),
+                # so `obj.method(x, mu=…)` works and matches the .pyi.
+                _kwnames = "".join(f'"{_p["name"]}", ' for _p in params)
+                if _enable_out:
+                    # gh-219 follow-up: the single-array-param case is
+                    # otherwise identical to the has_arg out= branch below —
+                    # extend the same optional out= kwarg. _fmt is exactly
+                    # "O" here (one required array param, nothing else, by
+                    # the _single_array_param definition), so "|O" makes
+                    # `out` the first optional argument.
+                    _pb_lines.append("    PyObject *out_obj = NULL;")
+                    _fmt += "|O"
+                    _fmt_args.append("&out_obj")
+                    _kwnames += '"out", '
                 parse_block = (
-                    "\n".join(_pb_lines) + "\n"
-                    f'    if (!PyArg_ParseTuple(args, "{_fmt}", '
+                    f"    static char *_kwlist[] = {{{_kwnames}NULL}};\n"
+                    + "\n".join(_pb_lines)
+                    + "\n"
+                    + "    if (!PyArg_ParseTupleAndKeywords(args, kwds, "
+                    + f'"{_fmt}",\n'
+                    + "            _kwlist, "
                     + ", ".join(_fmt_args)
                     + "))\n"
                     "        return NULL;\n"
@@ -937,12 +1101,16 @@ def make_methods_ctx(
                 )
                 call_data = ", ".join(_cd_parts)
                 decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
+                # gh-421: with no array param to size from, a scalar param
+                # (e.g. Delay.push_ptr(x), where x is the value being pushed,
+                # not a count) has no "count" semantics jm can derive from its
+                # raw value -- casting it as one silently mis-sizes the
+                # buffer. Fall back to the method's own <name>_max_out(),
+                # always available per the standard variable_output triplet.
                 _lazy_fallback = (
                     f"(size_t)PyArray_SIZE({_first_arr}_arr)"
                     if _first_arr is not None
-                    else f"(size_t){_first_scalar}"
-                    if _first_scalar is not None
-                    else "1"
+                    else f"{component}_{name}_max_out(self->handle)"
                 )
             else:
                 if _enable_out:
@@ -1050,10 +1218,29 @@ def make_methods_ctx(
                 # until dealloc.  Reserve the retired slot before allocating
                 # the new buffer, so an OOM leaves the live buffer untouched
                 # (no use-after-free, no leak).
+                # gh-437: a still-referenced view of _buf forbids
+                # in-place reuse — a same-size call would overwrite the
+                # caller's array. Probe the weakref and, when the view is
+                # alive, retire + allocate fresh exactly like a grow.
                 _lazy_alloc_vo = (
                     f"    size_t _need = {_lazy_fallback};\n"
+                    f"    int _view_live = 0;\n"
+                    f"    if (self->_{name}_view_ref) {{\n"
+                    f"#if PY_VERSION_HEX >= 0x030D0000\n"
+                    f"        PyObject *_lv = NULL;\n"
+                    f"        if (PyWeakref_GetRef("
+                    f"self->_{name}_view_ref, &_lv) == 1) {{\n"
+                    f"            Py_DECREF(_lv);\n"
+                    f"            _view_live = 1;\n"
+                    f"        }}\n"
+                    f"#else\n"
+                    f"        _view_live = PyWeakref_GetObject("
+                    f"self->_{name}_view_ref) != Py_None;\n"
+                    f"#endif\n"
+                    f"    }}\n"
                     f"    if (!self->_{name}_buf"
-                    f" || self->_{name}_buf_cap < _need) {{\n"
+                    f" || self->_{name}_buf_cap < _need"
+                    f" || _view_live) {{\n"
                     f"        size_t _max ="
                     f" {component}_{name}_max_out(self->handle);\n"
                     f"        if (!_max || _max < _need) _max = _need;\n"
@@ -1127,11 +1314,22 @@ def make_methods_ctx(
                         f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                         f"        size_t _omax ="
                         f" {component}_{name}_max_out(self->handle);\n"
-                        f"        if (_cap < _omax) {{\n"
+                        # gh-219 follow-up: max_out() alone is not always a
+                        # true call-independent upper bound — some kernels
+                        # (e.g. a generator's steps(count)) write exactly the
+                        # caller's requested size, which can exceed max_out.
+                        # Require capacity for whichever is larger, mirroring
+                        # the internal buffer-growth path's own fallback
+                        # (`if (!_max || _max < _need) _max = _need;`) so the
+                        # two paths agree instead of the out= path silently
+                        # under-validating and overflowing the caller's array.
+                        f"        size_t _min_cap = _omax > {_lazy_fallback}"
+                        f" ? _omax : ({_lazy_fallback});\n"
+                        f"        if (_cap < _min_cap) {{\n"
                         f"            PyErr_Format(PyExc_ValueError,\n"
                         f'                "out has %zu elements,'
-                        f' need >= %zu ({name}_max_out)",\n'
-                        f"                _cap, _omax);\n"
+                        f' need >= %zu",\n'
+                        f"                _cap, _min_cap);\n"
                         f"            Py_DECREF(out_arr);"
                         f" {_decref_early_vo}return NULL;\n"
                         f"        }}\n"
@@ -1156,7 +1354,14 @@ def make_methods_ctx(
                     )
                 else:
                     _out_branch = ""
-                    _vo_sig = f"({Component}Object *self, PyObject *args)\n"
+                    # gh-412: params methods still take kwds (keyword parsing)
+                    # even without the out= buffer branch.
+                    _vo_sig = (
+                        f"({Component}Object *self,"
+                        f" PyObject *args, PyObject *kwds)\n"
+                        if _enable_kw
+                        else f"({Component}Object *self, PyObject *args)\n"
+                    )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
@@ -1176,6 +1381,15 @@ def make_methods_ctx(
                     f"    PyArray_SetBaseObject("
                     f"(PyArrayObject *)arr, (PyObject *)self);\n"
                     f"    Py_INCREF(self);\n"
+                    f"    /* gh-437: remember this view — while the caller"
+                    f" holds it the next\n"
+                    f"     * call retires the buffer instead of reusing it"
+                    f" in place. */\n"
+                    f"    Py_XDECREF(self->_{name}_view_ref);\n"
+                    f"    self->_{name}_view_ref ="
+                    f" PyWeakref_NewRef(arr, NULL);\n"
+                    f"    if (!self->_{name}_view_ref) {{"
+                    f" Py_DECREF(arr); return NULL; }}\n"
                     f"{decref_in}"
                     f"    return arr;\n"
                     f"}}"
@@ -1208,7 +1422,10 @@ def make_methods_ctx(
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
-                _brief or "Zero-copy view into pre-allocated output buffer.",
+                _brief
+                or "Zero-copy view into an internally managed buffer;"
+                " safe to keep across calls (a still-referenced buffer is"
+                " retired, never reused in place).",
                 "",
                 "    >>> import numpy as np",
                 *_from_line,
@@ -1221,7 +1438,7 @@ def make_methods_ctx(
             ]
             _vo_flags = (
                 "METH_VARARGS | METH_KEYWORDS"
-                if _enable_out
+                if _enable_kw
                 else "METH_VARARGS"
             )
             pmd_lines.append(
@@ -1476,21 +1693,23 @@ def make_methods_ctx(
                 )
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
-                    f"    size_t n_out ="
-                    f" {component}_{name}(self->handle,\n"
-                    f"        (const {arg_disp} *)"
-                    f"PyArray_DATA(in_arr),"
-                    f" n_in,\n"
-                    f"        results, {max_results});\n"
-                    f"    Py_DECREF(in_arr);\n"
+                    + _kernel_call_block(
+                        f"{component}_{name}(self->handle, "
+                        f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
+                        f"results, {max_results})",
+                        nogil,
+                    )
+                    + "    Py_DECREF(in_arr);\n"
                 )
             else:
                 _rf_parse = ""
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
-                    f"    size_t n_out ="
-                    f" {component}_{name}(self->handle,\n"
-                    f"        results, {max_results});\n"
+                    + _kernel_call_block(
+                        f"{component}_{name}(self->handle, "
+                        f"results, {max_results})",
+                        nogil,
+                    )
                 )
             wrapper = (
                 f"static PyObject *\n"
@@ -1581,7 +1800,20 @@ def make_methods_ctx(
                 )
                 meth_flags = "METH_NOARGS"
 
-            if multi_output:
+            if status_return:
+                # gh-432: status-code return — 0 = OK -> None, non-zero
+                # raises ValueError carrying the method name and rc.
+                ret_body = (
+                    f"    int _rc = {component}_{name}({call_args_c});\n"
+                    f"{_p_cleanup}"
+                    f"    if (_rc != 0) {{\n"
+                    f"        PyErr_Format(PyExc_ValueError,\n"
+                    f'                     "{name} failed (rc=%d)", _rc);\n'
+                    f"        return NULL;\n"
+                    f"    }}\n"
+                    f"    Py_RETURN_NONE;\n"
+                )
+            elif multi_output:
                 extra_decls = "".join(
                     f"    {_ctype_display(rt)} out{i + 1}"
                     f" = {_CTYPE_META[rt]['zero']};\n"
@@ -1764,6 +1996,10 @@ def make_methods_ctx(
             pt = p["type"]
             if pt.endswith("[]"):
                 param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
+            elif p.get("capsule"):
+                # gh-432: a capsule-typed param takes the named PyCapsule,
+                # any wrapper exposing `_capsule`, or None (detach).
+                param_parts.append(f"{p['name']}: object | None")
             else:
                 # gh-240: a defaulted scalar renders as an optional kwarg.
                 _suffix = (
@@ -1772,7 +2008,10 @@ def make_methods_ctx(
                     else ""
                 )
                 param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
-        if result_fields and single_record:
+        if status_return:
+            # gh-432: status returns bind as None (raise on failure).
+            ret_ann = "None"
+        elif result_fields and single_record:
             # gh-244: one named record — a PyStructSequence (a tuple subclass).
             # Type it as a tuple of the field types: unpacking type-checks and
             # named attribute access works at runtime. (A full NamedTuple stub
@@ -1795,8 +2034,12 @@ def make_methods_ctx(
         else:
             ret_ann = _pyi_scalar(return_type)
         # gh-219: single-output variable_output methods take an optional
-        # `out=` buffer and expose a <verb>_max_out() sibling.
-        _stub_enable_out = m_var and not m_multi and not params
+        # `out=` buffer and expose a <verb>_max_out() sibling. A
+        # single-array-param method (params=[{array}], no other params) is
+        # eligible too -- see _single_array_param above.
+        _stub_enable_out = (
+            m_var and not m_multi and (not params or _single_array_param)
+        )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)
@@ -1834,6 +2077,18 @@ def make_methods_ctx(
                 f'        """Max output length {name}() can produce'
                 f' for the current state."""\n'
             )
+
+    # ── serializable: generate the state-blob binding (gh-400) ──────────────
+    # Calls the hand-written C triplet (size_t <c>_state_bytes(const T*); void
+    # <c>_get_state(const T*, void*); int <c>_set_state(T*, const void*)) — the
+    # elastic / pure-transducer face, sibling to reset.
+    if serializable:
+        _c_funcs, _pmd, _pyi = serializable_triplet_parts(
+            component, Component, wrapper_prefix
+        )
+        method_c_parts.extend(_c_funcs)
+        pmd_lines.append(_pmd)
+        pyi_lines.append(_pyi)
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
@@ -1892,6 +2147,7 @@ def make_properties_ctx(
         "tp_getset_decl": "",
         "property_decls": "",
         "property_struct_fields": "",
+        "property_stubs_pyi": "",
     }
     if not properties:
         return _EMPTY
@@ -1907,6 +2163,7 @@ def make_properties_ctx(
     getset_entries: list[str] = []
     decl_lines: list[str] = []
     struct_field_lines: list[str] = []
+    pyi_parts: list[str] = []
 
     for p in properties:
         pname: str = p["name"]
@@ -2076,6 +2333,23 @@ def make_properties_ctx(
             f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
         )
 
+        # gh-446: standalone .pyi stubs for a manifest property (PyGetSetDef
+        # -> a real `@property` descriptor), independent of the getter/
+        # setter *methods* make_state_ctx stubs out for state vars.
+        py_t = _pyi_ndarray(ctype) if buf_field else _pyi_scalar(ctype)
+        pyi_block = [
+            "",
+            "    @property",
+            f"    def {pname}(self) -> {py_t}:",
+            f'        """{_pdoc}"""',
+        ]
+        if writable:
+            pyi_block += [
+                f"    @{pname}.setter",
+                f"    def {pname}(self, value: {py_t}) -> None: ...",
+            ]
+        pyi_parts.append("\n".join(pyi_block))
+
     getset_body = "\n".join(getter_parts)
     entries_str = "\n".join(getset_entries)
     getset_def = (
@@ -2090,10 +2364,12 @@ def make_properties_ctx(
     property_struct_fields = (
         "\n" + "\n".join(struct_field_lines) if struct_field_lines else ""
     )
+    property_stubs_pyi = "\n".join(pyi_parts) + "\n" if pyi_parts else ""
 
     return {
         "getset_def": getset_def,
         "tp_getset_decl": tp_getset_decl,
         "property_decls": property_decls,
         "property_struct_fields": property_struct_fields,
+        "property_stubs_pyi": property_stubs_pyi,
     }

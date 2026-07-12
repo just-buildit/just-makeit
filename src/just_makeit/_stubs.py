@@ -22,6 +22,7 @@ doctests:  ``python -m doctest -v src/<pkg>/<module>/<module>.pyi``
 
 from __future__ import annotations
 
+import ast
 import re as _re
 
 from . import _config as C
@@ -44,6 +45,7 @@ _CTYPE_TO_PY: dict[str, str] = {
     "uint32_t": "int",
     "uint64_t": "int",
     "size_t": "int",
+    "const char *": "str",
 }
 
 _CTYPE_TO_NP: dict[str, str] = {
@@ -114,6 +116,229 @@ def _title(name: str) -> str:
     return "".join(w.title() for w in name.split("_"))
 
 
+# ── member-level merge / manual_stub splice engine (gh-428) ─────────────────
+#
+# A `manual_stub = true` method's C binding is entirely hand-owned (spliced
+# directly into a sacred `_ext_<obj>_extra.c` fragment jm never created), so
+# jm's .pyi codegen only ever knows to emit a generic placeholder for it.
+# Separately, a `# jm:hand` comment directly above any class member (method
+# or property, manifest-derived or not) marks that member as hand-owned with
+# zero manifest declaration required -- the field-data case that motivated
+# gh-428's re-scope (doppler's `Fft.execute_ci16`, a hand-added CPython
+# overload with no representable manifest entry at all).
+#
+# Both mechanisms funnel through the same splice: this mirrors
+# `_status.py::_pyi_symbols` (gh-426) -- a .pyi is valid Python, so
+# `ast.parse` gives exact member text for free -- but extracts source text
+# instead of just names, then transplants the old hand-written text back
+# over (or, for a `# jm:hand` member with no manifest counterpart, appends
+# it after) the freshly rendered class body, the same way `_object.py`'s
+# `_extract_c_function_bodies`/`_restore_c_function_bodies` preserve `_ext.c`
+# function bodies by name across regen. A property's getter/setter share a
+# Python name (`@property def x` / `@x.setter def x`) and are always treated
+# as one unit -- splicing only the getter and leaving a stale setter behind
+# would be worse than not splicing at all.
+
+_HAND_MARKER = "# jm:hand"
+
+
+def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
+    """Absolute (start, end) character offsets for *node* within *text*.
+
+    ``ast``'s ``col_offset``/``end_col_offset`` are UTF-8 *byte* offsets
+    within their line, not character offsets -- a non-ASCII character
+    earlier on the line (e.g. an em dash in a docstring) throws off a naive
+    character-index computation, silently swallowing or duplicating text
+    after it. Each line's byte column is re-decoded back to a character
+    column before combining with the (character-based) line start offset.
+    """
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+
+    def _char_offset(lineno: int, byte_col: int) -> int:
+        line = lines[lineno - 1]
+        char_col = len(line.encode("utf-8")[:byte_col].decode("utf-8"))
+        return starts[lineno - 1] + char_col
+
+    return (
+        _char_offset(node.lineno, node.col_offset),
+        _char_offset(node.end_lineno, node.end_col_offset),
+    )
+
+
+def _member_start_node(node: ast.AST) -> ast.AST:
+    """*node* itself, or its first decorator when it has any -- a
+    decorator's own ``lineno``/``col_offset`` sit before the ``def`` line's,
+    so a property's ``@property``/``@x.setter`` line is only captured by
+    starting the span there instead of at the ``def`` keyword."""
+    decorators = getattr(node, "decorator_list", None)
+    return decorators[0] if decorators else node
+
+
+def _member_groups(text: str) -> dict[tuple[str, str], list[ast.AST]]:
+    """Map ``(ClassName, member_name) -> [FunctionDef, ...]`` for every
+    class-body method/property in a `.pyi` source. A property's getter and
+    setter share ``member_name`` and land in the same list -- callers must
+    treat the group as one atomic unit. Best-effort: unparsable text yields
+    an empty map rather than raising."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return {}
+    groups: dict[tuple[str, str], list[ast.AST]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                groups.setdefault((node.name, item.name), []).append(item)
+    return groups
+
+
+def _group_span(text: str, nodes: list[ast.AST]) -> tuple[int, int]:
+    """Combined (start, end) offset spanning every node in *nodes* (a
+    property's getter + setter), decorators included."""
+    starts = [_node_span(text, _member_start_node(n))[0] for n in nodes]
+    ends = [_node_span(text, n)[1] for n in nodes]
+    return min(starts), max(ends)
+
+
+def _group_start_lineno(nodes: list[ast.AST]) -> int:
+    return min(_member_start_node(n).lineno for n in nodes)
+
+
+def _line_start_offset(text: str, lineno: int) -> int:
+    """Absolute character offset of the start of 1-indexed *lineno*."""
+    lines = text.splitlines(keepends=True)
+    return sum(len(line) for line in lines[: lineno - 1])
+
+
+def _hand_marker_start(lines: list[str], member_lineno: int) -> int | None:
+    """1-indexed line number of the ``# jm:hand`` marker immediately above
+    *member_lineno* (skipping at most one blank separator line), or None."""
+    idx = member_lineno - 2  # 0-indexed line just above the member
+    if idx < 0:
+        return None
+    if lines[idx].strip() == "":
+        idx -= 1
+        if idx < 0:
+            return None
+    return idx + 1 if lines[idx].strip() == _HAND_MARKER else None
+
+
+def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
+    """``{(ClassName, method_name)}`` for every ``manual_stub = true`` entry
+    declared anywhere in the manifest (standalone or module object)."""
+    pairs: set[tuple[str, str]] = set()
+    for comp in C.components(cfg):
+        Component = C.class_name(cfg, comp) or _title(comp)
+        for m in C.methods(cfg, comp):
+            if m.get("manual_stub"):
+                pairs.add((Component, m["name"]))
+    return pairs
+
+
+def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
+    """Preserve every hand-owned member of *old_text* across *new_text*'s
+    fresh render.
+
+    A ``(ClassName, member_name)`` group is hand-owned when it is EITHER
+    flagged ``manual_stub`` in the manifest OR marked with a ``# jm:hand``
+    comment directly above it in *old_text* -- the latter needs no manifest
+    entry at all (gh-428's re-scope: a hand-added CPython overload with
+    nothing to declare it against).
+
+    A hand-owned group whose name also exists in the freshly rendered
+    *new_text* (a manifest-derived member the user then hand-edited in
+    place) has its rendered span replaced -- verbatim old text, marker
+    comment included so the next regen still recognizes it. A hand-owned
+    group with **no** counterpart in *new_text* (no manifest entry
+    generates it at all) is instead appended after the last member of its
+    class, so a purely hand-written addition survives even though jm never
+    emits a placeholder for it to land on. Either way, a first apply (no
+    prior text) or a renamed member (no matching old group) leaves the
+    fresh render as-is, same limitation the `_ext.c` splicer already
+    accepts for renames.
+    """
+    old_groups = _member_groups(old_text)
+    if not old_groups:
+        return new_text
+    manifest_pairs = _manual_stub_pairs(cfg)
+    old_lines = old_text.splitlines()
+
+    def _block(key: tuple[str, str], nodes: list[ast.AST]) -> str:
+        """Old-text span to transplant for *key*, marker line included
+        when it was `# jm:hand`-marked (so the marker survives the
+        transplant and next apply still recognizes it).
+
+        Always anchored at the full start of its first line (never a
+        node's mid-line column offset) -- the target replacement below
+        anchors the same way, so the block supplies its own indentation
+        wholesale instead of stacking on top of what's already there.
+        """
+        _, end = _group_span(old_text, nodes)
+        member_lineno = _group_start_lineno(nodes)
+        marker_lineno = _hand_marker_start(old_lines, member_lineno)
+        start_lineno = (
+            member_lineno if marker_lineno is None else marker_lineno
+        )
+        start = _line_start_offset(old_text, start_lineno)
+        return old_text[start:end]
+
+    hand_owned: dict[tuple[str, str], str] = {}
+    for key, nodes in old_groups.items():
+        marked = (
+            _hand_marker_start(old_lines, _group_start_lineno(nodes))
+            is not None
+        )
+        if key in manifest_pairs or marked:
+            hand_owned[key] = _block(key, nodes)
+    if not hand_owned:
+        return new_text
+
+    new_groups = _member_groups(new_text)
+    replacements: list[tuple[int, int, str]] = []
+    append_by_class: dict[str, list[str]] = {}
+    for key, block in hand_owned.items():
+        cls, _name = key
+        if key in new_groups:
+            new_nodes = new_groups[key]
+            _, end = _group_span(new_text, new_nodes)
+            start = _line_start_offset(
+                new_text, _group_start_lineno(new_nodes)
+            )
+            replacements.append((start, end, block))
+        else:
+            append_by_class.setdefault(cls, []).append(block)
+
+    out = new_text
+    if replacements:
+        # Back-to-front so earlier offsets stay valid across replacements.
+        replacements.sort(key=lambda r: r[0], reverse=True)
+        for start, end, block in replacements:
+            out = out[:start] + block + out[end:]
+
+    if append_by_class:
+        try:
+            tree = ast.parse(out)
+        except SyntaxError:
+            return out
+        insertions: list[tuple[int, str]] = []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name in append_by_class:
+                _, end = _node_span(out, node)
+                combined = "".join(
+                    f"\n\n{block}" for block in append_by_class[node.name]
+                )
+                insertions.append((end, combined))
+        insertions.sort(key=lambda r: r[0], reverse=True)
+        for offset, block in insertions:
+            out = out[:offset] + block + out[offset:]
+    return out
+
+
 _ARRAY_RE = _re.compile(r"^([\w\s_]+)\[(\d+)\]$")
 
 
@@ -182,15 +407,29 @@ def _build_class_docstring(
     py_create_args: str,
     brief: str = "",
     custom_reset: bool = False,
+    create_blk=None,
 ) -> list[str]:
     """Return lines for a numpy-style class docstring (indented 4 spaces).
 
     *brief* — when supplied (from the create()'s ``@brief`` in the sacred
     header) — becomes the summary line in place of the generic
     ``"<Component> component."``.
+
+    *create_blk* — the parsed create() ``DocBlock``; its ``@param`` descriptions
+    document each init-param.  Per-param precedence is the manifest ``doc=``
+    override, then the create ``@param``, then a generic stub.
     """
     summary = brief or f"{Component} component."
     lines: list[str] = [f'    """{summary}', ""]
+
+    def _pdesc(name: str, manifest_doc: str, required: bool) -> str:
+        stub = (
+            f"{name} constructor parameter (required)."
+            if required
+            else f"{name} constructor parameter."
+        )
+        hdr = create_blk.param_desc(name) if create_blk else None
+        return manifest_doc or hdr or stub
 
     # Parameters section. init_params win when present (they are what create()
     # actually takes — the #69 contract); state vars are documented only for a
@@ -198,8 +437,14 @@ def _build_class_docstring(
     param_lines: list[str] = []
     if init_params:
         for name, ctype, dflt, *rest in init_params:
-            optional = rest[4] if len(rest) >= 5 else False
+            # init_params 10-tuple minus (name, type, default) leaves rest =
+            # (default_raw, real_type, real_create_fn, optional, create_fn,
+            # required, doc) — optional lives at rest[3], not rest[4] (that
+            # was create_fn, always falsy for a plain scalar so the "or None"
+            # annotation was only silently wrong for an optional-array param).
+            optional = rest[3] if len(rest) >= 4 else False
             required = rest[5] if len(rest) >= 6 else False
+            manifest_doc = rest[6] if len(rest) >= 7 else ""
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
@@ -207,7 +452,7 @@ def _build_class_docstring(
                 # gh-266: no default — document it as a required parameter.
                 param_lines += [
                     f"    {name} : {py_t}",
-                    f"        {name} constructor parameter (required).",
+                    f"        {_pdesc(name, manifest_doc, True)}",
                 ]
                 continue
             if ctype.startswith("string_enum:"):
@@ -216,7 +461,7 @@ def _build_class_docstring(
                 py_d = _py_default_stub(ctype, dflt)
             param_lines += [
                 f"    {name} : {py_t}, default {py_d}",
-                f"        {name} constructor parameter.",
+                f"        {_pdesc(name, manifest_doc, False)}",
             ]
     elif state_vars and not no_state:
         for name, ctype, dflt in state_vars:
@@ -305,23 +550,28 @@ def _build_class_docstring(
     return lines
 
 
-def _method_doc_lines(
+def _numpy_doc_lines(
     block,
-    m_name: str,
+    name: str,
     py_params: list[tuple[str, str]],
     ret_ann: str,
     override: str = "",
+    *,
+    indent: int = 8,
 ) -> list[str]:
-    """Return indented `.pyi` docstring lines for a method.
+    """Return `.pyi` numpy-docstring lines, indented by *indent* spaces.
 
-    Summary precedence: *override* (TOML ``doc``) > the Doxygen *block*'s
-    ``@brief`` > name fallback. With an override or a block, emit a
-    numpy-style docstring (summary + Parameters + Returns); otherwise fall
+    Shared by object methods (``indent=8``, inside a class) and module-level
+    free functions (``indent=4``, top level). Summary precedence: *override*
+    (TOML ``doc``) > the Doxygen *block*'s ``@brief`` > name fallback. With an
+    override or a block, emit a numpy-style docstring (summary + Parameters +
+    Returns + a runnable ``Examples`` doctest from ``@code``); otherwise fall
     back to the historical one-line name-based stub.
     """
-    fallback = f'        """{m_name.replace("_", " ").capitalize()}."""'
+    pad = " " * indent
+    pad2 = " " * (indent + 4)
     if block is None and not override:
-        return [fallback]
+        return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
     from ._docstring import _wrap, render_numpy_method_doc
 
     if block is not None:
@@ -332,33 +582,46 @@ def _method_doc_lines(
         summary, body, descs, ret, examples = "", [], {}, "", []
     summary = override or summary
     if not summary:
-        summary = m_name.replace("_", " ").capitalize() + "."
-    out = [f'        """{summary}']
+        summary = name.replace("_", " ").capitalize() + "."
+    out = [f'{pad}"""{summary}']
     for para in body:  # extended description — flowing, wrapped paragraphs
         out.append("")
-        out += [f"        {w}" for w in _wrap(para, 72)]
+        out += [f"{pad}{w}" for w in _wrap(para, 72)]
     if py_params:
-        out += ["", "        Parameters", "        ----------"]
+        out += ["", f"{pad}Parameters", f"{pad}----------"]
         for pname, ann in py_params:
-            out.append(f"        {pname} : {ann}")
-            out.append(f"            {descs.get(pname) or 'Input.'}")
+            out.append(f"{pad}{pname} : {ann}")
+            out.append(f"{pad2}{descs.get(pname) or 'Input.'}")
     if ret_ann != "None":
         out += [
             "",
-            "        Returns",
-            "        -------",
-            f"        {ret_ann}",
-            f"            {ret or 'Output.'}",
+            f"{pad}Returns",
+            f"{pad}-------",
+            f"{pad}{ret_ann}",
+            f"{pad2}{ret or 'Output.'}",
         ]
     if examples:  # @code ... @endcode -> runnable doctest
-        out += ["", "        Examples", "        --------"]
-        out += [f"        {ex}".rstrip() for ex in examples]
+        out += ["", f"{pad}Examples", f"{pad}--------"]
+        out += [f"{pad}{ex}".rstrip() for ex in examples]
         # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
         # text file, where expected output runs until a blank line — without
         # this the closing `"""` is swallowed into the last example's output.
         out.append("")
-    out.append('        """')
+    out.append(f'{pad}"""')
     return out
+
+
+def _method_doc_lines(
+    block,
+    m_name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
+) -> list[str]:
+    """Return indented `.pyi` docstring lines for an object method."""
+    return _numpy_doc_lines(
+        block, m_name, py_params, ret_ann, override, indent=8
+    )
 
 
 def _obj_stream_pyi(cfg: dict, obj: str) -> str:
@@ -482,6 +745,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # zeroed by reset(). Skip the "reset restores defaults" demo there.
         # (init_params survive the apply-path cfg; reset_impl/create_impl don't.)
         custom_reset=bool(ip),
+        create_blk=_create_blk,
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
 
@@ -656,6 +920,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f'        """{_va_doc}"""',
             ]
             continue
+        if m.get("manual_stub"):
+            lines += [
+                "",
+                f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
+                '        """<<MANUAL_STUB>> hand-write this signature/'
+                "docstring in the .pyi — jm preserves it verbatim on"
+                ' future regens."""',
+            ]
+            continue
         m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg = m.get("arg_type", "void")
@@ -665,9 +938,25 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_py_return_type = m.get("py_return_type", "")
 
         param_parts: list[str] = []
+        # gh-385: a variable_output method consumes a *block* of arg_type
+        # elements — its generated binding parses a numpy array (PyArray_FROM_
+        # OTF) and passes PyArray_DATA as the input block, and its output is
+        # already rendered as an NDArray below — so a non-array (element)
+        # arg_type means an array input here, not a scalar.
+        _x_ann = ""
         if m_arg != "void":
-            param_parts.append(f"x: {_py(m_arg)}")
+            _x_ann = (
+                f"NDArray[{_np(m_arg)}]"
+                if (m_var and not m_arg.endswith("[]"))
+                else _py(m_arg)
+            )
+            param_parts.append(f"x: {_x_ann}")
         for p in m_params:
+            # gh-432: a capsule param takes the named PyCapsule, a wrapper
+            # exposing `_capsule`, or None (detach).
+            if p.get("capsule"):
+                param_parts.append(f"{p['name']}: object | None")
+                continue
             # gh-240: a defaulted param renders as an optional kwarg.
             pann = f"{p['name']}: {_py(p['type'])}"
             if p.get("default"):
@@ -676,6 +965,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
         if m_py_return_type:
             ret_ann = m_py_return_type
+        elif m.get("status_return"):
+            # gh-432: status returns bind as None (raise on failure).
+            ret_ann = "None"
         elif m_result_fields:
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             # gh-244: a `single` method returns ONE record, not a list of them.
@@ -695,13 +987,33 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             ret_ann = _py(m_ret)
 
+        # gh-423: mirror make_methods_ctx's _enable_out/_single_array_param
+        # (gh-219) here -- this loop is a separate stub generator for the
+        # module-aggregated .pyi and was never taught the out=/_max_out()
+        # shape, so it kept emitting the pre-#219 signature after that fix.
+        _m_single_array_param = (
+            m_arg == "void"
+            and len(m_params) == 1
+            and m_params[0]["type"].endswith("[]")
+        )
+        _stub_enable_out = (
+            m_var and not m_multi and (not m_params or _m_single_array_param)
+        )
+        if _stub_enable_out:
+            param_parts.append(f"out: {ret_ann} | None = None")
+
         sig = ", ".join(param_parts)
         # (name, annotation) for the Python-facing args, for the doc builder.
         _py_params: list[tuple[str, str]] = []
         if m_arg != "void":
-            _py_params.append(("x", _py(m_arg)))
+            _py_params.append(("x", _x_ann))
         for p in m_params:
-            _py_params.append((p["name"], _py(p["type"])))
+            _py_params.append(
+                (
+                    p["name"],
+                    "object | None" if p.get("capsule") else _py(p["type"]),
+                )
+            )
         _doc = _method_doc_lines(
             _blk, m_name, _py_params, ret_ann, override=m.get("doc", "")
         )
@@ -711,6 +1023,28 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else f"    def {m_name}(self) -> {ret_ann}:"
         )
         lines += ["", header, *_doc]
+        if _stub_enable_out:
+            lines += [
+                "",
+                f"    def {m_name}_max_out(self) -> int:",
+                f'        """Max output length {m_name}() can produce'
+                f' for the current state."""',
+            ]
+
+    # serializable (gh-400): state-blob triplet, sibling to reset. The module
+    # .pyi is assembled here independently of make_methods_ctx's
+    # pyi_extra_methods (which drives the standalone COMPONENT_PYI), so the
+    # triplet must be emitted in both paths to keep the type stub complete.
+    if C.is_serializable(cfg, obj):
+        lines += [
+            "",
+            "    def state_bytes(self) -> int:",
+            '        """Serialized state size in bytes."""',
+            "    def get_state(self) -> bytes:",
+            '        """Serialize the engine\'s mutable state to bytes."""',
+            "    def set_state(self, blob: bytes) -> None:",
+            '        """Restore mutable state from a get_state() blob."""',
+        ]
 
     # properties
     for prop in obj_props:
@@ -757,7 +1091,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 # ── module-level function stub ────────────────────────────────────────────────
 
 
-def _fn_stub(fn: dict) -> str:
+def _fn_stub(fn: dict, block=None) -> str:
     name = fn["name"]
     out_type = fn.get("out_type")
     if fn.get("check_return"):
@@ -777,6 +1111,7 @@ def _fn_stub(fn: dict) -> str:
     # gh-240: a param with a `default` is optional — surface it in the stub
     # (`name: type = <default>`) so type-checkers and readers see the default.
     parts = []
+    py_params: list[tuple[str, str]] = []
     for p in params:
         # gh-353: a path arg accepts str | os.PathLike; an enum arg (type "int"
         # with an `enum` name) accepts the choice string.
@@ -786,6 +1121,7 @@ def _fn_stub(fn: dict) -> str:
             ann = "str"
         else:
             ann = _py(p["type"])
+        py_params.append((p["name"], ann))
         part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):
             # An enum default is a choice string — quote it; scalar defaults are
@@ -794,6 +1130,15 @@ def _fn_stub(fn: dict) -> str:
             part += f" = {dflt}"
         parts.append(part)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
+    # gh-384: when the module header carries Doxygen for this free function,
+    # synthesize the full numpy docstring (brief + params + a runnable Examples
+    # doctest from @code), same as object methods. With no block, keep the
+    # historical one-line stub so a manifest-only/scaffold rebuild is unchanged.
+    if block is not None:
+        doc_lines = _numpy_doc_lines(
+            block, name, py_params, ret, override=doc, indent=4
+        )
+        return f"{sig}\n" + "\n".join(doc_lines)
     one_liner = (
         doc.split("\n")[0]
         if doc
@@ -806,10 +1151,11 @@ def _fn_stub(fn: dict) -> str:
 
 
 def _uses_any(cfg: dict, module: str) -> bool:
-    """Return True if any object in this module has a varargs method."""
+    """True if any object in this module has a varargs/manual_stub method
+    (gh-428) — both render a ``(*args: Any, **kwargs: Any) -> Any`` stub."""
     for obj in C.module_objects(cfg, module):
         for m in C.methods(cfg, obj):
-            if m.get("varargs"):
+            if m.get("varargs") or m.get("manual_stub"):
                 return True
     return False
 
@@ -861,7 +1207,7 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
 # ── public entry point ────────────────────────────────────────────────────────
 
 
-def make_module_pyi(cfg: dict, module: str) -> str:
+def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     """Return the full __init__.pyi content for *module*.
 
     Example output (module='dsp', objects=['filt'], functions=['apply'])::
@@ -915,6 +1261,21 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
     functions = C.module_functions(cfg, module)
+    # gh-384: header Doxygen for free functions, stashed transiently on cfg by
+    # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
+    # the module has no header / hand-written function comments.
+    # gh-384: synthesize free-function docstrings (incl. @code Examples) from
+    # the module header Doxygen, same as object methods. Only when a project
+    # root is supplied (the apply/regenerate path); direct callers without a
+    # root keep the historical one-line stubs. Local import avoids a cycle
+    # (_object imports _stubs); the loader honours _object's apply-replay
+    # _DOC_ROOT_OVERRIDE just like the per-object blocks.
+    if root is not None:
+        from ._object import _load_module_doc_blocks
+
+        fn_doc_blocks = _load_module_doc_blocks(root, module)
+    else:
+        fn_doc_blocks = {}
 
     if objects:
         parts.append("")
@@ -923,7 +1284,7 @@ def make_module_pyi(cfg: dict, module: str) -> str:
         parts.append("")
 
     for fn in functions:
-        parts.append(_fn_stub(fn))
+        parts.append(_fn_stub(fn, fn_doc_blocks.get(fn["name"])))
         parts.append("")
 
     # strip trailing blank line

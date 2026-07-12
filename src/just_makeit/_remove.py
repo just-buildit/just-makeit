@@ -21,6 +21,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _stubs as S
 from ._init import (
     _make_component_ctx,
     _to_title,
@@ -466,10 +467,12 @@ def _remove_state(
     # Removing a field is structural (struct + create/reset change): rebuild
     # from the manifest rather than splicing.  The remove was already
     # confirmed above, so skip the regenerate prompt.  (Imported lazily —
-    # _regenerate imports helpers from this module.)
+    # _regenerate imports helpers from this module.) discard=True: the old
+    # body's signature predates the removed field — see _add.py's identical
+    # reasoning for the opposite (add) direction.
     from . import _regenerate
 
-    _regenerate.run(root, obj, force=True)
+    _regenerate.run(root, obj, force=True, discard=True)
     print()
     print(f"Done!  State field '{name}' removed.")
 
@@ -672,6 +675,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
+            serializable=C.is_serializable(cfg, obj),
         )
     )
     ctx.update(
@@ -722,7 +726,14 @@ def _regenerate_object_bindings(
         print(f"  update  {ext_c}")
     pyi = root / "src" / pkg / f"{obj}.pyi"
     if pyi.exists():
-        pyi.write_text(R.render(R.COMPONENT_PYI, ctx), encoding="utf-8")
+        old_pyi = pyi.read_text(encoding="utf-8")
+        new_pyi = R.render(R.COMPONENT_PYI, ctx)
+        # gh-428: preserve a sibling manual_stub method's hand-written text
+        # across the regen triggered by removing a different method/property.
+        pyi.write_text(
+            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+            encoding="utf-8",
+        )
         print(f"  update  {pyi}")
     bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
     if bench_c.exists():

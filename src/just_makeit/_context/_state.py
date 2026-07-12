@@ -40,6 +40,7 @@ def _build_no_state_init_ctx(
     params: list[tuple],
     array_args: list[tuple[str, str]] = (),
     init_post_parse_impl: str = "",
+    create_blk=None,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -134,6 +135,38 @@ def _build_no_state_init_ctx(
         (n, ct, d, dr) for n, ct, d, dr, rq in scalar_ip if not rq
     ]
 
+    # gh-422: within each of the required/optional PyArg groups, interleave
+    # arrays / string-enums / scalars in their *original* TOML declaration
+    # order rather than a fixed type-based sequence (array, then string-enum,
+    # then scalar) — that fixed sequence silently hoisted a string_enum
+    # param in front of any scalar declared ahead of it, breaking positional
+    # construction. `_order` gives each param name its declared index;
+    # ``required_entries``/``optional_entries`` are the (kind, name) pairs
+    # for the kwlist/format-string/parse-args triplet, each sorted back into
+    # that order — this mirrors what the ``sig_parts``/``call_parts`` loop
+    # above already does correctly for the C ``create()`` signature.
+    _order = {p[0]: i for i, p in enumerate(params)}
+    required_entries = sorted(
+        [("arr", n) for n, _, __, ___ in arr_ip]
+        + [("scalar", n) for n, *_ in req_scalar_ip],
+        key=lambda e: _order[e[1]],
+    )
+    optional_entries = sorted(
+        [("str_enum", n) for n, _, __ in str_enum_ip]
+        + [("opt_arr", n) for n, *_ in opt_arr_ip]
+        + [("scalar", n) for n, *_ in opt_scalar_ip],
+        key=lambda e: _order[e[1]],
+    )
+    _req_scalar_meta: dict[str, tuple] = {
+        n: (ct, d, dr) for n, ct, d, dr in req_scalar_ip
+    }
+    _opt_scalar_meta: dict[str, tuple] = {
+        n: (ct, d, dr) for n, ct, d, dr in opt_scalar_ip
+    }
+    _str_enum_by_name: dict[str, tuple] = {
+        n: (choices, sdflt) for n, choices, sdflt in str_enum_ip
+    }
+
     sig_parts: list[str] = []
     doc_parts: list[str] = []
     call_parts: list[str] = []
@@ -219,22 +252,21 @@ def _build_no_state_init_ctx(
 
     kwlist_items = (
         [f'"{name}"' for name, _ in _aa]
-        + [f'"{name}"' for name, _, __, ___ in arr_ip]
-        + [f'"{name}"' for name, *_ in req_scalar_ip]
-        + [f'"{name}"' for name, _, __ in str_enum_ip]
-        + [f'"{name}"' for name, *_ in opt_arr_ip]
-        + [f'"{name}"' for name, *_ in opt_scalar_ip]
+        + [f'"{name}"' for _, name in required_entries]
+        + [f'"{name}"' for _, name in optional_entries]
         + ["NULL"]
     )
     init_kwlist = ", ".join(kwlist_items)
 
-    local_lines: list[str] = (
-        [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
-        + [f"    PyObject *{name}_obj = NULL;" for name, _, __, ___ in arr_ip]
-        + [f"    PyObject *{name}_obj = NULL;" for name, *_ in opt_arr_ip]
-    )
+    local_lines: list[str] = [
+        f"    PyObject *{name}_obj = NULL;" for name, _ in _aa
+    ] + [
+        f"    PyObject *{name}_obj = NULL;"
+        for kind, name in required_entries
+        if kind == "arr"
+    ]
     parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa] + [
-        f"&{name}_obj" for name, _, __, ___ in arr_ip
+        f"&{name}_obj" for kind, name in required_entries if kind == "arr"
     ]
     post_lines: list[str] = []
 
@@ -260,38 +292,45 @@ def _build_no_state_init_ctx(
         return f"&{name}"
 
     # Required scalars are parsed before the optional kwargs (str-enum, optional
-    # array, optional scalar), matching their position ahead of the PyArg `|`.
-    for name, ct, dflt, dflt_raw in req_scalar_ip:
-        parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
+    # array, optional scalar), matching their position ahead of the PyArg `|`
+    # — but, per gh-422, in TOML declaration order relative to any required
+    # arrays, not array-always-first.
+    for kind, name in required_entries:
+        if kind == "scalar":
+            ct, dflt, dflt_raw = _req_scalar_meta[name]
+            parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
+        # "arr" entries already got their local_lines/parse_args above.
 
-    for sname, choices, sdflt in str_enum_ip:
-        local_lines.append(f'    const char *{sname}_str = "{sdflt}";')
-        parse_args.append(f"&{sname}_str")
-        enum_lines = [f"    int {sname} = 0;"]
-        for i, choice in enumerate(choices):
-            kw = "if" if i == 0 else "else if"
-            enum_lines.append(
-                f'    {kw} (strcmp({sname}_str, "{choice}") == 0) {sname} = {i};'
-            )
-        choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
-        enum_lines += [
-            "    else {",
-            f'        PyErr_Format(PyExc_ValueError, "{sname} must be one of'
-            f" {choices_str}, got '%s'\", {sname}_str);",
-            "        return -1;",
-            "    }",
-        ]
-        post_lines.extend(enum_lines)
-
-    for oname, *_ in opt_arr_ip:
-        parse_args.append(f"&{oname}_obj")
-
-    # Optional scalars keep the historic behaviour: defaulted, parsed after the
-    # PyArg `|`. (gh-244: a parse_type param such as size_t seeds its `_raw`
-    # local from dflt_raw, then dflt, then the type's parse_zero — handled in
-    # _emit_scalar.)
-    for name, ct, dflt, dflt_raw in opt_scalar_ip:
-        parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
+    # Optional string-enum / array / scalar kwargs, in TOML declaration
+    # order (gh-422). (gh-244: a parse_type scalar such as size_t seeds its
+    # `_raw` local from dflt_raw, then dflt, then the type's parse_zero —
+    # handled in _emit_scalar.)
+    for kind, name in optional_entries:
+        if kind == "str_enum":
+            choices, sdflt = _str_enum_by_name[name]
+            local_lines.append(f'    const char *{name}_str = "{sdflt}";')
+            parse_args.append(f"&{name}_str")
+            enum_lines = [f"    int {name} = 0;"]
+            for i, choice in enumerate(choices):
+                kw = "if" if i == 0 else "else if"
+                enum_lines.append(
+                    f'    {kw} (strcmp({name}_str, "{choice}") == 0) {name} = {i};'
+                )
+            choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
+            enum_lines += [
+                "    else {",
+                f'        PyErr_Format(PyExc_ValueError, "{name} must be one of'
+                f" {choices_str}, got '%s'\", {name}_str);",
+                "        return -1;",
+                "    }",
+            ]
+            post_lines.extend(enum_lines)
+        elif kind == "opt_arr":
+            local_lines.append(f"    PyObject *{name}_obj = NULL;")
+            parse_args.append(f"&{name}_obj")
+        else:  # "scalar"
+            ct, dflt, dflt_raw = _opt_scalar_meta[name]
+            parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
 
     if init_post_parse_impl:
         post_lines.append(init_post_parse_impl.rstrip())
@@ -299,16 +338,19 @@ def _build_no_state_init_ctx(
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
-    n_required = len(_aa) + len(arr_ip)
-    # Required converters (before the PyArg `|`): the positional arrays, then
-    # any required scalars (gh-266).
-    required_fmt = "O" * n_required + "".join(
-        _CTYPE_META[ct]["fmt"] for _, ct, *_ in req_scalar_ip
+    # Required converters (before the PyArg `|`): positional arrays and
+    # required scalars, interleaved in declared order (gh-422).
+    required_fmt = "O" * len(_aa) + "".join(
+        "O" if kind == "arr" else _CTYPE_META[_req_scalar_meta[name][0]]["fmt"]
+        for kind, name in required_entries
     )
-    optional_fmt = (
-        "s" * len(str_enum_ip)
-        + "O" * len(opt_arr_ip)
-        + "".join(_CTYPE_META[ct]["fmt"] for _, ct, *_ in opt_scalar_ip)
+    optional_fmt = "".join(
+        "s"
+        if kind == "str_enum"
+        else "O"
+        if kind == "opt_arr"
+        else _CTYPE_META[_opt_scalar_meta[name][0]]["fmt"]
+        for kind, name in optional_entries
     )
     if optional_fmt:
         init_parse_fmt = required_fmt + "|" + optional_fmt
@@ -520,23 +562,29 @@ def _build_no_state_init_ctx(
         "intp": "np.intp",
     }
 
-    pyi_parts: list[str] = (
-        [f"{name}: npt.ArrayLike" for name, _ in _aa]
-        + [f"{aname}: npt.ArrayLike" for aname, _, __, ___ in arr_ip]
-        # Required scalars have no default, so they precede every defaulted
-        # parameter — Python signatures forbid a default-less arg after a
-        # defaulted one (gh-266).
-        + [
-            f"{name}: {_CTYPE_META[ct]['py_type']}"
-            for name, ct, *_ in req_scalar_ip
-        ]
-        + [f'{sname}: str = "{sdflt}"' for sname, _, sdflt in str_enum_ip]
-        + [f"{oname}: npt.ArrayLike | None = None" for oname, *_ in opt_arr_ip]
-        + [
-            f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
-            for name, ct, dflt, *_ in opt_scalar_ip
-        ]
-    )
+    # gh-422: required entries precede every defaulted parameter (Python
+    # signatures forbid a default-less arg after a defaulted one — gh-266),
+    # but within each group, arrays / string-enums / scalars interleave in
+    # TOML declaration order rather than a fixed type-based sequence.
+    pyi_parts: list[str] = [f"{name}: npt.ArrayLike" for name, _ in _aa]
+    for kind, name in required_entries:
+        if kind == "arr":
+            pyi_parts.append(f"{name}: npt.ArrayLike")
+        else:
+            ct = _req_scalar_meta[name][0]
+            pyi_parts.append(f"{name}: {_CTYPE_META[ct]['py_type']}")
+    for kind, name in optional_entries:
+        if kind == "str_enum":
+            sdflt = _str_enum_by_name[name][1]
+            pyi_parts.append(f'{name}: str = "{sdflt}"')
+        elif kind == "opt_arr":
+            pyi_parts.append(f"{name}: npt.ArrayLike | None = None")
+        else:
+            ct, dflt, _dr = _opt_scalar_meta[name]
+            pyi_parts.append(
+                f"{name}: {_CTYPE_META[ct]['py_type']} ="
+                f" {_py_default(ct, dflt)}"
+            )
     init_params_pyi = ", ".join(pyi_parts)
 
     pyi_doc_sections: list[str] = []
@@ -575,11 +623,24 @@ def _build_no_state_init_ctx(
                 for oname, oact, ondim, _, oalt_fn in opt_arr_ip
             )
         )
+    # Constructor-param description: manifest doc= override, then the create
+    # @param, then a generic stub. (Mirrors the .pyi path in _stubs.py.)
+    _manifest_doc = {p[0]: (p[9] if len(p) > 9 else "") for p in params}
+
+    def _pdoc(name: str, required: bool) -> str:
+        stub = (
+            f"{name} constructor parameter (required)."
+            if required
+            else f"{name} constructor parameter."
+        )
+        hdr = create_blk.param_desc(name) if create_blk else None
+        return _manifest_doc.get(name) or hdr or stub
+
     if req_scalar_ip:
         pyi_doc_sections.append(
             "\n".join(
                 f"    {name} : {_CTYPE_META[ct]['py_type']}\n"
-                f"        {name} constructor parameter (required)."
+                f"        {_pdoc(name, True)}"
                 for name, ct, *_ in req_scalar_ip
             )
         )
@@ -588,7 +649,7 @@ def _build_no_state_init_ctx(
             "\n".join(
                 f"    {name} : {_CTYPE_META[ct]['py_type']},"
                 f" default {_py_default(ct, dflt)}\n"
-                f"        {name} constructor parameter."
+                f"        {_pdoc(name, False)}"
                 for name, ct, dflt, *_ in opt_scalar_ip
             )
         )
@@ -610,15 +671,23 @@ def _build_no_state_init_ctx(
     # Required scalars are positional-before the optional kwargs in the
     # generated ctor, so the smoke test passes them first; their seed value is
     # the type's zero (the stub ctor never validates, so the test still
-    # builds green) — gh-266.
-    py_create_parts += [
-        _py_default(ct, dflt or _CTYPE_META[ct]["zero"])
-        for _, ct, dflt, *_ in req_scalar_ip
-    ]
-    py_create_parts += [f'"{sdflt}"' for _, _, sdflt in str_enum_ip]
-    py_create_parts += [
-        _py_default(ct, dflt) for _, ct, dflt, *_ in opt_scalar_ip
-    ]
+    # builds green) — gh-266. gh-422: this is a *positional* example call, so
+    # required/optional scalars and string-enums must line up with
+    # required_entries/optional_entries' declared order, not a fixed
+    # type-based sequence — optional arrays stay omitted (keyword-only in
+    # practice), matching the historic behaviour.
+    for kind, name in required_entries:
+        if kind == "scalar":
+            ct, dflt, _dr = _req_scalar_meta[name]
+            py_create_parts.append(
+                _py_default(ct, dflt or _CTYPE_META[ct]["zero"])
+            )
+    for kind, name in optional_entries:
+        if kind == "str_enum":
+            py_create_parts.append(f'"{_str_enum_by_name[name][1]}"')
+        elif kind == "scalar":
+            ct, dflt, _dr = _opt_scalar_meta[name]
+            py_create_parts.append(_py_default(ct, dflt))
     py_create_args = ", ".join(py_create_parts)
 
     c_create_args = ", ".join(c_create_parts_ordered)
@@ -1286,8 +1355,14 @@ def make_state_ctx(
     for name, ct, dflt in ctor_scalars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
+            # gh-377: seed the _raw local from dflt when valid as an
+            # initializer for parse_type; struct parse_types (Py_complex,
+            # parse_zero starts with "{") cannot accept a C99 expression like
+            # "0.0 + 0.0 * I" — fall back to parse_zero for those.
+            pz = meta["parse_zero"]
+            raw_init = dflt if (dflt and not pz.startswith("{")) else pz
             local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {meta['parse_zero']};"
+                f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             parse_args.append(f"&{name}_raw")

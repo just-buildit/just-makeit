@@ -361,7 +361,7 @@ def _dep_header_includes(inc_root: Path, deps: "list[str]") -> "list[str]":
 
 
 def _inject_includes_into_core_h(
-    path: Path, comp: str, deps: "list[str]"
+    path: Path, comp: str, deps: "list[str]", extra: "tuple | list" = ()
 ) -> bool:
     """Add a ``#include "<dep>/<dep>_core.h"`` per *deps* entry, idempotently.
 
@@ -370,17 +370,21 @@ def _inject_includes_into_core_h(
     ``lfsr_state_t *`` field), so it must include the dependency's header to
     compile. Only deps whose header actually exists are injected (a bare link
     target like ``lo_core`` is skipped — see :func:`_dep_header_includes`).
+    gh-432: *extra* carries verbatim header paths from method params'
+    ``header`` keys (a capsule param's foreign type, e.g.
+    ``telemetry/telemetry.h``) — injected the same way when the header file
+    exists under ``native/inc``.
     The includes are placed after the last existing ``#include`` at the top of
     the header; one already present is skipped. The sacred struct and inline
     ``step()`` body are never touched. Returns True if changed."""
-    if not path.exists() or not deps:
+    if not path.exists() or not (deps or extra):
         return False
     text = original = path.read_text(encoding="utf-8")
-    missing = [
-        inc
-        for inc in _dep_header_includes(path.parent.parent, deps)
-        if inc not in text
+    inc_root = path.parent.parent
+    wanted = _dep_header_includes(inc_root, deps) + [
+        f'#include "{h}"' for h in extra if (inc_root / h).exists()
     ]
+    missing = [inc for inc in wanted if inc not in text]
     if not missing:
         return False
     block = "\n".join(missing)
@@ -562,6 +566,7 @@ def run(
     no_step: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
+    serializable: bool = False,
     streamable: bool = False,
     async_stream: bool = False,
     stream_block_default: int | None = None,
@@ -643,7 +648,9 @@ def run(
         }
     )
 
-    sample_ctx = Ctx.make_sample_ctx(arg_type, return_type)
+    sample_ctx = Ctx.make_sample_ctx(
+        arg_type, return_type, C.project_bench_block_sizes(cfg)
+    )
     ctx.update(sample_ctx)
 
     ctx.update(
@@ -687,6 +694,17 @@ def run(
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
+            serializable=serializable,
+        )
+    )
+    # No properties exist at creation time (jm property adds them later) —
+    # still call this so property_stubs_pyi resolves to "" rather than
+    # leaving <<property_stubs_pyi>> unrendered in the fresh .pyi (gh-446).
+    ctx.update(
+        Ctx.make_properties_ctx(
+            ctx["component"],
+            ctx["Component"],
+            [],
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
@@ -788,11 +806,17 @@ def run(
     # without a manual edit. Only deps with a real header are included (a bare
     # link target like `lo_core` is skipped). Each include is newline-prefixed
     # so it sits cleanly after the (possibly empty) perf include.
+    # gh-432: method params' `header` keys (a capsule param's foreign type)
+    # are included the same way when the header exists.
+    _inc_root = root / "native" / "inc"
     ctx["depends_includes"] = "".join(
         "\n" + inc
-        for inc in _dep_header_includes(
-            root / "native" / "inc", C.dep_names(depends_on)
-        )
+        for inc in _dep_header_includes(_inc_root, C.dep_names(depends_on))
+        + [
+            f'#include "{h}"'
+            for h in C.param_headers(cfg, ctx["component"])
+            if (_inc_root / h).exists()
+        ]
     )
 
     def r(tmpl):
@@ -1001,6 +1025,7 @@ def run(
         no_step_=no_step,
         mutable_=mutable,
         step_delegates_=step_delegates,
+        serializable_=serializable,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,

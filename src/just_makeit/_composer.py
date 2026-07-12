@@ -40,11 +40,20 @@ _FMT = {
 
 
 def _field_fmt(field: dict) -> str:
+    if field.get("_ranged"):
+        return "O"  # scalar or (lo, hi) — decoded post-parse
     if field.get("enum"):
         return "s"
-    if field.get("bytes"):
-        return "O"
+    if field.get("bytes") or field.get("complex"):
+        return "O"  # opaque: a bytes buffer / a numpy complex64 array
     return _FMT[field["type"]]
+
+
+def _field_is_buffer(field: dict) -> bool:
+    """An owned heap array crossing as a Python object — a ``bytes`` pattern or
+    a ``complex`` (complex64) stream. Both store ``src-><name>`` /
+    ``src->n_<name>`` and need a free in dealloc."""
+    return bool(field.get("bytes") or field.get("complex"))
 
 
 def _field_is_enum(field: dict) -> bool:
@@ -126,8 +135,83 @@ def render_enum_tables(cfg: dict, module: str) -> str:
 # ── source type (e.g. Synth) ─────────────────────────────────────────────────
 
 
+def _ranged_map(table: dict) -> dict[str, str]:
+    """``{field_name: WFM_RANGE_* flag macro}`` for a composer source/segment
+    ``ranged`` table. A ranged field accepts a ``(lo, hi)`` pair in addition to
+    a scalar; the composer redraws it uniformly each repeat. Declared as
+    ``ranged = [{name = "freq", flag = "WFM_RANGE_FREQ"}, …]`` — the backing
+    struct must carry a ``<name>_hi`` companion and a ``ranged`` flag field."""
+    return {r["name"]: r["flag"] for r in table.get("ranged", [])}
+
+
+def _annotate_ranged(fields: list[dict], rmap: dict[str, str]) -> list[dict]:
+    """Tag each field dict with ``_ranged`` (its flag macro) when rangeable."""
+    return [
+        {**f, "_ranged": rmap[f["name"]]} if f["name"] in rmap else f
+        for f in fields
+    ]
+
+
+def _has_ranged(cfg: dict, module: str) -> bool:
+    """True when any source or segment field is rangeable (so the shared
+    ``_jm_parse_range`` helper is emitted)."""
+    return bool(
+        _ranged_map(C.composer_source(cfg, module))
+        or _ranged_map(C.composer_segment(cfg, module))
+    )
+
+
+# Shared scalar-or-(lo, hi) parser for ranged composer fields. Returns lo/hi as
+# doubles + a flag; the caller casts to the field's C type. A scalar leaves
+# *is_range 0; a 2-sequence (not str/bytes) sets it. Reproducible draws happen
+# in the composer core — this only records the bounds the user passed.
+_RANGE_PARSE_FN = "\n".join(
+    [
+        "static int",
+        "_jm_parse_range(PyObject *o, double *lo, double *hi, int *is_range)",
+        "{",
+        "    if (PySequence_Check(o) && !PyUnicode_Check(o)",
+        "        && !PyBytes_Check(o)) {",
+        "        if (PySequence_Size(o) != 2) {",
+        "            PyErr_SetString(PyExc_ValueError,",
+        '                            "range must be a (low, high) pair");',
+        "            return 0;",
+        "        }",
+        "        PyObject *a = PySequence_GetItem(o, 0);",
+        "        PyObject *b = PySequence_GetItem(o, 1);",
+        "        double dlo = a ? PyFloat_AsDouble(a) : -1.0;",
+        "        double dhi = b ? PyFloat_AsDouble(b) : -1.0;",
+        "        Py_XDECREF(a);",
+        "        Py_XDECREF(b);",
+        "        if (PyErr_Occurred())",
+        "            return 0;",
+        "        *lo = dlo;",
+        "        *hi = dhi;",
+        "        *is_range = 1;",
+        "        return 1;",
+        "    }",
+        "    {",
+        "        double v = PyFloat_AsDouble(o);",
+        "        if (PyErr_Occurred())",
+        "            return 0;",
+        "        *lo = v;",
+        "        *is_range = 0;",
+        "    }",
+        "    return 1;",
+        "}",
+        "",
+    ]
+)
+
+
+def render_range_helper(cfg: dict, module: str) -> str:
+    """Emit the shared ranged-field parser once, when the module uses ranges."""
+    return _RANGE_PARSE_FN if _has_ranged(cfg, module) else ""
+
+
 def _source_fields(cfg: dict, module: str) -> list[dict]:
-    return list(C.composer_source(cfg, module).get("fields", []))
+    tbl = C.composer_source(cfg, module)
+    return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
 
 
 def _source_generates(cfg: dict, module: str) -> dict | None:
@@ -210,17 +294,22 @@ def render_source_type(cfg: dict, module: str) -> str:
 }} {obj};
 """)
 
-    # dealloc — destroy any built generator, then free the owned bits buffer.
+    # dealloc — destroy any built generator, then free every owned buffer
+    # field (a bytes pattern and/or a complex stream).
     gen_dtor = (
         f"    if (self->_gen) {gen['destroy_fn']}(self->_gen);\n"
         if gen
         else ""
     )
+    free_bufs = "".join(
+        f"    free(self->src.{f['name']});\n"
+        for f in fields
+        if _field_is_buffer(f)
+    )
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-{gen_dtor}    free(self->src.bits);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{gen_dtor}{free_bufs}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
 
@@ -235,7 +324,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             default = f.get("default", "")
             decls.append(f'    const char *{n} = "{default}";')
             addrs.append(f"&{n}")
-        elif f.get("bytes"):
+        elif _field_is_buffer(f) or f.get("_ranged"):
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
@@ -262,14 +351,41 @@ def render_source_type(cfg: dict, module: str) -> str:
         self->src.{n} = _i;
     }}""")
         elif f.get("bytes"):
-            assign.append(f"""    if (!_attach_bytes(&self->src, {n}))
+            # Per-field destination: several bytes fields on one source
+            # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
+            # each land in their own struct arrays, not all in `bits`.
+            assign.append(
+                f"    if (!_attach_bytes(&self->src.{n}, "
+                f"&self->src.n_{n}, {n}))\n        return -1;"
+            )
+        elif f.get("complex"):
+            assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
         return -1;""")
+        elif f.get("_ranged"):
+            flag = f["_ranged"]
+            ct = f["type"]
+            default = f.get("default", "0")
+            assign.append(f"""    if ({n} != NULL) {{
+        double _lo, _hi;
+        int    _r;
+        if (!_jm_parse_range({n}, &_lo, &_hi, &_r))
+            return -1;
+        self->src.{n} = ({ct})_lo;
+        if (_r) {{
+            self->src.{n}_hi = ({ct})_hi;
+            self->src.ranged |= {flag};
+        }} else {{
+            self->src.ranged &= ~(unsigned){flag};
+        }}
+    }} else {{
+        self->src.{n} = ({ct}){default};
+    }}""")
         else:
             assign.append(f"    self->src.{n} = {n};")
     assign_s = "\n".join(assign)
 
-    store_bits = """    src->bits   = buf;
-    src->n_bits = (size_t)nb;
+    store_bits = """    *dst   = buf;
+    *n_dst = (size_t)nb;
     return 1;"""
     if bits_coerce:
         attach_doc = (
@@ -344,7 +460,7 @@ def render_source_type(cfg: dict, module: str) -> str:
 {store_bits}
     }}"""
     else:
-        attach_doc = "Copy a Python bytes (0/1 pattern) or None into src->bits"
+        attach_doc = "Copy a Python bytes (0/1 pattern) or None"
         attach_body = f"""    if (!PyBytes_Check(obj)) {{
         PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
         return 0;
@@ -402,13 +518,47 @@ def render_source_type(cfg: dict, module: str) -> str:
         parse_fail = "        return -1;"
         parse_ok = ""
 
-    parts.append(f"""/* {attach_doc} (owned). */
+    # One _attach_<name> per complex64 stream field — coerce a numpy complex64
+    # array (or None) into an owned src-><name> / src->n_<name>.
+    for f in fields:
+        if not f.get("complex"):
+            continue
+        cn = f["name"]
+        parts.append(f"""/* Copy a numpy complex64 array (or None) into \
+src->{cn} (owned). */
 static int
-_attach_bytes({struct} *src, PyObject *obj)
+_attach_{cn}({struct} *src, PyObject *obj)
 {{
-    free(src->bits);
-    src->bits   = NULL;
-    src->n_bits = 0;
+    free(src->{cn});
+    src->{cn}   = NULL;
+    src->n_{cn} = 0;
+    if (!obj || obj == Py_None)
+        return 1;
+    PyArrayObject *_arr = (PyArrayObject *)PyArray_FROM_OTF(
+        obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_FORCECAST);
+    if (!_arr)
+        return 0;
+    Py_ssize_t _n = PyArray_SIZE(_arr);
+    if (_n <= 0) {{ Py_DECREF(_arr); return 1; }}
+    float _Complex *_buf
+        = (float _Complex *)malloc((size_t)_n * sizeof *_buf);
+    if (!_buf) {{ Py_DECREF(_arr); PyErr_NoMemory(); return 0; }}
+    memcpy(_buf, PyArray_DATA(_arr), (size_t)_n * sizeof *_buf);
+    Py_DECREF(_arr);
+    src->{cn}   = _buf;
+    src->n_{cn} = (size_t)_n;
+    return 1;
+}}
+""")
+
+    parts.append(f"""/* {attach_doc} into an owned *dst/*n_dst (one shared
+ * coercer; each bytes field passes its own struct destination). */
+static int
+_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
+{{
+    free(*dst);
+    *dst   = NULL;
+    *n_dst = 0;
     if (!obj || obj == Py_None)
         return 1;
 {attach_body}
@@ -466,16 +616,76 @@ static int
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    if (self->src.bits && self->src.n_bits)
+    if (self->src.{n} && self->src.n_{n})
         return PyBytes_FromStringAndSize(
-            (const char *)self->src.bits, (Py_ssize_t)self->src.n_bits);
+            (const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n});
     Py_RETURN_NONE;
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_bytes(&self->src, value) ? 0 : -1;
+    return _attach_bytes(&self->src.{n}, &self->src.n_{n}, value) ? 0 : -1;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+        elif f.get("complex"):
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->src.{n} && self->src.n_{n}) {{
+        npy_intp _d[1] = {{(npy_intp)self->src.n_{n}}};
+        PyObject *_a = PyArray_SimpleNew(1, _d, NPY_COMPLEX64);
+        if (!_a) return NULL;
+        memcpy(PyArray_DATA((PyArrayObject *)_a), self->src.{n},
+               self->src.n_{n} * sizeof(float _Complex));
+        return _a;
+    }}
+    Py_RETURN_NONE;
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    return _attach_{n}(&self->src, value) ? 0 : -1;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+        elif f.get("_ranged"):
+            # scalar, or (lo, hi) when the field's ranged bit is set.
+            flag = f["_ranged"]
+            ct = f["type"]
+            to_py = _to_py_scalar(ct, f"self->src.{n}")
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->src.ranged & {flag})
+        return Py_BuildValue("(dd)", (double)self->src.{n},
+                             (double)self->src.{n}_hi);
+    return {to_py};
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    double _lo, _hi;
+    int    _r;
+    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
+        return -1;
+    self->src.{n} = ({ct})_lo;
+    if (_r) {{
+        self->src.{n}_hi = ({ct})_hi;
+        self->src.ranged |= {flag};
+    }} else {{
+        self->src.ranged &= ~(unsigned){flag};
+    }}
+    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -697,7 +907,8 @@ def _from_py_scalar(ctype: str, obj: str) -> str:
 
 
 def _segment_fields(cfg: dict, module: str) -> list[dict]:
-    return list(C.composer_segment(cfg, module).get("fields", []))
+    tbl = C.composer_segment(cfg, module)
+    return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
 
 
 def _segment_flat_fields(cfg: dict, module: str) -> list[dict]:
@@ -746,7 +957,16 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # Segment, so it is forward-declared here.
     tl_tname = C.composer_timeline(cfg, module).get("type_name")
 
+    # Ranged segment fields (e.g. off_samples) carry a <name>_hi companion and
+    # share one `ranged` bitmask — mirroring the backing wfm_segment_t — so a
+    # (lo, hi) draw survives into the built struct and back through from_json.
+    ranged_fields = [f for f in fields if f.get("_ranged")]
     members = "".join(f"    {f['type']} {f['name']};\n" for f in fields)
+    if ranged_fields:
+        members += "    unsigned ranged;\n"
+        members += "".join(
+            f"    {f['type']} {f['name']}_hi;\n" for f in ranged_fields
+        )
     parts: list[str] = []
     # Forward declaration — the `sum` classmethod (emitted before the type
     # definition) allocates via the type object.
@@ -767,31 +987,72 @@ def render_segment_type(cfg: dict, module: str) -> str:
 }}
 """)
 
-    # defaults applied before extraction.
+    # defaults applied before extraction. An enum default is a string in
+    # the manifest ("auto"); the struct member is the SSOT int, so map it
+    # at codegen time (gh-460 — segment fields can be enums, like source
+    # fields always could).
+    enums = C.enums(cfg)
+
     def _default(f):
+        if _field_is_enum(f):
+            values = enums.get(f["enum"], [])
+            d = f.get("default", "")
+            return str(values.index(d)) if d in values else "0"
         if f.get("default") not in (None, ""):
             return f["default"]
         return "0"
 
     set_defaults = "\n".join(
-        f"    self->{f['name']} = {_default(f)};" for f in fields
+        [f"    self->{f['name']} = {_default(f)};" for f in fields]
+        + (["    self->ranged = 0;"] if ranged_fields else [])
+        + [f"    self->{f['name']}_hi = 0;" for f in ranged_fields]
     )
 
     # extract a segment field from a kwargs dict; *delete* (init) or leave
-    # (sum). Shared body emitted as a macro-free inline block per field.
+    # (sum). Shared body emitted as a macro-free inline block per field. A
+    # ranged field accepts a scalar or a (lo, hi) pair (→ ranged bit + _hi).
     def _extract_block(f, *, delete: bool):
         n, ct = f["name"], f["type"]
-        conv = _from_py_scalar(ct, "_o")
         dele = (
             f'        if (PyDict_DelItemString(kw, "{n}") < 0) goto fail;\n'
             if delete
             else ""
         )
+        if _field_is_enum(f):
+            e = f["enum"]
+            body = (
+                "            const char *_s = PyUnicode_AsUTF8(_o);\n"
+                "            if (!_s) goto fail;\n"
+                f"            int _i = _enum_index(_enum_{e}, _s);\n"
+                "            if (_i < 0) {\n"
+                "                PyErr_Format(PyExc_ValueError,\n"
+                f'                             "invalid {n} \'%s\'", _s);\n'
+                "                goto fail;\n"
+                "            }\n"
+                f"            self->{n} = _i;\n"
+            )
+        elif f.get("_ranged"):
+            flag = f["_ranged"]
+            body = (
+                "            double _lo, _hi;\n"
+                "            int    _r;\n"
+                "            if (!_jm_parse_range(_o, &_lo, &_hi, &_r))\n"
+                "                goto fail;\n"
+                f"            self->{n} = ({ct})_lo;\n"
+                f"            if (_r) {{ self->{n}_hi = ({ct})_hi;"
+                f" self->ranged |= {flag}; }}\n"
+                f"            else {{ self->ranged &= ~(unsigned){flag}; }}\n"
+            )
+        else:
+            conv = _from_py_scalar(ct, "_o")
+            body = (
+                f"            self->{n} = {conv};\n"
+                "            if (PyErr_Occurred()) goto fail;\n"
+            )
         return (
             f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
             f"        if (_o) {{\n"
-            f"            self->{n} = {conv};\n"
-            f"            if (PyErr_Occurred()) goto fail;\n"
+            f"{body}"
             f"{dele}        }}\n    }}"
         )
 
@@ -885,6 +1146,68 @@ fail:
     for f in fields:
         n, ct = f["name"], f["type"]
         to_py = _to_py_scalar(ct, f"self->{n}")
+        if f.get("_ranged"):
+            # scalar, or (lo, hi) when the field's ranged bit is set. Segment
+            # ranged fields are integer counts → build/parse via Py_ssize_t.
+            flag = f["_ranged"]
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (self->ranged & {flag})
+        return Py_BuildValue("(nn)", (Py_ssize_t)self->{n},
+                             (Py_ssize_t)self->{n}_hi);
+    return {to_py};
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    double _lo, _hi;
+    int    _r;
+    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
+        return -1;
+    self->{n} = ({ct})_lo;
+    if (_r) {{
+        self->{n}_hi = ({ct})_hi;
+        self->ranged |= {flag};
+    }} else {{
+        self->ranged &= ~(unsigned){flag};
+    }}
+    return 0;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+            continue
+        if _field_is_enum(f):
+            e = f["enum"]
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    return PyUnicode_FromString(_enum_{e}[self->{n}]);
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    const char *s = PyUnicode_AsUTF8(value);
+    if (!s) return -1;
+    int _i = _enum_index(_enum_{e}, s);
+    if (_i < 0) {{
+        PyErr_Format(PyExc_ValueError, "invalid {n} '%s'", s);
+        return -1;
+    }}
+    self->{n} = _i;
+    return 0;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, NULL, NULL}},"
+            )
+            continue
         store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
@@ -1240,12 +1563,45 @@ def render_composer_type(cfg: dict, module: str) -> str:
     segments_fn = f"{backing}_segments"
     destroy_fn = f"{backing}_destroy"
 
-    # segment scalar field copy lines (both directions).
-    fwd = "\n".join(
-        f"        segs[i].{f['name']} = seg->{f['name']};" for f in seg_fields
+    # segment scalar field copy lines (both directions). Ranged segment fields
+    # also carry their `ranged` bitmask + <name>_hi companion across, so a
+    # (lo, hi) draw survives the OO ⇄ struct conversion and from_json round-trip.
+    seg_ranged = [f for f in _segment_fields(cfg, module) if f.get("_ranged")]
+    fwd_extra = (
+        "".join(
+            ["\n        segs[i].ranged = seg->ranged;"]
+            + [
+                f"\n        segs[i].{f['name']}_hi = seg->{f['name']}_hi;"
+                for f in seg_ranged
+            ]
+        )
+        if seg_ranged
+        else ""
     )
-    back = "\n".join(
-        f"        sg->{f['name']} = src[i].{f['name']};" for f in seg_fields
+    back_extra = (
+        "".join(
+            ["\n        sg->ranged = src[i].ranged;"]
+            + [
+                f"\n        sg->{f['name']}_hi = src[i].{f['name']}_hi;"
+                for f in seg_ranged
+            ]
+        )
+        if seg_ranged
+        else ""
+    )
+    fwd = (
+        "\n".join(
+            f"        segs[i].{f['name']} = seg->{f['name']};"
+            for f in seg_fields
+        )
+        + fwd_extra
+    )
+    back = (
+        "\n".join(
+            f"        sg->{f['name']} = src[i].{f['name']};"
+            for f in seg_fields
+        )
+        + back_extra
     )
 
     # JSON faces (gh-287 C2.3): from_json / from_file classmethods + to_json.
@@ -2101,6 +2457,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include "{header}"
 {gen_includes}{json_includes}{rt_includes}{serializer_includes}""",
         render_enum_tables(cfg, module),
+        render_range_helper(cfg, module),
         render_source_type(cfg, module),
         render_segment_type(cfg, module),
     ]
@@ -2210,15 +2567,26 @@ target_include_directories({prog} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
 """
 
 
+def _field_is_numeric(f: dict) -> bool:
+    """A source/segment field whose value is numeric (a scalar ``float``/``int``
+    or a ranged ``… | tuple`` of them) — i.e. anything that is not an enum
+    string, a ``bytes`` buffer, or a ``complex`` stream. Used to decide whether
+    a docstring default is rendered bare (``0.0``) or quoted (``"tone"``)."""
+    return not f.get("enum") and not f.get("bytes") and not f.get("complex")
+
+
 def _pyi_field_type(f: dict) -> str:
     """The ``.pyi`` annotation type for a source/segment field."""
     if f.get("enum"):
         return "str"
     if f.get("bytes"):
         return "bytes | None"
-    if f["type"] in ("double", "float"):
-        return "float"
-    return "int"
+    if f.get("complex"):
+        return "NDArray[np.complex64] | None"
+    scalar = "float" if f["type"] in ("double", "float") else "int"
+    if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
+        return f"{scalar} | tuple[{scalar}, {scalar}]"
+    return scalar
 
 
 def _pyi_field_sig(fields: list[dict]) -> str:
@@ -2228,12 +2596,50 @@ def _pyi_field_sig(fields: list[dict]) -> str:
     )
 
 
+def _pyi_doc_lines(
+    type_name: str,
+    fields: list[dict],
+    enum_reg: dict[str, list[str]],
+) -> list[str]:
+    """4-space-indented numpy-style class docstring from a field list (gh-375)."""
+    if not fields:
+        return [f'    """{type_name}."""']
+    out: list[str] = [f'    """{type_name}.', ""]
+    out += ["    Parameters", "    ----------"]
+    for f in fields:
+        ann = _pyi_field_type(f)
+        type_line = f"    {f['name']} : {ann}"
+        if "default" in f:
+            dv = f["default"]
+            # A numeric field (incl. a ranged ``float | tuple[float, float]``)
+            # renders its default bare; only string/enum defaults are quoted.
+            if _field_is_numeric(f):
+                type_line += f", default {dv}"
+            else:
+                type_line += f', default ``"{dv}"``'
+        elif f.get("bytes") or f.get("complex"):
+            type_line += ", default None"
+        out.append(type_line)
+        # Optional per-field description (manifest ``doc =``), then — for an
+        # enum field — its choice list.
+        if f.get("doc"):
+            out.append(f"        {f['doc']}")
+        if f.get("enum"):
+            choices = enum_reg.get(f["enum"], [])
+            if choices:
+                choice_str = ", ".join(f'``"{c}"``' for c in choices)
+                out.append(f"        One of {choice_str}.")
+    out.append('    """')
+    return out
+
+
 def render_pyi(cfg: dict, module: str) -> str:
     """Render a typed ``.pyi`` stub for the composer's OO surface.
 
-    Signatures only (rich docstrings are a header-derived follow-up, as with the
-    capsule). Covers the source / segment / timeline / composer types, the
-    factories, and — when enabled — the JSON faces."""
+    Covers the source / segment / timeline / composer types, the factories,
+    and — when enabled — the JSON faces. Docstrings include defaults and enum
+    choices from the manifest (gh-375)."""
+    enum_reg = C.enums(cfg)
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -2241,10 +2647,17 @@ def render_pyi(cfg: dict, module: str) -> str:
     seg_t = seg["type_name"]
     tl_t = C.composer_timeline(cfg, module).get("type_name")
     cname = oo.get("composer_type_name", "Composer")
-    src_sig = _pyi_field_sig(src.get("fields", []))
-    seg_scalar_sig = _pyi_field_sig(seg.get("fields", []))
+    # Annotated so ranged fields render `float | tuple[float, float]`.
+    src_fields = _source_fields(cfg, module)
+    seg_fields = _segment_fields(cfg, module)
+    src_sig = _pyi_field_sig(src_fields)
+    seg_scalar_sig = _pyi_field_sig(seg_fields)
     has_stream = bool(C.composer_stream(cfg, module).get("stream"))
     typing_imports = "Any, Iterator" if has_stream else "Any"
+
+    # The fs segment field also appears at the end of Synth.__init__.
+    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
+    synth_doc_fields = src_fields + ([fs_field] if fs_field else [])
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
@@ -2254,19 +2667,25 @@ def render_pyi(cfg: dict, module: str) -> str:
         "from numpy.typing import NDArray",
         "",
         f"class {src_t}:",
+    ]
+    lines.extend(_pyi_doc_lines(src_t, synth_doc_fields, enum_reg))
+    lines += [
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
         "    def __getattr__(self, name: str) -> Any: ...",
     ]
     if _source_generates(cfg, module):
         lines += [
-            "    def steps(self, n: int) -> NDArray[np.complex64]: ...",
-            "    def step(self) -> complex: ...",
-            "    def reset(self) -> None: ...",
+            "    def steps(self, n: int) -> NDArray[np.complex64]:",
+            '        """Generate *n* complex samples."""',
+            "    def step(self) -> complex:",
+            '        """Generate one complex sample."""',
+            "    def reset(self) -> None:",
+            '        """Reset to initial state."""',
         ]
+    lines += ["", f"class {seg_t}:"]
+    lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
     lines += [
-        "",
-        f"class {seg_t}:",
         f"    sources: list[{src_t}]",
         # Feature 4 — flat single-source accessors (read-only; AttributeError on
         # a multi-source segment).
@@ -2277,16 +2696,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         f"{seg_scalar_sig}) -> None: ...",
         "    @classmethod",
-        f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}: ...",
+        f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}:",
+        f'        """Combine *sources* into a single {seg_t}."""',
     ]
     if tl_t:
-        lines.append(f"    def add(self, *others: {seg_t}) -> {tl_t}: ...")
         lines += [
+            f"    def add(self, *others: {seg_t}) -> {tl_t}:",
+            f'        """Append segments; return a {tl_t}."""',
             "",
             f"class {tl_t}:",
+            f'    """{tl_t}."""',
             f"    segments: list[{seg_t}]",
             f"    def __init__(self, segments: list[{seg_t}]) -> None: ...",
-            f"    def add(self, *segments: {seg_t}) -> {tl_t}: ...",
+            f"    def add(self, *segments: {seg_t}) -> {tl_t}:",
+            '        """Append and return self."""',
             "    def __iter__(self): ...",
             "    def __len__(self) -> int: ...",
             "    def __getitem__(self, i): ...",
@@ -2299,42 +2722,57 @@ def render_pyi(cfg: dict, module: str) -> str:
     lines += [
         "",
         f"class {cname}:",
+        f'    """{cname}.',
+        "",
+        "    Parameters",
+        "    ----------",
+        f"    segments : {seg_or_tl}, default None",
+        "        Initial segment list.",
+        "    repeat : bool, default False",
+        "        Loop the sequence after the last segment.",
+        "    continuous : bool, default False",
+        "        Never finish; execute always returns the requested count.",
+        '    """',
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
         "repeat: bool = ..., continuous: bool = ..., **segment_kwargs"
         ") -> None: ...",
-        "    def execute(self, n: int) -> NDArray[np.complex64]: ...",
-        "    def compose(self, block: int = ...) -> NDArray[np.complex64]: ...",
-        *(
-            [
-                "    def stream(self, block: int = ..."
-                + (
-                    ", realtime: float = ..."
-                    if C.composer_stream(cfg, module).get("realtime")
-                    else ""
-                )
-                + ") -> Iterator[NDArray[np.complex64]]: ..."
-            ]
-            if C.composer_stream(cfg, module).get("stream")
-            else []
-        ),
-        *(
-            ["    def to_dict(self) -> dict: ..."]
-            if C.composer_stream(cfg, module).get("to_dict")
-            else []
-        ),
-        *[
-            f"    def {s['name']}(self"
-            + "".join(
-                f", {p['name']}: {_pyi_field_type(p)} = ..."
-                for p in s.get("params", [])
-            )
-            + f") -> {s.get('returns', 'str')}: ..."
-            for s in C.composer_serializers(cfg, module)
-        ],
-        "    def close(self) -> None: ...",
+        "    def execute(self, n: int) -> NDArray[np.complex64]:",
+        '        """Execute for *n* samples."""',
+        "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
+        '        """Compose the full sequence into one array."""',
+    ]
+    if C.composer_stream(cfg, module).get("stream"):
+        rt_arg = (
+            ", realtime: float = ..."
+            if C.composer_stream(cfg, module).get("realtime")
+            else ""
+        )
+        lines += [
+            f"    def stream(self, block: int = ...{rt_arg})"
+            " -> Iterator[NDArray[np.complex64]]:",
+            '        """Iterate the sequence in blocks."""',
+        ]
+    if C.composer_stream(cfg, module).get("to_dict"):
+        lines += [
+            "    def to_dict(self) -> dict:",
+            '        """Serialise the composer state to a dict."""',
+        ]
+    for s in C.composer_serializers(cfg, module):
+        sig = "".join(
+            f", {p['name']}: {_pyi_field_type(p)} = ..."
+            for p in s.get("params", [])
+        )
+        ret = s.get("returns", "str")
+        lines += [
+            f"    def {s['name']}(self{sig}) -> {ret}:",
+            f'        """Serialise as {s["name"]}."""',
+        ]
+    lines += [
+        "    def close(self) -> None:",
+        '        """Release native resources."""',
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
     ]
@@ -2347,9 +2785,11 @@ def render_pyi(cfg: dict, module: str) -> str:
             "    def to_json(self) -> str: ...",
         ]
     lines.append("")
-    # factories
     for fac in oo.get("factories", []):
-        lines.append(f"def {fac}(**kw: Any) -> {src_t}: ...")
+        lines += [
+            f"def {fac}(**kw: Any) -> {src_t}:",
+            f'    """Return a {src_t} configured as a *{fac}* source."""',
+        ]
     lines.append("")
     return "\n".join(lines)
 
@@ -2407,6 +2847,47 @@ def _default_literal(f: dict) -> str:
     return d if d not in (None, "") else "0"
 
 
+def _ser_ranged(jobj: str, cobj: str, name: str, flag: str) -> str:
+    """Generic-JSON serialize for a ranged field: a [lo, hi] array when the
+    field's ranged bit is set, else a plain number."""
+    return (
+        f"        if ({cobj}->ranged & {flag}) {{\n"
+        f'            cJSON *_r = cJSON_AddArrayToObject({jobj}, "{name}");\n'
+        f"            cJSON_AddItemToArray(_r,"
+        f" cJSON_CreateNumber((double){cobj}->{name}));\n"
+        f"            cJSON_AddItemToArray(_r,"
+        f" cJSON_CreateNumber((double){cobj}->{name}_hi));\n"
+        f"        }} else {{\n"
+        f'            cJSON_AddNumberToObject({jobj}, "{name}",'
+        f" (double){cobj}->{name});\n"
+        f"        }}"
+    )
+
+
+def _parse_ranged(
+    jobj: str, cobj: str, name: str, ct: str, flag: str, default: str
+) -> str:
+    """Generic-JSON parse for a ranged field: a two-element [lo, hi] array sets
+    the ranged bit + companion; a scalar (or absence) is the constant."""
+    return (
+        f"        {{\n"
+        f"            const cJSON *_it ="
+        f' cJSON_GetObjectItemCaseSensitive({jobj}, "{name}");\n'
+        f"            if (cJSON_IsArray(_it)"
+        f" && cJSON_GetArraySize(_it) == 2) {{\n"
+        f"                {cobj}->{name} = ({ct})cJSON_GetNumberValue("
+        f"cJSON_GetArrayItem(_it, 0));\n"
+        f"                {cobj}->{name}_hi = ({ct})cJSON_GetNumberValue("
+        f"cJSON_GetArrayItem(_it, 1));\n"
+        f"                {cobj}->ranged |= {flag};\n"
+        f"            }} else {{\n"
+        f'                {cobj}->{name} = ({ct})_json_num({jobj}, "{name}",'
+        f" {default});\n"
+        f"            }}\n"
+        f"        }}"
+    )
+
+
 def render_json_funcs(cfg: dict, module: str) -> str:
     """Emit a GENERIC, SSOT-driven ``to_json`` / ``from_json`` / ``from_file``
     for a composer — no hand-written wire schema, reusable by any composer
@@ -2425,8 +2906,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     oo = C.composer_oo(cfg, module)
     seg_struct = seg["struct"]
     src_struct = src["struct"]
-    seg_fields = list(seg.get("fields", []))
-    src_fields = list(src.get("fields", []))
+    seg_fields = _segment_fields(cfg, module)
+    src_fields = _source_fields(cfg, module)
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
@@ -2439,6 +2920,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_ser = []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
             src_ser.append(
@@ -2451,6 +2934,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             for (size_t bi = 0; bi < src->n_bits; bi++)
                 cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->bits[bi]));
         }}""")
+        elif f.get("_ranged"):
+            src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
         else:
             src_ser.append(
                 f'        cJSON_AddNumberToObject(so, "{n}", '
@@ -2459,8 +2944,15 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_ser_s = "\n".join(src_ser)
 
     seg_ser = "\n".join(
-        f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
-        f"(double)g->{f['name']});"
+        _ser_ranged("sj", "g", f["name"], f["_ranged"])
+        if f.get("_ranged")
+        else (
+            f'        cJSON_AddStringToObject(sj, "{f["name"]}", '
+            f"_enum_{f['enum']}[g->{f['name']}]);"
+            if f.get("enum")
+            else f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
+            f"(double)g->{f['name']});"
+        )
         for f in seg_fields
     )
 
@@ -2468,6 +2960,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_parse = []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
             src_parse.append(f"""        {{
@@ -2491,6 +2985,17 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 src->n_bits = _nb;
             }}
         }}""")
+        elif f.get("_ranged"):
+            src_parse.append(
+                _parse_ranged(
+                    "so",
+                    "src",
+                    n,
+                    f["type"],
+                    f["_ranged"],
+                    _default_literal(f),
+                )
+            )
         else:
             ct = f["type"]
             src_parse.append(
@@ -2500,8 +3005,22 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_parse_s = "\n".join(src_parse)
 
     seg_parse = "\n".join(
-        f'        sg->{f["name"]} = ({f["type"]})_json_num(sj, "{f["name"]}", '
-        f"{_default_literal(f)});"
+        _parse_ranged(
+            "sj", "sg", f["name"], f["type"], f["_ranged"], _default_literal(f)
+        )
+        if f.get("_ranged")
+        else (
+            f"""        {{
+            const char *_s = cJSON_GetStringValue(
+                cJSON_GetObjectItemCaseSensitive(sj, "{f['name']}"));
+            int _v = _enum_index(_enum_{f['enum']},
+                                 _s ? _s : "{f.get('default', '')}");
+            sg->{f['name']} = _v < 0 ? 0 : _v;
+        }}"""
+            if f.get("enum")
+            else f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
+            f'"{f["name"]}", {_default_literal(f)});'
+        )
         for f in seg_fields
     )
 
@@ -2732,6 +3251,8 @@ def render_cli(cfg: dict, module: str) -> str:
     decls, parse, assign = [], [], []
     for f in src_fields:
         n = f["name"]
+        if f.get("complex"):
+            continue  # complex streams can't cross a generated CLI flag
         if f.get("enum"):
             decls.append(f'    const char *{n} = "{f.get("default", "")}";')
             parse.append(

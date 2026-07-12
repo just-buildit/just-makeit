@@ -9,8 +9,7 @@ import numpy as np
 from <<package>>.<<module>> import <<Component>>
 
 REPS      = 1_000
-BLOCK_1K  = 1_024
-BLOCK_64K = 65_536
+<<bench_block_consts>>
 
 
 def _bench(label: str, fn, *args, reps: int = REPS) -> float:

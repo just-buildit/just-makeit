@@ -144,8 +144,8 @@ class TestSourceType:
         assert "self->src.type = _i;" in s
         # scalar assigned directly
         assert "self->src.freq = freq;" in s
-        # bytes attached
-        assert "_attach_bytes(&self->src, bits)" in s
+        # bytes attached into its own field's destination
+        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -158,6 +158,33 @@ class TestSourceType:
     def test_dealloc_frees_bits(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert "free(self->src.bits);" in s
+
+    def test_multiple_bytes_fields_use_own_destinations(self):
+        # gh-457: with several bytes fields on one source (a DSSS burst's
+        # acq_code/data_code alongside the payload bits), each field's init
+        # marshal and getset must target its OWN struct arrays — the old
+        # codegen hard-wired every one to bits/n_bits, so the last kwarg
+        # silently clobbered the others.
+        cfg = _cfg()
+        fields = cfg["module"]["wfm_compose"]["source"]["fields"]
+        fields.append(
+            {"name": "acq_code", "type": "uint8_t*", "bytes": True}
+        )
+        fields.append(
+            {"name": "data_code", "type": "uint8_t*", "bytes": True}
+        )
+        s = _composer.render_source_type(cfg, "wfm_compose")
+        for n in ("bits", "acq_code", "data_code"):
+            assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
+            assert f"free(self->src.{n});" in s
+            # the getter reads its own field, not bits
+            assert (
+                f"(const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n}"
+                in s
+            )
+        # the shared coercer writes through the passed destination
+        assert "_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)" in s
+        assert "free(*dst);" in s
 
     def test_factories(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -202,6 +229,57 @@ class TestSegmentType:
         assert "needs at least one source" in s
         # allocates via the (forward-declared) type object
         assert "SegmentType.tp_alloc(&SegmentType, 0)" in s
+
+    def test_enum_segment_field(self):
+        # gh-460: a segment field may be a string enum (e.g. a gap_noise
+        # "auto"|"off" policy). The old codegen emitted the manifest default
+        # verbatim (`self->gap_noise = auto;` — not C), parsed the kwarg as
+        # an int, and the getter returned an int — while the .pyi promised a
+        # string. Segment enum fields now get the same treatment source
+        # enum fields always had: index-mapped default, validated string
+        # kwarg, string getset round-trip.
+        cfg = _cfg()
+        cfg["enum"].append({"name": "gap_noise", "values": ["auto", "off"]})
+        cfg["module"]["wfm_compose"]["segment"]["fields"].append(
+            {
+                "name": "gap_noise",
+                "type": "int",
+                "enum": "gap_noise",
+                "default": "auto",
+            }
+        )
+        s = _composer.render_segment_type(cfg, "wfm_compose")
+        # default is the SSOT index, not the bare string token
+        assert "self->gap_noise = 0;" in s
+        assert "self->gap_noise = auto;" not in s
+        # kwarg parses a validated string through the shared enum table
+        assert "_enum_index(_enum_gap_noise, _s)" in s
+        assert "invalid gap_noise" in s
+        # getset round-trips the string
+        assert "PyUnicode_FromString(_enum_gap_noise[self->gap_noise])" in s
+        assert "Segment_set_gap_noise" in s
+
+    def test_enum_segment_field_generic_json(self):
+        # gh-460 (generic JSON face): a segment enum serializes as its SSOT
+        # string and parses back with the default as fallback — same
+        # contract source enums already had.
+        cfg = _cfg()
+        cfg["enum"].append({"name": "gap_noise", "values": ["auto", "off"]})
+        cfg["module"]["wfm_compose"]["segment"]["fields"].append(
+            {
+                "name": "gap_noise",
+                "type": "int",
+                "enum": "gap_noise",
+                "default": "auto",
+            }
+        )
+        s = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert (
+            'cJSON_AddStringToObject(sj, "gap_noise", '
+            "_enum_gap_noise[g->gap_noise]);" in s
+        )
+        assert "_enum_index(_enum_gap_noise," in s
+        assert '_s ? _s : "auto"' in s
 
     def test_getsets_and_dealloc(self):
         s = _composer.render_segment_type(_cfg(), "wfm_compose")
@@ -519,8 +597,8 @@ class TestSourceGenerates:
 
     def test_pyi_declares_generation_methods(self):
         pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
-        assert "def steps(self, n: int) -> NDArray[np.complex64]: ..." in pyi
-        assert "def step(self) -> complex: ..." in pyi
+        assert "def steps(self, n: int) -> NDArray[np.complex64]:" in pyi
+        assert "def step(self) -> complex:" in pyi
         # absent without generates
         assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
 
@@ -574,6 +652,55 @@ class TestBitPatternCoercion:
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert "bits must be bytes or None" in s
         assert "PyUnicode_Check" not in s
+
+
+def _complex_cfg():
+    """_cfg() with a complex64 stream field (symbols) alongside bits."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["fields"].append(
+        {"name": "symbols", "type": "float _Complex*", "complex": True}
+    )
+    return cfg
+
+
+class TestComplexField:
+    """A ``complex = true`` source/segment field accepts a numpy complex64
+    array, stored as an owned src-><name> / src->n_<name> pair."""
+
+    def test_attach_helper_emitted(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "_attach_symbols(wfm_source_t *src, PyObject *obj)" in s
+        assert "PyArray_FROM_OTF(" in s and "NPY_COMPLEX64" in s
+        assert "NPY_ARRAY_FORCECAST" in s  # accept complex128 too
+        assert "src->symbols   = _buf;" in s
+        assert "src->n_symbols = (size_t)_n;" in s
+
+    def test_init_attaches_and_dealloc_frees(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "if (!_attach_symbols(&self->src, symbols))" in s
+        # dealloc frees every owned buffer — bits AND symbols
+        assert "free(self->src.bits);" in s
+        assert "free(self->src.symbols);" in s
+
+    def test_getset_returns_complex64_array(self):
+        s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
+        assert "Synth_get_symbols(SynthObject *self, void *closure)" in s
+        assert "PyArray_SimpleNew(1, _d, NPY_COMPLEX64)" in s
+        assert "return _attach_symbols(&self->src, value) ? 0 : -1;" in s
+
+    def test_pyi_annotation(self):
+        pyi = _composer.render_pyi(_complex_cfg(), "wfm_compose")
+        assert "symbols: NDArray[np.complex64] | None" in pyi
+        assert "symbols : NDArray[np.complex64] | None, default None" in pyi
+
+    def test_complex_skipped_in_generic_json(self):
+        """A complex field is omitted from the generic cJSON serializer (it
+        crosses via the OO getset / a to_json_fn, not generic JSON)."""
+        cfg = _complex_cfg()
+        # force the generic JSON path (no to_json_fn)
+        cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+        funcs = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert '"symbols"' not in funcs
 
 
 def _stream_cfg():
@@ -635,7 +762,7 @@ class TestComposerStream:
         pyi = _composer.render_pyi(_stream_cfg(), "wfm_compose")
         assert (
             "def stream(self, block: int = ...)"
-            " -> Iterator[NDArray[np.complex64]]: ..." in pyi
+            " -> Iterator[NDArray[np.complex64]]:" in pyi
         )
         assert "from typing import Any, Iterator" in pyi
         # absent without the table — and Iterator is not imported
@@ -854,7 +981,7 @@ class TestComposerToDict:
 
     def test_pyi_declares_to_dict(self):
         pyi = _composer.render_pyi(_to_dict_cfg(), "wfm_compose")
-        assert "    def to_dict(self) -> dict: ..." in pyi
+        assert "    def to_dict(self) -> dict:" in pyi
         assert "def to_dict(" not in _composer.render_pyi(
             _cfg(), "wfm_compose"
         )
@@ -1060,7 +1187,7 @@ class TestDelegatedSerializers:
         pyi = _composer.render_pyi(self._cfg(), "wfm_compose")
         assert (
             "def to_sigmf(self, kind: str = ..., fs: float = ..., "
-            "fc: float = ...) -> str: ..." in pyi
+            "fc: float = ...) -> str:" in pyi
         )
 
     def test_no_params_serializer_is_noargs(self):
@@ -1075,6 +1202,71 @@ class TestDelegatedSerializers:
         )
         assert "wfm_blue_meta(segs, _n);" in s
         assert '{"to_blue", (PyCFunction)Composer_to_blue,' in s
+
+
+# ── gh-375: numpy-style docstrings in composer .pyi ─────────────────────────
+
+
+class TestPyiDocstrings:
+    """render_pyi emits numpy-style class docstrings with defaults and enum
+    choices sourced from the manifest (gh-375)."""
+
+    def test_synth_class_docstring_parameters(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Synth.' in pyi
+        assert "    Parameters" in pyi
+        assert "    ----------" in pyi
+        # enum field: annotation + default + choices
+        assert '    type : str, default ``"tone"``' in pyi
+        assert (
+            '        One of ``"tone"``, ``"noise"``, ``"pn"``,'
+            ' ``"bpsk"``, ``"qpsk"``.' in pyi
+        )
+        # numeric float default
+        assert "    freq : float, default 0.0" in pyi
+        # int default
+        assert "    seed : int, default 1" in pyi
+        # bytes field — no explicit default, always None
+        assert "    bits : bytes | None, default None" in pyi
+        # fs field from segment appears in Synth docstring
+        assert "    fs : float, default 1e6" in pyi
+
+    def test_segment_class_docstring_parameters(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Segment.' in pyi
+        # source fields are included
+        assert pyi.count("    freq : float, default 0.0") == 2
+        # segment-only scalar fields
+        assert "    num_samples : int, default 1024" in pyi
+        assert "    off_samples : int, default 0" in pyi
+
+    def test_composer_class_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '    """Composer.' in pyi
+        assert "    repeat : bool, default False" in pyi
+        assert "    continuous : bool, default False" in pyi
+        # segments type includes seg_or_tl
+        assert "    segments : " in pyi
+
+    def test_generation_method_docstrings(self):
+        pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
+        assert '        """Generate *n* complex samples."""' in pyi
+        assert '        """Generate one complex sample."""' in pyi
+        assert '        """Reset to initial state."""' in pyi
+
+    def test_factory_docstrings(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert "def tone(**kw: Any) -> Synth:" in pyi
+        assert '    """Return a Synth configured as a *tone* source."""' in pyi
+        assert "def qpsk(**kw: Any) -> Synth:" in pyi
+
+    def test_close_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '        """Release native resources."""' in pyi
+
+    def test_sum_docstring(self):
+        pyi = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert '        """Combine *sources* into a single Segment."""' in pyi
 
 
 # ── gh-343: compile-check that the emitted serializer include resolves the
@@ -1149,3 +1341,93 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
         timeout=600,
     )
     assert obj.exists()
+
+
+def _ranged_cfg():
+    """A composer cfg with a ranged source field (freq) and a ranged segment
+    field (off_samples) — the (lo, hi) per-repeat uniform-draw interface."""
+    import copy
+
+    cfg = copy.deepcopy(_cfg())
+    mod = cfg["module"]["wfm_compose"]
+    mod["source"]["ranged"] = [{"name": "freq", "flag": "WFM_RANGE_FREQ"}]
+    mod["segment"]["ranged"] = [
+        {"name": "off_samples", "flag": "WFM_RANGE_OFF_SAMPLES"}
+    ]
+    return cfg
+
+
+class TestRangedFields:
+    """A numeric field declared ``ranged`` accepts a scalar or a (lo, hi) pair
+    drawn uniformly each repeat (gh — ranged composer fields)."""
+
+    def test_helper_emitted_only_when_used(self):
+        assert "_jm_parse_range" in _composer.render_range_helper(
+            _ranged_cfg(), "wfm_compose"
+        )
+        assert _composer.render_range_helper(_cfg(), "wfm_compose") == ""
+
+    def test_source_init_parses_range(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        # freq crosses as an object (O) and is decoded post-parse.
+        assert "PyObject *freq = NULL;" in s
+        assert "_jm_parse_range(freq, &_lo, &_hi, &_r)" in s
+        assert "self->src.ranged |= WFM_RANGE_FREQ;" in s
+        assert "self->src.freq_hi = (double)_hi;" in s
+
+    def test_source_getset_round_trips_range(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        assert "if (self->src.ranged & WFM_RANGE_FREQ)" in s
+        assert 'Py_BuildValue("(dd)"' in s
+
+    def test_non_ranged_field_unchanged(self):
+        s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
+        # seed is a plain uint32 scalar, still parsed directly into the struct.
+        assert "self->src.seed = seed;" in s
+
+    def test_segment_carries_range_companions(self):
+        s = _composer.render_segment_type(_ranged_cfg(), "wfm_compose")
+        assert "unsigned ranged;" in s
+        assert "size_t off_samples_hi;" in s
+        assert "_jm_parse_range(_o, &_lo, &_hi, &_r)" in s
+        assert "self->ranged |= WFM_RANGE_OFF_SAMPLES;" in s
+        assert 'Py_BuildValue("(nn)"' in s
+
+    def test_pyi_uses_union_type(self):
+        pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")
+        assert "freq: float | tuple[float, float]" in pyi
+        assert "off_samples: int | tuple[int, int]" in pyi
+
+    def test_pyi_ranged_default_is_unquoted(self):
+        """A ranged numeric field's docstring default is bare (``0.0``), not a
+        quoted string — its union annotation must not trip the string branch."""
+        pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")
+        assert "    freq : float | tuple[float, float], default 0.0" in pyi
+        assert "    off_samples : int | tuple[int, int], default 0" in pyi
+        # the regression: never the quoted form for a numeric field
+        assert 'default ``"0.0"``' not in pyi
+
+    def test_pyi_field_doc_rendered(self):
+        """An optional ``doc =`` on a source/segment field renders as the
+        numpy parameter description line."""
+        import copy
+
+        cfg = copy.deepcopy(_ranged_cfg())
+        for f in cfg["module"]["wfm_compose"]["source"]["fields"]:
+            if f["name"] == "freq":
+                f["doc"] = "Carrier frequency in Hz (normalised when fs=1)."
+        pyi = _composer.render_pyi(cfg, "wfm_compose")
+        assert "        Carrier frequency in Hz (normalised when fs=1)." in pyi
+
+    def test_generic_serializer_round_trips_range(self):
+        # The generic SSOT-driven JSON path (no to_json_fn) emits/parses ranged
+        # fields as [lo, hi] arrays — so --record round-trips for any composer.
+        import copy
+
+        cfg = copy.deepcopy(_ranged_cfg())
+        cfg["module"]["wfm_compose"]["json"] = {"enabled": True}
+        s = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert "src->ranged & WFM_RANGE_FREQ" in s  # source serialize
+        assert "src->ranged |= WFM_RANGE_FREQ" in s  # source parse
+        assert "g->ranged & WFM_RANGE_OFF_SAMPLES" in s  # segment serialize
+        assert "sg->ranged |= WFM_RANGE_OFF_SAMPLES" in s  # segment parse

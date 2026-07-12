@@ -18,6 +18,7 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import io
 import os
 import re
@@ -33,6 +34,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _stubs as S
 from ._init import _to_title
 
 
@@ -114,6 +116,7 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "no_state": C.is_no_state(cfg, comp),
         "no_step": C.is_no_step(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
+        "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
         "stream_block_default": (
@@ -192,6 +195,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # the enum tables) against the same declared enums as the real project.
     if cfg.get("enum"):
         tcfg["enum"] = cfg["enum"]
+    # gh-393: carry [project.bench] so the replayed scaffold honours the
+    # project's configured benchmark block_sizes (#390) — otherwise a new
+    # object materialised by `jm apply` reintroduces the default _1k suite.
+    bench = cfg.get("project", {}).get("bench")
+    if bench:
+        tcfg["project"]["bench"] = bench
     C.save(temp_root, tcfg)
 
     # `new` with no objects writes the minimal package __init__.py; the
@@ -366,8 +375,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 m.get("return_type", "float _Complex"),
                 bool(m.get("variable_output")),
                 list(m.get("multi_output", [])),
+                # gh-432: pass params through as full dicts — the old
+                # (name, type, default) tuple flattening silently dropped
+                # every other per-param key (capsule, header, out) on the
+                # replay path, the same failure mode gh-257 fixed for
+                # method-level keys.
                 params=[
-                    (p["name"], p["type"], p.get("default", ""))
+                    dict(p)
                     for p in (m.get("extra_args") or m.get("params", []))
                 ],
                 out_type=m.get("out_type"),
@@ -383,8 +397,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 py_return_type=m.get("py_return_type", ""),
                 max_out=int(m.get("max_out", 0)),
                 varargs=bool(m.get("varargs")),
+                manual_stub=bool(m.get("manual_stub")),
                 pass_capacity=bool(m.get("pass_capacity")),
                 nogil=bool(m.get("nogil")),
+                status_return=bool(m.get("status_return")),
                 doc=m.get("doc", ""),
                 from_apply=True,
             )
@@ -705,13 +721,53 @@ def _merge_module_init_file(
     return False
 
 
-def _overwrite_if_changed(real: Path, temp: Path) -> bool:
-    """Overwrite *real* with *temp*'s bytes if they differ."""
+def _overwrite_if_changed(
+    real: Path,
+    temp: Path,
+    cfg: dict | None = None,
+    rel: str = "",
+    honor_status_allow: bool = True,
+) -> bool:
+    """Overwrite *real* with *temp*'s bytes if they differ.
+
+    For a ``.pyi`` target, *cfg* (if given) is used to splice any
+    manual_stub method's hand-written text from *real* back over the
+    freshly rendered placeholder in *temp* before comparing (gh-428) —
+    without this, this reconcile step is exactly what silently clobbers a
+    hand-written manual_stub stub on every plain `jm apply`.
+
+    *rel* — the project-relative posix path of *real* — is checked against
+    ``[project] status_allow`` when *honor_status_allow* is true (gh-441): a
+    hand-maintained file `jm status --check` already treats as allowed
+    drift must never be silently overwritten by apply's reconcile step, so
+    a match skips the write entirely rather than only suppressing the
+    status warning. `_status.py` sets *honor_status_allow* false for its
+    internal throwaway replay, which must keep computing the real diff
+    (allowed files still need genuine before/after content to classify as
+    ALLOWED rather than OK, and gh-426 dropped-symbol detection must see
+    them too) instead of silently matching by never having written it.
+    """
     if not real.exists() or not temp.exists():
         return False
-    if real.read_bytes() == temp.read_bytes():
+    if honor_status_allow and cfg is not None and rel:
+        allow_patterns = C.status_allow(cfg)
+        if any(
+            rel == pat or fnmatch.fnmatch(rel, pat) for pat in allow_patterns
+        ):
+            return False
+    new_bytes = temp.read_bytes()
+    if cfg is not None and real.suffix == ".pyi":
+        try:
+            new_bytes = S._splice_manual_stub_bodies(
+                cfg,
+                real.read_text(encoding="utf-8"),
+                new_bytes.decode("utf-8"),
+            ).encode("utf-8")
+        except UnicodeDecodeError:
+            pass
+    if real.read_bytes() == new_bytes:
         return False
-    real.write_bytes(temp.read_bytes())
+    real.write_bytes(new_bytes)
     return True
 
 
@@ -905,6 +961,7 @@ def _sync_aggregates(
     *,
     only_mod: str | None = None,
     only_comp: str | None = None,
+    honor_status_allow: bool = True,
 ) -> list[Path]:
     """Reconcile wiring files that already exist on disk and so are
     skipped by _sync_missing but need to absorb newly-materialized
@@ -994,7 +1051,13 @@ def _sync_aggregates(
             ).get("enabled"):
                 glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
             for rel in glue:
-                if _overwrite_if_changed(root / rel, temp_root / rel):
+                if _overwrite_if_changed(
+                    root / rel,
+                    temp_root / rel,
+                    cfg,
+                    rel=rel,
+                    honor_status_allow=honor_status_allow,
+                ):
                     updated.append(root / rel)
             continue
         # Nested-module forms: cname (flat native dir), pypath (nested Python
@@ -1022,7 +1085,13 @@ def _sync_aggregates(
             f"native/src/{mp.cname}/CMakeLists.txt",
             f"src/{pkg}/{mp.pypath}/{mp.leaf}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel):
+            if _overwrite_if_changed(
+                root / rel,
+                temp_root / rel,
+                cfg,
+                rel=rel,
+                honor_status_allow=honor_status_allow,
+            ):
                 updated.append(root / rel)
         # Module function bodies live in their own sacred <fn>.c (create-only
         # via _sync_missing), so <mod>_core.c is just the include scaffold —
@@ -1041,7 +1110,10 @@ def _sync_aggregates(
         for obj in C.module_objects(cfg, mod):
             obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
             if _inject_includes_into_core_h(
-                obj_h, obj, C.depends_on(cfg, obj)
+                obj_h,
+                obj,
+                C.depends_on(cfg, obj),
+                extra=C.param_headers(cfg, obj),
             ):
                 updated.append(obj_h)
             # gh-271: a non-collocated module object's OBJECT-core CMakeLists is
@@ -1088,7 +1160,13 @@ def _sync_aggregates(
             f"native/src/{comp}/CMakeLists.txt",
             f"src/{pkg}/{comp}.pyi",
         ):
-            if _overwrite_if_changed(root / rel, temp_root / rel):
+            if _overwrite_if_changed(
+                root / rel,
+                temp_root / rel,
+                cfg,
+                rel=rel,
+                honor_status_allow=honor_status_allow,
+            ):
                 updated.append(root / rel)
         # _core.h is a hybrid: the inline step() body and the state struct
         # are sacred; the function declarations are glue. Apply injects any
@@ -1104,7 +1182,10 @@ def _sync_aggregates(
         from ._init import _inject_includes_into_core_h
 
         if _inject_includes_into_core_h(
-            root / rel, comp, C.depends_on(cfg, comp)
+            root / rel,
+            comp,
+            C.depends_on(cfg, comp),
+            extra=C.param_headers(cfg, comp),
         ):
             changed = True
         if changed:
@@ -1358,6 +1439,8 @@ def run(
     root: Path,
     fragment: Path | None = None,
     only: str | None = None,
+    *,
+    honor_status_allow: bool = True,
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -1461,6 +1544,7 @@ def run(
             cfg,
             only_mod=only_mod,
             only_comp=only_comp,
+            honor_status_allow=honor_status_allow,
         )
 
     bench_updated = _reconcile_bench_cmake(root, cfg)
@@ -1484,6 +1568,18 @@ def run(
         print(f"  update  {path}")
     for path in updated + bench_updated + frag_doc_updated:
         print(f"  update  {path}")
+
+    # gh-442: non-fatal — jm has no way to know which side (manifest or
+    # hand-written header doc) is the stale one, so it warns rather than
+    # failing the apply. `jm status --check` promotes this to a CI-gating
+    # DRIFT section for projects that want it enforced.
+    for obj in C.components(cfg):
+        for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
+            print(
+                f"  warning: {obj}.{name} default mismatch: "
+                f"manifest={m_dflt!r} header={h_dflt!r} "
+                f"(native/inc/{obj}/{obj}_core.h) — one of these is stale"
+            )
 
     print()
     total = (
