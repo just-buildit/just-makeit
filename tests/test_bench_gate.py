@@ -12,7 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._bench import _compare_reports, _baseline_snapshot
+from just_makeit._bench import (
+    _compare_reports,
+    _baseline_snapshot,
+    _qualify_python_names,
+)
 
 
 def _report(**means):
@@ -134,6 +138,44 @@ def test_fullname_disambiguates_duplicate_names():
         "b.py::execute_64k",
     }
     assert not [r for r in rows if r["status"] == "regressed"]
+
+
+def test_qualify_python_names_disambiguates_display():
+    """gh-141 fixed `_bench_key`'s baseline<->current matching, but the
+    *display* table (`_display_table`) still prints and Δ-keys on the bare
+    `name` -- unchanged, it silently collides two components' same-named
+    benches in `jm bench`'s printed summary. `_qualify_python_names` prefixes
+    `name` from `fullname`'s file stem (mirrors `_collect_c`'s `f"{comp}::…"`
+    convention), mutating in place before the report reaches `_display_table`
+    or gets written to a snapshot."""
+    data = {
+        "benchmarks": [
+            {
+                "name": "test_bench_steps_64k",
+                "fullname": "src/doppler/cvt/benchmarks/"
+                "bench_i16_to_f32.py::test_bench_steps_64k[obj0]",
+            },
+            {
+                "name": "test_bench_steps_64k",
+                "fullname": "src/doppler/resample/benchmarks/"
+                "bench_farrow.py::test_bench_steps_64k[obj0]",
+            },
+        ]
+    }
+    _qualify_python_names(data)
+    names = {b["name"] for b in data["benchmarks"]}
+    assert names == {
+        "bench_i16_to_f32::test_bench_steps_64k",
+        "bench_farrow::test_bench_steps_64k",
+    }
+
+
+def test_qualify_python_names_skips_entries_without_fullname():
+    """A malformed/legacy entry with no `::` in `fullname` (or none at all)
+    is left as-is rather than raising."""
+    data = {"benchmarks": [{"name": "bare"}, {"name": "x", "fullname": "y"}]}
+    _qualify_python_names(data)  # must not raise
+    assert [b["name"] for b in data["benchmarks"]] == ["bare", "x"]
 
 
 def test_uses_min_metric_when_present():

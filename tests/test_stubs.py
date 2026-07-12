@@ -827,3 +827,50 @@ class TestInitParamDocs:
             )
         )
         assert "sf constructor parameter." in doc
+
+    def test_optional_param_gets_or_none(self):
+        # gh-441 follow-up: optional lives at tuple offset 6 (rest[3] once
+        # name/type/default are peeled off) -- a real optional-array param
+        # must render "| None" in the Parameters section.
+        from just_makeit._stubs import _build_class_docstring
+
+        ip = [
+            (
+                "bank",
+                "double[]",
+                "",
+                "",
+                "",
+                "",
+                True,  # optional
+                "Resamp_create_custom",  # create_fn
+                False,
+                "",
+            )
+        ]
+        doc = "\n".join(_build_class_docstring("Thing", [], True, ip, "", ""))
+        assert "bank : NDArray[np.float64] or None" in doc
+
+    def test_nonoptional_param_with_create_fn_stays_plain(self):
+        # The bug this guards against: rest[4] (create_fn) is truthy for a
+        # non-optional param that still names a create_fn, which used to be
+        # misread as the optional flag and wrongly appended "| None".
+        from just_makeit._stubs import _build_class_docstring
+
+        ip = [
+            (
+                "rate",
+                "double",
+                "1.0",
+                "",
+                "",
+                "",
+                False,  # optional
+                "Resamp_create_custom",  # create_fn (non-empty, non-optional)
+                False,
+                "",
+            )
+        ]
+        doc = "\n".join(_build_class_docstring("Thing", [], True, ip, "", ""))
+        assert "rate : float, default 1.0" in doc
+        assert "or None" not in doc

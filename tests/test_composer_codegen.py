@@ -144,8 +144,8 @@ class TestSourceType:
         assert "self->src.type = _i;" in s
         # scalar assigned directly
         assert "self->src.freq = freq;" in s
-        # bytes attached
-        assert "_attach_bytes(&self->src, bits)" in s
+        # bytes attached into its own field's destination
+        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -158,6 +158,33 @@ class TestSourceType:
     def test_dealloc_frees_bits(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert "free(self->src.bits);" in s
+
+    def test_multiple_bytes_fields_use_own_destinations(self):
+        # gh-457: with several bytes fields on one source (a DSSS burst's
+        # acq_code/data_code alongside the payload bits), each field's init
+        # marshal and getset must target its OWN struct arrays — the old
+        # codegen hard-wired every one to bits/n_bits, so the last kwarg
+        # silently clobbered the others.
+        cfg = _cfg()
+        fields = cfg["module"]["wfm_compose"]["source"]["fields"]
+        fields.append(
+            {"name": "acq_code", "type": "uint8_t*", "bytes": True}
+        )
+        fields.append(
+            {"name": "data_code", "type": "uint8_t*", "bytes": True}
+        )
+        s = _composer.render_source_type(cfg, "wfm_compose")
+        for n in ("bits", "acq_code", "data_code"):
+            assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
+            assert f"free(self->src.{n});" in s
+            # the getter reads its own field, not bits
+            assert (
+                f"(const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n}"
+                in s
+            )
+        # the shared coercer writes through the passed destination
+        assert "_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)" in s
+        assert "free(*dst);" in s
 
     def test_factories(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -202,6 +229,57 @@ class TestSegmentType:
         assert "needs at least one source" in s
         # allocates via the (forward-declared) type object
         assert "SegmentType.tp_alloc(&SegmentType, 0)" in s
+
+    def test_enum_segment_field(self):
+        # gh-460: a segment field may be a string enum (e.g. a gap_noise
+        # "auto"|"off" policy). The old codegen emitted the manifest default
+        # verbatim (`self->gap_noise = auto;` — not C), parsed the kwarg as
+        # an int, and the getter returned an int — while the .pyi promised a
+        # string. Segment enum fields now get the same treatment source
+        # enum fields always had: index-mapped default, validated string
+        # kwarg, string getset round-trip.
+        cfg = _cfg()
+        cfg["enum"].append({"name": "gap_noise", "values": ["auto", "off"]})
+        cfg["module"]["wfm_compose"]["segment"]["fields"].append(
+            {
+                "name": "gap_noise",
+                "type": "int",
+                "enum": "gap_noise",
+                "default": "auto",
+            }
+        )
+        s = _composer.render_segment_type(cfg, "wfm_compose")
+        # default is the SSOT index, not the bare string token
+        assert "self->gap_noise = 0;" in s
+        assert "self->gap_noise = auto;" not in s
+        # kwarg parses a validated string through the shared enum table
+        assert "_enum_index(_enum_gap_noise, _s)" in s
+        assert "invalid gap_noise" in s
+        # getset round-trips the string
+        assert "PyUnicode_FromString(_enum_gap_noise[self->gap_noise])" in s
+        assert "Segment_set_gap_noise" in s
+
+    def test_enum_segment_field_generic_json(self):
+        # gh-460 (generic JSON face): a segment enum serializes as its SSOT
+        # string and parses back with the default as fallback — same
+        # contract source enums already had.
+        cfg = _cfg()
+        cfg["enum"].append({"name": "gap_noise", "values": ["auto", "off"]})
+        cfg["module"]["wfm_compose"]["segment"]["fields"].append(
+            {
+                "name": "gap_noise",
+                "type": "int",
+                "enum": "gap_noise",
+                "default": "auto",
+            }
+        )
+        s = _composer.render_json_funcs(cfg, "wfm_compose")
+        assert (
+            'cJSON_AddStringToObject(sj, "gap_noise", '
+            "_enum_gap_noise[g->gap_noise]);" in s
+        )
+        assert "_enum_index(_enum_gap_noise," in s
+        assert '_s ? _s : "auto"' in s
 
     def test_getsets_and_dealloc(self):
         s = _composer.render_segment_type(_cfg(), "wfm_compose")

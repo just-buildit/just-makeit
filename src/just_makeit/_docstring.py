@@ -94,6 +94,26 @@ class DoxyBlock:
         return None
 
 
+# jm's own scaffolder emits "@param name  Initial name (default: X)." — the
+# canonical shape (see _context/_state.py) a hand-edited header is expected
+# to preserve or update in place (gh-442).
+_HEADER_DEFAULT_RE = re.compile(r"\(default:\s*([^)]+?)\)\.?\s*$")
+
+
+def header_default(desc: str | None) -> str | None:
+    """Extract the trailing ``(default: X)`` value from a ``@param`` description.
+
+    Returns ``None`` when *desc* is absent or carries no recognizable
+    ``(default: ...)`` suffix — best-effort by design (gh-442): a header
+    that documents its default in some other shape is silently skipped
+    rather than misparsed.
+    """
+    if not desc:
+        return None
+    m = _HEADER_DEFAULT_RE.search(desc)
+    return m.group(1).strip() if m else None
+
+
 def group_paragraphs(lines: list[str]) -> list[str]:
     """Join a list of body *lines* into paragraphs.
 

@@ -250,3 +250,117 @@ Foo_nop(FooObject *self, PyObject *Py_UNUSED(ignored))
         out = _restore_c_function_bodies(new_src, {"Foo_nop": impl})
         assert "Py_RETURN_NONE" in out
         assert "NotImplementedError" not in out
+
+
+# ---------------------------------------------------------------------------
+# require_static=False (gh-267: sacred _core.c/_core.h, public — non-static
+# — functions)
+# ---------------------------------------------------------------------------
+
+CORE_C_SIMPLE = """\
+foo_state_t *
+foo_create(double gain)
+{
+    foo_state_t *obj = calloc(1, sizeof(*obj));
+    obj->gain = gain;
+    return obj;
+}
+"""
+
+CORE_H_WITH_PROTOTYPE_AND_INLINE = """\
+foo_state_t *foo_create(double gain);
+
+void foo_destroy(foo_state_t *state);
+
+static inline float
+foo_step(const foo_state_t *state, float x)
+{
+    (void)state;
+    return (float)x;
+}
+"""
+
+
+class TestExtractCFunctionBodiesNonStatic:
+    def test_extracts_public_function(self):
+        result = _extract_c_function_bodies(
+            CORE_C_SIMPLE, require_static=False
+        )
+        assert "foo_create" in result
+        assert "obj->gain = gain;" in result["foo_create"]
+
+    def test_ignores_bare_prototypes(self):
+        # foo_create/foo_destroy are declaration-only (";", no body) here —
+        # must not be captured, and must not corrupt the scan for foo_step.
+        result = _extract_c_function_bodies(
+            CORE_H_WITH_PROTOTYPE_AND_INLINE, require_static=False
+        )
+        assert "foo_create" not in result
+        assert "foo_destroy" not in result
+        assert "foo_step" in result
+        assert result["foo_step"].count("{") == result["foo_step"].count("}")
+
+    def test_require_static_true_ignores_public_functions(self):
+        # Default behavior (ext.c call sites) must be unaffected.
+        assert (
+            _extract_c_function_bodies(CORE_C_SIMPLE, require_static=True)
+            == {}
+        )
+
+
+class TestRestoreCFunctionBodiesSignatureGuard:
+    def test_matching_signature_restores(self):
+        new_source = """\
+foo_state_t *
+foo_create(double gain)
+{
+    foo_state_t *obj = calloc(1, sizeof(*obj));
+    return obj;
+}
+"""
+        preserved = {
+            "foo_create": (
+                "foo_state_t *\nfoo_create(double gain)\n{\n"
+                "    foo_state_t *obj = calloc(1, sizeof(*obj));\n"
+                "    obj->gain = gain; /* HAND */\n    return obj;\n}\n"
+            )
+        }
+        out = _restore_c_function_bodies(
+            new_source, preserved, require_static=False
+        )
+        assert "HAND" in out
+
+    def test_mismatched_signature_skipped(self):
+        # gh-267: a structural change (e.g. `jm add` growing the param
+        # list) must fall back to the fresh body rather than splice an
+        # incompatible one in — a hard compile break otherwise.
+        new_source = """\
+foo_state_t *
+foo_create(double gain, int order)
+{
+    foo_state_t *obj = calloc(1, sizeof(*obj));
+    obj->order = order;
+    return obj;
+}
+"""
+        preserved = {
+            "foo_create": (
+                "foo_state_t *\nfoo_create(double gain)\n{\n"
+                "    foo_state_t *obj = calloc(1, sizeof(*obj));\n"
+                "    obj->gain = gain; /* HAND */\n    return obj;\n}\n"
+            )
+        }
+        out = _restore_c_function_bodies(
+            new_source, preserved, require_static=False
+        )
+        assert "HAND" not in out
+        assert "obj->order = order;" in out
+
+    def test_require_static_false_ignores_declaration_only(self):
+        # A bare prototype in new_source has no body to splice into.
+        new_source = "foo_state_t *foo_create(double gain);\n"
+        preserved = {"foo_create": CORE_C_SIMPLE}
+        out = _restore_c_function_bodies(
+            new_source, preserved, require_static=False
+        )
+        assert out == new_source

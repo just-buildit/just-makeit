@@ -2,6 +2,179 @@
 
 ## [Unreleased]
 
+## [0.28.9] — 2026-07-12
+
+### Fixed
+
+- **`jm bench`'s display table and Δ-vs-prev collided same-named benches
+    across components (gh-464).** `_bench_key` already preferred `fullname`
+    over the bare `name` for baseline↔current matching, but
+    `_display_table` — the function that prints `jm bench`'s terminal
+    summary — never got the same fix, reading `b["name"]` directly for both
+    the printed "Name" column and the `prev_ops` dict key used to compute
+    "Δ vs prev". Two components sharing a generic Python bench name (e.g.
+    `test_bench_steps_64k`) printed identically and could silently compare
+    against the wrong component's previous run. New `_qualify_python_names()`
+    prefixes each Python benchmark's `name` with its bench file's stem,
+    mirroring the C side's existing `f"{comp}::{entry_name}"` convention.
+- **`jm regenerate` discarded hand-written `_core.c`/`_core.h` bodies on
+    every rebuild (gh-267).** By default it now lifts create/destroy/reset/
+    `step()`/getter/setter/method bodies out of the sacred files by function
+    name before deleting them, and splices them back into the freshly
+    regenerated ones — reusing the same by-name extract/restore machinery
+    `jm apply` already uses to preserve hand-patched module `_ext.c` glue,
+    generalized to public (non-`static`) functions. Guards against a bare
+    prototype declaration false-matching and against splicing an old body
+    under a changed signature (e.g. `jm add` growing a lifecycle function's
+    parameter list) — in either case the fresh body is kept instead. `jm add`
+    / `jm remove --state` now pass `discard=True` explicitly, matching their
+    existing documented contract. New `--discard` flag restores the old
+    clean-reset behavior.
+
+## [0.28.8] — 2026-07-11
+
+### Fixed
+
+- **Segment fields now support enums end to end (gh-460).** Declaring an
+    enum **segment** field (e.g. a `gap_noise = "auto"|"off"` policy)
+    generated broken/inconsistent code while the same declaration on a
+    source field worked fully: the manifest default was emitted verbatim
+    (`self->gap_noise = auto;` — not C), the kwarg parsed as an int while
+    the generated `.pyi` promised a string, the getset returned the raw
+    int, and the generic JSON face serialized a number against its
+    documented SSOT-string contract. `render_segment_type`'s
+    default/extract/getset paths and `render_json_funcs`' segment loops
+    simply predated any enum segment field existing; they now get the
+    identical `_field_is_enum` treatment source fields have had since
+    gh-285 — codegen-time index-mapped defaults, validated-string kwarg
+    parse through the shared `_enum_index`/`_enum_<name>` tables, string
+    getset round-trip, and SSOT-string generic JSON.
+
+## [0.28.7] — 2026-07-11
+
+### Fixed
+
+- **A composer source with multiple `bytes=true` fields clobbered them all
+    into `bits` (gh-457).** The composer source-type codegen generated one
+    `_attach_bytes` helper hard-wired to `src->bits`/`n_bits`, and every
+    `bytes=true` field's init marshal and getset setter called it — with the
+    getter likewise reading `self->src.bits`. A source with more than one
+    bytes field (e.g. a DSSS burst's `acq_code`/`data_code`/`sync` alongside
+    the payload `bits`) silently clobbered everything into `bits`, last
+    kwarg winning. The shared coercer is now parameterized as
+    `_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)` — the same
+    per-field-destination shape the `complex=true` fields already use — and
+    each field's init assign and getset point at its own struct arrays.
+    Single-bytes-field modules regenerate to behaviorally identical code.
+
+## [0.28.6] — 2026-07-11
+
+### Added
+
+- **Lint init_param default drift between the manifest and the header doc
+    (gh-442).** `jm apply` already juxtaposes two sources when rendering a
+    `.pyi`'s constructor docstring — the manifest's `init_params[].default`
+    for the numpydoc signature line, and the sacred header's own
+    `@param name ... (default: X)` prose for the description — so when only
+    one side gets edited out-of-band, the stub silently reads as a
+    scale/corruption bug even though each half is individually correct for
+    its own source of truth (the actual root cause behind gh-441's original
+    report). `jm apply` now warns (non-fatal — jm has no way to know which
+    side is stale) on every numeric disagreement; `jm status`/`jm status   --check` promote the same check to an always-shown, CI-gating `DRIFT`
+    section, mirroring the gh-426 `DROPPED`-symbol precedent (never
+    suppressed by `--allow`/`status_allow`). Scoped to `init_params` for v1.
+    Best-effort: a header `@param` with no recognizable `(default: X)`
+    suffix is silently skipped rather than misparsed, and a freshly
+    scaffolded header (no human-authored doc yet) never fires — `jm`'s own
+    boilerplate `@brief`/`@param` text is filtered out the same way the
+    docstring generator already ignores it.
+
+## [0.28.5] — 2026-07-11
+
+### Fixed
+
+- **Standalone objects never got a `.pyi` stub for a newly added property
+    (gh-446).** `_property.py::run()`'s standalone branch updated
+    `_core.h`/`_ext.c` but never wrote the `.pyi` at all. Because `jm   apply`'s replay and `jm status --check` both materialize properties by
+    calling this same `_property.run()` internally, the gap was invisible
+    on three fronts: immediately after `jm property`, after a follow-up
+    `jm apply`, and to `jm status --check` itself, which reported clean
+    since its own scratch-copy replay hit the identical gap. A deeper
+    issue surfaced during the fix: even a direct write wasn't enough,
+    since the standalone `.pyi` template's getter/setter placeholder was
+    populated purely from state-variable get/set *methods*
+    (`make_state_ctx`) with no notion of a manifest property at all — a
+    manifest property is a `PyGetSetDef`-backed `@property` descriptor,
+    not a get/set method pair, and had no template placeholder of its
+    own. `make_properties_ctx` now also emits `@property`/`@x.setter`
+    stubs (reusing `_CTYPE_META`-driven type inference rather than a new
+    hardcoded table — the same drift class gh-450 just fixed), wired into
+    the template and every render site.
+
+## [0.28.4] — 2026-07-11
+
+### Fixed
+
+- **`const char *` params rendered as `Any` in module-grouped `.pyi` stubs
+    (gh-450).** `_stubs.py::make_module_pyi` — the separate stub generator
+    used for module-owned objects (gh-423) — keeps its own
+    `_CTYPE_TO_PY` scalar-type table rather than sharing `_types.py`'s
+    `_CTYPE_META`, and that table never got a `"const char *"` entry, so
+    any `const char *` param fell through to the `Any` fallback. Looked
+    capsule-related because the only regression test covering this
+    generator (gh-432) happened to pair a `const char *` param with a
+    capsule param but never asserted on the plain param's own type — a
+    bare `const char *` param on a module-owned object hit the same bug
+    with no capsule in sight. Standalone objects use a different
+    generator (`_context/_methods.py`) that was never affected.
+
+## [0.28.3] — 2026-07-11
+
+### Added
+
+- **`# jm:hand` marker for member-level `.pyi` merge (gh-428).** A comment
+    directly above any class member (method or property) opts it out of
+    regeneration with zero manifest entry required — extending the
+    `manual_stub = true` splice engine, which only covered a method with no
+    manifest-representable signature at all. A marked member that also
+    exists in the fresh render (a manifest-derived member hand-edited in
+    place) has its span replaced verbatim, marker included, so the next
+    regen still recognizes it. A marked member with no counterpart in the
+    fresh render (a wholly hand-added method) is appended after the class's
+    last member instead. A property's getter/setter share a Python name and
+    always move as one unit.
+- **Additive method/property splice into sacred `_ext_<obj>.c` fragments
+    (gh-440).** A fragment previously only adopted a manifest-derived method
+    or property added after it was last generated via deleting the whole
+    fragment and letting `jm apply` recreate it — discarding every other
+    hand patch the fragment carried. `jm apply` now diffs the
+    manifest-derived `PyMethodDef`/`PyGetSetDef` binding set against what
+    the fragment already implements, by entry name, and splices in only
+    what's missing; every existing binding, hand-patched or not, is left
+    byte-for-byte untouched. v1 is additive only — a fragment gaining a
+    method/property when it already has at least one of that kind splices
+    cleanly, but going from zero to one of a kind still needs the old
+    delete-and-recreate cycle.
+
+## [0.28.2] — 2026-07-11
+
+### Fixed
+
+- **`jm apply` ignored `[project] status_allow` (gh-441).** Apply's
+    reconcile step unconditionally overwrote every glue file, including a
+    hand-maintained `.pyi` the manifest already marks as accepted drift for
+    `jm status --check` — so a bare `jm apply` could silently clobber
+    hand-written content status considered exempt. `_overwrite_if_changed`
+    now skips the write when the target's project-relative path matches a
+    `status_allow` entry (exact or glob); `jm status`'s internal throwaway
+    replay opts out of the skip so its ALLOWED/STALE classification (and
+    the gh-426 dropped-symbol check) still sees the genuine diff.
+- **Constructor docstring `optional` flag read from the wrong tuple offset
+    (gh-441 follow-up).** `_build_class_docstring` picked up `create_fn`
+    instead of the `optional` flag when deciding whether an init-param's
+    docstring type gets `| None` appended, so a non-optional param with a
+    `create_fn` set could wrongly render as optional.
+
 ## [0.28.1] — 2026-07-10
 
 ### Fixed

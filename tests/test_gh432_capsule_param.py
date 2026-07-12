@@ -188,12 +188,19 @@ class TestPyiStubs:
     def test_module_pyi(self, tmp_path):
         # _stubs.py::make_module_pyi is a separate generator (gh-423) — it
         # must map the capsule param and the status return identically.
+        # gh-450: it kept its own _CTYPE_TO_PY table without a "const
+        # char *" entry, so `prefix` fell through to "Any" here even
+        # though the standalone generator (_context/_methods.py) got it
+        # right — assert the full signature, not just the capsule param,
+        # so a missing scalar-type mapping can't hide again.
         dest = _scaffold_module(tmp_path)
         pyi = (dest / "src" / "dsp" / "track" / "track.pyi").read_text(
             encoding="utf-8"
         )
-        assert "tlm: object | None" in pyi
-        assert ") -> None:" in pyi.split("def set_telemetry", 1)[1][:200]
+        assert (
+            "def set_telemetry(self, tlm: object | None, prefix: str,"
+            " decim: int = 1) -> None:" in pyi
+        )
 
 
 class TestRoundTrip:

@@ -1,0 +1,48 @@
+# Version control / dev tooling (never needed inside an image)
+.git/
+.github/
+.devcontainer/
+.vscode/
+.claude/
+
+# Python bytecode / caches (mirrors .gitignore)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Packaging / build artifacts (mirrors .gitignore)
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+
+# Virtual environments (mirrors .gitignore)
+.venv/
+venv/
+env/
+ENV/
+
+# Generated/build-only artifacts specific to this repo
+.benchmarks/
+docs/_build/
+/site
+docs/examples/*.md
+compile_commands.json
+
+# Misc scratch files called out in .gitignore's "Project-specific" section
+my_project/
+test123/
+scaffold_feedback.md
+
+# Broken symlink checked into the repo (points outside the machine/container)
+mypy.ini

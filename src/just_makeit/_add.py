@@ -89,4 +89,7 @@ def run(
         f"structural, so '{component}' is rebuilt from the manifest:"
     )
     print()
-    _regenerate.run(root, component, force=force)
+    # discard=True: the old body's signature is guaranteed stale (it
+    # predates the new field(s)) — splicing it back in would either not
+    # compile or silently skip initializing the new state.
+    _regenerate.run(root, component, force=force, discard=True)

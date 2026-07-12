@@ -194,6 +194,18 @@ def run(
 
     allow_patterns = list(allow) + C.status_allow(cfg)
 
+    # gh-442: init-param default mismatch between the manifest and the
+    # sacred header's own @param (default: X) doc — a static comparison,
+    # unrelated to what `apply` would rewrite, so it's computed directly
+    # against the real project rather than via the scratch-copy diff below.
+    from . import _object as _obj_mod
+
+    drift_entries: list[tuple[str, str, str, str]] = [
+        (obj, name, m_dflt, h_dflt)
+        for obj in C.components(cfg)
+        for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj)
+    ]
+
     # (rel_posix, state, allowed, diff_text, dropped_symbols)
     entries: list[tuple[str, str, bool, str, frozenset]] = []
     ok_count = 0
@@ -203,8 +215,16 @@ def run(
         # Run apply on the copy so we observe its real reconciliation
         # (glue regenerated, _core.h merged, _core.c preserved). Suppress
         # its progress output — status prints its own report.
+        # honor_status_allow=False (gh-441): apply itself now skips
+        # status_allow-matched files so a real `jm apply` never clobbers
+        # hand-maintained content, but this throwaway replay must still
+        # regenerate them to compute the genuine before/after diff below —
+        # otherwise every allowed file would look up-to-date (never
+        # written) instead of classified ALLOWED, and the gh-426
+        # dropped-symbol check would go blind for exactly the files it
+        # exists to guard.
         with contextlib.redirect_stdout(io.StringIO()):
-            _apply.run(scratch)
+            _apply.run(scratch, honor_status_allow=False)
 
         for rel in _walk_managed(scratch):
             real = root / rel
@@ -245,7 +265,11 @@ def run(
     # it must count toward the CI-gating return value even for an allowed
     # file, or a status_allow entry silently hides real content loss behind
     # "this file always drifts, that's expected."
-    drift_count = len(drift) + sum(1 for e in allowed if e[4])
+    # gh-442: same treatment for a default-doc mismatch — not suppressible,
+    # always counted, so `jm status --check` actually gates on it.
+    drift_count = (
+        len(drift) + sum(1 for e in allowed if e[4]) + len(drift_entries)
+    )
 
     if as_json:
         print(
@@ -259,6 +283,15 @@ def run(
                             "dropped_symbols": sorted(dr),
                         }
                         for (p, s, al, _, dr) in entries
+                    ],
+                    "param_default_drift": [
+                        {
+                            "object": o,
+                            "param": n,
+                            "manifest_default": m,
+                            "header_default": h,
+                        }
+                        for (o, n, m, h) in drift_entries
                     ],
                     "ok": ok_count,
                     "drift": drift_count,
@@ -317,9 +350,28 @@ def run(
         )
         print()
 
+    # gh-442: same "impossible to miss" treatment as DROPPED — this is a
+    # static doc-consistency check, not a diff of what apply would write,
+    # so it prints even when every managed file is otherwise OK.
+    if drift_entries:
+        print(
+            f"DRIFT ({len(drift_entries)}) — init-param default disagrees "
+            "between the manifest and the header's own doc:"
+        )
+        for obj, name, m_dflt, h_dflt in drift_entries:
+            print(
+                f"  ! {obj}.{name}: manifest={m_dflt!r} header={h_dflt!r} "
+                f"(native/inc/{obj}/{obj}_core.h)"
+            )
+        print(
+            "  One of these is stale — jm can't tell which; update the "
+            "manifest default or the header doc to match. See gh-442."
+        )
+        print()
+
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
-    if not drift and not dropped_entries:
+    if not drift and not dropped_entries and not drift_entries:
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
@@ -331,6 +383,11 @@ def run(
             f"{n_stale} stale"
             + (f", {len(allowed)} allowed" if allowed else "")
             + (f", {n_dropped_files} dropped (!)" if dropped_entries else "")
+            + (
+                f", {len(drift_entries)} default-drift (!)"
+                if drift_entries
+                else ""
+            )
             + ".\n"
             "Your `_core.c` is sacred — apply never changes it; use "
             "`jm regenerate <component>` to rebuild one from the manifest."

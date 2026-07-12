@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._method import run as method_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._regenerate import run as regen_run
@@ -24,6 +25,19 @@ def _plant(core_c: Path, marker: str = "USER_EDIT") -> None:
             text,
             count=1,
         ),
+        encoding="utf-8",
+    )
+
+
+def _plant_body(path: Path, needle: str, marker: str) -> None:
+    """Append a sentinel comment right after the first occurrence of
+    *needle* — used to hand-edit a real function body (create/reset/
+    destroy/step/a named method), as opposed to `_plant`'s boilerplate
+    `_steps()` dispatch loop."""
+    text = path.read_text(encoding="utf-8")
+    assert needle in text, f"{needle!r} not found in {path}"
+    path.write_text(
+        text.replace(needle, f"{needle} /* {marker} */", 1),
         encoding="utf-8",
     )
 
@@ -88,3 +102,67 @@ class TestRegenerate:
         shutil.rmtree(project / "native" / "src" / "eng")
         regen_run(project, "eng", force=True)
         assert (project / "native" / "src" / "eng" / "eng_core.c").exists()
+
+
+class TestRegeneratePreservesHandWrittenBodies:
+    """gh-267: by default, `regenerate` lifts create/reset/destroy/step and
+    named-method bodies out of the sacred _core.c/_core.h before deleting
+    them, and splices them back into the freshly regenerated files."""
+
+    @pytest.fixture()
+    def mutable_project(self, tmp_path):
+        root = tmp_path / "demo"
+        new_run(
+            "demo",
+            root,
+            ["delay"],
+            [("length", "int", "0")],
+            mutable=True,
+            arg_type="float",
+            return_type="float",
+        )
+        method_run(root, "delay", "peek", None, "void", "float", False, [])
+        return root
+
+    def test_create_reset_destroy_and_method_survive(self, mutable_project):
+        core_c = mutable_project / "native" / "src" / "delay" / "delay_core.c"
+        _plant_body(core_c, "obj->length = length;", "HAND_CREATE")
+        _plant_body(core_c, "state->length = 0;", "HAND_RESET")
+        _plant_body(core_c, "free(state);", "HAND_DESTROY")
+        _plant_body(core_c, "return (float)0.0f;", "HAND_METHOD")
+
+        regen_run(mutable_project, "delay", force=True)
+
+        text = core_c.read_text(encoding="utf-8")
+        for marker in (
+            "HAND_CREATE",
+            "HAND_RESET",
+            "HAND_DESTROY",
+            "HAND_METHOD",
+        ):
+            assert marker in text, f"{marker} lost across regenerate"
+
+    def test_steps_dispatch_still_discarded(self, mutable_project):
+        # The *_steps() boilerplate loop is not a preservation target —
+        # it must keep tracking the manifest, same as before this feature.
+        core_c = mutable_project / "native" / "src" / "delay" / "delay_core.c"
+        _plant(core_c, "STEPS_EDIT")
+        regen_run(mutable_project, "delay", force=True)
+        text = core_c.read_text(encoding="utf-8")
+        assert "STEPS_EDIT" not in text
+
+    def test_discard_flag_restores_old_behavior(self, mutable_project):
+        core_c = mutable_project / "native" / "src" / "delay" / "delay_core.c"
+        _plant_body(core_c, "obj->length = length;", "HAND_CREATE")
+
+        regen_run(mutable_project, "delay", force=True, discard=True)
+
+        text = core_c.read_text(encoding="utf-8")
+        assert "HAND_CREATE" not in text
+
+    def test_inline_step_body_in_header_survives(self, project):
+        core_h = project / "native" / "inc" / "eng" / "eng_core.h"
+        _plant_body(core_h, "return (float complex)x;", "HAND_STEP")
+        regen_run(project, "eng", force=True)
+        text = core_h.read_text(encoding="utf-8")
+        assert "HAND_STEP" in text

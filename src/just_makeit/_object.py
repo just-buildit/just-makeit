@@ -32,7 +32,7 @@ from ._init import (
     _write_compile_commands,
     ensure_parent_packages,
 )
-from ._docstring import extract_doc_blocks, parse_doxygen_block
+from ._docstring import extract_doc_blocks, header_default, parse_doxygen_block
 from ._context._parse import _build_ml_doc
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
@@ -67,6 +67,41 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
             continue
         out[cname] = parsed
     return out
+
+
+def init_param_drift(
+    cfg: dict, root: Path, obj: str
+) -> list[tuple[str, str, str]]:
+    """Init-params whose manifest default disagrees with the header's own.
+
+    Returns ``(name, manifest_default, header_default)`` for every
+    ``init_params`` entry whose manifest ``default`` and the sacred
+    ``<obj>_core.h`` create()'s ``@param name ... (default: X)`` numerically
+    disagree (gh-442) — jm juxtaposes both sources when building the ``.pyi``
+    docstring, so an out-of-band edit to just one of them (a manifest default
+    retuned, or hand doc left stale, or vice versa) silently reads as
+    corruption in the generated stub with no other signal. Best-effort:
+    either side missing, or not parseable as a number, is skipped rather than
+    reported — a false negative here is fine, a false positive is not.
+    """
+    doc_blocks = _load_doc_blocks(root, obj)
+    create_blk = doc_blocks.get(f"{obj}_create")
+    if create_blk is None:
+        return []
+    drift: list[tuple[str, str, str]] = []
+    for name, _ctype, dflt, *_rest in C.init_params(cfg, obj):
+        if not dflt:
+            continue
+        hdr_dflt = header_default(create_blk.param_desc(name))
+        if hdr_dflt is None:
+            continue
+        try:
+            if float(dflt) == float(hdr_dflt):
+                continue
+        except ValueError:
+            continue
+        drift.append((name, dflt, hdr_dflt))
+    return drift
 
 
 def _load_module_doc_blocks(root: Path, module: str) -> dict:
@@ -519,23 +554,36 @@ def _merge_module_init(
     return result
 
 
-def _extract_c_function_bodies(source: str) -> dict[str, str]:
-    """Extract static function bodies from C source.
+_NORMALIZE_WS_RE = re.compile(r"\s+")
+
+
+def _extract_c_function_bodies(
+    source: str, require_static: bool = True
+) -> dict[str, str]:
+    """Extract function bodies from C source.
 
     Returns ``{function_name: full_function_text}`` for every
-    ``static <returntype>\\n<name>(`` function in *source*.  Covers
-    ``static PyObject *`` method wrappers and ``static int`` init/traverse
-    functions so that hand-patches to any generated function survive
-    regeneration of module_ext.c.
+    ``static <returntype>\\n<name>(`` function in *source* (or, with
+    ``require_static=False``, every ``<returntype>\\n<name>(`` function,
+    static or not — used to preserve hand-written bodies in a sacred
+    ``_core.c``/``_core.h``, whose public API functions carry no ``static``
+    keyword). Covers ``static PyObject *`` method wrappers and ``static int``
+    init/traverse functions so that hand-patches to any generated function
+    survive regeneration of module_ext.c.
 
     Uses brace-counting rather than a regex for the body so that nested
     braces and parentheses inside parameter lists (e.g. ``Py_UNUSED(...)``)
-    are handled correctly.
+    are handled correctly. The "type on its own line, name( on the next"
+    house style (this project's clang-format convention) means single-line
+    signatures — the generated dispatch loops (``*_steps``) and macro
+    invocations — never match, so pure boilerplate is naturally excluded
+    without an explicit deny-list.
     """
-    # Match "static <return-type>\n<name>(" for any return type.
+    # Match "[static ]<return-type>\n<name>(" for any return type.
     # [^\n]+ stops at the newline so struct/array definitions (which have
     # no "(" immediately after the identifier) are not captured.
-    header_pat = re.compile(r"static [^\n]+\n(\w+)\(")
+    prefix = r"static " if require_static else r"(?:static )?"
+    header_pat = re.compile(prefix + r"[^\n]+\n(\w+)\(")
     result: dict[str, str] = {}
     for hm in header_pat.finditer(source):
         fn_name = hm.group(1)
@@ -551,10 +599,14 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
             elif source[i] == ")":
                 depth -= 1
             i += 1
-        # Now scan for the opening '{'.
-        while i < len(source) and source[i] != "{":
+        # Now scan for the opening '{', bailing out on a bare ';' first —
+        # a forward-declared prototype (only possible when require_static
+        # is False; _core.h declares create/destroy/reset/getters/setters
+        # ahead of their definitions) has no body, and without this guard
+        # the scan would run past it into an unrelated function's braces.
+        while i < len(source) and source[i] not in "{;":
             i += 1
-        if i >= len(source):
+        if i >= len(source) or source[i] == ";":
             continue
         brace_start = i
         # Collect the full body using balanced brace counting.
@@ -574,13 +626,17 @@ def _extract_c_function_bodies(source: str) -> dict[str, str]:
 
 
 def _restore_c_function_bodies(
-    new_source: str, preserved: dict[str, str]
+    new_source: str, preserved: dict[str, str], require_static: bool = True
 ) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
     Only replaces functions that already existed in the old source AND still
     exist in the newly generated source.  New functions (first-time stubs) are
     left unchanged, so fresh scaffolded methods get their TODO stubs.
+
+    ``require_static`` mirrors :func:`_extract_c_function_bodies` — pass
+    False when *new_source* is a sacred ``_core.c``/``_core.h`` whose public
+    functions carry no ``static`` keyword.
 
     Buffer-lifecycle functions (_dealloc, _init) are always regenerated from
     the template so that newly added variable_output free() and malloc() calls
@@ -609,8 +665,9 @@ def _restore_c_function_bodies(
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
+        prefix = r"static " if require_static else r"(?:static )?"
         header_pat = re.compile(
-            r"static [^\n]+\n" + re.escape(fn_name) + r"\("
+            prefix + r"[^\n]+\n" + re.escape(fn_name) + r"\("
         )
         hm = header_pat.search(new_source)
         if not hm:
@@ -624,9 +681,22 @@ def _restore_c_function_bodies(
             elif new_source[i] == ")":
                 depth -= 1
             i += 1
-        while i < len(new_source) and new_source[i] != "{":
+        # Bail on a bare ';' (forward-declared prototype) before scanning
+        # for '{' — see the matching guard in _extract_c_function_bodies.
+        while i < len(new_source) and new_source[i] not in "{;":
             i += 1
-        if i >= len(new_source):
+        if i >= len(new_source) or new_source[i] == ";":
+            continue
+        # gh-267: bail if the signature itself changed (e.g. `jm add`/
+        # `jm remove --state` growing or shrinking a lifecycle function's
+        # parameter list). Splicing an old body under a new signature either
+        # fails to compile or silently skips initializing new parameters —
+        # worse than just keeping the freshly regenerated body. Only reached
+        # when require_static=False; ext.c wrapper signatures are fixed
+        # CPython boilerplate that never varies across a regeneration.
+        old_sig = _NORMALIZE_WS_RE.sub(" ", old_body[: old_body.index("{")])
+        new_sig = _NORMALIZE_WS_RE.sub(" ", new_source[start:i])
+        if old_sig.strip() != new_sig.strip():
             continue
         depth = 0
         end = i
