@@ -81,7 +81,9 @@ def test_nogil_generates_allow_threads(tmp_path):
         if frag.startswith("Py_BEGIN_ALLOW_THREADS", i)
     ]
     ends = [
-        i for i in range(len(frag)) if frag.startswith("Py_END_ALLOW_THREADS", i)
+        i
+        for i in range(len(frag))
+        if frag.startswith("Py_END_ALLOW_THREADS", i)
     ]
     out_b, default_b = begins
     out_e, default_e = ends

@@ -72,12 +72,14 @@ def termynal_fence(source, language, css_class, options, md, **kwargs):
     for line in lines:
         if line.startswith("$ "):
             cmd = _colorize(line[2:])
-            spans.append(f'<span data-ty="input" data-ty-delay="500">{cmd}</span>')
+            spans.append(
+                f'<span data-ty="input" data-ty-delay="500">{cmd}</span>'
+            )
         elif line.startswith("# "):
             comment = _colorize(line)
             spans.append(f'<span data-ty="comment">{comment}</span>')
         elif line == "":
-            spans.append('<span data-ty>&nbsp;</span>')
+            spans.append("<span data-ty>&nbsp;</span>")
         else:
             out = _colorize(line)
             spans.append(f"<span data-ty>{out}</span>")

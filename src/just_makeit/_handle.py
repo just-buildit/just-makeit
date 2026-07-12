@@ -425,7 +425,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 calls.append(an)
             else:
                 meta = T._CTYPE_META[a["type"]]
-                pt = meta.get("parse_type", a["type"])  # safe-width parse target
+                pt = meta.get(
+                    "parse_type", a["type"]
+                )  # safe-width parse target
                 to_c = meta.get("to_c")
                 decls += f"    {pt} {an}_raw = 0;\n"
                 fmt_parts.append(meta["fmt"])
@@ -433,7 +435,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 calls.append(to_c(an) if to_c else f"{an}_raw")
         parse = (
             f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
-            f'{", ".join(addrs)}))\n        return NULL;\n'
+            f"{', '.join(addrs)}))\n        return NULL;\n"
             if margs
             else "    (void)args;\n"
         )
@@ -1289,7 +1291,11 @@ def render_pyi(cfg: dict, module: str) -> str:
             # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
             sig = "self, " + ", ".join(
                 f"{a['name']}: "
-                + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
+                + (
+                    "str"
+                    if a.get("type") == "string"
+                    else _pyi_scalar(a["type"])
+                )
                 for a in margs
             )
             ann = "NDArray[Any]"

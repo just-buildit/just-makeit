@@ -31,9 +31,9 @@ maintains the MkDocs 1.x plugin and extension contract so that existing
 
 - Reads `mkdocs.yml` directly — no `zensical.toml` required.
 - `zensical build` / `zensical serve` are drop-in replacements for the
-  corresponding `mkdocs` commands.
+    corresponding `mkdocs` commands.
 
----
+______________________________________________________________________
 
 ## Building and serving
 
@@ -72,7 +72,7 @@ dev-dep floor stays resolvable.
 No `PYTHONPATH` needed — just-makeit is installed editably into the venv so
 `just_makeit._termynal_fence` is importable like any other package module.
 
----
+______________________________________________________________________
 
 ## Full `mkdocs.yml` walkthrough
 
@@ -131,6 +131,7 @@ theme:
 ```
 
 !!! note "navigation.instant and JavaScript"
+
     With `navigation.instant` active, `DOMContentLoaded` fires only once — on
     the initial hard load. Subsequent page navigations swap content without a
     full reload. Any JS that initialises widgets must subscribe to the
@@ -195,6 +196,7 @@ All paths are relative to `docs/`. Files must physically exist there — zensica
 does not auto-bundle anything not listed here.
 
 !!! warning "Plugin asset injection does not work"
+
     Some plugins (e.g. the official `termynal` mkdocs plugin) attempt to inject
     extra CSS/JS at build time via `on_config` hooks. Zensical does not propagate
     these dynamic additions to the rendered HTML. Always list assets explicitly
@@ -211,7 +213,7 @@ extra:
       link: https://pypi.org/project/just-makeit/
 ```
 
----
+______________________________________________________________________
 
 ## Plugins
 
@@ -241,33 +243,33 @@ Usage in a `.md` file:
 Requires `mkdocstrings-python>=2.0` as a dev dep. Handler options are documented
 at <https://mkdocstrings.github.io/python/>.
 
----
+______________________________________________________________________
 
 ## Markdown extensions
 
 ### Standard extensions
 
-| Extension | What it enables |
-|-----------|----------------|
-| `admonition` | `!!! note "Title"`, `!!! tip`, `!!! warning`, etc. |
-| `attr_list` | `{ .class #id key=val }` on blocks and inline spans |
-| `def_list` | `Term\n:   Definition` definition lists |
-| `footnotes` | `[^1]` inline references, rendered at page bottom |
+| Extension    | What it enables                                        |
+| ------------ | ------------------------------------------------------ |
+| `admonition` | `!!! note "Title"`, `!!! tip`, `!!! warning`, etc.     |
+| `attr_list`  | `{ .class #id key=val }` on blocks and inline spans    |
+| `def_list`   | `Term\n:   Definition` definition lists                |
+| `footnotes`  | `[^1]` inline references, rendered at page bottom      |
 | `md_in_html` | Markdown inside `<div markdown>` and `<span markdown>` |
-| `tables` | GFM pipe tables |
-| `toc` | Auto heading IDs; `permalink: true` adds a ¶ link |
+| `tables`     | GFM pipe tables                                        |
+| `toc`        | Auto heading IDs; `permalink: true` adds a ¶ link      |
 
 ### PyMdown extensions
 
-| Extension | Config | What it enables |
-|-----------|--------|----------------|
-| `pymdownx.details` | — | `??? note` collapsible admonitions |
-| `pymdownx.emoji` | `twemoji` index, `to_svg` generator | `:material-*:` `:fontawesome-*:` shortcodes |
-| `pymdownx.highlight` | `anchor_linenums: true`, `line_spans: __span`, `pygments_lang_class: true` | Fenced code syntax highlighting, line anchors |
-| `pymdownx.inlinehilite` | — | `#!python inline` syntax highlighting |
-| `pymdownx.snippets` | — | `--8<-- "path/to/file"` file includes |
-| `pymdownx.superfences` | custom fences below | Fenced blocks with custom renderers |
-| `pymdownx.tabbed` | `alternate_style: true` | `=== "Tab A"` content tabs |
+| Extension               | Config                                                                     | What it enables                               |
+| ----------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| `pymdownx.details`      | —                                                                          | `??? note` collapsible admonitions            |
+| `pymdownx.emoji`        | `twemoji` index, `to_svg` generator                                        | `:material-*:` `:fontawesome-*:` shortcodes   |
+| `pymdownx.highlight`    | `anchor_linenums: true`, `line_spans: __span`, `pygments_lang_class: true` | Fenced code syntax highlighting, line anchors |
+| `pymdownx.inlinehilite` | —                                                                          | `#!python inline` syntax highlighting         |
+| `pymdownx.snippets`     | —                                                                          | `--8<-- "path/to/file"` file includes         |
+| `pymdownx.superfences`  | custom fences below                                                        | Fenced blocks with custom renderers           |
+| `pymdownx.tabbed`       | `alternate_style: true`                                                    | `=== "Tab A"` content tabs                    |
 
 ### Custom superfences
 
@@ -298,35 +300,35 @@ def my_fence(source, language, css_class, options, md, **kwargs) -> str:
 Install it somewhere importable (or add it to `_termynal_fence.py`), then add
 a `custom_fences` entry referencing it.
 
----
+______________________________________________________________________
 
 ## Termynal blocks — markup reference
 
-Fenced blocks with ` ```termynal ` (or `~~~termynal`) are rendered as animated
+Fenced blocks with ```` ```termynal ```` (or `~~~termynal`) are rendered as animated
 terminal widgets by `src/just_makeit/_termynal_fence.py`.
 
 ### Line types
 
-| Prefix | Rendered as |
-|--------|------------|
-| `$ ` | Typed input (animated character-by-character) |
-| `# ` | Comment line (no typing animation; dim style) |
-| _(blank line)_ | Vertical gap spacer |
-| _(anything else)_ | Static output line |
+| Prefix            | Rendered as                                   |
+| ----------------- | --------------------------------------------- |
+| `$ `              | Typed input (animated character-by-character) |
+| `# `              | Comment line (no typing animation; dim style) |
+| _(blank line)_    | Vertical gap spacer                           |
+| _(anything else)_ | Static output line                            |
 
 ### Color markup
 
 Wrap any fragment of any line with `{tag}...{/tag}`:
 
-| Tag | Color | Typical use |
-|-----|-------|-------------|
-| `{g}` | Bold green | `Done!`, `passed`, cmake `Linking` |
-| `{G}` | Green (normal weight) | cmake `Building ...` progress lines |
-| `{c}` | Bold cyan | jm command hints, file paths |
-| `{b}` | Bold blue | cmake `Copy extension module` |
-| `{y}` | Bold yellow | warnings, version highlights |
-| `{mark}` | Amber | installer arrows (`-->`, `==>`) |
-| `{d}` | Dim gray | comment/separator lines |
+| Tag      | Color                 | Typical use                         |
+| -------- | --------------------- | ----------------------------------- |
+| `{g}`    | Bold green            | `Done!`, `passed`, cmake `Linking`  |
+| `{G}`    | Green (normal weight) | cmake `Building ...` progress lines |
+| `{c}`    | Bold cyan             | jm command hints, file paths        |
+| `{b}`    | Bold blue             | cmake `Copy extension module`       |
+| `{y}`    | Bold yellow           | warnings, version highlights        |
+| `{mark}` | Amber                 | installer arrows (`-->`, `==>`)     |
+| `{d}`    | Dim gray              | comment/separator lines             |
 
 Tags can span only a single line and do not nest. Everything outside a tag is
 HTML-escaped automatically.
@@ -350,7 +352,7 @@ $ cd my_dsp && make && make test
 ### Widget behavior
 
 - The widget auto-plays when it scrolls into view (via `IntersectionObserver`
-  inside `termynal.js`).
+    inside `termynal.js`).
 - `data-ty-typeDelay="40"` controls ms per character (typed lines).
 - `data-ty-lineDelay="400"` controls the pause between lines.
 - `data-ty-macos` adds the macOS traffic-light button chrome above the terminal.
@@ -369,57 +371,57 @@ auto-init selector (`.termy`) ignores. Only `termynal-init.js` handles
 applies via the `[data-termynal]` attribute selector and is unaffected by the
 class name.
 
----
+______________________________________________________________________
 
 ## Anchor slug rules
 
 Zensical/mkdocs-material generates heading IDs with these rules:
 
 1. Lowercase the heading text.
-2. Strip all characters that are not alphanumeric, hyphens, or spaces.
-3. Replace spaces (including spaces around punctuation) with a single `-`.
+1. Strip all characters that are not alphanumeric, hyphens, or spaces.
+1. Replace spaces (including spaces around punctuation) with a single `-`.
 
 Practical consequences:
 
-| Heading text | Generated anchor |
-|---|---|
-| `## Get it` | `#get-it` |
-| `### Now — write it in C` | `#now-write-it-in-c` |
-| `### Opaque state fields — pointers and handles` | `#opaque-state-fields-pointers-and-handles` |
-| `## \`jm function\` --module mod` | `#jm-function-module-mod` |
-| `## 3. The capsule generator (\`kind = "capsule"\`)` | `#3-the-capsule-generator-kind-capsule` |
+| Heading text                                          | Generated anchor                            |
+| ----------------------------------------------------- | ------------------------------------------- |
+| `## Get it`                                           | `#get-it`                                   |
+| `### Now — write it in C`                             | `#now-write-it-in-c`                        |
+| `### Opaque state fields — pointers and handles`      | `#opaque-state-fields-pointers-and-handles` |
+| `## \`jm function\` --module mod\`                    | `#jm-function-module-mod`                   |
+| `## 3. The capsule generator (\`kind = "capsule"\`)\` | `#3-the-capsule-generator-kind-capsule`     |
 
 Key gotcha: an em dash (`—`) with surrounding spaces becomes **a single `-`**,
 not `--`. Double CLI flag dashes (`--module`) also collapse to single `-` because
 `-` adjacent to a stripped character merges. When a link breaks with an "anchor
 does not exist" warning, grep the built `site/` HTML for the actual `id="..."`.
 
----
+______________________________________________________________________
 
 ## Adding a new page
 
 1. Create `docs/path/to/page.md`.
-2. Add it to `nav:` in `mkdocs.yml` at the right position.
-3. If it lives under a section with an `index.md`, the section page is that
-   `index.md` — do not create a duplicate.
-4. Run `make docs-serve` and check the sidebar.
+1. Add it to `nav:` in `mkdocs.yml` at the right position.
+1. If it lives under a section with an `index.md`, the section page is that
+    `index.md` — do not create a duplicate.
+1. Run `make docs-serve` and check the sidebar.
 
 Pages not in `nav` build successfully but are unreachable from navigation; pages
 in `nav` without a matching file fail the build.
 
----
+______________________________________________________________________
 
 ## Assets reference
 
-| File | Source | Purpose |
-|------|--------|---------|
-| `docs/assets/termynal.css` | termynal.py 0.14.0 | Terminal widget base styles (`[data-termynal]`, macOS chrome, font) |
-| `docs/assets/termynal.js` | termynal.py 0.14.0 | `Termynal` class + auto-init for `.termy` elements |
-| `docs/assets/termynal-colors.css` | hand-written | ANSI color spans (`.jm-termy .ty-*`), `.jm-card`, `.jm-*` utilities |
-| `docs/assets/termynal-init.js` | hand-written | `document$`-aware init for `.jm-termy[data-termynal]` |
-| `docs/assets/mermaid-zoom.css` | hand-written | Click-to-zoom overlay for mermaid diagrams |
-| `docs/assets/mermaid-zoom.js` | hand-written | Zoom overlay logic |
-| `docs/assets/logo.svg` | hand-drawn | Site logo and favicon |
+| File                              | Source             | Purpose                                                             |
+| --------------------------------- | ------------------ | ------------------------------------------------------------------- |
+| `docs/assets/termynal.css`        | termynal.py 0.14.0 | Terminal widget base styles (`[data-termynal]`, macOS chrome, font) |
+| `docs/assets/termynal.js`         | termynal.py 0.14.0 | `Termynal` class + auto-init for `.termy` elements                  |
+| `docs/assets/termynal-colors.css` | hand-written       | ANSI color spans (`.jm-termy .ty-*`), `.jm-card`, `.jm-*` utilities |
+| `docs/assets/termynal-init.js`    | hand-written       | `document$`-aware init for `.jm-termy[data-termynal]`               |
+| `docs/assets/mermaid-zoom.css`    | hand-written       | Click-to-zoom overlay for mermaid diagrams                          |
+| `docs/assets/mermaid-zoom.js`     | hand-written       | Zoom overlay logic                                                  |
+| `docs/assets/logo.svg`            | hand-drawn         | Site logo and favicon                                               |
 
 To update `termynal.css` / `termynal.js` to a newer `termynal.py` release:
 
@@ -434,15 +436,15 @@ python -c "import termynal, pathlib; print(pathlib.Path(termynal.__file__).paren
 These classes are defined in `termynal-colors.css` and can be used anywhere in
 `.md-typeset` prose via `attr_list`:
 
-| Class | Color |
-|-------|-------|
-| `.jm-green` | Bold `#4ade80` (green) |
-| `.jm-green-dim` | `#86efac` (muted green) |
-| `.jm-cyan` | Bold `#22d3ee` (cyan) |
-| `.jm-blue` | Bold `#60a5fa` (blue) |
-| `.jm-yellow` | Bold `#facc15` (yellow) |
-| `.jm-amber` | `#fb923c` (amber/orange) |
-| `.jm-dim` | `#6b7280` (dim gray) |
+| Class           | Color                    |
+| --------------- | ------------------------ |
+| `.jm-green`     | Bold `#4ade80` (green)   |
+| `.jm-green-dim` | `#86efac` (muted green)  |
+| `.jm-cyan`      | Bold `#22d3ee` (cyan)    |
+| `.jm-blue`      | Bold `#60a5fa` (blue)    |
+| `.jm-yellow`    | Bold `#facc15` (yellow)  |
+| `.jm-amber`     | `#fb923c` (amber/orange) |
+| `.jm-dim`       | `#6b7280` (dim gray)     |
 
 Usage:
 

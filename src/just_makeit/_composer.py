@@ -1026,7 +1026,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
                 f"            int _i = _enum_index(_enum_{e}, _s);\n"
                 "            if (_i < 0) {\n"
                 "                PyErr_Format(PyExc_ValueError,\n"
-                f'                             "invalid {n} \'%s\'", _s);\n'
+                f"                             \"invalid {n} '%s'\", _s);\n"
                 "                goto fail;\n"
                 "            }\n"
                 f"            self->{n} = _i;\n"
@@ -3012,10 +3012,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         else (
             f"""        {{
             const char *_s = cJSON_GetStringValue(
-                cJSON_GetObjectItemCaseSensitive(sj, "{f['name']}"));
-            int _v = _enum_index(_enum_{f['enum']},
-                                 _s ? _s : "{f.get('default', '')}");
-            sg->{f['name']} = _v < 0 ? 0 : _v;
+                cJSON_GetObjectItemCaseSensitive(sj, "{f["name"]}"));
+            int _v = _enum_index(_enum_{f["enum"]},
+                                 _s ? _s : "{f.get("default", "")}");
+            sg->{f["name"]} = _v < 0 ? 0 : _v;
         }}"""
             if f.get("enum")
             else f"        sg->{f['name']} = ({f['type']})_json_num(sj, "

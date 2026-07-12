@@ -492,7 +492,11 @@ class TestPyi:
                             "fn": "rdr_info",
                             "out": "rdr_info_t",
                             "fields": [
-                                {"name": "file_type", "type": "int", "enum": "ftype"},
+                                {
+                                    "name": "file_type",
+                                    "type": "int",
+                                    "enum": "ftype",
+                                },
                                 {"name": "fs", "type": "double"},
                             ],
                         }
@@ -501,7 +505,10 @@ class TestPyi:
             },
         }
         pyi = _handle.render_pyi(cfg, "rdr")
-        assert '"""file_type (str); one of ``"raw"``, ``"csv"``, ``"blue"``."""' in pyi
+        assert (
+            '"""file_type (str); one of ``"raw"``, ``"csv"``, ``"blue"``."""'
+            in pyi
+        )
         assert '"""fs (float)."""' in pyi
 
     def test_method_scalar_default_in_docstring(self):
@@ -523,7 +530,11 @@ class TestPyi:
                             "args": [
                                 {"name": "x", "type": "float _Complex[]"},
                                 {"name": "fs", "type": "double"},
-                                {"name": "fc", "type": "double", "default": "0.0"},
+                                {
+                                    "name": "fc",
+                                    "type": "double",
+                                    "default": "0.0",
+                                },
                             ],
                         }
                     ],

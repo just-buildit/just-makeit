@@ -167,12 +167,8 @@ class TestSourceType:
         # silently clobbered the others.
         cfg = _cfg()
         fields = cfg["module"]["wfm_compose"]["source"]["fields"]
-        fields.append(
-            {"name": "acq_code", "type": "uint8_t*", "bytes": True}
-        )
-        fields.append(
-            {"name": "data_code", "type": "uint8_t*", "bytes": True}
-        )
+        fields.append({"name": "acq_code", "type": "uint8_t*", "bytes": True})
+        fields.append({"name": "data_code", "type": "uint8_t*", "bytes": True})
         s = _composer.render_source_type(cfg, "wfm_compose")
         for n in ("bits", "acq_code", "data_code"):
             assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
@@ -183,7 +179,9 @@ class TestSourceType:
                 in s
             )
         # the shared coercer writes through the passed destination
-        assert "_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)" in s
+        assert (
+            "_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)" in s
+        )
         assert "free(*dst);" in s
 
     def test_factories(self):
