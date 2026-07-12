@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.28.9] — 2026-07-12
+
+### Fixed
+
+- **`jm bench`'s display table and Δ-vs-prev collided same-named benches
+    across components (gh-464).** `_bench_key` already preferred `fullname`
+    over the bare `name` for baseline↔current matching, but
+    `_display_table` — the function that prints `jm bench`'s terminal
+    summary — never got the same fix, reading `b["name"]` directly for both
+    the printed "Name" column and the `prev_ops` dict key used to compute
+    "Δ vs prev". Two components sharing a generic Python bench name (e.g.
+    `test_bench_steps_64k`) printed identically and could silently compare
+    against the wrong component's previous run. New `_qualify_python_names()`
+    prefixes each Python benchmark's `name` with its bench file's stem,
+    mirroring the C side's existing `f"{comp}::{entry_name}"` convention.
+- **`jm regenerate` discarded hand-written `_core.c`/`_core.h` bodies on
+    every rebuild (gh-267).** By default it now lifts create/destroy/reset/
+    `step()`/getter/setter/method bodies out of the sacred files by function
+    name before deleting them, and splices them back into the freshly
+    regenerated ones — reusing the same by-name extract/restore machinery
+    `jm apply` already uses to preserve hand-patched module `_ext.c` glue,
+    generalized to public (non-`static`) functions. Guards against a bare
+    prototype declaration false-matching and against splicing an old body
+    under a changed signature (e.g. `jm add` growing a lifecycle function's
+    parameter list) — in either case the fresh body is kept instead. `jm add`
+    / `jm remove --state` now pass `discard=True` explicitly, matching their
+    existing documented contract. New `--discard` flag restores the old
+    clean-reset behavior.
+
 ## [0.28.8] — 2026-07-11
 
 ### Fixed
@@ -51,8 +80,7 @@
     scale/corruption bug even though each half is individually correct for
     its own source of truth (the actual root cause behind gh-441's original
     report). `jm apply` now warns (non-fatal — jm has no way to know which
-    side is stale) on every numeric disagreement; `jm status`/`jm status
-    --check` promote the same check to an always-shown, CI-gating `DRIFT`
+    side is stale) on every numeric disagreement; `jm status`/`jm status   --check` promote the same check to an always-shown, CI-gating `DRIFT`
     section, mirroring the gh-426 `DROPPED`-symbol precedent (never
     suppressed by `--allow`/`status_allow`). Scoped to `init_params` for v1.
     Best-effort: a header `@param` with no recognizable `(default: X)`
@@ -67,8 +95,7 @@
 
 - **Standalone objects never got a `.pyi` stub for a newly added property
     (gh-446).** `_property.py::run()`'s standalone branch updated
-    `_core.h`/`_ext.c` but never wrote the `.pyi` at all. Because `jm
-    apply`'s replay and `jm status --check` both materialize properties by
+    `_core.h`/`_ext.c` but never wrote the `.pyi` at all. Because `jm   apply`'s replay and `jm status --check` both materialize properties by
     calling this same `_property.run()` internally, the gap was invisible
     on three fronts: immediately after `jm property`, after a follow-up
     `jm apply`, and to `jm status --check` itself, which reported clean
