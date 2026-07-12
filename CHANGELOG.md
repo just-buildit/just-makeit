@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.28.10] — 2026-07-12
+
+### Added
+
+- **Composer source generic computed (derived) read-only properties
+    (gh-287).** A `[[module.X.source.computed]]` entry adds a read-only
+    attribute on the generated source type whose value is computed in C by
+    a project straight-C function (`extern <type> fn(const <struct> *)`) —
+    a derived quantity, not a stored field, so it never goes stale when the
+    fields it depends on are mutated. jm emits the getset; the project
+    writes the few-line derivation. Generic — mirrors `source.generates`'s
+    existing project-C-function seam, proven non-waveform-coupled by a
+    `clip`/`duration` test case. Closes the last reason a project would
+    hand-write a Python subclass of a generated composer type (e.g.
+    doppler's `Synth.n_samples`) purely to add a derived convenience.
+
+### Changed
+
+- **Pre-commit hooks bumped to latest**: `uv-pre-commit` 0.7.2→0.11.28,
+    `ruff-pre-commit` v0.11.10→v0.15.21, `mirrors-clang-format`
+    v22.1.5→v22.1.8. `pre-commit run --all-files` reformatted 17 files
+    (all cosmetic — Python quote-style/line-wrap from the ruff bump,
+    markdown table/list normalization from mdformat catching files that
+    predated an `--all-files` sweep, and one example tutorial-step header's
+    C formatting from the clang-format bump). The clang-format reformat of
+    `composites`'s `.steps/ringbuf.h` desynced the example's assembled,
+    checked-in `README.md` — caught by `test_readme_assembled` and fixed
+    by regenerating it via `assemble.py` in the same commit.
+
 ## [0.28.9] — 2026-07-12
 
 ### Fixed
