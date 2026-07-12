@@ -2044,6 +2044,19 @@ def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
     return out
 
 
+def _inline_computed(c: dict) -> str:
+    """Serialize a computed read-only property (``{name, type, fn, doc?}``) as a
+    TOML inline table — the source's derived-property declarations (gh-287)."""
+    parts = [
+        f'name = "{c["name"]}"',
+        f'type = "{c["type"]}"',
+        f'fn = "{c["fn"]}"',
+    ]
+    if c.get("doc"):
+        parts.append(f'doc = "{c["doc"]}"')
+    return "{ " + ", ".join(parts) + " }"
+
+
 def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     """Render a composer module's source/segment/timeline/oo/json sub-tables
     (gh-287). Each is a single TOML table; field lists are inline-table arrays
@@ -2061,6 +2074,13 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
             out.append(
                 "fields = ["
                 + ", ".join(_inline_field(f) for f in fields)
+                + "]"
+            )
+        computed = src.get("computed") or []
+        if computed:
+            out.append(
+                "computed = ["
+                + ", ".join(_inline_computed(c) for c in computed)
                 + "]"
             )
         out.append("")
