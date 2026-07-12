@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.28.11] — 2026-07-12
+
+### Fixed
+
+- **`jm apply`/`jm status` injected a malformed, redundant prototype for a
+    non-static, header-only, self-defining function (gh-468).**
+    `_inject_decls_into_core_h`'s gh-133 check only recognized a `static   inline`/`static JM_FORCEINLINE` definition as already satisfying the
+    manifest — the regex required `static` immediately before the
+    `inline`/`JM_FORCEINLINE` keyword. A module-level header-only function
+    that dropped `static` (doppler's `square_clip`, to silence GCC
+    `-Wstatic-in-inline` triggered by a non-static caller elsewhere) fell
+    through the check, so `jm apply` injected a duplicate prototype at
+    column 0 (breaking the surrounding `extern "C"` block's indent, missing
+    the project's usual space before `(`) directly after the definition it
+    duplicates, and `jm status` reported the header as STALE for the same
+    reason (it reuses `apply`'s exact code path on a throwaway copy). `static`
+    is now optional in the gh-133 regex: an inline/JM_FORCEINLINE definition
+    satisfies the manifest regardless of linkage.
+
 ## [0.28.10] — 2026-07-12
 
 ### Added
