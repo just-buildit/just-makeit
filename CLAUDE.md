@@ -48,37 +48,37 @@ the user only writes the DSP algorithm.
 
 ### Source layout (`src/just_makeit/`)
 
-| File                | Role                                                                                                                                                                       |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_cli.py`           | Entry point; dispatches `just-makeit <cmd>` to submodules                                                                                                                  |
-| `_cli_*.py`         | Per-command argument parsers (`_cli_new`, `_cli_object`, `_cli_method`, `_cli_function`, `_cli_remove`, `_cli_parse`)                                                      |
-| `_color.py`         | ANSI color helpers; respects `NO_COLOR` and non-TTY fallback                                                                                                               |
-| `_types.py`         | **Type system**: `_CTYPE_META` dict, all type-query helpers (`is_valid_type`, `array_elem_ctype`, etc.)                                                                    |
-| `_context/`         | **Context builders** (package): `_sample`, `_state`, `_step`, `_methods`, `_types`, `_parse` — all `make_*_ctx()` functions                                                |
-| `_render.py`        | **Render engine**: `render()`, template constants loaded from files at import, `fn_c_stub/decl`, `render_module_ext_*`                                                       |
+| File                | Role                                                                                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_cli.py`           | Entry point; dispatches `just-makeit <cmd>` to submodules                                                                                                       |
+| `_cli_*.py`         | Per-command argument parsers (`_cli_new`, `_cli_object`, `_cli_method`, `_cli_function`, `_cli_remove`, `_cli_parse`)                                           |
+| `_color.py`         | ANSI color helpers; respects `NO_COLOR` and non-TTY fallback                                                                                                    |
+| `_types.py`         | **Type system**: `_CTYPE_META` dict, all type-query helpers (`is_valid_type`, `array_elem_ctype`, etc.)                                                         |
+| `_context/`         | **Context builders** (package): `_sample`, `_state`, `_step`, `_methods`, `_types`, `_parse` — all `make_*_ctx()` functions                                     |
+| `_render.py`        | **Render engine**: `render()`, template constants loaded from files at import, `fn_c_stub/decl`, `render_module_ext_*`                                          |
 | `templates/`        | **Template files**: `c/inc/`, `c/src/`, `cmake/`, `py/`, `make/`, `toml/`, `doc/`, `misc/`; C/H use `/*<<token>>*/` placeholders for clang-format compatibility |
-| `_config.py`        | Read/write `just-makeit.toml`; all project state lives here                                                                                                                |
-| `_new.py`           | `just-makeit new` — creates a new empty project scaffold                                                                                                                   |
-| `_init.py`          | Low-level file writers shared by `object`, `module`, and `new`                                                                                                             |
-| `_object.py`        | `just-makeit object` — builds render context and calls `_init.py` writers                                                                                                  |
-| `_module.py`        | `just-makeit module` / `just-makeit object --module` — multi-object `.so`                                                                                                  |
-| `_method.py`        | `just-makeit method` — adds named execute variants to an object                                                                                                            |
-| `_property.py`      | `just-makeit property` — adds Python properties backed by getter/setter C fns                                                                                              |
-| `_function.py`      | `just-makeit function` — module-level C functions exposed to Python                                                                                                        |
-| `_add.py`           | `just-makeit add` — appends state/init-param to existing object                                                                                                            |
-| `_perf.py`          | `just-makeit perf` — idempotent retrofit of `JM_HOT`/`JM_FORCEINLINE`                                                                                                      |
-| `_impl.py`          | `--impl file::funcname` and `--replace` — lifts a C function body from an existing file and splices it into generated stubs                                                |
-| `_apply.py`         | `just-makeit apply` — additive replay: materializes any files missing from the project manifest                                                                            |
-| `_remove.py`        | `just-makeit remove` — deletes generated files and strips TOML/CMake wiring                                                                                                |
-| `_app.py`           | `just-makeit app` — scaffolds a C executable, Python console script, or PEP 723 inline script from a component                                                             |
-| `_bench.py`         | `just-makeit bench` — builds and runs C + Python benchmarks; saves dated snapshots                                                                                         |
-| `_upgrade.py`       | `just-makeit upgrade` — schema migration for existing projects                                                                                                             |
-| `_split_objects.py` | `just-makeit split-objects` — moves per-object TOML sections into `objects/*.toml` fragments                                                                               |
-| `_script.py`        | `just-makeit script` — reconstructs full CLI history from `just-makeit.toml`                                                                                               |
-| `_build.py`         | `just-makeit build/test/dry-run` — cmake configure + build + pytest                                                                                                        |
-| `_stubs.py`         | Generates `.pyi` type stubs regenerated on every mutating command                                                                                                          |
-| `_scripts.py`       | Entry points for `jm-install-deps`, `jm-run-tests`, `jm-docker-e2e`                                                                                                        |
-| `_example.py`       | `just-makeit example` — runs bundled end-to-end walkthroughs                                                                                                               |
+| `_config.py`        | Read/write `just-makeit.toml`; all project state lives here                                                                                                     |
+| `_new.py`           | `just-makeit new` — creates a new empty project scaffold                                                                                                        |
+| `_init.py`          | Low-level file writers shared by `object`, `module`, and `new`                                                                                                  |
+| `_object.py`        | `just-makeit object` — builds render context and calls `_init.py` writers                                                                                       |
+| `_module.py`        | `just-makeit module` / `just-makeit object --module` — multi-object `.so`                                                                                       |
+| `_method.py`        | `just-makeit method` — adds named execute variants to an object                                                                                                 |
+| `_property.py`      | `just-makeit property` — adds Python properties backed by getter/setter C fns                                                                                   |
+| `_function.py`      | `just-makeit function` — module-level C functions exposed to Python                                                                                             |
+| `_add.py`           | `just-makeit add` — appends state/init-param to existing object                                                                                                 |
+| `_perf.py`          | `just-makeit perf` — idempotent retrofit of `JM_HOT`/`JM_FORCEINLINE`                                                                                           |
+| `_impl.py`          | `--impl file::funcname` and `--replace` — lifts a C function body from an existing file and splices it into generated stubs                                     |
+| `_apply.py`         | `just-makeit apply` — additive replay: materializes any files missing from the project manifest                                                                 |
+| `_remove.py`        | `just-makeit remove` — deletes generated files and strips TOML/CMake wiring                                                                                     |
+| `_app.py`           | `just-makeit app` — scaffolds a C executable, Python console script, or PEP 723 inline script from a component                                                  |
+| `_bench.py`         | `just-makeit bench` — builds and runs C + Python benchmarks; saves dated snapshots                                                                              |
+| `_upgrade.py`       | `just-makeit upgrade` — schema migration for existing projects                                                                                                  |
+| `_split_objects.py` | `just-makeit split-objects` — moves per-object TOML sections into `objects/*.toml` fragments                                                                    |
+| `_script.py`        | `just-makeit script` — reconstructs full CLI history from `just-makeit.toml`                                                                                    |
+| `_build.py`         | `just-makeit build/test/dry-run` — cmake configure + build + pytest                                                                                             |
+| `_stubs.py`         | Generates `.pyi` type stubs regenerated on every mutating command                                                                                               |
+| `_scripts.py`       | Entry points for `jm-install-deps`, `jm-run-tests`, `jm-docker-e2e`                                                                                             |
+| `_example.py`       | `just-makeit example` — runs bundled end-to-end walkthroughs                                                                                                    |
 
 ### Template rendering
 

@@ -5,7 +5,7 @@ directly from the Doxygen-style `/** ... */` comments in your project's
 `<component>_core.h` headers. This page explains how that pipeline works,
 what Doxygen tags are supported, and how CI keeps the stubs in sync.
 
----
+______________________________________________________________________
 
 ## The pipeline
 
@@ -40,7 +40,7 @@ a C function declaration. The Doxygen XML pipeline (`doxygen Doxyfile`
 warnings and mkdoxy uses it to generate HTML C API docs. Neither touches
 `.pyi` generation.
 
----
+______________________________________________________________________
 
 ## Supported Doxygen tags
 
@@ -114,7 +114,7 @@ class AGC:
     ) -> None: ...
 ```
 
----
+______________________________________________________________________
 
 ## `@code` blocks become runnable doctests
 
@@ -139,7 +139,7 @@ against the built C extension every CI pass. If a comment says
 …and the C implementation returns `0.6`, CI will catch it. Write your
 `@code` examples so they produce deterministic, printable output.
 
----
+______________________________________________________________________
 
 ## The manifest-drift gate
 
@@ -147,24 +147,24 @@ against the built C extension every CI pass. If a comment says
 gate, not by hand. After you edit a `_core.h` docstring:
 
 1. Run `jm apply` — regenerates all glue files from the updated headers.
-2. Commit the updated `.pyi` stubs alongside the header change.
-3. CI runs `jm status --check`, which re-parses the headers and diffs
-   the regenerated output against the committed stubs. Any mismatch
-   fails the gate.
+1. Commit the updated `.pyi` stubs alongside the header change.
+1. CI runs `jm status --check`, which re-parses the headers and diffs
+    the regenerated output against the committed stubs. Any mismatch
+    fails the gate.
 
 The gate ensures stubs never drift from the C source of truth.
 
----
+______________________________________________________________________
 
 ## What the Doxygen XML pipeline is for
 
 Doxygen is run separately in CI for two purposes unrelated to `.pyi` generation:
 
 - **Zero-warnings gate** (`ci.yml`): `doxygen Doxyfile 2>&1 | tee doxygen.log`
-  followed by `grep -q 'warning:'` — ensures the C API comments are clean.
+    followed by `grep -q 'warning:'` — ensures the C API comments are clean.
 - **HTML C API docs** (`docs.yml`): mkdoxy reads the Doxygen XML (at
-  `.mkdoxy/doppler/xml/`) to generate `docs/c-api/` Markdown, which the
-  docs site builds into browsable HTML.
+    `.mkdoxy/doppler/xml/`) to generate `docs/c-api/` Markdown, which the
+    docs site builds into browsable HTML.
 
 Neither of these touches `.pyi` generation. The two pipelines are
 completely independent — jm reads header text directly; Doxygen reads

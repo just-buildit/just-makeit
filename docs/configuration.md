@@ -463,20 +463,20 @@ reset). Same `name` / `type` / `default` keys as `state`.
 
 One entry per `just-makeit method` call.
 
-| Key               | Type                    | Notes                                                     |
-| ----------------- | ----------------------- | --------------------------------------------------------- |
-| `name`            | string                  | Method name                                               |
-| `arg_type`        | string                  | Array-style input type                                    |
-| `return_type`     | string                  | C return type                                             |
-| `params`          | array of `{name, type}` | Named scalar / array parameters                           |
-| `variable_output` | bool                    | `--variable-output`                                       |
-| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)      |
-| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)  |
+| Key               | Type                    | Notes                                                             |
+| ----------------- | ----------------------- | ----------------------------------------------------------------- |
+| `name`            | string                  | Method name                                                       |
+| `arg_type`        | string                  | Array-style input type                                            |
+| `return_type`     | string                  | C return type                                                     |
+| `params`          | array of `{name, type}` | Named scalar / array parameters                                   |
+| `variable_output` | bool                    | `--variable-output`                                               |
+| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
+| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
 | `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
-| `batch`           | bool                    | `--batch`                                                 |
-| `multi_output`    | array of strings        | `--multi-output` types                                    |
-| `out_type`        | string                  | `--out-type`                                              |
-| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`) |
+| `batch`           | bool                    | `--batch`                                                         |
+| `multi_output`    | array of strings        | `--multi-output` types                                            |
+| `out_type`        | string                  | `--out-type`                                                      |
+| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)         |
 
 `nogil` wraps the pure-C kernel of a `variable_output` execute method in
 `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy accessors hoisted out

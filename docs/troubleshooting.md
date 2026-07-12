@@ -243,8 +243,7 @@ ______________________________________________________________________
 ## `--return-type "T[]"` requires an array `--arg-type`
 
 **Symptom:** `just-makeit object x --return-type "float[]"` with a scalar (or
-`void`) input type exits with: `array return type 'float[]' requires an array
-arg type (--arg-type 'T[]')`.
+`void`) input type exits with: `array return type 'float[]' requires an array arg type (--arg-type 'T[]')`.
 
 **Cause:** an array return only makes sense for a blockwise transform — array
 in, array out of the same length. A scalar input paired with an array return

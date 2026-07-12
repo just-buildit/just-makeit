@@ -252,8 +252,8 @@ ______________________________________________________________________
 1. Wait for CI to go green on the PR. Fix any failures before merging.
 
 1. Add the PR to the **merge queue** ("Merge when ready"). The queue rebases it
-   onto `main`, re-runs CI on the batched commit, and squash-merges it
-   automatically when green — no manual rebase, even if other PRs land first.
+    onto `main`, re-runs CI on the batched commit, and squash-merges it
+    automatically when green — no manual rebase, even if other PRs land first.
 
 1. The branch is deleted automatically on merge.
 

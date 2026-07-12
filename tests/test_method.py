@@ -489,7 +489,9 @@ class TestMethodOutKwarg:
         assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
         assert "(PyObject *)out_arr)" in ext
 
-    def test_out_validation_requires_max_of_max_out_and_call_size(self, project):
+    def test_out_validation_requires_max_of_max_out_and_call_size(
+        self, project
+    ):
         """Follow-up to gh-219: `max_out()` is not always a true
         call-independent upper bound — a generator's `steps(count)` writes
         exactly `count` samples, which can exceed `max_out()`. Validating
@@ -499,7 +501,9 @@ class TestMethodOutKwarg:
         arg, and a void-arg/no-params generator with an implicit `count`)
         must require capacity for whichever is larger."""
         ext = self._add(project, arg="float _Complex")
-        assert "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);" in ext
+        assert (
+            "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);" in ext
+        )
         assert "if (_cap < _min_cap) {" in ext
         assert "_cap, _min_cap);" in ext
 
@@ -573,8 +577,7 @@ class TestVariableOutputParamsKeywords:
     def test_wrapper_signature_takes_kwds(self, project):
         ext = self._ext(project)
         assert (
-            "Nco_delay(NcoObject *self, PyObject *args, PyObject *kwds)"
-            in ext
+            "Nco_delay(NcoObject *self, PyObject *args, PyObject *kwds)" in ext
         )
 
     def test_no_out_buffer_kwarg(self, project):
@@ -632,9 +635,7 @@ class TestVariableOutputSingleArrayParam:
 
     def test_pyi_has_out_param_and_max_out(self, project):
         self._ext(project)
-        pyi = (project / "src" / "dsp" / "nco.pyi").read_text(
-            encoding="utf-8"
-        )
+        pyi = (project / "src" / "dsp" / "nco.pyi").read_text(encoding="utf-8")
         assert "out:" in pyi and "| None = None" in pyi
         assert "def steps_max_out(self) -> int:" in pyi
 
