@@ -295,9 +295,30 @@ def _run_python(root: Path, python: str) -> dict | None:
         if not report.exists():
             return None
         try:
-            return json.loads(report.read_text(encoding="utf-8"))
+            data = json.loads(report.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return None
+        _qualify_python_names(data)
+        return data
+
+
+def _qualify_python_names(data: dict) -> None:
+    """Prefix each Python benchmark's ``name`` with its bench file's stem.
+
+    pytest-benchmark's bare ``name`` (e.g. ``test_bench_steps_64k``) repeats
+    across ``bench_*.py`` files project-wide -- several projects' hand-written
+    benchmarks reuse the same test name per component (``test_bench_step``,
+    ``test_bench_steps_64k``, ...). ``_bench_key`` already prefers the unique
+    ``fullname`` for baseline<->current matching (gh-141 follow-up), but
+    ``_display_table`` prints the bare ``name`` and keys its previous-run
+    lookup on it too -- both silently collide across components. Mirrors the
+    C side's own ``f"{comp}::{entry_name}"`` prefixing in ``_collect_c`` so
+    both sides read the same way in a merged table."""
+    for entry in data.get("benchmarks", []):
+        fullname = entry.get("fullname", "")
+        file_part = fullname.split("::", 1)[0] if "::" in fullname else ""
+        if file_part:
+            entry["name"] = f"{Path(file_part).stem}::{entry.get('name', '')}"
 
 
 # ── history (dated snapshots) ──────────────────────────────────────────────────
