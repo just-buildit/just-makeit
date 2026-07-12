@@ -68,6 +68,7 @@ nav:
     - Bind design (proposal): developers/bind-design.md
     - Release checklist: developers/release-checklist.md
     - Why zensical: developers/why-zensical.md
+    - Docstring derivation (C → .pyi): developers/docstring-derivation.md
 
 theme:
   name: material
