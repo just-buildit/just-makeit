@@ -534,6 +534,128 @@ def _gen_cfg():
     return cfg
 
 
+def _computed_cfg():
+    """_cfg() with the source declaring a computed read-only property (feat 6)."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["computed"] = [
+        {
+            "name": "n_samples",
+            "type": "size_t",
+            "fn": "wfm_source_n_samples",
+            "doc": "One full pass of a bits pattern, in samples.",
+        }
+    ]
+    return cfg
+
+
+class TestSourceComputed:
+    """``[[module.X.source.computed]]`` (gh-287 round 3 feature 6): a read-only
+    property whose value is computed in C by a project straight-C fn (no stored
+    field, never stale). Generic — mirrors ``generates``'s project-C-fn seam."""
+
+    def test_readonly_getset_emitted(self):
+        s = _composer.render_source_type(_computed_cfg(), "wfm_compose")
+        assert "Synth_get_n_samples(SynthObject *self" in s
+        # delegates to the project fn over the struct; size_t → PyLong
+        assert (
+            "PyLong_FromSize_t((size_t)wfm_source_n_samples(&self->src))" in s
+        )
+        # read-only: NULL setter + the doc string in the getset row
+        assert (
+            '{"n_samples", (getter)Synth_get_n_samples, NULL,'
+            ' "One full pass of a bits pattern, in samples.", NULL},' in s
+        )
+        # no setter function generated
+        assert "Synth_set_n_samples" not in s
+
+    def test_ext_declares_project_fn(self):
+        ext = _composer.render_ext(_computed_cfg(), "wfm_compose")
+        assert (
+            "extern size_t wfm_source_n_samples(const wfm_source_t *);" in ext
+        )
+
+    def test_pyi_declares_readonly_property(self):
+        pyi = _composer.render_pyi(_computed_cfg(), "wfm_compose")
+        assert "    n_samples: int" in pyi
+        # absent without the table
+        assert "n_samples" not in _composer.render_pyi(_cfg(), "wfm_compose")
+
+    def test_double_computed_maps_to_float_pyi(self):
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["source"]["computed"] = [
+            {"name": "duration", "type": "double", "fn": "src_duration"}
+        ]
+        s = _composer.render_source_type(cfg, "wfm_compose")
+        assert "PyFloat_FromDouble((double)src_duration(&self->src))" in s
+        pyi = _composer.render_pyi(cfg, "wfm_compose")
+        assert "    duration: float" in pyi
+
+    def test_absent_by_default(self):
+        s = _composer.render_source_type(_cfg(), "wfm_compose")
+        assert "_get_n_samples" not in s
+        assert "extern size_t" not in _composer.render_ext(
+            _cfg(), "wfm_compose"
+        )
+
+    def test_generic_non_wfm_source(self):
+        """Proves it is a generic object-of-objects primitive: a clip source
+        exposes its own computed `duration` via the project's own C fn."""
+        cfg = {
+            "project": {"name": "studio", "version": "0.1.0"},
+            "module": {
+                "playlist": {
+                    "kind": "composer",
+                    "composes": ["clip"],
+                    "source": {
+                        "object": "clip",
+                        "struct": "clip_t",
+                        "type_name": "Clip",
+                        "fields": [
+                            {
+                                "name": "gain",
+                                "type": "double",
+                                "default": "1.0",
+                            }
+                        ],
+                        "computed": [
+                            {
+                                "name": "duration",
+                                "type": "double",
+                                "fn": "clip_duration",
+                            }
+                        ],
+                    },
+                    "segment": {
+                        "type_name": "Track",
+                        "struct": "track_t",
+                        "sources": "multi",
+                        "fields": [{"name": "dur", "type": "size_t"}],
+                    },
+                    "oo": {"composer_type_name": "Mix"},
+                }
+            },
+        }
+        s = _composer.render_source_type(cfg, "playlist")
+        assert "Clip_get_duration(ClipObject *self" in s
+        assert "clip_duration(&self->src)" in s
+        ext = _composer.render_ext(cfg, "playlist")
+        assert "extern double clip_duration(const clip_t *);" in ext
+
+    def test_name_colliding_with_field_is_rejected(self):
+        """A computed name shadowing a stored field (or fs) is a manifest error
+        — both would emit a getset row for the same attribute — so reject it."""
+        for clash in ("freq", "fs"):
+            cfg = _cfg()
+            cfg["module"]["wfm_compose"]["source"]["computed"] = [
+                {"name": clash, "type": "double", "fn": "f"}
+            ]
+            try:
+                _composer.render_source_type(cfg, "wfm_compose")
+                raise AssertionError(f"expected rejection for {clash!r}")
+            except ValueError as e:
+                assert "collides with a stored field" in str(e)
+
+
 class TestSourceGenerates:
     """``[module.X.source.generates]`` (gh-287 round 3): the source type
     generates standalone by delegating to a composed generator, built by the

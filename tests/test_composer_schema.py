@@ -312,3 +312,36 @@ def test_stream_and_to_dict_coexist(tmp_path):
     cfg2 = load(tmp_path)
     tbl = composer_stream(cfg2, "wfm_compose")
     assert tbl.get("stream") is True and tbl.get("to_dict") is True
+
+
+def test_save_load_preserves_computed(tmp_path):
+    """``[[module.X.source.computed]]`` (feature 6) survives save/load."""
+    cfg = _cfg()
+    cfg["module"]["wfm_compose"]["source"]["computed"] = [
+        {
+            "name": "n_samples",
+            "type": "size_t",
+            "fn": "wfm_source_n_samples",
+            "doc": "pattern length",
+        }
+    ]
+    save(tmp_path, cfg)
+    manifest = (tmp_path / "just-makeit.toml").read_text()
+    assert "computed = [" in manifest
+    assert 'fn = "wfm_source_n_samples"' in manifest
+
+    cfg2 = load(tmp_path)
+    comp = composer_source(cfg2, "wfm_compose")["computed"]
+    assert comp == [
+        {
+            "name": "n_samples",
+            "type": "size_t",
+            "fn": "wfm_source_n_samples",
+            "doc": "pattern length",
+        }
+    ]
+
+
+def test_computed_absent_by_default():
+    """No ``computed`` key → the source declares no derived properties."""
+    assert "computed" not in composer_source(_cfg(), "wfm_compose")

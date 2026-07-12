@@ -247,6 +247,40 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     }
 
 
+def _source_computed(cfg: dict, module: str) -> list[dict]:
+    """The source's computed (derived) read-only properties (feature 6).
+
+    ``[[module.X.source.computed]]`` adds a **read-only** attribute on the source
+    type whose value is computed in C from the struct — a derived quantity that
+    is not a stored field (so it never goes stale when the fields it depends on
+    are mutated). Each entry:
+
+    ``name``    the Python attribute (e.g. ``"n_samples"``);
+    ``type``    the C return type (``size_t`` / ``double`` / ``int`` / …),
+                converted to Python like any scalar field;
+    ``fn``      a straight-C function ``<type> fn(const <struct> *)`` the project
+                writes (the derivation — no CPython); jm emits the getset that
+                calls it.
+
+    Optional ``doc`` (getset docstring). Generic — mirrors ``generates``'s
+    project-C-function seam; returns ``[]`` when none are declared.
+
+    A computed name that collides with a stored field (or the always-present
+    ``fs``) is a manifest error — both would emit a getset row for the same
+    attribute and the second would silently shadow the first — so it is
+    rejected here (a derived quantity must not share a stored field's name)."""
+    computed = list(C.composer_source(cfg, module).get("computed", []))
+    if computed:
+        taken = {f["name"] for f in _source_fields(cfg, module)} | {"fs"}
+        clash = sorted(c["name"] for c in computed if c["name"] in taken)
+        if clash:
+            raise ValueError(
+                "computed source property name collides with a stored field: "
+                + ", ".join(clash)
+            )
+    return computed
+
+
 def render_source_type(cfg: dict, module: str) -> str:
     """Emit the source ``PyTypeObject`` (e.g. ``Synth``): a config object
     wrapping the backing C struct, with a keyword ``tp_init``, per-field getset
@@ -746,6 +780,25 @@ static int
         f'    {{"fs", (getter){tname}_get_fs, (setter){tname}_set_fs, '
         "NULL, NULL},"
     )
+
+    # Feature 6 — computed (derived) read-only properties: a value computed in C
+    # from the struct by a project straight-C fn (no CPython), so it never goes
+    # stale when its inputs are mutated. Generic; opt-in via
+    # [[module.X.source.computed]]. Read-only (NULL setter).
+    for c in _source_computed(cfg, module):
+        n, ct = c["name"], c["type"]
+        to_py = _to_py_scalar(ct, f"{c['fn']}(&self->src)")
+        doc = c.get("doc", "")
+        doc_c = f'"{doc}"' if doc else "NULL"
+        getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    return {to_py};
+}}""")
+        getset_rows.append(
+            f'    {{"{n}", (getter){tname}_get_{n}, NULL, {doc_c}, NULL}},'
+        )
 
     parts.append("\n".join(getset_fns))
     parts.append(f"""
@@ -2429,14 +2482,22 @@ def render_ext(cfg: dict, module: str) -> str:
     serializer_includes = "".join(f'#include "{h}"\n' for h in _ser_headers)
 
     gen = _source_generates(cfg, module)
+    src_struct = C.composer_source(cfg, module)["struct"]
     gen_includes = ""
     if gen:
-        src_struct = C.composer_source(cfg, module)["struct"]
         gen_includes = (
             f'#include "{gen["header"]}"\n'
             "/* project bridge (straight C, no CPython): build the generator. */\n"
             f"extern {gen['state_type']} *{gen['bridge_fn']}("
             f"const {src_struct} *, double);\n"
+        )
+
+    # Feature 6 — computed properties: each is backed by a project straight-C
+    # derivation fn `<type> fn(const <struct> *)`. Declare them here.
+    for c in _source_computed(cfg, module):
+        gen_includes += (
+            "/* project computed-property fn (straight C, no CPython). */\n"
+            f"extern {c['type']} {c['fn']}(const {src_struct} *);\n"
         )
 
     parts = [
@@ -2683,6 +2744,10 @@ def render_pyi(cfg: dict, module: str) -> str:
             "    def reset(self) -> None:",
             '        """Reset to initial state."""',
         ]
+    # Feature 6 — computed read-only properties (derived in C; never stale).
+    for c in _source_computed(cfg, module):
+        pytype = "float" if c["type"] in ("double", "float") else "int"
+        lines.append(f"    {c['name']}: {pytype}")
     lines += ["", f"class {seg_t}:"]
     lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
     lines += [
