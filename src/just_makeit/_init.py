@@ -287,12 +287,19 @@ def _inject_decls_into_core_h(
         m = re.search(r"(\w+)\s*\(", d)
         if m:
             fn_name = m.group(1)
-            # gh-133: if the header already has a static-inline (or
-            # static JM_FORCEINLINE) *definition* of this function, don't
-            # append a bare extern declaration — that would violate C11
-            # §6.7.4¶7 (conflicting linkage on the same TU).
+            # gh-133/gh-468: if the header already has an inline (or
+            # JM_FORCEINLINE) *definition* of this function, don't append a
+            # bare extern declaration — for a `static inline`/`static
+            # JM_FORCEINLINE` definition that would violate C11 §6.7.4¶7
+            # (conflicting linkage on the same TU); for a non-static one
+            # (module-level header-only functions, e.g. doppler's
+            # `square_clip`, dropped `static` to silence GCC
+            # `-Wstatic-in-inline` for a non-static caller) the definition
+            # already satisfies the manifest just the same, so injecting a
+            # redundant declaration would only ever be a malformed duplicate.
+            # `static` is therefore optional here, not required.
             static_inline_pat = re.compile(
-                r"\bstatic\b[^;{]*\b(?:inline|JM_FORCEINLINE)\b[^;{]*\b"
+                r"(?:\bstatic\b[^;{]*)?\b(?:inline|JM_FORCEINLINE)\b[^;{]*\b"
                 + re.escape(fn_name)
                 + r"\s*\(",
                 re.MULTILINE,

@@ -792,6 +792,44 @@ class TestInjectDeclsStaticInline:
         assert changed
         assert "new_fn" in path.read_text()
 
+    def test_non_static_forceinline_not_redeclared(self, tmp_path):
+        """gh-468: a module-level header-only function dropped `static` (e.g.
+        to silence GCC -Wstatic-in-inline for a non-static caller elsewhere)
+        but is still fully self-defining — must not get a redundant, malformed
+        prototype injected."""
+        header = (
+            "#ifndef UTIL_H\n#define UTIL_H\n"
+            "#define JM_FORCEINLINE __attribute__((always_inline)) inline\n"
+            "JM_FORCEINLINE float complex\n"
+            "square_clip(float complex y, float lin)\n"
+            "{\n    return y;\n}\n"
+            "#endif /* UTIL_CORE_H */\n"
+        )
+        path = tmp_path / "util_core.h"
+        path.write_text(header)
+        changed = _inject_decls_into_core_h(
+            path,
+            "util",
+            ["float complex square_clip(float complex y, float lin);"],
+        )
+        assert not changed
+        assert path.read_text().count("square_clip") == 1
+
+    def test_non_static_inline_not_redeclared(self, tmp_path):
+        """Same as above with the bare `inline` keyword instead of the
+        JM_FORCEINLINE macro."""
+        path = tmp_path / "d_core.h"
+        path.write_text(
+            "#ifndef D_H\n#define D_H\n"
+            "inline int\nbare_inline(int x)\n{\n    return x;\n}\n"
+            "#endif /* D_CORE_H */\n"
+        )
+        changed = _inject_decls_into_core_h(
+            path, "d", ["int bare_inline(int x);"]
+        )
+        assert not changed
+        assert path.read_text().count("bare_inline") == 1
+
 
 class TestBuiltinResetPyiInStateCtx:
     """gh-131: make_state_ctx must supply builtin_reset_pyi so the
