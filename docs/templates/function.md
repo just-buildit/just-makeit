@@ -19,16 +19,21 @@ jm new my_dsp --module io
 jm function q15_to_float --module io \
     --param input:int16_t[] \
     --out-param output:float[] \
-    --param n:size_t \
-    --impl "/tmp/impl.c::q15_to_float"
+    --param n:size_t
 ```
 
 `--param` declares input arrays (auto `const`-qualified) and scalar
 params; `--out-param` declares writable output arrays (`const`
-dropped). `--impl file::funcname` lifts an existing C body into the
-generated stub. The function's `_core.c` is a sacred file — once
-written, `jm apply` never overwrites it — so lifting a real body in is
-safe and has no splice-into-existing-file hazard.
+dropped). This scaffolds the function with a blank `<<IMPLEMENT>>` stub,
+shown below; see [What you fill in](#what-you-fill-in) for the body.
+
+Already have the implementation in another file? Add
+`--impl file::funcname` (e.g. `--impl /tmp/impl.c::q15_to_float`) to the
+command above and it lifts that function's body directly into the
+generated file instead of leaving a stub — no separate fill-in step. The
+function's `_core.c` is a sacred file — once written, `jm apply` never
+overwrites it — so lifting a real body in is safe and has no
+splice-into-existing-file hazard.
 
 `--impl` also takes a **line range**: `--impl file::N:M` lifts lines
 `N..M` (inclusive, 1-based) verbatim instead of a named body — handy
@@ -49,7 +54,7 @@ void q15_to_float(const int16_t *input,  size_t input_len,
 `input` is `const`; `output` is not. The header and implementation
 always match.
 
-### `native/src/io/io_core.c` (stub)
+### `native/src/io/q15_to_float.c` (stub — the function's own sacred file)
 
 ```c
 /* <<IMPLEMENT: q15_to_float>> */
@@ -61,7 +66,6 @@ q15_to_float(const int16_t *input,  size_t input_len,
     (void)input; (void)input_len;
     (void)output; (void)output_len;
     (void)n;
-    /* TODO: fill in the conversion. */
 }
 ```
 
@@ -110,20 +114,23 @@ positional-only).
 - **Inline (header-only)** — pass `--inline` to emit a `static inline`
     body in `_core.h` so the function inlines at every call site. Good
     for short, pure functions.
-- **`out_type` for sized scalar output** — when the output size is
-    derivable from a single scalar param. TOML-only today; see
-    [Quick reference](../quick-reference.md) for the form.
-- **`result_fields` for record-returning functions** — emit a list of
-    `{name, type}` records per call. Declared in TOML today.
+- **`--out-type T`** — the function allocates and returns a fresh `T[]`
+    ndarray instead of writing through an `--out-param`, sized from the
+    first array param's length (or the first integer scalar param, if
+    there's no array param). `jm function make_window --module win   --param n:size_t --out-type float` generates `void make_window(float   *out, size_t n)`, called from Python as `make_window(512)`.
+- **`--result-field name:type`** — emit a list of `{name, type}` records
+    per call (repeatable). This path currently has known codegen gaps —
+    see the warning under [Patterns](../types.md#patterns) — so verify
+    the generated header and stub agree before relying on it.
 
 ## Concrete types
 
-| Slot                               | Accepts                                                                                                                                                                                                       | Rejects                                                  | Default          |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------- |
-| `--param name:T`                   | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                        | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
-| `--out-param name:T[]`             | Array shapes only. Drops `const`.                                                                                                                                                                             | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
-| `--return-type T`                  | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                       | `const char *`, any `T[]`.                               | `void`           |
-| `--out-type T` *(TOML only today)* | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
+| Slot                   | Accepts                                                                                                                                                                                                       | Rejects                                                  | Default          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------- |
+| `--param name:T`       | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                        | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
+| `--out-param name:T[]` | Array shapes only. Drops `const`.                                                                                                                                                                             | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
+| `--return-type T`      | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                       | `const char *`, any `T[]`.                               | `void`           |
+| `--out-type T`         | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
 
 The function preset has the **narrowest** slot allowlist of any
 template — no strings, no string-enums, no 2-D arrays. Need those?

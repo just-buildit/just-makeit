@@ -55,10 +55,7 @@ uint64_t NAME_get_count(const NAME_state_t *state);
 static inline void
 NAME_step(NAME_state_t *state, float complex x)
 {
-    /* TODO: update internal state. The default body accumulates
-       |x|^2 and increments a counter — replace with your reducer. */
-    state->sum += (double)(crealf(x) * crealf(x) + cimagf(x) * cimagf(x));
-    state->count++;
+    (void)state; (void)x; /* TODO: implement */
 }
 
 void
@@ -70,9 +67,20 @@ NAME_steps(NAME_state_t *state, const float complex *in, size_t n)
 
 ## What you fill in
 
-The reducer in `step()`. Common shapes:
+The reducer in `step()`. A running-power accumulator is typical:
 
-- Running sum / mean / RMS.
+```c
+static inline void
+NAME_step(NAME_state_t *state, float complex x)
+{
+    state->sum += (double)(crealf(x) * crealf(x) + cimagf(x) * cimagf(x));
+    state->count++;
+}
+```
+
+Other common shapes:
+
+- Running sum / mean / RMS (as above).
 - Histogram bin update.
 - Threshold counter ("how many samples above X?").
 - Direct write to a file descriptor stored in state.

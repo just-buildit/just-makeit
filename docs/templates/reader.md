@@ -33,8 +33,13 @@ are yours. Then add the I/O verbs:
 ```sh
 jm method NAME read --param n:size_t --out-type "float _Complex"
 jm method NAME seek --param sample_index:size_t --return-type int
-jm method NAME close
+jm method NAME close --return-type void
 ```
+
+`jm method` defaults `--return-type` to `float _Complex` when omitted, so
+`close` needs an explicit `--return-type void` to get a real `void` C
+signature — without it you'd get a `close()` that returns (and discards)
+a bogus complex value.
 
 ## What you get
 
@@ -52,12 +57,72 @@ NAME_state_t *NAME_create(const char *filepath, size_t header_bytes);
 void          NAME_destroy(NAME_state_t *state);
 void          NAME_reset(NAME_state_t *state);
 
-size_t NAME_read(NAME_state_t *state, float complex *out, size_t n);
-int    NAME_seek(NAME_state_t *state, size_t sample_index);
-void   NAME_close(NAME_state_t *state);
+float complex NAME_read(NAME_state_t *state, size_t n, float complex *out);
+int           NAME_seek(NAME_state_t *state, size_t sample_index);
+void          NAME_close(NAME_state_t *state);
 ```
 
+`read()`'s C return type follows `jm method`'s default (`float _Complex`,
+since the command above doesn't pass `--return-type`) even though the
+Python binding ignores it — the sample count comes from `n`, and the data
+goes into `out`. Pass `--return-type size_t` if you want the C-level
+return value to mean something (e.g. "samples actually read"); the
+generated Python wrapper's behavior doesn't change either way.
+
 ### `native/src/NAME/NAME_core.c`
+
+```c
+NAME_state_t *
+NAME_create(const char *filepath, size_t header_bytes)
+{
+    NAME_state_t *obj = calloc(1, sizeof(*obj));
+    if (!obj)
+        return NULL;
+    obj->fd = -1;
+    obj->file_size = 0;
+    obj->position = 0;
+    return obj;
+}
+
+void
+NAME_destroy(NAME_state_t *state)
+{
+    free(state);
+}
+
+/* <<IMPLEMENT: read >> */
+float complex
+NAME_read(NAME_state_t *state, size_t n, float complex *out)
+{
+    (void)state; (void)n; (void)out;
+    return (float complex)0.0f + 0.0f * I;
+}
+
+/* <<IMPLEMENT: seek >> */
+int
+NAME_seek(NAME_state_t *state, size_t sample_index)
+{
+    (void)state; (void)sample_index;
+    return (int)0;
+}
+
+/* <<IMPLEMENT: close >> */
+void
+NAME_close(NAME_state_t *state)
+{
+    (void)state;
+}
+```
+
+`filepath` and `header_bytes` are constructor init-params, not state —
+they never reach `NAME_create()`'s body automatically (init-params carry
+no auto-assignment the way `--state` does). You open the file, seed
+`file_size`/`position`, and wire `fd` yourself.
+
+## What you fill in
+
+The `open()`/`read()`/`seek()`/`close()` logic against `state->fd`.
+A typical fill-in:
 
 ```c
 NAME_state_t *
@@ -84,22 +149,17 @@ NAME_destroy(NAME_state_t *state)
     free(state);
 }
 
-size_t
-NAME_read(NAME_state_t *state, float complex *out, size_t n)
+float complex
+NAME_read(NAME_state_t *state, size_t n, float complex *out)
 {
-    /* TODO: read up to n complex samples from state->fd into out[].
-       Return the number actually read. The default body does a raw
-       read() of n * sizeof(float complex) bytes. */
     ssize_t bytes = read(state->fd, out, n * sizeof(*out));
-    if (bytes <= 0) return 0;
-    state->position += (size_t)bytes;
-    return (size_t)bytes / sizeof(*out);
+    if (bytes > 0) state->position += (size_t)bytes;
+    return 0;
 }
 
 int
 NAME_seek(NAME_state_t *state, size_t sample_index)
 {
-    /* TODO: translate sample_index to byte offset and lseek. */
     off_t off = (off_t)(sample_index * sizeof(float complex));
     if (lseek(state->fd, off, SEEK_SET) == (off_t)-1) return -1;
     state->position = (size_t)off;
@@ -113,9 +173,7 @@ NAME_close(NAME_state_t *state)
 }
 ```
 
-## What you fill in
-
-Replace the raw-read default with your format. Common shapes:
+Other common shapes:
 
 - Wire-format demultiplexing (separate I and Q from interleaved bytes).
 - Header parsing (use `header_bytes` to skip a file header).

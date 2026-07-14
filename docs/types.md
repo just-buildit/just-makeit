@@ -136,7 +136,7 @@ Notes:
 
 ### Patterns
 
-Five common combinations of the above. Each is a worked recipe you
+Four common combinations of the above. Each is a worked recipe you
 can paste verbatim.
 
 #### Fixed coefficient table inside state
@@ -191,19 +191,16 @@ jm function q15_to_float --module io \
 `const`). Python side: `q15_to_float(input_arr, output_arr, n)` —
 caller passes both buffers.
 
-#### Function returning a record list (event emitter)
+!!! warning "Record-returning methods/functions (`--result-field`)"
 
-```sh
-jm function find_peaks --module dsp \
-    --param input:float[] \
-    --variable-output --max-out 64 \
-    --result-field idx:size_t \
-    --result-field magnitude:float
-```
-
-Up to 64 records per call. Each record is a `{idx, magnitude}`
-struct on the C side; a list of `(idx, magnitude)` tuples on the
-Python side.
+    `--result-field` (an event emitter returning a list or single record
+    of a user-defined C struct — see [`jm method`](commands/extend.md))
+    currently has known codegen gaps where the generated `_core.h`
+    declaration and the `_core.c` stub disagree on the C signature,
+    so a freshly scaffolded record-returning method/function does not
+    always compile as-is. If you hit a "conflicting types" error here,
+    that's why — check the generated header against the stub and
+    reconcile the signature by hand before filling in the body.
 
 ______________________________________________________________________
 

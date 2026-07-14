@@ -5,7 +5,12 @@ the exact commands that produce the layout, then the complete file tree with
 one-line annotations.
 
 Files omitted from all trees for brevity: `README.md`, `.gitignore`,
-`.benchmarks/.gitkeep`.
+`benchmarks/history/.gitkeep`, `Doxyfile`, `zensical.toml`, `docs/index.md`,
+`docs/api.md`, `jb.toml`, `cmake/<project>-config.cmake.in`. Every project
+also defaults to the split-fragment layout (see
+[Declarative scaffolding](declarative-scaffolding.md)): each object/module
+gets its own `objects/<name>.toml` / `modules/<name>.toml` fragment file
+alongside `just-makeit.toml`, also omitted below.
 
 ______________________________________________________________________
 
@@ -34,7 +39,8 @@ mylib/
 │   │   ├── mylib_lib.c             # version symbol
 │   │   └── dsp/
 │   │       ├── CMakeLists.txt
-│   │       ├── dsp_core.c          # C implementation ← write compute() here
+│   │       ├── dsp_core.c          # module boilerplate; #includes dsp_core.h
+│   │       ├── compute.c           # C implementation ← write compute() here
 │   │       └── dsp_ext.c           # Python binding (auto-generated)
 │   └── tests/                      # empty; add test_compute.c here if needed
 ├── cmake/
@@ -52,6 +58,11 @@ mylib/
 └── just-makeit.toml
 ```
 
+Every module function gets its own `.c` file by default, so multiple
+functions in the same module compile as separate translation units. Pass
+`--functions-in-core` on `just-makeit module`/`new --module` to keep them all
+in `dsp_core.c` instead (one TU, shared static helpers).
+
 ______________________________________________________________________
 
 ## 2. Standalone object
@@ -67,7 +78,8 @@ just-makeit new mylib --object engine --state gain:double:1.0
 mylib/
 ├── native/
 │   ├── benchmarks/
-│   │   └── bench_engine_core.c     # C-level microbenchmark
+│   │   ├── bench_engine_core.c     # C-level microbenchmark
+│   │   └── jm_bench.h              # shared per-round timing/stats helpers
 │   ├── inc/
 │   │   ├── clib_common.h
 │   │   ├── pyex_common.h
@@ -122,7 +134,8 @@ just-makeit object filt --module dsp \
 mylib/
 ├── native/
 │   ├── benchmarks/
-│   │   └── bench_filt_core.c
+│   │   ├── bench_filt_core.c
+│   │   └── jm_bench.h
 │   ├── inc/
 │   │   ├── clib_common.h
 │   │   ├── pyex_common.h
@@ -177,7 +190,8 @@ mylib/
 ├── native/
 │   ├── benchmarks/
 │   │   ├── bench_fir_core.c
-│   │   └── bench_biquad_core.c
+│   │   ├── bench_biquad_core.c
+│   │   └── jm_bench.h
 │   ├── inc/
 │   │   ├── clib_common.h
 │   │   ├── pyex_common.h
@@ -238,7 +252,8 @@ mylib/
 ├── native/
 │   ├── benchmarks/
 │   │   ├── bench_fir_core.c
-│   │   └── bench_reader_core.c
+│   │   ├── bench_reader_core.c
+│   │   └── jm_bench.h
 │   ├── inc/
 │   │   ├── clib_common.h
 │   │   ├── pyex_common.h

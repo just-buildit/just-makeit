@@ -114,7 +114,7 @@ Yes. Use `--param` to declare method parameters; omitting `--param` gives
 you a no-argument method:
 
 ```sh
-just-makeit method my_obj flush   # step with no params
+just-makeit method my_obj flush   # method with no params
 ```
 
 The C stub is `T my_obj_flush(my_obj_state_t *state)` and the Python binding
@@ -166,10 +166,12 @@ ______________________________________________________________________
 
 `just-makeit regenerate <component>` deletes every file the component owns and
 re-runs apply, rebuilding from `just-makeit.toml`. It is the deliberate-refresh
-counterpart to the sacred-file contract: unlike `jm apply` it *does* discard
-hand-written `_core.c` bodies, so `git stash` first. It leaves the manifest
-untouched (unlike `jm remove`). One confirmation prompt; `--force` skips it.
-Works for both standalone and module objects.
+counterpart to the sacred-file contract: by default it lifts hand-written
+`_core.c`/`_core.h` bodies before deleting the files and splices them back
+into the fresh scaffold (best-effort text matching, not a guarantee — `git stash` first regardless); pass `--discard` for a truly clean reset back to the
+template. It leaves the manifest untouched (unlike `jm remove`). One
+confirmation prompt; `--force` skips it. Works for both standalone and module
+objects.
 
 ______________________________________________________________________
 
@@ -214,8 +216,10 @@ ______________________________________________________________________
 just-makeit build
 ```
 
-This calls `pip wheel` using the generated `pyproject.toml` and
-[just-buildit](https://github.com/just-buildit/just-buildit) as the PEP 517
-backend. For cross-platform wheel distribution, the generated project is
-`cibuildwheel`-compatible — add a `cibuildwheel` section to `pyproject.toml`
-and configure for your target platforms.
+This configures and builds the C extension via CMake, then packages the wheel
+by calling [just-buildit](https://github.com/just-buildit/just-buildit)'s
+`build_wheel()` directly (not a `pip wheel` subprocess) — the same backend
+named in the generated `pyproject.toml`'s `build-backend`. For cross-platform
+wheel distribution, the generated project is `cibuildwheel`-compatible — add a
+`cibuildwheel` section to `pyproject.toml` and configure for your target
+platforms.

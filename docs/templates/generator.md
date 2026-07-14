@@ -14,13 +14,18 @@ tokens one at a time from a pre-loaded buffer.
 input side of `step()`. The scaffold builds and tests green straight
 away; with no input, `void` arg-type defaults to a complex return.
 
+A generator's whole job is to advance its own state on every call, so it
+almost always needs `--mutable` (the default `step()` takes a `const`
+state pointer; see [`--mutable`](../commands/scaffold.md)).
+
 ## Command
 
 ```sh
 jm object NAME --preset generator \
     --return-type "float _Complex" \
     --state phase:float:0.0f \
-    --state freq:float:0.0f
+    --state freq:float:0.0f \
+    --mutable
 ```
 
 ## What you get
@@ -51,11 +56,8 @@ void NAME_steps(NAME_state_t *state, float complex *out, size_t n);
 static inline float complex
 NAME_step(NAME_state_t *state)
 {
-    /* TODO: advance state, emit one sample. The default body is a
-       trivial cosine oscillator — replace with your generator. */
-    float complex y = cosf(state->phase) + sinf(state->phase) * I;
-    state->phase += state->freq;
-    return y;
+    (void)state; /* TODO: implement */
+    return (float complex)0;
 }
 
 void
@@ -67,9 +69,21 @@ NAME_steps(NAME_state_t *state, float complex *out, size_t n)
 
 ## What you fill in
 
-The `step()` body. Replace the cosine placeholder with your generator —
-LFSR, Costas loop, file-decoded sample stream, whatever produces one
-sample per call.
+The `step()` body — advance state, emit one sample. A cosine oscillator
+is typical (add `#include <math.h>` to `NAME_core.c` for `cosf`/`sinf`):
+
+```c
+static inline float complex
+NAME_step(NAME_state_t *state)
+{
+    float complex y = cosf(state->phase) + sinf(state->phase) * I;
+    state->phase += state->freq;
+    return y;
+}
+```
+
+Other shapes: an LFSR, a Costas loop, a file-decoded sample stream —
+whatever produces one sample per call.
 
 ## Python usage
 

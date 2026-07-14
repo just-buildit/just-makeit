@@ -51,15 +51,15 @@ you write a line of your algorithm. Fill in `step()` and ship.
 
 </div>
 
-
 ## Get it
 
 === "curl"
 
-
-    ```sh
-    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-    ```
+````
+```sh
+. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+```
+````
 
 === "pip"
 
@@ -81,30 +81,29 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
   {y}-->{/y}   just-makeit  (/tmp/jm-venv)
 {b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
     {g}ok{/g}  numpy 2.4.6
-    {g}ok{/g}  just-makeit 0.19.27
+    {g}ok{/g}  just-makeit 0.29.0
 
 {b}==> Venv activated — just-makeit is ready:{/b}
 
     jm new my_project --object my_object
 ```
 
-
 !!! note
-    `install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
-    into a Python venv, creating and activating it for you. The venv is created at 
-    `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the 
-    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`.
 
+    `install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
+    into a Python venv, creating and activating it for you. The venv is created at
+    `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the
+    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`.
 
 !!! info
 
     Installer detects your platform and installs system dependencies via
     the available package manager:
 
-    | Platform     | Detection order                                            |
-    |--------------|------------------------------------------------------------|
-    | **Linux**    | apt · dnf · pacman · zypper · apk                          |
-    | **macOS**    | Homebrew                                                   |
+    | Platform  | Detection order                   |
+    | --------- | --------------------------------- |
+    | **Linux** | apt · dnf · pacman · zypper · apk |
+    | **macOS** | Homebrew                          |
 
 ______________________________________________________________________
 
@@ -119,7 +118,7 @@ ______________________________________________________________________
 !!! Tip
 
     **No install needed** - the container prints a welcome message with everything you need:
-        
+
     - pre-built example projects in `~/examples/`
     - commands to browse or re-run them
     - a quickstart for your own project
@@ -128,14 +127,14 @@ ______________________________________________________________________
 
 ## Next steps
 
-| Goal | Page |
-| ---- | ---- |
-| Scaffold → implement → test loop | [Workflow](workflow.md) |
-| All generated file layouts | [Artifacts](artifacts.md) |
-| Tour every feature in one project | [Feature tour](feature-tour.md) |
-| Runnable bundled examples | [Examples](examples/index.md) |
+| Goal                                 | Page                                                      |
+| ------------------------------------ | --------------------------------------------------------- |
+| Scaffold → implement → test loop     | [Workflow](workflow.md)                                   |
+| All generated file layouts           | [Artifacts](artifacts.md)                                 |
+| Tour every feature in one project    | [Feature tour](feature-tour.md)                           |
+| Runnable bundled examples            | [Examples](examples/index.md)                             |
 | Generated C and Python API reference | [Workflow → Generated C API](workflow.md#generated-c-api) |
-| Command options | [Commands → Scaffold](commands/scaffold.md) |
+| Command options                      | [Commands → Scaffold](commands/scaffold.md)               |
 
 ______________________________________________________________________
 
@@ -143,7 +142,10 @@ ______________________________________________________________________
 
 - Python 3.9+
 - CMake ≥ 3.16
-- A C99 compiler (GCC, Clang, MSVC/MinGW)
+- A C99 compiler (GCC or Clang; Windows is opt-in via MinGW — see
+    [Windows troubleshooting](troubleshooting.md#windows-makeexe-not-found) —
+    MSVC is not supported, it rejects the C99 `_Complex` type jm generates by
+    default)
 - NumPy (runtime, for generated projects)
 
 ______________________________________________________________________

@@ -33,7 +33,11 @@ jobs:
         run: python3 scripts/copy_examples.py
 
       - name: Build docs site
-        run: uv run --group dev zensical build --clean
+        # --strict aborts on warnings (e.g. a broken internal link) instead
+        # of shipping a site with dead links — docs/examples/*.md in
+        # particular only exist after the copy step above runs, so this is
+        # the backstop against a build that skips it.
+        run: uv run --group dev zensical build --clean --strict
 
       - name: Copy install.sh into site root
         run: cp install.sh site/install.sh

@@ -1,13 +1,21 @@
-# `jm bind` — design sketch
+# `jm bind` — design notes
 
-Status: **design note.** Sibling to the
-[template gallery](../templates/index.md). This note captures a
-"reverse" command — read a hand-written `<comp>_core.h` and synthesise
-`<comp>_ext.c` from it, with no TOML and no prior `jm` history. The
-sacred/glue contract that `jm apply` now ships (see
-[declarative-scaffolding.md](declarative-scaffolding.md)) makes this
-safe: `_ext.c` is a glue file, regenerated from the source of truth
-without ever clobbering a hand-written `_core.c`.
+> This is a contributor-facing design record, not user documentation. For
+> how to use the shipped `jm bind` command, see the
+> [porting guide](../porting-guide.md#path-a-you-have-the-header-jm-bind).
+
+Status: **shipped (MVP + Real phases; see [Phased rollout](#phased-rollout)
+below).** `jm bind` reads a hand-written `<comp>_core.h` and synthesises
+`<comp>_ext.c` from it, with no TOML and no prior `jm` history — every
+shape below is implemented and covered by CI (`jm bind --check` runs on
+every bundled example). Only the **Robust** phase (a libclang fallback for
+headers the regex parser can't handle) remains open. This note is kept as
+the design record for why the contract is shaped the way it is, and as the
+tracking doc for that remaining phase. Sibling to the
+[template gallery](../templates/index.md). The sacred/glue contract that
+`jm apply` ships (see [declarative-scaffolding.md](declarative-scaffolding.md))
+is what makes this safe: `_ext.c` is a glue file, regenerated from the
+source of truth without ever clobbering a hand-written `_core.c`.
 
 ______________________________________________________________________
 
@@ -21,8 +29,10 @@ to Python — the binding is mechanically derivable. There's nothing
 left to ask.
 
 `jm bind <component>` reads `<component>_core.h`, recognises the
-template shape it follows, and writes a `<component>_ext.c` (plus
-`.pyi`, plus the test) that matches. No `just-makeit.toml`, no `jm new`, no flags. Composes cleanly with hand-rolled or imported C code.
+template shape it follows, and writes a `<component>_ext.c` (plus a
+matching `.pyi`) that matches. No `just-makeit.toml`, no `jm new` required.
+Composes cleanly with hand-rolled or imported C code. It does not scaffold
+a test file — see [Open questions](#open-questions).
 
 This is the asymmetry that makes it cheap: `_ext.c` only needs to know
 five things, all present in a well-formed header.
@@ -44,13 +54,15 @@ ______________________________________________________________________
 
 ## Phased rollout
 
-| Phase      | Scope                                                                                                                                                                                                                                                            | Effort            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                                                      | ~2 days, ~400 LOC |
-| **Real**   | Init_params recognition (ctor args that aren't state fields); output-param detection (`out` / `output` / `dst` / `dest` naming + `_max_out` pairing); opaque state; arbitrary custom verbs. Covers the working presets (processor, generator, consumer, reader). | + ~3 days         |
-| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines. Adds `jm bind --check` for CI parity.                                                                                                             | + ~1 week         |
+| Phase      | Scope                                                                                                                                                                                                                                                            | Status                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                                                      | **Shipped**            |
+| **Real**   | Init_params recognition (ctor args that aren't state fields); output-param detection (`out` / `output` / `dst` / `dest` naming + `_max_out` pairing); opaque state; arbitrary custom verbs. Covers the working presets (processor, generator, consumer, reader). | **Shipped** (Phase 3b) |
+| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines.                                                                                                                                                   | Open                   |
 
-Each phase is shippable on its own and the surface only ever grows.
+`jm bind --check` (the CI-parity gate) shipped alongside MVP — it never
+needed libclang, only a deterministic re-render to diff against. Each phase
+was shippable on its own and the surface only ever grew.
 
 ______________________________________________________________________
 
@@ -226,7 +238,8 @@ ______________________________________________________________________
 
 ## Acceptance
 
-`jm bind` is shippable when:
+The MVP + Real phases shipped once all three held true — and still do,
+guarded in CI:
 
 1. Each working preset's generated `_core.h` can be fed to `jm bind`
     and produce an `_ext.c` byte-identical to (or semantically
@@ -237,10 +250,10 @@ ______________________________________________________________________
     `_core.h` and `_core.c` by hand, then `jm bind` to materialise the
     binding.
 
-After that: hand-import a small third-party C library (e.g. a single
-header from a DSP project) via a shim and use it from Python in one
-session. That's the validation that the contract is small enough to
-hit by hand.
+The Robust (libclang) phase remains open; its bar is the same kind of
+proof — hand-import a small third-party C library (e.g. a single header
+from a DSP project) via a shim and use it from Python in one session,
+covering a header the regex parser can't.
 
 ______________________________________________________________________
 

@@ -128,7 +128,8 @@ just-makeit object ema \
     --arg-type float \
     --return-type float \
     --state alpha:double:0.1 \
-    --state prev:float:0.0
+    --state prev:float:0.0 \
+    --mutable
 ```
 
 `object` writes all C and Python files for the new standalone object and updates:
@@ -370,24 +371,26 @@ ______________________________________________________________________
 hand. The verbs treat your files differently — this is the
 **sacred/glue contract**:
 
-| File                   | Class                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest; never hand-edited                                      |
-| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                           |
-| `CMakeLists.txt`       | **Glue** — always regenerated                                                                           |
-| `<comp>_core.c`        | **Sacred** — never spliced or re-rendered; created once, rebuilt only by `jm regenerate`                |
-| `<comp>_core.h`        | The state struct + inline `step()` are **sacred**; method/property *declarations* refresh from the TOML |
+| File                   | Class                                                                                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest; never hand-edited                                                                                                                                         |
+| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                                                                                                                              |
+| `CMakeLists.txt`       | **Glue** — always regenerated                                                                                                                                                                              |
+| `<comp>_core.c`        | **Sacred** — created once; a structural change rebuilds it via `jm regenerate`, which lifts your hand-written bodies out and splices them back in by function name (`--discard` for a clean reset instead) |
+| `<comp>_core.h`        | The state struct + inline `step()` are **sacred**; method/property *declarations* refresh from the TOML                                                                                                    |
 
-The verbs are **splice-free**. They never re-render an existing body:
+The additive verbs never touch an existing body in place — they only inject
+what's missing:
 
 - `jm method`, computed `jm property`, and `jm function` are **additive** —
     they inject one declaration into `_core.h` and append a fresh stub to
     `_core.c`. Existing bodies are never touched. A field-backed
     `jm property --field` injects one struct member directly.
 - `jm add` (adding state) is **structural** — it writes `[[obj.state]]` to the
-    manifest, then rebuilds the object via the regenerate path. It discards
-    hand-written `_core.c` bodies and the inline `step()` body in `_core.h`
-    (see below).
+    manifest, then rebuilds the object via the regenerate path with a clean
+    reset (`--discard`), so it does discard hand-written `_core.c` bodies and
+    the inline `step()` body in `_core.h` (see below) — same for
+    `jm remove --state`.
 - `jm apply` injects any TOML-declared declaration missing from `_core.h` and
     keeps the struct + `step()` sacred. A state-field change or a signature
     change is structural → `jm regenerate`.
@@ -409,17 +412,20 @@ or add a state field, the structure of the object changed — rebuild it from
 the manifest with `jm regenerate`:
 
 ```sh
-git stash                    # _core.c bodies are about to be discarded
+git stash                    # safety net — see below
 just-makeit regenerate gain  # deletes every file 'gain' owns, re-runs apply
 ```
 
 `regenerate` deletes every file the component owns and rebuilds it from the
 manifest, then asks for a single confirmation (`--force` skips it). Unlike
 `jm remove`, it leaves the manifest untouched — it is the deliberate-rebuild
-half of the contract. It discards hand-written `_core.c` bodies and the inline
-`step()` body in `_core.h`, so keep your algorithm in the TOML
-`impl`/`create_impl` (which the rebuild re-asserts) or stash/commit first.
-Works for standalone and module objects.
+half of the contract. By default it lifts your hand-written `_core.c`/
+`_core.h` bodies (create/destroy/reset/`step()`/getters/setters/methods) out
+before deleting the files, and splices them back into the freshly generated
+ones by function name — `--discard` skips that and does a clean reset
+instead. The lift/splice is best-effort (a changed signature, e.g. a new
+parameter, means the fresh body wins instead), so `git stash` first is still
+good practice, not a requirement. Works for standalone and module objects.
 
 ### Lifting an existing C body with `--impl`
 

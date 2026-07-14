@@ -256,15 +256,17 @@ but the struct body and `step()` inline body are never touched.
 
 ### The three maintenance commands
 
-| Command              | Effect                                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `jm apply`           | Additive — injects missing declarations, regenerates glue, never deletes                               |
-| `jm regenerate COMP` | Delete all COMP files and rebuild from manifest (discards `_core.c` bodies — record `impl_file` first) |
-| `jm status`          | Read-only drift table: OK / MISSING / STALE per file                                                   |
+| Command              | Effect                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `jm apply`           | Additive — injects missing declarations, regenerates glue, never deletes                                                                  |
+| `jm regenerate COMP` | Delete all COMP files and rebuild from manifest; by default splices hand-written `_core.c` bodies back in (`--discard` for a clean reset) |
+| `jm status`          | Read-only drift table: OK / MISSING / STALE per file                                                                                      |
 
-Use `jm apply` for day-to-day additions. Use `jm regenerate` only when you
-intentionally want to discard a body — for example, after a signature change
-where you have a new `impl_file` that provides the replacement.
+Use `jm apply` for day-to-day additions. Use `jm regenerate` when a component
+needs to be rebuilt cleanly from its manifest — after a sweeping signature
+change, for example. It preserves what it can by splicing your old bodies
+back in by function name; pass `--discard` when you want a truly clean reset
+(e.g. you have a new `impl_file` that provides the replacement).
 
 ______________________________________________________________________
 
@@ -482,9 +484,13 @@ The regex parser couldn't handle those signatures. For each:
 `[[comp.methods]]` or `[[comp.properties]]` TOML entry, or into the
 sacred `_core.c`.
 
-### `jm regenerate` discarded my `step()` body
+### `jm regenerate` lost my `step()` body
 
-Record the implementation in TOML before regenerating:
+By default `jm regenerate` splices hand-written bodies back in by function
+name, but the splice is best-effort text matching: it loses if you passed
+`--discard`, or if a changed signature defeats the name match. Record the
+implementation in TOML so `apply`/`regenerate` can always re-derive it,
+regardless of the splice outcome:
 
 ```toml
 [engine]
