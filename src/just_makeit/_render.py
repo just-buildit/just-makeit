@@ -746,6 +746,7 @@ def _py_wrapper_for_function(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    max_results: int = 64,
     variable_output: bool = False,
     out_size: str = "",
     check_return: bool = False,
@@ -758,8 +759,12 @@ def _py_wrapper_for_function(
     out_type: if set, allocates a 1-D ndarray of this type (length = first
     array param's length) and passes it after the array args, before scalars.
 
-    result_fields + max_results_param: if set, calls C with a stack-allocated
-    array of structs, builds and returns list[tuple] from the fields.
+    result_fields: if set, calls C with a stack-allocated array of structs,
+    builds and returns list[tuple] from the fields. max_results_param names
+    an existing param that already carries the capacity (already embedded in
+    call_args, so it is not passed again); when empty (the common case),
+    fn_c_decl appended a bare trailing `size_t max_results` param instead, so
+    the wrapper passes the literal `max_results` value for it.
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
@@ -775,7 +780,7 @@ def _py_wrapper_for_function(
         cleanup = ""
         py_args = "PyObject *Py_UNUSED(args)"
 
-    if result_fields and max_results_param:
+    if result_fields:
         # Build list-of-tuples from struct array.
         _rf_fmt_parts: list[str] = []
         _rf_arg_parts: list[str] = []
@@ -792,12 +797,25 @@ def _py_wrapper_for_function(
         _bvargs = ", ".join(_rf_arg_parts)
         _rt_disp = _ctype_display(return_type)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        # max_results_param names an existing param already in call_args (the
+        # C signature has no extra trailing param for it); otherwise fn_c_decl
+        # appended a bare `size_t max_results`, so the call passes the literal.
+        if max_results_param:
+            _max_expr = f"(size_t){max_results_param}"
+            _call = f"{fn_name}({call_args}, _results)"
+        else:
+            _max_expr = str(max_results)
+            _call = (
+                f"{fn_name}({call_args}, _results, _max)"
+                if call_args
+                else f"{fn_name}(_results, _max)"
+            )
         ret_line = (
-            f"    size_t _max = (size_t){max_results_param};\n"
+            f"    size_t _max = {_max_expr};\n"
             f"    {_rt_disp} *_results ="
             f" ({_rt_disp} *)malloc(_max * sizeof({_rt_disp}));\n"
             f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
-            f"    size_t _n = {fn_name}({call_args}, _results);\n"
+            f"    size_t _n = {_call};\n"
             f"{cleanup}"
             f"    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
             f"    if (!_lst) {{ free(_results); return NULL; }}\n"
@@ -1043,6 +1061,7 @@ def make_functions_ctx(
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
+                max_results=int(fn.get("max_results", 64)),
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),

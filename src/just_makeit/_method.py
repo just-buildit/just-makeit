@@ -429,12 +429,35 @@ def _build_method_prototype(
     out_type: str | None = None,
     pass_capacity: bool = False,
     batch: bool = False,
+    result_fields: list[dict] | None = None,
+    single: bool = False,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline)."""
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
     params = params or []
+    result_fields = result_fields or []
+
+    # gh-244: a result_fields method returns a list of structs — the header
+    # declaration must match _methods_c_stub_result_fields/_result_single's
+    # shape (size_t count + results[]/max_results out-params, or one record
+    # by value with `single`), not the generic scalar/array fallback below.
+    if result_fields:
+        step_param = (
+            f", const {_block_in_elem_disp(arg_type)} *in, size_t n_in"
+            if has_arg
+            else ""
+        )
+        if single:
+            return (
+                f"{ret_disp} {component}_{name}"
+                f"({component}_state_t *state{step_param});"
+            )
+        return (
+            f"size_t {component}_{name}({component}_state_t *state"
+            f"{step_param}, {ret_disp} *result, size_t max_results);"
+        )
 
     # gh-179: a batch (1:1-rate) method is a block transform —
     # (state, const in *in, size_t n, out *out), or (state, size_t n, out *out)
@@ -703,6 +726,8 @@ def run(
             out_type,
             pass_capacity=pass_capacity,
             batch=batch,
+            result_fields=result_fields,
+            single=single,
         ).split("\n")
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a

@@ -160,6 +160,7 @@ def run(
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
+    max_results: int = 64,
     variable_output: bool = False,
     out_size: str = "",
     inline: bool = False,
@@ -345,6 +346,8 @@ def run(
         fn_entry["out_type"] = out_type
     if result_fields:
         fn_entry["result_fields"] = result_fields
+        if not max_results_param:
+            fn_entry["max_results"] = max_results
     if max_results_param:
         fn_entry["max_results_param"] = max_results_param
     # #318 / gh-335: a stateless self-sizing output. The C stub/decl place
