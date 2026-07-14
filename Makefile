@@ -79,7 +79,7 @@ build:
 
 docs:
 	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL_RUN) zensical build --clean
+	$(ZENSICAL_RUN) zensical build --clean --strict
 
 docs-serve:
 	$(PYTHON) scripts/copy_examples.py

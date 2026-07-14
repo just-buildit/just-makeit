@@ -65,7 +65,7 @@ nav:
     - Test philosophy: developers/testing.md
     - pkg-config & CMake: developers/pkg-config.md
     - Declarative scaffolding design: developers/declarative-scaffolding.md
-    - Bind design (proposal): developers/bind-design.md
+    - Bind design: developers/bind-design.md
     - Release checklist: developers/release-checklist.md
     - Why zensical: developers/why-zensical.md
     - Docstring derivation (C → .pyi): developers/docstring-derivation.md

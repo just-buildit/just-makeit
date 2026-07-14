@@ -116,18 +116,21 @@ Glue changed — _ext.c, .pyi, CMakeLists.txt, or a
      step() are SACRED; _core.c is never spliced)
 
 Structural change — a new state FIELD or a changed
-  signature; rebuild from the manifest, discarding
-  hand-written _core.c bodies                    ─→  jm regenerate <name>
+  signature; rebuild from the manifest             ─→  jm regenerate <name>
                                                      (or jm add, for state)
     (deletes every file the component owns, then re-runs
-     apply; leaves TOML untouched. git stash first, or
-     keep the body in TOML impl/create_impl.)
+     apply; leaves TOML untouched. By default lifts your
+     hand-written _core.c/_core.h bodies out first and
+     splices them back in afterward, by function name;
+     --discard skips that for a clean reset. jm add always
+     does a clean reset. git stash first regardless.)
 ```
 
 Rule of thumb: `apply` is the safe, additive refresh (glue + missing
 declarations). `regenerate` is the deliberate rebuild — use it when a
-signature change or a new state field must re-stub the sacred `_core.c` body.
-`jm add` is `regenerate` specialized for adding state.
+signature change or a new state field must re-stub the sacred `_core.c` body;
+it preserves what it can by default. `jm add` is `regenerate` specialized
+for adding state, always with a clean (`--discard`) reset.
 
 ## Sub-decision E. Preset (for `jm object --preset NAME`)
 

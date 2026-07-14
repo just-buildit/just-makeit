@@ -328,9 +328,15 @@ just-makeit script > rebuild.sh # save to file
 ```
 
 Reads `just-makeit.toml` and emits one command per scaffold step in the
-correct order: `new` → `module` → `object` → `method` → `property` →
+correct category order: `new` → `module` → `object` → `method` → `property` →
 `function`. The output is a valid shell script that, when run from the
-parent directory, produces an identical `just-makeit.toml`.
+parent directory, produces an identical `just-makeit.toml`. Within the
+`object` category, order matches original creation order for a
+`--no-fragments` (single-manifest) project; under the default fragment
+layout, objects are read back from `objects/*.toml` and so are reconstructed
+in filename (alphabetical) order instead — harmless for correctness (each
+`object` command is independent) but the sequence may not match how you
+originally typed it.
 
 **Note:** `--impl` / `--replace` are not stored in `just-makeit.toml` (the
 lifted body is patched directly into the generated files), so they are not

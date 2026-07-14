@@ -40,15 +40,34 @@ After `just-makeit new my_project` followed by `just-makeit object engine`.
 `just-makeit.toml` sits at the project root — every command reads it from
 there, no flags required.
 
+By default (the **fragment layout** — see [`jm new`](commands/scaffold.md)),
+`just-makeit.toml` itself holds only `[project]` plus an `include` glob; each
+object's and module's section lives in its own `objects/<name>.toml` /
+`modules/<name>.toml` fragment instead of being inlined. The schema — every
+key and table shown below — is identical either way; only which physical file
+holds it changes. Pass `--no-fragments` to `jm new` to inline everything into
+a single `just-makeit.toml`, as older projects (and the "combined schema" tab
+below) do.
+
 === "File tree"
 
 ````
 ```
 my_project/
 ├── just-makeit.toml
+├── objects/
+│   └── engine.toml
 ├── CMakeLists.txt
 ├── Makefile
 ├── pyproject.toml
+├── jb.toml
+├── Doxyfile
+├── zensical.toml
+├── .gitignore
+├── README.md
+├── docs/
+│   ├── index.md
+│   └── api.md
 ├── cmake/
 │   ├── my_project-config.cmake.in
 │   └── my-project.pc.in
@@ -68,7 +87,8 @@ my_project/
 │   ├── tests/
 │   │   └── test_engine_core.c
 │   └── benchmarks/
-│       └── bench_engine_core.c
+│       ├── bench_engine_core.c
+│       └── jm_bench.h
 └── src/
     └── my_project/
         ├── __init__.py
@@ -80,18 +100,28 @@ my_project/
 ```
 ````
 
-=== "just-makeit.toml"
+=== "just-makeit.toml (fragment layout)"
 
 ````
 ```toml
-[project]
-name             = "my_project"
-version          = "0.1.0"
-build            = "cmake"
-perf             = "false"
-pytest           = "false"
-pytest_benchmark = "false"
+include = ["objects/*.toml", "modules/*.toml"]
 
+[project]
+name    = "my_project"
+version = "0.1.0"
+build   = "cmake"
+perf    = "false"
+pytest  = "false"
+pytest_benchmark = "false"
+schema    = "7"
+jm_version = "0.29.0"
+```
+````
+
+=== "objects/engine.toml"
+
+````
+```toml
 # One section per object, named after the object.
 [engine]
 arg_type    = "float _Complex"
@@ -124,6 +154,56 @@ return_type = "void"
 params      = [{name = "scale", type = "double"}]
 
 # One entry per `just-makeit property`.
+[[engine.properties]]
+name     = "peak"
+type     = "double"
+writable = true
+field    = true
+```
+````
+
+=== "combined schema (--no-fragments)"
+
+Everything above, inlined into one `just-makeit.toml` — this is what
+`jm new --no-fragments` produces, and what every fragment ultimately
+means regardless of which file it lives in:
+
+````
+```toml
+[project]
+name             = "my_project"
+version          = "0.1.0"
+build            = "cmake"
+perf             = "false"
+pytest           = "false"
+pytest_benchmark = "false"
+
+[engine]
+arg_type    = "float _Complex"
+return_type = "float _Complex"
+mutable     = "false"
+no_state    = "false"
+no_step     = "false"
+
+[[engine.state]]
+name    = "gain"
+type    = "double"
+default = "1.0"
+
+[[engine.init_params]]
+name    = "order"
+type    = "int"
+default = "4"
+
+[[engine.array_args]]
+name = "coeffs"
+type = "float32"
+
+[[engine.methods]]
+name        = "normalize"
+return_type = "void"
+params      = [{name = "scale", type = "double"}]
+
 [[engine.properties]]
 name     = "peak"
 type     = "double"
@@ -406,6 +486,12 @@ clobber. Output is single-line, matching the rest of the package.
 - **🟡 CLI flag pending**: 15 keys — rare modifiers (`opaque`, `no_ctor`, `roles`, `buf_field`/`expr` property variants, `init_post_parse_impl`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
 
 Phase 2 acceptance bar — "every TOML field has a 'Reachable via CLI' column ✓" — is met for the common path. The remaining 🟡 rows are tracked Phase 3 work, not by-design exceptions.
+
+**Caveat on `result_fields`:** the `✅` above means the field is CLI-settable
+(`--result-field`), not that the generated code compiles out of the box —
+the `_core.h` declaration and `_core.c` stub currently disagree on the C
+signature for a record-returning method/function. See the warning under
+[Types — Patterns](types.md#patterns).
 
 ______________________________________________________________________
 

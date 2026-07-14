@@ -20,26 +20,28 @@ jm app --target console --object engine --name dsp_tool
 jm app --target pep723 --object engine --name dsp_tool
 ```
 
-As of **0.15.0** the generated app is *complete*, not a stub: each target
-emits a real argument parser **and** a working read → process → write loop,
-generated from the object model. The C `strtof`/`argv` parser and the Python
-`argparse` setup are produced from the same spec, so the C binary and the
-Python CLI accept the same flags and behave the same way. There is nothing to
-hand-edit before it runs.
+As of **0.15.0** the generated app is *complete*, not a stub, for the four
+object shapes listed below: each target emits a real argument parser **and**
+a working read → process → write loop, generated from the object model. The
+C `strtof`/`argv` parser and the Python `argparse` setup are produced from
+the same spec, so the C binary and the Python CLI accept the same flags and
+behave the same way. There is nothing to hand-edit before it runs.
 
 Every run records an `[app]` section (and any `[[app.flags]]` /
 `[[app.commands]]`) in `just-makeit.toml`, so `jm apply` recreates the scaffold.
 
 **Arguments**
 
-| Argument                            | Description                                                                             |
-| ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `--target c\|console\|pep723`       | Output target (repeatable intent via re-runs). Default: `c`.                            |
-| `--object name`                     | Component to wrap. Defaults to the first component.                                     |
-| `--function name`                   | Wrap a module-level function instead of an object (see *Function CLIs*).                |
-| `--name name`                       | Name of the generated app/script. Defaults to the project name.                         |
-| `--flag name:type[:default[:help]]` | Extra control flag, added to both parsers and persisted as `[[app.flags]]`. Repeatable. |
-| `--command name[:help]`             | Declare a subcommand (multi-command CLI). Repeatable. See *Subcommands*.                |
+| Argument                            | Description                                                                                                                                                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--target c\|console\|pep723`       | Output target (repeatable intent via re-runs). Default: `c`.                                                                                                                                          |
+| `--object name`                     | Component to wrap. Defaults to the first component.                                                                                                                                                   |
+| `--function name`                   | Wrap a module-level function instead of an object (see *Function CLIs*).                                                                                                                              |
+| `--module name`                     | Module the `--function` lives in (only meaningful with `--function`).                                                                                                                                 |
+| `--name name`                       | Name of the generated app/script. Defaults to the project name.                                                                                                                                       |
+| `--flag name:type[:default[:help]]` | Extra control flag, added to both parsers and persisted as `[[app.flags]]`. Repeatable.                                                                                                               |
+| `--command name[:help]`             | Declare a subcommand (multi-command CLI). Repeatable. See *Subcommands*.                                                                                                                              |
+| `--argc-argv`                       | For an object shape `jm app` doesn't generate a full loop for (e.g. a `--no-step` reader): emit an `argv`-parsing skeleton in the C target's stub instead of a plain `(void)argc; (void)argv;` no-op. |
 
 ______________________________________________________________________
 
@@ -58,6 +60,15 @@ loop that fits it — no flag needed:
 Constructor state vars become `--<name>` flags wired into `create()`, each
 defaulting to its `--state` default. Extra `--flag` controls are appended to
 both the C and Python parsers.
+
+An object outside these four shapes — a `--no-step` object such as a
+[reader](../templates/reader.md), or one with an unsupported `--arg-type`/
+`--return-type` combination — still scaffolds, but `jm app` has no I/O loop
+to generate for it: the C target gets an `<<IMPLEMENT: parse argv>>` stub
+(or `--argc-argv`'s skeleton) and the Python targets get an
+`<<IMPLEMENT: open input/output, call obj.step(), write>>` stub. `--function`
+apps (see below) are unaffected — they always call the function once and
+print the result.
 
 ______________________________________________________________________
 
@@ -103,7 +114,8 @@ make && ./build/<name> --help
 
 ### `--target console`
 
-Generates `src/<pkg>/<name>_cli.py` — an `argparse` CLI over the Python
+Generates `src/<pkg>/cli.py` (or `src/<pkg>/<module>/cli.py` for a
+`--function`/`--object` inside a module) — an `argparse` CLI over the Python
 bindings, one `--<param>` per constructor scalar plus any `--flag`s, with the
 matching process loop. Adds `<name>` to `[project.scripts]` in `pyproject.toml`
 (snippet printed if `tomlkit`/`pyproject.toml` is unavailable).

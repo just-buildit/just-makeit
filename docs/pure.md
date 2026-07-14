@@ -77,8 +77,10 @@ just-makeit object tone_gen --arg-type void --return-type "float _Complex" --mut
 
 A generator produces samples without consuming input. Pass `--arg-type void`
 to suppress the input parameter from `step()` and `steps()`. With no explicit
-`--return-type`, a void-arg object defaults to a `float _Complex` return
-(`--return-type void` is rejected as a no-op object).
+`--return-type`, a void-arg object defaults to a `float _Complex` return.
+Combining `--arg-type void --return-type void` is also valid — it produces a
+"tick" object whose `step()` takes no input and returns nothing, only
+mutating state (a counter, a clock).
 
 ```c
 /* no input parameter */

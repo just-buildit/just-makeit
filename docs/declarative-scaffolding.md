@@ -673,11 +673,24 @@ A single confirmation guards the destructive step; `--force` skips it:
 jm regenerate fir --force
 ```
 
-!!! warning "Regenerate discards hand-written `_core.c` bodies"
+By default, `regenerate` doesn't throw your hand-written code away: before
+deleting the sacred files it lifts create/destroy/reset/`step()`/getter/
+setter/method bodies out by function name, and splices them back into the
+freshly regenerated ones (gh-267) — the same by-name extract/restore
+machinery `jm apply` already uses to preserve hand-patched module `_ext.c`
+glue. Pass `--discard` to skip this and get a truly clean reset instead:
 
-    Because the sacred file is deleted and re-stubbed, any `steps()` /
-    lifecycle code you wrote is lost. `git stash` (or commit) first if you
-    might want it back.
+```sh
+jm regenerate fir --discard --force
+```
+
+!!! warning "The splice is best-effort — `git stash` first regardless"
+
+    Lifting bodies by function name is text matching, not a guarantee. A
+    changed signature (e.g. a new parameter) means the fresh stub wins for
+    that function instead of your old body. `git stash` (or commit) before
+    regenerating so you can recover the original if the splice doesn't
+    reproduce what you wanted.
 
 ______________________________________________________________________
 
