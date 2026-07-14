@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-07-14
+
+### Fixed
+
+- **`--result-field` (`jm method`/`jm function`) had a header/body
+    signature mismatch and dropped call-site arguments, breaking every
+    first-time scaffold (gh-477).** `jm method`'s surgically-injected
+    `_core.h` declaration never accounted for `result_fields`/`single`,
+    falling through to a generic scalar-return prototype that conflicted
+    with the correctly-built `_core.c` body — a hard "conflicting types"
+    compile error. The benchmark harness had the same gap, calling the C
+    function with 3 args instead of the 5 its real signature takes.
+    `jm function --result-field` was completely unreachable via the CLI
+    (`--return-type` rejected any non-scalar struct name before
+    `--result-field` could be seen), and even bypassing that, the Python
+    glue call site silently dropped the `result`/`max_results` arguments
+    in the common case. Verified end-to-end (compile + Python round-trip)
+    for both commands; regression tests added for each of the four fixes.
+
+### Docs
+
+- **Comprehensive precision/clarity/coherence audit across the docs
+    site.** Fixed CLI examples that didn't compile as written, five stale
+    descriptions of `jm regenerate`'s behavior (gh-267 changed the default
+    from discard to preserve-and-splice), a stale monolithic-manifest
+    example, wrong/backwards CLI syntax, missing flags, and template
+    pages showing fully-implemented bodies as if they were the literal
+    scaffold output. Consolidated near-verbatim duplication between
+    `docs/declarative-scaffolding.md` and its `developers/` counterpart.
+    `docs/developers/bind-design.md` was describing the fully-shipped
+    `jm bind` as an unshipped proposal — rewritten and marked
+    contributor-only. `zensical build --strict` now wired into `make docs`
+    and CI, so a broken site can no longer merge to main.
+
 ## [0.29.0] — 2026-07-13
 
 ### Added
