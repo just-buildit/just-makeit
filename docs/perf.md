@@ -58,8 +58,8 @@ expand to safe no-ops.
 | `JM_ALIGNED(n)`  | Aligns a variable or struct field to `n` bytes.             |
 
 All macros expand to safe no-ops on unknown compilers. On x86, `jm_perf.h`
-also includes `<immintrin.h>` so SIMD intrinsics are available without an
-extra include.
+also includes `<immintrin.h>`; on aarch64 it includes `<arm_neon.h>` — so
+SIMD intrinsics are available without an extra include either way.
 
 ______________________________________________________________________
 
@@ -94,15 +94,28 @@ JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)
 
 **What gets generated:**
 
-- On AVX-512: fills a stack-resident scratch buffer (L1-resident, `LENGTH + CHUNK`
-    samples), calls `fn##_step_batch()` in strides of `BATCH`, then falls
-    through to the scalar tail via `fn##_step()`.
-- Everywhere else: loops directly over `fn##_step()`.
+- Whenever a SIMD tier is active (AVX-512, AVX2, or NEON on aarch64 — see
+    the tier table below): fills a stack-resident scratch buffer
+    (L1-resident, `LENGTH + CHUNK` samples), calls `fn##_step_batch()` in
+    strides of `BATCH`, then falls through to the scalar tail via
+    `fn##_step()`.
+- On the scalar tier: loops directly over `fn##_step()`.
 
 The three constants are the only coupling between layers. You write `step()`.
 You optionally write `step_batch()` for SIMD. `JM_DEFINE_STEPS` owns the rest.
 
 Convention: `state->delay[0..LENGTH-1]` is the delay line, `delay[0]` = newest.
+
+!!! warning "`state->delay` must exist even for a stateless object (`LENGTH=0`)"
+
+    Whenever a SIMD tier is active, the generated `steps()` references
+    `state->delay[...]` in a loop that happens to run zero iterations when
+    `LENGTH` is `0` — the member still has to exist for the translation unit
+    to compile. A single-element placeholder field (e.g. `float delay[1]`)
+    is enough. This is easy to miss on **aarch64**, where NEON is
+    unconditionally active (unlike AVX2/AVX-512, which only turn on under
+    explicit compiler flags) — a `LENGTH=0` object that always compiled
+    fine on x86 can fail to build on aarch64 until you add the placeholder.
 
 ______________________________________________________________________
 
@@ -155,23 +168,30 @@ ______________________________________________________________________
 ## `jm_simd.h` — width-portable operation macros
 
 The highest-effort option — worth it when the inner loop matters more than the
-dispatch. Raw AVX intrinsics lock `step_batch()` to one ISA and require
+dispatch. Raw AVX/NEON intrinsics lock `step_batch()` to one ISA and require
 `#ifdef` guards for every other target. `jm_simd.h` provides macros that
-select the widest available instruction set at compile time — AVX-512, AVX2+FMA,
-or scalar — so the same source compiles everywhere. The tier is chosen once at
-the top of `jm_simd.h`; user code sees no `#ifdef`.
+select the widest available instruction set at compile time — AVX-512,
+AVX2+FMA, NEON (aarch64), or scalar — so the same source compiles everywhere.
+The tier is chosen once at the top of `jm_simd.h`; user code sees no `#ifdef`.
 
 Included automatically by `jm_perf.h`; can also be included standalone.
 
 ### SIMD tier selection
 
-| Tier       | `JM_SIMD_WIDTH_F32` | `JM_VEC_F32` | `JM_VEC_F64` |
-| ---------- | ------------------- | ------------ | ------------ |
-| AVX-512F   | 16                  | `__m512`     | `__m512d`    |
-| AVX2 + FMA | 8                   | `__m256`     | `__m256d`    |
-| Scalar     | 1                   | `float`      | `double`     |
+| Tier       | `JM_SIMD_WIDTH_F32` | `JM_VEC_F32`  | `JM_VEC_F64`  |
+| ---------- | ------------------- | ------------- | ------------- |
+| AVX-512F   | 16                  | `__m512`      | `__m512d`     |
+| AVX2 + FMA | 8                   | `__m256`      | `__m256d`     |
+| NEON       | 4                   | `float32x4_t` | `float64x2_t` |
+| Scalar     | 1                   | `float`       | `double`      |
 
 `JM_SIMD_WIDTH_F64` is always half of `JM_SIMD_WIDTH_F32`.
+
+NEON is selected on any `__aarch64__` build — unlike AVX2/AVX-512, which
+require explicit compiler flags (`-march=native` or similar) to turn on,
+NEON is part of the mandatory ARMv8-A baseline, so this tier is **always**
+active on aarch64 Linux/macOS, opt-in or not. 32-bit ARM is out of scope
+(no double-precision NEON there).
 
 ### Operation macros
 
@@ -210,9 +230,10 @@ fir_step_batch(fir_state_t *state, const float *window, float *out)
 }
 ```
 
-On AVX-512 this expands to `_mm512_fmadd_ps` + `_mm512_reduce_add_ps`.
-On scalar it compiles to a plain loop the compiler can auto-vectorise.
-No `#ifdef` in user code; the tier is chosen once at the top of `jm_simd.h`.
+On AVX-512 this expands to `_mm512_fmadd_ps` + `_mm512_reduce_add_ps`. On
+aarch64 it expands to `vfmaq_f32` + `vaddvq_f32`. On scalar it compiles to a
+plain loop the compiler can auto-vectorise. No `#ifdef` in user code; the
+tier is chosen once at the top of `jm_simd.h`.
 
 ### Additional hint macros (in `jm_perf.h`)
 
