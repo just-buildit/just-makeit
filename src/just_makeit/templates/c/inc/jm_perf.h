@@ -79,6 +79,11 @@
 #  include <immintrin.h>
 #endif
 
+/* ARM NEON intrinsics (aarch64) */
+#if defined(__aarch64__)
+#  include <arm_neon.h>
+#endif
+
 /* Width-portable SIMD operation macros (JM_VEC_F32, JM_MAC_F32, etc.) */
 #include "jm_simd.h"
 
@@ -96,6 +101,14 @@
  *
  * Convention: state->delay[0..LENGTH-1] is the delay line, delay[0] = newest.
  * LENGTH, BATCH, and CHUNK must be integer constant expressions (no VLA).
+ *
+ * state->delay must exist even for a stateless object (LENGTH=0): whenever a
+ * SIMD tier is active (BATCH > 1 — always true on aarch64, since NEON is
+ * unconditional there, unlike AVX2/AVX-512 which need explicit compiler
+ * flags), the generated steps() references state->delay[...] in a loop that
+ * happens to run zero iterations when LENGTH is 0 — the member still has to
+ * exist for the translation unit to compile. A single-element placeholder
+ * field (e.g. `float delay[1]`) is enough.
  *
  * Usage (16-tap FIR: TAPS=16, LENGTH=TAPS-1=15):
  *   JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,

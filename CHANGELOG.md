@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **aarch64 (ARM64) Linux support (gh-473).** `jm_simd.h` gains a NEON tier
+    (4x f32 / 2x f64 lanes via `float32x4_t`/`float64x2_t`, `vfmaq_f32`/
+    `vfmaq_f64`, and the ARMv8-A `vaddvq_f32`/`vaddvq_f64` horizontal-sum
+    intrinsics) alongside the existing AVX-512/AVX2 tiers — aarch64 Linux
+    already compiled and ran correctly via the portable scalar fallback, this
+    just stops leaving those lanes on the table. This repo's own CI
+    (`test`/`examples`/`install-deps-smoke`) and the `jm ci`-generated
+    project template both gained a `ubuntu-24.04-arm` leg, and
+    `ghcr.io/just-buildit/jm-examples-linux` now publishes a multi-arch
+    (`linux/amd64` + `linux/arm64`) manifest. Also added a runtime regression
+    test proving `step()` and `steps()` agree numerically under
+    `-ffast-math` for a hand-written `JM_FMA_F32`-based `step_batch()` — the
+    NEON tier makes `JM_DEFINE_STEPS`'s SIMD-batch path reachable on Linux
+    aarch64 for the first time (previously dead code there), the same
+    divergence class gh-208 fixed for x86. **Note for existing
+    `JM_DEFINE_STEPS`/`JM_DEFINE_STEPS_EX` users:** unlike AVX2/AVX-512,
+    which only activate under explicit compiler flags, NEON is unconditional
+    on aarch64 — any stateless object (`LENGTH=0`) built with this macro now
+    needs a placeholder `state->delay` member (e.g. `float delay[1]`) for the
+    generated code to compile, since the macro references it even in a loop
+    that runs zero iterations. See the updated `jm_perf.h` doc comment.
+
 ## [0.28.11] — 2026-07-12
 
 ### Fixed

@@ -688,7 +688,15 @@ def test_perf_controllable_macro_e2e(tmp_path):
     init_run(
         root,
         "c",
-        state_vars=[("gain", "float", "2.0")],
+        state_vars=[
+            ("gain", "float", "2.0"),
+            # LENGTH=0 below never touches this, but JM_DEFINE_STEPS_EX's
+            # macro body unconditionally references state->delay[...] (in a
+            # loop that happens to run zero iterations whenever a SIMD tier
+            # is active) — the member must still exist for the translation
+            # unit to compile.
+            ("delay", "float[1]", "0.0"),
+        ],
         arg_type="float",
         return_type="float",
         perf=True,

@@ -4,6 +4,7 @@
  * Selects the widest available instruction set at compile time:
  *   AVX-512F  ->  16 float / 8 double lanes  (JM_SIMD_WIDTH_F32 = 16)
  *   AVX2+FMA  ->   8 float / 4 double lanes  (JM_SIMD_WIDTH_F32 =  8)
+ *   NEON      ->   4 float / 2 double lanes  (JM_SIMD_WIDTH_F32 =  4)  (aarch64)
  *   Scalar    ->   1 lane  (auto-vectorisation still applies)
  *
  * Typical usage (FIR inner loop):
@@ -39,6 +40,13 @@
 #  ifndef _IMMINTRIN_H_INCLUDED
 #    include <immintrin.h>
 #  endif
+#endif
+
+/* Pull in the NEON intrinsic header on aarch64 (mandatory baseline there,
+ * unlike optional NEON on 32-bit ARM, which lacks double-precision support
+ * and is out of scope). */
+#if defined(__aarch64__)
+#  include <arm_neon.h>
 #endif
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -124,7 +132,42 @@ static inline double _jm_hsum256_f64(__m256d v) {
 #define JM_HSUM_F64(v)           _jm_hsum256_f64(v)
 
 /* ════════════════════════════════════════════════════════════════════════
- * Tier 3 — Scalar  (1 lane; compiler auto-vectorisation still applies)
+ * Tier 3 — NEON  (4 float / 2 double lanes; aarch64 only — 32-bit ARM NEON
+ * has no double-precision support, so this is gated on __aarch64__, not
+ * the broader __ARM_NEON, which is also defined there)
+ * ════════════════════════════════════════════════════════════════════════ */
+#elif defined(__aarch64__)
+
+#define JM_SIMD_WIDTH_F32    4
+#define JM_SIMD_WIDTH_F64    2
+#define JM_SIMD_WIDTH        JM_SIMD_WIDTH_F32
+
+typedef float32x4_t JM_VEC_F32;
+typedef float64x2_t JM_VEC_F64;
+
+#define JM_ZERO_F32()            vdupq_n_f32(0.0f)
+#define JM_ZERO_F64()            vdupq_n_f64(0.0)
+#define JM_SPLAT_F32(x)          vdupq_n_f32(x)
+#define JM_SPLAT_F64(x)          vdupq_n_f64(x)
+#define JM_LOAD_F32(p)           vld1q_f32(p)
+#define JM_LOAD_F64(p)           vld1q_f64(p)
+#define JM_STORE_F32(p, v)       vst1q_f32(p, v)
+#define JM_STORE_F64(p, v)       vst1q_f64(p, v)
+#define JM_ADD_F32(a, b)         vaddq_f32(a, b)
+#define JM_ADD_F64(a, b)         vaddq_f64(a, b)
+#define JM_MUL_F32(a, b)         vmulq_f32(a, b)
+#define JM_MUL_F64(a, b)         vmulq_f64(a, b)
+/* acc += a * b (vfmaq_f32(a,b,c) computes a + b*c, so acc = vfmaq_f32(acc,a,b)) */
+#define JM_FMA_F32(acc, a, b)    ((acc) = vfmaq_f32(acc, a, b))
+#define JM_FMA_F64(acc, a, b)    ((acc) = vfmaq_f64(acc, a, b))
+#define JM_MAC_F32(acc, ptr, s)  JM_FMA_F32(acc, JM_LOAD_F32(ptr), JM_SPLAT_F32(s))
+#define JM_MAC_F64(acc, ptr, s)  JM_FMA_F64(acc, JM_LOAD_F64(ptr), JM_SPLAT_F64(s))
+/* ARMv8-A provides a direct across-vector horizontal add; no manual hadd needed */
+#define JM_HSUM_F32(v)           vaddvq_f32(v)
+#define JM_HSUM_F64(v)           vaddvq_f64(v)
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Tier 4 — Scalar  (1 lane; compiler auto-vectorisation still applies)
  * ════════════════════════════════════════════════════════════════════════ */
 #else
 

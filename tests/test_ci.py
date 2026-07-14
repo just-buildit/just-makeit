@@ -40,6 +40,7 @@ class TestCi:
         text = wf.read_text(encoding="utf-8")
         assert "run: make" in text and "run: make test" in text
         assert "ubuntu-latest" in text and "macos-latest" in text
+        assert "ubuntu-24.04-arm" in text
         # No unsubstituted placeholders.
         assert "<<" not in text
 

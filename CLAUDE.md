@@ -224,8 +224,9 @@ correct. The generated `Makefile` still detects `OS=Windows_NT` at make-time
 
 ### CI / release
 
-- `ci.yml` — matrix (ubuntu/macos/windows × py3.11–3.14); runs
-    `jm-install-deps` then `jm-run-tests`
+- `ci.yml` — matrix (ubuntu/macos/ubuntu-arm64 × py3.9–3.14); runs
+    `jm-install-deps` then `jm-run-tests`. No Windows leg (jm itself isn't
+    tested there — see the Windows section above).
 - `release.yml` — tag `v*` → test matrix → build wheel → PyPI publish →
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images
