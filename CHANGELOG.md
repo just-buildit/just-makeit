@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-13
+
 ### Added
 
 - **aarch64 (ARM64) Linux support (gh-473).** `jm_simd.h` gains a NEON tier
