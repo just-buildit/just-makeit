@@ -188,9 +188,13 @@ keep.
 **Fix:** for a new method or computed property, the additive verb (`jm method`,
 `jm property`) injects a declaration and appends a fresh stub for you to fill
 in. A signature change or a new state field is structural — rebuild from the
-manifest with `jm regenerate` (or `jm add` for state). The rebuild discards
-hand-written `_core.c` bodies, so stash first (or keep them in the TOML
-`impl`/`create_impl`):
+manifest with `jm regenerate` (or `jm add` for state, which always does a
+discarding rebuild since the old body's signature is already stale). By
+default `jm regenerate` lifts hand-written `_core.c`/`_core.h` bodies before
+deleting the files and splices them back into the fresh scaffold — pass
+`--discard` for a clean reset instead. Either way the splice is best-effort
+text matching, not a guarantee, so stash first (or keep the algorithm in the
+TOML `impl`/`create_impl`, which the rebuild reasserts):
 
 ```sh
 git stash
@@ -215,24 +219,25 @@ explicitly marked as an output buffer.
 function:
 
 ```toml
-[[spectral.functions]]
+[[module.spectral.functions]]
 name = "kaiser_window"
 return_type = "void"
 
-[[spectral.functions.params]]
+[[module.spectral.functions.params]]
 name = "w"
 type = "float[]"
 out = true        # drops const → float *w in C
 
-[[spectral.functions.params]]
+[[module.spectral.functions.params]]
 name = "beta"
 type = "float"
 ```
 
-For a method, use `--out-param w:float[]` on the CLI:
+For a module function, use `--out-param w:float[]` on the CLI (`--out-param`
+is `jm function`-only; `jm method` has no equivalent flag):
 
 ```sh
-just-makeit method spectral kaiser_window --out-param w:float[] --param beta:float
+just-makeit function kaiser_window --module spectral --out-param w:float[] --param beta:float
 ```
 
 After updating the TOML, run `jm apply` to refresh the declaration in
@@ -243,7 +248,8 @@ ______________________________________________________________________
 ## `--return-type "T[]"` requires an array `--arg-type`
 
 **Symptom:** `just-makeit object x --return-type "float[]"` with a scalar (or
-`void`) input type exits with: `array return type 'float[]' requires an array arg type (--arg-type 'T[]')`.
+`void`) input type raises a Python traceback ending in
+`ValueError: array return type 'float[]' requires an array arg type (--arg-type 'T[]')`.
 
 **Cause:** an array return only makes sense for a blockwise transform — array
 in, array out of the same length. A scalar input paired with an array return

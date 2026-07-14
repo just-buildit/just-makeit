@@ -116,6 +116,25 @@ bodies are never touched.
 
 No TOML changes, no `jm upgrade` required.
 
+### v0.28.9 — `jm regenerate` preserves hand-written bodies by default
+
+Before v0.28.9, `jm regenerate` always deleted a component's sacred
+`_core.c`/`_core.h` bodies and rebuilt blank stubs. As of v0.28.9 it lifts
+create/destroy/reset/`step()`/getter/setter/method bodies out by function
+name before deleting the files, and splices them back into the freshly
+regenerated ones — the same by-name extract/restore machinery `jm apply`
+uses to preserve hand-patched module `_ext.c` glue. Pass `--discard` for the
+old clean-reset behavior. `jm add` and `jm remove --state` still pass
+`discard=True` explicitly, since a state change means the old body's
+signature is already stale.
+
+The splice is best-effort text matching, not a guarantee — `git stash` (or
+commit) first regardless. See
+[Declarative scaffolding](declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh)
+for the full behavior.
+
+No TOML changes, no `jm upgrade` required.
+
 ______________________________________________________________________
 
 ## For project maintainers

@@ -2,8 +2,14 @@
 
 ## Directory structure
 
+The tree below is the part of the scaffold you actually touch — the C
+core, its Python binding, and the tests. `just-makeit new` also emits
+project-level scaffolding (docs, packaging, CI config) around it; see
+[Configuration — project layout](configuration.md#project-layout-and-schema)
+for the complete, generated-file-by-file tree.
+
 ```
-<component>/
+<project>/
     native/
         inc/
             clib_common.h               # common C99 types
@@ -17,11 +23,12 @@
         tests/
             test_<component>_core.c     # CTest
     src/
-        <component>/
+        <package>/
             __init__.py
             <component>.pyi             # type stub
             tests/
                 test_<component>.py     # pytest
+    just-makeit.toml                    # project manifest (source of truth)
     CMakeLists.txt
     Makefile
     pyproject.toml

@@ -33,8 +33,14 @@ splice-free — they inject one declaration into `_core.h` and append a fresh
 stub to `_core.c`; they never re-render an existing body. Adding state with
 `jm add` is **structural**: it rebuilds the object from the manifest (see
 below). The two commands that rebuild the sacred `_core.c` are `jm add` and
-`jm regenerate <obj>` — `git stash` first, or keep your body in the TOML
-`impl`/`create_impl` so the rebuild re-asserts it (see
+`jm regenerate <obj>`, but they don't treat your hand-written bodies the same
+way: `jm regenerate` lifts create/destroy/reset/`step()`/getter/setter/method
+bodies out by function name before deleting the files and splices them back
+into the freshly generated ones (`--discard` skips this for a clean reset),
+while `jm add` always does a clean rebuild — the old body's signature predates
+the new field, so there's nothing safe to splice. Either way, `git stash`
+first, or keep your body in the TOML `impl`/`create_impl` so the rebuild
+re-asserts it (see
 [Declarative scaffolding](declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh)).
 
 ______________________________________________________________________
@@ -74,8 +80,10 @@ just-makeit add --object my_filter --state drive:float:1.0f
 Adding state is **structural**: `add` writes the new `[[my_filter.state]]`
 entry to `just-makeit.toml`, then rebuilds the object from the manifest (a
 delete-then-apply). The new field reaches the struct, constructor,
-getter/setter, reset, and Python stub in one shot. Because the rebuild
-re-stubs the sacred `_core.c`, keep your algorithm in the TOML
+getter/setter, reset, and Python stub in one shot. Unlike `jm regenerate`
+(which preserves hand-written bodies by default), `add` always discards the
+sacred `_core.c` — the old body's signature predates the new field, so there's
+nothing safe to splice back. Keep your algorithm in the TOML
 `impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first. `add`
 prompts once before rebuilding; `--force` skips it.
 

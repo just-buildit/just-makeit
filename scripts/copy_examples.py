@@ -6,7 +6,7 @@ Run from the project root:
 All output files (docs/examples/*.md) are gitignored and regenerated here
 before every build. To add a new example:
   1. Add it to the `examples` list below (folder, out_name, display_name).
-  2. Add a matching nav entry in zensical.toml.
+  2. Add a matching nav entry in mkdocs.yml.
 
 docs/examples/index.md is also generated here — no manual table needed.
 """

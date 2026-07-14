@@ -108,138 +108,63 @@ ______________________________________________________________________
 
 ## Implementation bodies
 
-`--impl path/to/file.c::funcname` lifts a C function body from an
-external file into the generated `/* <<IMPLEMENT>> */` placeholder.
-`--impl path/to/file.c::N:M` instead lifts lines `N`..`M` (inclusive,
-1-based) when there is no named function to target. Both compose with
-`--replace`. A declarative spec should also be able to carry the
-implementation **itself** — so one TOML produces a complete, buildable
-component with nothing to wire up by hand.
+A declarative spec should be able to carry the implementation **itself** —
+so one TOML produces a complete, buildable component with nothing to wire up
+by hand. `--impl`/`impl_file` (and their `replace` companion) are what make
+that possible; the mechanics, the two forms (named function vs. line range),
+the mutual-exclusivity rule, and the TOML-ownership-vs-sacred-`.c` behavior
+are documented for users on the top-level page, in
+[The fragment](../declarative-scaffolding.md#the-fragment).
 
-`--impl` is a **supported, recommended** feature, not a legacy hazard.
-The old risk was splicing into an existing, hand-edited file; the
-sacred/glue contract eliminates it — `--impl` feeds the generated stub,
-and the sacred `_core.c` is the user's once it exists.
-
-Two forms, either of which fills the `/* <<IMPLEMENT>> */` placeholder
-for its target:
-
-```toml
-[agc]
-arg_type = "float _Complex"
-return_type = "float _Complex"
-
-# Inline body — a TOML literal multi-line string ('''…'''). Literal,
-# not basic: no escape processing, so C backslashes and quotes pass
-# through verbatim. This is the heredoc form — paste the body in.
-impl = '''
-double p = state->power;
-p += (cabsf(x) * cabsf(x) - p) * state->alpha;
-state->power = p;
-return x * (float)agc_gain_(state, p);
-'''
-
-[[agc.methods]]
-name = "execute_ctrl"
-arg_type = "float _Complex"
-return_type = "size_t"
-# File-reference form — the existing --impl "path::funcname" semantics.
-impl_file = "src/agc/agc_ref.c::agc_execute_ctrl"
-# Optional pre-injection substitutions — the existing --replace.
-replace = { "agc_execute_ctrl" = "execute_ctrl", "TODO" = "done" }
-```
-
-- `impl` — the C body inline (TOML literal string). The heredoc form.
-- `impl_file` — `"path::funcname"` (named function) or `"path::N:M"`
-    (line range `N`..`M`, inclusive, 1-based), the file-lift behaviour.
-- `replace` — a table of `old = new` substitutions applied before
-    injection (the existing `--replace`); valid with either form.
-- `impl` and `impl_file` are **mutually exclusive** on one target —
-    `apply` errors if both are set.
-- Both are valid on the object section (the `step()` body) and on each
-    `[[X.methods]]` entry (that method's body).
-
-**TOML ownership vs. sacred `.c`.** When a target carries
-`impl`/`impl_file`, the TOML *owns* that body: `apply` writes it and a
-re-`apply` re-asserts it, even into the otherwise-sacred `_core.c`.
-When neither is set, the sacred-file rule applies — `apply` never
-overwrites a hand-written body in `_core.c`. A body is declared in the
-TOML *or* edited in the C file, never both.
-
-`jm script` round-trips `impl_file` as the reference it is, and emits an
-`impl` body as the literal `'''…'''` block.
+The rationale worth recording here: `--impl` is a **supported, recommended**
+feature, not a legacy hazard. Before the sacred/glue contract shipped, the
+risk was splicing generated output into an existing, hand-edited file — a
+fragile brace-matching problem. The contract eliminates that risk entirely by
+construction: `--impl`/`impl_file` only ever feed the *generated* stub before
+the sacred `_core.c` exists, and once it exists it's the user's, full stop.
+That's why lifting an implementation from an external file was safe to keep
+(and lean into) rather than deprecate alongside the old splicer.
 
 ______________________________________________________________________
 
-## `jm apply` — the sacred/glue contract
+## `jm apply` and `jm regenerate` — the sacred/glue contract
 
-Materialize everything *declared* in the TOML.
+The mechanics — the per-file bucketing (glue / mixed / sacred), the CLI
+flags, the fragment-compose form of `apply`, `regenerate`'s default
+splice-back behavior (gh-267) vs `--discard` — are documented once, for
+users, on the top-level page:
+[What `jm apply` does](../declarative-scaffolding.md#what-jm-apply-does) and
+[`jm regenerate` — the deliberate refresh](../declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh).
+This section only keeps the design rationale that doesn't belong in a
+user-facing walkthrough.
 
-```sh
-jm apply                  # materialize the project's own TOML
-jm apply objects/dsp.toml # merge a fragment in, then materialize
-```
-
-- No argument → read the project manifest + its includes, generate
-    every file each object/module/function implies.
-- A path argument → a **compose fragment**: an object TOML that is
-    copied into `objects/` (so the project stays self-contained), added
-    to the `include` set, then materialized.
-- `apply` **never deletes.** It is safe to run repeatedly; deletion is
-    strictly `jm remove`'s job.
-
-`apply` shipped a precise per-file policy. Every file an object owns
-falls into one of three buckets:
-
-| File                   | Class      | What `apply` does                                                                                        |
-| ---------------------- | ---------- | -------------------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`         | **glue**   | Regenerated from the manifest on every apply.                                                            |
-| `src/<pkg>/<comp>.pyi` | **glue**   | Regenerated from the manifest on every apply.                                                            |
-| `CMakeLists.txt`       | **glue**   | Regenerated from the manifest on every apply.                                                            |
-| `<comp>_core.h`        | **mixed**  | A missing method/property declaration is injected; the inline `step()` body and state struct are sacred. |
-| `<comp>_core.c`        | **sacred** | Never spliced or re-rendered once it exists. `steps()` / lifecycle bodies are the user's.                |
-
-So editing the manifest always propagates to the glue, and `apply` injects any
-missing method/property *declaration* into `_core.h`, while the hand-written
-inline `step()` body and the state struct definition stay sacred. The
-**sacred** `.c` is the one file `apply` will never touch. A signature change in
-TOML, or a new state field, is *structural* — rebuild the body from the
-manifest with `jm regenerate` (or `jm add`, which is `regenerate` specialized
-for state). A new method or computed property is additive: `jm method` /
-`jm property` inject a declaration and append a fresh stub.
-
-When a target declares `impl` / `impl_file` (see
-[Implementation bodies](#implementation-bodies)), the TOML *owns* that
-body and `apply` re-asserts it even into the otherwise-sacred `.c`.
-
-This is the batch-scaffold path: author a complex object in one TOML,
-`jm apply` it. It also makes a project reproducible from its TOML alone
-— a stronger guarantee than `jm script` (which only replays CLI
-history).
-
-______________________________________________________________________
-
-## `jm regenerate`
-
-The deliberate-refresh half of the sacred/glue contract.
-
-```sh
-jm regenerate <component>          # confirm, then rebuild from the manifest
-jm regenerate <component> --force  # skip the confirmation
-```
-
-- Deletes **every file the component owns** and re-runs `jm apply` to
-    rebuild them from the manifest — including the sacred `_core.c`.
-- Single confirmation prompt; `--force` skips it.
-- Leaves the **manifest untouched** (unlike `jm remove`, which strips
-    the TOML section). The component still exists; only its generated
-    files are rebuilt.
-- Discards hand-written `_core.c` bodies — advise `git stash` first.
-- Works for both standalone and module objects.
-
-Use it when a manifest edit (a new state field, a changed signature)
-needs to reach the sacred `.c` body and the additive verbs don't cover
-the change.
+- **Why `apply` never deletes.** Keeping deletion out of `apply` means a
+    reconcile is always safe to re-run — the only way to lose a generated
+    file is the explicit `jm remove`. Splitting "reconcile" and "delete" into
+    two verbs was a deliberate decision (see [Decisions](#decisions) below),
+    not an accident of implementation order.
+- **Why `regenerate` exists instead of teaching `apply` to rebuild.** `apply`
+    is additive by invariant — teaching it to also tear down and rebuild a
+    sacred file on a structural change would mean two different classes of
+    side effect live behind one verb, and a user could no longer tell from
+    the command name alone whether their `_core.c` is at risk. `regenerate`
+    keeps that risk explicit and opt-in.
+- **`impl`/`impl_file` overrides the sacred rule, deliberately.** When a
+    target declares one, the TOML — not the `.c` file — is the source of
+    truth for that body, so `apply` re-asserts it even into an otherwise
+    untouchable file. This is the one place the sacred/glue split bends: it's
+    load-bearing for reproducibility (a project should be rebuildable from
+    its manifest alone, a stronger guarantee than `jm script`, which only
+    replays CLI history), so the exception is scoped tightly to targets that
+    opt in.
+- **The lift/splice-back behavior (gh-267) reuses `apply`'s own machinery.**
+    `jm regenerate`'s default preserve-by-splicing pass extracts and restores
+    function bodies by name using the same by-name extract/restore code
+    `jm apply` already uses to keep hand-patched module `_ext.c` glue intact
+    — one splicer, two call sites, instead of a second implementation to
+    keep in sync. `jm add` and `jm remove --state` opt out (`discard=True`)
+    because a state change makes the old body's signature stale before the
+    splice would even run.
 
 ______________________________________________________________________
 

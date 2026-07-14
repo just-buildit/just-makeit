@@ -262,7 +262,7 @@ ______________________________________________________________________
 
     - [`--impl file.c::funcname`](commands/scaffold.md) — lift a C body from an existing file into the generated stub (or `file.c::12:48` to lift a line range)
     - [`--replace old::new`](commands/scaffold.md) — rename symbols on lift
-    - [`just-makeit regenerate <comp>`](commands/build.md) — delete a component's files and rebuild from the manifest (`git stash` your `_core.c` first)
+    - [`just-makeit regenerate <comp>`](commands/build.md) — delete a component's files and rebuild from the manifest, splicing hand-written `_core.c`/`_core.h` bodies back in by default (`--discard` for a clean reset; `git stash` first regardless)
     - [`result_fields`](commands/extend.md) — typed `list[tuple[...]]` return from a method
     - [`--multi-output`](commands/extend.md) — secondary output array on a variable-output method
     - [`--batch`](commands/extend.md) — 1:1-rate array transform

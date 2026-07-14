@@ -65,8 +65,10 @@ ______________________________________________________________________
 
 **perf tier**
 The SIMD instruction set selected when building with `-DENABLE_SIMD=ON`.
-`jm_simd.h` supports three tiers: AVX-512F (16 floats/cycle), AVX2+FMA (8
-floats/cycle), and scalar (1 float/cycle, compiler-autovectorisable). The tier
+`jm_simd.h` supports four tiers: AVX-512F (16 floats/cycle), AVX2+FMA (8
+floats/cycle), NEON on aarch64 (4 floats/cycle — always active there, since
+NEON is part of the mandatory ARMv8-A baseline rather than an opt-in flag like
+AVX2/AVX-512), and scalar (1 float/cycle, compiler-autovectorisable). The tier
 is detected at compile time; no runtime dispatch.
 
 ______________________________________________________________________
@@ -108,7 +110,9 @@ ______________________________________________________________________
 A generated file that apply never overwrites once it exists — `<comp>_core.c`
 (your `steps()` and lifecycle bodies) and the generated tests. To intentionally
 rebuild a sacred file from the manifest, use `just-makeit regenerate <comp>`
-(`git stash` first, since it discards hand-written bodies).
+— by default it lifts hand-written bodies and splices them back into the
+fresh scaffold, so `git stash` first regardless (the splice is best-effort);
+pass `--discard` for a clean reset that drops them for good.
 
 ______________________________________________________________________
 
