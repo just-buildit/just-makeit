@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
@@ -23,7 +23,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # cmake and a C compiler are preinstalled on the GitHub-hosted
-      # ubuntu/macos runners; only the Python build/test deps are needed.
+      # ubuntu/macos/ubuntu-arm runners; only the Python build/test deps
+      # are needed.
       - name: Install build dependencies
         run: python -m pip install --upgrade pip <<pip_deps>>
 

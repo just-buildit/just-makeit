@@ -36,7 +36,8 @@ just-makeit scaffolds, builds, tests, benchmarks, and distributes a Python C
 extension today — and the same C compiles once into a standalone library for
 C, C++, and Rust. The full I/O matrix (scalar, array, void, real, complex),
 multi-type modules, shape presets, performance scaffolding (portable SIMD
-macros), and the sacred/glue edit lifecycle are all shipped. Also shipped:
+macros — AVX-512, AVX2, and NEON on aarch64 Linux), and the sacred/glue edit
+lifecycle are all shipped. Also shipped:
 `jm status` (drift report), `jm ci` (CI workflow generation), the
 per-component fragment layout
 ([`objects/NAME.toml` / `modules/NAME.toml`](declarative-scaffolding.md#three-layouts)),

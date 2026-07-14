@@ -21,9 +21,19 @@ permissions:
 
 jobs:
   # ── Linux ─────────────────────────────────────────────────────────────────────
+  # One native build per architecture (no QEMU) — each is loaded into its
+  # runner's local daemon and smoke-tested before anything is pushed.
   linux:
-    name: Linux image
-    runs-on: ubuntu-latest
+    name: Linux image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -37,12 +47,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Build into the local daemon so the smoke test can run it.
-      # GHA layer cache keeps subsequent builds fast.
+      # GHA layer cache keeps subsequent builds fast (scoped per-arch so the
+      # amd64 and arm64 legs don't thrash each other's cache).
       - name: Build Linux image
         run: |
           docker buildx build \
-            --cache-from type=gha \
-            --cache-to   type=gha,mode=max \
+            --cache-from type=gha,scope=linux-${{ matrix.arch }} \
+            --cache-to   type=gha,mode=max,scope=linux-${{ matrix.arch }} \
             --load \
             -t jm-examples-linux:ci \
             -f docker/Dockerfile.examples-linux \
@@ -89,12 +100,36 @@ jobs:
             echo "pkg-config OK"
           '
 
-      # Push latest + sha tags on every push to main.
-      - name: Tag and push to GHCR
+      # Push an arch-suffixed tag on every push to main — never :latest
+      # directly, so that tag never briefly points at a single-arch image.
+      # The manifest job below combines these into the public tags.
+      - name: Tag and push arch-specific image to GHCR
         if: github.event_name == 'push' || github.event_name == 'workflow_call'
         run: |
           BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
-          docker tag jm-examples-linux:ci ${BASE}:latest
-          docker tag jm-examples-linux:ci ${BASE}:sha-${{ github.sha }}
-          docker push ${BASE}:latest
-          docker push ${BASE}:sha-${{ github.sha }}
+          docker tag jm-examples-linux:ci "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
+          docker push "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
+
+  # Combine the per-arch images pushed above into the public, multi-arch
+  # :latest / :sha-<sha> manifest list — the same tag contract every existing
+  # puller already relies on, now backed by more than one platform.
+  manifest:
+    name: Publish multi-arch manifest
+    needs: linux
+    if: github.event_name == 'push' || github.event_name == 'workflow_call'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push combined manifest
+        run: |
+          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
+          docker buildx imagetools create \
+            -t "${BASE}:latest" \
+            -t "${BASE}:sha-${{ github.sha }}" \
+            "${BASE}:sha-${{ github.sha }}-amd64" \
+            "${BASE}:sha-${{ github.sha }}-arm64"

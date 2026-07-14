@@ -1,6 +1,8 @@
 """Tests for the --perf scaffold and `just-makeit perf` upgrade command."""
 
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +14,17 @@ from just_makeit._new import run as new_run
 from just_makeit._init import run as init_run
 from just_makeit._perf import run as perf_run
 from just_makeit._config import load, is_perf
+
+
+def _skip_reason():
+    if not shutil.which("cmake"):
+        return "cmake not found"
+    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+        return "no C compiler found"
+    return None
+
+
+_SKIP = _skip_reason()
 
 
 @pytest.fixture()
@@ -364,10 +377,20 @@ class TestJmSimdHContent:
         assert "jm_dot_f32" in simd_h
         assert "jm_dot_f64" in simd_h
 
-    def test_three_simd_tiers(self, simd_h):
+    def test_four_simd_tiers(self, simd_h):
         assert "__AVX512F__" in simd_h
         assert "__AVX2__" in simd_h
+        assert "__aarch64__" in simd_h
         assert "#else" in simd_h  # scalar fallback
+
+    def test_neon_tier(self, simd_h):
+        assert "arm_neon.h" in simd_h
+        assert "float32x4_t" in simd_h
+        assert "float64x2_t" in simd_h
+        assert "vfmaq_f32" in simd_h
+        assert "vfmaq_f64" in simd_h
+        assert "vaddvq_f32" in simd_h
+        assert "vaddvq_f64" in simd_h
 
     def test_no_unreplaced_placeholders(self, simd_h):
         assert "<<" not in simd_h
@@ -394,3 +417,116 @@ class TestJmPerfHUpdated:
 
     def test_has_prefetch_macro(self, perf_h):
         assert "JM_PREFETCH" in perf_h
+
+
+# ── step()/steps() numerical consistency under -ffast-math (gh-208-class) ────
+#
+# gh-208 fixed a divergence where -ffast-math contracted a scalar step()'s
+# a*b+c into an FMA while a hand-written SIMD steps() batch did not (or vice
+# versa). A NEON tier makes JM_DEFINE_STEPS's SIMD-batch path reachable on
+# aarch64 for the first time (previously dead code there, since
+# JM_SIMD_WIDTH_F32 was 1) — this test builds a real JM_FMA_F32-based
+# step_batch with ENABLE_SIMD=ON and proves looped step() and steps() agree,
+# on whatever SIMD tier the host actually has (AVX2/AVX-512/NEON/scalar).
+
+
+class TestStepStepsFmaConsistency:
+    def test_perf_step_batch_matches_looped_step(self, tmp_path):
+        if _SKIP:
+            pytest.skip(_SKIP)
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        init_run(
+            root,
+            "c",
+            state_vars=[
+                ("gain", "float", "2.0"),
+                ("bias", "float", "1.0"),
+                # LENGTH=0 below never touches this, but JM_DEFINE_STEPS's
+                # macro body unconditionally references state->delay[...]
+                # (in a loop that happens to run zero iterations) — the
+                # member must still exist for the translation unit to
+                # compile.
+                ("delay", "float[1]", "0.0"),
+            ],
+            arg_type="float",
+            return_type="float",
+            perf=True,
+        )
+        # step() = x * gain + bias (an a*b+c shape the compiler may contract
+        # into an FMA under -ffast-math).
+        h = root / "native/inc/c/c_core.h"
+        h.write_text(
+            h.read_text().replace(
+                "return (float)x;",
+                "return (float)(x * state->gain + state->bias);",
+            )
+        )
+        # Replace the generated plain-loop steps() with the SIMD macro + a
+        # hand-written step_batch using a real fused multiply-add, mirroring
+        # the bundled fir_filter example's JM_DEFINE_STEPS + step_batch shape.
+        c = root / "native/src/c/c_core.c"
+        body = re.sub(
+            r"void\s+c_steps\(.*?\n\}\n", "", c.read_text(), flags=re.S
+        )
+        body += (
+            "\n#if JM_SIMD_WIDTH_F32 > 1\n"
+            "static inline void\n"
+            "c_step_batch(c_state_t *state, const float *in, float *out)\n"
+            "{\n"
+            "    JM_VEC_F32 acc = JM_SPLAT_F32(state->bias);\n"
+            "    JM_FMA_F32(acc, JM_LOAD_F32(in), JM_SPLAT_F32(state->gain));\n"
+            "    JM_STORE_F32(out, acc);\n"
+            "}\n"
+            "#endif\n"
+            "JM_DEFINE_STEPS(c, c_state_t, float, 0, JM_SIMD_WIDTH_F32, 64)\n"
+        )
+        c.write_text(body)
+
+        build = root / "build"
+        cfg = subprocess.run(
+            [
+                "cmake",
+                "-S",
+                str(root),
+                "-B",
+                str(build),
+                "-DENABLE_SIMD=ON",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert cfg.returncode == 0, f"configure failed:\n{cfg.stderr}"
+        bld = subprocess.run(
+            ["cmake", "--build", str(build)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert bld.returncode == 0, (
+            f"build failed:\n{bld.stdout}\n{bld.stderr}"
+        )
+
+        script = (
+            "import numpy as np\n"
+            "from proj import C\n"
+            "o = C(gain=2.0, bias=1.0)\n"
+            "x = np.linspace(-100.0, 100.0, 4096, dtype=np.float32)\n"
+            "looped = np.array([o.step(float(v)) for v in x], dtype=np.float32)\n"
+            "batched = o.steps(x)\n"
+            "assert np.allclose(looped, batched, rtol=1e-5, atol=1e-5), (\n"
+            "    looped[~np.isclose(looped, batched, rtol=1e-5, atol=1e-5)],\n"
+            "    batched[~np.isclose(looped, batched, rtol=1e-5, atol=1e-5)],\n"
+            ")\n"
+            "print('FMA CONSISTENCY OK')\n"
+        )
+        run = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=root / "src",
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert run.returncode == 0, f"runtime check failed:\n{run.stderr}"
+        assert "FMA CONSISTENCY OK" in run.stdout
