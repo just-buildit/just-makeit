@@ -172,15 +172,10 @@ def run(args: list[str]) -> None:
             if i >= len(remaining):
                 print("error: --return-type requires a type", file=sys.stderr)
                 sys.exit(1)
-            val = remaining[i]
-            if val != "void" and val not in T._CTYPE_META:
-                print(
-                    f"error: --return-type '{val}' must be void or a scalar.\n"
-                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            fn_return_type = val
+            # gh-244: a result_fields function's --return-type names the
+            # user's record struct, not a scalar — validate post-loop, once
+            # --result-field is known (mirrors jm method's CLI parser).
+            fn_return_type = remaining[i]
             i += 1
         elif tok == "--out-type":
             i += 1
@@ -270,6 +265,21 @@ def run(args: list[str]) -> None:
     if module is None:
         print(
             "error: 'function' requires --module (functions must belong to a module).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # gh-244: a result_fields function's --return-type names the user's
+    # record struct (the buffer element type for a list), not a scalar — so
+    # it's exempt from the scalar allowlist.
+    if (
+        fn_return_type != "void"
+        and fn_return_type not in T._CTYPE_META
+        and not fn_result_fields
+    ):
+        print(
+            f"error: --return-type '{fn_return_type}' must be void or a scalar.\n"
+            f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
             file=sys.stderr,
         )
         sys.exit(1)

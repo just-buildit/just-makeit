@@ -459,6 +459,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
+                max_results=int(fn.get("max_results", 64)),
                 # gh-335: self-sizing output for module functions. Without
                 # these the replayed temp manifest loses them and the rendered
                 # _ext.c under-allocates (out first, _dim = 1 / first array

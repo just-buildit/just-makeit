@@ -89,3 +89,206 @@ class TestListOfRecords:
         ]
         # the C kernel fills a caller-bounded buffer of the record struct
         assert "detector_event_t results[" in body
+
+
+class TestListOfRecordsHeaderDeclMatchesBody:
+    """gh-244 regression: the surgically-injected _core.h declaration for a
+    result_fields method must match the _core.c body's signature exactly.
+    They're built by two different code paths — ``_method.py``'s
+    ``_build_method_prototype`` (header, injected via
+    ``_inject_decls_into_core_h``) vs. ``_methods_c_stub_result_fields``
+    (body) — and previously only the body-builder knew about
+    ``result_fields``, so the header got a plain scalar-return declaration
+    with generic ``x``/``x_len`` param names instead, a hard compile error
+    (conflicting types). This is the default case (no ``max_results_param``
+    — jm auto-appends a bare ``size_t max_results``); ``max_results_param``
+    set (an existing named param) already worked and is covered above."""
+
+    def test_prototype_has_result_fields_signature(self):
+        from just_makeit._method import _build_method_prototype
+
+        proto = _build_method_prototype(
+            "comp",
+            "find_peaks",
+            "float[]",
+            "peaks_result_t",
+            variable_output=False,
+            multi_output=[],
+            params=[],
+            result_fields=[
+                {"name": "index", "type": "size_t"},
+                {"name": "magnitude", "type": "float"},
+            ],
+        )
+        assert proto == (
+            "size_t comp_find_peaks(comp_state_t *state, const float *in,"
+            " size_t n_in, peaks_result_t *result, size_t max_results);"
+        )
+
+    def test_prototype_matches_body_stub_signature(self):
+        from just_makeit._method import (
+            _build_method_prototype,
+            _methods_c_stub_result_fields,
+        )
+
+        result_fields = [
+            {"name": "index", "type": "size_t"},
+            {"name": "magnitude", "type": "float"},
+        ]
+        proto = _build_method_prototype(
+            "comp",
+            "find_peaks",
+            "float[]",
+            "peaks_result_t",
+            variable_output=False,
+            multi_output=[],
+            params=[],
+            result_fields=result_fields,
+        ).rstrip(";")
+        stub = _methods_c_stub_result_fields(
+            "comp", "find_peaks", "float[]", "peaks_result_t"
+        )
+        # The declaration's "fn(...)" text must appear verbatim as the
+        # definition's signature line in the body stub.
+        sig = proto.split(" ", 1)[1]
+        assert sig in stub
+
+    def test_single_record_prototype_uses_shared_param_names(self):
+        # single=True (one record by value, no results[]/max_results) must
+        # also use in/n_in — matching _methods_c_stub_result_single, not the
+        # generic fallback's x/x_len.
+        from just_makeit._method import _build_method_prototype
+
+        proto = _build_method_prototype(
+            "comp",
+            "find_peak",
+            "float[]",
+            "peaks_result_t",
+            variable_output=False,
+            multi_output=[],
+            params=[],
+            result_fields=[{"name": "index", "type": "size_t"}],
+            single=True,
+        )
+        assert proto == (
+            "peaks_result_t comp_find_peak(comp_state_t *state,"
+            " const float *in, size_t n_in);"
+        )
+
+
+class TestBenchBlockResultFields:
+    """gh-244 regression: the bench harness's call site also needs to know
+    about result_fields — it previously fell through to the generic
+    array-arg branch, calling the C function with 3 args instead of the 5
+    (state, in, n_in, result, max_results) its actual signature takes."""
+
+    METHOD = {
+        "name": "find_peaks",
+        "arg_type": "float[]",
+        "return_type": "peaks_result_t",
+        "result_fields": [
+            {"name": "index", "type": "size_t"},
+            {"name": "magnitude", "type": "float"},
+        ],
+    }
+
+    def test_call_includes_results_buffer_and_cap(self):
+        from just_makeit._context._methods import _bench_method_block
+
+        block = _bench_method_block("comp", self.METHOD)
+        assert (
+            "comp_find_peaks(obj, find_peaks_in, BENCH_N,"
+            " find_peaks_results, 64)" in block
+        )
+
+    def test_results_buffer_declared(self):
+        from just_makeit._context._methods import _bench_method_block
+
+        block = _bench_method_block("comp", self.METHOD)
+        assert "peaks_result_t find_peaks_results[64];" in block
+
+    def test_respects_custom_max_results(self):
+        from just_makeit._context._methods import _bench_method_block
+
+        m = dict(self.METHOD, max_results=16)
+        block = _bench_method_block("comp", m)
+        assert "find_peaks_results[16];" in block
+        assert ", find_peaks_results, 16)" in block
+
+
+class TestFunctionResultFieldsWrapper:
+    """gh-244 regression: jm function's Python-glue wrapper generator
+    (_py_wrapper_for_function) only handled result_fields when
+    max_results_param named an existing param — the common case (jm
+    auto-appends a bare trailing max_results, same as jm method) fell
+    through to the generic path and silently dropped the result_fields
+    handling, producing an under-arity call."""
+
+    def test_default_case_passes_literal_cap(self):
+        from just_makeit._render import _py_wrapper_for_function
+
+        wrapper = _py_wrapper_for_function(
+            "find_peaks",
+            [{"name": "x", "type": "float[]"}],
+            "peaks_result_t",
+            result_fields=[
+                {"name": "index", "type": "size_t"},
+                {"name": "magnitude", "type": "float"},
+            ],
+        )
+        assert "size_t _max = 64;" in wrapper
+        assert "find_peaks(x, x_len, _results, _max)" in wrapper
+
+    def test_named_param_case_unchanged(self):
+        # max_results_param set: the cap is already one of the parsed args
+        # (in call_args), so it is not passed again.
+        from just_makeit._render import _py_wrapper_for_function
+
+        wrapper = _py_wrapper_for_function(
+            "push",
+            [
+                {"name": "x", "type": "float _Complex"},
+                {"name": "max_events", "type": "size_t"},
+            ],
+            "detector_event_t",
+            result_fields=[{"name": "lag", "type": "uint32_t"}],
+            max_results_param="max_events",
+        )
+        assert "size_t _max = (size_t)max_events;" in wrapper
+        assert "push(x, max_events, _results)" in wrapper
+
+
+class TestCliFunctionResultFieldReturnType:
+    """gh-244: jm function's --return-type validator ran inline, before
+    --result-field could be seen later in argv, so it always rejected a
+    result_fields function's struct-name return type — jm method's
+    equivalent validator is deferred post-loop for exactly this reason."""
+
+    def test_struct_return_type_accepted_with_result_field(
+        self, tmp_path, monkeypatch
+    ):
+        import sys
+
+        sys.path.insert(0, str(tmp_path))
+        from just_makeit._new import run as new_run
+        from just_makeit._cli_function import run as cli_run
+
+        root = tmp_path / "proj"
+        new_run("proj", root, modules=["dsp"])
+        monkeypatch.chdir(root)
+        # Must not exit(1) / print the scalar-allowlist error.
+        cli_run(
+            [
+                "find_peaks",
+                "--module",
+                "dsp",
+                "--param",
+                "x:float[]",
+                "--return-type",
+                "peaks_result_t",
+                "--result-field",
+                "index:size_t",
+            ]
+        )
+        h = (root / "native/inc/dsp/dsp_core.h").read_text(encoding="utf-8")
+        assert "peaks_result_t *result" in h

@@ -166,6 +166,9 @@ def _bench_method_block(component: str, m: dict) -> str:
     return_type: str = m.get("return_type", "float _Complex")
     batch: bool = m.get("batch", False)
     params: list[dict] = m.get("params", [])
+    result_fields: list[dict] = m.get("result_fields", [])
+    single_record: bool = m.get("single", False)
+    max_results: int = int(m.get("max_results", 64))
 
     has_arg = arg_type != "void"
     has_ret = return_type != "void"
@@ -193,7 +196,39 @@ def _bench_method_block(component: str, m: dict) -> str:
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
     lines.append(f"        double _times_{name}[ITERATIONS];")
 
-    if batch:
+    if result_fields and not single_record:
+        # gh-244: a results[]/max_results method returns a count (size_t),
+        # not `return_type` directly — the call signature and sink differ
+        # from every other shape below, so this is handled first and skips
+        # the generic branches entirely.
+        rf_disp = _ctype_display(return_type)
+        lines.append(f"        {rf_disp} {name}_results[{max_results}];")
+        if has_arg:
+            lines += [
+                f"        {arg_elem_disp} *{name}_in ="
+                f" ({arg_elem_disp} *)calloc(BENCH_N,"
+                f" sizeof({arg_elem_disp}));",
+                f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
+            ]
+            call = (
+                f"{component}_{name}(obj, {name}_in, BENCH_N,"
+                f" {name}_results, {max_results})"
+            )
+        else:
+            call = f"{component}_{name}(obj, {name}_results, {max_results})"
+        lines.append(f"        volatile size_t {name}_sink;")
+        lines += [
+            f"        for (int i = 0; i < 4; i++) {name}_sink = {call};",
+            "        for (int r = 0; r < ITERATIONS; r++) {",
+            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            f"            {name}_sink = {call};",
+            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
+            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            "        }",
+        ]
+        if has_arg:
+            lines.append(f"        free({name}_in);")
+    elif batch:
         if has_arg:
             # gh-139: the input buffer holds elements; an array arg_type
             # (`T[]`) must use the element display, not `T[] *…`.
