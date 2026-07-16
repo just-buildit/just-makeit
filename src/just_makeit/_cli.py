@@ -117,6 +117,13 @@ Commands:
     --module name               Module the object lives in.
     --stacklevel N              PyErr_WarnEx stacklevel (default: 1).
 
+  error <obj> [OPTIONS]         Translate a create() failure to a Python exception.
+    --category name             Exception class, e.g. ValueError (required).
+    --message text              Exception text (required).
+    --module name               Module the object lives in.
+                                Note: applies to EVERY create() failure, a real
+                                allocation failure included — NULL cannot say why.
+
   function <name> [OPTIONS]     Add a module-level C function.
     --module name               Module to add the function to (required).
     --param name:type           Input parameter; repeatable.
@@ -694,6 +701,51 @@ def main() -> None:
             stacklevel=stacklevel,
         )
 
+    elif cmd == "error":
+        _warn_schema()
+        if len(args) < 2:
+            print("error: 'error' requires an object name.", file=sys.stderr)
+            sys.exit(1)
+        from . import _error
+
+        object_name = args[1]
+        module = None
+        category = ""
+        message = ""
+
+        remaining = args[2:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok in ("--module", "--category", "--message"):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a value", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if tok == "--module":
+                    module = val
+                elif tok == "--category":
+                    category = val
+                else:
+                    message = val
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        if not category:
+            print("error: --category is required", file=sys.stderr)
+            sys.exit(1)
+
+        _error.run(
+            Path.cwd(),
+            object_name,
+            category,
+            message,
+            module=module,
+        )
+
     elif cmd == "function":
         _warn_schema()
         from ._cli_function import run as _cmd_function
@@ -1167,6 +1219,7 @@ _C_EMITTING_COMMANDS = frozenset(
         "method",
         "property",
         "warning",
+        "error",
         "function",
         "add",
         "perf",

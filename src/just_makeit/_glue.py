@@ -112,6 +112,16 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             object_name, Component, C.warnings(cfg, object_name)
         )
     )
+    # gh-482: translate this component's create() failure. Undeclared yields
+    # the historical MemoryError block, so nothing changes for existing
+    # projects.
+    ctx.update(
+        Ctx.make_errors_ctx(
+            object_name,
+            C.create_error(cfg, object_name),
+            C.create_error_message(cfg, object_name),
+        )
+    )
     ctx.update(
         Ctx.make_stream_ctx(
             object_name,

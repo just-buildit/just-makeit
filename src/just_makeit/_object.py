@@ -813,6 +813,15 @@ def build_component_ctxs(
                 ctx["component"], ctx["Component"], C.warnings(cfg, obj)
             )
         )
+        # gh-482: a module object's declared create_error, filled into its
+        # COMPONENT_TYPE_SECTION slot by the aggregator render.
+        ctx.update(
+            Ctx.make_errors_ctx(
+                ctx["component"],
+                C.create_error(cfg, obj),
+                C.create_error_message(cfg, obj),
+            )
+        )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
         # COMPONENT_TYPE_SECTION slots; the per-object PyType_Ready for the
@@ -1318,6 +1327,8 @@ def run(
     # gh-481: a fresh object declares no warnings, but the slot must resolve
     # or this path's _ext.c ships with a literal <<init_warn_block>> in it.
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
+    # gh-482: undeclared at creation -> the historical MemoryError block.
+    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
 
     if create_impl_body is not None:
         ctx["create_assignments"] = _indent_body(create_impl_body)

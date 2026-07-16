@@ -370,6 +370,23 @@ def run(root: Path) -> None:
         lines += warn_lines
         lines.append("\n")
 
+    # ── create() error translation ────────────────────────────────────────────
+    err_lines: list[str] = []
+    for comp in all_comps:
+        mod = C.component_module(cfg, comp)
+        cat = C.create_error(cfg, comp)
+        if not cat:
+            continue
+        flags: list[str] = []
+        if mod:
+            flags.append(_flag("--module", mod))
+        flags.append(_flag("--category", cat))
+        flags.append(_flag("--message", C.create_error_message(cfg, comp)))
+        err_lines.append(_render_cmd(["just-makeit", "error", comp], flags))
+    if err_lines:
+        lines += err_lines
+        lines.append("\n")
+
     # ── module-level functions ─────────────────────────────────────────────────
     fn_lines: list[str] = []
     for mod in mods:
