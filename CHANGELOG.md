@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm warning` / `[[<comp>.warnings]]` — declarative post-construction
+    `PyErr_WarnEx` (gh-481).** An object that auto-sizes itself can end up
+    with a best-effort result that doesn't meet the caller's target, flagged
+    by a bool on the state struct. Construction succeeded, so the right
+    Python surface is a `UserWarning`, not an exception — but C has no
+    channel for "succeeded, but with a caveat" (`create()` returns non-NULL
+    or it doesn't), so a Python warning is unrepresentable in C and could
+    only be hand-patched into the `_ext.c` glue. That glue is regenerated
+    wholesale from the manifest, and jm's own sanctioned way to pick up a new
+    declarative field on an existing object is to delete the fragment and let
+    `jm apply` recreate it — which dropped the patch silently, with no
+    diagnostic. Declaring the warning makes it survive that round-trip like
+    any other generated boilerplate. Purely additive glue: no sacred file is
+    touched, and a component that declares no warnings renders byte-identical
+    output. `--after` accepts only `__init__` today; method-site warnings are
+    rejected rather than half-generated. A sibling for `create()`-failure
+    translation is tracked in gh-482.
+
+### Fixed
+
+- **`jm property` corrupted the generated `.pyi` doctest (found while
+    building gh-481).** `make_state_ctx` seeds `pyi_examples` with
+    `<<package>>`/`<<Component>>` placeholders that only `_init.run` resolved,
+    so every regenerating command rewrote the stub's example to a literal
+    `>>> from <<package>> import <<Component>>` — which is what
+    `pytest --doctest-glob='*.pyi'` would then try to run. It went unnoticed
+    because the placeholder scan in the test suite covered
+    `.py`/`.c`/`.h`/`.toml`/`.txt` but not `.pyi`, the only file affected. The
+    context assembly chain now lives once in `_glue.py` (the third copy of it
+    was about to be written for `jm warning`; gh-446 was a real bug caused by
+    two copies diverging), the fix applies to every caller, and the scan now
+    covers `.pyi`.
+
 ## [0.29.1] — 2026-07-14
 
 ### Fixed

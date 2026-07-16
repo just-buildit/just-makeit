@@ -110,6 +110,13 @@ Commands:
     --writable                  Generate a setter in addition to the getter.
     --field                     Back property with a struct field (no getter C fn).
 
+  warning <obj> [OPTIONS]       Warn after construction when a state flag is set.
+    --condition name            Bool state field that triggers the warning (required).
+    --message text              Warning text shown to the caller (required).
+    --category name             Warning class (default: UserWarning).
+    --module name               Module the object lives in.
+    --stacklevel N              PyErr_WarnEx stacklevel (default: 1).
+
   function <name> [OPTIONS]     Add a module-level C function.
     --module name               Module to add the function to (required).
     --param name:type           Input parameter; repeatable.
@@ -614,6 +621,79 @@ def main() -> None:
             doc=doc,
         )
 
+    elif cmd == "warning":
+        _warn_schema()
+        if len(args) < 2:
+            print(
+                "error: 'warning' requires an object name.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from . import _warning
+
+        object_name = args[1]
+        module = None
+        condition = ""
+        message = ""
+        category = "UserWarning"
+        after = "__init__"
+        stacklevel = 1
+
+        remaining = args[2:]
+        i = 0
+        while i < len(remaining):
+            tok = remaining[i]
+            if tok in (
+                "--module",
+                "--condition",
+                "--message",
+                "--category",
+                "--after",
+                "--stacklevel",
+            ):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a value", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if tok == "--module":
+                    module = val
+                elif tok == "--condition":
+                    condition = val
+                elif tok == "--message":
+                    message = val
+                elif tok == "--category":
+                    category = val
+                elif tok == "--after":
+                    after = val
+                else:
+                    if not val.isdigit():
+                        print(
+                            "error: --stacklevel requires a positive integer",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                    stacklevel = int(val)
+                i += 1
+            else:
+                print(f"error: unexpected argument '{tok}'", file=sys.stderr)
+                sys.exit(1)
+
+        if not condition:
+            print("error: --condition is required", file=sys.stderr)
+            sys.exit(1)
+
+        _warning.run(
+            Path.cwd(),
+            object_name,
+            condition,
+            message,
+            module=module,
+            category=category,
+            after=after,
+            stacklevel=stacklevel,
+        )
+
     elif cmd == "function":
         _warn_schema()
         from ._cli_function import run as _cmd_function
@@ -1086,6 +1166,7 @@ _C_EMITTING_COMMANDS = frozenset(
         "object",
         "method",
         "property",
+        "warning",
         "function",
         "add",
         "perf",
