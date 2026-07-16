@@ -4,6 +4,37 @@
 
 ### Added
 
+- **`jm error` / `[<comp>] create_error` — a `create()` failure now reports
+    the exception the component meant (gh-482).** `create()` returning NULL is
+    the only failure channel C has, so it carries every reason a component can
+    refuse to construct: out of memory, but also an invalid parameter
+    combination or an unsatisfiable constraint. jm reported all of them as
+    `MemoryError`, which for anything but an allocation failure is simply
+    false — a caller passing bad parameters got
+    `MemoryError: acq_create returned NULL` when the truth was a `ValueError`.
+    Misleading in a traceback, and uncatchable the way a caller would reach
+    for it. The inconsistency was sharper because jm already got this right
+    for everything it validates itself (enum choices and array shapes raise
+    `ValueError`); only the C-side refusal — the one case where the
+    *component* knows why it failed — got flattened.
+
+    ```toml
+    [acq]
+    create_error = "ValueError"
+    create_error_message = "invalid acquisition parameters"
+    ```
+
+    A translation fix, not a new hook: C could already signal failure, jm was
+    mistranslating it on arrival. Pure glue — no sacred file is touched, and
+    an undeclared component renders byte-identical output.
+
+    **Known limit, inherent to the design:** NULL is NULL. With `create_error`
+    declared, *every* create() failure reports as that category, including a
+    genuine allocation failure — `jm error` says so on stdout. Distinguishing
+    reasons needs an err out-param on `create()`, which changes the C API in
+    the sacred `_core.h`/`_core.c` and requires the component to set the code
+    itself; parked on the `gh-482-errors-wip` branch.
+
 - **`jm warning` / `[[<comp>.warnings]]` — declarative post-construction
     `PyErr_WarnEx` (gh-481).** An object that auto-sizes itself can end up
     with a best-effort result that doesn't meet the caller's target, flagged

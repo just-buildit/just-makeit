@@ -490,6 +490,10 @@ def _build_ctx(
     # Declaring warnings on a bound component would mean teaching `parse` to
     # carry them; not wired today.
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
+    # gh-482: same reasoning — a create_error is authored intent, not something
+    # recoverable from a header, so `bind` renders the MemoryError fallback
+    # exactly as it did before.
+    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
     return ctx
 
 

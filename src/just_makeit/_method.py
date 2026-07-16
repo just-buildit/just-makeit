@@ -924,6 +924,14 @@ def run(
                 object_name, Component, C.warnings(cfg, object_name)
             )
         )
+        # Preserve the declared create_error (gh-482) likewise.
+        ctx.update(
+            Ctx.make_errors_ctx(
+                object_name,
+                C.create_error(cfg, object_name),
+                C.create_error_message(cfg, object_name),
+            )
+        )
 
         def r(tmpl):
             return R.render(tmpl, ctx)

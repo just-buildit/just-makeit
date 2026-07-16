@@ -1478,6 +1478,59 @@ def add_warning(cfg: dict, component: str, warning: dict) -> dict:
     return cfg
 
 
+# Python exception classes a create() failure may be reported as (gh-482).
+# Same 1:1 ``PyExc_<name>`` mapping as `WARNING_CATEGORIES`, and the same
+# reason for existing: a typo here would otherwise reach the user's compiler
+# as an undeclared identifier rather than a jm diagnostic.
+ERROR_CATEGORIES = frozenset(
+    {
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "RuntimeError",
+        "MemoryError",
+        "OverflowError",
+        "ArithmeticError",
+        "ZeroDivisionError",
+        "FloatingPointError",
+        "IndexError",
+        "KeyError",
+        "BufferError",
+        "NotImplementedError",
+        "OSError",
+    }
+)
+
+
+def create_error(cfg: dict, component: str) -> str:
+    """Exception class for a ``create()`` failure (gh-482; "" if undeclared).
+
+    Undeclared means the generated glue keeps its historical blanket
+    ``MemoryError``, so existing projects are untouched.
+    """
+    return cfg.get(component, {}).get("create_error", "")
+
+
+def create_error_message(cfg: dict, component: str) -> str:
+    """Message paired with `create_error` ("" if undeclared)."""
+    return cfg.get(component, {}).get("create_error_message", "")
+
+
+def set_create_error(
+    cfg: dict, component: str, category: str, message: str
+) -> dict:
+    """Declare how this component's ``create()`` failure reports to Python.
+
+    Scalars rather than a table array (contrast ``[[<comp>.warnings]]``):
+    ``create()`` has exactly one failure channel — a NULL return — so there is
+    exactly one translation to declare. See `_context._diagnostics` for why
+    that channel can't distinguish reasons without changing the C API.
+    """
+    cfg.setdefault(component, {})["create_error"] = category
+    cfg[component]["create_error_message"] = message
+    return cfg
+
+
 def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     return [
         (s["name"], s["type"], s["default"])
@@ -2460,11 +2513,23 @@ def _dump(cfg: dict) -> str:
             "async_stream",
             "stream_block_default",
             "class_name",
+            # gh-482. `create_error` is a name from ERROR_CATEGORIES, so the
+            # raw f-string emission below is safe for it. Its paired
+            # `create_error_message` is human prose and is emitted separately
+            # via _str_assign — this loop does no escaping, so a message
+            # containing a quote would produce broken TOML here.
+            "create_error",
         )
         lines.append(f"[{comp}]")
         for k in scalar_keys:
             if k in comp_data:
                 lines.append(f'{k} = "{comp_data[k]}"')
+        if comp_data.get("create_error_message"):
+            lines.append(
+                _str_assign(
+                    "create_error_message", comp_data["create_error_message"]
+                )
+            )
         if comp_data.get("doc"):
             lines.append(_doc_assign(comp_data["doc"]))
         if comp_data.get("depends_on"):

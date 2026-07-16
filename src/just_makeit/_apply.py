@@ -167,6 +167,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         _object,
         _property,
         _warning,
+        _error,
     )
 
     project = C.project_name(cfg)
@@ -435,6 +436,16 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 category=w.get("category", "UserWarning"),
                 after=w.get("after", "__init__"),
                 stacklevel=int(w.get("stacklevel", 1) or 1),
+            )
+        # gh-482: same reasoning as the warnings replay above — a declared
+        # create_error must reach a fresh checkout from the manifest alone.
+        if C.create_error(cfg, comp):
+            _error.run(
+                temp_root,
+                comp,
+                C.create_error(cfg, comp),
+                C.create_error_message(cfg, comp),
+                module=mod,
             )
 
     for mod in mods:

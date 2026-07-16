@@ -1,8 +1,7 @@
 """_diagnostics — context builders for declarative Python-level diagnostics.
 
-Today this is `make_warnings_ctx` (gh-481): a ``PyErr_WarnEx`` guarded by a
-bool field on the state struct, emitted right after a *successful*
-construction.
+`make_warnings_ctx` (gh-481) emits a ``PyErr_WarnEx`` guarded by a bool field
+on the state struct, right after a *successful* construction.
 
 Why it has to be generated rather than hand-written: C has no channel for
 "succeeded, but with a caveat". ``create()`` returns non-NULL or it doesn't, so
@@ -13,15 +12,28 @@ an existing object is to delete the fragment and let ``jm apply`` recreate it �
 which silently dropped the patch, with no diagnostic. Declaring the warning
 here makes it survive that round-trip like any other generated boilerplate.
 
-A sibling lands in gh-482: translating a ``create()`` failure into the
-exception the component actually meant, instead of today's blanket
-``MemoryError``. The two read as siblings — per-component table-arrays keyed on
-``category`` + ``message`` plus a discriminator — but they are deliberately not
-symmetric, because the underlying problems aren't. A warning is pure glue: it
-fires on live state C already computed, and jm owns the whole path. An error
-fires when there is no object at all, so the reason needs its own out-param
-channel on ``create()`` — which changes the C API and means splicing the sacred
-``_core.h``/``_core.c``. Hence the separate change.
+`make_errors_ctx` (gh-482) is its sibling: translating a ``create()`` failure
+into the exception the component actually meant, instead of the blanket
+``MemoryError`` the glue used to hardcode. Not an expressiveness gap — C can
+already signal failure by returning NULL. The gap was that jm mistranslated the
+failure on arrival, reporting a bad-parameter refusal as an allocation error.
+So the fix lives in the translation, not in a new post-construction hook.
+
+The two are siblings, not twins, and the asymmetry is deliberate:
+
+- A warning is a **table array** (`[[<comp>.warnings]]`): a component can have
+  any number of best-effort caveats, each keyed on a different state field.
+- An error is a **scalar pair** (`create_error` / `create_error_message`):
+  ``create()`` has exactly one failure channel — a NULL return — so there is
+  exactly one translation to declare.
+
+That single channel is also this feature's known limit. NULL is NULL: with
+`create_error` declared, *every* create() failure reports as that category,
+including a genuine allocation failure. Distinguishing reasons would need an
+err out-param, which changes ``create()``'s signature in the sacred
+``_core.h``/``_core.c`` and requires the component to set the code itself. That
+was scoped out deliberately — see the `gh-482-errors-wip` branch. Both builders
+here stay pure glue: no sacred file is touched by either.
 """
 
 from __future__ import annotations
@@ -166,3 +178,66 @@ def make_warnings_ctx(
             f"    }}\n"
         )
     return {"init_warn_block": "".join(parts)}
+
+
+def make_errors_ctx(
+    component: str,
+    category: str = "",
+    message: str = "",
+) -> dict[str, str]:
+    """Build the create()-failure translation block (gh-482).
+
+    Parameters
+    ----------
+    component : str
+        Lowercase component id, e.g. ``acq``.
+    category : str, optional
+        A name from `_config.ERROR_CATEGORIES`. Empty means undeclared, which
+        yields the historical ``MemoryError`` block unchanged.
+    message : str, optional
+        Text for the raised exception. Ignored when `category` is empty.
+
+    Returns
+    -------
+    dict
+        Single key ``create_fail_block``.
+
+    Notes
+    -----
+    The undeclared form is byte-identical to the text this block replaced in
+    ``templates/c/src/component_ext.c``, so a component that declares no
+    create_error renders exactly as it did before gh-482. That equivalence is
+    what makes the slot safe to introduce, and it is pinned by a test.
+
+    Examples
+    --------
+    >>> print(make_errors_ctx("acq")["create_fail_block"], end="")
+        if (!self->handle) {
+            PyErr_SetString(PyExc_MemoryError,
+                            "acq_create returned NULL");
+            return -1;
+        }
+    >>> out = make_errors_ctx("acq", "ValueError", "bad params")
+    >>> print(out["create_fail_block"], end="")
+        if (!self->handle) {
+            PyErr_SetString(PyExc_ValueError,
+                            "bad params");
+            return -1;
+        }
+    """
+    if not category:
+        # The pre-gh-482 hardcoded template text, to the byte.
+        body = (
+            "        PyErr_SetString(PyExc_MemoryError,\n"
+            f'                        "{component}_create returned NULL");\n'
+        )
+    else:
+        body = (
+            f"        PyErr_SetString(PyExc_{category},\n"
+            f"{_c_string_literal(message, 24)});\n"
+        )
+    return {
+        "create_fail_block": (
+            f"    if (!self->handle) {{\n{body}        return -1;\n    }}\n"
+        )
+    }

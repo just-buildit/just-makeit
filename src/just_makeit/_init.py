@@ -718,6 +718,9 @@ def run(
     # warnings, but the slot must still resolve or the new _ext.c ships with a
     # literal <<init_warn_block>> in it.
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
+    # gh-482: likewise undeclared at creation, which yields the historical
+    # MemoryError block — so this render stays byte-identical to before.
+    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;
     # a later variable_output method re-points it (recomputed on every render).

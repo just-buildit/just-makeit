@@ -157,12 +157,7 @@ static PyObject *
 static int
 <<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
 {
-<<init_parse_block>><<array_args_parse_block>><<create_line>><<array_args_decref>>    if (!self->handle) {
-        PyErr_SetString(PyExc_MemoryError,
-                        "<<component>>_create returned NULL");
-        return -1;
-    }
-<<extra_buf_alloc>><<init_warn_block>>    return 0;
+<<init_parse_block>><<array_args_parse_block>><<create_line>><<array_args_decref>><<create_fail_block>><<extra_buf_alloc>><<init_warn_block>>    return 0;
 }
 
 <<builtin_reset_c>>

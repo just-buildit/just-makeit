@@ -669,6 +669,41 @@ jm warning comp \
 <td>
 
 ```python
+# create() refusal reports
+# the real reason, not
+# a blanket MemoryError
+Comp(reps=0)
+# -> ValueError: bad params
+```
+
+</td>
+<td>
+
+```toml
+[comp]
+create_error = "ValueError"
+create_error_message = \
+  "bad params"
+```
+
+</td>
+<td>
+
+```sh
+jm error comp \
+  --category \
+    ValueError \
+  --message \
+    "bad params"
+```
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+```python
 # Module-level function
 def apply(
     x: NDArray[np.float32],
