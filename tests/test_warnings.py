@@ -44,6 +44,33 @@ def project(tmp_path):
     return dest
 
 
+class _CliResult:
+    def __init__(self, returncode, out, err):
+        self.returncode = returncode
+        self.stdout = out
+        self.stderr = err
+
+
+def _cli(*args, cwd=None, capsys=None, monkeypatch=None) -> _CliResult:
+    """Drive the real argv parser in-process.
+
+    Deliberately not a subprocess: `main()` is what parses these flags, and a
+    subprocess would run it where coverage can't see it (the CLI dispatch layer
+    sits at ~53% for exactly that reason). In-process also runs ~100x faster.
+    """
+    from just_makeit._cli import main
+
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
+    code = 0
+    try:
+        main()
+    except SystemExit as e:
+        code = e.code or 0
+    out, err = capsys.readouterr()
+    return _CliResult(code, out, err)
+
+
 def _ext_c(project, obj="acq"):
     return (project / "native" / "src" / obj / f"{obj}_ext.c").read_text(
         encoding="utf-8"
@@ -305,3 +332,202 @@ class TestWarningEndToEnd:
         )
         assert run.returncode == 0, run.stderr[-3000:]
         assert "ok" in run.stdout
+
+
+class TestWarningCli:
+    """The argv layer, which `warning_run` tests bypass entirely."""
+
+    def test_cli_declares_a_warning(self, project, capsys, monkeypatch):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            _MSG,
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode == 0, r.stderr
+        assert "PyErr_WarnEx(PyExc_UserWarning," in _ext_c(project)
+        assert cfg_warnings(load(project), "acq")[0]["message"] == _MSG
+
+    def test_cli_passes_category_and_stacklevel(
+        self, project, capsys, monkeypatch
+    ):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            "m",
+            "--category",
+            "RuntimeWarning",
+            "--stacklevel",
+            "2",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode == 0, r.stderr
+        entry = cfg_warnings(load(project), "acq")[0]
+        assert entry["category"] == "RuntimeWarning"
+        assert entry["stacklevel"] == 2
+        assert "PyErr_WarnEx(PyExc_RuntimeWarning," in _ext_c(project)
+
+    def test_cli_requires_condition(self, project, capsys, monkeypatch):
+        r = _cli(
+            "warning",
+            "acq",
+            "--message",
+            "m",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "--condition is required" in r.stderr
+
+    def test_cli_requires_object_name(self, project, capsys, monkeypatch):
+        r = _cli(
+            "warning", cwd=project, capsys=capsys, monkeypatch=monkeypatch
+        )
+        assert r.returncode != 0
+        assert "requires an object name" in r.stderr
+
+    def test_cli_rejects_unknown_flag(self, project, capsys, monkeypatch):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            "m",
+            "--bogus",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "unexpected argument '--bogus'" in r.stderr
+
+    def test_cli_rejects_flag_without_value(
+        self, project, capsys, monkeypatch
+    ):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "--condition requires a value" in r.stderr
+
+    def test_cli_rejects_non_numeric_stacklevel(
+        self, project, capsys, monkeypatch
+    ):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            "m",
+            "--stacklevel",
+            "high",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "--stacklevel requires a positive integer" in r.stderr
+
+    def test_cli_rejects_bad_category(self, project, capsys, monkeypatch):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            "m",
+            "--category",
+            "Nope",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "unsupported --category" in r.stderr
+
+    def test_cli_passes_module_through(self, tmp_path, capsys, monkeypatch):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, [], [], modules=["filt"])
+        from just_makeit._object import run as object_run
+
+        object_run(
+            dest, "fir", module="filt", state_vars=[("clipped", "int", "0")]
+        )
+        r = _cli(
+            "warning",
+            "fir",
+            "--module",
+            "filt",
+            "--condition",
+            "clipped",
+            "--message",
+            "output clipped",
+            cwd=dest,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode == 0, r.stderr
+        ext = (dest / "native" / "src" / "filt" / "filt_ext_fir.c").read_text(
+            encoding="utf-8"
+        )
+        assert "PyErr_WarnEx(PyExc_UserWarning," in ext
+
+    def test_cli_passes_after_through(self, project, capsys, monkeypatch):
+        # --after must reach _warning.run, which rejects anything but
+        # __init__; a silently-swallowed flag would look like it worked.
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "underpowered",
+            "--message",
+            "m",
+            "--after",
+            "execute",
+            cwd=project,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "not supported yet" in r.stderr
+
+    def test_cli_errors_outside_a_project(self, tmp_path, capsys, monkeypatch):
+        r = _cli(
+            "warning",
+            "acq",
+            "--condition",
+            "x",
+            "--message",
+            "m",
+            cwd=tmp_path,
+            capsys=capsys,
+            monkeypatch=monkeypatch,
+        )
+        assert r.returncode != 0
+        assert "just-makeit.toml" in r.stderr
+
+
+class TestWarningModuleObjectErrors:
+    def test_unknown_object_in_module(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, [], [], modules=["filt"])
+        with pytest.raises(SystemExit):
+            warning_run(dest, "nosuch", "flag", "m", module="filt")
