@@ -26,6 +26,7 @@ import ast
 import re as _re
 
 from . import _config as C
+from . import _context as Ctx
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -1046,29 +1047,30 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             '        """Restore mutable state from a get_state() blob."""',
         ]
 
-    # properties
-    for prop in obj_props:
-        p_name = prop["name"]
-        p_ctype = prop.get("type") or prop.get("ctype", "size_t")
-        p_write = prop.get("writable", False) or (p_name in state_names)
-        py_t = _py(p_ctype)
-        _pblk = doc_blocks.get(f"{obj}_get_{p_name}")
-        _pdoc = (
-            prop.get("doc")
-            or (_pblk.brief if (_pblk and _pblk.brief) else "")
-            or f"{p_name.replace('_', ' ').capitalize()}."
-        )
-        lines += [
-            "",
-            "    @property",
-            f"    def {p_name}(self) -> {py_t}:",
-            f'        """{_pdoc}"""',
-        ]
-        if p_write:
-            lines += [
-                f"    @{p_name}.setter",
-                f"    def {p_name}(self, value: {py_t}) -> None: ...",
-            ]
+    # Properties — rendered by make_properties_ctx, the same builder that emits
+    # the C getset table and the standalone .pyi. This used to be an
+    # independent second implementation, and the two had diverged in exactly
+    # the way gh-446 warned about:
+    #
+    #   - It treated a property aliasing a state var as writable
+    #     (`or p_name in state_names`), while the C emits NULL for the setter.
+    #     The stub advertised `@x.setter` for a read-only property, so mypy
+    #     passed and the assignment raised AttributeError at runtime. State
+    #     vars produce no property at all, so the clause compensated for
+    #     nothing — it just lied.
+    #   - It annotated with `_py()`, which has no buf_field notion, so a
+    #     `--buf-field` property was typed as a scalar instead of NDArray.
+    #
+    # One renderer means those can't drift again.
+    _prop_pyi = Ctx.make_properties_ctx(
+        obj,
+        Component,
+        obj_props,
+        frozenset(state_names),
+        doc_blocks=doc_blocks,
+    )["property_stubs_pyi"]
+    if _prop_pyi:
+        lines += _prop_pyi.rstrip("\n").split("\n")
 
     # Stream generator (gh-203): a streamable object grows stream()/__iter__.
     _stream_pyi = _obj_stream_pyi(cfg, obj)
