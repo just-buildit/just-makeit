@@ -24,6 +24,20 @@
 
 ### Fixed
 
+- **A module object's `.pyi` claimed a setter that its C didn't have
+    (gh-446 follow-up).** `_stubs._obj_stub` independently re-implemented the
+    property-stub emission that `make_properties_ctx` already produced for the
+    standalone path, and the two had drifted. It treated a property whose name
+    matched a state variable as writable, while the C correctly emits `NULL`
+    for the setter of a read-only property — so the stub advertised
+    `@x.setter`, mypy blessed the assignment, and it raised `AttributeError`
+    at runtime. The clause compensated for nothing: state variables produce no
+    `@property` at all. The same renderer also annotated with `_py()`, which
+    has no `buf_field` notion, typing a `--buf-field` property as a scalar
+    instead of `NDArray`. Both paths now render through `make_properties_ctx`,
+    so they cannot diverge again — which is the actual root cause gh-446
+    identified but only half-fixed.
+
 - **`jm property` corrupted the generated `.pyi` doctest (found while
     building gh-481).** `make_state_ctx` seeds `pyi_examples` with
     `<<package>>`/`<<Component>>` placeholders that only `_init.run` resolved,

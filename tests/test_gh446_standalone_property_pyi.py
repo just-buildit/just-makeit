@@ -126,3 +126,76 @@ class TestStatusDetectsPropertyDrift:
 
         rc = _status.run(project, check=True)
         assert rc == 0
+
+
+class TestOneRendererForPropertyStubs:
+    """gh-446's actual root cause: two independent renderers of the same facts.
+
+    `_stubs._obj_stub` (module objects) re-implemented the property-stub
+    emission that `make_properties_ctx` already produced for the standalone
+    path. Predictably, they drifted. These pin the two together — if someone
+    reintroduces a second renderer, the divergence tests fail rather than
+    shipping a stub that lies about the C.
+    """
+
+    def _module_project(self, tmp_path, *, writable=False, ctype="double"):
+        from just_makeit._object import run as object_run
+
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, [], [], modules=["filt"])
+        object_run(
+            dest, "fir", module="filt", state_vars=[("gain", ctype, "1.0")]
+        )
+        property_run(dest, "fir", "gain", "filt", ctype, writable)
+        return dest
+
+    def _standalone_project(self, tmp_path, *, writable=False, ctype="double"):
+        dest = tmp_path / "solo"
+        new_run("solo", dest, ["fir"], [("gain", ctype, "1.0")])
+        property_run(dest, "fir", "gain", None, ctype, writable)
+        return dest
+
+    def test_readonly_property_aliasing_state_has_no_setter_in_module_pyi(
+        self, tmp_path
+    ):
+        # The C emits NULL for the setter, so a stub claiming `@gain.setter`
+        # makes mypy bless an assignment that raises AttributeError at
+        # runtime. _obj_stub used to add the setter whenever the property
+        # name matched a state var — compensating for nothing, since state
+        # vars produce no property at all.
+        dest = self._module_project(tmp_path, writable=False)
+        pyi = (dest / "src" / "dsp" / "filt" / "filt.pyi").read_text(
+            encoding="utf-8"
+        )
+        ext = (dest / "native" / "src" / "filt" / "filt_ext_fir.c").read_text(
+            encoding="utf-8"
+        )
+        assert "@gain.setter" not in pyi
+        # ...and the stub agrees with the C it describes.
+        assert '{ "gain", (getter)Fir_getprop_gain, NULL,' in ext
+
+    def test_writable_property_still_has_setter_in_module_pyi(self, tmp_path):
+        dest = self._module_project(tmp_path, writable=True)
+        pyi = (dest / "src" / "dsp" / "filt" / "filt.pyi").read_text(
+            encoding="utf-8"
+        )
+        assert "@gain.setter" in pyi
+
+    @pytest.mark.parametrize("writable", [False, True])
+    def test_module_and_standalone_pyi_agree(self, tmp_path, writable):
+        """The same property config must stub identically either side."""
+        mod = self._module_project(tmp_path / "m", writable=writable)
+        solo = self._standalone_project(tmp_path / "s", writable=writable)
+        mod_pyi = (mod / "src" / "dsp" / "filt" / "filt.pyi").read_text(
+            encoding="utf-8"
+        )
+        solo_pyi = (solo / "src" / "solo" / "fir.pyi").read_text(
+            encoding="utf-8"
+        )
+
+        def _prop_block(text):
+            lines = text.splitlines()
+            i = next(i for i, ln in enumerate(lines) if "def gain" in ln)
+            return [ln for ln in lines[i - 1 : i + 4] if ln.strip()]
+
+        assert _prop_block(mod_pyi) == _prop_block(solo_pyi)
