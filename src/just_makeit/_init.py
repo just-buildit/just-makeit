@@ -714,6 +714,10 @@ def run(
             [],
         )
     )
+    # Same reasoning as properties above (gh-481): a fresh object declares no
+    # warnings, but the slot must still resolve or the new _ext.c ships with a
+    # literal <<init_warn_block>> in it.
+    ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;
     # a later variable_output method re-points it (recomputed on every render).

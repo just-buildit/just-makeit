@@ -806,6 +806,13 @@ def build_component_ctxs(
                 doc_blocks=_doc_blocks,
             )
         )
+        # Declared warnings (gh-481) for a module object, filled into its
+        # COMPONENT_TYPE_SECTION slots by the aggregator render.
+        ctx.update(
+            Ctx.make_warnings_ctx(
+                ctx["component"], ctx["Component"], C.warnings(cfg, obj)
+            )
+        )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
         # COMPONENT_TYPE_SECTION slots; the per-object PyType_Ready for the
@@ -1308,6 +1315,9 @@ def run(
             serializable=serializable,
         )
     )
+    # gh-481: a fresh object declares no warnings, but the slot must resolve
+    # or this path's _ext.c ships with a literal <<init_warn_block>> in it.
+    ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
 
     if create_impl_body is not None:
         ctx["create_assignments"] = _indent_body(create_impl_body)

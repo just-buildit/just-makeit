@@ -173,6 +173,41 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     return parts
 
 
+def _warning_flags(w: dict, module: str | None) -> list[str]:
+    """CLI flags reconstructing a ``[[<comp>.warnings]]`` entry (gh-481).
+
+    Every key the manifest can hold is emitted — unlike `_property_flags`,
+    which silently drops ``doc``/``expr``/``buf_field`` and so cannot
+    round-trip a property authored through ``jm apply``'s replay. A `jm script`
+    that quietly loses the warning text would recreate the original bug this
+    feature fixes, one layer up.
+
+    >>> _warning_flags({"condition": "underpowered", "message": "best effort",
+    ...                 "category": "UserWarning"}, None)
+    ['    --condition underpowered \\\\\\n', "    --message 'best effort' \\\\\\n"]
+    """
+    parts: list[str] = []
+
+    if module:
+        parts.append(_flag("--module", module))
+
+    parts.append(_flag("--condition", w["condition"]))
+    parts.append(_flag("--message", w["message"]))
+
+    # Defaults are omitted so the reconstructed script reads like one a human
+    # would have typed, but anything non-default must survive.
+    if w.get("category", "UserWarning") != "UserWarning":
+        parts.append(_flag("--category", w["category"]))
+
+    if w.get("after", "__init__") != "__init__":
+        parts.append(_flag("--after", w["after"]))
+
+    if int(w.get("stacklevel", 1) or 1) != 1:
+        parts.append(_flag("--stacklevel", str(w["stacklevel"])))
+
+    return parts
+
+
 def _function_flags(fn: dict, module: str) -> list[str]:
     parts: list[str] = [_flag("--module", module)]
 
@@ -316,6 +351,23 @@ def run(root: Path) -> None:
             )
     if prop_lines:
         lines += prop_lines
+        lines.append("\n")
+
+    # ── warnings ──────────────────────────────────────────────────────────────
+    # After properties: a warning's condition is often a field-backed property,
+    # and the reconstructed script should declare the field before referencing
+    # it — jm warns on an unknown condition.
+    warn_lines: list[str] = []
+    for comp in all_comps:
+        mod = C.component_module(cfg, comp)
+        for w in C.warnings(cfg, comp):
+            warn_lines.append(
+                _render_cmd(
+                    ["just-makeit", "warning", comp], _warning_flags(w, mod)
+                )
+            )
+    if warn_lines:
+        lines += warn_lines
         lines.append("\n")
 
     # ── module-level functions ─────────────────────────────────────────────────

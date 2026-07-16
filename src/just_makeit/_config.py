@@ -1440,6 +1440,44 @@ def add_property(cfg: dict, component: str, prop: dict) -> dict:
     return cfg
 
 
+# Python's built-in warning categories (gh-481). Each name maps 1:1 onto a
+# ``PyExc_<name>`` symbol in the C API, so the codegen interpolates the name
+# directly. This frozenset is what keeps a typo out of the generated C, where
+# it would surface as an undeclared-identifier compile error in the user's
+# build rather than as a jm diagnostic.
+WARNING_CATEGORIES = frozenset(
+    {
+        "Warning",
+        "UserWarning",
+        "DeprecationWarning",
+        "PendingDeprecationWarning",
+        "RuntimeWarning",
+        "FutureWarning",
+        "SyntaxWarning",
+        "ImportWarning",
+        "UnicodeWarning",
+        "BytesWarning",
+        "ResourceWarning",
+    }
+)
+
+
+def warnings(cfg: dict, component: str) -> list[dict]:
+    """Return declared post-construction warnings (gh-481; [] if none).
+
+    Each entry carries ``after`` (today always ``__init__``), ``condition``
+    (a bool-valued field on the state struct), ``category`` (a name from
+    `WARNING_CATEGORIES`) and ``message``.
+    """
+    return list(cfg.get(component, {}).get("warnings", []))
+
+
+def add_warning(cfg: dict, component: str, warning: dict) -> dict:
+    """Append a warning entry to the component's warnings list."""
+    cfg.setdefault(component, {}).setdefault("warnings", []).append(warning)
+    return cfg
+
+
 def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     return [
         (s["name"], s["type"], s["default"])
@@ -1895,20 +1933,27 @@ def add_component(
     return cfg
 
 
-def _doc_assign(value: str) -> str:
-    """Render ``doc = ...`` for the TOML dump.
+def _str_assign(key: str, value: str) -> str:
+    """Render ``<key> = ...`` for the TOML dump, escaping as needed.
 
-    Multi-line docstrings use a TOML basic multi-line string; single-line
-    docs use a basic string with quotes/backslashes escaped.
+    Multi-line values use a TOML basic multi-line string; single-line values
+    use a basic string with quotes/backslashes escaped. Shared by ``doc`` and
+    by the ``message`` key on ``[[<comp>.warnings]]`` (gh-481), whose prose is
+    authored by a human and routinely contains quotes.
     """
     if "\n" in value:
         # strip("\n") for round-trip idempotency (gh-192) — see _dump impl keys.
         body = (
             value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"').strip("\n")
         )
-        return f'doc = """\n{body}\n"""'
+        return f'{key} = """\n{body}\n"""'
     body = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'doc = "{body}"'
+    return f'{key} = "{body}"'
+
+
+def _doc_assign(value: str) -> str:
+    """Render ``doc = ...`` for the TOML dump."""
+    return _str_assign("doc", value)
 
 
 # Method keys the _dump serializer emits explicitly (the list/table ones —
@@ -2612,6 +2657,20 @@ def _dump(cfg: dict) -> str:
                 lines.append(f'valid_field = "{p["valid_field"]}"')
             if p.get("expr"):
                 lines.append(f'expr = "{p["expr"]}"')
+            lines.append("")
+        # gh-481. An explicit closed field list (the `properties` style, not
+        # the `methods` generic passthrough): the grammar is deliberately small
+        # and fixed, so a key that isn't one of these is an authoring error
+        # worth losing loudly at validation rather than round-tripping
+        # silently. gh-482 adds a sibling [[<comp>.errors]] table here.
+        for w in comp_data.get("warnings", []):
+            lines.append(f"[[{comp}.warnings]]")
+            lines.append(f'after = "{w.get("after", "__init__")}"')
+            lines.append(f'condition = "{w["condition"]}"')
+            lines.append(f'category = "{w.get("category", "UserWarning")}"')
+            lines.append(_str_assign("message", w["message"]))
+            if w.get("stacklevel"):
+                lines.append(f"stacklevel = {int(w['stacklevel'])}")
             lines.append("")
 
     app = cfg.get("app", {})

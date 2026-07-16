@@ -633,6 +633,42 @@ jm property comp gain \
 <td>
 
 ```python
+# Warn after construction
+# when a state flag is set
+import warnings
+with warnings.catch_warnings():
+    Comp()  # -> UserWarning
+```
+
+</td>
+<td>
+
+```toml
+[[comp.warnings]]
+after     = "__init__"
+condition = "underpowered"
+category  = "UserWarning"
+message   = "best effort only"
+```
+
+</td>
+<td>
+
+```sh
+jm warning comp \
+  --condition \
+    underpowered \
+  --message \
+    "best effort only"
+```
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+```python
 # Module-level function
 def apply(
     x: NDArray[np.float32],

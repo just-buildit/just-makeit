@@ -20,17 +20,12 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _context as Ctx
-from . import _render as R
-from . import _stubs as S
+from . import _glue
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
     _inject_struct_field,
-    _make_component_ctx,
-    _to_title,
 )
-from ._object import _regenerate_module
 
 
 def run(
@@ -92,7 +87,6 @@ def run(
         sys.exit(1)
 
     pkg = C.project_name(cfg)
-    Component = _to_title(object_name)
 
     print(
         f"just-makeit: adding property '{prop_name}' to '{object_name}'"
@@ -148,93 +142,10 @@ def run(
 
     # Regenerate the glue (Python getset descriptor + binding).  Module objects
     # share one _ext.c (rebuilt by _regenerate_module); standalone objects own
-    # their _ext.c.
-    if module:
-        _regenerate_module(root, cfg, module, pkg)
-    else:
-        state_vars_list = C.state_vars(cfg, object_name)
-        arg_type_ = C.arg_type(cfg, object_name)
-        return_type_ = C.return_type(cfg, object_name)
-        ctx = _make_component_ctx(object_name)
-        ctx.update(
-            {
-                "package": pkg,
-                "PACKAGE": pkg.upper(),
-                "project": pkg.replace("_", "-"),
-                "project_underscore": pkg,
-                "version": C.project_version(cfg),
-            }
-        )
-        ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
-        ctx.update(
-            Ctx.make_state_ctx(
-                object_name,
-                Component,
-                state_vars_list,
-                array_args=C.array_args(cfg, object_name),
-                no_state=C.is_no_state(cfg, object_name),
-                init_params=C.init_params(cfg, object_name),
-            )
-        )
-        ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
-        ctx.update(
-            Ctx.make_step_ctx(
-                ctx,
-                arg_type_,
-                return_type_,
-                no_step=C.is_no_step(cfg, object_name),
-            )
-        )
-        ctx.update(
-            Ctx.make_methods_ctx(
-                object_name,
-                Component,
-                C.methods(cfg, object_name),
-                pkg=pkg,
-                py_create_args=ctx.get("py_create_args", ""),
-                no_state=C.is_no_state(cfg, object_name),
-                serializable=C.is_serializable(cfg, object_name),
-            )
-        )
-        ctx.update(
-            Ctx.make_properties_ctx(
-                object_name,
-                Component,
-                C.properties(cfg, object_name),
-                frozenset(n for n, _, _ in state_vars_list),
-            )
-        )
-        # Preserve the stream generator (gh-201) across `jm property`.
-        ctx.update(
-            Ctx.make_stream_ctx(
-                object_name,
-                Component,
-                ctx["ComponentW"],
-                streamable=C.is_streamable(cfg, object_name),
-                async_stream=C.is_async_stream(cfg, object_name),
-                methods=C.methods(cfg, object_name),
-                arg_type=arg_type_,
-                return_type=return_type_,
-                default_block=C.stream_block_default(cfg, object_name),
-            )
-        )
-        ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
-        if ext_c.exists():
-            ext_c.write_text(
-                R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8"
-            )
-            print(f"  update  {ext_c}")
-        pyi_path = root / "src" / pkg / f"{object_name}.pyi"
-        if pyi_path.exists():
-            old_pyi = pyi_path.read_text(encoding="utf-8")
-            new_pyi = R.render(R.COMPONENT_PYI, ctx)
-            # gh-428: preserve any manual_stub method's hand-written text
-            # across the otherwise-blind regen above.
-            pyi_path.write_text(
-                S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
-                encoding="utf-8",
-            )
-            print(f"  update  {pyi_path}")
+    # their _ext.c. The assembly chain lives in _glue so `jm warning` and any
+    # future manifest-driven command render from the identical context (gh-446
+    # was a divergence between two copies of it).
+    _glue.regenerate(root, cfg, object_name, module, pkg)
 
     print()
     rw = "read/write" if writable else "read-only"

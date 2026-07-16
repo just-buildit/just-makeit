@@ -66,6 +66,9 @@ per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_make
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: compiles a generated project (deselect with '-m \"not slow\"')",
+]
 
 [tool.coverage.run]
 source = ["just_makeit"]

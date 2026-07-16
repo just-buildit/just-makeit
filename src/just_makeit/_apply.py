@@ -166,6 +166,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         _new,
         _object,
         _property,
+        _warning,
     )
 
     project = C.project_name(cfg)
@@ -418,6 +419,22 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 valid_field=p.get("valid_field", ""),
                 expr=p.get("expr", ""),
                 doc=p.get("doc", ""),
+            )
+        # gh-481. Without this replay a declared warning never reaches a fresh
+        # checkout: the object is scaffolded with no warnings and nothing puts
+        # them back. That is the exact failure this feature exists to fix —
+        # delete-the-fragment-and-apply is jm's own sanctioned migration
+        # mechanic, so the manifest has to be able to rebuild the glue alone.
+        for w in C.warnings(cfg, comp):
+            _warning.run(
+                temp_root,
+                comp,
+                w["condition"],
+                w["message"],
+                module=mod,
+                category=w.get("category", "UserWarning"),
+                after=w.get("after", "__init__"),
+                stacklevel=int(w.get("stacklevel", 1) or 1),
             )
 
     for mod in mods:

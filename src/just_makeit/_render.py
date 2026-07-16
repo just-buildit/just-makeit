@@ -162,7 +162,7 @@ static int
                         "<<component>>_create returned NULL");
         return -1;
     }
-<<extra_buf_alloc>>    return 0;
+<<extra_buf_alloc>><<init_warn_block>>    return 0;
 }
 
 <<builtin_reset_c>>

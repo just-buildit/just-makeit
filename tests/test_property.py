@@ -180,9 +180,14 @@ class TestPropertyValidation:
 
 
 def _check_no_placeholders(project: Path) -> None:
+    # .pyi included since gh-481: it was the one generated suffix this scan
+    # skipped, and it was also the only file `jm property` corrupted — the
+    # stub's doctest regenerated as `>>> from <<package>> import <<Component>>`
+    # because only _init.run resolved pyi_examples. The gap hid the bug.
     for path in project.rglob("*"):
         if path.is_file() and path.suffix in (
             ".py",
+            ".pyi",
             ".c",
             ".h",
             ".toml",

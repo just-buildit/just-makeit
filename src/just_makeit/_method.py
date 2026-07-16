@@ -917,6 +917,13 @@ def run(
                 frozenset(n for n, _, _ in state_vars_list),
             )
         )
+        # Preserve declared warnings (gh-481) across `jm method`, which
+        # regenerates the whole glue from the manifest.
+        ctx.update(
+            Ctx.make_warnings_ctx(
+                object_name, Component, C.warnings(cfg, object_name)
+            )
+        )
 
         def r(tmpl):
             return R.render(tmpl, ctx)

@@ -686,6 +686,9 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
             frozenset(n for n, _, _ in state_vars),
         )
     )
+    # Preserve declared warnings (gh-481) when regenerating after a
+    # method/property removal.
+    ctx.update(Ctx.make_warnings_ctx(obj, Component, C.warnings(cfg, obj)))
     # Preserve the stream generator (gh-201) when regenerating after a
     # method/property removal.
     ctx.update(

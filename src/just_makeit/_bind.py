@@ -484,6 +484,12 @@ def _build_ctx(
             frozenset(n for n, _, _ in state_vars),
         )
     )
+    # gh-481: `bind` reflects a hand-written _core.h rather than the manifest,
+    # and a warning condition is authored intent — not recoverable from a
+    # header. So this resolves empty, rendering exactly as `bind` did before.
+    # Declaring warnings on a bound component would mean teaching `parse` to
+    # carry them; not wired today.
+    ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     return ctx
 
 
