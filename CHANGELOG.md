@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-07-16
+
 ### Added
 
 - **`jm error` / `[<comp>] create_error` — a `create()` failure now reports
