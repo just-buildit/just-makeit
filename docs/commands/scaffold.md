@@ -5,7 +5,13 @@ project, then use [Extend commands](extend.md) to add behaviour.
 
 ______________________________________________________________________
 
-## `just-makeit new <proj> [--object name ...] [--state name:type[:default] ...]`
+## `just-makeit new`
+
+```text
+just-makeit new <proj>
+    [--object name ...]
+    [--state name:type[:default] ...]
+```
 
 Start a new project. One command gives you a complete, building, tested C
 extension project — optionally with a first object already scaffolded.
@@ -93,7 +99,14 @@ with `just-makeit function`.
 
 ______________________________________________________________________
 
-## `just-makeit object <name> [--module <name>] [--state name:type[:default] ...] [--arg-type TYPE] [--return-type TYPE]`
+## `just-makeit object`
+
+```text
+just-makeit object <name>
+    [--module <name>]
+    [--state name:type[:default] ...]
+    [--arg-type TYPE] [--return-type TYPE]
+```
 
 Add a Python type to the project — standalone or inside a module. Use this
 when the algorithm needs persistent state (history, coefficients, a cursor, a
@@ -231,7 +244,12 @@ The Python class name is derived automatically:
 
 ______________________________________________________________________
 
-## `just-makeit add --state name:type[:default] [...] [--object name]`
+## `just-makeit add`
+
+```text
+just-makeit add --state name:type[:default] [...]
+    [--object name]
+```
 
 Add one or more state variables to an existing standalone object. Must be run
 from the project root.

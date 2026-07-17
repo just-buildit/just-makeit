@@ -51,188 +51,180 @@ below) do.
 
 === "File tree"
 
-````
-```
-my_project/
-├── just-makeit.toml
-├── objects/
-│   └── engine.toml
-├── CMakeLists.txt
-├── Makefile
-├── pyproject.toml
-├── jb.toml
-├── Doxyfile
-├── zensical.toml
-├── .gitignore
-├── README.md
-├── docs/
-│   ├── index.md
-│   └── api.md
-├── cmake/
-│   ├── my_project-config.cmake.in
-│   └── my-project.pc.in
-├── native/
-│   ├── inc/
-│   │   ├── my_project.h
-│   │   ├── clib_common.h
-│   │   ├── pyex_common.h
-│   │   └── engine/
-│   │       └── engine_core.h
-│   ├── src/
-│   │   ├── my_project_lib.c
-│   │   └── engine/
-│   │       ├── engine_core.c
-│   │       ├── engine_ext.c
-│   │       └── CMakeLists.txt
-│   ├── tests/
-│   │   └── test_engine_core.c
-│   └── benchmarks/
-│       ├── bench_engine_core.c
-│       └── jm_bench.h
-└── src/
-    └── my_project/
-        ├── __init__.py
-        ├── engine.pyi
-        ├── tests/
-        │   └── test_engine.py
-        └── benchmarks/
-            └── bench_engine.py
-```
-````
+    ```
+    my_project/
+    ├── just-makeit.toml
+    ├── objects/
+    │   └── engine.toml
+    ├── CMakeLists.txt
+    ├── Makefile
+    ├── pyproject.toml
+    ├── jb.toml
+    ├── Doxyfile
+    ├── zensical.toml
+    ├── .gitignore
+    ├── README.md
+    ├── docs/
+    │   ├── index.md
+    │   └── api.md
+    ├── cmake/
+    │   ├── my_project-config.cmake.in
+    │   └── my-project.pc.in
+    ├── native/
+    │   ├── inc/
+    │   │   ├── my_project.h
+    │   │   ├── clib_common.h
+    │   │   ├── pyex_common.h
+    │   │   └── engine/
+    │   │       └── engine_core.h
+    │   ├── src/
+    │   │   ├── my_project_lib.c
+    │   │   └── engine/
+    │   │       ├── engine_core.c
+    │   │       ├── engine_ext.c
+    │   │       └── CMakeLists.txt
+    │   ├── tests/
+    │   │   └── test_engine_core.c
+    │   └── benchmarks/
+    │       ├── bench_engine_core.c
+    │       └── jm_bench.h
+    └── src/
+        └── my_project/
+            ├── __init__.py
+            ├── engine.pyi
+            ├── tests/
+            │   └── test_engine.py
+            └── benchmarks/
+                └── bench_engine.py
+    ```
 
 === "just-makeit.toml (fragment layout)"
 
-````
-```toml
-include = ["objects/*.toml", "modules/*.toml"]
+    ```toml
+    include = ["objects/*.toml", "modules/*.toml"]
 
-[project]
-name    = "my_project"
-version = "0.1.0"
-build   = "cmake"
-perf    = "false"
-pytest  = "false"
-pytest_benchmark = "false"
-schema    = "7"
-jm_version = "0.29.0"
-```
-````
+    [project]
+    name    = "my_project"
+    version = "0.1.0"
+    build   = "cmake"
+    perf    = "false"
+    pytest  = "false"
+    pytest_benchmark = "false"
+    schema    = "7"
+    jm_version = "0.29.0"
+    ```
 
 === "objects/engine.toml"
 
-````
-```toml
-# One section per object, named after the object.
-[engine]
-arg_type    = "float _Complex"
-return_type = "float _Complex"
-mutable     = "false"
-no_state    = "false"
-no_step     = "false"
+    ```toml
+    # One section per object, named after the object.
+    [engine]
+    arg_type    = "float _Complex"
+    return_type = "float _Complex"
+    mutable     = "false"
+    no_state    = "false"
+    no_step     = "false"
 
-# One entry per --state declaration.
-[[engine.state]]
-name    = "gain"
-type    = "double"
-default = "1.0"
+    # One entry per --state declaration.
+    [[engine.state]]
+    name    = "gain"
+    type    = "double"
+    default = "1.0"
 
-# One entry per --init-param.
-[[engine.init_params]]
-name    = "order"
-type    = "int"
-default = "4"
+    # One entry per --init-param.
+    [[engine.init_params]]
+    name    = "order"
+    type    = "int"
+    default = "4"
 
-# One entry per --array-arg.
-[[engine.array_args]]
-name = "coeffs"
-type = "float32"
+    # One entry per --array-arg.
+    [[engine.array_args]]
+    name = "coeffs"
+    type = "float32"
 
-# One entry per `just-makeit method`.
-[[engine.methods]]
-name        = "normalize"
-return_type = "void"
-params      = [{name = "scale", type = "double"}]
+    # One entry per `just-makeit method`.
+    [[engine.methods]]
+    name        = "normalize"
+    return_type = "void"
+    params      = [{name = "scale", type = "double"}]
 
-# One entry per `just-makeit property`.
-[[engine.properties]]
-name     = "peak"
-type     = "double"
-writable = true
-field    = true
-```
-````
+    # One entry per `just-makeit property`.
+    [[engine.properties]]
+    name     = "peak"
+    type     = "double"
+    writable = true
+    field    = true
+    ```
 
 === "combined schema (--no-fragments)"
 
-Everything above, inlined into one `just-makeit.toml` — this is what
-`jm new --no-fragments` produces, and what every fragment ultimately
-means regardless of which file it lives in:
+    Everything above, inlined into one `just-makeit.toml` — this is what
+    `jm new --no-fragments` produces, and what every fragment ultimately
+    means regardless of which file it lives in:
 
-````
-```toml
-[project]
-name             = "my_project"
-version          = "0.1.0"
-build            = "cmake"
-perf             = "false"
-pytest           = "false"
-pytest_benchmark = "false"
+    ```toml
+    [project]
+    name             = "my_project"
+    version          = "0.1.0"
+    build            = "cmake"
+    perf             = "false"
+    pytest           = "false"
+    pytest_benchmark = "false"
 
-[engine]
-arg_type    = "float _Complex"
-return_type = "float _Complex"
-mutable     = "false"
-no_state    = "false"
-no_step     = "false"
+    [engine]
+    arg_type    = "float _Complex"
+    return_type = "float _Complex"
+    mutable     = "false"
+    no_state    = "false"
+    no_step     = "false"
 
-[[engine.state]]
-name    = "gain"
-type    = "double"
-default = "1.0"
+    [[engine.state]]
+    name    = "gain"
+    type    = "double"
+    default = "1.0"
 
-[[engine.init_params]]
-name    = "order"
-type    = "int"
-default = "4"
+    [[engine.init_params]]
+    name    = "order"
+    type    = "int"
+    default = "4"
 
-[[engine.array_args]]
-name = "coeffs"
-type = "float32"
+    [[engine.array_args]]
+    name = "coeffs"
+    type = "float32"
 
-[[engine.methods]]
-name        = "normalize"
-return_type = "void"
-params      = [{name = "scale", type = "double"}]
+    [[engine.methods]]
+    name        = "normalize"
+    return_type = "void"
+    params      = [{name = "scale", type = "double"}]
 
-[[engine.properties]]
-name     = "peak"
-type     = "double"
-writable = true
-field    = true
+    [[engine.properties]]
+    name     = "peak"
+    type     = "double"
+    writable = true
+    field    = true
 
-# Module subpackage, named after the module.
-[module.filter]
-objects = ["fir", "biquad"]
+    # Module subpackage, named after the module.
+    [module.filter]
+    objects = ["fir", "biquad"]
 
-[[module.filter.functions]]
-name        = "design_lowpass"
-return_type = "void"
-doc         = "Compute FIR coefficients for a lowpass filter."
-params      = [{name = "cutoff", type = "double"}]
+    [[module.filter.functions]]
+    name        = "design_lowpass"
+    return_type = "void"
+    doc         = "Compute FIR coefficients for a lowpass filter."
+    params      = [{name = "cutoff", type = "double"}]
 
-[fir]
-arg_type    = "float _Complex"
-return_type = "float _Complex"
-mutable     = "false"
-no_state    = "false"
-no_step     = "false"
+    [fir]
+    arg_type    = "float _Complex"
+    return_type = "float _Complex"
+    mutable     = "false"
+    no_state    = "false"
+    no_step     = "false"
 
-[[fir.state]]
-name    = "coeffs"
-type    = "float[16]"
-default = "0.0f"
-```
-````
+    [[fir.state]]
+    name    = "coeffs"
+    type    = "float[16]"
+    default = "0.0f"
+    ```
 
 ______________________________________________________________________
 

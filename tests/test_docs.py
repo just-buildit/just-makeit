@@ -263,6 +263,66 @@ class TestEveryDocPageIsReachable:
         )
 
 
+_TAB_MARKER = re.compile(r"""^=== ["'].+["']\s*$""")
+
+
+def _all_doc_pages() -> list[Path]:
+    """Every page under docs/, source READMEs included (not generated copies).
+
+    The generated `docs/examples/*.md` are copies of the source READMEs, so
+    linting the source under `src/just_makeit/examples/**` covers them without
+    depending on a `make docs` having run.
+    """
+    pages = [
+        p
+        for p in (ROOT / "docs").rglob("*.md")
+        if not p.relative_to(ROOT / "docs").as_posix().startswith("examples/")
+    ]
+    pages += list(EXAMPLES.glob("*/README.md"))
+    return sorted(pages)
+
+
+class TestTabbedBlocksRender:
+    """A `=== "tab"` whose content is not indented renders as an empty tab.
+
+    pymdownx.tabbed takes the *indented* block after a `=== "..."` marker as
+    that tab's content. A code fence left at column 0 (e.g. wrapped in stray
+    ```` ```` fences) is not part of the tab: the tab renders empty and the
+    fence floats out as a separate block showing its own ``` markers as text.
+    This is valid Markdown, so `zensical build --strict` does not catch it —
+    it shipped on the homepage and in configuration.md (from #478) until a
+    reader noticed. This gate is the backstop.
+    """
+
+    @pytest.mark.parametrize(
+        "page",
+        _all_doc_pages(),
+        ids=lambda p: p.relative_to(ROOT).as_posix(),
+    )
+    def test_tab_content_is_indented(self, page):
+        lines = page.read_text(encoding="utf-8").splitlines()
+        bad = []
+        for i, line in enumerate(lines):
+            if not _TAB_MARKER.match(line):
+                continue
+            # First non-blank line after the marker is the tab's content.
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j >= len(lines):
+                continue
+            nxt = lines[j]
+            # Valid: indented content, or an adjacent tab marker.
+            if nxt.startswith((" ", "\t")) or _TAB_MARKER.match(nxt):
+                continue
+            bad.append(f"line {j + 1}: {nxt[:60]!r}")
+        assert bad == [], (
+            f"{page.relative_to(ROOT)}: tab content is not indented under its "
+            f'`=== "..."` marker, so the tab renders empty and the block '
+            f"floats out. Indent the tab body 4 spaces. {bad}"
+        )
+
+
 class TestPublishedPagesAreSiteShaped:
     """READMEs are copied to docs/examples/, so their links resolve there."""
 

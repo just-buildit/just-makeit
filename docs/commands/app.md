@@ -2,7 +2,17 @@
 
 ______________________________________________________________________
 
-## `just-makeit app [--target c|console|pep723] [--object name | --function name] [--name name] [--flag ...] [--command ...]`
+## `just-makeit app`
+
+```text
+just-makeit app
+    [--target c|console|pep723]
+    [--object name | --function name]
+    [--name name]
+    [--flag name:type[:default[:help]] ...]
+    [--command name[:help] ...]
+    [--argc-argv]
+```
 
 Scaffold a shippable, **runnable** application from an existing component —
 the "one C core, three faces" pattern. Run it after `just-makeit object` (or

@@ -32,6 +32,13 @@ Color markers (wrap any fragment of a line):
 Lines starting with ``$ `` animate as typed input.
 Lines starting with ``# `` render as comments (no typing animation).
 Blank lines insert a small vertical gap.
+
+Version token:
+
+    {jm_version}   replaced with the installed just-makeit version at build
+                   time, so an illustrative install transcript never shows a
+                   stale version. Resolves to the same string as
+                   ``just-makeit --version``.
 """
 
 import html as _html
@@ -67,6 +74,13 @@ def _colorize(text: str) -> str:
 
 
 def termynal_fence(source, language, css_class, options, md, **kwargs):
+    # Substitute the version token before colorize/escape so an install
+    # transcript tracks the real version instead of a hand-typed one going
+    # stale. Deferred import: the version is read at doc-build time, and this
+    # keeps module import free of a package-init dependency.
+    from just_makeit import __version__
+
+    source = source.replace("{jm_version}", __version__)
     lines = source.strip().splitlines()
     spans: list[str] = []
     for line in lines:
