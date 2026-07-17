@@ -24,8 +24,15 @@ prose survives, a no-op save is a no-op, and fresh output is unchanged.
 
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+# tomllib is stdlib only on 3.11+; jm supports down to 3.9 and guards this the
+# same way in _config.py. A bare `import tomllib` here is a collection error on
+# the 3.9/3.10 legs, which fail-fast then reports as an 18-job matrix wipeout.
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 import pytest
 
