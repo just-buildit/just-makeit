@@ -134,6 +134,11 @@ class TestFormatProject:
         err = capsys.readouterr().err
         assert "clang-format was not found" in err
 
+    def test_no_native_src_yields_no_files(self, tmp_path):
+        # A project without a native/src tree (nothing scaffolded yet) has no
+        # format targets — the early return, not an rglob over a missing dir.
+        assert _cfmt._generated_c_files(tmp_path) == []
+
     def test_collects_only_regenerated_ext_c(self, tmp_path):
         # gh-493: only the wholesale-regenerated *_ext.c glue is a format
         # target. Sacred sources (_core.c, native/inc/** headers) are excluded
@@ -225,6 +230,29 @@ class TestConvergence:
                 f"{p.relative_to(root)} was reformatted by c_style — this is "
                 f"what broke apply convergence (gh-493)"
             )
+
+    @_cf_only
+    def test_in_process_apply_converges(self, tmp_path):
+        # Same convergence property as the CLI test below, but driving
+        # `_apply.run` directly so the format-and-seed reconcile path (the
+        # .clang-format copy into the throwaway scaffold) is exercised in
+        # process, not behind a subprocess.
+        from just_makeit import _apply
+
+        root = tmp_path / "p"
+        new_run("p", root, object_names=["widget"], c_style="clang-format")
+        ext = root / "native/src/widget/widget_ext.c"
+        core_h = root / "native/inc/widget/widget_core.h"
+        _apply.run(root)  # first reconcile
+        after_first = {p: p.read_bytes() for p in (ext, core_h)}
+        _apply.run(root)  # second reconcile on an unchanged manifest
+        for p, blob in after_first.items():
+            assert p.read_bytes() == blob, (
+                f"{p.name} changed on a second apply — c_style broke "
+                f"convergence (gh-493)"
+            )
+        # The binding stayed house-styled through both reconciles.
+        assert "Py_TYPE (self)" in ext.read_text()
 
     @_cf_only
     def test_status_check_stays_clean_across_apply(self, tmp_path):
