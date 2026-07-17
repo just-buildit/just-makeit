@@ -1565,6 +1565,24 @@ def run(
             sys.exit(1)
         finally:
             _obj_mod._DOC_ROOT_OVERRIDE = None
+        # gh-493: reformat the throwaway scaffold to the project's house style
+        # *before* it is compared against the real tree, so a c_style project's
+        # on-disk (formatted) *_ext.c glue matches the freshly rendered glue
+        # instead of reading as perpetual drift on every `apply`/`status`. Only
+        # *_ext.c is touched (see _cfmt._generated_c_files); sacred sources are
+        # unformatted on both sides and already compare equal. No-op unless
+        # c_style is set, and a soft no-op if clang-format is absent (both
+        # sides then stay jm-style, still equal). The real project's
+        # .clang-format must be seeded into the temp tree first — _replay
+        # rebuilds via _object/_module, which do not re-emit it, so
+        # `clang-format --style=file` would otherwise fall back to LLVM there
+        # and the two sides would diverge on style instead of converging.
+        from . import _cfmt
+
+        real_cf = root / ".clang-format"
+        if C.c_style(cfg) == "clang-format" and real_cf.is_file():
+            shutil.copy2(real_cf, temp_root / ".clang-format")
+        _cfmt.format_project(temp_root, cfg, quiet=True)
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
         updated = _sync_aggregates(
