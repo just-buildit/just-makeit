@@ -402,6 +402,7 @@ def fn_c_inline_stub(
     static inline float
     clip_f32(float x, float lo)
     {
+        (void)x; (void)lo;
         return (float)0.0f; /* placeholder */
     }
     <BLANKLINE>

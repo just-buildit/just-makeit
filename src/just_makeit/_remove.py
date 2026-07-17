@@ -550,6 +550,100 @@ def _remove_property(
     print(f"Done!  Property '{name}' removed.{note}")
 
 
+def _remove_warning(
+    root: Path, cfg: dict, obj: str, name: str, force: bool
+) -> None:
+    """Drop a declared ``[[<obj>.warnings]]`` entry (gh-490).
+
+    Addressed by its ``condition``, not by a ``name`` — a warning has no name
+    of its own, and the condition is what makes it unique on a component (the
+    same key ``jm warning`` de-duplicates on).
+
+    Purely a glue removal, the mirror of how it was declared: no sacred file is
+    touched, and the condition field on the state struct is left alone — the
+    component computes it, and it may well have other readers.
+    """
+    pkg = C.project_name(cfg)
+    if obj not in C.components(cfg):
+        print(f"error: object '{obj}' not found.", file=sys.stderr)
+        sys.exit(1)
+    warnings = cfg.get(obj, {}).get("warnings", [])
+    entry = next((w for w in warnings if w.get("condition") == name), None)
+    if entry is None:
+        declared = [w.get("condition") for w in warnings]
+        print(
+            f"error: no warning on '{obj}' with condition '{name}'."
+            + (f" Declared: {declared}" if declared else " None declared."),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not _confirm(
+        f"Remove the {entry.get('category', 'UserWarning')} on '{obj}' "
+        f"when {name}?",
+        force,
+    ):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing warning on '{obj}' when {name}")
+    print()
+    warnings.remove(entry)
+    if not warnings:
+        cfg[obj].pop("warnings", None)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+
+    _regenerate_object_bindings(root, cfg, obj, pkg)
+    print()
+    print(
+        f"Done!  Warning removed.\n"
+        f"\n  note: the '{name}' field remains in {obj}_state_t — it is the "
+        f"component's own state, not the warning's."
+    )
+
+
+def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
+    """Drop a component's ``create_error`` translation (gh-490).
+
+    Takes no name: ``create()`` has exactly one failure channel, so there is
+    exactly one translation to remove — the scalar-vs-table-array asymmetry
+    from gh-482 shows up here too. Removing it reverts the glue to the blanket
+    ``MemoryError``, which is the pre-gh-482 behaviour rather than a new state.
+    """
+    pkg = C.project_name(cfg)
+    if obj not in C.components(cfg):
+        print(f"error: object '{obj}' not found.", file=sys.stderr)
+        sys.exit(1)
+    category = C.create_error(cfg, obj)
+    if not category:
+        print(
+            f"error: object '{obj}' declares no create_error.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not _confirm(
+        f"Remove the {category} create() translation on '{obj}'? "
+        f"Failures will report MemoryError again.",
+        force,
+    ):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing create_error ({category}) from '{obj}'")
+    print()
+    cfg[obj].pop("create_error", None)
+    cfg[obj].pop("create_error_message", None)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+
+    _regenerate_object_bindings(root, cfg, obj, pkg)
+    print()
+    print(
+        f"Done!  create_error removed — {obj}_create() failures now report "
+        f"MemoryError."
+    )
+
+
 def _strip_decl_from_header(core_h: Path, name: str) -> bool:
     """Drop the one-line declaration of ``name`` from a module header.
 
@@ -736,6 +830,23 @@ def run(
             )
             sys.exit(1)
         _remove_property(root, cfg, object_name, name, force)
+    elif kind == "warning":
+        if not object_name:
+            print(
+                "error: 'remove warning' requires --object <obj>.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # `name` is the warning's condition — see _remove_warning.
+        _remove_warning(root, cfg, object_name, name, force)
+    elif kind == "error":
+        if not object_name:
+            print(
+                "error: 'remove error' requires --object <obj>.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remove_create_error(root, cfg, object_name, force)
     elif kind == "function":
         if not module:
             print(
