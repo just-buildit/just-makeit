@@ -109,6 +109,11 @@ Commands:
     --type TYPE                 C type of the property value.
     --writable                  Generate a setter in addition to the getter.
     --field                     Back property with a struct field (no getter C fn).
+    --buf-field name            Back property with a buffer field (ndarray view).
+    --len-field name            Length field for --buf-field (default: n).
+    --valid-field name          Field gating whether the buffer is populated.
+    --expr "C expr"             Back property with an inline C expression.
+    --doc "text"                Explicit docstring override.
 
   warning <obj> [OPTIONS]       Warn after construction when a state flag is set.
     --condition name            Bool state field that triggers the warning (required).
@@ -564,7 +569,6 @@ def main() -> None:
             )
             sys.exit(1)
         from . import _property
-        from . import _types as T
 
         object_name = args[1]
         prop_name = args[2]
@@ -573,6 +577,10 @@ def main() -> None:
         writable = False
         field = False
         doc = ""
+        buf_field = ""
+        len_field = "n"
+        valid_field = ""
+        expr = ""
 
         remaining = args[3:]
         i = 0
@@ -590,15 +598,14 @@ def main() -> None:
                 if i >= len(remaining):
                     print("error: --type requires a type", file=sys.stderr)
                     sys.exit(1)
-                val = remaining[i]
-                if val not in T._CTYPE_META:
-                    print(
-                        f"error: --type '{val}' is not a supported scalar type.\n"
-                        f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                ctype = val
+                # gh-490: do NOT validate here. This duplicated the rule
+                # _property.run already owns, and the copies disagreed: a
+                # buf/expr-backed property legitimately takes a non-scalar
+                # type ("float[]"), which _property.run allows and this
+                # eager check rejected — before it could even know whether
+                # --buf-field was coming later in argv. One owner, and it is
+                # the one that can see every flag.
+                ctype = remaining[i]
                 i += 1
             elif tok == "--writable":
                 writable = True
@@ -613,9 +620,48 @@ def main() -> None:
                     sys.exit(1)
                 doc = remaining[i]
                 i += 1
+            # gh-490: _property.run has always accepted these, but the parser
+            # never wired them — so they were reachable only through
+            # `jm apply`'s replay of a hand-written manifest. A user could not
+            # author a buf/expr-backed property at all, and `jm script` could
+            # not round-trip one.
+            elif tok in (
+                "--buf-field",
+                "--len-field",
+                "--valid-field",
+                "--expr",
+            ):
+                i += 1
+                if i >= len(remaining):
+                    print(f"error: {tok} requires a value", file=sys.stderr)
+                    sys.exit(1)
+                val = remaining[i]
+                if tok == "--buf-field":
+                    buf_field = val
+                elif tok == "--len-field":
+                    len_field = val
+                elif tok == "--valid-field":
+                    valid_field = val
+                else:
+                    expr = val
+                i += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
+
+        if len_field != "n" and not buf_field:
+            print(
+                "error: --len-field only applies alongside --buf-field",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if buf_field and expr:
+            print(
+                "error: --buf-field and --expr are mutually exclusive — a "
+                "property is backed by a buffer or by an expression, not both",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
         _property.run(
             Path.cwd(),
@@ -625,6 +671,10 @@ def main() -> None:
             ctype,
             writable,
             field,
+            buf_field=buf_field,
+            len_field=len_field,
+            valid_field=valid_field,
+            expr=expr,
             doc=doc,
         )
 

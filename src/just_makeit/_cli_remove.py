@@ -4,6 +4,8 @@
     just-makeit remove module   <name>
     just-makeit remove method   <name> --object <obj>
     just-makeit remove property <name> --object <obj>
+    just-makeit remove warning  <condition> --object <obj>
+    just-makeit remove error    <obj> --object <obj>
     just-makeit remove function <name> --module <mod>
 
 `--force` (`-f`) skips the confirmation prompt.
@@ -16,15 +18,35 @@ from pathlib import Path
 
 from . import _remove
 
-_KINDS = ("object", "module", "method", "property", "function", "state")
+# gh-490: `warning` and `error` shipped as authoring commands with no removal
+# path, leaving hand-editing the TOML as the only undo — which cuts against
+# the manifest-is-SSOT/CLI-drives-it contract those features exist to uphold.
+#
+# Their addressing differs from the rest, and deliberately:
+#   warning <condition>  — a warning has no name; its condition is what makes
+#                          it unique on a component (the key `jm warning`
+#                          de-duplicates on).
+#   error <obj>          — takes no name at all: create() has one failure
+#                          channel, so there is one translation to remove.
+#                          `name` is ignored; --object is what identifies it.
+_KINDS = (
+    "object",
+    "module",
+    "method",
+    "property",
+    "warning",
+    "error",
+    "function",
+    "state",
+)
 
 
 def run(args: list[str]) -> None:
     if len(args) < 2 or args[0] not in _KINDS:
         print(
             "error: 'remove' requires a kind and a name.\n"
-            "  just-makeit remove "
-            "object|module|state|method|property|function <name> [options]",
+            "  just-makeit remove object|module|state|method|property|"
+            "warning|error|function <name> [options]",
             file=sys.stderr,
         )
         sys.exit(1)

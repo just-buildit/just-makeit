@@ -157,6 +157,21 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
 
 def _property_flags(p: dict, module: str | None) -> list[str]:
+    """CLI flags reconstructing a ``[[<comp>.properties]]`` entry.
+
+    Emits every key the manifest can hold. It used to drop ``doc``, ``expr``,
+    ``buf_field``, ``len_field`` and ``valid_field`` (gh-490), so `jm script`
+    silently produced a script that rebuilt a *different* project — a
+    buf-backed ndarray property came back as a plain scalar getter, and an
+    expr-backed one lost its expression entirely. A reconstruction that
+    quietly differs from the original is worse than one that fails loudly.
+
+    >>> _property_flags({"name": "n", "type": "size_t"}, None)
+    ['    --type size_t \\\\\\n']
+    >>> _property_flags({"name": "buf", "type": "float[]",
+    ...                  "buf_field": "data", "len_field": "n"}, None)[1:]
+    ['    --buf-field data \\\\\\n', '    --len-field n \\\\\\n']
+    """
     parts: list[str] = []
 
     if module:
@@ -170,21 +185,35 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if p.get("field"):
         parts.append(_bool_flag("--field"))
 
+    if p.get("buf_field"):
+        parts.append(_flag("--buf-field", p["buf_field"]))
+        # len_field only means anything alongside buf_field, and defaults to
+        # "n" — emit it explicitly so a non-default survives the round-trip.
+        parts.append(_flag("--len-field", p.get("len_field", "n")))
+
+    if p.get("valid_field"):
+        parts.append(_flag("--valid-field", p["valid_field"]))
+
+    if p.get("expr"):
+        parts.append(_flag("--expr", p["expr"]))
+
+    if p.get("doc"):
+        parts.append(_flag("--doc", p["doc"]))
+
     return parts
 
 
 def _warning_flags(w: dict, module: str | None) -> list[str]:
     """CLI flags reconstructing a ``[[<comp>.warnings]]`` entry (gh-481).
 
-    Every key the manifest can hold is emitted — unlike `_property_flags`,
-    which silently drops ``doc``/``expr``/``buf_field`` and so cannot
-    round-trip a property authored through ``jm apply``'s replay. A `jm script`
-    that quietly loses the warning text would recreate the original bug this
-    feature fixes, one layer up.
+    Every key the manifest can hold is emitted. A `jm script` that quietly
+    lost the warning text would recreate the very bug this feature fixes, one
+    layer up — the reconstruction would rebuild a *different* project without
+    saying so. (`_property_flags` did exactly that until gh-490.)
 
     >>> _warning_flags({"condition": "underpowered", "message": "best effort",
     ...                 "category": "UserWarning"}, None)
-    ['    --condition underpowered \\\\\\n', "    --message 'best effort' \\\\\\n"]
+    ['    --condition underpowered \\\\\\n', '    --message "best effort" \\\\\\n']
     """
     parts: list[str] = []
 
