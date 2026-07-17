@@ -23,11 +23,11 @@ second, plus the nav that has to agree with it.
 """
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).parent.parent
 EXAMPLES = ROOT / "src" / "just_makeit" / "examples"
@@ -48,31 +48,49 @@ def _load_copy_examples():
 CE = _load_copy_examples()
 
 
+_NAV_ITEM = re.compile(r"^(?P<indent>\s*)-\s+(?P<title>.+?):\s+(?P<path>\S+)$")
+_NAV_SECTION = re.compile(r"^(?P<indent>\s*)-\s+Examples:\s*$")
+
+
 def _nav_examples() -> dict[str, str]:
-    """Map examples/<name>.md -> nav title, for the Examples nav section.
+    """Map ``examples/<name>.md`` -> nav title, for the Examples nav section.
 
-    mkdocs.yml is not valid plain YAML to a strict loader — the Material
-    theme's `!!python/name:` tags appear in `markdown_extensions` — so the
-    unknown tags are ignored rather than resolved. Only `nav` is read here.
+    Parsed by hand rather than with PyYAML, deliberately. PyYAML is not a
+    declared dependency of this project — it is only ever present as a
+    transitive one — and the CI test legs install just the package under test.
+    A `import yaml` here is a collection error that fails the whole matrix,
+    and the alternative (skip when unavailable) would mean this gate silently
+    never runs in CI, which is the exact class of bug the file exists to stop.
+
+    The nav is a flat list of ``- Title: path`` under ``- Examples:``, so this
+    needs no general YAML. It raises rather than returns empty if the section
+    moves or the shape changes: a parser that quietly finds nothing would make
+    every test below vacuously pass.
     """
+    lines = MKDOCS.read_text(encoding="utf-8").splitlines()
+    out: dict[str, str] = {}
+    section_indent = None
 
-    class _Loader(yaml.SafeLoader):
-        pass
+    for line in lines:
+        if section_indent is None:
+            m = _NAV_SECTION.match(line)
+            if m:
+                section_indent = len(m.group("indent"))
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _NAV_ITEM.match(line)
+        # The section ends at the first entry indented no deeper than
+        # `- Examples:` itself, i.e. the next sibling nav entry.
+        if not m or len(m.group("indent")) <= section_indent:
+            break
+        out[m.group("path")] = m.group("title")
 
-    _Loader.add_multi_constructor(
-        "tag:yaml.org,2002:python/name", lambda loader, suffix, node: None
-    )
-    _Loader.add_multi_constructor("!", lambda loader, suffix, node: None)
-
-    cfg = yaml.load(MKDOCS.read_text(encoding="utf-8"), Loader=_Loader)
-    for entry in cfg["nav"]:
-        if isinstance(entry, dict) and "Examples" in entry:
-            out = {}
-            for item in entry["Examples"]:
-                ((title, path),) = item.items()
-                out[path] = title
-            return out
-    raise AssertionError("mkdocs.yml has no Examples nav section")
+    if section_indent is None:
+        raise AssertionError("mkdocs.yml has no `- Examples:` nav section")
+    if not out:
+        raise AssertionError("the Examples nav section parsed as empty")
+    return out
 
 
 class TestGeneratorAgreesWithDisk:
