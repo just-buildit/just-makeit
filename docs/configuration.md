@@ -337,10 +337,9 @@ ______________________________________________________________________
 
 ## Complete CLI ↔ TOML mapping
 
-Every TOML key the schema accepts maps to a CLI flag. This is the
-Phase 2 acceptance bar from the
-[implementation plan](developers/implementation-plan.md): no feature
-should require a TOML edit before it can be used.
+Every TOML key the schema accepts maps to a CLI flag. This is a
+standing design bar: no feature should require a TOML edit before it
+can be used.
 
 Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 

@@ -9,39 +9,46 @@ site_dir: site
 
 nav:
   - Home: index.md
-  - Workflow: workflow.md
-  - Decision tree: decision-tree.md
-  - Template gallery:
-    - Overview: templates/index.md
-    - Processor: templates/processor.md
-    - Blockwise: templates/blockwise.md
-    - Generator: templates/generator.md
-    - Consumer: templates/consumer.md
-    - Reader: templates/reader.md
-    - Function: templates/function.md
-  - Feature tour: feature-tour.md
-  - Feature map: feature-index.md
-  - Commands:
-    - Scaffold: commands/scaffold.md
-    - Extend: commands/extend.md
-    - Build & Run: commands/build.md
-  - Artifacts: artifacts.md
-  - Configuration: configuration.md
-  - Quick reference: quick-reference.md
-  - Object-of-objects (capsule & composer): object-of-objects.md
-  - Declarative scaffolding: declarative-scaffolding.md
-  - Upgrading: upgrading.md
-  - Porting guide: porting-guide.md
-  - Stateful vs Pure: pure.md
-  - Performance: perf.md
-  - Arguments (positional vs keyword): arguments.md
-  - State Types: types.md
-  - Template Reference: template.md
-  - Customization: customization.md
-  - Troubleshooting: troubleshooting.md
-  - FAQ: faq.md
-  - Glossary: glossary.md
-  - Roadmap: roadmap.md
+  - Getting started:
+    - Workflow: workflow.md
+    - Decision tree: decision-tree.md
+    - Feature tour: feature-tour.md
+  - Guides:
+    - Template gallery:
+      - Overview: templates/index.md
+      - Processor: templates/processor.md
+      - Blockwise: templates/blockwise.md
+      - Generator: templates/generator.md
+      - Consumer: templates/consumer.md
+      - Reader: templates/reader.md
+      - Function: templates/function.md
+    - Declarative scaffolding: declarative-scaffolding.md
+    - Customization: customization.md
+    - Performance: perf.md
+    - Porting guide: porting-guide.md
+    - Upgrading: upgrading.md
+    - Distributing the C library: c-library.md
+    - Troubleshooting: troubleshooting.md
+  - Concepts:
+    - Stateful vs pure: pure.md
+    - Object-of-objects (capsule & composer): object-of-objects.md
+    - Arguments (positional vs keyword): arguments.md
+    - Artifacts: artifacts.md
+  # The tool's API surface is the CLI and the TOML config; both live here so
+  # "where are the API docs" has an answer in the nav.
+  - Reference:
+    - CLI reference:
+      - Scaffold: commands/scaffold.md
+      - Extend: commands/extend.md
+      - Build & Run: commands/build.md
+      - App: commands/app.md
+    - Configuration (TOML schema): configuration.md
+    - State types: types.md
+    - Template reference: template.md
+    - Quick reference: quick-reference.md
+    - Feature map: feature-index.md
+    - Glossary: glossary.md
+    - FAQ: faq.md
   # Keep in sync with GALLERY in scripts/copy_examples.py — same order, same
   # display names. tests/test_docs.py fails if they drift apart.
   - Examples:
@@ -71,7 +78,6 @@ nav:
     - Full workflow: examples/full_workflow.md
     - Composites: examples/composites.md
     - Kitchen sink: examples/kitchen_sink.md
-  - C library: c-library.md
   - For Developers:
     - Start Here: developers/START_HERE.md
     - Test philosophy: developers/testing.md
@@ -81,6 +87,7 @@ nav:
     - Release checklist: developers/release-checklist.md
     - Why zensical: developers/why-zensical.md
     - Docstring derivation (C → .pyi): developers/docstring-derivation.md
+  - Roadmap: roadmap.md
 
 theme:
   name: material
