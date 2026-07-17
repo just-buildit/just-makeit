@@ -200,12 +200,25 @@ def _tk_value(value, _tk):
 def _sync(tbl, new_data: dict, _tk) -> None:
     """Update `tbl` in place to match `new_data`, touching only what changed.
 
-    "Touching only what changed" is the whole point (gh-491). tomlkit attaches
-    comments and layout to the *items* it parsed, so an untouched key keeps its
-    prose. Rewriting a key that did not change would silently drop the comment
-    above it — which is exactly the bug this replaces, just at finer grain.
+    Skipping unchanged keys is load-bearing, and specifically for *layout*
+    rather than comments — tomlkit does carry a key's comments across a
+    same-value reassignment, so that part would survive either way. What does
+    not survive is the authored shape: a hand-formatted inline array like::
 
-    So: compare each key's current value against the new one and skip if equal.
+        # why these links are explicit
+        depends_on = [
+            { name = "corr2d", link = true },
+        ]
+
+    round-trips fine when left alone, but reassigning it sends the value
+    through `_tk_value`, which builds a list of dicts as an AoT — rewriting it
+    as ``[[acq.depends_on]]``. Same TOML semantics, different file. Comparing
+    first means an untouched key keeps exactly the form its author chose.
+
+    (A key whose value genuinely *changes* is still re-emitted in jm's
+    canonical shape. That is the honest trade: jm owns the value, the author
+    owns the layout of values jm did not touch.)
+
     tomlkit items compare equal to the plain values they wrap, so this is a
     plain ``==``.
 
@@ -226,13 +239,10 @@ def _sync(tbl, new_data: dict, _tk) -> None:
         if not k.startswith("_") and v is not None
     }
     for k, v in new_data.items():
-        if k in tbl:
-            try:
-                if tbl[k] == v:
-                    continue  # unchanged — leave the parsed item (and its
-                    # comments) exactly as authored
-            except Exception:
-                pass  # incomparable — fall through and overwrite
+        # Unchanged → leave the parsed item, and its comments, exactly as
+        # authored. tomlkit items compare equal to the plain values they wrap.
+        if k in tbl and tbl[k] == v:
+            continue
         tbl[k] = _tk_value(v, _tk)
     for k in list(tbl.keys()):
         if k not in new_data:

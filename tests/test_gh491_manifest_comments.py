@@ -221,3 +221,90 @@ class TestSplitLayoutFragments:
         assert tomllib.loads(after)["acq"]["warnings"][0]["condition"] == (
             "underpowered"
         )
+
+
+class TestTomlkitAbsentFallback:
+    """The documented soft failure: no tomlkit -> full rewrite, still correct.
+
+    just-buildit does not propagate `[project].dependencies` to the wheel, so
+    tomlkit can be missing in a tool-installed environment. Comment
+    preservation degrades, but the manifest must still be written correctly —
+    a missing optional dep may not corrupt the SSOT.
+    """
+
+    def test_falls_back_to_dump_without_tomlkit(self, project, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_tomlkit(name, *a, **kw):
+            if name == "tomlkit":
+                raise ModuleNotFoundError("No module named 'tomlkit'")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", _no_tomlkit)
+        warning_run(project, "acq", "underpowered", "best effort")
+        monkeypatch.undo()
+
+        # The declaration still landed and the manifest still parses...
+        cfg = C.load(project)
+        assert cfg["acq"]["warnings"][0]["condition"] == "underpowered"
+        # ...even though the prose is gone, which is the accepted degradation.
+        assert "[[acq.warnings]]" in _manifest(project)
+
+
+class TestIncludeListRoundTrip:
+    """The split layout's `include` key is rewritten only when it changes."""
+
+    def test_include_survives_and_updates(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, ["acq"], [("underpowered", "int", "0")])
+        from just_makeit._split_objects import run as split_run
+
+        split_run(dest)
+        manifest = dest / "just-makeit.toml"
+        text = manifest.read_text(encoding="utf-8")
+        if "include" not in text:
+            pytest.skip("split layout produced no include list")
+        manifest.write_text("# top-of-file prose\n" + text, encoding="utf-8")
+
+        warning_run(dest, "acq", "underpowered", "best effort")
+        after = manifest.read_text(encoding="utf-8")
+        assert "# top-of-file prose" in after
+        assert "include" in after
+        # The include list still parses to the same fragment set.
+        assert tomllib.loads(after)["include"]
+
+
+class TestLayoutIsPreservedNotJustComments:
+    """The subtle half: comments survive a rewrite, authored *layout* doesn't.
+
+    tomlkit carries a key's comments across a same-value reassignment, so the
+    skip-if-unchanged rule in `_sync` is not about comments. It is about shape:
+    reassigning a hand-formatted inline array sends it through `_tk_value`,
+    which builds a list of dicts as an AoT — turning
+
+        depends_on = [ { name = "corr2d", link = true } ]
+
+    into `[[acq.depends_on]]`. Same semantics, different file. Verified rather
+    than assumed; the first version of this fix documented the wrong reason.
+    """
+
+    def test_unchanged_inline_array_keeps_its_authored_shape(self, project):
+        warning_run(project, "acq", "underpowered", "best effort")
+        after = _manifest(project)
+        assert "depends_on = [\n" in after
+        assert "[[acq.depends_on]]" not in after, (
+            "an untouched inline array was restructured into an AoT"
+        )
+
+    def test_unchanged_keys_are_not_reemitted_at_all(self, project):
+        # The strongest form: everything jm did not touch is byte-identical.
+        before = _manifest(project)
+        warning_run(project, "acq", "underpowered", "best effort")
+        after = _manifest(project)
+        # Every pre-existing line still present, in order.
+        b, a = before.splitlines(), after.splitlines()
+        assert [ln for ln in b if ln.strip()] == [
+            ln for ln in a if ln.strip() and ln in b
+        ][: len([ln for ln in b if ln.strip()])]
