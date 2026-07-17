@@ -209,6 +209,60 @@ class TestNavAgreesWithGallery:
         )
 
 
+_NAV_PATH = re.compile(r":\s+(?P<path>[A-Za-z0-9_./-]+\.md)\s*$")
+
+
+def _all_nav_paths() -> set[str]:
+    """Every ``.md`` path referenced anywhere in the nav, docs-relative.
+
+    Same hand-parse rationale as `_nav_examples`: no PyYAML dependency. Every
+    nav leaf is ``- Title: some/path.md``; section headers (``- Guides:``)
+    carry no ``.md`` and are skipped.
+    """
+    paths = set()
+    in_nav = False
+    for line in MKDOCS.read_text(encoding="utf-8").splitlines():
+        if line.startswith("nav:"):
+            in_nav = True
+            continue
+        if in_nav and line and not line[0].isspace():
+            break  # left the nav block (e.g. `theme:`)
+        m = _NAV_PATH.search(line)
+        if m:
+            paths.add(m.group("path"))
+    return paths
+
+
+class TestEveryDocPageIsReachable:
+    """An orphaned page ships in the build but no reader can navigate to it.
+
+    `commands/app.md` (a real, documented command) and a stale roadmap doc
+    were both live-but-unreachable until this pass. `--strict` cannot catch
+    it: a page missing from the nav is not a broken link, just an invisible
+    page. `docs/examples/**` is exempt — it is generated and gated by the
+    Examples tests above.
+    """
+
+    def _orphans(self) -> list[str]:
+        nav = _all_nav_paths()
+        docs_root = ROOT / "docs"
+        orphans = []
+        for page in docs_root.rglob("*.md"):
+            rel = page.relative_to(docs_root).as_posix()
+            if rel.startswith("examples/"):
+                continue
+            if rel not in nav:
+                orphans.append(rel)
+        return sorted(orphans)
+
+    def test_no_orphan_pages(self):
+        orphans = self._orphans()
+        assert orphans == [], (
+            f"pages exist under docs/ but are unreachable from the nav: "
+            f"{orphans}. Add a nav entry in mkdocs.yml, or delete the page."
+        )
+
+
 class TestPublishedPagesAreSiteShaped:
     """READMEs are copied to docs/examples/, so their links resolve there."""
 

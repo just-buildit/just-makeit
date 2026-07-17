@@ -348,8 +348,9 @@ directly into the state struct and auto-implements the getter as
 
 `just-makeit remove <kind> <name> --object <obj> [--module <mod>] [--force]`,
 where `kind` is `method` or `property` (also `object`, `module`, `function`,
-or `state` for those respectively — `--object`/`--module` only apply where
-relevant):
+`state`, `warning`, or `error` for those respectively — `--object`/`--module`
+only apply where relevant; `warning` and `error` are addressed differently,
+see their own sections below):
 
 ```sh
 just-makeit remove method configure --object nco --module dsp
@@ -363,6 +364,78 @@ member) in place with a "delete by hand" note — your code is never silently
 rewritten. Remove the stub yourself once you're sure. (Removing *state* via
 `just-makeit remove state <name> --object <obj>` is structural and rebuilds
 the object via the regenerate path instead.)
+
+______________________________________________________________________
+
+## `just-makeit warning <object> --condition FIELD --message TEXT [--module name] [--category NAME] [--stacklevel N]`
+
+Declare a warning that fires **after construction** when a boolean state field
+is set — a way to flag a degenerate-but-legal configuration without failing the
+constructor. The generated `__init__` glue checks the field once the object is
+built and, if set, calls `PyErr_WarnEx` with your message and category.
+
+```sh
+just-makeit warning agc underpowered \
+    --message "AGC gain floor reached; output may clip" \
+    --category RuntimeWarning
+```
+
+This is **declarative**: the condition, message, and category live in
+`just-makeit.toml` as a `[[<object>.warnings]]` entry, and the check is
+regenerated into `_ext.c` — you write no C. `--condition` names a bool-ish
+field on the object's state struct (emitted as `self->handle-><field>`), so it
+must already exist as state (add it with `just-makeit add` if needed).
+
+**Arguments**
+
+| Argument            | Description                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                      |
+| `--condition FIELD` | Bool-valued state field that triggers the warning. Required.                                                                 |
+| `--message TEXT`    | Warning text shown to the Python caller. Required.                                                                           |
+| `--category NAME`   | Warning class — a Python built-in warning (`UserWarning`, `DeprecationWarning`, `RuntimeWarning`, …). Default `UserWarning`. |
+| `--module name`     | Module the object belongs to (required for module objects).                                                                  |
+| `--stacklevel N`    | `PyErr_WarnEx` stacklevel, so the warning points at the caller's frame. Default `1`.                                         |
+
+An object may carry more than one warning — each `just-makeit warning` call on
+a distinct `--condition` adds another. Re-running with the same condition
+replaces that entry.
+
+Remove one with `just-makeit remove warning <condition> --object <obj>` — a
+warning has no name of its own, so its **condition** is what identifies it.
+
+______________________________________________________________________
+
+## `just-makeit error <object> --category NAME --message TEXT [--module name]`
+
+Translate a `create()` failure into a specific Python exception. By default a
+failed constructor raises a blanket `MemoryError`; this replaces that with an
+exception class and message of your choosing.
+
+```sh
+just-makeit error biquad \
+    --category ValueError \
+    --message "biquad coefficients unstable (|poles| >= 1)"
+```
+
+Also declarative: the choice is stored as `create_error` /
+`create_error_message` in `just-makeit.toml` and regenerated into the `_ext.c`
+failure path. There is **one** failure channel — a NULL from `create()` cannot
+say *why* it failed — so this applies to every `create()` failure, a genuine
+allocation failure included. Choose a category that reads sensibly for the most
+likely cause.
+
+**Arguments**
+
+| Argument          | Description                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `object`          | Object name (must already exist in `just-makeit.toml`).                                                     |
+| `--category NAME` | Exception class — a Python built-in exception (`ValueError`, `RuntimeError`, `OverflowError`, …). Required. |
+| `--message TEXT`  | Text for the raised exception. Required.                                                                    |
+| `--module name`   | Module the object belongs to (required for module objects).                                                 |
+
+Each object has a single failure translation, so re-running replaces it rather
+than accumulating. Remove it with `just-makeit remove error <obj> --object <obj>` — `error` takes no name because there is only ever one per object.
 
 ______________________________________________________________________
 
