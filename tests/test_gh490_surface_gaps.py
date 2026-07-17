@@ -125,6 +125,28 @@ class TestRemoveWarning:
             )
         assert "underpowered" in capsys.readouterr().err
 
+    def test_unknown_object_errors(self, project):
+        with pytest.raises(SystemExit):
+            remove_run(
+                project,
+                "warning",
+                "underpowered",
+                object_name="nosuch",
+                force=True,
+            )
+
+    def test_declining_the_prompt_changes_nothing(
+        self, project, monkeypatch, capsys
+    ):
+        # "Aborted." must mean aborted — a removal that mutates anyway would
+        # be the worst kind of bug in a destructive command.
+        warning_run(project, "acq", "underpowered", "best effort")
+        monkeypatch.setattr("builtins.input", lambda *_: "n")
+        remove_run(project, "warning", "underpowered", object_name="acq")
+        assert "Aborted." in capsys.readouterr().out
+        assert len(cfg_warnings(load(project), "acq")) == 1
+        assert "PyErr_WarnEx" in _ext_c(project)
+
     def test_cli(self, project, capsys, monkeypatch):
         warning_run(project, "acq", "underpowered", "best effort")
         r = _cli(
@@ -162,6 +184,22 @@ class TestRemoveError:
     def test_undeclared_errors(self, project):
         with pytest.raises(SystemExit):
             remove_run(project, "error", "acq", object_name="acq", force=True)
+
+    def test_unknown_object_errors(self, project):
+        with pytest.raises(SystemExit):
+            remove_run(
+                project, "error", "acq", object_name="nosuch", force=True
+            )
+
+    def test_declining_the_prompt_changes_nothing(
+        self, project, monkeypatch, capsys
+    ):
+        error_run(project, "acq", "ValueError", "bad params")
+        monkeypatch.setattr("builtins.input", lambda *_: "n")
+        remove_run(project, "error", "acq", object_name="acq")
+        assert "Aborted." in capsys.readouterr().out
+        assert create_error(load(project), "acq") == "ValueError"
+        assert "PyExc_ValueError" in _init_body(project)
 
     def test_cli(self, project, capsys, monkeypatch):
         error_run(project, "acq", "ValueError", "bad params")
