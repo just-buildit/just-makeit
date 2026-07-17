@@ -19,11 +19,10 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _context as Ctx
+from . import _glue
 from . import _render as R
 from . import _stubs as S
 from ._init import (
-    _make_component_ctx,
     _to_title,
     _write_compile_commands,
 )
@@ -629,88 +628,25 @@ def _remove_function(
 
 
 def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
-    """Build the full render ctx for regenerating object *obj*."""
-    state_vars = C.state_vars(cfg, obj)
-    arg_t = C.arg_type(cfg, obj)
-    ret_t = C.return_type(cfg, obj)
-    Component = _to_title(obj)
-    ctx = _make_component_ctx(obj)
-    ctx.update(
-        {
-            "package": pkg,
-            "PACKAGE": pkg.upper(),
-            "project": pkg.replace("_", "-"),
-            "project_underscore": pkg,
-            "version": C.project_version(cfg),
-        }
-    )
-    if module:
-        ctx.update({"module": module, "Module": _to_title(module)})
-    ctx.update(Ctx.make_sample_ctx(arg_t, ret_t))
-    ctx.update(
-        Ctx.make_state_ctx(
-            obj,
-            Component,
-            state_vars,
-            array_args=C.array_args(cfg, obj),
-            no_state=C.is_no_state(cfg, obj),
-            init_params=C.init_params(cfg, obj),
-        )
-    )
-    ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
-    ctx.update(
-        Ctx.make_step_ctx(
-            ctx,
-            arg_t,
-            ret_t,
-            no_step=C.is_no_step(cfg, obj),
-            mutable=C.is_mutable(cfg, obj),
-        )
-    )
-    ctx.update(
-        Ctx.make_methods_ctx(
-            obj,
-            Component,
-            C.methods(cfg, obj),
-            pkg=pkg,
-            py_create_args=ctx.get("py_create_args", ""),
-            no_state=C.is_no_state(cfg, obj),
-            serializable=C.is_serializable(cfg, obj),
-        )
-    )
-    ctx.update(
-        Ctx.make_properties_ctx(
-            obj,
-            Component,
-            C.properties(cfg, obj),
-            frozenset(n for n, _, _ in state_vars),
-        )
-    )
-    # Preserve declared warnings (gh-481) when regenerating after a
-    # method/property removal.
-    ctx.update(Ctx.make_warnings_ctx(obj, Component, C.warnings(cfg, obj)))
-    # Preserve the declared create_error (gh-482) likewise.
-    ctx.update(
-        Ctx.make_errors_ctx(
-            obj, C.create_error(cfg, obj), C.create_error_message(cfg, obj)
-        )
-    )
-    # Preserve the stream generator (gh-201) when regenerating after a
-    # method/property removal.
-    ctx.update(
-        Ctx.make_stream_ctx(
-            obj,
-            Component,
-            ctx["ComponentW"],
-            streamable=C.is_streamable(cfg, obj),
-            async_stream=C.is_async_stream(cfg, obj),
-            methods=C.methods(cfg, obj),
-            arg_type=arg_t,
-            return_type=ret_t,
-            default_block=C.stream_block_default(cfg, obj),
-        )
-    )
-    return ctx
+    """Build the full render ctx for regenerating object *obj* (gh-486).
+
+    Delegates to the one assembly chain. This used to be an inline copy of it,
+    which drifted exactly as gh-446 predicted: it never learned to rebuild
+    ``pyi_examples`` with the real package name, so every ``jm remove``
+    regenerated the stub's doctest as
+    ``>>> from <<package>> import <<Component>>``.
+
+    Two keys the old copy carried are deliberately not reproduced:
+
+    - ``mutable=`` on ``make_step_ctx`` was dead. It changes exactly one slot,
+      ``step_impl_def``, which only ``COMPONENT_CORE_H`` consumes — and
+      ``_core.h`` is sacred, never re-rendered here (this function renders
+      ``_ext.c`` / ``.pyi`` / the benchmark). Passing it changed no output.
+    - the ``module``/``Module`` keys were unreachable: the only caller returns
+      early for a module object, delegating to ``_regenerate_module``, so
+      `module` is always None by the time this runs.
+    """
+    return _glue.component_ctx(cfg, obj, pkg)
 
 
 def _regenerate_object_bindings(

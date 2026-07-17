@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm method` and `jm remove` corrupted the generated `.pyi` doctest
+    (gh-486).** Both regenerated the stub's example as
+    `>>> from <<package>> import <<Component>>` — the same bug gh-481 fixed for
+    `jm property`, still live because each carried its own inline copy of the
+    context assembly chain and only the `_glue`-backed paths learned to rebuild
+    `pyi_examples` with the real package name. Since `.pyi` doctests run under
+    `pytest --doctest-glob='*.pyi'`, this was a broken example in every
+    standalone stub after either command. Both now render through
+    `_glue.component_ctx()`, so a slot added there reaches every regenerating
+    command (−142 lines). Two keys the old copies carried were dropped as dead:
+    `mutable=` on `make_step_ctx` (it changes only `step_impl_def`, consumed
+    solely by the sacred `_core.h`, which these paths never re-render) and
+    `_remove`'s `module`/`Module` keys (unreachable — its caller returns early
+    for module objects).
+
 ## [0.30.0] — 2026-07-16
 
 ### Added

@@ -22,14 +22,12 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _context as Ctx
+from . import _glue
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
-    _make_component_ctx,
-    _to_title,
 )
 from ._object import _regenerate_module
 
@@ -611,7 +609,6 @@ def run(
         sys.exit(1)
 
     pkg = C.project_name(cfg)
-    Component = _to_title(object_name)
 
     print(
         f"just-makeit: adding method '{method_name}' to '{object_name}'"
@@ -842,95 +839,20 @@ def run(
     else:
         # Standalone: regenerate _core.h (adds method_decls) + _ext.c
 
-        state_vars_list = C.state_vars(cfg, object_name)
-        arg_type_ = C.arg_type(cfg, object_name)
-        return_type_ = C.return_type(cfg, object_name)
-        perf = C.is_perf(cfg)
-        version = C.project_version(cfg)
+        # gh-486: one assembly chain. This was an inline copy of _glue's and
+        # drifted the same way _remove's did — it never learned to rebuild
+        # pyi_examples with the real package, so every `jm method` regenerated
+        # the stub's doctest as `>>> from <<package>> import <<Component>>`
+        # (the gh-481 bug, which only the _glue-backed paths got fixed).
+        ctx = _glue.component_ctx(cfg, object_name, pkg)
 
-        ctx = _make_component_ctx(object_name)
-        ctx.update(
-            {
-                "package": pkg,
-                "PACKAGE": pkg.upper(),
-                "project": pkg.replace("_", "-"),
-                "project_underscore": pkg,
-                "version": version,
-            }
-        )
-        ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))
-        ctx.update(
-            Ctx.make_state_ctx(
-                object_name,
-                Component,
-                state_vars_list,
-                array_args=C.array_args(cfg, object_name),
-                no_state=C.is_no_state(cfg, object_name),
-                init_params=C.init_params(cfg, object_name),
-            )
-        )
-        ctx.update(Ctx.make_perf_ctx(perf))
-        ctx.update(
-            Ctx.make_step_ctx(
-                ctx,
-                arg_type_,
-                return_type_,
-                no_step=C.is_no_step(cfg, object_name),
-            )
-        )
-        methods_ctx = Ctx.make_methods_ctx(
-            object_name,
-            Component,
-            C.methods(cfg, object_name),
-            pkg=pkg,
-            py_create_args=ctx.get("py_create_args", ""),
-            no_state=C.is_no_state(cfg, object_name),
-            serializable=C.is_serializable(cfg, object_name),
-        )
-        ctx.update(methods_ctx)
-        # Preserve the stream generator (gh-201) across `jm method`: the
-        # producer is recomputed from the updated methods list, so adding a
-        # variable_output method re-points stream() at it.
-        ctx.update(
-            Ctx.make_stream_ctx(
-                object_name,
-                Component,
-                ctx["ComponentW"],
-                streamable=C.is_streamable(cfg, object_name),
-                async_stream=C.is_async_stream(cfg, object_name),
-                methods=C.methods(cfg, object_name),
-                arg_type=arg_type_,
-                return_type=return_type_,
-                default_block=C.stream_block_default(cfg, object_name),
-            )
-        )
-        # extra_ext_sources: space-prefixed list of varargs binding .c files
-        # compiled into the Python DSO target (not the pure-C OBJECT lib).
+        # The only slot this command needs beyond the shared base:
+        # extra_ext_sources is the space-prefixed list of varargs binding .c
+        # files compiled into the Python DSO target (not the pure-C OBJECT
+        # lib). make_methods_ctx already put varargs_binding_files in the ctx
+        # — it is a list, so render() skips it as a non-str value.
         ctx["extra_ext_sources"] = "".join(
-            f" {f}" for f in methods_ctx.get("varargs_binding_files", [])
-        )
-        ctx.update(
-            Ctx.make_properties_ctx(
-                object_name,
-                Component,
-                C.properties(cfg, object_name),
-                frozenset(n for n, _, _ in state_vars_list),
-            )
-        )
-        # Preserve declared warnings (gh-481) across `jm method`, which
-        # regenerates the whole glue from the manifest.
-        ctx.update(
-            Ctx.make_warnings_ctx(
-                object_name, Component, C.warnings(cfg, object_name)
-            )
-        )
-        # Preserve the declared create_error (gh-482) likewise.
-        ctx.update(
-            Ctx.make_errors_ctx(
-                object_name,
-                C.create_error(cfg, object_name),
-                C.create_error_message(cfg, object_name),
-            )
+            f" {f}" for f in ctx.get("varargs_binding_files", [])
         )
 
         def r(tmpl):
