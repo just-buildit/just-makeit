@@ -173,25 +173,106 @@ def _provenance(
     return owners, module_owners, include_list
 
 
-def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
-    """Write cfg to path.
+def _tk_value(value, _tk):
+    """Convert a plain Python value into the tomlkit item it should become.
 
-    For existing files the ``[project]`` section, ``[module.X]`` sections,
-    and the ``include`` key are updated in-place using tomlkit so that user
-    comments survive a round-trip.  Component sections (which contain
-    ``[[comp.state]]`` repeated tables) are always rebuilt from ``_dump()``
-    and appended after the preserved header — comment preservation inside
-    repeated-table arrays is impractical with tomlkit.
+    The only interesting case is a list of dicts: assigning it directly would
+    produce an inline array of inline tables (``x = [{a = 1}]``) rather than
+    the repeated-table form (``[[x]]``) the manifest uses everywhere. Build an
+    AoT explicitly so a newly added ``[[<comp>.warnings]]`` looks like every
+    other table array in the file.
+    """
+    if (
+        isinstance(value, list)
+        and value
+        and all(isinstance(v, dict) for v in value)
+    ):
+        aot = _tk.aot()
+        for entry in value:
+            tbl = _tk.table()
+            for k, v in entry.items():
+                tbl[k] = v
+            aot.append(tbl)
+        return aot
+    return value
+
+
+def _sync(tbl, new_data: dict, _tk) -> None:
+    """Update `tbl` in place to match `new_data`, touching only what changed.
+
+    Skipping unchanged keys is load-bearing, and specifically for *layout*
+    rather than comments — tomlkit does carry a key's comments across a
+    same-value reassignment, so that part would survive either way. What does
+    not survive is the authored shape: a hand-formatted inline array like::
+
+        # why these links are explicit
+        depends_on = [
+            { name = "corr2d", link = true },
+        ]
+
+    round-trips fine when left alone, but reassigning it sends the value
+    through `_tk_value`, which builds a list of dicts as an AoT — rewriting it
+    as ``[[acq.depends_on]]``. Same TOML semantics, different file. Comparing
+    first means an untouched key keeps exactly the form its author chose.
+
+    (A key whose value genuinely *changes* is still re-emitted in jm's
+    canonical shape. That is the honest trade: jm owns the value, the author
+    owns the layout of values jm did not touch.)
+
+    tomlkit items compare equal to the plain values they wrap, so this is a
+    plain ``==``.
+
+    Two kinds of key are dropped rather than written, both of which ``_dump()``
+    discarded for free by only emitting keys it recognised — a sync has to skip
+    them deliberately or tomlkit raises ConvertError:
+
+    - **Underscore-prefixed**: transient in-memory state, not manifest data.
+      ``_object._regenerate_module`` stashes ``_doc_blocks`` (parsed DoxyBlock
+      objects) on the cfg for the render chain.
+    - **None-valued**: TOML has no null, so None means "absent". Filtering it
+      here lets the trailing delete-loop remove the key, which is the right
+      semantics — an unset value should leave no trace in the file.
+    """
+    new_data = {
+        k: v
+        for k, v in new_data.items()
+        if not k.startswith("_") and v is not None
+    }
+    for k, v in new_data.items():
+        # Unchanged → leave the parsed item, and its comments, exactly as
+        # authored. tomlkit items compare equal to the plain values they wrap.
+        if k in tbl and tbl[k] == v:
+            continue
+        tbl[k] = _tk_value(v, _tk)
+    for k in list(tbl.keys()):
+        if k not in new_data:
+            del tbl[k]
+
+
+def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
+    """Write cfg to path, preserving what the user wrote (gh-491).
+
+    For an existing file every section — ``[project]``, ``[module.X]``, the
+    ``include`` key, *and* the component sections — is updated in place with
+    tomlkit, so comments, key order and array layout survive. Only keys whose
+    values actually changed are rewritten.
+
+    This previously rebuilt component sections from ``_dump()`` on the grounds
+    that "comment preservation inside repeated-table arrays is impractical with
+    tomlkit". It isn't: tomlkit round-trips an AoT byte-for-byte and appends a
+    new one without disturbing its neighbours. But component sections are where
+    the prose lives — a manifest documents *why* a component links what it
+    links — so re-dumping them meant one ``jm warning`` stripped every comment
+    from every ``objects/*.toml`` in the project (see gh-491, found in doppler:
+    49 files, all prose gone, as a side effect of declaring one warning).
 
     Falls back silently to plain ``_dump()`` if tomlkit is not installed
     (just-buildit does not propagate ``[project].dependencies`` to the wheel,
-    so tomlkit may be absent in tool-installed environments; comment
-    preservation is a nice-to-have, not a hard requirement).
+    so tomlkit may be absent in tool-installed environments).
 
-    For brand-new files the output is identical to the previous plain-
-    ``_dump()`` behaviour."""
-    comps = {k: v for k, v in cfg.items() if k not in ("project", "module")}
-    comp_text = _dump(comps)
+    For brand-new files the output is byte-identical to plain ``_dump()`` —
+    there is nothing to preserve, and the whole test suite pins that text.
+    """
 
     if not path.exists():
         text = _dump(cfg)
@@ -210,21 +291,15 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         path.write_text(text, encoding="utf-8")
         return
 
-    def _sync(tbl: "_tk.items.Table", new_data: dict) -> None:
-        for k, v in new_data.items():
-            tbl[k] = v
-        for k in list(tbl.keys()):
-            if k not in new_data:
-                del tbl[k]
-
     doc = _tk.loads(path.read_text(encoding="utf-8"))
 
     # -- include list ---------------------------------------------------------
     if include_list is not None:
-        arr = _tk.array()
-        for item in include_list:
-            arr.append(item)
-        doc["include"] = arr
+        if "include" not in doc or doc["include"] != include_list:
+            arr = _tk.array()
+            for item in include_list:
+                arr.append(item)
+            doc["include"] = arr
     elif "include" in doc:
         del doc["include"]
 
@@ -233,7 +308,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     if new_proj:
         if "project" not in doc:
             doc.add("project", _tk.table())
-        _sync(doc["project"], new_proj)
+        _sync(doc["project"], new_proj, _tk)
     elif "project" in doc:
         del doc["project"]
 
@@ -247,25 +322,41 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         for mod, data in new_mod.items():
             if mod not in mod_tbl:
                 mod_tbl.add(mod, _tk.table())
-            _sync(mod_tbl[mod], data)
+            _sync(mod_tbl[mod], data, _tk)
         for mod in list(mod_tbl.keys()):
             if mod not in new_mod:
                 del mod_tbl[mod]
         if not new_mod:
             del doc["module"]
 
-    # -- component sections ---------------------------------------------------
-    # Strip old component keys; they will be replaced by _dump()-generated text.
+    # -- component sections (gh-491) ------------------------------------------
+    # Synced in place, not stripped and re-dumped. This is where the prose
+    # lives — a manifest documents *why* a component links what it links — and
+    # re-dumping deleted all of it. An unchanged component is not touched at
+    # all, so the common case (declare one warning on one object) leaves every
+    # other component's text byte-identical.
+    new_comps = {
+        k: v
+        for k, v in cfg.items()
+        if k not in ("project", "module", "include")
+    }
+    for comp, data in new_comps.items():
+        if not isinstance(data, dict):
+            # Not every top-level key is a table: `enum` is a top-level AoT
+            # ([[enum]] name/values), so it is assigned rather than synced.
+            if comp not in doc or doc[comp] != data:
+                doc[comp] = _tk_value(data, _tk)
+            continue
+        if comp not in doc:
+            doc.add(comp, _tk.table())
+        _sync(doc[comp], data, _tk)
     for k in list(doc.keys()):
-        if k not in ("project", "module", "include"):
+        if k not in ("project", "module", "include") and k not in new_comps:
             del doc[k]
 
-    header = _tk.dumps(doc).rstrip("\n")
-    body = comp_text.strip()
-    path.write_text(
-        ((header + "\n\n" + body) if body else header).strip() + "\n",
-        encoding="utf-8",
-    )
+    # The whole document now round-trips through tomlkit — there is no longer a
+    # _dump()-generated body to staple onto a preserved header.
+    path.write_text(_tk.dumps(doc).rstrip("\n") + "\n", encoding="utf-8")
 
 
 def save(root: Path, cfg: dict) -> None:
