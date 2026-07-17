@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.30.1] — 2026-07-17
+
 ### Fixed
 
 - **`jm method` and `jm remove` corrupted the generated `.pyi` doctest
