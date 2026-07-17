@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+## [0.30.2] — 2026-07-17
+
+### Fixed
+
+- **`c_style = "clang-format"` no longer breaks `jm apply` convergence
+    (gh-493).** The house-style pass (gh-265) reformatted every C/H file under
+    `native/inc` and `native/src`. On a project that hand-maintains
+    `native/inc/**` (doppler), that corrupted the sacred-header contract, and
+    because the declaration-injection detection is whitespace-sensitive,
+    reformatting a header made the *next* `jm apply` believe a declaration had
+    moved and re-patch it — `jm status --check` reported dozens of files
+    "stale" on an unchanged manifest, and repeated `apply` never converged.
+    Now only the wholesale-regenerated `*_ext.c` binding is reformatted (the
+    one C file whose style can drift from the committed copy and show as
+    stale); sacred `*_core.c` and the splice-patched `native/inc/**` headers
+    are left to the project's own formatter. The drift comparison also seeds
+    the project's `.clang-format` into its throwaway scaffold and formats it
+    before diffing, so a house-styled binding compares equal instead of
+    reading as perpetual drift.
+- **Homepage and `configuration.md` code tabs rendered empty.** Five
+    `pymdownx.tabbed` tabs wrapped their code in stray four-backtick fences at
+    column 0 instead of indenting it under the `=== "..."` marker, so the tab
+    showed nothing and the block floated out displaying its own \`\`\` markers as
+    text. A `tests/test_docs.py` gate now fails on un-indented tab content.
+- **The homepage install transcript showed a stale hard-coded version.** The
+    `termynal` fence now substitutes a `{jm_version}` token with the installed
+    version at build time.
+
+### Docs
+
+- **`jm app --help` documents all its options (gh-496).** `--flag`,
+    `--command`, `--function`, `--module`, and `--argc-argv` existed in the
+    parser but were absent from the help text.
+- **Command-reference headings no longer wrap mid-flag.** Each is now the bare
+    command name (a cleaner table of contents) with the full signature in a
+    synopsis block split at chosen points.
+
+### Sandbox
+
+- **The examples Docker image shows `user@jm-sandbox` instead of
+    `I have no name!@<container-id>`.** It ran as a bare numeric UID with no
+    `/etc/passwd` entry; a named `user` and a fixed prompt (login and nested
+    shells, robust under a UID remap) replace it.
+
 ## [0.30.1] — 2026-07-17
 
 ### Fixed
