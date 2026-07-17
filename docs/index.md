@@ -55,11 +55,9 @@ you write a line of your algorithm. Fill in `step()` and ship.
 
 === "curl"
 
-````
-```sh
-. <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
-```
-````
+    ```sh
+    . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+    ```
 
 === "pip"
 
@@ -81,7 +79,7 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
   {y}-->{/y}   just-makeit  (/tmp/jm-venv)
 {b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
     {g}ok{/g}  numpy 2.4.6
-    {g}ok{/g}  just-makeit 0.29.0
+    {g}ok{/g}  just-makeit {jm_version}
 
 {b}==> Venv activated — just-makeit is ready:{/b}
 

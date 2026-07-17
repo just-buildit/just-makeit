@@ -160,7 +160,17 @@ Commands:
   app [OPTIONS]                 Scaffold a shippable standalone application from an object.
     --target c|console|pep723   Output target (default: c).
     --object name               Component to scaffold from (default: first object).
+    --function name             Bind the app to a module-level function
+                                instead of an object.
+    --module name               Module the object or function lives in.
     --name name                 App/script name (default: project name).
+    --flag name:type[:default[:help]]
+                                Extra CLI flag wired into both the C and
+                                Python parsers ([[app.flags]]); repeatable.
+    --command name[:help]       Subcommand ([[app.commands]]); repeatable.
+    --argc-argv                 For object shapes with no generated I/O loop,
+                                emit an argv-parsing skeleton instead of a
+                                (void)argc/argv stub.
 
   perf                          Retrofit JM_HOT/JM_FORCEINLINE without touching user code.
   apply [fragment]              Materialize just-makeit.toml: create missing files,

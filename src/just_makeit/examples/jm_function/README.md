@@ -179,6 +179,6 @@ The output length equals `len(x) / out_divisor` (default divisor: 1).
 
 ## See also
 
-- [`jm function` reference](../commands/extend.md#just-makeit-function-name-module-mod-param-nametype-return-type-type-doc-text)
+- [`jm function` reference](../commands/extend.md#just-makeit-function)
 - [Feature tour — Step 4: module function](../feature-tour.md)
 - [Template gallery — function](../templates/function.md)

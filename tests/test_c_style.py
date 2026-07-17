@@ -74,7 +74,23 @@ class TestNewScaffold:
         assert C.c_style(C.load(tmp_path / "p")) == ""
 
     @_cf_only
-    def test_generated_c_is_gnu_styled(self, tmp_path):
+    def test_regenerated_ext_c_is_gnu_styled(self, tmp_path):
+        # The wholesale-regenerated binding IS reformatted to house style.
+        new_run(
+            "p",
+            tmp_path / "p",
+            object_names=["widget"],
+            c_style="clang-format",
+        )
+        ext = (tmp_path / "p" / "native/src/widget/widget_ext.c").read_text()
+        assert "Py_TYPE (self)" in ext  # GNU: space before the call paren
+        assert "Py_TYPE(self)" not in ext
+
+    @_cf_only
+    def test_sacred_core_c_is_left_alone(self, tmp_path):
+        # gh-493: the sacred algorithm source is NOT reformatted, even with
+        # c_style on — its style is the project formatter's business, and
+        # reformatting it broke apply convergence.
         new_run(
             "p",
             tmp_path / "p",
@@ -82,9 +98,8 @@ class TestNewScaffold:
             c_style="clang-format",
         )
         core = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text()
-        # GNU style: a space before the call paren in a definition.
-        assert "widget_create (float gain)" in core
-        assert "widget_create(float gain)" not in core
+        assert "widget_create(float gain)" in core  # jm's own 4-space style
+        assert "widget_create (float gain)" not in core
 
     def test_default_keeps_jm_style(self, tmp_path):
         # Without c_style the canonical 4-space output is preserved verbatim.
@@ -119,12 +134,24 @@ class TestFormatProject:
         err = capsys.readouterr().err
         assert "clang-format was not found" in err
 
-    def test_collects_inc_and_src(self, tmp_path):
+    def test_no_native_src_yields_no_files(self, tmp_path):
+        # A project without a native/src tree (nothing scaffolded yet) has no
+        # format targets — the early return, not an rglob over a missing dir.
+        assert _cfmt._generated_c_files(tmp_path) == []
+
+    def test_collects_only_regenerated_ext_c(self, tmp_path):
+        # gh-493: only the wholesale-regenerated *_ext.c glue is a format
+        # target. Sacred sources (_core.c, native/inc/** headers) are excluded
+        # so reformatting them can't flap the splice-patch detection.
         new_run("p", tmp_path / "p", object_names=["widget"])
         files = _cfmt._generated_c_files(tmp_path / "p")
         names = {f.name for f in files}
-        assert "widget_core.c" in names
-        assert "widget_core.h" in names
+        assert "widget_ext.c" in names
+        assert "widget_core.c" not in names
+        assert "widget_core.h" not in names
+        assert not any(
+            "native/inc" in str(f.relative_to(tmp_path / "p")) for f in files
+        )
         assert files == sorted(files)
 
 
@@ -168,6 +195,82 @@ class TestPerCommandHook:
         assert "format" not in r.stdout
         ext = (root / "native/src/widget/widget_ext.c").read_text()
         assert "Py_TYPE(self)" in ext
+
+
+class TestConvergence:
+    """gh-493: with c_style on, repeated passes must not churn sacred files.
+
+    The bug: format_project reformatted the splice-patched `_core.h` (and
+    `_core.c`), and jm's declaration-injection is whitespace-sensitive, so a
+    later `jm apply`/`status --check` believed the header had drifted and
+    re-patched it — `apply` never converged and `status --check` flapped on an
+    unchanged manifest. These pin the fix at the point it broke.
+    """
+
+    @_cf_only
+    def test_repeated_format_leaves_sacred_files_byte_identical(
+        self, tmp_path
+    ):
+        root = tmp_path / "p"
+        new_run("p", root, object_names=["widget"], c_style="clang-format")
+        cfg = C.load(root)
+        sacred = [
+            root / "native/src/widget/widget_core.c",
+            root / "native/inc/widget/widget_core.h",
+            root / "native/inc/p.h",
+        ]
+        sacred = [p for p in sacred if p.exists()]
+        assert sacred, "expected sacred sources to exist"
+        before = {p: p.read_bytes() for p in sacred}
+        # Every mutating command re-runs the format hook; simulate a few.
+        for _ in range(3):
+            _cfmt.format_project(root, cfg)
+        for p, blob in before.items():
+            assert p.read_bytes() == blob, (
+                f"{p.relative_to(root)} was reformatted by c_style — this is "
+                f"what broke apply convergence (gh-493)"
+            )
+
+    @_cf_only
+    def test_in_process_apply_converges(self, tmp_path):
+        # Same convergence property as the CLI test below, but driving
+        # `_apply.run` directly so the format-and-seed reconcile path (the
+        # .clang-format copy into the throwaway scaffold) is exercised in
+        # process, not behind a subprocess.
+        from just_makeit import _apply
+
+        root = tmp_path / "p"
+        new_run("p", root, object_names=["widget"], c_style="clang-format")
+        ext = root / "native/src/widget/widget_ext.c"
+        core_h = root / "native/inc/widget/widget_core.h"
+        _apply.run(root)  # first reconcile
+        after_first = {p: p.read_bytes() for p in (ext, core_h)}
+        _apply.run(root)  # second reconcile on an unchanged manifest
+        for p, blob in after_first.items():
+            assert p.read_bytes() == blob, (
+                f"{p.name} changed on a second apply — c_style broke "
+                f"convergence (gh-493)"
+            )
+        # The binding stayed house-styled through both reconciles.
+        assert "Py_TYPE (self)" in ext.read_text()
+
+    @_cf_only
+    def test_status_check_stays_clean_across_apply(self, tmp_path):
+        # The end-to-end symptom: apply on a c_style project, then status
+        # --check must report clean on the still-unchanged manifest — twice.
+        root = tmp_path / "p"
+        new_run("p", root, object_names=["widget"], c_style="clang-format")
+        assert _cli("apply", cwd=root).returncode == 0
+        first = _cli("status", "--check", cwd=root)
+        assert first.returncode == 0, f"first status --check: {first.stdout}"
+        # A second apply with an unchanged manifest must be a no-op, and
+        # status --check must still pass — i.e. it converged.
+        assert _cli("apply", cwd=root).returncode == 0
+        second = _cli("status", "--check", cwd=root)
+        assert second.returncode == 0, (
+            f"status --check flapped after a second apply on an unchanged "
+            f"manifest — apply did not converge (gh-493): {second.stdout}"
+        )
 
 
 @pytest.mark.skipif(

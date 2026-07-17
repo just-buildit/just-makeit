@@ -12,6 +12,20 @@ FROM python:3.12-slim-trixie
 
 ENV JM_HOME=/home/just-makeit
 
+# ── Named sandbox user + fixed prompt ────────────────────────────────────────
+# `USER 1000:1000` (a bare numeric UID with no /etc/passwd entry) makes bash
+# render "I have no name!@<container-id>". Create a real `user` so the shell
+# has an identity, and install a fixed `user@jm-sandbox:<cwd>$` prompt for both
+# shell kinds: /etc/profile.d covers the login-shell CMD (sourced after
+# /etc/bash.bashrc, so it wins), and appending to /etc/skel/.bashrc *before*
+# useradd — so the new user's ~/.bashrc carries it — covers a nested,
+# non-login `bash`. Independent of repo source, so this layer stays cached.
+COPY docker/prompt.sh /etc/profile.d/05-jm-prompt.sh
+RUN cat /etc/profile.d/05-jm-prompt.sh >> /etc/skel/.bashrc && \
+    useradd --uid 1000 --create-home --home-dir ${JM_HOME} \
+        --shell /bin/bash user && \
+    chmod +x /etc/profile.d/05-jm-prompt.sh
+
 # ── Install pip + build-time Python deps (independent of repo source) ────────
 # numpy must be globally reachable so cmake's find_package(Python3 ... NumPy)
 # succeeds when cmake is invoked with -DPython3_EXECUTABLE=$(which python3).
@@ -51,8 +65,8 @@ RUN python3 /tmp/build_examples.py ${JM_HOME}/examples
 # ── Welcome message ──────────────────────────────────────────────────────────
 COPY docker/motd.sh /etc/profile.d/00-jm-examples.sh
 RUN chmod +x /etc/profile.d/00-jm-examples.sh && \
-    chown -R 1000:1000 ${JM_HOME}
+    chown -R user:user ${JM_HOME}
 
-USER 1000:1000
+USER user
 WORKDIR ${JM_HOME}/examples
 CMD ["/bin/bash", "-l"]

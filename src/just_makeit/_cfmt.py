@@ -2,15 +2,22 @@
 _cfmt.py — optional house-style pass over generated C (gh-265).
 
 jm emits its own canonical 4-space C. Projects with a different committed style
-(doppler, jm's poster-child, uses GNU 2-space) otherwise have to run
-``clang-format`` over the generated ``native/**`` fragments by hand after every
-mutating command. Opting in with::
+(doppler, jm's poster-child, uses GNU 2-space) otherwise see spurious drift:
+jm regenerates the ``*_ext.c`` binding in 4-space, the project's formatter
+rewrites it to house style, and ``jm status --check`` then reports it stale
+forever. Opting in with::
 
     [project]
     c_style = "clang-format"
 
-makes jm run that pass itself, so the emitted code already matches the project's
-``.clang-format`` and the manual reformat step disappears.
+makes jm reformat the binding to the project's ``.clang-format`` as it emits
+it, so the regenerated file already matches what is committed and status stays
+clean.
+
+Scope: only the wholesale-regenerated ``*_ext.c`` glue is reformatted. Sacred
+sources (``*_core.c`` and the splice-patched ``native/inc/**`` headers) are
+left to the project's own formatter — reformatting them broke ``jm apply``
+convergence (gh-493). See `_generated_c_files`.
 
 Off by default (``c_style`` unset) → output is byte-identical to before, so
 existing projects are unaffected.
@@ -27,29 +34,47 @@ from . import _config as C
 
 
 def _generated_c_files(root: Path) -> list[Path]:
-    """All generated C/H translation units under the project's ``native/``.
+    """The C files jm regenerates wholesale — the only ones safe to reformat.
 
-    Sorted for a stable invocation order (and stable test assertions). Only
-    ``native/inc`` and ``native/src`` are walked — vendored third-party C under
-    ``[project] c_deps`` lives elsewhere and is never reformatted.
+    Only the CPython binding ``*_ext.c`` under ``native/src/**`` is rewritten
+    from the manifest on every mutating command, so it is the only C file
+    whose *style* can drift from the committed (house-style) version and make
+    ``jm status --check`` report it stale. Reformatting it is exactly what
+    ``c_style`` is for, and it is safe: the file is overwritten from scratch
+    each time, so clang-format has nothing to fight.
+
+    Everything else under ``native/`` is skipped, deliberately (gh-493):
+
+    - ``*_core.c`` is create-once and holds the user's algorithm — reformatting
+      it on every command would churn hand-written code.
+    - ``native/inc/**`` headers (each ``*_core.h`` and the ``<pkg>.h``
+      umbrella) are *splice-patched*: jm injects declarations into them, and
+      that detection is whitespace-sensitive. Reformatting a header makes a
+      later ``jm apply`` believe a declaration moved and re-patch it, so
+      ``apply`` never converges and ``status --check`` flaps on an unchanged
+      manifest. A house-style project (doppler, this feature's motivating use
+      case) already excludes ``native/inc/**`` from its own clang-format for
+      exactly this reason; its own formatter owns the sacred sources.
+
+    Vendored third-party C under ``[project] c_deps`` lives outside
+    ``native/src`` and is never reformatted either.
+
+    Sorted for a stable invocation order (and stable test assertions).
     """
-    files: list[Path] = []
-    for sub in ("inc", "src"):
-        base = root / "native" / sub
-        if base.is_dir():
-            files.extend(base.rglob("*.h"))
-            files.extend(base.rglob("*.c"))
-    return sorted(files)
+    src = root / "native" / "src"
+    if not src.is_dir():
+        return []
+    return sorted(src.rglob("*_ext.c"))
 
 
 def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     """Reformat the project's generated C to its house style, if opted in.
 
     No-op unless ``[project] c_style == "clang-format"``. Runs
-    ``clang-format -i --style=file`` over every generated ``native/**`` C/H
-    file, so the committed ``.clang-format`` (or ``--fallback-style`` when the
-    project ships none) decides the layout. Idempotent: already-conformant
-    files are left byte-identical.
+    ``clang-format -i --style=file`` over the wholesale-regenerated ``*_ext.c``
+    glue (see `_generated_c_files`), so the committed ``.clang-format`` (or
+    ``--fallback-style`` when the project ships none) decides the layout.
+    Idempotent: already-conformant files are left byte-identical.
 
     A missing ``clang-format`` binary is a soft failure — a one-line warning to
     stderr, and the command that triggered this still succeeds; jm's own output

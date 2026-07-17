@@ -5,7 +5,16 @@ These commands add behaviour to objects and modules that already exist in
 
 ______________________________________________________________________
 
-## `just-makeit method <object> <method_name> [--module name] [--param name:type ...] --return-type TYPE [--variable-output] [--arg-type TYPE] [--multi-output TYPE ...]`
+## `just-makeit method`
+
+```text
+just-makeit method <object> <method_name>
+    [--module name]
+    [--param name:type ...]
+    --return-type TYPE
+    [--variable-output] [--arg-type TYPE]
+    [--multi-output TYPE ...]
+```
 
 Add a named execute method to an existing object.
 
@@ -313,7 +322,14 @@ regenerates with the binding.
 
 ______________________________________________________________________
 
-## `just-makeit property <object> <prop_name> [--module name] --type TYPE [--writable] [--field]`
+## `just-makeit property`
+
+```text
+just-makeit property <object> <prop_name>
+    [--module name]
+    --type TYPE
+    [--writable] [--field]
+```
 
 Add a read-only (or read-write) Python property to an existing object.
 
@@ -367,7 +383,14 @@ the object via the regenerate path instead.)
 
 ______________________________________________________________________
 
-## `just-makeit warning <object> --condition FIELD --message TEXT [--module name] [--category NAME] [--stacklevel N]`
+## `just-makeit warning`
+
+```text
+just-makeit warning <object>
+    --condition FIELD
+    --message TEXT
+    [--module name] [--category NAME] [--stacklevel N]
+```
 
 Declare a warning that fires **after construction** when a boolean state field
 is set — a way to flag a degenerate-but-legal configuration without failing the
@@ -406,7 +429,14 @@ warning has no name of its own, so its **condition** is what identifies it.
 
 ______________________________________________________________________
 
-## `just-makeit error <object> --category NAME --message TEXT [--module name]`
+## `just-makeit error`
+
+```text
+just-makeit error <object>
+    --category NAME
+    --message TEXT
+    [--module name]
+```
 
 Translate a `create()` failure into a specific Python exception. By default a
 failed constructor raises a blanket `MemoryError`; this replaces that with an
@@ -439,7 +469,14 @@ than accumulating. Remove it with `just-makeit remove error <obj> --object <obj>
 
 ______________________________________________________________________
 
-## `just-makeit function <name> --module <mod> [--param name:type ...] [--return-type TYPE] [--doc "text"]`
+## `just-makeit function`
+
+```text
+just-makeit function <name> --module <mod>
+    [--param name:type ...]
+    [--return-type TYPE]
+    [--doc "text"]
+```
 
 Add a stateless C function to an existing module — no struct, no lifecycle,
 no persistent state.
