@@ -14,8 +14,10 @@ loop over the object's sample type — no hand-editing required. Extra flags can
 be declared with ``--flag name:type[:default[:help]]`` (persisted as
 ``[[app.flags]]``) and appear in both the C and Python parsers.
 
-Objects that don't fit the scalar-stream shape (``void`` arg/return, generators,
-consumers, ``no_step``) fall back to an ``<<IMPLEMENT>>`` stub.
+Four I/O shapes are generated: ``scalar`` (``x -> y``), ``blockwise``
+(``x[] -> y[]``), ``consumer`` (``x -> void``), and ``generator``
+(``void -> y``). ``no_step`` objects and any other shape fall back to an
+``<<IMPLEMENT>>`` stub. See ``_app_shape``, which is the authority.
 
 Targets
 -------

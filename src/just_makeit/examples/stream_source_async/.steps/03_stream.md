@@ -1,7 +1,7 @@
 ## 3. Build and stream from `asyncio`
 
 ```sh
-just-makeit build      # cmake configure + build + tests
+just-makeit build      # cmake configure + build + wheel
 ```
 
 Now drive the generated iterator under an event loop:
@@ -23,6 +23,6 @@ What `--async-stream` adds on top of the sync iterator:
 
 The sync `for blk in obj.stream(...)` / `for blk in obj` forms are untouched and
 work on the same object — `--async-stream` only *adds* the async surface. See
-the [`stream_source`](../stream_source/README.md) example for the synchronous
-walkthrough, and [`stream_blockwise`](../stream_blockwise/README.md) for a
+the [`stream_source`](stream_source.md) example for the synchronous
+walkthrough, and [`stream_blockwise`](stream_blockwise.md) for a
 finite (draining) producer.

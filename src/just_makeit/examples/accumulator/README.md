@@ -690,3 +690,12 @@ applies to `acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
 _Complex` is more involved: the storage is two consecutive doubles (real then
 imaginary), so you need `JM_VEC_F64` with stride-2 access or interleaved
 accumulation — left as an exercise once the `AccF32` workflow is understood.
+
+---
+
+## See also
+
+- [Filter module example](filter_module.md) — two types sharing a module,
+    focused on the module-grouping mechanics
+- [Extend commands — `jm method`](../commands/extend.md)
+- [Template gallery — processor](../templates/processor.md)

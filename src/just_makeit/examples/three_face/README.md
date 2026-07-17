@@ -14,7 +14,7 @@ core** exposed three ways, all calling the same `gain_step()` — and `jm app`
 `gaintool` scales a stream of `float32` samples by `--gain`. The same
 `gain_core.c` is compiled once as a CMake OBJECT library and linked by the
 binary, the C test, and the Python extension — so all three faces behave
-identically (the test asserts byte-identical output).
+identically (the test asserts every face agrees to within 1e-5).
 
 ## Run it
 
@@ -40,8 +40,11 @@ the Python `argparse` from the *same* object model. Extra flags can be declared
 with `jm app --flag name:type[:default[:help]]` (persisted as `[[app.flags]]`)
 and appear in both parsers.
 
-This works for scalar `step(x)→y` objects. Other shapes (`void` arg/return,
-`no_step`) fall back to an `<<IMPLEMENT>>` stub.
+Four shapes are generated: `scalar` (`x → y`, what `gaintool` uses),
+`blockwise` (`x[] → y[]`), `consumer` (`x → void`), and `generator`
+(`void → y`). `no_step` objects and anything else fall back to an
+`<<IMPLEMENT>>` stub. The `app_shapes` example (`jm example app_shapes`)
+builds the generator and blockwise faces as C binaries.
 
 ## History
 
@@ -49,6 +52,8 @@ The first version of this example had to **hand-write** the C `main()` and the
 Python `cli.py` because `jm app` only scaffolded plumbing. Those hand-written
 bodies became the spec for the generator; this example now relies entirely on
 generated code (its diff against the old version is the proof the generator
-reproduces what was hand-written). Remaining follow-ons: `[[app.commands]]`
-subcommands, binding `jm app` to module `function`s, and blockwise/`steps()`
-I/O loops.
+reproduces what was hand-written).
+
+The follow-ons that version listed have all since shipped: `[[app.commands]]`
+subcommands (`jm app --command`), binding `jm app` to module `function`s
+(`jm app --function`), and blockwise/`steps()` I/O loops.

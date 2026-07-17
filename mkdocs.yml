@@ -42,6 +42,8 @@ nav:
   - FAQ: faq.md
   - Glossary: glossary.md
   - Roadmap: roadmap.md
+  # Keep in sync with GALLERY in scripts/copy_examples.py — same order, same
+  # display names. tests/test_docs.py fails if they drift apart.
   - Examples:
     - Overview: examples/index.md
     - Running stats: examples/running_stats.md
@@ -49,16 +51,26 @@ nav:
     - Sliding power: examples/sliding_power.md
     - Sliding correlator: examples/sliding_correlator.md
     - Array processing: examples/array_processing.md
+    - Varargs methods: examples/varargs_method.md
+    - Opaque counter: examples/opaque_counter.md
+    - Delay line: examples/delay_line.md
+    - Accumulator: examples/accumulator.md
+    - Stream source: examples/stream_source.md
+    - Stream blockwise: examples/stream_blockwise.md
+    - Stream chunker: examples/stream_chunker.md
+    - Stream source (async): examples/stream_source_async.md
     - DSP toolkit: examples/dsp_toolkit.md
     - Filter module: examples/filter_module.md
+    - Module functions: examples/jm_function.md
     - IQ file: examples/iqfile.md
-    - Stream chunker: examples/stream_chunker.md
+    - NCO tone: examples/nco_tone.md
+    - App scaffolding: examples/jm_app.md
+    - Three faces: examples/three_face.md
+    - Declarative scaffold: examples/declarative_scaffold.md
     - pytest style: examples/pytest_style.md
     - Full workflow: examples/full_workflow.md
-    - App scaffolding: examples/jm_app.md
-    - NCO tone: examples/nco_tone.md
-    - Module functions: examples/jm_function.md
     - Composites: examples/composites.md
+    - Kitchen sink: examples/kitchen_sink.md
   - C library: c-library.md
   - For Developers:
     - Start Here: developers/START_HERE.md

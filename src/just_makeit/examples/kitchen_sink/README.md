@@ -1,13 +1,19 @@
-# Kitchen sink — every feature, one project
+# Kitchen sink — the integration surface, one project
 
-This example builds a single jm project that exercises **every** major feature
-at once: a vendored external C library, cross-component `depends_on`, GIL
-release (`nogil`), component-level `extra_link_libs`, and every object flavor.
+This example builds a single jm project that combines the features most likely
+to break *each other*: a vendored external C library, cross-component
+`depends_on`, GIL release (`nogil`), component-level `extra_link_libs`, a
+hand-written `no_generate` sibling module, an app face, and every object
+flavor.
 
 Integration bugs hide in the *combinations* — a feature that works alone breaks
 when used with another. (Building this example is what surfaced jm gh-174: a
 `depends_on` object whose C test failed to link its dependency.) Running it in
 CI guards that surface on every push.
+
+It is deliberately not exhaustive: it covers the features that touch the build
+and link graph. Composites, streaming, and declarative diagnostics have their
+own examples in the gallery.
 
 Run it end to end:
 
@@ -19,16 +25,16 @@ jm example kitchen_sink
 
 ## What it covers
 
-The generated project has one module, `dsp`, with six objects plus a vendored
-C dependency:
+The generated project has a `dsp` module with six objects, a hand-written
+`dsp_fn` sibling module, and a vendored C dependency:
 
 | Object   | Flavor                          | Feature exercised |
 | -------- | ------------------------------- | ----------------- |
-| `gain`   | scalar `step(x) -> y`           | writable property |
-| `nco`    | generator `void -> complex64`   | `--mutable`, `--class-name NCO` |
+| `gain`   | scalar `step(x) -> y`           | writable property, plus a `--batch` method (`process_batch`) |
+| `lfo`    | generator `void -> complex64`   | `--mutable`, `--class-name Lfo` |
 | `meter`  | consumer `float -> void`        | `--field` property |
 | `resamp` | block `complex64[] -> complex64`| `variable_output` + `pass_capacity` + **`nogil`** |
-| `mixer`  | `complex64 -> complex64`        | `depends_on = ["nco"]` — opaque sibling `nco_state_t *`, header auto-included |
+| `mixer`  | `complex64 -> complex64`        | `depends_on = ["lfo"]` — opaque sibling `lfo_state_t *`, header auto-included |
 | `config` | sink, `no_step`                 | vendored **cJSON**: opaque `cJSON *`, component `extra_link_libs` + `extra_include_dirs` |
 
 `cjson` is a `[project] c_deps` OBJECT library (vendored under
@@ -36,9 +42,9 @@ C dependency:
 **component-level** `extra_link_libs` — the exact path jm gh-174 fixed.
 
 `depends_on` does two things for `mixer`: it injects
-`#include "nco/nco_core.h"` into `mixer_core.h` (so the opaque field compiles)
-and links `nco_core` into `mixer`'s OBJECT lib **and** its test/bench
-executables (gh-174 follow-up). `mixer`'s `step()` then calls `nco_step()` on
+`#include "lfo/lfo_core.h"` into `mixer_core.h` (so the opaque field compiles)
+and links `lfo_core` into `mixer`'s OBJECT lib **and** its test/bench
+executables (gh-174 follow-up). `mixer`'s `step()` then calls `lfo_step()` on
 its own oscillator.
 
 `resamp.execute` releases the GIL (`nogil`) around the pure-C kernel, so a
@@ -94,5 +100,8 @@ Three more features round out the project:
   generates an `argparse` CLI over the `gain` bindings and wires it into
   `[project.scripts]`.
 
-Everything is built and exercised by `smoke.py`, so the whole combination is
-verified on every CI run.
+`test.py` builds the project and runs CTest over the C tests, then drives the
+Python bindings through `smoke.py` — so the whole combination is compiled and
+exercised on every CI run. The `dsp_cli` app face is checked for its
+`[project.scripts]` wiring rather than executed; the `three_face` example
+covers running a generated app.
