@@ -16,5 +16,8 @@ Three more features round out the project:
   generates an `argparse` CLI over the `gain` bindings and wires it into
   `[project.scripts]`.
 
-Everything is built and exercised by `smoke.py`, so the whole combination is
-verified on every CI run.
+`test.py` builds the project and runs CTest over the C tests, then drives the
+Python bindings through `smoke.py` — so the whole combination is compiled and
+exercised on every CI run. The `dsp_cli` app face is checked for its
+`[project.scripts]` wiring rather than executed; the `three_face` example
+covers running a generated app.

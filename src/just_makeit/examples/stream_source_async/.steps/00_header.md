@@ -1,6 +1,6 @@
 # Async stream source example
 
-This is the [`stream_source`](../stream_source/README.md) example turned
+This is the [`stream_source`](stream_source.md) example turned
 asynchronous. A **source** generates samples from internal state; `--streamable`
 already gives it a Pythonic `for blk in obj.stream(...)`. Adding
 `--async-stream` *also* makes it work under `asyncio`:

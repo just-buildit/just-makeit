@@ -120,7 +120,7 @@ example's test, so what you read here is exactly what compiles.)
 ## 3. Build and stream from Python
 
 ```sh
-just-makeit build      # cmake configure + build + tests
+just-makeit build      # cmake configure + build + wheel
 ```
 
 Now drive the generated iterator:

@@ -3,7 +3,7 @@
 ```{01_scaffold.sh}
 ```
 
-The only change from the sync [`stream_source`](../stream_source/README.md)
+The only change from the sync [`stream_source`](stream_source.md)
 example is `--async-stream` in place of `--streamable`:
 
 | Flag                       | Effect                                                                          |
