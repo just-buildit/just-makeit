@@ -1,179 +1,134 @@
-# Decision tree — which `jm` command do I want?
+# Which `jm` command do I want?
 
-Use this page when you don't know which command starts the work you're about
-to do. Follow the flow to the command, then jump to the relevant per-command
-page for details.
-
-______________________________________________________________________
-
-## The flow
-
-```mermaid
-flowchart TD
-    S([Start]) --> P{"Have a just-makeit.toml?"}
-    P -->|no| N["jm new PROJECT<br/>(optionally --object / --module)"]
-    N --> W
-    P -->|yes| W{"What are you adding?"}
-
-    W -->|"a stateful Python class"| C{"Own .so, or shared with peers?"}
-    C -->|"its own .so"| O["jm object NAME"]
-    C -->|"shared .so"| M["jm module MOD once,<br/>then jm object NAME --module MOD"]
-
-    W -->|"a free C function"| F["jm function FN --module MOD"]
-    W -->|"a method / property / state field"| X["jm method OBJ NAME<br/>jm property OBJ NAME<br/>jm add --state VAR:T"]
-    W -->|"a warning or error on construction"| D["jm warning OBJ ...<br/>jm error OBJ ..."]
-    W -->|"a shippable app"| A["jm app --target c / console / pep723"]
-    W -->|"a perf hot-path retrofit"| PF["jm perf"]
-
-    O --> Shape(["see: Object shape, below"])
-    M --> Shape
-```
-
-Already have the code and just need to **operate** on the project? Those
-commands are a flat lookup, not a branch:
-
-| I edited / want to…                           | command                             |
-| --------------------------------------------- | ----------------------------------- |
-| Materialize TOML edits into files (glue)      | `jm apply`                          |
-| Compose an external fragment into the project | `jm apply <fragment.toml>`          |
-| Rebuild a component from the manifest         | `jm regenerate <name>`              |
-| Delete generated code **and** TOML wiring     | `jm remove <kind> <name>`           |
-| Build / run tests / run benchmarks            | `jm build` · `jm test` · `jm bench` |
-| Reconstruct the CLI history from TOML         | `jm script`                         |
-| Upgrade an old project's schema               | `jm upgrade`                        |
-
-> `jm apply` and `jm regenerate` are the two halves of the sacred/glue
-> contract — see [apply vs regenerate](#apply-vs-regenerate-the-sacredglue-contract).
+A quick lookup, not a tutorial: find the command, then open its
+[command page](commands/scaffold.md) for the details.
 
 ______________________________________________________________________
 
-## Sub-decision A. Object shape (for `jm object`)
+## Starting a project
 
-What does `step()` look like?
+No `just-makeit.toml` yet? [`jm new <project>`](commands/scaffold.md#just-makeit-new) scaffolds a complete, building,
+tested project. Add `--object <name>` or `--module <mod>` to create your first
+component in the same step.
 
-| Shape                           | Flags                                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| input → output (1:1, processor) | `--arg-type "float _Complex"` (default)                                                                            |
-| array → 1 sample (array input)  | `--arg-type "T[]"` (`steps()` not generated)                                                                       |
-| no input (generator)            | `--arg-type void` (defaults to a complex return)                                                                   |
-| no output (consumer)            | `--return-type void`                                                                                               |
-| no `step()` — custom verbs only | `--no-step` + `jm method …`                                                                                        |
-| reader (no step, opens a file)  | `--no-step` + `--init-param filepath:"const char *"`                                                               |
-| array → array (blockwise)       | `--preset blockwise` (default `float _Complex[] → float _Complex[]`; override with `--arg-type` / `--return-type`) |
+## Creating a component
 
-What state does it carry?
+| To create…                        | run…                                                                                                                                                 |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A stateful class in its own `.so` | [`jm object <name>`](commands/scaffold.md#just-makeit-object)                                                                                        |
+| Several classes sharing one `.so` | [`jm module <mod>`](commands/scaffold.md#just-makeit-module-name), then [`jm object <name> --module <mod>`](commands/scaffold.md#just-makeit-object) |
+| A stateless C function (no class) | [`jm function <fn> --module <mod>`](commands/extend.md#just-makeit-function)                                                                         |
 
-| State                              | How                                                                                                |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| scalar defaults only               | `[[state]]` entries (default path)                                                                 |
-| no internal state                  | `--no-state` + `[[init_params]]`                                                                   |
-| user-facing ctor ≠ internal state  | `[[state]]` + `[[init_params]]` + `create_impl` (init_params drive the ctor, state stays internal) |
-| some fields preserved on `reset()` | `state.roles = "config"` (TOML only)                                                               |
+New object? Its `step()` shape and state come next under
+[Shaping an object](#shaping-an-object).
 
-## Sub-decision B. Method output shape (for `jm method`)
+## Extending a component
 
-| Output                             | How                                                        |
+| To add…                                 | run…                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| A named execute method                  | [`jm method <obj> <name>`](commands/extend.md#just-makeit-method)                              |
+| A read-only Python property             | [`jm property <obj> <name>`](commands/extend.md#just-makeit-property)                          |
+| A read-write property                   | [`jm property <obj> <name> --writable`](commands/extend.md#just-makeit-property)               |
+| A state field                           | [`jm add --state <var>:T [--object <obj>]`](commands/scaffold.md#just-makeit-add)              |
+| A warning after construction            | [`jm warning <obj> --condition <field> --message "…"`](commands/extend.md#just-makeit-warning) |
+| A specific `create()`-failure exception | [`jm error <obj> --category ValueError --message "…"`](commands/extend.md#just-makeit-error)   |
+| A SIMD / `JM_HOT` performance pass      | [`jm perf`](commands/build.md#just-makeit-perf)                                                |
+
+## Shipping and operating
+
+| To…                                            | run…                                                                                                                 |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Package a runnable app (C / console / PEP 723) | [`jm app --target c\|console\|pep723`](commands/app.md#just-makeit-app)                                              |
+| Build, test, or benchmark                      | [`jm build`](commands/build.md#just-makeit-build-dir) · [`jm test`](commands/build.md#just-makeit-test) · `jm bench` |
+| Push hand-edited TOML into files               | [`jm apply`](commands/build.md#just-makeit-apply) (see below)                                                        |
+| Compose an external fragment                   | [`jm apply <fragment.toml>`](commands/build.md#just-makeit-apply)                                                    |
+| Rebuild a component from the manifest          | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component) (see below)                             |
+| Delete generated code **and** its wiring       | [`jm remove <kind> <name>`](commands/extend.md#removing-a-method-or-property)                                        |
+| Reconstruct the CLI history from TOML          | [`jm script`](commands/build.md#just-makeit-script)                                                                  |
+| Upgrade an old project's schema                | [`jm upgrade`](upgrading.md)                                                                                         |
+
+______________________________________________________________________
+
+## Shaping an object
+
+[`jm object`](commands/scaffold.md#just-makeit-object) defaults to a 1:1 processor over `float _Complex`. For any other
+shape, pass a `--preset` — or the flags it stands for:
+
+| Your `step()`             | Preset                | …the flags it stands for                                              |
+| ------------------------- | --------------------- | --------------------------------------------------------------------- |
+| input → output (1:1)      | `processor` (default) | `--arg-type "float _Complex"`                                         |
+| array → one sample        | —                     | `--arg-type "T[]"` (`steps()` not generated)                          |
+| nothing in, samples out   | `generator`           | `--arg-type void` (complex return by default)                         |
+| samples in, nothing out   | `consumer`            | `--return-type void`                                                  |
+| no `step()`, custom verbs | `reader`              | `--no-step` (+ `--init-param filepath:"const char *"` to open a file) |
+| array → array             | `blockwise`           | override `--arg-type` / `--return-type`                               |
+
+And what state it carries:
+
+| State                             | How                                             |
+| --------------------------------- | ----------------------------------------------- |
+| Scalar defaults only              | `[[state]]` entries (the default path)          |
+| No internal state                 | `--no-state` + `[[init_params]]`                |
+| Public ctor ≠ internal state      | `[[state]]` + `[[init_params]]` + `create_impl` |
+| Some fields kept across `reset()` | `state.roles = "config"` (TOML only)            |
+
+## Shaping a method's output
+
+For [`jm method`](commands/extend.md#just-makeit-method), the output shape is a TOML setting on the method:
+
+| Output                             | Setting                                                    |
 | ---------------------------------- | ---------------------------------------------------------- |
 | Fixed N out for N in (resampler)   | `out_type="float"`, `out_divisor=2`                        |
 | Variable count out (event emitter) | `variable_output=true` (provide `<comp>_<name>_max_out()`) |
-| List of records out (events)       | `result_fields=[{name, type}, …]`                          |
-| Multiple parallel buffers          | `multi_output=["float _Complex", …]`                       |
-| Skip from benchmarks               | `bench=false`                                              |
+| A list of records (events)         | `result_fields=[{name, type}, …]`                          |
+| Several parallel buffers           | `multi_output=["float _Complex", …]`                       |
+| Excluded from benchmarks           | `bench=false`                                              |
 
-## Sub-decision C. External dependencies
+## Wiring an external library
 
-How is the dependency found?
+Declare how it's found on `[project]`:
 
-| Source                         | Declaration                             |
-| ------------------------------ | --------------------------------------- |
-| Vendored C subdir in your tree | `[project] c_deps = ["liba", "libb"]`   |
-| Findable by `find_package`     | `[project] find_packages = ["Doppler"]` |
-| pkg-config available           | `[project] pkg_modules = ["doppler"]`   |
+| It's…                      | Declaration                   |
+| -------------------------- | ----------------------------- |
+| A vendored C subdir        | `c_deps = ["liba", "libb"]`   |
+| Findable by `find_package` | `find_packages = ["Doppler"]` |
+| A pkg-config module        | `pkg_modules = ["doppler"]`   |
 
-Then, on the module or component that uses it:
-
-| Need                | Declaration                                       |
-| ------------------- | ------------------------------------------------- |
-| Link against a lib  | `extra_link_libs = ["${DOPPLER_LIBRARY}"]`        |
-| Include its headers | `extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]` |
-
-## Sub-decision D. Preset (for `jm object --preset NAME`)
-
-| `step()` shape             | Preset                                  |
-| -------------------------- | --------------------------------------- |
-| input → output (1:1)       | `processor` (default)                   |
-| no input, produces samples | `generator` (void arg → complex return) |
-| consumes input, no output  | `consumer`                              |
-| no `step()`, custom verbs  | `reader`                                |
-| array in → array out       | `blockwise`                             |
+Then link or include it on the component (or module) that uses it:
+`extra_link_libs = ["${DOPPLER_LIBRARY}"]`,
+`extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]`.
 
 ______________________________________________________________________
 
-## `apply` vs `regenerate` (the sacred/glue contract)
+## `apply` vs `regenerate`
 
-You edited `just-makeit.toml` by hand. Which command propagates the change?
+You edited `just-makeit.toml` by hand. Which command carries the change into
+the generated files?
 
-```mermaid
-flowchart TD
-    E{"What kind of change?"}
-    E -->|"glue"| A["jm apply"]
-    E -->|"structural"| R["jm regenerate NAME<br/>(or jm add, for state)"]
-    A --> An["Glue: _ext.c, .pyi, CMakeLists, or a<br/>new method/property decl to reach the API.<br/>Decls are injected into _core.h; the state<br/>struct + inline step() are SACRED, and<br/>_core.c is never spliced."]
-    R --> Rn["Structural: a new state field or a changed<br/>signature. Deletes every file the component<br/>owns, then re-runs apply. Leaves TOML untouched.<br/>By default lifts your _core.c/_core.h bodies out<br/>and splices them back by function name; --discard<br/>skips that. jm add always resets clean.<br/>git stash first regardless."]
-```
+|                            | [`jm apply`](commands/build.md#just-makeit-apply)                                                                                             | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component)           |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Use when**               | Glue changed — `_ext.c`, `.pyi`, `CMakeLists.txt`, or a new method/property that just needs to reach the public API                           | Structural change — a new state field or a changed signature                           |
+| **What it does**           | Regenerates glue and injects missing declarations into `_core.h`. The state struct and inline `step()` are sacred; `_core.c` is never touched | Deletes every file the component owns and re-runs `apply`. Leaves the TOML alone       |
+| **Your hand-written code** | Untouched                                                                                                                                     | Lifted out and spliced back by function name; `--discard` skips that for a clean reset |
 
-**Rule of thumb:** `apply` is the safe, additive refresh (glue + missing
-declarations). `regenerate` is the deliberate rebuild — use it when a signature
-change or a new state field must re-stub the sacred `_core.c` body; it
-preserves what it can by default. `jm add` is `regenerate` specialised for
-adding state, always with a clean (`--discard`) reset.
+`apply` is the safe, additive refresh. `regenerate` is the deliberate
+rebuild — reach for it when a signature change or new state field has to
+re-stub the sacred `_core.c`. [`jm add`](commands/scaffold.md#just-makeit-add) is `regenerate` specialised for state
+(always a clean reset); `git stash` first regardless.
 
 ______________________________________________________________________
 
-## "I want…" lookup
+## When the CLI can't reach it
 
-| I want…                                  | do…                                                     |
-| ---------------------------------------- | ------------------------------------------------------- |
-| A new project                            | `jm new <name>`                                         |
-| A class with state, own .so              | `jm object <name>`                                      |
-| Multiple classes in one .so              | `jm module <mod>`, then `jm object … --module <mod>`    |
-| A free C function in a module            | `jm function <fn> --module <mod>`                       |
-| A second `.execute_*()` method           | `jm method <obj> <method>`                              |
-| Read-only Python property                | `jm property <obj> <prop>`                              |
-| Read-write Python property               | `jm property <obj> <prop> --writable`                   |
-| Aliased property (existing field)        | `jm property <obj> <prop> --field` (same name as state) |
-| Add a state field later                  | `jm add --state <var>:T:V [--object <obj>]`             |
-| Warn after construction                  | `jm warning <obj> --condition F --message "…"`          |
-| Map a `create()` failure to an exception | `jm error <obj> --category ValueError --message "…"`    |
-| SIMD batch dispatch / `JM_HOT`           | scaffold with `--perf`, or `jm perf` later              |
-| Standalone C executable                  | `jm app --target c`                                     |
-| Python CLI from your obj                 | `jm app --target console`                               |
-| PEP 723 single-file script               | `jm app --target pep723`                                |
-| Drop generated files **and** TOML        | `jm remove <kind> <name>`                               |
-| Materialize TOML changes (glue)          | `jm apply`                                              |
-| Compose a fragment file                  | `jm apply <fragment.toml>`                              |
-| Refresh a component, keep TOML           | `jm regenerate <name>`                                  |
-| Run benchmarks                           | `jm bench`                                              |
-| Reconstruct the CLI history              | `jm script`                                             |
-| Upgrade an old project                   | `jm upgrade`                                            |
-
-______________________________________________________________________
-
-## When the CLI can't reach it (TOML-only features)
-
-Every common TOML knob has a CLI flag; see the field-by-field inventory at
+Every common TOML knob has a CLI flag —
 [Configuration → Complete CLI ↔ TOML mapping](configuration.md#complete-cli-toml-mapping)
-for the authoritative status of every key.
+is the authoritative status of each key. A small tail stays TOML-only by
+design:
 
-Remaining TOML-only by design (a small tail of use cases):
-
-- `opaque` state fields, `no_ctor` per-field, `roles = "config"`
-- `init_params` modifiers: `default_raw`, `real_type`, `real_create_fn`, `create_fn`
-- `init_post_parse_impl`, `string_enum:` init-param types
+- `opaque` state fields, `no_ctor` per field, `roles = "config"`
+- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse_impl`, `string_enum:` init-param types
 - `buf_field` / `len_field` / `valid_field` / `expr` property variants
-- `max_results` / `max_results_param` on methods/functions
-- `no_generate` modules (hand-written from scratch)
-- `extra_c` files
-- Per-component `extra_link_libs` (per-module is reachable via CLI)
+- `max_results` / `max_results_param` on methods and functions
+- `no_generate` modules, `extra_c` files, per-component `extra_link_libs`
 
 See [Configuration](configuration.md) for the full schema.
