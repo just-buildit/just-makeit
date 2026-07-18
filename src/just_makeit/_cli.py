@@ -104,6 +104,20 @@ Commands:
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 
+  view <obj> <ClassName> [OPTIONS]  Add a second Python class over an object's
+                                same generated C core (module objects only).
+                                Shares <obj>_state_t and _core.c; differs only in
+                                its constructor and property surface.
+    --module name               Module the object lives in (required).
+    --create-fn fn              C constructor the view's __init__ calls, e.g.
+                                acq_create_burst (required; must differ from
+                                <obj>_create). Scaffolded as a stub in the core.
+    --init-param name:type[:default]  The view's own constructor param;
+                                repeatable. Omit to inherit the parent's.
+    --exclude-property name     Parent property to omit from the view;
+                                repeatable.
+    --doc "text"                Docstring for the view class.
+
   property <obj> <name> [OPTIONS]  Add a Python property to an object.
     --module name               Module the object lives in.
     --type TYPE                 C type of the property value.
@@ -570,6 +584,12 @@ def main() -> None:
         from ._cli_method import run as _cmd_method
 
         _cmd_method(args[1:])
+
+    elif cmd == "view":
+        _warn_schema()
+        from ._cli_view import run as _cmd_view
+
+        _cmd_view(args[1:])
 
     elif cmd == "remove":
         _warn_schema()
@@ -1284,6 +1304,7 @@ _C_EMITTING_COMMANDS = frozenset(
         "module",
         "object",
         "method",
+        "view",
         "property",
         "warning",
         "error",

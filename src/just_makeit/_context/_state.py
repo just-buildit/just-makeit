@@ -41,6 +41,7 @@ def _build_no_state_init_ctx(
     array_args: list[tuple[str, str]] = (),
     init_post_parse_impl: str = "",
     create_blk=None,
+    create_fn: "str | None" = None,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -63,7 +64,14 @@ def _build_no_state_init_ctx(
     Ordering in kwlist / C signature:
       --array-arg first, then array init-params, then string-enum,
       then scalars.
+
+    create_fn (gh-504) overrides the C constructor the non-dispatch
+    create_line calls; None ⇒ ``<component>_create`` (byte-identical to
+    today).  The dtype/optional-array dispatch paths still embed
+    ``<component>_create`` directly — a view never takes those paths (its
+    generator rejects array-dispatch parents).
     """
+    _create = create_fn or f"{component}_create"
     # ── Classify params ───────────────────────────────────────────────────
 
     arr_ip: list[tuple[str, str, int, str]] = []
@@ -539,9 +547,7 @@ def _build_no_state_init_ctx(
     if dispatch_meta or opt_arr_ip:
         create_line = ""
     else:
-        create_line = (
-            f"    self->handle = {component}_create({create_call_args});\n"
-        )
+        create_line = f"    self->handle = {_create}({create_call_args});\n"
 
     # ── pyi / test helpers ────────────────────────────────────────────────
 
@@ -1020,6 +1026,7 @@ def make_state_ctx(
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
+    create_fn: "str | None" = None,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1038,7 +1045,18 @@ def make_state_ctx(
     construction-time parameters (e.g. filter coefficients, sample rate)
     that should survive a soft-reset of runtime state (e.g. phase
     accumulator, filter history).
+
+    create_fn overrides the C constructor the generated ``tp_init`` calls.
+    Default None ⇒ ``<component>_create`` (today's behaviour, byte-identical
+    output for every existing caller).  A view (gh-504) passes its own
+    constructor (e.g. ``acq_create_burst``) so a second class over the same
+    core builds from a different constructor.  Only the ``create_line`` slot
+    honours it; the per-array-arg dtype/optional-array dispatch paths embed
+    ``<component>_create`` directly and blank ``create_line``, so callers that
+    use those paths must not also pass ``create_fn`` (the view generator
+    rejects array-dispatch parents up front).
     """
+    _create = create_fn or f"{component}_create"
     if no_state:
         _ns_reset_fn = f"{Component}Obj_reset"
         base = {
@@ -1088,7 +1106,7 @@ def make_state_ctx(
             "reset_test_c": (f"    /* reset */\n    {component}_reset(obj);"),
             "array_args_parse_block": "",
             "array_args_decref": "",
-            "create_line": (f"    self->handle = {component}_create();\n"),
+            "create_line": (f"    self->handle = {_create}();\n"),
             "method_decls": "",
             "extra_buf_fields": "",
             "extra_buf_free": "",
@@ -1138,6 +1156,7 @@ def make_state_ctx(
                     list(init_params),
                     list(array_args),
                     init_post_parse_impl=init_post_parse_impl,
+                    create_fn=create_fn,
                 )
             )
         if opaque_fields:
@@ -1800,7 +1819,7 @@ def make_state_ctx(
         "init_parse_block": init_parse_block,
         "create_call_args": create_call_args,
         "create_line": (
-            f"    self->handle = {component}_create({create_call_args});\n"
+            f"    self->handle = {_create}({create_call_args});\n"
         ),
         "getter_setter_methods_c": getter_setter_methods_c,
         "getter_setter_pymethoddef": getter_setter_pymethoddef,
@@ -1888,6 +1907,7 @@ def make_state_ctx(
             list(init_params),
             list(array_args),
             init_post_parse_impl=init_post_parse_impl,
+            create_fn=create_fn,
         )
         # gh-122: _build_no_state_init_ctx generates empty create-arg strings
         # when an init_param has no explicit default. Fall back to the matching

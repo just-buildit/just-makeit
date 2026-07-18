@@ -1284,6 +1284,32 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     for obj in objects:
         parts.append(_obj_stub(cfg, obj, pkg=pkg, module=module))
         parts.append("")
+        # gh-504: each view is a second class over the same core. Render it via
+        # the same _obj_stub, driven by an overlay cfg key that swaps in the
+        # view's class_name / init_params / (filtered) properties. The synthetic
+        # key never reaches output — a .pyi carries no C symbols — so this reuses
+        # _obj_stub unchanged.
+        for view in C.views(cfg, obj):
+            excl = C.view_exclude_properties(view)
+            synth = f"{obj}__view_{view['class_name'].lower()}"
+            overlay = dict(cfg.get(obj, {}))
+            overlay["class_name"] = view["class_name"]
+            if view.get("init_params"):
+                # The view's constructor takes its own params (it shares the
+                # parent's state struct but builds it differently). _obj_stub
+                # prefers state_vars over init_params for __init__, so drop the
+                # inherited `state` here to make the view's init_params drive
+                # __init__ — matching the C _init that parses exactly them. An
+                # inheriting view (no own init_params) keeps `state` so its
+                # __init__ mirrors the parent's.
+                overlay["init_params"] = view["init_params"]
+                overlay.pop("state", None)
+            overlay["properties"] = [
+                p for p in C.properties(cfg, obj) if p["name"] not in excl
+            ]
+            cfg_v = {**cfg, synth: overlay}
+            parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
+            parts.append("")
 
     for fn in functions:
         parts.append(_fn_stub(fn, fn_doc_blocks.get(fn["name"])))
