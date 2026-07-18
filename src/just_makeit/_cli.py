@@ -182,6 +182,11 @@ Commands:
                                 _core.h bodies back in afterward (--discard skips this
                                 for a clean reset; stash first regardless). --force
                                 skips the confirmation.
+  bind <component> [--check]    Synthesise <component>_ext.c + .pyi from a
+                                hand-written <component>_core.h (the "port an
+                                existing C API" path). --check exits 1 if the
+                                generated binding differs from the file on disk
+                                (a CI drift gate; nothing is written).
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
@@ -190,6 +195,8 @@ Commands:
                                 with [project] + include globs. Idempotent.
   split-objects                 Objects-only subset of migrate-to-fragments (modules stay
                                 inline). Prefer migrate-to-fragments.
+  upgrade                       Migrate an older project's just-makeit.toml to the
+                                current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
   status [OPTIONS]              Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
