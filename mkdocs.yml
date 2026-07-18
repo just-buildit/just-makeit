@@ -15,7 +15,7 @@ nav:
     - Feature tour: feature-tour.md
   - Guides:
     - Template gallery:
-      - Overview: templates/index.md
+      - templates/index.md
       - Processor: templates/processor.md
       - Blockwise: templates/blockwise.md
       - Generator: templates/generator.md
@@ -52,7 +52,7 @@ nav:
   # Keep in sync with GALLERY in scripts/copy_examples.py — same order, same
   # display names. tests/test_docs.py fails if they drift apart.
   - Examples:
-    - Overview: examples/index.md
+    - examples/index.md
     - Running stats: examples/running_stats.md
     - FIR filter: examples/fir_filter.md
     - Sliding power: examples/sliding_power.md

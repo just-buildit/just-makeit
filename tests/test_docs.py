@@ -22,6 +22,10 @@ The chain these tests defend is three links long:
 second, plus the nav that has to agree with it.
 """
 
+# `str | None` (PEP 604) is evaluated at def-time and is 3.10+; jm supports
+# 3.9, so defer annotation evaluation to keep them strings on every leg.
+from __future__ import annotations
+
 import importlib.util
 import re
 import sys
@@ -49,10 +53,14 @@ CE = _load_copy_examples()
 
 
 _NAV_ITEM = re.compile(r"^(?P<indent>\s*)-\s+(?P<title>.+?):\s+(?P<path>\S+)$")
+# A bare `- path.md` with no title: the section-index page under
+# `navigation.indexes` (the section title itself links to it — no "Overview"
+# child). Its "title" is None.
+_NAV_BARE = re.compile(r"^(?P<indent>\s*)-\s+(?P<path>\S+\.md)\s*$")
 _NAV_SECTION = re.compile(r"^(?P<indent>\s*)-\s+Examples:\s*$")
 
 
-def _nav_examples() -> dict[str, str]:
+def _nav_examples() -> dict[str, str | None]:
     """Map ``examples/<name>.md`` -> nav title, for the Examples nav section.
 
     Parsed by hand rather than with PyYAML, deliberately. PyYAML is not a
@@ -62,13 +70,14 @@ def _nav_examples() -> dict[str, str]:
     and the alternative (skip when unavailable) would mean this gate silently
     never runs in CI, which is the exact class of bug the file exists to stop.
 
-    The nav is a flat list of ``- Title: path`` under ``- Examples:``, so this
-    needs no general YAML. It raises rather than returns empty if the section
-    moves or the shape changes: a parser that quietly finds nothing would make
-    every test below vacuously pass.
+    The nav is a flat list of ``- Title: path`` under ``- Examples:``, plus one
+    bare ``- examples/index.md`` (the section index under `navigation.indexes`,
+    mapped to a None title), so this needs no general YAML. It raises rather
+    than returns empty if the section moves or the shape changes: a parser that
+    quietly finds nothing would make every test below vacuously pass.
     """
     lines = MKDOCS.read_text(encoding="utf-8").splitlines()
-    out: dict[str, str] = {}
+    out: dict[str, str | None] = {}
     section_indent = None
 
     for line in lines:
@@ -79,12 +88,15 @@ def _nav_examples() -> dict[str, str]:
             continue
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        m = _NAV_ITEM.match(line)
+        titled = _NAV_ITEM.match(line)
+        bare = None if titled else _NAV_BARE.match(line)
+        hit = titled or bare
         # The section ends at the first entry indented no deeper than
-        # `- Examples:` itself, i.e. the next sibling nav entry.
-        if not m or len(m.group("indent")) <= section_indent:
+        # `- Examples:` itself, i.e. the next sibling nav entry (or any line
+        # that is not a nav item at all).
+        if not hit or len(hit.group("indent")) <= section_indent:
             break
-        out[m.group("path")] = m.group("title")
+        out[hit.group("path")] = titled.group("title") if titled else None
 
     if section_indent is None:
         raise AssertionError("mkdocs.yml has no `- Examples:` nav section")
@@ -209,7 +221,9 @@ class TestNavAgreesWithGallery:
         )
 
 
-_NAV_PATH = re.compile(r":\s+(?P<path>[A-Za-z0-9_./-]+\.md)\s*$")
+# Matches a nav leaf's path, whether titled (`- Title: path.md`) or the bare
+# `navigation.indexes` section-index form (`- path.md`).
+_NAV_PATH = re.compile(r"[:-]\s+(?P<path>[A-Za-z0-9_./-]+\.md)\s*$")
 
 
 def _all_nav_paths() -> set[str]:
