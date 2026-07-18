@@ -1177,7 +1177,7 @@ def render_module_ext_c(
 
 _FRAGMENT_FILE_HEADER = """\
 /*
- * <<module>>_ext_<<component>>.c — <<Component>> type for the <<module>> module.
+ * <<module>>_ext_<<frag_id>>.c — <<Component>> type for the <<module>> module.
  *
  * Included by <<module>>_ext.c (the module aggregator).
  * Hand-patches to this file are preserved across jm commands.
@@ -1189,12 +1189,19 @@ _FRAGMENT_FILE_HEADER = """\
 def render_module_ext_fragment(comp_ctx: dict) -> str:
     """Render the per-object section for one fragment file.
 
-    The returned text is the content of ``<module>_ext_<comp>.c``: a brief
+    The returned text is the content of ``<module>_ext_<frag_id>.c``: a brief
     warning header followed by the full ``COMPONENT_TYPE_SECTION`` for the
     object.  It contains no Python.h include (the aggregator provides it).
+    ``frag_id`` is the object's component name, or a view's lowercased
+    class_name (gh-504); it defaults to ``component`` for any caller that
+    predates views.
     """
-    header = render(_FRAGMENT_FILE_HEADER, comp_ctx)
-    return header + render(COMPONENT_TYPE_SECTION, comp_ctx)
+    ctx = {
+        "frag_id": comp_ctx.get("frag_id", comp_ctx["component"]),
+        **comp_ctx,
+    }
+    header = render(_FRAGMENT_FILE_HEADER, ctx)
+    return header + render(COMPONENT_TYPE_SECTION, ctx)
 
 
 def render_module_ext_aggregator(
@@ -1256,7 +1263,9 @@ def render_module_ext_aggregator(
     # Include each per-object fragment, then its per-object extra if present.
     include_parts: list[str] = []
     for ctx in comp_ctxs:
-        comp = ctx["component"]
+        # gh-504: a view's fragment is keyed on its frag_id, not the shared
+        # parent component; real objects have frag_id == component.
+        comp = ctx.get("frag_id", ctx["component"])
         include_parts.append(f'#include "{module}_ext_{comp}.c"')
         obj_extra = f"{module}_ext_{comp}_extra.c"
         if obj_extra in extra_files:

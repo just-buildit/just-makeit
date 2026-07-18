@@ -1466,6 +1466,18 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     a stub.  All fields default to ``""`` / ``False`` when absent.  Callers may
     unpack defensively with ``param[:3]``.
     """
+    return _project_init_params(
+        cfg, cfg.get(component, {}).get("init_params", [])
+    )
+
+
+def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
+    """Project a list of init-param dicts to the 10-tuple form.
+
+    Shared by `init_params` (the object path) and the view path (gh-504), so a
+    view's own ``init_params`` becomes the same tuple shape ``make_state_ctx``
+    already consumes.
+    """
     return [
         (
             p["name"],
@@ -1479,8 +1491,36 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
             p.get("required", False),
             p.get("doc", ""),
         )
-        for p in cfg.get(component, {}).get("init_params", [])
+        for p in param_dicts
     ]
+
+
+def init_param_tuple_to_dict(p: tuple) -> dict:
+    """Convert one parsed init-param tuple to its stored-manifest dict shape.
+
+    Shared by `add_component` and the `jm view` generator so both persist an
+    identical ``init_params`` record (gh-504). Accepts the 3-to-10-field
+    tuples `parse_init_param_flag` and callers produce.
+    """
+    n, t, d = p[:3]
+    rec: dict = {"name": n, "type": t}
+    if d:
+        rec["default"] = d
+    if len(p) > 3 and p[3]:
+        rec["default_raw"] = p[3]
+    if len(p) > 4 and p[4]:
+        rec["real_type"] = p[4]
+    if len(p) > 5 and p[5]:
+        rec["real_create_fn"] = p[5]
+    if len(p) > 6 and p[6]:
+        rec["optional"] = True
+    if len(p) > 7 and p[7]:
+        rec["create_fn"] = p[7]
+    if len(p) > 8 and p[8]:
+        rec["required"] = True
+    if len(p) > 9 and p[9]:
+        rec["doc"] = p[9]
+    return rec
 
 
 def init_post_parse(cfg: dict, component: str) -> str:
@@ -1529,6 +1569,46 @@ def add_property(cfg: dict, component: str, prop: dict) -> dict:
     """Append a property entry to the component's properties list."""
     cfg.setdefault(component, {}).setdefault("properties", []).append(prop)
     return cfg
+
+
+def views(cfg: dict, component: str) -> list[dict]:
+    """Return declared views for component (gh-504; [] if none).
+
+    A *view* is a second Python class over the same generated C core: it
+    shares ``<component>_state_t`` and the parent's ``_core.c``, differing
+    only in its ``class_name``, its C constructor (``create_fn``), its own
+    ``init_params``, and an optionally-trimmed property surface
+    (``exclude_properties``). Each entry carries ``class_name`` and
+    ``create_fn`` (both required), plus optional ``init_params`` (the view's
+    own constructor shape; falls back to the parent's) and
+    ``exclude_properties`` (a list of parent property names to omit). Views
+    are a module-object feature only.
+    """
+    return list(cfg.get(component, {}).get("views", []))
+
+
+def add_view(cfg: dict, component: str, view: dict) -> dict:
+    """Append a view entry to the component's views list (gh-504)."""
+    cfg.setdefault(component, {}).setdefault("views", []).append(view)
+    return cfg
+
+
+def view_init_params(cfg: dict, component: str, view: dict) -> list[tuple]:
+    """10-tuple init_params for a view: its own if declared, else parent's.
+
+    A view whose ``create_fn`` takes the same arguments as the parent omits
+    ``init_params`` and inherits the parent's constructor shape; one whose
+    constructor differs declares its own.
+    """
+    own = view.get("init_params")
+    if own:
+        return _project_init_params(cfg, own)
+    return init_params(cfg, component)
+
+
+def view_exclude_properties(view: dict) -> set[str]:
+    """Parent property names a view omits from its Python surface (gh-504)."""
+    return set(view.get("exclude_properties", []))
 
 
 # Python's built-in warning categories (gh-481). Each name maps 1:1 onto a
@@ -2044,27 +2124,9 @@ def add_component(
             {"name": n, "type": dt} for n, dt in array_args_
         ]
     if init_params_:
-        entry["init_params"] = []
-        for p in init_params_:
-            n, t, d = p[:3]
-            rec = {"name": n, "type": t}
-            if d:
-                rec["default"] = d
-            if len(p) > 3 and p[3]:
-                rec["default_raw"] = p[3]
-            if len(p) > 4 and p[4]:
-                rec["real_type"] = p[4]
-            if len(p) > 5 and p[5]:
-                rec["real_create_fn"] = p[5]
-            if len(p) > 6 and p[6]:
-                rec["optional"] = True
-            if len(p) > 7 and p[7]:
-                rec["create_fn"] = p[7]
-            if len(p) > 8 and p[8]:
-                rec["required"] = True
-            if len(p) > 9 and p[9]:
-                rec["doc"] = p[9]
-            entry["init_params"].append(rec)
+        entry["init_params"] = [
+            init_param_tuple_to_dict(p) for p in init_params_
+        ]
     if class_name_:
         entry["class_name"] = class_name_
     if depends_on_:
@@ -2827,6 +2889,36 @@ def _dump(cfg: dict) -> str:
             lines.append(_str_assign("message", w["message"]))
             if w.get("stacklevel"):
                 lines.append(f"stacklevel = {int(w['stacklevel'])}")
+            lines.append("")
+        # gh-504. A view is a second class over the same core. Its own
+        # init_params serialize inline (a nested [[...]] table under a [[...]]
+        # table is awkward TOML); exclude_properties is a plain list key like
+        # multi_output. Nothing emitted when the list is empty → zero churn.
+        for v in comp_data.get("views", []):
+            lines.append(f"[[{comp}.views]]")
+            lines.append(f'class_name = "{v["class_name"]}"')
+            lines.append(f'create_fn = "{v["create_fn"]}"')
+            if v.get("doc"):
+                lines.append(_doc_assign(v["doc"]))
+            if v.get("init_params"):
+
+                def _ip_inline(p: dict) -> str:
+                    s = f'name = "{p["name"]}", type = "{p["type"]}"'
+                    if p.get("default") not in (None, ""):
+                        s += f', default = "{p["default"]}"'
+                    if p.get("optional"):
+                        s += ", optional = true"
+                    if p.get("create_fn"):
+                        s += f', create_fn = "{p["create_fn"]}"'
+                    if p.get("required"):
+                        s += ", required = true"
+                    return "{" + s + "}"
+
+                parts = ", ".join(_ip_inline(p) for p in v["init_params"])
+                lines.append(f"init_params = [{parts}]")
+            if v.get("exclude_properties"):
+                ep = ", ".join(f'"{n}"' for n in v["exclude_properties"])
+                lines.append(f"exclude_properties = [{ep}]")
             lines.append("")
 
     app = cfg.get("app", {})

@@ -166,6 +166,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         _new,
         _object,
         _property,
+        _view,
         _warning,
         _error,
     )
@@ -446,6 +447,21 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 C.create_error(cfg, comp),
                 C.create_error_message(cfg, comp),
                 module=mod,
+            )
+        # gh-504: same reasoning — a declared view (a second class over this
+        # object's core) must rebuild from the manifest alone, or a fresh
+        # checkout (and every `jm status`/`jm apply`) would drop it.
+        for v in C.views(cfg, comp):
+            _view.run(
+                temp_root,
+                comp,
+                v["class_name"],
+                mod,
+                v["create_fn"],
+                init_params=[dict(p) for p in v.get("init_params", [])],
+                exclude_properties=list(v.get("exclude_properties", [])),
+                doc=v.get("doc", ""),
+                from_apply=True,
             )
 
     for mod in mods:

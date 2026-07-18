@@ -216,8 +216,15 @@ def _make_object_ctx(
     controllable: list[tuple[str, str]] = (),
     doc_blocks: dict | None = None,
     block_sizes: "list[int] | None" = None,
+    create_fn: str | None = None,
 ) -> dict:
-    """Build the render ctx for an object."""
+    """Build the render ctx for an object (or a view — gh-504).
+
+    A view passes ``class_name`` (its Python-facing name) and ``create_fn``
+    (its C constructor) while ``component`` stays the parent's, so the ctx
+    shares the parent's ``<component>_state_t``/core but registers a distinct
+    type built from a different constructor.
+    """
     ctx = _make_component_ctx(component)
     if class_name is not None:
         ctx["Component"] = class_name
@@ -244,6 +251,7 @@ def _make_object_ctx(
             init_post_parse_impl=init_post_parse_impl,
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
+            create_fn=create_fn,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -713,6 +721,108 @@ def _restore_c_function_bodies(
     return new_source
 
 
+def _view_frag_id(view: dict) -> str:
+    """Fragment id for a view's per-type section file (gh-504).
+
+    Distinct from the parent's ``component`` so the view's fragment
+    (``<module>_ext_<frag_id>.c``) does not overwrite the parent's. Derived
+    from the lowercased class_name, which is already validated unique within
+    the module by the view generator.
+    """
+    return view["class_name"].lower()
+
+
+def _make_view_ctx(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    obj: str,
+    view: dict,
+    doc_blocks: dict,
+) -> dict:
+    """Build the render ctx for a view (gh-504): a second class over *obj*'s core.
+
+    The ctx reuses the parent object's ``component`` (so it shares
+    ``<component>_state_t``, the core ``#include`` and ``_destroy``/``_reset``)
+    but overrides ``class_name`` and ``create_fn``, so it registers a distinct
+    PyTypeObject built from a different constructor. Its property surface is the
+    parent's minus ``exclude_properties``; its methods are the parent's (v1). It
+    carries no warnings/errors/stream. A distinct ``frag_id`` keeps its fragment
+    file separate from the parent's.
+    """
+    state_vars = C.state_vars(cfg, obj)
+    arg_type_ = C.arg_type(cfg, obj)
+    return_type_ = C.return_type(cfg, obj)
+    excluded = C.view_exclude_properties(view)
+    ctx = _make_object_ctx(
+        obj,
+        module,
+        pkg,
+        C.project_version(cfg),
+        state_vars,
+        arg_type_,
+        return_type_,
+        perf=C.is_perf(cfg),
+        array_args=C.array_args(cfg, obj),
+        no_state=C.is_no_state(cfg, obj),
+        no_step=C.is_no_step(cfg, obj),
+        mutable=C.is_mutable(cfg, obj),
+        step_delegates=C.step_delegates(cfg, obj),
+        init_params=C.view_init_params(cfg, obj, view),
+        class_name=view["class_name"],
+        create_fn=view["create_fn"],
+        opaque_fields=C.opaque_fields(cfg, obj),
+        no_ctor_names=C.no_ctor_names(cfg, obj),
+        controllable=C.controllable_state_vars(cfg, obj),
+        doc_blocks=doc_blocks,
+        block_sizes=C.project_bench_block_sizes(cfg),
+    )
+    ctx.update(
+        Ctx.make_methods_ctx(
+            ctx["component"],
+            ctx["Component"],
+            C.methods(cfg, obj),
+            pkg=pkg,
+            py_create_args=ctx.get("py_create_args", ""),
+            no_state=C.is_no_state(cfg, obj),
+            serializable=C.is_serializable(cfg, obj),
+            doc_blocks=doc_blocks,
+        )
+    )
+    ctx.update(
+        Ctx.make_properties_ctx(
+            ctx["component"],
+            ctx["Component"],
+            [p for p in C.properties(cfg, obj) if p["name"] not in excluded],
+            frozenset(n for n, _, _ in state_vars),
+            doc_blocks=doc_blocks,
+        )
+    )
+    # A view carries no warnings/errors/stream in v1 — those are the parent's
+    # concern. Empty ctxs keep the COMPONENT_TYPE_SECTION slots blank.
+    ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
+    ctx.update(Ctx.make_errors_ctx(ctx["component"], "", ""))
+    ctx.update(
+        Ctx.make_stream_ctx(
+            ctx["component"],
+            ctx["Component"],
+            ctx["ComponentW"],
+            streamable=False,
+            async_stream=False,
+            methods=C.methods(cfg, obj),
+            arg_type=arg_type_,
+            return_type=return_type_,
+            default_block=C.stream_block_default(cfg, obj),
+        )
+    )
+    _vdoc = view.get("doc") or f"{ctx['Component']} type."
+    ctx["tp_doc"] = _build_ml_doc([_vdoc])
+    ctx.update(Ctx.make_module_ctx(module, pkg))
+    ctx["frag_id"] = _view_frag_id(view)
+    return ctx
+
+
 def build_component_ctxs(
     root: Path,
     cfg: dict,
@@ -753,6 +863,7 @@ def build_component_ctxs(
                         _entry.pop("doc", None)
 
     comp_ctxs: list[dict] = []
+    view_ctxs: list[dict] = []  # gh-504: appended after all real objects
     for obj in C.module_objects(cfg, module):
         # Parse the sacred header's Doxygen once; stash transiently on cfg so
         # the .pyi generator (_stubs, which receives cfg) sees the same blocks
@@ -851,7 +962,19 @@ def build_component_ctxs(
         # file is <cname>_ext_<comp>.c) and supply `module_tp` for the dotted
         # tp_name. For a flat module these equal today's values (zero churn).
         ctx.update(Ctx.make_module_ctx(module, pkg))
+        # gh-504: a real object's fragment id is its component name (today's
+        # behaviour); a view (below) overrides it so its fragment file differs.
+        ctx["frag_id"] = ctx["component"]
         comp_ctxs.append(ctx)
+        # gh-504: each view of this object becomes an extra ctx — a second
+        # PyTypeObject over the same core. Collected and appended AFTER every
+        # real object so the zip(object_names, comp_ctxs) pairing downstream
+        # (which walks module_objects, excluding views) stays aligned.
+        for view in C.views(cfg, obj):
+            view_ctxs.append(
+                _make_view_ctx(root, cfg, module, pkg, obj, view, _doc_blocks)
+            )
+    comp_ctxs.extend(view_ctxs)
     return comp_ctxs
 
 
@@ -888,7 +1011,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             monolith_bodies = _extract_c_function_bodies(raw)
 
     for ctx in comp_ctxs:
-        comp = ctx["component"]
+        # gh-504: a view fragment is keyed on its frag_id (lowercased
+        # class_name), not the shared parent component, so it doesn't overwrite
+        # the parent's fragment. Real objects have frag_id == component.
+        comp = ctx.get("frag_id", ctx["component"])
         frag_path = ext_dir / f"{cname}_ext_{comp}.c"
         # Prefer bodies from the existing fragment; fall back to the monolith
         # during migration (only matching function names will be spliced in).
@@ -907,7 +1033,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     # includes them in the aggregator so hand-written types survive regen.
     extra_files: set[str] = set()
     for ctx in comp_ctxs:
-        comp = ctx["component"]
+        comp = ctx.get("frag_id", ctx["component"])
         if (ext_dir / f"{cname}_ext_{comp}_extra.c").exists():
             extra_files.add(f"{cname}_ext_{comp}_extra.c")
     if (ext_dir / f"{cname}_ext_extra.c").exists():

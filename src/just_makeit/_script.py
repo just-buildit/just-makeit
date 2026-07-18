@@ -203,6 +203,50 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     return parts
 
 
+def _view_flags(v: dict, module: str | None) -> list[str]:
+    """CLI flags reconstructing a ``[[<comp>.views]]`` entry (gh-504).
+
+    Every key the manifest can hold is emitted, so `jm script` round-trips a
+    view faithfully (the gh-490 lesson: a reconstruction that silently differs
+    from the original is worse than one that fails loudly). The view's class
+    name is a positional on the command, not a flag, so it is not emitted here.
+
+    >>> _view_flags({"class_name": "Burst", "create_fn": "acq_create_burst",
+    ...              "init_params": [{"name": "reps", "type": "int"}],
+    ...              "exclude_properties": ["symbol_rate"]}, "dsp")
+    ['    --module dsp \\\\\\n', '    --create-fn acq_create_burst \\\\\\n', \
+'    --init-param reps:int \\\\\\n', '    --exclude-property symbol_rate \\\\\\n']
+    """
+    parts: list[str] = []
+
+    if module:
+        parts.append(_flag("--module", module))
+
+    parts.append(_flag("--create-fn", v["create_fn"]))
+
+    for p in v.get("init_params", []):
+        name, typ = p["name"], p["type"]
+        if p.get("optional"):
+            spec = f"{name}:{typ}:optional"
+            if p.get("create_fn"):
+                spec += f":{p['create_fn']}"
+        elif p.get("required"):
+            spec = f"{name}:{typ}:required"
+        elif p.get("default") not in (None, ""):
+            spec = f"{name}:{typ}:{p['default']}"
+        else:
+            spec = f"{name}:{typ}"
+        parts.append(_flag("--init-param", spec))
+
+    for name in v.get("exclude_properties", []):
+        parts.append(_flag("--exclude-property", name))
+
+    if v.get("doc"):
+        parts.append(_flag("--doc", v["doc"]))
+
+    return parts
+
+
 def _warning_flags(w: dict, module: str | None) -> list[str]:
     """CLI flags reconstructing a ``[[<comp>.warnings]]`` entry (gh-481).
 
@@ -380,6 +424,23 @@ def run(root: Path) -> None:
             )
     if prop_lines:
         lines += prop_lines
+        lines.append("\n")
+
+    # ── views ─────────────────────────────────────────────────────────────────
+    # After properties: a view's --exclude-property names properties that must
+    # already be declared for the reconstruction to make sense.
+    view_lines: list[str] = []
+    for comp in all_comps:
+        mod = C.component_module(cfg, comp)
+        for v in C.views(cfg, comp):
+            view_lines.append(
+                _render_cmd(
+                    ["just-makeit", "view", comp, v["class_name"]],
+                    _view_flags(v, mod),
+                )
+            )
+    if view_lines:
+        lines += view_lines
         lines.append("\n")
 
     # ── warnings ──────────────────────────────────────────────────────────────
