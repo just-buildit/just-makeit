@@ -44,6 +44,43 @@ command that `just-makeit build` would invoke.
 
 ______________________________________________________________________
 
+## `just-makeit bench [comp …]`
+
+Build the project, run the C and Python benchmarks, and save a dated snapshot
+under `benchmarks/history/` so performance history lives in git.
+
+```sh
+just-makeit bench              # all components, both sides, saves a snapshot
+just-makeit bench fir biquad   # only these components
+```
+
+Each run rebuilds via `cmake`, executes every `bench_<comp>_core` C binary and
+the `pytest-benchmark` suite under `src/`, prints a stats table per side with a
+Δ column against the previous snapshot, and writes two immutable files —
+`<tag>.json` (Python) and `<tag>-c.json` (C), where `<tag>` is a UTC timestamp.
+Commit them to keep the history.
+
+**Gate mode.** `--check` compares against a baseline instead of saving and
+exits non-zero on a regression, so CI can fail a change that slows a kernel
+down:
+
+```sh
+just-makeit bench --check --threshold 0.10   # fail if anything is >10% slower
+```
+
+**Arguments**
+
+| Argument                     | Description                                                         |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `comp …`                     | Restrict to the named components (default: all).                    |
+| `--tag TAG`                  | Snapshot tag (default: a UTC timestamp).                            |
+| `--c-only` / `--python-only` | Run only one benchmark side.                                        |
+| `--check`                    | Compare against a baseline and exit 1 on regression; saves nothing. |
+| `--threshold N`              | Fractional slowdown that fails `--check` (default `0.10` = 10%).    |
+| `--baseline TAG`             | Baseline snapshot for `--check` (default: the latest).              |
+| `--allow NAME`               | A benchmark exempt from `--check` (repeatable).                     |
+| `--json`                     | With `--check`, emit the comparison as JSON.                        |
+
 ______________________________________________________________________
 
 ## `make coverage`
