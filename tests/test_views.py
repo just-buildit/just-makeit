@@ -302,3 +302,100 @@ class TestValidation:
         )
         with pytest.raises(SystemExit):
             _view.run(dest, "acq", "V", None, "acq_make")
+
+    def test_rejects_array_dispatch_parent(self, tmp_path):
+        # A parent using dtype-dispatch init-params embeds <comp>_create in the
+        # arg-parse block and blanks create_line, so create_fn can't be honoured
+        # — v1 rejects it up front rather than silently ignoring the view's ctor.
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest,
+            "acq",
+            module="dsp",
+            no_state=True,
+            init_params=[
+                # optional-array dispatch: (name, type, ..., optional, create_fn)
+                (
+                    "h",
+                    "float _Complex[]",
+                    "",
+                    "",
+                    "",
+                    "",
+                    True,
+                    "acq_make_h",
+                    False,
+                )
+            ],
+        )
+        with pytest.raises(SystemExit):
+            _view.run(dest, "acq", "V", "dsp", "acq_make")
+
+
+# ── CLI parser + jm script round-trip ───────────────────────────────────────
+
+
+class TestCliAndScript:
+    def _project_with_view_via_cli(self, dest, monkeypatch):
+        from just_makeit import _cli_view
+
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acq", module="dsp", state_vars=[("rate", "double", "1.0")]
+        )
+        # Drive the actual CLI parser (Path.cwd()-relative), not _view.run.
+        monkeypatch.chdir(dest)
+        _cli_view.run(
+            [
+                "acq",
+                "BurstAcquisition",
+                "--module",
+                "dsp",
+                "--create-fn",
+                "acq_create_burst",
+                "--init-param",
+                "reps:int:1",
+            ]
+        )
+
+    def test_cli_view_creates_the_view(self, tmp_path, monkeypatch):
+        dest = tmp_path / "demo"
+        self._project_with_view_via_cli(dest, monkeypatch)
+        cfg = C.load(dest)
+        views = C.views(cfg, "acq")
+        assert len(views) == 1
+        assert views[0]["class_name"] == "BurstAcquisition"
+        assert views[0]["create_fn"] == "acq_create_burst"
+
+    def test_script_round_trips_the_view(self, tmp_path, monkeypatch, capsys):
+        from just_makeit import _script
+
+        dest = tmp_path / "demo"
+        self._project_with_view_via_cli(dest, monkeypatch)
+        capsys.readouterr()  # drop scaffold output
+        _script.run(dest)
+        out = capsys.readouterr().out
+        assert "just-makeit view acq BurstAcquisition" in out
+        assert "--create-fn acq_create_burst" in out
+        assert "--init-param reps:int:1" in out
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            [],  # no positionals
+            ["acq"],  # missing view class name
+            ["acq", "V", "--module"],  # flag missing value
+            ["acq", "V", "--create-fn"],
+            ["acq", "V", "--exclude-property"],
+            ["acq", "V", "--doc"],
+            ["acq", "V", "--bogus"],  # unknown flag
+        ],
+    )
+    def test_cli_view_arg_errors_exit(self, args):
+        from just_makeit import _cli_view
+
+        with pytest.raises(SystemExit):
+            _cli_view.run(args)
