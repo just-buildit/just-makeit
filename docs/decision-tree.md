@@ -36,16 +36,16 @@ New object? Its `step()` shape and state come next under
 
 ## Shipping and operating
 
-| To…                                            | run…                                                                                                                 |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Package a runnable app (C / console / PEP 723) | [`jm app --target c\|console\|pep723`](commands/app.md#just-makeit-app)                                              |
-| Build, test, or benchmark                      | [`jm build`](commands/build.md#just-makeit-build-dir) · [`jm test`](commands/build.md#just-makeit-test) · `jm bench` |
-| Push hand-edited TOML into files               | [`jm apply`](commands/build.md#just-makeit-apply) (see below)                                                        |
-| Compose an external fragment                   | [`jm apply <fragment.toml>`](commands/build.md#just-makeit-apply)                                                    |
-| Rebuild a component from the manifest          | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component) (see below)                             |
-| Delete generated code **and** its wiring       | [`jm remove <kind> <name>`](commands/extend.md#removing-a-method-or-property)                                        |
-| Reconstruct the CLI history from TOML          | [`jm script`](commands/build.md#just-makeit-script)                                                                  |
-| Upgrade an old project's schema                | [`jm upgrade`](upgrading.md)                                                                                         |
+| To…                                            | run…                                                                                                                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package a runnable app (C / console / PEP 723) | [`jm app --target c\|console\|pep723`](commands/app.md#just-makeit-app)                                                                                          |
+| Build, test, or benchmark                      | [`jm build`](commands/build.md#just-makeit-build-dir) · [`jm test`](commands/build.md#just-makeit-test) · [`jm bench`](commands/build.md#just-makeit-bench-comp) |
+| Push hand-edited TOML into files               | [`jm apply`](commands/build.md#just-makeit-apply) (see below)                                                                                                    |
+| Compose an external fragment                   | [`jm apply <fragment.toml>`](commands/build.md#just-makeit-apply)                                                                                                |
+| Rebuild a component from the manifest          | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component) (see below)                                                                         |
+| Delete generated code **and** its wiring       | [`jm remove <kind> <name>`](commands/extend.md#removing-a-method-or-property)                                                                                    |
+| Reconstruct the CLI history from TOML          | [`jm script`](commands/build.md#just-makeit-script)                                                                                                              |
+| Upgrade an old project's schema                | [`jm upgrade`](upgrading.md)                                                                                                                                     |
 
 ______________________________________________________________________
 
