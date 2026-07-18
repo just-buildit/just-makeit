@@ -7,51 +7,51 @@ ______________________________________________________________________
 
 ## Starting a project
 
-No `just-makeit.toml` yet? `jm new <project>` scaffolds a complete, building,
+No `just-makeit.toml` yet? [`jm new <project>`](commands/scaffold.md#just-makeit-new) scaffolds a complete, building,
 tested project. Add `--object <name>` or `--module <mod>` to create your first
 component in the same step.
 
 ## Creating a component
 
-| To create…                        | run…                                                      |
-| --------------------------------- | --------------------------------------------------------- |
-| A stateful class in its own `.so` | `jm object <name>`                                        |
-| Several classes sharing one `.so` | `jm module <mod>`, then `jm object <name> --module <mod>` |
-| A stateless C function (no class) | `jm function <fn> --module <mod>`                         |
+| To create…                        | run…                                                                                                                                                 |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A stateful class in its own `.so` | [`jm object <name>`](commands/scaffold.md#just-makeit-object)                                                                                        |
+| Several classes sharing one `.so` | [`jm module <mod>`](commands/scaffold.md#just-makeit-module-name), then [`jm object <name> --module <mod>`](commands/scaffold.md#just-makeit-object) |
+| A stateless C function (no class) | [`jm function <fn> --module <mod>`](commands/extend.md#just-makeit-function)                                                                         |
 
 New object? Its `step()` shape and state come next under
 [Shaping an object](#shaping-an-object).
 
 ## Extending a component
 
-| To add…                                 | run…                                                 |
-| --------------------------------------- | ---------------------------------------------------- |
-| A named execute method                  | `jm method <obj> <name>`                             |
-| A read-only Python property             | `jm property <obj> <name>`                           |
-| A read-write property                   | `jm property <obj> <name> --writable`                |
-| A state field                           | `jm add --state <var>:T [--object <obj>]`            |
-| A warning after construction            | `jm warning <obj> --condition <field> --message "…"` |
-| A specific `create()`-failure exception | `jm error <obj> --category ValueError --message "…"` |
-| A SIMD / `JM_HOT` performance pass      | `jm perf`                                            |
+| To add…                                 | run…                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| A named execute method                  | [`jm method <obj> <name>`](commands/extend.md#just-makeit-method)                              |
+| A read-only Python property             | [`jm property <obj> <name>`](commands/extend.md#just-makeit-property)                          |
+| A read-write property                   | [`jm property <obj> <name> --writable`](commands/extend.md#just-makeit-property)               |
+| A state field                           | [`jm add --state <var>:T [--object <obj>]`](commands/scaffold.md#just-makeit-add)              |
+| A warning after construction            | [`jm warning <obj> --condition <field> --message "…"`](commands/extend.md#just-makeit-warning) |
+| A specific `create()`-failure exception | [`jm error <obj> --category ValueError --message "…"`](commands/extend.md#just-makeit-error)   |
+| A SIMD / `JM_HOT` performance pass      | [`jm perf`](commands/build.md#just-makeit-perf)                                                |
 
 ## Shipping and operating
 
-| To…                                            | run…                                 |
-| ---------------------------------------------- | ------------------------------------ |
-| Package a runnable app (C / console / PEP 723) | `jm app --target c\|console\|pep723` |
-| Build, test, or benchmark                      | `jm build` · `jm test` · `jm bench`  |
-| Push hand-edited TOML into files               | `jm apply` (see below)               |
-| Compose an external fragment                   | `jm apply <fragment.toml>`           |
-| Rebuild a component from the manifest          | `jm regenerate <name>` (see below)   |
-| Delete generated code **and** its wiring       | `jm remove <kind> <name>`            |
-| Reconstruct the CLI history from TOML          | `jm script`                          |
-| Upgrade an old project's schema                | `jm upgrade`                         |
+| To…                                            | run…                                                                                                                 |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Package a runnable app (C / console / PEP 723) | [`jm app --target c\|console\|pep723`](commands/app.md#just-makeit-app)                                              |
+| Build, test, or benchmark                      | [`jm build`](commands/build.md#just-makeit-build-dir) · [`jm test`](commands/build.md#just-makeit-test) · `jm bench` |
+| Push hand-edited TOML into files               | [`jm apply`](commands/build.md#just-makeit-apply) (see below)                                                        |
+| Compose an external fragment                   | [`jm apply <fragment.toml>`](commands/build.md#just-makeit-apply)                                                    |
+| Rebuild a component from the manifest          | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component) (see below)                             |
+| Delete generated code **and** its wiring       | [`jm remove <kind> <name>`](commands/extend.md#removing-a-method-or-property)                                        |
+| Reconstruct the CLI history from TOML          | [`jm script`](commands/build.md#just-makeit-script)                                                                  |
+| Upgrade an old project's schema                | [`jm upgrade`](upgrading.md)                                                                                         |
 
 ______________________________________________________________________
 
 ## Shaping an object
 
-`jm object` defaults to a 1:1 processor over `float _Complex`. For any other
+[`jm object`](commands/scaffold.md#just-makeit-object) defaults to a 1:1 processor over `float _Complex`. For any other
 shape, pass a `--preset` — or the flags it stands for:
 
 | Your `step()`             | Preset                | …the flags it stands for                                              |
@@ -74,7 +74,7 @@ And what state it carries:
 
 ## Shaping a method's output
 
-For `jm method`, the output shape is a TOML setting on the method:
+For [`jm method`](commands/extend.md#just-makeit-method), the output shape is a TOML setting on the method:
 
 | Output                             | Setting                                                    |
 | ---------------------------------- | ---------------------------------------------------------- |
@@ -105,7 +105,7 @@ ______________________________________________________________________
 You edited `just-makeit.toml` by hand. Which command carries the change into
 the generated files?
 
-|                            | `jm apply`                                                                                                                                    | `jm regenerate <name>`                                                                 |
+|                            | [`jm apply`](commands/build.md#just-makeit-apply)                                                                                             | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component)           |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | **Use when**               | Glue changed — `_ext.c`, `.pyi`, `CMakeLists.txt`, or a new method/property that just needs to reach the public API                           | Structural change — a new state field or a changed signature                           |
 | **What it does**           | Regenerates glue and injects missing declarations into `_core.h`. The state struct and inline `step()` are sacred; `_core.c` is never touched | Deletes every file the component owns and re-runs `apply`. Leaves the TOML alone       |
@@ -113,7 +113,7 @@ the generated files?
 
 `apply` is the safe, additive refresh. `regenerate` is the deliberate
 rebuild — reach for it when a signature change or new state field has to
-re-stub the sacred `_core.c`. `jm add` is `regenerate` specialised for state
+re-stub the sacred `_core.c`. [`jm add`](commands/scaffold.md#just-makeit-add) is `regenerate` specialised for state
 (always a clean reset); `git stash` first regardless.
 
 ______________________________________________________________________
