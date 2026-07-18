@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import tomllib
-
 import pytest
 
 from just_makeit import _config as C
+
+# `tomllib` is stdlib only on 3.11+; reuse the loader _config already resolved
+# (the `tomli` backport on 3.9/3.10) rather than importing `tomllib` directly,
+# which would collection-error the whole module on those legs.
+tomllib = C.tomllib
 from just_makeit import _context as Ctx
 from just_makeit import _stubs as S
 from just_makeit import _view
