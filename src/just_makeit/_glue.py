@@ -120,6 +120,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             object_name,
             C.create_error(cfg, object_name),
             C.create_error_message(cfg, object_name),
+            create_fn=C.object_create_fn(cfg, object_name),
         )
     )
     ctx.update(

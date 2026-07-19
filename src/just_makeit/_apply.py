@@ -127,6 +127,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "init_params": C.init_params(cfg, comp),
         "init_post_parse_impl": C.init_post_parse(cfg, comp),
         "class_name": C.class_name(cfg, comp),
+        # gh-509: replay the object-level C constructor override so the
+        # regenerated tp_init calls it, not the default <comp>_create.
+        "create_fn": C.object_create_fn(cfg, comp),
         # gh-225: pass the RAW depends_on (preserving `{name, link}` tables) so
         # the replayed scaffold re-persists the link flag and the consuming
         # target's link line is regenerated; render paths flatten to names.
@@ -479,6 +482,21 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 _replay_method(comp, mod, m, view=cls)
             for p in C.view_properties(v):
                 _replay_property(comp, mod, p, view=cls)
+            # gh-509: a view's OWN warnings, same replay reasoning as the
+            # object's above — the manifest must rebuild the view's
+            # PyErr_WarnEx block from a fresh checkout alone.
+            for w in C.view_warnings(v):
+                _warning.run(
+                    temp_root,
+                    comp,
+                    w["condition"],
+                    w["message"],
+                    module=mod,
+                    category=w.get("category", "UserWarning"),
+                    after=w.get("after", "__init__"),
+                    stacklevel=int(w.get("stacklevel", 1) or 1),
+                    view=cls,
+                )
 
     for mod in mods:
         if C.is_no_generate_module(cfg, mod):

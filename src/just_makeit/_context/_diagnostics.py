@@ -184,6 +184,7 @@ def make_errors_ctx(
     component: str,
     category: str = "",
     message: str = "",
+    create_fn: "str | None" = None,
 ) -> dict[str, str]:
     """Build the create()-failure translation block (gh-482).
 
@@ -226,10 +227,14 @@ def make_errors_ctx(
         }
     """
     if not category:
-        # The pre-gh-482 hardcoded template text, to the byte.
+        # The pre-gh-482 hardcoded template text, to the byte. gh-509: when the
+        # object overrides its constructor name (create_fn), the message names
+        # the function that actually returned NULL — default None preserves the
+        # historical ``<component>_create`` text byte-for-byte.
+        _cfn = create_fn or f"{component}_create"
         body = (
             "        PyErr_SetString(PyExc_MemoryError,\n"
-            f'                        "{component}_create returned NULL");\n'
+            f'                        "{_cfn} returned NULL");\n'
         )
     else:
         body = (

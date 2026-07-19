@@ -40,6 +40,7 @@ def run(
     category: str = "UserWarning",
     after: str = "__init__",
     stacklevel: int = 1,
+    view: str = "",
 ) -> None:
     """Declare a post-construction warning on `object_name`.
 
@@ -139,10 +140,6 @@ def run(
             file=sys.stderr,
         )
 
-    # Idempotent for `jm apply` replay: the same condition re-declared is the
-    # same warning, so update it in place rather than emitting a duplicate
-    # PyErr_WarnEx guarded by the identical `if`.
-    existing = C.warnings(cfg, object_name)
     entry: dict = {
         "after": after,
         "condition": condition,
@@ -152,20 +149,49 @@ def run(
     if stacklevel != 1:
         entry["stacklevel"] = stacklevel
 
-    for i, w in enumerate(existing):
-        if (
-            w.get("condition") == condition
-            and w.get("after", "__init__") == after
-        ):
-            cfg[object_name]["warnings"][i] = entry
-            break
-    else:
-        C.add_warning(cfg, object_name, entry)
+    # gh-509: --view targets a view's OWN warnings ([[<obj>.views.warnings]])
+    # rather than the object's. A view is module-only, so --module is required;
+    # add_view_warning is idempotent on (condition, after) exactly like the
+    # object path below, so `jm apply` replay stays stable.
+    if view:
+        if not module:
+            print(
+                "error: --view requires --module (views are module-only).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if C._find_view(cfg, object_name, view) is None:
+            print(
+                f"error: no view '{view}' on object '{object_name}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        C.add_view_warning(cfg, object_name, view, entry)
         print(
-            f"just-makeit: adding {category} on '{object_name}'"
-            f" when {condition}" + (f" in module '{module}'" if module else "")
+            f"just-makeit: adding {category} on view '{view}'"
+            f" of '{object_name}' when {condition}"
         )
         print()
+    else:
+        # Idempotent for `jm apply` replay: the same condition re-declared is
+        # the same warning, so update it in place rather than emitting a
+        # duplicate PyErr_WarnEx guarded by the identical `if`.
+        existing = C.warnings(cfg, object_name)
+        for i, w in enumerate(existing):
+            if (
+                w.get("condition") == condition
+                and w.get("after", "__init__") == after
+            ):
+                cfg[object_name]["warnings"][i] = entry
+                break
+        else:
+            C.add_warning(cfg, object_name, entry)
+            print(
+                f"just-makeit: adding {category} on '{object_name}'"
+                f" when {condition}"
+                + (f" in module '{module}'" if module else "")
+            )
+            print()
 
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

@@ -591,6 +591,7 @@ def run(
     depends_on: list[str] = (),
     extra_link_libs: list[str] = (),
     extra_include_dirs: list[str] = (),
+    create_fn: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -670,6 +671,7 @@ def run(
             init_params=init_params,
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
+            create_fn=create_fn,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -720,7 +722,7 @@ def run(
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     # gh-482: likewise undeclared at creation, which yields the historical
     # MemoryError block — so this render stays byte-identical to before.
-    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
+    ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;
     # a later variable_output method re-points it (recomputed on every render).
@@ -1045,6 +1047,7 @@ def run(
         stream_block_default_=stream_block_default,
         init_params_=init_params,
         class_name_=class_name,
+        create_fn_=create_fn,
         depends_on_=list(depends_on),
         controllable_names_=controllable_names,
         extra_link_libs_=list(extra_link_libs),

@@ -821,10 +821,20 @@ def _make_view_ctx(
             doc_blocks=doc_blocks,
         )
     )
-    # A view carries no warnings/errors/stream in v1 — those are the parent's
-    # concern. Empty ctxs keep the COMPONENT_TYPE_SECTION slots blank.
-    ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
-    ctx.update(Ctx.make_errors_ctx(ctx["component"], "", ""))
+    # gh-509: a view declares its OWN warnings ([[<obj>.views.warnings]]) —
+    # its underpowered PyErr_WarnEx guards a bool field on the shared state
+    # struct, exactly as the parent's would. errors/stream remain the parent's
+    # concern (empty ctxs keep those COMPONENT_TYPE_SECTION slots blank).
+    ctx.update(
+        Ctx.make_warnings_ctx(
+            ctx["component"], ctx["Component"], C.view_warnings(view)
+        )
+    )
+    ctx.update(
+        Ctx.make_errors_ctx(
+            ctx["component"], "", "", create_fn=view["create_fn"]
+        )
+    )
     ctx.update(
         Ctx.make_stream_ctx(
             ctx["component"],
@@ -917,6 +927,7 @@ def build_component_ctxs(
             controllable=C.controllable_state_vars(cfg, obj),
             doc_blocks=_doc_blocks,
             block_sizes=C.project_bench_block_sizes(cfg),
+            create_fn=C.object_create_fn(cfg, obj),
         )
         ctx.update(
             Ctx.make_methods_ctx(
@@ -953,6 +964,7 @@ def build_component_ctxs(
                 ctx["component"],
                 C.create_error(cfg, obj),
                 C.create_error_message(cfg, obj),
+                create_fn=C.object_create_fn(cfg, obj),
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -1328,6 +1340,7 @@ def run(
     extra_link_libs: list[str] = (),
     extra_include_dirs: list[str] = (),
     max_out: int = 0,
+    create_fn: str | None = None,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -1381,6 +1394,7 @@ def run(
             depends_on=list(depends_on),
             extra_link_libs=list(extra_link_libs),
             extra_include_dirs=list(extra_include_dirs),
+            create_fn=create_fn,
             _hint=_hint and not variable_output,
         )
         if variable_output:
@@ -1460,6 +1474,7 @@ def run(
             (n, ct) for n, ct, _ in vars_ if n in controllable_names
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
+        create_fn=create_fn,
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -1476,7 +1491,8 @@ def run(
     # or this path's _ext.c ships with a literal <<init_warn_block>> in it.
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     # gh-482: undeclared at creation -> the historical MemoryError block.
-    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
+    # gh-509: name the override constructor in the NULL message when set.
+    ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
 
     if create_impl_body is not None:
         ctx["create_assignments"] = _indent_body(create_impl_body)
@@ -1635,6 +1651,7 @@ def run(
         stream_block_default_=stream_block_default,
         init_params_=init_params,
         class_name_=class_name,
+        create_fn_=create_fn,
         depends_on_=list(depends_on),
         opaque_fields_=list(opaque_fields),
         no_ctor_names_=no_ctor_names,

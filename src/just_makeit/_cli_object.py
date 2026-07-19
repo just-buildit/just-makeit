@@ -128,6 +128,7 @@ def run(args: list[str]) -> None:
     destroy_impl_spec: str | None = None
     replacements: list[tuple[str, str]] = []
     class_name_obj: str | None = None
+    create_fn_obj: str | None = None
 
     # Expand `--preset NAME` (Phase 3a) into its flag combination before
     # the normal parser runs, so the rest of this function stays a flat
@@ -344,6 +345,16 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             class_name_obj = remaining[i]
             i += 1
+        elif tok == "--create-fn":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --create-fn requires a C function name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            create_fn_obj = remaining[i]
+            i += 1
         elif tok == "--extra-include-dirs":
             i += 1
             if i >= len(remaining):
@@ -445,6 +456,7 @@ def run(args: list[str]) -> None:
         multi_output=multi_output_obj,
         method_name=method_name_obj,
         class_name=class_name_obj,
+        create_fn=create_fn_obj,
         max_out=max_out_obj,
         extra_include_dirs=extra_include_dirs_obj,
     )

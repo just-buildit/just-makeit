@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Object-level `create_fn` — a plain object's C constructor override
+    (gh-509).** `jm object <name> --create-fn <fn>` (or a `create_fn` key in the
+    object's manifest block) makes the generated `tp_init` call `<fn>` instead of
+    the default `<component>_create`, with the same argument list the init-params
+    already produce — only the name changes. This removes the need to hand-patch
+    the generated glue for an object whose backing constructor is named something
+    else (e.g. an `acq` object backed by `acq_create_continuous`, where a plain
+    `acq_create` does not even exist); such a hand-patch was silently reverted the
+    moment anything regenerated the fragment. The create-failure `MemoryError`
+    message names the overriding function too. Round-trips through `jm apply`,
+    `jm script`, and `jm status --check`; the default (no override) is
+    byte-identical to before.
+- **View-level warnings — `[[<obj>.views.warnings]]` (gh-509).** `jm warning   <obj> --view <ClassName> --module <mod> --condition <field> --message <text>`
+    attaches a post-construction `PyErr_WarnEx` (gh-481) to a *view* rather than
+    its parent object. A view's warning guards a bool field on the shared state
+    struct exactly as the parent's would, so a second front door over one core
+    (e.g. a `BurstAcquisition` view of `Acquisition`) can surface its own
+    under-powered-search notice without a hand-patch. Idempotent on
+    `(condition, after)`; rebuilds from the manifest alone through `jm apply`,
+    `jm script`, and `jm status --check`.
+
 ## [0.32.0] — 2026-07-19
 
 ### Added
