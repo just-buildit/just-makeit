@@ -116,6 +116,8 @@ Commands:
                                 repeatable. Omit to inherit the parent's.
     --exclude-property name     Parent property to omit from the view;
                                 repeatable.
+    --exclude-method name       Parent method to omit from the view;
+                                repeatable.
     --doc "text"                Docstring for the view class.
 
   property <obj> <name> [OPTIONS]  Add a Python property to an object.

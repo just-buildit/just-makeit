@@ -213,9 +213,11 @@ def _view_flags(v: dict, module: str | None) -> list[str]:
 
     >>> _view_flags({"class_name": "Burst", "create_fn": "acq_create_burst",
     ...              "init_params": [{"name": "reps", "type": "int"}],
-    ...              "exclude_properties": ["symbol_rate"]}, "dsp")
+    ...              "exclude_properties": ["symbol_rate"],
+    ...              "exclude_methods": ["tune"]}, "dsp")
     ['    --module dsp \\\\\\n', '    --create-fn acq_create_burst \\\\\\n', \
-'    --init-param reps:int \\\\\\n', '    --exclude-property symbol_rate \\\\\\n']
+'    --init-param reps:int \\\\\\n', '    --exclude-property symbol_rate \\\\\\n', \
+'    --exclude-method tune \\\\\\n']
     """
     parts: list[str] = []
 
@@ -240,6 +242,9 @@ def _view_flags(v: dict, module: str | None) -> list[str]:
 
     for name in v.get("exclude_properties", []):
         parts.append(_flag("--exclude-property", name))
+
+    for name in v.get("exclude_methods", []):
+        parts.append(_flag("--exclude-method", name))
 
     if v.get("doc"):
         parts.append(_flag("--doc", v["doc"]))

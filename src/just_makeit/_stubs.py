@@ -1291,6 +1291,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         # _obj_stub unchanged.
         for view in C.views(cfg, obj):
             excl = C.view_exclude_properties(view)
+            excl_m = C.view_exclude_methods(view)
             synth = f"{obj}__view_{view['class_name'].lower()}"
             overlay = dict(cfg.get(obj, {}))
             overlay["class_name"] = view["class_name"]
@@ -1306,6 +1307,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
                 overlay.pop("state", None)
             overlay["properties"] = [
                 p for p in C.properties(cfg, obj) if p["name"] not in excl
+            ]
+            overlay["methods"] = [
+                m for m in C.methods(cfg, obj) if m["name"] not in excl_m
             ]
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))

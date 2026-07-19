@@ -13,6 +13,7 @@ tomllib = C.tomllib
 from just_makeit import _context as Ctx
 from just_makeit import _stubs as S
 from just_makeit import _view
+from just_makeit._method import run as method_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -390,6 +391,7 @@ class TestCliAndScript:
             ["acq", "V", "--module"],  # flag missing value
             ["acq", "V", "--create-fn"],
             ["acq", "V", "--exclude-property"],
+            ["acq", "V", "--exclude-method"],
             ["acq", "V", "--doc"],
             ["acq", "V", "--bogus"],  # unknown flag
         ],
@@ -399,3 +401,125 @@ class TestCliAndScript:
 
         with pytest.raises(SystemExit):
             _cli_view.run(args)
+
+
+# ── Per-view method subsets (exclude_methods) ───────────────────────────────
+
+
+@pytest.fixture()
+def view_project_with_excluded_method(tmp_path):
+    """A module object with a declared method + a view that excludes it."""
+    dest = tmp_path / "demo"
+    new_run("demo", dest, [], [], build_system="cmake")
+    module_run(dest, "dsp")
+    object_run(
+        dest,
+        "acc",
+        module="dsp",
+        state_vars=[("sum", "double", "0.0")],
+        arg_type="double",
+        return_type="double",
+        mutable=True,
+    )
+    method_run(dest, "acc", "reset_hard", "dsp", "void", "void", False, [])
+    _view.run(
+        dest,
+        "acc",
+        "SeededAcc",
+        "dsp",
+        "acc_create_seeded",
+        init_params=[("seed", "double", "0.0")],
+        exclude_methods=["reset_hard"],
+    )
+    return dest
+
+
+class TestExcludeMethods:
+    def test_config_round_trip(self):
+        cfg = {
+            "project": {"name": "demo", "version": "0.1.0"},
+            "acc": {
+                "arg_type": "double",
+                "return_type": "double",
+                "state": [{"name": "sum", "type": "double", "default": "0.0"}],
+                "methods": [{"name": "tune", "arg_type": "void"}],
+                "views": [
+                    {
+                        "class_name": "SeededAcc",
+                        "create_fn": "acc_make",
+                        "exclude_methods": ["tune"],
+                    }
+                ],
+            },
+        }
+        cfg2 = tomllib.loads(C._dump(cfg))
+        v = C.views(cfg2, "acc")[0]
+        assert C.view_exclude_methods(v) == {"tune"}
+
+    def test_excluded_method_dropped_from_view_fragment(
+        self, view_project_with_excluded_method
+    ):
+        d = view_project_with_excluded_method / "native" / "src" / "dsp"
+        parent = (d / "dsp_ext_acc.c").read_text(encoding="utf-8")
+        view = (d / "dsp_ext_seededacc.c").read_text(encoding="utf-8")
+        assert "reset_hard" in parent  # kept on the parent
+        assert "reset_hard" not in view  # dropped from the view
+
+    def test_shared_c_function_still_declared(
+        self, view_project_with_excluded_method
+    ):
+        # The excluded method's C function stays in the sacred core (the parent
+        # still calls it) — excluding only drops the view's Python wrapper.
+        h = (
+            view_project_with_excluded_method
+            / "native"
+            / "inc"
+            / "acc"
+            / "acc_core.h"
+        ).read_text(encoding="utf-8")
+        assert "acc_reset_hard" in h
+
+    def test_excluded_method_absent_from_view_pyi(
+        self, view_project_with_excluded_method
+    ):
+        pyi = (
+            view_project_with_excluded_method
+            / "src"
+            / "demo"
+            / "dsp"
+            / "dsp.pyi"
+        ).read_text(encoding="utf-8")
+        parent = pyi[pyi.index("class Acc") : pyi.index("class SeededAcc")]
+        view = pyi[pyi.index("class SeededAcc") :]
+        assert "reset_hard" in parent
+        assert "reset_hard" not in view
+
+    def test_status_check_clean(self, view_project_with_excluded_method):
+        assert status_run(view_project_with_excluded_method, check=True) == 0
+
+    def test_rejects_unknown_exclude_method(self, tmp_path):
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acc", module="dsp", state_vars=[("s", "double", "0.0")]
+        )
+        with pytest.raises(SystemExit):
+            _view.run(
+                dest,
+                "acc",
+                "V",
+                "dsp",
+                "acc_make",
+                exclude_methods=["nonexistent"],
+            )
+
+    def test_script_emits_exclude_method(
+        self, view_project_with_excluded_method, capsys
+    ):
+        from just_makeit import _script
+
+        capsys.readouterr()
+        _script.run(view_project_with_excluded_method)
+        out = capsys.readouterr().out
+        assert "--exclude-method reset_hard" in out
