@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Diverging view surfaces — a view can now ADD and OVERRIDE members, not just
+    exclude (gh-504 follow-up).** A `--view <ClassName>` flag on `jm property`
+    and `jm method` targets a view instead of its parent object, so a view's
+    Python surface is no longer restricted to *parent minus excludes*. A view
+    can expose a field-property the parent omits (any field on the shared
+    `<component>_state_t` — the getter reads `self->handle->{field}`), and it can
+    override a shared member by name to give it a different docstring. This is
+    the real-world case where two front doors over one core genuinely diverge —
+    e.g. an `Acquisition` and a `BurstAcquisition` where the burst door adds a
+    `reps` property and documents the shared `doppler_bins` differently — without
+    a second object or a hand-written forwarder core. A view's own members
+    serialize as nested `[[<obj>.views.properties]]` / `[[<obj>.views.methods]]`
+    tables and round-trip through `jm apply`, `jm script`, and `jm status   --check`. Precedence is override-by-name, add-if-new; naming a member that is
+    also excluded is rejected as an authoring error. Method overrides are
+    doc-only (the wrapper calls the shared C symbol, so a signature change is
+    rejected); adding a genuinely new method to a view scaffolds a shared C stub.
+
 ## [0.31.0] — 2026-07-19
 
 ### Added

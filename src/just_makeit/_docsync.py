@@ -489,14 +489,18 @@ def refresh_module_fragment_docs(
             continue
         ext_dir = root / "native" / "src" / mod
         derived = O.build_component_ctxs(root, cfg, mod, pkg)
+        # gh-504: key by frag_id, not component — a view shares its parent's
+        # `component` but owns a distinct fragment (`<mod>_ext_<frag_id>.c`), so
+        # keying by component would collapse the view onto the parent and
+        # transplant the view's docs into the parent's fragment.
         fallback = {
-            c["component"]: c
+            c.get("frag_id", c["component"]): c
             for c in O.build_component_ctxs(
                 root, cfg, mod, pkg, force_fallback=True
             )
         }
         for ctx in derived:
-            comp = ctx["component"]
+            comp = ctx.get("frag_id", ctx["component"])
             frag = ext_dir / f"{mod}_ext_{comp}.c"
             if not frag.exists():
                 continue

@@ -362,66 +362,73 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     all_comps = standalone + [
         o for m in mods for o in C.module_objects(cfg, m)
     ]
+
+    # gh-504: one replay per member, reused for both an object's members and a
+    # view's own (via view=). `view` routes _property.run/_method.run onto the
+    # named view; "" is the object itself.
+    def _replay_method(comp, mod, m, view=""):
+        mctx = _object_ctx(cfg, comp, mod) | {"method": m["name"]}
+        m_impl = _resolve_impl(m, mctx, project_root, f"{comp}.{m['name']}")
+        _method.run(
+            temp_root,
+            comp,
+            m["name"],
+            mod,
+            m.get("arg_type", "void"),
+            m.get("return_type", "float _Complex"),
+            bool(m.get("variable_output")),
+            list(m.get("multi_output", [])),
+            # gh-432: pass params through as full dicts — the old
+            # (name, type, default) tuple flattening silently dropped every
+            # other per-param key (capsule, header, out) on the replay path.
+            params=[
+                dict(p) for p in (m.get("extra_args") or m.get("params", []))
+            ],
+            out_type=m.get("out_type"),
+            out_divisor=int(m.get("out_divisor", 1)),
+            batch=bool(m.get("batch")),
+            impl_body=m_impl,
+            none_on_empty=bool(m.get("none_on_empty")),
+            result_fields=list(m.get("result_fields", [])),
+            max_results=int(m.get("max_results", 64)),
+            single=bool(m.get("single")),
+            record_name=m.get("record_name", ""),
+            record_module=m.get("record_module", ""),
+            py_return_type=m.get("py_return_type", ""),
+            max_out=int(m.get("max_out", 0)),
+            varargs=bool(m.get("varargs")),
+            manual_stub=bool(m.get("manual_stub")),
+            pass_capacity=bool(m.get("pass_capacity")),
+            nogil=bool(m.get("nogil")),
+            status_return=bool(m.get("status_return")),
+            doc=m.get("doc", ""),
+            from_apply=True,
+            view=view,
+        )
+
+    def _replay_property(comp, mod, p, view=""):
+        _property.run(
+            temp_root,
+            comp,
+            p["name"],
+            mod,
+            p.get("type") or p.get("ctype", "size_t"),
+            bool(p.get("writable")),
+            field=bool(p.get("field")),
+            buf_field=p.get("buf_field", ""),
+            len_field=p.get("len_field", "n"),
+            valid_field=p.get("valid_field", ""),
+            expr=p.get("expr", ""),
+            doc=p.get("doc", ""),
+            view=view,
+        )
+
     for comp in all_comps:
         mod = C.component_module(cfg, comp)
         for m in C.methods(cfg, comp):
-            mctx = _object_ctx(cfg, comp, mod) | {"method": m["name"]}
-            m_impl = _resolve_impl(
-                m, mctx, project_root, f"{comp}.{m['name']}"
-            )
-            _method.run(
-                temp_root,
-                comp,
-                m["name"],
-                mod,
-                m.get("arg_type", "void"),
-                m.get("return_type", "float _Complex"),
-                bool(m.get("variable_output")),
-                list(m.get("multi_output", [])),
-                # gh-432: pass params through as full dicts — the old
-                # (name, type, default) tuple flattening silently dropped
-                # every other per-param key (capsule, header, out) on the
-                # replay path, the same failure mode gh-257 fixed for
-                # method-level keys.
-                params=[
-                    dict(p)
-                    for p in (m.get("extra_args") or m.get("params", []))
-                ],
-                out_type=m.get("out_type"),
-                out_divisor=int(m.get("out_divisor", 1)),
-                batch=bool(m.get("batch")),
-                impl_body=m_impl,
-                none_on_empty=bool(m.get("none_on_empty")),
-                result_fields=list(m.get("result_fields", [])),
-                max_results=int(m.get("max_results", 64)),
-                single=bool(m.get("single")),
-                record_name=m.get("record_name", ""),
-                record_module=m.get("record_module", ""),
-                py_return_type=m.get("py_return_type", ""),
-                max_out=int(m.get("max_out", 0)),
-                varargs=bool(m.get("varargs")),
-                manual_stub=bool(m.get("manual_stub")),
-                pass_capacity=bool(m.get("pass_capacity")),
-                nogil=bool(m.get("nogil")),
-                status_return=bool(m.get("status_return")),
-                doc=m.get("doc", ""),
-                from_apply=True,
-            )
+            _replay_method(comp, mod, m)
         for p in C.properties(cfg, comp):
-            _property.run(
-                temp_root,
-                comp,
-                p["name"],
-                mod,
-                p.get("type") or p.get("ctype", "size_t"),
-                bool(p.get("writable")),
-                field=bool(p.get("field")),
-                buf_field=p.get("buf_field", ""),
-                len_field=p.get("len_field", "n"),
-                valid_field=p.get("valid_field", ""),
-                expr=p.get("expr", ""),
-                doc=p.get("doc", ""),
-            )
+            _replay_property(comp, mod, p)
         # gh-481. Without this replay a declared warning never reaches a fresh
         # checkout: the object is scaffolded with no warnings and nothing puts
         # them back. That is the exact failure this feature exists to fix —
@@ -464,6 +471,14 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 doc=v.get("doc", ""),
                 from_apply=True,
             )
+            # gh-504: the view's OWN added/overriding members, materialized
+            # after the view exists (methods before properties so an override
+            # method's shared C symbol is present).
+            cls = v["class_name"]
+            for m in C.view_methods(v):
+                _replay_method(comp, mod, m, view=cls)
+            for p in C.view_properties(v):
+                _replay_property(comp, mod, p, view=cls)
 
     for mod in mods:
         if C.is_no_generate_module(cfg, mod):

@@ -523,3 +523,270 @@ class TestExcludeMethods:
         _script.run(view_project_with_excluded_method)
         out = capsys.readouterr().out
         assert "--exclude-method reset_hard" in out
+
+
+# ── Diverging view surfaces: add + override property/method ──────────────────
+
+
+@pytest.fixture()
+def diverging_view_project(tmp_path):
+    """A view that ADDS a property/method the parent lacks and OVERRIDES a
+    parent property/method's doc — the doppler Acquisition/BurstAcquisition
+    shape in miniature."""
+    dest = tmp_path / "demo"
+    new_run("demo", dest, [], [], build_system="cmake")
+    module_run(dest, "dsp")
+    object_run(
+        dest,
+        "acq",
+        module="dsp",
+        state_vars=[("sum", "double", "0.0")],
+        arg_type="double",
+        return_type="double",
+        mutable=True,
+    )
+    property_run(
+        dest,
+        "acq",
+        "doppler_bins",
+        "dsp",
+        "size_t",
+        False,
+        field=True,
+        doc="window-tile count",
+    )
+    method_run(dest, "acq", "configure", "dsp", "void", "int", False, [])
+    _view.run(dest, "acq", "BurstAcq", "dsp", "acq_create_burst")
+    # ADD reps (parent lacks it); OVERRIDE doppler_bins doc.
+    property_run(
+        dest,
+        "acq",
+        "reps",
+        "dsp",
+        "size_t",
+        False,
+        field=True,
+        doc="coherent ceiling",
+        view="BurstAcq",
+    )
+    property_run(
+        dest,
+        "acq",
+        "doppler_bins",
+        "dsp",
+        "size_t",
+        False,
+        field=True,
+        doc="coherent depth",
+        view="BurstAcq",
+    )
+    # ADD tune (parent lacks it); OVERRIDE configure's doc.
+    method_run(
+        dest, "acq", "tune", "dsp", "void", "void", False, [], view="BurstAcq"
+    )
+    method_run(
+        dest,
+        "acq",
+        "configure",
+        "dsp",
+        "void",
+        "int",
+        False,
+        [],
+        doc="burst configure",
+        view="BurstAcq",
+    )
+    return dest
+
+
+class TestDivergingSurfaces:
+    def test_added_property_in_view_not_parent(self, diverging_view_project):
+        d = diverging_view_project / "native" / "src" / "dsp"
+        view = (d / "dsp_ext_burstacq.c").read_text(encoding="utf-8")
+        parent = (d / "dsp_ext_acq.c").read_text(encoding="utf-8")
+        # reps is a getter reading the shared struct field, in the VIEW only.
+        assert "BurstAcq_getprop_reps" in view
+        assert "self->handle->reps" in view
+        assert "reps" not in parent
+
+    def test_added_field_injected_into_shared_struct(
+        self, diverging_view_project
+    ):
+        h = (
+            diverging_view_project / "native" / "inc" / "acq" / "acq_core.h"
+        ).read_text(encoding="utf-8")
+        assert (
+            "reps;" in h
+        )  # the view's added field lands on the shared struct
+
+    def test_property_doc_override(self, diverging_view_project):
+        d = diverging_view_project / "native" / "src" / "dsp"
+        view = (d / "dsp_ext_burstacq.c").read_text(encoding="utf-8")
+        parent = (d / "dsp_ext_acq.c").read_text(encoding="utf-8")
+        assert "coherent depth" in view  # view's override doc
+        assert "window-tile count" not in view  # parent doc not leaked
+        assert "window-tile count" in parent  # parent keeps its own
+
+    def test_added_and_overridden_method(self, diverging_view_project):
+        view = (
+            diverging_view_project
+            / "native"
+            / "src"
+            / "dsp"
+            / "dsp_ext_burstacq.c"
+        ).read_text(encoding="utf-8")
+        assert "BurstAcq_tune" in view  # added method
+        assert "burst configure" in view  # override doc on shared configure
+
+    def test_added_method_c_stub_in_shared_core(self, diverging_view_project):
+        c = (
+            diverging_view_project / "native" / "src" / "acq" / "acq_core.c"
+        ).read_text(encoding="utf-8")
+        assert "acq_tune" in c  # the view-added method's shared C function
+
+    def test_pyi_add_override(self, diverging_view_project):
+        pyi = (
+            diverging_view_project / "src" / "demo" / "dsp" / "dsp.pyi"
+        ).read_text(encoding="utf-8")
+        parent = pyi[pyi.index("class Acq") : pyi.index("class BurstAcq")]
+        view = pyi[pyi.index("class BurstAcq") :]
+        assert "reps" in view and "reps" not in parent
+        assert "coherent depth" in view
+        assert "window-tile count" in parent
+
+    def test_status_check_clean(self, diverging_view_project):
+        # The drift gate — the acceptance test for the whole round-trip
+        # (apply replay of view members must reproduce the fragments/.pyi).
+        assert status_run(diverging_view_project, check=True) == 0
+
+    def test_config_round_trips_view_members(self, diverging_view_project):
+        cfg = C.load(diverging_view_project)
+        v = C.views(cfg, "acq")[0]
+        assert [p["name"] for p in C.view_properties(v)] == [
+            "reps",
+            "doppler_bins",
+        ]
+        assert C.view_properties(v)[1]["doc"] == "coherent depth"
+        assert [m["name"] for m in C.view_methods(v)] == ["tune", "configure"]
+
+    def test_script_round_trips_view_members(
+        self, diverging_view_project, capsys
+    ):
+        from just_makeit import _script
+
+        capsys.readouterr()
+        _script.run(diverging_view_project)
+        out = capsys.readouterr().out
+        assert "property acq reps" in out and "--view BurstAcq" in out
+        assert "method acq tune" in out
+
+    def test_rejects_add_and_exclude_same_property(self, tmp_path):
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
+        )
+        property_run(dest, "acq", "gone", "dsp", "size_t", False, field=True)
+        _view.run(
+            dest, "acq", "V", "dsp", "acq_make", exclude_properties=["gone"]
+        )
+        with pytest.raises(SystemExit):
+            property_run(
+                dest,
+                "acq",
+                "gone",
+                "dsp",
+                "size_t",
+                False,
+                field=True,
+                view="V",
+            )
+
+    def test_rejects_property_on_missing_view(self, tmp_path):
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
+        )
+        with pytest.raises(SystemExit):
+            property_run(
+                dest,
+                "acq",
+                "x",
+                "dsp",
+                "size_t",
+                False,
+                field=True,
+                view="NoSuchView",
+            )
+
+    @staticmethod
+    def _module_object_with_view(tmp_path):
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
+        )
+        _view.run(dest, "acq", "V", "dsp", "acq_make")
+        return dest
+
+    def test_property_view_requires_module(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):  # --view without --module
+            property_run(
+                dest, "acq", "x", None, "size_t", False, field=True, view="V"
+            )
+
+    def test_method_view_requires_module(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):
+            method_run(
+                dest, "acq", "x", None, "void", "void", False, [], view="V"
+            )
+
+    def test_method_rejects_missing_view(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):
+            method_run(
+                dest,
+                "acq",
+                "x",
+                "dsp",
+                "void",
+                "void",
+                False,
+                [],
+                view="NoSuchView",
+            )
+
+    def test_method_rejects_double_override(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        method_run(dest, "acq", "cfg", "dsp", "void", "int", False, [])
+        method_run(
+            dest,
+            "acq",
+            "cfg",
+            "dsp",
+            "void",
+            "int",
+            False,
+            [],
+            doc="first",
+            view="V",
+        )
+        with pytest.raises(SystemExit):  # view already overrides cfg
+            method_run(
+                dest,
+                "acq",
+                "cfg",
+                "dsp",
+                "void",
+                "int",
+                False,
+                [],
+                doc="second",
+                view="V",
+            )

@@ -444,6 +444,23 @@ def run(root: Path) -> None:
                     _view_flags(v, mod),
                 )
             )
+            # gh-504: the view's OWN added/overriding members, after its
+            # `jm view` line (methods before properties, matching apply replay).
+            cls = v["class_name"]
+            for m in C.view_methods(v):
+                view_lines.append(
+                    _render_cmd(
+                        ["just-makeit", "method", comp, m["name"]],
+                        _method_flags(m, mod) + [_flag("--view", cls)],
+                    )
+                )
+            for p in C.view_properties(v):
+                view_lines.append(
+                    _render_cmd(
+                        ["just-makeit", "property", comp, p["name"]],
+                        _property_flags(p, mod) + [_flag("--view", cls)],
+                    )
+                )
     if view_lines:
         lines += view_lines
         lines.append("\n")

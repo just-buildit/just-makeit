@@ -12,6 +12,9 @@ Exercises `just-makeit view` — two Python classes over ONE generated C core:
     same step behaviour, and construct differently (`Acc(sum=0.0)` starts empty;
     `SeededAcc(seed=10.0)` starts pre-loaded); `Acc` exposes `total()`,
     `SeededAcc` does not.
+  - The view's surface DIVERGES, not just trims: `SeededAcc` ADDS a `runs`
+    property the parent lacks (a field on the shared `acc_state_t`) and
+    OVERRIDES `depth`'s docstring — `jm property acc <name> --view SeededAcc`.
 
 The point: there is exactly one `acc_core.c` (one struct, one step()), and the
 view is pure generated glue over it plus a hand-written alternate constructor.
@@ -51,6 +54,7 @@ def run(root: Path) -> None:
     from just_makeit._new import run as new_run
     from just_makeit._method import run as method_run
     from just_makeit._object import run as object_run
+    from just_makeit._property import run as property_run
     from just_makeit._view import run as view_run
 
     dest = root / "acc_bank"
@@ -69,6 +73,17 @@ def run(root: Path) -> None:
     )
     # A read-only "total" method on the accumulator (returns the running sum).
     method_run(dest, "acc", "total", "bank", "void", "double", False, [])
+    # A read-back field property on the parent (auto-implemented field getter).
+    property_run(
+        dest,
+        "acc",
+        "depth",
+        "bank",
+        "size_t",
+        False,
+        field=True,
+        doc="parent depth",
+    )
 
     # ── 2. Add a SECOND class over the same core: a pre-seeded accumulator ────
     # It shares acc_state_t and step(), builds from a different constructor, and
@@ -81,6 +96,30 @@ def run(root: Path) -> None:
         "acc_create_seeded",
         init_params=[("seed", "double", "0.0")],
         exclude_methods=["total"],
+    )
+    # Diverging surface: the view ADDS a property the parent lacks (`runs`, a
+    # field on the shared acc_state_t) and OVERRIDES a parent property's doc.
+    property_run(
+        dest,
+        "acc",
+        "runs",
+        "bank",
+        "size_t",
+        False,
+        field=True,
+        doc="reseed count",
+        view="SeededAcc",
+    )
+    property_run(
+        dest,
+        "acc",
+        "depth",
+        "bank",
+        "size_t",
+        False,
+        field=True,
+        doc="seed depth",
+        view="SeededAcc",
     )
 
     # Both classes present, one core, distinct constructors.
@@ -100,6 +139,11 @@ def run(root: Path) -> None:
     # emitted); the shared C function still exists in the core.
     assert "total" in frag_acc
     assert "total" not in frag_view
+    # Diverging surface: `runs` is a view-only property; `depth`'s doc differs.
+    assert "runs" in frag_view and "runs" not in frag_acc
+    assert "reseed count" in frag_view  # view's added-property doc
+    assert "seed depth" in frag_view  # view's override doc
+    assert "parent depth" in frag_acc and "parent depth" not in frag_view
     # Exactly one core lib — the view adds no new object library.
     cmake = (dest / "native" / "src" / "bank" / "CMakeLists.txt").read_text()
     assert "acc_core" in cmake
@@ -159,6 +203,13 @@ assert type(s).__name__ == "SeededAcc"
 assert a.total() == 3.5
 assert hasattr(Acc, "total")
 assert not hasattr(SeededAcc, "total"), "view should not expose total()"
+
+# Diverging surface: `runs` is view-only; `depth` is on both (different docs).
+assert hasattr(SeededAcc, "runs"), "view should expose the added property runs"
+assert not hasattr(Acc, "runs"), "parent should not have runs"
+assert hasattr(Acc, "depth") and hasattr(SeededAcc, "depth")
+assert "parent depth" in (Acc.depth.__doc__ or "")
+assert "seed depth" in (SeededAcc.depth.__doc__ or "")
 print("views_module: all checks passed")
 """,
         ],

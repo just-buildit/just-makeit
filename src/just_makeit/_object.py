@@ -780,15 +780,31 @@ def _make_view_ctx(
         doc_blocks=doc_blocks,
         block_sizes=C.project_bench_block_sizes(cfg),
     )
+    # gh-504: a view's surface is the parent's, minus excludes, with its OWN
+    # members merged over by name — an own entry OVERRIDES a parent one of the
+    # same name (e.g. a different doc), a new name ADDS. So a view is not just a
+    # subset of the parent (the doppler Acquisition/BurstAcquisition case: burst
+    # adds `reps`, overrides `doppler_bins`'s doc).
+    own_methods = C.view_methods(view)
+    own_method_names = {m["name"] for m in own_methods}
+    merged_methods = [
+        m
+        for m in C.methods(cfg, obj)
+        if m["name"] not in excluded_methods
+        and m["name"] not in own_method_names
+    ] + own_methods
+    own_props = C.view_properties(view)
+    own_prop_names = {p["name"] for p in own_props}
+    merged_props = [
+        p
+        for p in C.properties(cfg, obj)
+        if p["name"] not in excluded and p["name"] not in own_prop_names
+    ] + own_props
     ctx.update(
         Ctx.make_methods_ctx(
             ctx["component"],
             ctx["Component"],
-            [
-                m
-                for m in C.methods(cfg, obj)
-                if m["name"] not in excluded_methods
-            ],
+            merged_methods,
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
@@ -800,7 +816,7 @@ def _make_view_ctx(
         Ctx.make_properties_ctx(
             ctx["component"],
             ctx["Component"],
-            [p for p in C.properties(cfg, obj) if p["name"] not in excluded],
+            merged_props,
             frozenset(n for n, _, _ in state_vars),
             doc_blocks=doc_blocks,
         )
