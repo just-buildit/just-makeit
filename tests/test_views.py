@@ -721,3 +721,72 @@ class TestDivergingSurfaces:
                 field=True,
                 view="NoSuchView",
             )
+
+    @staticmethod
+    def _module_object_with_view(tmp_path):
+        dest = tmp_path / "demo"
+        new_run("demo", dest, [], [], build_system="cmake")
+        module_run(dest, "dsp")
+        object_run(
+            dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
+        )
+        _view.run(dest, "acq", "V", "dsp", "acq_make")
+        return dest
+
+    def test_property_view_requires_module(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):  # --view without --module
+            property_run(
+                dest, "acq", "x", None, "size_t", False, field=True, view="V"
+            )
+
+    def test_method_view_requires_module(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):
+            method_run(
+                dest, "acq", "x", None, "void", "void", False, [], view="V"
+            )
+
+    def test_method_rejects_missing_view(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        with pytest.raises(SystemExit):
+            method_run(
+                dest,
+                "acq",
+                "x",
+                "dsp",
+                "void",
+                "void",
+                False,
+                [],
+                view="NoSuchView",
+            )
+
+    def test_method_rejects_double_override(self, tmp_path):
+        dest = self._module_object_with_view(tmp_path)
+        method_run(dest, "acq", "cfg", "dsp", "void", "int", False, [])
+        method_run(
+            dest,
+            "acq",
+            "cfg",
+            "dsp",
+            "void",
+            "int",
+            False,
+            [],
+            doc="first",
+            view="V",
+        )
+        with pytest.raises(SystemExit):  # view already overrides cfg
+            method_run(
+                dest,
+                "acq",
+                "cfg",
+                "dsp",
+                "void",
+                "int",
+                False,
+                [],
+                doc="second",
+                view="V",
+            )
