@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-19
+
 ### Added
 
 - **Diverging view surfaces — a view can now ADD and OVERRIDE members, not just
