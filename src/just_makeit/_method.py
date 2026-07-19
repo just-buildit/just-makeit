@@ -571,6 +571,7 @@ def run(
     status_return: bool = False,
     doc: str = "",
     from_apply: bool = False,
+    view: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -599,19 +600,87 @@ def run(
         )
         sys.exit(1)
 
-    # Check for duplicate method name
-    existing = [m["name"] for m in C.methods(cfg, object_name)]
+    pkg = C.project_name(cfg)
+
+    # gh-504: --view retargets the method onto a VIEW of the object. Views are
+    # module-only.
+    view_entry = None
+    if view:
+        if not module:
+            print(
+                "error: --view requires --module (views are a module-object "
+                "feature).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        view_entry = C._find_view(cfg, object_name, view)
+        if view_entry is None:
+            print(
+                f"error: no view '{view}' on object '{object_name}'. Create it "
+                f"first with 'just-makeit view {object_name} {view} --module "
+                f"{module} --create-fn <fn>'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if method_name in C.view_exclude_methods(view_entry):
+            print(
+                f"error: method '{method_name}' is both excluded and added on "
+                f"view '{view}' — that is contradictory. Drop it from "
+                f"--exclude-method, or don't add it.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # A view method whose name matches a PARENT method is a DOC-ONLY
+        # override: the view's wrapper calls the shared <comp>_<method> C
+        # symbol, so the signature must stay the parent's (a change would
+        # mis-call it). Copy the parent entry and swap the doc — no C scaffold,
+        # no signature to validate. A NEW name falls through to the normal add
+        # path (which scaffolds the shared C stub).
+        parent_names = {m["name"] for m in C.methods(cfg, object_name)}
+        if method_name in parent_names:
+            parent = next(
+                m
+                for m in C.methods(cfg, object_name)
+                if m["name"] == method_name
+            )
+            if method_name in {m["name"] for m in C.view_methods(view_entry)}:
+                print(
+                    f"error: view '{view}' already overrides method "
+                    f"'{method_name}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            entry = dict(parent)
+            entry["doc"] = doc
+            C.add_view_method(cfg, object_name, view, entry)
+            C.save(root, cfg)
+            print(f"  update  {cfg_path}")
+            _regenerate_module(root, cfg, module, pkg)
+            print()
+            print(
+                f"Done!  View '{view}' overrides the doc of '{method_name}' "
+                f"(shares the parent's {object_name}_{method_name})."
+            )
+            return
+
+    # Check for duplicate method name. For a view ADD, dup-check against the
+    # view's own methods (the object's shared method of the same name would be
+    # a doc-override, handled above).
+    if view_entry is not None:
+        existing = [m["name"] for m in C.view_methods(view_entry)]
+        target = f"view '{view}'"
+    else:
+        existing = [m["name"] for m in C.methods(cfg, object_name)]
+        target = f"'{object_name}'"
     if method_name in existing:
         print(
-            f"error: method '{method_name}' already exists on '{object_name}'.",
+            f"error: method '{method_name}' already exists on {target}.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    pkg = C.project_name(cfg)
-
     print(
-        f"just-makeit: adding method '{method_name}' to '{object_name}'"
+        f"just-makeit: adding method '{method_name}' to {target}"
         + (f" in module '{module}'" if module else "")
     )
     print()
@@ -819,7 +888,13 @@ def run(
     if max_out > 0:
         method_entry["max_out"] = max_out
 
-    C.add_method(cfg, object_name, method_entry)
+    # gh-504: a view ADD stores the method on the view (its C stub still lands
+    # in the shared core above, so the view's wrapper can call it); a normal
+    # method stores on the object.
+    if view_entry is not None:
+        C.add_view_method(cfg, object_name, view, method_entry)
+    else:
+        C.add_method(cfg, object_name, method_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

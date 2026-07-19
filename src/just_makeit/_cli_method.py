@@ -43,6 +43,7 @@ def run(args: list[str]) -> None:
     result_fields: list[dict] = []
     impl_spec_m: str | None = None
     replacements_m: list[tuple[str, str]] = []
+    view = ""
 
     remaining = args[2:]
     i = 0
@@ -107,6 +108,13 @@ def run(args: list[str]) -> None:
                 print("error: --doc requires a string", file=sys.stderr)
                 sys.exit(1)
             doc = remaining[i]
+            i += 1
+        elif tok == "--view":
+            i += 1
+            if i >= len(remaining):
+                print("error: --view requires a class name", file=sys.stderr)
+                sys.exit(1)
+            view = remaining[i]
             i += 1
         elif tok == "--batch":
             batch_method = True
@@ -403,4 +411,5 @@ def run(args: list[str]) -> None:
         pass_capacity=pass_capacity,
         nogil=nogil,
         doc=doc,
+        view=view,
     )

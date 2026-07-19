@@ -1305,12 +1305,24 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
                 # __init__ mirrors the parent's.
                 overlay["init_params"] = view["init_params"]
                 overlay.pop("state", None)
+            # gh-504: the view's surface = parent minus excludes, with the
+            # view's OWN members merged over by name (override) or appended
+            # (add) — same merge as _make_view_ctx, so the .pyi matches the C.
+            own_props = C.view_properties(view)
+            own_prop_names = {p["name"] for p in own_props}
             overlay["properties"] = [
-                p for p in C.properties(cfg, obj) if p["name"] not in excl
-            ]
+                p
+                for p in C.properties(cfg, obj)
+                if p["name"] not in excl and p["name"] not in own_prop_names
+            ] + own_props
+            own_methods = C.view_methods(view)
+            own_method_names = {m["name"] for m in own_methods}
             overlay["methods"] = [
-                m for m in C.methods(cfg, obj) if m["name"] not in excl_m
-            ]
+                m
+                for m in C.methods(cfg, obj)
+                if m["name"] not in excl_m
+                and m["name"] not in own_method_names
+            ] + own_methods
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")

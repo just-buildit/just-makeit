@@ -41,6 +41,7 @@ def run(
     valid_field: str = "",
     expr: str = "",
     doc: str = "",
+    view: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -77,11 +78,48 @@ def run(
         )
         sys.exit(1)
 
-    # Check for duplicate property name
-    existing = [p["name"] for p in C.properties(cfg, object_name)]
+    # gh-504: --view retargets the property onto a VIEW of the object (a view
+    # can ADD a property the parent lacks, or OVERRIDE a parent property of the
+    # same name). Views are module-only.
+    view_entry = None
+    if view:
+        if not module:
+            print(
+                "error: --view requires --module (views are a module-object "
+                "feature).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        view_entry = C._find_view(cfg, object_name, view)
+        if view_entry is None:
+            print(
+                f"error: no view '{view}' on object '{object_name}'. "
+                f"Create it first with 'just-makeit view {object_name} {view} "
+                f"--module {module} --create-fn <fn>'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if prop_name in C.view_exclude_properties(view_entry):
+            print(
+                f"error: property '{prop_name}' is both excluded and added on "
+                f"view '{view}' — that is contradictory. Drop it from "
+                f"--exclude-property, or don't add it.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # Check for duplicate property name. For a view, dup-check against the
+    # VIEW's own properties: an override intentionally shares a parent name, so
+    # only a collision with the view's own list is the error.
+    if view_entry is not None:
+        existing = [p["name"] for p in C.view_properties(view_entry)]
+        target = f"view '{view}'"
+    else:
+        existing = [p["name"] for p in C.properties(cfg, object_name)]
+        target = f"'{object_name}'"
     if prop_name in existing:
         print(
-            f"error: property '{prop_name}' already exists on '{object_name}'.",
+            f"error: property '{prop_name}' already exists on {target}.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -89,7 +127,7 @@ def run(
     pkg = C.project_name(cfg)
 
     print(
-        f"just-makeit: adding property '{prop_name}' to '{object_name}'"
+        f"just-makeit: adding property '{prop_name}' to {target}"
         + (f" in module '{module}'" if module else "")
     )
     print()
@@ -109,7 +147,10 @@ def run(
         prop_entry["valid_field"] = valid_field
     if expr:
         prop_entry["expr"] = expr
-    C.add_property(cfg, object_name, prop_entry)
+    if view_entry is not None:
+        C.add_view_property(cfg, object_name, view, prop_entry)
+    else:
+        C.add_property(cfg, object_name, prop_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

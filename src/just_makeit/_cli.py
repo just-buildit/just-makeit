@@ -103,6 +103,9 @@ Commands:
     --no-bench                  Exclude this method from the C benchmark.
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
+    --view ClassName            Attach the method to a VIEW of the object (add a
+                                view-only method, or override a parent method's
+                                doc by reusing its name). Requires --module.
 
   view <obj> <ClassName> [OPTIONS]  Add a second Python class over an object's
                                 same generated C core (module objects only).
@@ -130,6 +133,10 @@ Commands:
     --valid-field name          Field gating whether the buffer is populated.
     --expr "C expr"             Back property with an inline C expression.
     --doc "text"                Explicit docstring override.
+    --view ClassName            Attach the property to a VIEW of the object
+                                instead of the object itself (a view can add a
+                                property the parent lacks, or override one's doc
+                                by reusing its name). Requires --module.
 
   warning <obj> [OPTIONS]       Warn after construction when a state flag is set.
     --condition name            Bool state field that triggers the warning (required).
@@ -620,6 +627,7 @@ def main() -> None:
         len_field = "n"
         valid_field = ""
         expr = ""
+        view = ""
 
         remaining = args[3:]
         i = 0
@@ -631,6 +639,15 @@ def main() -> None:
                     print("error: --module requires a name", file=sys.stderr)
                     sys.exit(1)
                 module = remaining[i]
+                i += 1
+            elif tok == "--view":
+                i += 1
+                if i >= len(remaining):
+                    print(
+                        "error: --view requires a class name", file=sys.stderr
+                    )
+                    sys.exit(1)
+                view = remaining[i]
                 i += 1
             elif tok == "--type":
                 i += 1
@@ -715,6 +732,7 @@ def main() -> None:
             valid_field=valid_field,
             expr=expr,
             doc=doc,
+            view=view,
         )
 
     elif cmd == "warning":

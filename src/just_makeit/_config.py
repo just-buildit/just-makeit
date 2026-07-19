@@ -1622,6 +1622,49 @@ def view_exclude_methods(view: dict) -> set[str]:
     return set(view.get("exclude_methods", []))
 
 
+def view_properties(view: dict) -> list[dict]:
+    """A view's OWN properties (gh-504): entries that ADD a property the parent
+    lacks, or OVERRIDE a parent property of the same name (e.g. a different
+    doc). Merged over the parent's in ``_make_view_ctx``. [] if none."""
+    return list(view.get("properties", []))
+
+
+def view_methods(view: dict) -> list[dict]:
+    """A view's OWN methods (gh-504): ADD a new method (scaffolds a shared C
+    stub) or OVERRIDE a parent method's doc. [] if none."""
+    return list(view.get("methods", []))
+
+
+def _find_view(cfg: dict, component: str, class_name: str) -> dict | None:
+    """The view entry on *component* whose ``class_name`` matches, else None."""
+    for v in views(cfg, component):
+        if v.get("class_name") == class_name:
+            return v
+    return None
+
+
+def add_view_property(
+    cfg: dict, component: str, class_name: str, prop: dict
+) -> dict:
+    """Append a property to the named view's own list (gh-504)."""
+    view = _find_view(cfg, component, class_name)
+    if view is None:
+        raise KeyError(f"no view '{class_name}' on object '{component}'")
+    view.setdefault("properties", []).append(prop)
+    return cfg
+
+
+def add_view_method(
+    cfg: dict, component: str, class_name: str, method: dict
+) -> dict:
+    """Append a method to the named view's own list (gh-504)."""
+    view = _find_view(cfg, component, class_name)
+    if view is None:
+        raise KeyError(f"no view '{class_name}' on object '{component}'")
+    view.setdefault("methods", []).append(method)
+    return cfg
+
+
 # Python's built-in warning categories (gh-481). Each name maps 1:1 onto a
 # ``PyExc_<name>`` symbol in the C API, so the codegen interpolates the name
 # directly. This frozenset is what keeps a typo out of the generated C, where
@@ -2462,6 +2505,124 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     return out
 
 
+def _property_dump_lines(p: dict, header: str) -> list[str]:
+    """TOML lines for one property under *header* (ends with a blank line).
+
+    Shared (gh-504) by an object's ``[[<comp>.properties]]`` and a view's
+    ``[[<comp>.views.properties]]`` so the two emit identically.
+    """
+    lines = [header, f'name = "{p["name"]}"']
+    if p.get("doc"):
+        lines.append(_doc_assign(p["doc"]))
+    lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
+    if p.get("writable"):
+        lines.append("writable = true")
+    if p.get("field"):
+        lines.append("field = true")
+    if p.get("buf_field"):
+        lines.append(f'buf_field = "{p["buf_field"]}"')
+        lines.append(f'len_field = "{p.get("len_field", "n")}"')
+    if p.get("valid_field"):
+        lines.append(f'valid_field = "{p["valid_field"]}"')
+    if p.get("expr"):
+        lines.append(f'expr = "{p["expr"]}"')
+    lines.append("")
+    return lines
+
+
+def _method_dump_lines(m: dict, header: str) -> list[str]:
+    """TOML lines for one method under *header* (ends with a blank line).
+
+    Shared (gh-504) by an object's ``[[<comp>.methods]]`` and a view's
+    ``[[<comp>.views.methods]]``.
+    """
+    lines = [header, f'name = "{m["name"]}"']
+    if m.get("doc"):
+        lines.append(_doc_assign(m["doc"]))
+    if m.get("arg_type"):
+        lines.append(f'arg_type = "{m["arg_type"]}"')
+    if m.get("return_type"):
+        lines.append(f'return_type = "{m["return_type"]}"')
+    if m.get("varargs"):
+        lines.append("varargs = true")
+    if m.get("manual_stub"):
+        lines.append("manual_stub = true")
+    if m.get("variable_output"):
+        lines.append("variable_output = true")
+    if m.get("pass_capacity"):
+        lines.append("pass_capacity = true")
+    if m.get("nogil"):
+        lines.append("nogil = true")
+    if m.get("none_on_empty"):
+        lines.append("none_on_empty = true")
+    if m.get("batch"):
+        lines.append("batch = true")
+    if m.get("multi_output"):
+        mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
+        lines.append(f"multi_output = [{mo_str}]")
+    _ea = m.get("extra_args") or m.get("params")
+    if _ea:
+        _ekey = "extra_args" if "extra_args" in m else "params"
+
+        def _param_inline(p: dict) -> str:
+            s = f'name = "{p["name"]}", type = "{p["type"]}"'
+            # gh-240: an optional scalar default round-trips as a string.
+            if p.get("default") not in (None, ""):
+                s += f', default = "{p["default"]}"'
+            # gh-432: capsule-typed params — the capsule name and the
+            # foreign type's header must survive save()/load(); the
+            # gh-257 generic passthrough covers only method-level
+            # scalar keys, not per-param keys.
+            if p.get("capsule"):
+                s += f', capsule = "{p["capsule"]}"'
+            if p.get("header"):
+                s += f', header = "{p["header"]}"'
+            return "{" + s + "}"
+
+        parts = ", ".join(_param_inline(p) for p in _ea)
+        lines.append(f"{_ekey} = [{parts}]")
+    if m.get("out_type"):
+        lines.append(f'out_type = "{m["out_type"]}"')
+    if m.get("out_divisor") and m["out_divisor"] != 1:
+        lines.append(f"out_divisor = {m['out_divisor']}")
+    if m.get("bench") is False:
+        lines.append("bench = false")
+    if m.get("max_results"):
+        lines.append(f"max_results = {m['max_results']}")
+    if m.get("result_fields"):
+        rf_parts = ", ".join(
+            f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
+            for f in m["result_fields"]
+        )
+        lines.append(f"result_fields = [{rf_parts}]")
+    if m.get("single"):
+        lines.append("single = true")
+    if m.get("py_return_type"):
+        lines.append(f'py_return_type = "{m["py_return_type"]}"')
+    if m.get("max_out"):
+        lines.append(f"max_out = {m['max_out']}")
+    # gh-257: preserve any manifest-authored scalar key the explicit block
+    # above doesn't know (e.g. `record_name`). List/table keys are already
+    # emitted above; `_`-prefixed keys are transient (e.g. `_doc_blocks`).
+    # Zero churn — jm only writes known keys, so this emits nothing for
+    # jm-generated manifests.
+    for _k, _v in m.items():
+        if (
+            _k in _KNOWN_METHOD_KEYS
+            or _k.startswith("_")
+            or isinstance(_v, (list, dict))
+        ):
+            continue
+        if isinstance(_v, bool):
+            lines.append(f"{_k} = {'true' if _v else 'false'}")
+        elif isinstance(_v, (int, float)):
+            lines.append(f"{_k} = {_v}")
+        else:
+            lines.append(f'{_k} = "{_v}"')
+    lines.append("")
+    return lines
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -2782,111 +2943,9 @@ def _dump(cfg: dict) -> str:
             lines.append(f'init_post_parse = """\n{ipp}\n"""')
             lines.append("")
         for m in comp_data.get("methods", []):
-            lines.append(f"[[{comp}.methods]]")
-            lines.append(f'name = "{m["name"]}"')
-            if m.get("doc"):
-                lines.append(_doc_assign(m["doc"]))
-            if m.get("arg_type"):
-                lines.append(f'arg_type = "{m["arg_type"]}"')
-            if m.get("return_type"):
-                lines.append(f'return_type = "{m["return_type"]}"')
-            if m.get("varargs"):
-                lines.append("varargs = true")
-            if m.get("manual_stub"):
-                lines.append("manual_stub = true")
-            if m.get("variable_output"):
-                lines.append("variable_output = true")
-            if m.get("pass_capacity"):
-                lines.append("pass_capacity = true")
-            if m.get("nogil"):
-                lines.append("nogil = true")
-            if m.get("none_on_empty"):
-                lines.append("none_on_empty = true")
-            if m.get("batch"):
-                lines.append("batch = true")
-            if m.get("multi_output"):
-                mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
-                lines.append(f"multi_output = [{mo_str}]")
-            _ea = m.get("extra_args") or m.get("params")
-            if _ea:
-                _ekey = "extra_args" if "extra_args" in m else "params"
-
-                def _param_inline(p: dict) -> str:
-                    s = f'name = "{p["name"]}", type = "{p["type"]}"'
-                    # gh-240: an optional scalar default round-trips as a string.
-                    if p.get("default") not in (None, ""):
-                        s += f', default = "{p["default"]}"'
-                    # gh-432: capsule-typed params — the capsule name and the
-                    # foreign type's header must survive save()/load(); the
-                    # gh-257 generic passthrough covers only method-level
-                    # scalar keys, not per-param keys.
-                    if p.get("capsule"):
-                        s += f', capsule = "{p["capsule"]}"'
-                    if p.get("header"):
-                        s += f', header = "{p["header"]}"'
-                    return "{" + s + "}"
-
-                parts = ", ".join(_param_inline(p) for p in _ea)
-                lines.append(f"{_ekey} = [{parts}]")
-            if m.get("out_type"):
-                lines.append(f'out_type = "{m["out_type"]}"')
-            if m.get("out_divisor") and m["out_divisor"] != 1:
-                lines.append(f"out_divisor = {m['out_divisor']}")
-            if m.get("bench") is False:
-                lines.append("bench = false")
-            if m.get("max_results"):
-                lines.append(f"max_results = {m['max_results']}")
-            if m.get("result_fields"):
-                rf_parts = ", ".join(
-                    f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
-                    for f in m["result_fields"]
-                )
-                lines.append(f"result_fields = [{rf_parts}]")
-            if m.get("single"):
-                lines.append("single = true")
-            if m.get("py_return_type"):
-                lines.append(f'py_return_type = "{m["py_return_type"]}"')
-            if m.get("max_out"):
-                lines.append(f"max_out = {m['max_out']}")
-            # gh-257: preserve any manifest-authored scalar key the explicit
-            # block above doesn't know (e.g. `record_name`). List/table keys are
-            # already emitted above; `_`-prefixed keys are transient (e.g.
-            # `_doc_blocks`). Zero churn — jm only writes known keys, so this
-            # emits nothing for jm-generated manifests.
-            for _k, _v in m.items():
-                if (
-                    _k in _KNOWN_METHOD_KEYS
-                    or _k.startswith("_")
-                    or isinstance(_v, (list, dict))
-                ):
-                    continue
-                if isinstance(_v, bool):
-                    lines.append(f"{_k} = {'true' if _v else 'false'}")
-                elif isinstance(_v, (int, float)):
-                    lines.append(f"{_k} = {_v}")
-                else:
-                    lines.append(f'{_k} = "{_v}"')
-            lines.append("")
+            lines += _method_dump_lines(m, f"[[{comp}.methods]]")
         for p in comp_data.get("properties", []):
-            lines.append(f"[[{comp}.properties]]")
-            lines.append(f'name = "{p["name"]}"')
-            if p.get("doc"):
-                lines.append(_doc_assign(p["doc"]))
-            lines.append(
-                f'type = "{p.get("type") or p.get("ctype", "size_t")}"'
-            )
-            if p.get("writable"):
-                lines.append("writable = true")
-            if p.get("field"):
-                lines.append("field = true")
-            if p.get("buf_field"):
-                lines.append(f'buf_field = "{p["buf_field"]}"')
-                lines.append(f'len_field = "{p.get("len_field", "n")}"')
-            if p.get("valid_field"):
-                lines.append(f'valid_field = "{p["valid_field"]}"')
-            if p.get("expr"):
-                lines.append(f'expr = "{p["expr"]}"')
-            lines.append("")
+            lines += _property_dump_lines(p, f"[[{comp}.properties]]")
         # gh-481. An explicit closed field list (the `properties` style, not
         # the `methods` generic passthrough): the grammar is deliberately small
         # and fixed, so a key that isn't one of these is an authoring error
@@ -2933,7 +2992,21 @@ def _dump(cfg: dict) -> str:
             if v.get("exclude_methods"):
                 em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
                 lines.append(f"exclude_methods = [{em}]")
-            lines.append("")
+            # gh-504: a view's own added/overriding members nest under it. All
+            # the view's scalar keys above must precede these subtables (TOML
+            # binds [[<comp>.views.properties]] to the preceding [[…views]]).
+            v_methods = v.get("methods", [])
+            v_props = v.get("properties", [])
+            for m in v_methods:
+                lines += _method_dump_lines(m, f"[[{comp}.views.methods]]")
+            for p in v_props:
+                lines += _property_dump_lines(
+                    p, f"[[{comp}.views.properties]]"
+                )
+            # The nested helpers each emit a trailing blank; only add the
+            # view separator when there were none.
+            if not v_methods and not v_props:
+                lines.append("")
 
     app = cfg.get("app", {})
     if app.get("target"):
