@@ -1635,6 +1635,41 @@ def view_methods(view: dict) -> list[dict]:
     return list(view.get("methods", []))
 
 
+def view_warnings(view: dict) -> list[dict]:
+    """A view's OWN post-construction warnings (gh-509; [] if none).
+
+    Same shape as ``[[<comp>.warnings]]`` (gh-481) but scoped to one view, so
+    a second front door over the shared core (e.g. ``BurstAcquisition``) can
+    surface its own ``PyErr_WarnEx`` on a bool field of the shared state
+    struct — the view carries no parent warnings of its own, so this is the
+    only source for its ``init_warn_block``.
+    """
+    return list(view.get("warnings", []))
+
+
+def add_view_warning(
+    cfg: dict, component: str, class_name: str, warning: dict
+) -> dict:
+    """Add/replace a warning on the named view (gh-509).
+
+    Idempotent on ``(condition, after)`` — a re-declared warning replaces the
+    existing entry rather than emitting a duplicate ``if`` guard, matching
+    ``_warning.run``'s object-level behaviour so ``jm apply`` replay is stable.
+    """
+    view = _find_view(cfg, component, class_name)
+    if view is None:
+        raise KeyError(f"no view {class_name!r} on {component!r}")
+    existing = view.setdefault("warnings", [])
+    for i, w in enumerate(existing):
+        if w.get("condition") == warning["condition"] and w.get(
+            "after", "__init__"
+        ) == warning.get("after", "__init__"):
+            existing[i] = warning
+            return cfg
+    existing.append(warning)
+    return cfg
+
+
 def _find_view(cfg: dict, component: str, class_name: str) -> dict | None:
     """The view entry on *component* whose ``class_name`` matches, else None."""
     for v in views(cfg, component):
@@ -2109,6 +2144,19 @@ def class_name(cfg: dict, component: str) -> str | None:
     return cfg.get(component, {}).get("class_name") or None
 
 
+def object_create_fn(cfg: dict, component: str) -> str | None:
+    """Return the object's C constructor override, or None for the default.
+
+    gh-509: a plain object may back its ``tp_init`` with a differently named
+    C constructor than ``<component>_create`` (e.g. ``acq_create_continuous``,
+    where ``acq_create`` does not exist). ``None`` preserves the historical
+    ``<component>_create`` default, byte-identical for every existing project.
+    The declared function must take the same argument list the init_params
+    already generate — this overrides only the name, not the call shape.
+    """
+    return cfg.get(component, {}).get("create_fn") or None
+
+
 def add_component(
     cfg: dict,
     component: str,
@@ -2132,6 +2180,7 @@ def add_component(
     controllable_names_: "frozenset[str]" = frozenset(),
     extra_link_libs_: list[str] = (),
     extra_include_dirs_: list[str] = (),
+    create_fn_: str | None = None,
 ) -> dict:
     rt = (
         return_type_
@@ -2183,6 +2232,8 @@ def add_component(
         ]
     if class_name_:
         entry["class_name"] = class_name_
+    if create_fn_:
+        entry["create_fn"] = create_fn_
     if depends_on_:
         entry["depends_on"] = list(depends_on_)
     if extra_link_libs_:
@@ -2838,6 +2889,11 @@ def _dump(cfg: dict) -> str:
             "async_stream",
             "stream_block_default",
             "class_name",
+            # gh-509: object-level C constructor override. A plain object whose
+            # backing create is not the default ``<comp>_create`` (e.g. acq's
+            # ``acq_create_continuous``) declares it here so the generated
+            # tp_init calls it — no hand-patch that regeneration would drop.
+            "create_fn",
             # gh-482. `create_error` is a name from ERROR_CATEGORIES, so the
             # raw f-string emission below is safe for it. Its paired
             # `create_error_message` is human prose and is emitted separately
@@ -2992,11 +3048,24 @@ def _dump(cfg: dict) -> str:
             if v.get("exclude_methods"):
                 em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
                 lines.append(f"exclude_methods = [{em}]")
-            # gh-504: a view's own added/overriding members nest under it. All
-            # the view's scalar keys above must precede these subtables (TOML
-            # binds [[<comp>.views.properties]] to the preceding [[…views]]).
+            # gh-504/gh-509: a view's own added/overriding members and its own
+            # warnings nest under it. All the view's scalar keys above must
+            # precede these subtables (TOML binds [[<comp>.views.properties]]
+            # to the preceding [[…views]]).
             v_methods = v.get("methods", [])
             v_props = v.get("properties", [])
+            v_warnings = v.get("warnings", [])
+            for w in v_warnings:
+                lines.append(f"[[{comp}.views.warnings]]")
+                lines.append(f'after = "{w.get("after", "__init__")}"')
+                lines.append(f'condition = "{w["condition"]}"')
+                lines.append(
+                    f'category = "{w.get("category", "UserWarning")}"'
+                )
+                lines.append(_str_assign("message", w["message"]))
+                if w.get("stacklevel"):
+                    lines.append(f"stacklevel = {int(w['stacklevel'])}")
+                lines.append("")
             for m in v_methods:
                 lines += _method_dump_lines(m, f"[[{comp}.views.methods]]")
             for p in v_props:
@@ -3005,7 +3074,7 @@ def _dump(cfg: dict) -> str:
                 )
             # The nested helpers each emit a trailing blank; only add the
             # view separator when there were none.
-            if not v_methods and not v_props:
+            if not v_methods and not v_props and not v_warnings:
                 lines.append("")
 
     app = cfg.get("app", {})

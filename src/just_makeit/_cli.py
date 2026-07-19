@@ -72,6 +72,8 @@ Commands:
                                       Required scalar form: name:type:required (no default;
                                       omitting it raises TypeError, not a late MemoryError).
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
+    --create-fn fn              C constructor tp_init calls (default <name>_create);
+                                same arg list, different name (e.g. acq_create_continuous).
     --extra-include-dirs DIR    CMake include path for this component; repeatable.
     --impl file::funcname       Lift step() body from funcname in file.
     --impl file::N:M            Lift lines N..M (inclusive) instead of a function.
@@ -144,6 +146,8 @@ Commands:
     --category name             Warning class (default: UserWarning).
     --module name               Module the object lives in.
     --stacklevel N              PyErr_WarnEx stacklevel (default: 1).
+    --view ClassName            Attach the warning to a view instead of the object
+                                (requires --module; the view's own PyErr_WarnEx).
 
   error <obj> [OPTIONS]         Translate a create() failure to a Python exception.
     --category name             Exception class, e.g. ValueError (required).
@@ -752,6 +756,7 @@ def main() -> None:
         category = "UserWarning"
         after = "__init__"
         stacklevel = 1
+        view = ""
 
         remaining = args[2:]
         i = 0
@@ -764,6 +769,7 @@ def main() -> None:
                 "--category",
                 "--after",
                 "--stacklevel",
+                "--view",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -780,6 +786,8 @@ def main() -> None:
                     category = val
                 elif tok == "--after":
                     after = val
+                elif tok == "--view":
+                    view = val
                 else:
                     if not val.isdigit():
                         print(
@@ -806,6 +814,7 @@ def main() -> None:
             category=category,
             after=after,
             stacklevel=stacklevel,
+            view=view,
         )
 
     elif cmd == "error":

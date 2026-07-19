@@ -112,6 +112,11 @@ def _object_flags(
         elif not C.is_async_stream(cfg, comp):
             parts.append(_bool_flag("--streamable"))
 
+    # gh-509: object-level C constructor override.
+    cf = C.object_create_fn(cfg, comp)
+    if cf:
+        parts.append(_flag("--create-fn", cf))
+
     return parts
 
 
@@ -459,6 +464,15 @@ def run(root: Path) -> None:
                     _render_cmd(
                         ["just-makeit", "property", comp, p["name"]],
                         _property_flags(p, mod) + [_flag("--view", cls)],
+                    )
+                )
+            # gh-509: the view's OWN warnings, reusing the object-warning flag
+            # builder plus --view (mirrors the members above).
+            for w in C.view_warnings(v):
+                view_lines.append(
+                    _render_cmd(
+                        ["just-makeit", "warning", comp],
+                        _warning_flags(w, mod) + [_flag("--view", cls)],
                     )
                 )
     if view_lines:
