@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-07-19
+
+### Added
+
+- **`jm view` — a second Python class over one generated C core (gh-504).** A
+    `[[<obj>.views]]` sub-table (created with `jm view <obj> <ClassName>   --module <mod> --create-fn <fn>`) exposes a second Python class that shares
+    the parent object's `<component>_state_t` and `_core.c`, differing only in
+    its C constructor (`--create-fn`), its own `--init-param` set, and a trimmed
+    surface (`--exclude-property`, `--exclude-method`). This is the
+    "simple mode / advanced mode as two classes over one engine" shape — e.g. an
+    `Acquisition` and a `BurstAcquisition` over one search core — without the old
+    workaround of a second object plus a hand-written forwarder core. The view
+    registers as a distinct type in the same module `.so` with non-colliding C
+    symbols; `jm view` scaffolds a stub for `--create-fn` into the sacred core so
+    the project still compiles out of the box. Views are a module-object feature;
+    they round-trip through `jm apply` and `jm script`, and `jm status --check`
+    stays clean. (Standalone-object views are a deliberate future follow-up.)
+- **`jm view --exclude-method` (and `--exclude-property`) trim a view's Python
+    surface (gh-504).** A view can omit named parent methods/properties from its
+    own class; the shared C function stays (the parent still exposes it), so only
+    the view's Python-facing wrapper is dropped.
+
+### Docs
+
+- **`jm bind` and `jm upgrade` are now listed in `jm help` (gh-496 follow-up).**
+    Both were fully working and documented in the guides but missing from the
+    command list. A new drift gate (`tests/test_cli_dispatch.py`) AST-diffs the
+    dispatcher against the help text, so a command can no longer ship
+    undocumented.
+- **`jm bench` is documented in the command reference** and linked from the
+    decision-tree page (every command there now clicks through to its docs).
+
 ## [0.30.2] — 2026-07-17
 
 ### Fixed
