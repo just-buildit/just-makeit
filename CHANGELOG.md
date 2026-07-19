@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--field` property injection no longer mangles the sacred struct's
+    indentation (gh-511).** `_inject_struct_field` matched the bare substring
+    `} <comp>_state_t;` without its leading whitespace, so for a struct nested
+    in an `extern "C"` block the injected member was double-indented and the
+    closing brace lost its own indent. It now matches the brace line with its
+    indentation, aligns the new field to the struct's existing members, and
+    leaves the brace untouched (any struct style; still idempotent).
+
 ## [0.33.0] — 2026-07-19
 
 ### Added

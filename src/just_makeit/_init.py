@@ -425,10 +425,33 @@ def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
     text = path.read_text(encoding="utf-8")
     if field_decl.strip() in text:
         return False
-    close = f"}} {comp}_state_t;"
-    if close not in text:
+    # Match the struct's closing brace line WITH its own leading whitespace, so
+    # we preserve that indent and align the new field to the struct's existing
+    # members. gh-511: the old bare-substring `} <comp>_state_t;` replace left
+    # the brace's indent stuck in front of the field (double-indented it) and
+    # de-indented the closing brace — mangling any struct nested inside an
+    # `extern "C"` block (e.g. doppler's acq_state_t).
+    close_re = re.compile(
+        rf"^([ \t]*)\}}[ \t]*{re.escape(comp)}_state_t;", re.MULTILINE
+    )
+    m = close_re.search(text)
+    if not m:
         return False
-    text = text.replace(close, f"    {field_decl.strip()}\n{close}", 1)
+    brace_indent = m.group(1)
+    # Indent the field to match the last member above the brace (any struct
+    # style); fall back to brace_indent + two spaces for an empty struct.
+    field_indent = brace_indent + "  "
+    for line in reversed(text[: m.start()].splitlines()):
+        if line.strip():
+            lead = line[: len(line) - len(line.lstrip())]
+            if len(lead) > len(brace_indent):
+                field_indent = lead
+            break
+    text = (
+        text[: m.start()]
+        + f"{field_indent}{field_decl.strip()}\n"
+        + text[m.start() :]
+    )
     path.write_text(text, encoding="utf-8")
     return True
 

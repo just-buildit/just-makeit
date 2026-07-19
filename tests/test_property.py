@@ -122,6 +122,67 @@ class TestPropertyUpdatesCoreH:
         assert "buf_set_dropped" not in h
 
 
+class TestFieldInjectionIndentation:
+    """gh-511: --field injects a struct member with clean indentation — aligned
+    to the struct's existing fields, and the closing brace keeps its own indent.
+    The old bare-substring replace double-indented the field and de-indented the
+    brace for any struct nested in an `extern "C"` block."""
+
+    def _inject(self, tmp_path, header_text, comp="acq"):
+        from just_makeit._init import _inject_struct_field
+
+        p = tmp_path / f"{comp}_core.h"
+        p.write_text(header_text, encoding="utf-8")
+        changed = _inject_struct_field(p, comp, "size_t doppler_bins;")
+        return p.read_text(encoding="utf-8"), changed
+
+    _NESTED = (
+        '#ifdef __cplusplus\nextern "C"\n{\n#endif\n'
+        "  typedef struct\n  {\n"
+        "    size_t code_bins;\n    float  test_stat;\n"
+        "  } acq_state_t;\n"
+        "#ifdef __cplusplus\n}\n#endif\n"
+    )
+
+    def test_nested_field_aligned_to_members(self, tmp_path):
+        out, changed = self._inject(tmp_path, self._NESTED)
+        assert changed
+        # field at the members' 4-space indent, not 6
+        assert "\n    size_t doppler_bins;\n" in out
+        assert "\n      size_t doppler_bins;\n" not in out
+
+    def test_nested_brace_keeps_indent(self, tmp_path):
+        out, _ = self._inject(tmp_path, self._NESTED)
+        assert "\n  } acq_state_t;\n" in out
+        assert "\n} acq_state_t;\n" not in out
+
+    def test_flat_struct_brace_at_col0(self, tmp_path):
+        flat = "typedef struct\n{\n    double gain;\n} widget_state_t;\n"
+        out, _ = self._inject(tmp_path, flat, comp="widget")
+        assert "\n    size_t doppler_bins;\n} widget_state_t;\n" in out
+
+    def test_idempotent(self, tmp_path):
+        from just_makeit._init import _inject_struct_field
+
+        p = tmp_path / "acq_core.h"
+        p.write_text(self._NESTED, encoding="utf-8")
+        assert _inject_struct_field(p, "acq", "size_t doppler_bins;")
+        assert not _inject_struct_field(p, "acq", "size_t doppler_bins;")
+
+    def test_integration_field_property_clean(self, tmp_path):
+        # A real --field property must land aligned in the sacred struct.
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, ["buf"], [("capacity", "size_t", "1024")])
+        property_run(dest, "buf", "level", None, "size_t", False, field=True)
+        h = (dest / "native" / "inc" / "buf" / "buf_core.h").read_text(
+            encoding="utf-8"
+        )
+        assert re.search(r"\n {4}size_t level;\n", h)
+        assert re.search(r"\n {2}\} buf_state_t;", h) or re.search(
+            r"\n\} buf_state_t;", h
+        )
+
+
 class TestPropertyUpdatesConfig:
     def test_config_records_property(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
