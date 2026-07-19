@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-19
+
 ### Added
 
 - **Object-level `create_fn` — a plain object's C constructor override
