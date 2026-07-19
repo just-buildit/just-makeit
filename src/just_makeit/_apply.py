@@ -460,6 +460,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 v["create_fn"],
                 init_params=[dict(p) for p in v.get("init_params", [])],
                 exclude_properties=list(v.get("exclude_properties", [])),
+                exclude_methods=list(v.get("exclude_methods", [])),
                 doc=v.get("doc", ""),
                 from_apply=True,
             )

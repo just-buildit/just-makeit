@@ -747,7 +747,8 @@ def _make_view_ctx(
     ``<component>_state_t``, the core ``#include`` and ``_destroy``/``_reset``)
     but overrides ``class_name`` and ``create_fn``, so it registers a distinct
     PyTypeObject built from a different constructor. Its property surface is the
-    parent's minus ``exclude_properties``; its methods are the parent's (v1). It
+    parent's minus ``exclude_properties``, and its methods the parent's minus
+    ``exclude_methods``. It
     carries no warnings/errors/stream. A distinct ``frag_id`` keeps its fragment
     file separate from the parent's.
     """
@@ -755,6 +756,7 @@ def _make_view_ctx(
     arg_type_ = C.arg_type(cfg, obj)
     return_type_ = C.return_type(cfg, obj)
     excluded = C.view_exclude_properties(view)
+    excluded_methods = C.view_exclude_methods(view)
     ctx = _make_object_ctx(
         obj,
         module,
@@ -782,7 +784,11 @@ def _make_view_ctx(
         Ctx.make_methods_ctx(
             ctx["component"],
             ctx["Component"],
-            C.methods(cfg, obj),
+            [
+                m
+                for m in C.methods(cfg, obj)
+                if m["name"] not in excluded_methods
+            ],
             pkg=pkg,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),

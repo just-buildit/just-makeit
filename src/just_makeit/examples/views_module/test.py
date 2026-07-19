@@ -5,11 +5,13 @@ Called by tests/test_examples.py as: run(root: Path) -> None
 Exercises `just-makeit view` — two Python classes over ONE generated C core:
 
   - `just-makeit object acc` scaffolds an accumulator (state `sum`, step adds).
-  - `just-makeit view SeededAcc --create-fn acc_create_seeded` adds a SECOND
-    class over the same `acc_state_t`, differing only in its constructor.
+  - `just-makeit view SeededAcc --create-fn acc_create_seeded
+    --exclude-method total` adds a SECOND class over the same `acc_state_t`,
+    differing in its constructor and trimming a method (`total()`).
   - Both classes compile into one `.so`, import from one subpackage, share the
     same step behaviour, and construct differently (`Acc(sum=0.0)` starts empty;
-    `SeededAcc(seed=10.0)` starts pre-loaded).
+    `SeededAcc(seed=10.0)` starts pre-loaded); `Acc` exposes `total()`,
+    `SeededAcc` does not.
 
 The point: there is exactly one `acc_core.c` (one struct, one step()), and the
 view is pure generated glue over it plus a hand-written alternate constructor.
@@ -47,6 +49,7 @@ def _patch(path: Path, old: str, new: str) -> None:
 def run(root: Path) -> None:
     from just_makeit._module import run as module_run
     from just_makeit._new import run as new_run
+    from just_makeit._method import run as method_run
     from just_makeit._object import run as object_run
     from just_makeit._view import run as view_run
 
@@ -64,8 +67,12 @@ def run(root: Path) -> None:
         return_type="double",
         mutable=True,
     )
+    # A read-only "total" method on the accumulator (returns the running sum).
+    method_run(dest, "acc", "total", "bank", "void", "double", False, [])
 
     # ── 2. Add a SECOND class over the same core: a pre-seeded accumulator ────
+    # It shares acc_state_t and step(), builds from a different constructor, and
+    # trims the surface — SeededAcc deliberately omits total().
     view_run(
         dest,
         "acc",
@@ -73,6 +80,7 @@ def run(root: Path) -> None:
         "bank",
         "acc_create_seeded",
         init_params=[("seed", "double", "0.0")],
+        exclude_methods=["total"],
     )
 
     # Both classes present, one core, distinct constructors.
@@ -88,6 +96,10 @@ def run(root: Path) -> None:
     assert "self->handle = acc_create_seeded(seed);" in frag_view
     assert 'PyModule_AddObject(m, "Acc"' in agg
     assert 'PyModule_AddObject(m, "SeededAcc"' in agg
+    # total() is on the parent but excluded from the view (its wrapper is not
+    # emitted); the shared C function still exists in the core.
+    assert "total" in frag_acc
+    assert "total" not in frag_view
     # Exactly one core lib — the view adds no new object library.
     cmake = (dest / "native" / "src" / "bank" / "CMakeLists.txt").read_text()
     assert "acc_core" in cmake
@@ -108,6 +120,12 @@ def run(root: Path) -> None:
         "    /* <<IMPLEMENT>>: build the state for the SeededAcc view. */\n"
         "    return NULL;",
         "    acc_state_t *s = acc_create(seed);\n    return s;",
+    )
+    # total() returns the running sum without mutating.
+    _patch(
+        core_c,
+        "    (void)state;\n    return (double)0.0;",
+        "    return state->sum;",
     )
 
     # ── 4. Build + C tests ───────────────────────────────────────────────────
@@ -136,6 +154,11 @@ assert s.step(2.5) == 13.5
 assert Acc is not SeededAcc
 assert type(a).__name__ == "Acc"
 assert type(s).__name__ == "SeededAcc"
+
+# total() is on the parent; the view trims it (exclude_methods).
+assert a.total() == 3.5
+assert hasattr(Acc, "total")
+assert not hasattr(SeededAcc, "total"), "view should not expose total()"
 print("views_module: all checks passed")
 """,
         ],

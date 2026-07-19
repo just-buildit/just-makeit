@@ -1611,6 +1611,17 @@ def view_exclude_properties(view: dict) -> set[str]:
     return set(view.get("exclude_properties", []))
 
 
+def view_exclude_methods(view: dict) -> set[str]:
+    """Parent method names a view omits from its Python surface (gh-504).
+
+    The shared C function stays; only the view's Python-facing wrapper and its
+    ``PyMethodDef`` entry are dropped, so there is no dangling symbol. Builtins
+    (``step``/``steps``/``reset``) are not ``[[<comp>.methods]]`` entries and so
+    are not excludable.
+    """
+    return set(view.get("exclude_methods", []))
+
+
 # Python's built-in warning categories (gh-481). Each name maps 1:1 onto a
 # ``PyExc_<name>`` symbol in the C API, so the codegen interpolates the name
 # directly. This frozenset is what keeps a typo out of the generated C, where
@@ -2919,6 +2930,9 @@ def _dump(cfg: dict) -> str:
             if v.get("exclude_properties"):
                 ep = ", ".join(f'"{n}"' for n in v["exclude_properties"])
                 lines.append(f"exclude_properties = [{ep}]")
+            if v.get("exclude_methods"):
+                em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
+                lines.append(f"exclude_methods = [{em}]")
             lines.append("")
 
     app = cfg.get("app", {})

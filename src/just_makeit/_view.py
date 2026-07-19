@@ -38,6 +38,7 @@ def run(
     create_fn: str,
     init_params: list | None = None,
     exclude_properties: list[str] | None = None,
+    exclude_methods: list[str] | None = None,
     doc: str = "",
     from_apply: bool = False,
 ) -> None:
@@ -102,6 +103,15 @@ def run(
                 f"'{object_name}'. Known: {sorted(prop_names)}"
             )
 
+    method_names = {m["name"] for m in C.methods(cfg, object_name)}
+    exclude_methods = list(exclude_methods or [])
+    for em in exclude_methods:
+        if em not in method_names:
+            _fail(
+                f"--exclude-method '{em}' is not a method of "
+                f"'{object_name}'. Known: {sorted(method_names)}"
+            )
+
     # Normalise init_params (CLI tuples or apply-replay dicts) to stored dicts.
     ip_dicts: list[dict] = []
     for p in init_params or []:
@@ -129,6 +139,8 @@ def run(
         view_entry["init_params"] = ip_dicts
     if exclude_properties:
         view_entry["exclude_properties"] = exclude_properties
+    if exclude_methods:
+        view_entry["exclude_methods"] = exclude_methods
 
     state_vars = C.state_vars(cfg, object_name)
     view_ip = C.view_init_params(cfg, object_name, view_entry)

@@ -26,6 +26,7 @@ def run(args: list[str]) -> None:
     doc = ""
     init_params: list[tuple] = []
     exclude_properties: list[str] = []
+    exclude_methods: list[str] = []
 
     remaining = args[2:]
     i = 0
@@ -61,6 +62,16 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             exclude_properties.append(remaining[i])
             i += 1
+        elif tok == "--exclude-method":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --exclude-method requires a name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            exclude_methods.append(remaining[i])
+            i += 1
         elif tok == "--doc":
             i += 1
             if i >= len(remaining):
@@ -80,5 +91,6 @@ def run(args: list[str]) -> None:
         create_fn,
         init_params=init_params,
         exclude_properties=exclude_properties,
+        exclude_methods=exclude_methods,
         doc=doc,
     )
