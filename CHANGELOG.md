@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.1] — 2026-07-19
+
 ### Fixed
 
 - **`--field` property injection no longer mangles the sacred struct's
