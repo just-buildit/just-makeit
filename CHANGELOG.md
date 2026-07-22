@@ -2,6 +2,74 @@
 
 ## [Unreleased]
 
+## [0.33.4] — 2026-07-22
+
+### Added
+
+- **Object modules honour `package` (gh-523).** `package` places a module's
+    Python artifacts under `src/<pkg>/<package>/`. It worked for capsule,
+    handle and composer; a plain object module accepted the key and ignored it,
+    taking its location from the module *name* alone — so `jm apply`
+    materialised a whole new top-level `src/<pkg>/<module>/` beside the package
+    the key asked for, and the `.pyi` moved out from under the package it
+    documents. An object can now live in an existing subpackage the way a
+    handle can. The accessor already existed twice (`capsule_package`, with
+    `handle_package` delegating to it); rather than add a third peer,
+    `module_package` is now canonical and both existing accessors alias it.
+    Landing in an existing package does not clobber it — the package
+    `__init__.py` write is create-only and the re-export merge preserves
+    hand-written content. Two modules sharing one package accumulate into one
+    `__all__` rather than each rewriting it, which would otherwise have made
+    `jm apply` ping-pong between them forever. A module with no `package` key
+    renders byte-identically to before.
+
+### Fixed
+
+- **A `variable_output` generator's stub declares its `count` parameter
+    (gh-527).** A `variable_output` method with no input to size from is the
+    generator shape: the binding emits `Py_ssize_t n = 1` and binds it as the
+    leading `count` (`kwlist {"count", "out"}` when an `out=` is offered, a
+    positional `"|n"` otherwise). The stub omitted it entirely, so the two
+    disagreed about the signature of the same method — `obj.run(4)` and
+    `obj.run(count=7)` are both accepted at runtime, and neither type-checked.
+    This is the silent direction of wrong: the runtime is right and the stub is
+    wrong, so nothing fails until a type-checker is pointed at it and the
+    natural reading is that the caller is at fault. `count` precedes `out` to
+    match the kwlist, so a positional call binds to the slot the binding
+    actually reads. Fixed in both stub generators — the standalone-object path
+    and the module-aggregated path are peers, and this repo has been bitten
+    repeatedly by fixing only one of a pair. A `variable_output` method sized
+    from an input array is unaffected, since the renderer derives its length
+    from `PyArray_SIZE`.
+
+### Docs
+
+- **Six documented statements that contradicted the code are corrected.** Each
+    told users something jm does not do, which costs more than a missing doc
+    because it reads as authoritative and there is nothing to search for when it
+    fails. `roles = "config"` was a phantom key — nothing in the tree reads
+    `roles`; the real key is `controllable`, and the same row also described it
+    backwards as "fields kept across `reset()`" when a controllable field is an
+    explicitly non-persistent per-call override. `--result-field` was documented
+    as broken in four places, having been fixed by gh-477. `jm status` was
+    documented as printing "one of three states" with no flags; it emits six
+    (`OK`, `MISSING`, `STALE`, `ALLOWED`, `DROPPED`, `DRIFT`) and takes four
+    (`--check`, `--allow`, `--json`, `--diff`). The lifecycle key is
+    `init_post_parse`, not `init_post_parse_impl`. The `buf_field` / `len_field`
+    / `valid_field` / `expr` properties were marked "TOML only, CLI flag
+    pending" though the flags shipped in 0.30.2. And `--variable-output`
+    described its return view as "valid until next call", which gh-437 retired:
+    the binding holds a weakref to the last view handed out, so accumulating
+    views is safe and only the drain-immediately pattern reuses the buffer in
+    place.
+- **`jm view` is documented (gh-504).** The command shipped in 0.31.0, gained
+    diverging surfaces in 0.32.0 and view-level warnings in 0.33.0, and had zero
+    occurrences anywhere in the docs — neither the command, nor the
+    `[[<obj>.views]]` table, nor the `--view` flag that `jm method`,
+    `jm property` and `jm warning` all accept. The bundled `views_module`
+    example already existed and ran but had no `README.md`, which was the sole
+    reason it was skipped by the gallery, the nav and the feature index.
+
 ## [0.33.3] — 2026-07-22
 
 ### Fixed
