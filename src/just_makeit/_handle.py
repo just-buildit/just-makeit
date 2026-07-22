@@ -34,6 +34,7 @@ from . import _capsule
 from . import _coerce
 from . import _composer
 from . import _config as C
+from . import _context as Ctx
 from . import _types as T
 
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
@@ -291,11 +292,35 @@ def render_tp_init(cfg: dict, module: str) -> str:
     }}
     {init_fn}(self->h{(", " + call_args) if call_args else ""});"""
     else:
+        # gh-514: honour this module's declared create_error/create_error_message
+        # instead of hardcoding RuntimeError. A handle module is the shape that
+        # opens external resources — files, sockets, devices — so an open that
+        # fails for a genuinely user-actionable reason (missing file, unknown
+        # container, refused format) deserves better than a message naming an
+        # internal C symbol. Undeclared keeps the historical text byte-for-byte.
+        #
+        # The path borrows are released by fs_decref above (gh-219: after
+        # create_fn copied them), so this failure branch has nothing to free.
+        _err_cat = C.handle_create_error(cfg, module)
+        if _err_cat and _err_cat not in C.ERROR_CATEGORIES:
+            supported = ", ".join(sorted(C.ERROR_CATEGORIES))
+            raise ValueError(
+                f"module '{module}': create_error '{_err_cat}' is not a"
+                f" recognised exception. Supported: {supported}."
+            )
+        _fail_block = Ctx.make_errors_ctx(
+            module,
+            _err_cat,
+            C.handle_create_error_message(cfg, module),
+            create_fn=create_fn,
+            handle_expr="self->h",
+            undeclared_body=(
+                f'        PyErr_SetString(PyExc_RuntimeError, "{create_fn}'
+                ' failed");\n'
+            ),
+        )["create_fail_block"].rstrip("\n")
         construct = f"""    self->h = {create_fn}({call_args});
-{fs_decref}    if (!self->h) {{
-        PyErr_SetString(PyExc_RuntimeError, "{create_fn} failed");
-        return -1;
-    }}"""
+{fs_decref}{_fail_block}"""
 
     return f"""static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)

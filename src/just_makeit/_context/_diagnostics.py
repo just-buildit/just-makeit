@@ -185,6 +185,8 @@ def make_errors_ctx(
     category: str = "",
     message: str = "",
     create_fn: "str | None" = None,
+    handle_expr: str = "self->handle",
+    undeclared_body: str = "",
 ) -> dict[str, str]:
     """Build the create()-failure translation block (gh-482).
 
@@ -197,6 +199,16 @@ def make_errors_ctx(
         yields the historical ``MemoryError`` block unchanged.
     message : str, optional
         Text for the raised exception. Ignored when `category` is empty.
+    handle_expr : str, optional
+        The C expression tested for NULL. Objects store their state in
+        ``self->handle``; a ``kind = "handle"`` module uses ``self->h``
+        (gh-514).
+    undeclared_body : str, optional
+        Overrides the ``category``-empty body. A handle's historical failure
+        text is a one-line ``RuntimeError``, not the object's two-line
+        ``MemoryError``, so it passes its own here — that keeps every existing
+        handle module's generated C byte-identical while still sharing the
+        *declared* rendering below, which is the part gh-514 needed.
 
     Returns
     -------
@@ -232,7 +244,7 @@ def make_errors_ctx(
         # the function that actually returned NULL — default None preserves the
         # historical ``<component>_create`` text byte-for-byte.
         _cfn = create_fn or f"{component}_create"
-        body = (
+        body = undeclared_body or (
             "        PyErr_SetString(PyExc_MemoryError,\n"
             f'                        "{_cfn} returned NULL");\n'
         )
@@ -243,6 +255,6 @@ def make_errors_ctx(
         )
     return {
         "create_fail_block": (
-            f"    if (!self->handle) {{\n{body}        return -1;\n    }}\n"
+            f"    if (!{handle_expr}) {{\n{body}        return -1;\n    }}\n"
         )
     }
