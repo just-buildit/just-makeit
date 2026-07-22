@@ -2,6 +2,77 @@
 
 ## [Unreleased]
 
+## [0.33.5] — 2026-07-22
+
+### Added
+
+- **`[<obj>.destroy]` — a nameable, fallible object destructor (gh-541,
+    gh-544).** An object's teardown was `void` and hardcoded to the Python name
+    `destroy()`. Both are now declarable:
+
+    ```toml
+    [wfm_writer.destroy]
+    name          = "close"        # Python method name; default "destroy"
+    aliases       = ["destroy"]    # additional names on the same C function
+    returns       = "int"          # non-zero raises
+    error         = "OSError"
+    error_message = "failed to finalise the capture"
+    ```
+
+    The fallible half is a data-integrity fix. For a writer, close is not
+    cleanup — it *is* the last part of the write: a capture format may patch its
+    header from the final sample count and append trailing metadata during
+    close, both after the sample data. A failure there means the file on disk is
+    not the file the caller asked for, and the caller can act on it. The
+    generated `__exit__` swallowed the status, so a `with` block — how nearly
+    every caller uses such a type — reported success over a corrupt capture. A
+    fallible `close()` alone would not have been enough; the status now reaches
+    `__exit__`, which returns NULL so the exception propagates out of the block.
+    `tp_dealloc` still swallows, necessarily: a deallocator has no exception
+    context and must not clobber an in-flight exception. The handle is cleared
+    before the status is reported, so a second close is a no-op rather than a
+    double free. `returns = "int"` widens the sacred core signature to
+    `int <obj>_destroy(<obj>_state_t *)`; existing projects are patched in
+    place, and a body you already wrote is never touched. `error` is validated
+    at generation time, and `error`/`error_message` are rejected when `returns`
+    is not `"int"` rather than sitting silently inert.
+
+- **`no_reset` — an object with nothing to reset need not ship one (gh-542).**
+    Symmetric with `no_step` and `no_state`, including a `--no-reset` flag on
+    both `jm object` and `jm new`. jm always emitted `reset()`, which for an
+    object with no coherent reset left only bad options: a C no-op returns
+    `None` so the caller believes it worked, and a hand-written raise in the
+    sacred fragment silently degrades to that no-op if a regeneration drops it.
+    A writer whose sample count drives a trailing header patch has nothing to
+    reset — the honest answer is to construct a new one. The flag removes the
+    method entirely rather than stubbing it: no binding, no `<obj>_reset()`
+    declared or defined in the core, no `.pyi` entry, and nothing in the
+    generated tests or benchmarks that calls it. `no_state` alone still emits
+    `reset()`, unchanged.
+
+### Docs
+
+- **`jm view` is documented (gh-504).** The command shipped in 0.31.0, gained
+    diverging surfaces in 0.32.0 and view-level warnings in 0.33.0, and had zero
+    occurrences anywhere in the docs — not the command, not the
+    `[[<obj>.views]]` table, not the `--view` flag that `jm method`,
+    `jm property` and `jm warning` all accept. The bundled `views_module`
+    example already existed and ran but had no `README.md`, which was the sole
+    reason the gallery, the nav and the feature index all skipped it.
+- **The property kinds are contrasted where `--field` is introduced (gh-536).**
+    Omitting `--field` read as "unsupported" when it means "you implement the
+    accessor" — the *computed* kind, whose generated accessor takes a pointer to
+    the state, so the struct may stay opaque. The other kinds read a member
+    directly and need the definition in the header. Getting this wrong is not
+    theoretical: it led to a state struct being published that did not need to
+    be, and to a migration being abandoned that was never actually blocked.
+- **Hand-owning one member of a generated stub is documented (gh-538).**
+    `# jm:hand` and `manual_stub` have existed since gh-428 and appeared nowhere
+    in the docs, so the only way to find either was to read the source. A
+    `# jm:hand` comment above a member in a `.pyi` makes the splice engine
+    transplant it verbatim through every regeneration, with no manifest entry
+    required — which is what lets a hand-written binding reach a type checker.
+
 ### Added
 
 - **`no_reset` — an object that has nothing to reset (gh-542).** jm's object
