@@ -2075,6 +2075,17 @@ def make_methods_ctx(
         _stub_enable_out = (
             m_var and not m_multi and (not params or _single_array_param)
         )
+        # gh-527: a variable_output method with no input to size from is the
+        # generator shape -- the parse block above emits `Py_ssize_t n = 1`
+        # for it and binds it as the leading `count` (kwlist {"count", "out"}
+        # when an out= is offered, a positional "|n" otherwise). The stub
+        # omitted it entirely, so `obj.run(4)` -- the call that actually works
+        # -- failed to type-check while `obj.run(out=...)` passed. `count`
+        # precedes `out` to match the kwlist order. The peer generator in
+        # _stubs.py (the module-aggregated .pyi) carries the same rule.
+        _stub_count_arg = m_var and arg_type == "void" and not params
+        if _stub_count_arg:
+            param_parts.append("count: int = 1")
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)
