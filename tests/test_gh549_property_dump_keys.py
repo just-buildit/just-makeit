@@ -19,7 +19,6 @@ forgets fails it, including one that does not exist yet.
 """
 
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -30,6 +29,11 @@ from just_makeit import _config as C
 from just_makeit._new import run as new_run
 from just_makeit._property import run as property_run
 from just_makeit._split_objects import run as split_run
+
+# tomllib is stdlib only on 3.11+; jm supports down to 3.9 and guards this in
+# _config.py, so borrow its already-resolved reader rather than importing it
+# here (a bare `import tomllib` is a collection error on 3.9/3.10).
+tomllib = C.tomllib
 
 
 def _round_trip(prop: dict) -> dict:
