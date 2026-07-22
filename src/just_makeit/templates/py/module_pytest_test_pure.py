@@ -9,7 +9,5 @@ def test_create():
 <<step_pytest_methods_pure>>
 def test_getter_setter():
 <<getter_setter_test_py_pure>>
-
-def test_reset():
-<<reset_test_py_pure>>
+<<reset_test_py_pure_def>><<reset_test_py_pure>>
 <<lifecycle_pytest_methods_pure>>

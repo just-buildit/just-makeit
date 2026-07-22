@@ -366,6 +366,7 @@ Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 | `mutable`            | `jm object --mutable`                             | ✅           |                                                                                         |
 | `no_state`           | `jm object --no-state`                            | ✅           |                                                                                         |
 | `no_step`            | `jm object --no-step`                             | ✅           |                                                                                         |
+| `no_reset`           | `jm object --no-reset`                            | ✅           | Removes `reset()` entirely — binding, C function, `.pyi` entry, tests.                  |
 | `class_name`         | `jm object --class-name NAME`                     | ✅           |                                                                                         |
 | `depends_on`         | (inferred from `--module`)                        | ✅           | Set automatically when an object lives in a module.                                     |
 | `extra_link_libs`    | (component scope: TOML only)                      | 🟡           | Per-module is `jm module --extra-link-libs`; per-component still TOML-only (rare case). |
@@ -516,13 +517,14 @@ ______________________________________________________________________
 One section per standalone object or module-member object. The section name
 is whatever you passed to `just-makeit object <name>`.
 
-| Key           | Type                  | Default            | Set by          |
-| ------------- | --------------------- | ------------------ | --------------- |
-| `arg_type`    | string                | `"float _Complex"` | `--arg-type`    |
-| `return_type` | string                | same as `arg_type` | `--return-type` |
-| `mutable`     | `"true"` or `"false"` | `"false"`          | `--mutable`     |
-| `no_state`    | `"true"` or `"false"` | `"false"`          | `--no-state`    |
-| `no_step`     | `"true"` or `"false"` | `"false"`          | `--no-step`     |
+| Key           | Type                     | Default            | Set by          |
+| ------------- | ------------------------ | ------------------ | --------------- |
+| `arg_type`    | string                   | `"float _Complex"` | `--arg-type`    |
+| `return_type` | string                   | same as `arg_type` | `--return-type` |
+| `mutable`     | `"true"` or `"false"`    | `"false"`          | `--mutable`     |
+| `no_state`    | `"true"` or `"false"`    | `"false"`          | `--no-state`    |
+| `no_step`     | `"true"` or `"false"`    | `"false"`          | `--no-step`     |
+| `no_reset`    | `"true"` (only when set) | _(absent)_         | `--no-reset`    |
 
 ### `[[<object>.state]]`
 

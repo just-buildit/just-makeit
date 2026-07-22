@@ -74,6 +74,9 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             array_args=C.array_args(cfg, object_name),
             no_state=C.is_no_state(cfg, object_name),
             init_params=C.init_params(cfg, object_name),
+            # gh-542: the glue render is exactly the pass that used to
+            # silently reinstate a hand-removed reset() binding.
+            no_reset=C.is_no_reset(cfg, object_name),
         )
     )
     ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
@@ -179,6 +182,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             f"from {pkg} import {Component}",
             ctx.get("py_create_args", ""),
             Component,
+            no_reset=C.is_no_reset(cfg, object_name),
         )
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""

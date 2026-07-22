@@ -681,6 +681,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     state_names = {n for n, _, _ in state_vars}
     ip = C.init_params(cfg, obj)
     no_step = C.is_no_step(cfg, obj)
+    no_reset = C.is_no_reset(cfg, obj)
     no_state = C.is_no_state(cfg, obj)
     # Controllable per-call overrides (gh-240): step() shows them positional-
     # only (trailing `/`, since its binding rejects keyword calls); steps()
@@ -765,7 +766,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # (the #69 contract), so the first state var is config — not guaranteed
         # zeroed by reset(). Skip the "reset restores defaults" demo there.
         # (init_params survive the apply-path cfg; reset_impl/create_impl don't.)
-        custom_reset=bool(ip),
+        # gh-542: `no_reset` removes the method, so the demo would be a
+        # failing doctest under `pytest --doctest-glob='*.pyi'`, not just
+        # stale prose.
+        custom_reset=bool(ip) or no_reset,
         create_blk=_create_blk,
     )
     lines: list[str] = [f"class {Component}:"] + doc_lines
@@ -811,8 +815,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # gh-131: skip the built-in reset() stub when the user declared a
     # [[methods]] entry named "reset"; that entry's stub appears below in
     # the extra-methods loop and must not be duplicated here.
+    # gh-542: `no_reset` removes it outright — the stub must not advertise a
+    # method the extension does not define, or a type checker green-lights a
+    # call that raises AttributeError at runtime.
     _user_has_reset = any(m["name"] == "reset" for m in obj_methods)
-    if not _user_has_reset:
+    if not _user_has_reset and not no_reset:
         lines += ["", "    def reset(self) -> None:"]
         lines += _builtin_doc(
             f"{obj}_reset", [], "None", "Reset state to post-create defaults."

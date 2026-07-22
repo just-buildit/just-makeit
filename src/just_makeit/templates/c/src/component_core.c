@@ -15,13 +15,7 @@
 {
 /*<<destroy_impl>>*/    free(state);/*<<destroy_ret_stmt>>*/
 }
-
-void
-/*<<component>>*/_reset(/*<<component>>*/_state_t *state)
-{
-/*<<reset_assignments>>*/
-}
-
+/*<<reset_c_open>>*//*<<reset_assignments>>*//*<<reset_c_close>>*/
 /*<<steps_c_impl>>*/
 
 /*<<getter_setter_impls>>*/

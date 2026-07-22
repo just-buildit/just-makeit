@@ -115,6 +115,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "array_args": C.array_args(cfg, comp),
         "no_state": C.is_no_state(cfg, comp),
         "no_step": C.is_no_step(cfg, comp),
+        # gh-542: replayed like every other shape key — a manifest key that
+        # apply drops regenerates the very method it asked to remove.
+        "no_reset": C.is_no_reset(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),

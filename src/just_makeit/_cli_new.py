@@ -30,6 +30,7 @@ def run(args: list[str]) -> None:
     # kept as a deprecated no-op for back-compat.
     fragments = True
     no_step = False
+    no_reset = False
     no_state = False
     arg_type = "float _Complex"
     return_type = None
@@ -161,6 +162,10 @@ def run(args: list[str]) -> None:
         elif tok == "--no-step":
             no_step = True
             i += 1
+        elif tok == "--no-reset":
+            # gh-542: an object with nothing coherent to reset.
+            no_reset = True
+            i += 1
         elif tok == "--no-state":
             no_state = True
             i += 1
@@ -224,6 +229,7 @@ def run(args: list[str]) -> None:
         perf=perf,
         mutable=mutable,
         no_step=no_step,
+        no_reset=no_reset,
         no_state=no_state,
         arg_type=arg_type,
         return_type=return_type,

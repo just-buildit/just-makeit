@@ -96,6 +96,9 @@ def _object_flags(
     if C.is_no_step(cfg, comp):
         parts.append(_bool_flag("--no-step"))
 
+    if C.is_no_reset(cfg, comp):
+        parts.append(_bool_flag("--no-reset"))
+
     if C.step_delegates(cfg, comp):
         parts.append(_bool_flag("--step-delegates-to-steps"))
 

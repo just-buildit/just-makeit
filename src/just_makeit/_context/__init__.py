@@ -21,6 +21,7 @@ from ._state import (
     _pyi_examples_block,
     _build_no_state_init_ctx,
     _unseedable_required,
+    _reset_wrapper_slots,
 )
 from ._methods import make_methods_ctx, make_properties_ctx
 from ._diagnostics import make_warnings_ctx, make_errors_ctx
@@ -53,4 +54,5 @@ __all__ = [
     "_pyi_examples_block",
     "_build_no_state_init_ctx",
     "_unseedable_required",
+    "_reset_wrapper_slots",
 ]
