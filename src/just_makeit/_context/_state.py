@@ -651,11 +651,19 @@ def _build_no_state_init_ctx(
             )
         )
     if opt_scalar_ip:
+        # gh-515: a param with no default carries no ", default …" clause.
+        # numpydoc already reads a bare `name : type` as having no default,
+        # whereas the trailing `, default ` jm used to emit was neither
+        # readable prose nor a literal anyone could copy into a call.
         pyi_doc_sections.append(
             "\n".join(
-                f"    {name} : {_CTYPE_META[ct]['py_type']},"
-                f" default {_py_default(ct, dflt)}\n"
-                f"        {_pdoc(name, False)}"
+                f"    {name} : {_CTYPE_META[ct]['py_type']}"
+                + (
+                    f", default {_py_default(ct, dflt)}"
+                    if dflt.strip()
+                    else ""
+                )
+                + f"\n        {_pdoc(name, False)}"
                 for name, ct, dflt, *_ in opt_scalar_ip
             )
         )
@@ -1676,6 +1684,10 @@ def make_state_ctx(
     # gh-273: a required init-param with no default has no valid construction
     # seed, so suppress the doctest rather than emit one a validating ctor
     # rejects under `pytest --doctest-glob='*.pyi'`.
+    # gh-515: likewise when any argument rendered as the `...` sentinel — a
+    # non-required param with no default is equally unseedable, and `Rdr(...)`
+    # would hand the ctor an Ellipsis and raise. Same guard `_stubs.py` applies
+    # to its own construction example.
     pyi_examples = (
         _pyi_examples_block(
             ctor_scalars,
@@ -1684,7 +1696,9 @@ def make_state_ctx(
             py_create_args,
             Component,
         )
-        if ctor_scalars and not _unseedable_required(init_params)
+        if ctor_scalars
+        and not _unseedable_required(init_params)
+        and "..." not in py_create_args
         else ""
     )
 

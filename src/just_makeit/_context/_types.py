@@ -44,7 +44,20 @@ def _c_set_val(ctype: str) -> str:
 
 
 def _py_default(ctype: str, default: str) -> str:
-    """Convert a C default literal to a valid Python literal."""
+    """Convert a C default literal to a valid Python literal.
+
+    When a branch cannot form a literal — the ``str`` and integer paths given
+    an absent default — the result is the ``...`` sentinel (gh-515) rather than
+    the empty string. ``...`` is the idiomatic stub placeholder and the same
+    marker :func:`just_makeit._stubs._py_default_stub` emits, so the two stub
+    paths agree; the empty string emitted ``path: str = `` into the .pyi, a
+    SyntaxError that broke the entire stub. Callers must treat ``...`` as "not
+    constructible" and suppress any generated construction example.
+
+    The float and complex branches already synthesise a valid zero literal that
+    mirrors the C side's zero-seed, so they are left untouched and their output
+    stays byte-identical.
+    """
     kind = _CTYPE_META[ctype]["kind"]
     if kind == "float":
         s = default.rstrip("fF")
@@ -62,8 +75,10 @@ def _py_default(ctype: str, default: str) -> str:
         # to swap for a real fixture path in their tests.
         # Any other C string literal (e.g. "/dev/null") is already
         # quoted in the TOML default and passes through verbatim.
-        return '""' if default == "NULL" else default
-    return default
+        if default == "NULL":
+            return '""'
+        return default if default.strip() else "..."
+    return default if default.strip() else "..."
 
 
 def _py_sample_val(meta: dict) -> str:

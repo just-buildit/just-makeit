@@ -344,8 +344,17 @@ _ARRAY_RE = _re.compile(r"^([\w\s_]+)\[(\d+)\]$")
 
 
 def _py_default_stub(ctype: str, default: str) -> str:
-    """Convert a C default literal to a Python literal (stub helper)."""
-    if ctype not in _CTYPE_TO_PY:
+    """Convert a C default literal to a Python literal (stub helper).
+
+    An absent default renders as the ``...`` sentinel rather than as the empty
+    string (gh-515). Every consumer already understands ``...`` to mean "no
+    literal jm can seed": the construction example is suppressed by the
+    ``"..." in py_create_args`` guard, and the emitted signature stays valid
+    Python. Returning the raw empty default instead produced ``x: int = `` —
+    a SyntaxError that broke the whole stub for any downstream ``mypy`` run or
+    ``pytest --doctest-glob='*.pyi'`` sweep.
+    """
+    if ctype not in _CTYPE_TO_PY or not default.strip():
         return "..."
     kind_map = {
         "float": "float",
@@ -460,8 +469,13 @@ def _build_class_docstring(
                 py_d = f'"{dflt}"' if dflt else "..."
             else:
                 py_d = _py_default_stub(ctype, dflt)
+            # gh-515: a param with no default carries no ", default …" clause.
+            # numpydoc already reads a bare `name : type` as having no default,
+            # whereas the trailing `, default ` jm used to emit was neither
+            # readable prose nor a literal anyone could copy into a call.
             param_lines += [
-                f"    {name} : {py_t}, default {py_d}",
+                f"    {name} : {py_t}"
+                + (f", default {py_d}" if dflt.strip() else ""),
                 f"        {_pdesc(name, manifest_doc, False)}",
             ]
     elif state_vars and not no_state:
