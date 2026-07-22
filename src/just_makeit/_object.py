@@ -819,6 +819,7 @@ def _make_view_ctx(
             merged_props,
             frozenset(n for n, _, _ in state_vars),
             doc_blocks=doc_blocks,
+            enums=C.enums(cfg),  # gh-519
         )
     )
     # gh-509: a view declares its OWN warnings ([[<obj>.views.warnings]]) —
@@ -948,6 +949,7 @@ def build_component_ctxs(
                 C.properties(cfg, obj),
                 frozenset(n for n, _, _ in state_vars),
                 doc_blocks=_doc_blocks,
+                enums=C.enums(cfg),  # gh-519
             )
         )
         # Declared warnings (gh-481) for a module object, filled into its

@@ -202,6 +202,12 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if p.get("expr"):
         parts.append(_flag("--expr", p["expr"]))
 
+    # gh-519: the [[enum]] the property decodes through. Dropping it would
+    # rebuild the property as a bare int — the exact silent-divergence the
+    # gh-490 note above warns about.
+    if p.get("enum"):
+        parts.append(_flag("--enum", p["enum"]))
+
     if p.get("doc"):
         parts.append(_flag("--doc", p["doc"]))
 

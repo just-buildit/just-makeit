@@ -42,6 +42,10 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         "stream_module_ready": "",
         "pyi_stream_typing": "",
         "pyi_stream_methods": "",
+        # gh-519: `, Literal` when some property declares an `enum`; empty
+        # otherwise, so a project without enum properties renders unchanged.
+        # make_properties_ctx overwrites it on every path that has properties.
+        "pyi_property_typing": "",
         # Windows CMake boilerplate is opt-in (gh-213); default off so the
         # generated CMakeLists has no `if(WIN32 …)` block unless the project
         # lists `windows` in [project] platforms.

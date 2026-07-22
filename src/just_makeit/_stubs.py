@@ -1091,6 +1091,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         obj_props,
         frozenset(state_names),
         doc_blocks=doc_blocks,
+        enums=C.enums(cfg),  # gh-519: `enum` properties annotate as Literal
     )["property_stubs_pyi"]
     if _prop_pyi:
         lines += _prop_pyi.rstrip("\n").split("\n")
@@ -1186,10 +1187,21 @@ def _uses_any(cfg: dict, module: str) -> bool:
 
 
 def _uses_literal(cfg: dict, module: str) -> bool:
-    """Return True if any object in this module has a string_enum init param."""
+    """Return True if the module's stub needs ``Literal``.
+
+    Two independent sources: a ``string_enum:`` init param, and (gh-519) a
+    property that decodes through the ``[[enum]]`` SSOT — both annotate as
+    ``Literal[...]``."""
+    enum_reg = C.enums(cfg)
     for obj in C.module_objects(cfg, module):
         for param in C.init_params(cfg, obj):
             if param[1].startswith("string_enum:"):
+                return True
+        props = list(C.properties(cfg, obj))
+        for v in C.views(cfg, obj):
+            props += C.view_properties(v)
+        for prop in props:
+            if prop.get("enum") in enum_reg:
                 return True
     return False
 

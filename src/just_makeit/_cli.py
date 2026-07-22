@@ -134,6 +134,8 @@ Commands:
     --len-field name            Length field for --buf-field (default: n).
     --valid-field name          Field gating whether the buffer is populated.
     --expr "C expr"             Back property with an inline C expression.
+    --enum name                 Decode the value through a top-level [[enum]]:
+                                the C side keeps the int, Python sees the string.
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -632,6 +634,7 @@ def main() -> None:
         valid_field = ""
         expr = ""
         view = ""
+        enum = ""  # gh-519
 
         remaining = args[3:]
         i = 0
@@ -690,6 +693,7 @@ def main() -> None:
                 "--len-field",
                 "--valid-field",
                 "--expr",
+                "--enum",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -702,6 +706,8 @@ def main() -> None:
                     len_field = val
                 elif tok == "--valid-field":
                     valid_field = val
+                elif tok == "--enum":
+                    enum = val  # gh-519
                 else:
                     expr = val
                 i += 1
@@ -737,6 +743,7 @@ def main() -> None:
             expr=expr,
             doc=doc,
             view=view,
+            enum=enum,
         )
 
     elif cmd == "warning":

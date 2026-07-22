@@ -482,6 +482,12 @@ def _build_ctx(
             ctx["Component"],
             parsed.get("properties", []),
             frozenset(n for n, _, _ in state_vars),
+            # gh-519: no `enums=` here. `bind` reflects a hand-written _core.h,
+            # not the manifest, so there is no [[enum]] registry in scope and
+            # `parsed` properties never carry an `enum` key. Leaving the
+            # default (None) means enum support is simply absent on this path
+            # and the render stays byte-identical (same reasoning as the
+            # empty make_warnings_ctx below).
         )
     )
     # gh-481: `bind` reflects a hand-written _core.h rather than the manifest,

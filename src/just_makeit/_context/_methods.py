@@ -2163,12 +2163,103 @@ def make_methods_ctx(
 # ---------------------------------------------------------------------------
 
 
+def _enum_symbols(Component: str, name: str) -> tuple[str, str]:
+    """C symbol names for one property enum, namespaced by *Component*.
+
+    gh-519: a module's ``_ext.c`` ``#include``s every object's fragment into a
+    *single* translation unit, and a view (gh-504) adds yet another type over
+    the same ``component``. Two types in that TU may each declare a property
+    on the same ``[[enum]]``, and module-level ``function`` enums (gh-353)
+    already own the bare ``_enum_index`` / ``_enum_<name>`` symbols. So the
+    per-property tables are namespaced by ``Component`` — the one name that is
+    unique per type section (it already namespaces every getter/setter there).
+
+    Returns ``(index_fn, table)``.
+    """
+    return (f"_enum_index_{Component}", f"_enum_{Component}_{name}")
+
+
+def _render_property_enum_tables(
+    Component: str, used: list[str], enums: dict[str, list[str]]
+) -> str:
+    """Emit the ``_enum_index_<Component>`` helper + one table per enum in
+    *used* (first-reference order).
+
+    Reuses the composer's enum SSOT verbatim — ``_composer._ENUM_INDEX_FN``
+    for the lookup body and the same "order is the C int" table layout as
+    :func:`_handle.render_enum_tables` — only renaming the symbols into this
+    type's namespace (see :func:`_enum_symbols`).
+    """
+    from .._composer import _ENUM_INDEX_FN
+
+    index_fn, _ = _enum_symbols(Component, "")
+    parts = [
+        "/* gh-519: strcmp for the enum lookup below. Python.h already",
+        " * pulls in <string.h>, but the include is explicit so the block",
+        " * stands on its own wherever it is spliced. */",
+        "#include <string.h>",
+        "",
+        _ENUM_INDEX_FN.replace(
+            "_enum_index(const char", f"{index_fn}(const char"
+        ),
+    ]
+    for name in used:
+        _, table = _enum_symbols(Component, name)
+        items = "".join(f'    "{v}",\n' for v in enums[name])
+        parts.append(f"static const char *const {table}[] = {{")
+        parts.append(items + "    NULL,")
+        parts.append("};")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _property_enum(
+    component: str,
+    Component: str,
+    p: dict,
+    enums: dict[str, list[str]] | None,
+) -> str:
+    """Resolve one property's ``enum = "<name>"`` declaration, or ``""``.
+
+    A ``None`` registry means "enums are unsupported on this path" (the
+    ``jm bind`` reflection path, which has no manifest to read ``[[enum]]``
+    from). Declaring ``enum`` there is inert rather than fatal, so the bound
+    render stays byte-identical to before gh-519.
+
+    Raises
+    ------
+    ValueError
+        If the enum names something absent from the ``[[enum]]`` registry, or
+        if it is combined with ``buf_field`` (an array of enums has no
+        meaning). Raising here turns a typo into a jm diagnostic instead of an
+        undeclared ``_enum_<typo>`` identifier in the user's compiler.
+    """
+    name = p.get("enum") or ""
+    if not name or enums is None:
+        return ""
+    if name not in enums:
+        known = ", ".join(sorted(enums)) or "(none declared)"
+        raise ValueError(
+            f"{component}.{p['name']}: unknown enum '{name}'. "
+            f"Declare it as a top-level [[enum]] with that name. "
+            f"Known enums: {known}"
+        )
+    if p.get("buf_field"):
+        raise ValueError(
+            f"{component}.{p['name']}: `enum` is not supported on a "
+            f"buf_field property — an array of enum strings has no "
+            f"decoded form. Drop `enum` or drop `buf_field`."
+        )
+    return name
+
+
 def make_properties_ctx(
     component: str,
     Component: str,
     properties: list[dict],
     state_var_names: frozenset[str] = frozenset(),
     doc_blocks: dict | None = None,
+    enums: dict[str, list[str]] | None = None,
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
 
@@ -2176,6 +2267,12 @@ def make_properties_ctx(
     excluded from property_decls to avoid duplicate C declarations.
 
     Each property dict has: name, type (a _CTYPE_META key), writable (bool).
+
+    enums: the project's ``[[enum]]`` registry (``C.enums(cfg)``). gh-519 — a
+    property may declare ``enum = "<name>"``, which makes its Python face an
+    ordered string instead of the raw int. ``None`` (the default) means the
+    caller has no registry to offer, in which case ``enum`` is ignored and the
+    output is byte-identical to the pre-gh-519 render.
     """
     _EMPTY: dict[str, str] = {
         "getset_def": "",
@@ -2183,6 +2280,7 @@ def make_properties_ctx(
         "property_decls": "",
         "property_struct_fields": "",
         "property_stubs_pyi": "",
+        "pyi_property_typing": "",
     }
     if not properties:
         return _EMPTY
@@ -2199,6 +2297,10 @@ def make_properties_ctx(
     decl_lines: list[str] = []
     struct_field_lines: list[str] = []
     pyi_parts: list[str] = []
+    # gh-519: enums actually referenced by this component's properties, in
+    # first-reference order (mirrors _handle._enums_used) — only those get a
+    # table emitted.
+    enums_used: list[str] = []
 
     for p in properties:
         pname: str = p["name"]
@@ -2211,6 +2313,55 @@ def make_properties_ctx(
 
         meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
         disp = _ctype_display(ctype)
+
+        # gh-519: an `enum`-decorated property stores the SSOT int in C but
+        # presents the value as its string on the Python side.
+        p_enum = _property_enum(component, Component, p, enums)
+        if p_enum and p_enum not in enums_used:
+            enums_used.append(p_enum)
+        enum_index_fn, enum_table = (
+            _enum_symbols(Component, p_enum) if p_enum else ("", "")
+        )
+
+        def _decode(acc: str, _t: str = enum_table) -> str:
+            """PyObject* expression for the value at accessor *acc*."""
+            if _t:
+                return f"PyUnicode_FromString({_t}[{acc}])"
+            return meta["to_py"](acc)
+
+        _n_choices = len(enums[p_enum]) if p_enum else 0
+
+        def _decode_stmts(
+            acc: str,
+            _t: str = enum_table,
+            _n: int = _n_choices,
+            _e: str = p_enum,
+            _p: str = pname,
+        ) -> str:
+            """Statements ending in a ``return`` that decode *acc*.
+
+            gh-519: the enum form is range-checked before it indexes the
+            table. C owns the stored value — it is typically decoded from an
+            external source such as a file header — so an unknown code is
+            reachable input, not an internal invariant. Indexing blind read
+            past the table (at ``_n`` exactly, the NULL terminator, giving
+            ``PyUnicode_FromString(NULL)``), which surfaced as a garbage
+            string, a UnicodeDecodeError, or a crash depending on what
+            followed in memory. A bounds check turns that into an actionable
+            Python error naming the offending value.
+            """
+            if not _t:
+                return f"    return {meta['to_py'](acc)};\n"
+            return (
+                f"    long _v = (long)({acc});\n"
+                f"    if (_v < 0 || _v >= {_n}) {{\n"
+                f"        PyErr_Format(PyExc_ValueError,\n"
+                f'            "{_p} holds out-of-range {_e} value %ld"\n'
+                f'            " (valid: 0..{_n - 1})", _v);\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    return PyUnicode_FromString({_t}[_v]);\n"
+            )
 
         if buf_field:
             _elem_ct = ctype[:-2] if ctype.endswith("[]") else ctype
@@ -2245,7 +2396,6 @@ def make_properties_ctx(
             )
         elif p.get("expr"):
             _expr = p["expr"]
-            to_py = meta["to_py"](_expr)
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"
@@ -2253,7 +2403,7 @@ def make_properties_ctx(
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
-                f"    return {to_py};\n"
+                f"{_decode_stmts(_expr)}"
                 f"}}"
             )
         elif field:
@@ -2263,7 +2413,6 @@ def make_properties_ctx(
             # compiler errors out (gh-70).
             if pname not in state_var_names:
                 struct_field_lines.append(f"    {disp} {pname};")
-            to_py = meta["to_py"](f"self->handle->{pname}")
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"
@@ -2271,16 +2420,18 @@ def make_properties_ctx(
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
-                f"    return {to_py};\n"
+                f"{_decode_stmts(f'self->handle->{pname}')}"
                 f"}}"
             )
         else:
-            to_py = meta["to_py"](f"{component}_get_{pname}(self->handle)")
+            _call = f"{component}_get_{pname}(self->handle)"
             implement_cmt = (
                 "    /* <<IMPLEMENT: return the computed or stored value>> */\n"
                 if pname not in state_var_names
                 else ""
             )
+            # gh-519: the enum form binds the call into its own local before
+            # the range check, so the C getter is evaluated exactly once.
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"
@@ -2289,7 +2440,7 @@ def make_properties_ctx(
                 f"{{\n"
                 f"{guard}"
                 f"{implement_cmt}"
-                f"    return {to_py};\n"
+                f"{_decode_stmts(_call)}"
                 f"}}"
             )
             if pname not in state_var_names:
@@ -2308,7 +2459,27 @@ def make_properties_ctx(
         setter_name = "NULL"
         if writable:
             setter_name = f"(setter){Component}_setprop_{pname}"
-            if "parse_type" in meta:
+            if p_enum:
+                # gh-519: accept the Python string, resolve it through the
+                # SSOT table, and assign the resolved int wherever the plain
+                # setter would have assigned `v`. "s" already raises TypeError
+                # for a non-str, so only the unknown-choice case needs a
+                # hand-written error.
+                _choices = ", ".join(enums[p_enum])
+                parse_block = (
+                    f"    const char *v_str = NULL;\n"
+                    f'    if (!PyArg_Parse(value, "s", &v_str)) return -1;\n'
+                    f"    int v_idx = {enum_index_fn}"
+                    f"({enum_table}, v_str);\n"
+                    f"    if (v_idx < 0) {{\n"
+                    f"        PyErr_Format(PyExc_ValueError,\n"
+                    f"            \"invalid {pname} '%s'"
+                    f' (choices: {_choices})", v_str);\n'
+                    f"        return -1;\n"
+                    f"    }}\n"
+                    f"    {disp} v = ({disp})v_idx;\n"
+                )
+            elif "parse_type" in meta:
                 parse_block = (
                     f"    {meta['parse_type']} v_raw ="
                     f" {meta['parse_zero']};\n"
@@ -2371,7 +2542,18 @@ def make_properties_ctx(
         # gh-446: standalone .pyi stubs for a manifest property (PyGetSetDef
         # -> a real `@property` descriptor), independent of the getter/
         # setter *methods* make_state_ctx stubs out for state vars.
-        py_t = _pyi_ndarray(ctype) if buf_field else _pyi_scalar(ctype)
+        if p_enum:
+            # gh-519: the Python face is the ordered choice set, not an int.
+            # Reuse _stubs._py's string_enum rendering so both stub writers
+            # spell Literal identically (local import: _stubs imports
+            # _context, so a module-level import would cycle).
+            from .._stubs import _py as _stubs_py
+
+            py_t = _stubs_py("string_enum:" + ",".join(enums[p_enum]))
+        elif buf_field:
+            py_t = _pyi_ndarray(ctype)
+        else:
+            py_t = _pyi_scalar(ctype)
         pyi_block = [
             "",
             "    @property",
@@ -2386,6 +2568,17 @@ def make_properties_ctx(
         pyi_parts.append("\n".join(pyi_block))
 
     getset_body = "\n".join(getter_parts)
+    # gh-519: the enum tables ride along inside getset_def rather than in a
+    # template slot of their own — that keeps every existing render path
+    # (standalone _ext.c, module fragment, view fragment) wired with no
+    # template churn, and guarantees the tables are defined *above* the
+    # getters that index them.
+    if enums_used:
+        getset_body = (
+            _render_property_enum_tables(Component, enums_used, enums or {})
+            + "\n"
+            + getset_body
+        )
     entries_str = "\n".join(getset_entries)
     getset_def = (
         f"{getset_body}\n\n"
@@ -2407,4 +2600,7 @@ def make_properties_ctx(
         "property_decls": property_decls,
         "property_struct_fields": property_struct_fields,
         "property_stubs_pyi": property_stubs_pyi,
+        # gh-519: the standalone .pyi hardcodes `from typing import Any`; an
+        # enum property annotates as Literal[...] and needs it imported.
+        "pyi_property_typing": ", Literal" if enums_used else "",
     }
