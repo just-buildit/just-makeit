@@ -24,15 +24,16 @@ New object? Its `step()` shape and state come next under
 
 ## Extending a component
 
-| To add…                                 | run…                                                                                           |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| A named execute method                  | [`jm method <obj> <name>`](commands/extend.md#just-makeit-method)                              |
-| A read-only Python property             | [`jm property <obj> <name>`](commands/extend.md#just-makeit-property)                          |
-| A read-write property                   | [`jm property <obj> <name> --writable`](commands/extend.md#just-makeit-property)               |
-| A state field                           | [`jm add --state <var>:T [--object <obj>]`](commands/scaffold.md#just-makeit-add)              |
-| A warning after construction            | [`jm warning <obj> --condition <field> --message "…"`](commands/extend.md#just-makeit-warning) |
-| A specific `create()`-failure exception | [`jm error <obj> --category ValueError --message "…"`](commands/extend.md#just-makeit-error)   |
-| A SIMD / `JM_HOT` performance pass      | [`jm perf`](commands/build.md#just-makeit-perf)                                                |
+| To add…                                    | run…                                                                                               |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| A named execute method                     | [`jm method <obj> <name>`](commands/extend.md#just-makeit-method)                                  |
+| A read-only Python property                | [`jm property <obj> <name>`](commands/extend.md#just-makeit-property)                              |
+| A read-write property                      | [`jm property <obj> <name> --writable`](commands/extend.md#just-makeit-property)                   |
+| A state field                              | [`jm add --state <var>:T [--object <obj>]`](commands/scaffold.md#just-makeit-add)                  |
+| A warning after construction               | [`jm warning <obj> --condition <field> --message "…"`](commands/extend.md#just-makeit-warning)     |
+| A specific `create()`-failure exception    | [`jm error <obj> --category ValueError --message "…"`](commands/extend.md#just-makeit-error)       |
+| A second Python class over the same C core | [`jm view <obj> <ClassName> --module <mod> --create-fn <fn>`](commands/extend.md#just-makeit-view) |
+| A SIMD / `JM_HOT` performance pass         | [`jm perf`](commands/build.md#just-makeit-perf)                                                    |
 
 ## Shipping and operating
 

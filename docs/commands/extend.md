@@ -53,6 +53,7 @@ appended, ready for you to implement.
 | `--replace old::new`        | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
 | `--doc "text"`              | Python docstring for the method.                                                                                                                                                                                                                                                                                                 |
 | `--py-return-type STR`      | Override the `.pyi` return-type annotation (the C `--return-type` still drives the C signature).                                                                                                                                                                                                                                 |
+| `--view ClassName`          | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or overrides a parent method's doc by reusing its name. Requires `--module`.                                                                                                                                                                                                                                                                                           |
 | `--no-bench`                | Exclude this method from the generated C benchmark.                                                                                                                                                                                                                                                                              |
 
 ______________________________________________________________________
@@ -359,16 +360,17 @@ directly into the state struct and auto-implements the getter as
 
 **Arguments**
 
-| Argument        | Description                                                                                                                                                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`        | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                 |
-| `prop_name`     | Snake-case property name.                                                                                                                                                                                                                               |
-| `--module name` | Module the object belongs to (required for module objects).                                                                                                                                                                                             |
-| `--type TYPE`   | C type of the property value.                                                                                                                                                                                                                           |
-| `--writable`    | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
-| `--field`       | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
-| `--doc "text"`  | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                          |
-| `--enum NAME`   | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                       |
+| Argument           | Description                                                                                                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`           | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                 |
+| `prop_name`        | Snake-case property name.                                                                                                                                                                                                                               |
+| `--module name`    | Module the object belongs to (required for module objects).                                                                                                                                                                                             |
+| `--type TYPE`      | C type of the property value.                                                                                                                                                                                                                           |
+| `--writable`       | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
+| `--field`          | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
+| `--doc "text"`     | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                          |
+| `--enum NAME`      | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                       |
+| `--view ClassName` | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Requires `--module`.                               |
 
 ### Enum-valued properties (`--enum`)
 
@@ -443,6 +445,95 @@ the object via the regenerate path instead.)
 
 ______________________________________________________________________
 
+## `just-makeit view`
+
+```text
+just-makeit view <object> <ViewClassName>
+    --module name
+    --create-fn fn
+    [--init-param name:type[:default] ...]
+    [--exclude-property name ...] [--exclude-method name ...]
+    [--doc "text"]
+```
+
+Add a **second Python class over the same generated C core** (gh-504). The view
+shares the object's `<obj>_state_t`, its `_core.c`, and its `step()`; it differs
+only in the C constructor it calls, the constructor arguments it takes, and the
+Python surface it exposes. Use it when one algorithm has two front doors — a
+continuous mode and a burst mode, an empty accumulator and a pre-seeded one —
+and a second object would mean a second copy of the C.
+
+```sh
+just-makeit view acc SeededAcc --module bank \
+    --create-fn acc_create_seeded \
+    --init-param seed:double:0.0 \
+    --exclude-method total
+```
+
+This records a `[[<obj>.views]]` entry, injects
+`acc_state_t *acc_create_seeded(double seed);` into `<obj>_core.h`, appends an
+`<<IMPLEMENT>>` stub for it to the sacred `<obj>_core.c` (so the module still
+compiles before you have written a line), and regenerates the module glue with
+the extra class registered. The view lands in its own binding fragment,
+`<mod>_ext_<viewclass>.c`, next to the parent's — **no** second core library and
+no second state struct.
+
+Views are a **module-object feature**: the multi-type module machinery is what
+registers the extra class, so `--module` is required. `--create-fn` is also
+required and must differ from the parent's `<obj>_create` — a view exists
+precisely to build from a different constructor.
+
+**Arguments**
+
+| Argument                           | Description                                                                                                                                               |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`                           | Object the view sits over (must already exist in `just-makeit.toml`).                                                                                     |
+| `ViewClassName`                    | Python class name for the view. Must be unique across every class the module exposes — each object's class name and every existing view.                  |
+| `--module name`                    | Module the object belongs to. Required.                                                                                                                   |
+| `--create-fn fn`                   | C constructor the view's `__init__` calls (e.g. `acc_create_seeded`). Required; must differ from `<obj>_create`. Scaffolded as a stub in the shared core. |
+| `--init-param name:type[:default]` | The view's own constructor parameter. Repeatable; same syntax as `jm object --init-param`. Omit entirely to inherit the parent's constructor shape.       |
+| `--exclude-property name`          | Parent property to omit from the view's Python surface. Repeatable; must name an existing property of the parent.                                         |
+| `--exclude-method name`            | Parent method to omit. Repeatable; must name an existing `[[<obj>.methods]]` entry. The builtins `step`/`steps`/`reset` are not excludable.               |
+| `--doc "text"`                     | Docstring for the view class.                                                                                                                             |
+
+### Diverging, not only trimming
+
+`--exclude-property` / `--exclude-method` take members *away*. To **add** a
+member the parent lacks, or **override** one it has, pass `--view <ClassName>`
+to [`jm property`](#just-makeit-property), [`jm method`](#just-makeit-method),
+or [`jm warning`](#just-makeit-warning) — reusing a parent member's name
+overrides it, a new name adds it:
+
+```sh
+# `runs` exists on SeededAcc only
+just-makeit property acc runs --module bank --type size_t --field \
+    --doc "reseed count" --view SeededAcc
+
+# same name as the parent's property -> overrides its docstring on the view
+just-makeit property acc depth --module bank --type size_t --field \
+    --doc "seed depth" --view SeededAcc
+```
+
+These persist as `[[<obj>.views.properties]]`, `[[<obj>.views.methods]]`, and
+`[[<obj>.views.warnings]]` under the matching view, and are merged over the
+parent's when the glue is generated. See
+[Configuration → Schema reference](../configuration.md#schema-reference).
+
+Excluding a method drops only the view's Python wrapper and its `PyMethodDef`
+entry — the shared C function stays in the core, so nothing dangles and the
+parent keeps working.
+
+**Limitation:** a view cannot yet sit over a parent whose init-params use
+per-array dtype-dispatch or optional-array forms (`real_type`, `real_create_fn`,
+`create_fn`, `optional`); those paths embed `<obj>_create` directly and would
+silently ignore the view's `create_fn`, so `jm view` rejects them with a
+diagnostic.
+
+The [Views example](../examples/views_module.md) builds the whole thing end to
+end.
+
+______________________________________________________________________
+
 ## `just-makeit warning`
 
 ```text
@@ -471,14 +562,15 @@ must already exist as state (add it with `just-makeit add` if needed).
 
 **Arguments**
 
-| Argument            | Description                                                                                                                  |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                      |
-| `--condition FIELD` | Bool-valued state field that triggers the warning. Required.                                                                 |
-| `--message TEXT`    | Warning text shown to the Python caller. Required.                                                                           |
-| `--category NAME`   | Warning class — a Python built-in warning (`UserWarning`, `DeprecationWarning`, `RuntimeWarning`, …). Default `UserWarning`. |
-| `--module name`     | Module the object belongs to (required for module objects).                                                                  |
-| `--stacklevel N`    | `PyErr_WarnEx` stacklevel, so the warning points at the caller's frame. Default `1`.                                         |
+| Argument            | Description                                                                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                                                                          |
+| `--condition FIELD` | Bool-valued state field that triggers the warning. Required.                                                                                                                     |
+| `--message TEXT`    | Warning text shown to the Python caller. Required.                                                                                                                               |
+| `--category NAME`   | Warning class — a Python built-in warning (`UserWarning`, `DeprecationWarning`, `RuntimeWarning`, …). Default `UserWarning`.                                                     |
+| `--module name`     | Module the object belongs to (required for module objects).                                                                                                                      |
+| `--stacklevel N`    | `PyErr_WarnEx` stacklevel, so the warning points at the caller's frame. Default `1`.                                                                                             |
+| `--view ClassName`  | Attach the warning to a [view](#just-makeit-view) rather than the object, so a second front door over the shared core gets its own `PyErr_WarnEx`. Requires `--module` (gh-509). |
 
 An object may carry more than one warning — each `just-makeit warning` call on
 a distinct `--condition` adds another. Re-running with the same condition

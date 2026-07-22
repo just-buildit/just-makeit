@@ -66,6 +66,7 @@ GALLERY = {
     "pytest_style": "pytest style",
     "full_workflow": "Full workflow",
     "composites": "Composites",
+    "views_module": "Views",
     "kitchen_sink": "Kitchen sink",
 }
 
@@ -77,7 +78,6 @@ UNPUBLISHED = {
     "app_shapes": "regression driver: jm app over non-scalar objects",
     "bench_upgrade": "regression driver: bench regeneration via jm upgrade",
     "jm_remove": "regression driver: jm remove",
-    "views_module": "regression driver: jm view (second class over one core)",
 }
 
 

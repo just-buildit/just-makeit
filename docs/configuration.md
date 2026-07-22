@@ -430,6 +430,19 @@ for the full semantics.
 | `field = true`                                  | `jm property --field`                                                  | ✅          |
 | `buf_field`, `len_field`, `valid_field`, `expr` | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr` | ✅ (0.30.2) |
 
+### `[[<component>.views]]` entries
+
+| TOML field                          | CLI flag                                                | Status    |
+| ----------------------------------- | ------------------------------------------------------- | --------- |
+| `class_name`, `create_fn`           | `jm view <obj> <Class> --module <mod> --create-fn <fn>` | ✅ (0.31) |
+| `doc = "..."`                       | `jm view --doc "text"`                                  | ✅ (0.31) |
+| `init_params = [{name, type, ...}]` | `jm view --init-param name:type[:default]` (repeatable) | ✅ (0.31) |
+| `exclude_properties = ["..."]`      | `jm view --exclude-property name` (repeatable)          | ✅ (0.31) |
+| `exclude_methods = ["..."]`         | `jm view --exclude-method name` (repeatable)            | ✅ (0.31) |
+| `properties = [{...}]`              | `jm property <obj> <prop> --view <Class>`               | ✅ (0.32) |
+| `methods = [{...}]`                 | `jm method <obj> <meth> --view <Class>`                 | ✅ (0.32) |
+| `warnings = [{...}]`                | `jm warning <obj> --view <Class>`                       | ✅ (0.33) |
+
 ### `[<component>]` lifecycle impl bodies
 
 | TOML field                 | CLI flag                                   | Status       |
@@ -605,6 +618,46 @@ One entry per `just-makeit property` call.
 | `type`     | string | C type of the value                                    |
 | `writable` | bool   | `--writable`                                           |
 | `field`    | bool   | `--field` (adds struct member, auto-implements getter) |
+
+### `[[<object>.views]]`
+
+One entry per `just-makeit view` call — a **second Python class over the same
+generated C core** (gh-504). The view shares `<object>_state_t` and the
+object's `_core.c`; only its constructor and its Python surface differ. Views
+are a module-object feature, so the object must belong to a `[module.<name>]`.
+
+| Key                  | Type             | Notes                                                                                                                                                                        |
+| -------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `class_name`         | string           | Python class name for the view. Required; unique across every class the module exposes.                                                                                      |
+| `create_fn`          | string           | C constructor the view's `__init__` calls. Required; must differ from `<object>_create`. Scaffolded as a stub in the shared `_core.c`.                                       |
+| `doc`                | string           | Docstring for the view class.                                                                                                                                                |
+| `init_params`        | array            | The view's own constructor params, same shape as `[[<object>.init_params]]`. Omit to inherit the parent's constructor shape.                                                 |
+| `exclude_properties` | array of strings | Parent property names the view omits from its Python surface.                                                                                                                |
+| `exclude_methods`    | array of strings | Parent method names the view omits. Only the view's Python wrapper and `PyMethodDef` entry are dropped; the shared C function stays.                                         |
+| `properties`         | array            | The view's **own** properties, same shape as `[[<object>.properties]]`: a new name ADDS a property the parent lacks, a parent's name OVERRIDES it. Merged over the parent's. |
+| `methods`            | array            | The view's own methods, same shape as `[[<object>.methods]]`: ADD a new method (scaffolds a shared C stub) or OVERRIDE a parent method's doc.                                |
+| `warnings`           | array            | The view's own post-construction warnings, same shape as `[[<object>.warnings]]` (gh-509). A view carries no parent warnings, so this is its only source.                    |
+
+```toml
+[[acc.views]]
+class_name = "SeededAcc"
+create_fn = "acc_create_seeded"
+exclude_methods = ["total"]
+
+[[acc.views.init_params]]
+name = "seed"
+type = "double"
+default = "0.0"
+
+[[acc.views.properties]]
+name = "runs"        # a property the parent does not have
+type = "size_t"
+doc = "reseed count"
+field = true
+```
+
+The nested tables are written by `just-makeit property|method|warning <obj> --view <ClassName>`; see
+[Extend commands → `just-makeit view`](commands/extend.md#just-makeit-view).
 
 ### `[module.<name>]`
 

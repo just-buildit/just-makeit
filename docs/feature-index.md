@@ -86,6 +86,15 @@ ______________________________________________________________________
 | `kind = "handle"` — typed RAII resource class | [Composites](examples/composites.md)            |
 | `kind = "capsule"` / `kind = "composer"`      | [Object-of-objects guide](object-of-objects.md) |
 
+## Two classes over one core
+
+| Feature                                              | Example                           |
+| ---------------------------------------------------- | --------------------------------- |
+| Second Python class over one C core (`jm view`)      | [Views](examples/views_module.md) |
+| A view's own constructor (`--create-fn`)             | [Views](examples/views_module.md) |
+| Trim a view's surface (`--exclude-property/-method`) | [Views](examples/views_module.md) |
+| Add / override a member on a view (`--view`)         | [Views](examples/views_module.md) |
+
 ## Streaming
 
 | Feature                                | Example                                      |
