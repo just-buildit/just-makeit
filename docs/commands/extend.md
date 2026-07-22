@@ -53,7 +53,7 @@ appended, ready for you to implement.
 | `--replace old::new`        | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                          |
 | `--doc "text"`              | Python docstring for the method.                                                                                                                                                                                                                                                                                                 |
 | `--py-return-type STR`      | Override the `.pyi` return-type annotation (the C `--return-type` still drives the C signature).                                                                                                                                                                                                                                 |
-| `--view ClassName`          | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or overrides a parent method's doc by reusing its name. Requires `--module`.                                                                                                                                                                                                                                                                                           |
+| `--view ClassName`          | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or overrides a parent method's doc by reusing its name. Requires `--module`.                                                                                                                              |
 | `--no-bench`                | Exclude this method from the generated C benchmark.                                                                                                                                                                                                                                                                              |
 
 ______________________________________________________________________
@@ -360,17 +360,60 @@ directly into the state struct and auto-implements the getter as
 
 **Arguments**
 
-| Argument           | Description                                                                                                                                                                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`           | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                 |
-| `prop_name`        | Snake-case property name.                                                                                                                                                                                                                               |
-| `--module name`    | Module the object belongs to (required for module objects).                                                                                                                                                                                             |
-| `--type TYPE`      | C type of the property value.                                                                                                                                                                                                                           |
-| `--writable`       | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
-| `--field`          | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
-| `--doc "text"`     | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                          |
-| `--enum NAME`      | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                       |
-| `--view ClassName` | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Requires `--module`.                               |
+| Argument           | Description                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`           | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                                                                                              |
+| `prop_name`        | Snake-case property name.                                                                                                                                                                                                                                                                                                                                                                            |
+| `--module name`    | Module the object belongs to (required for module objects).                                                                                                                                                                                                                                                                                                                                          |
+| `--type TYPE`      | C type of the property value.                                                                                                                                                                                                                                                                                                                                                                        |
+| `--writable`       | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                                                                                                                                                                 |
+| `--field`          | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. Requires the state struct to be a complete type — see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header). |
+| `--doc "text"`     | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
+| `--enum NAME`      | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
+| `--view ClassName` | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Requires `--module`.                                                                                                                                                                            |
+
+### Choosing a property kind — and what each costs your header
+
+A property is backed one of four ways. The flags are not variations on a
+theme: they decide **who writes the C** and, crucially, **whether your state
+struct has to be a complete type in the public header**.
+
+| Kind           | Declared with      | Who implements the read                                                              | State struct                         |
+| -------------- | ------------------ | ------------------------------------------------------------------------------------ | ------------------------------------ |
+| **Computed**   | *no backing flag*  | you — jm declares `<obj>_get_<prop>(const <obj>_state_t *)` for the sacred `_core.c` | may stay **opaque**                  |
+| **Field**      | `--field`          | jm — injects `TYPE prop;` and returns `state->prop`                                  | must be **complete**                 |
+| **Expression** | `--expr "…"`       | jm — emits your C expression inline                                                  | complete, if the expr reads a member |
+| **Buffer**     | `--buf-field name` | jm — returns a numpy view over that member                                           | must be **complete**                 |
+
+**Omitting `--field` is not "unsupported" — it means "you implement the
+accessor".** That is the computed kind, and it is the one to reach for when the
+struct is deliberately private: a file handle, a scratch buffer, a decoded
+header. jm declares
+
+```c
+int rdr_get_fd(const rdr_state_t *state);
+```
+
+which takes a *pointer* to the state, so an incomplete type is fine — you can
+forward-declare `typedef struct rdr_state rdr_state_t;` in the header and keep
+the definition in your `_core.c`. The generated binding never touches a member.
+
+The other three kinds read a member directly, so they need the definition. With
+an opaque struct a `--field` property fails at compile time:
+
+```text
+rdr_ext.c:115:46: error: invalid use of incomplete typedef 'rdr_state_t'
+```
+
+If you see that, the property wants to be computed.
+
+A computed property composes with everything else here, including
+[`--enum`](#enum-valued-properties-enum) and its out-of-range check — the
+accessor's return value is decoded exactly as a field's would be:
+
+```sh
+just-makeit property rdr file_type --type int --enum ftype   # computed + enum
+```
 
 ### Enum-valued properties (`--enum`)
 
