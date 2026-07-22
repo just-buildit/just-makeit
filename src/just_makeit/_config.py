@@ -2690,11 +2690,25 @@ def _property_dump_lines(p: dict, header: str) -> list[str]:
 
     Shared (gh-504) by an object's ``[[<comp>.properties]]`` and a view's
     ``[[<comp>.views.properties]]`` so the two emit identically.
+
+    Every optional key a property can carry must be emitted here. This dumper
+    is bypassed on an ordinary save — ``_write_doc`` round-trips an *existing*
+    file through tomlkit, which preserves keys generically — so an omission is
+    invisible until ``jm split-objects`` or ``jm migrate`` rewrites the section
+    from the parsed dict. gh-549: ``enum`` was missing, and splitting a project
+    reverted an enum property's Python face from its ordered string back to a
+    raw int (and dropped the gh-521 bounds check) with no error and no warning.
+    ``tests/test_gh549_property_dump_keys.py`` pins the whole key set rather
+    than any one key, so the next key added cannot repeat it.
     """
     lines = [header, f'name = "{p["name"]}"']
     if p.get("doc"):
         lines.append(_doc_assign(p["doc"]))
     lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
+    # gh-519: `enum` qualifies how `type` is presented to Python, so it reads
+    # best directly beneath it.
+    if p.get("enum"):
+        lines.append(f'enum = "{p["enum"]}"')
     if p.get("writable"):
         lines.append("writable = true")
     if p.get("field"):
