@@ -140,9 +140,7 @@ typedef struct {
 static void
 <<ComponentW>>_dealloc(<<Component>>Object *self)
 {
-    if (self->handle)
-        <<component>>_destroy(self->handle);
-<<extra_buf_free>>    Py_TYPE(self)->tp_free((PyObject *)self);
+<<destroy_dealloc_call>><<extra_buf_free>>    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *
@@ -172,12 +170,7 @@ static int
 static PyObject *
 <<ComponentW>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
 {
-    if (self->handle) {
-        <<component>>_destroy(self->handle);
-        self->handle = NULL;
-    }
-    Py_RETURN_NONE;
-}
+<<destroy_method_body>>}
 
 static PyObject *
 <<ComponentW>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
@@ -190,18 +183,11 @@ static PyObject *
 <<ComponentW>>_exit(<<Component>>Object *self, PyObject *args)
 {
     (void)args;
-    if (self->handle) {
-        <<component>>_destroy(self->handle);
-        self->handle = NULL;
-    }
-    Py_RETURN_NONE;
-}
+<<destroy_exit_body>>}
 
 <<stream_iter_block>>static PyMethodDef <<ComponentW>>_methods[] = {
 <<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>>    {"destroy",  (PyCFunction)<<ComponentW>>_destroy,  METH_NOARGS,
-     "Release resources."},
-    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>><<destroy_pymethoddef>>    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
     {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS, NULL},
     {NULL}
 };

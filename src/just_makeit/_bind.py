@@ -500,6 +500,12 @@ def _build_ctx(
     # recoverable from a header, so `bind` renders the MemoryError fallback
     # exactly as it did before.
     ctx.update(Ctx.make_errors_ctx(ctx["component"]))
+    # gh-541/gh-544: same reasoning again — a destructor's Python name and
+    # whether its status is fatal are authored intent, not something a header
+    # reflects. `bind` therefore renders the undeclared default, which is the
+    # text it produced before this feature existed. Re-run with the settled
+    # ComponentW so the PyMethodDef entry names the right static function.
+    ctx.update(Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"]))
     return ctx
 
 

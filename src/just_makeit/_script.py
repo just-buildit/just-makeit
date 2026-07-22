@@ -530,6 +530,23 @@ def run(root: Path) -> None:
         lines += err_lines
         lines.append("\n")
 
+    # ── destructor contract (gh-541/gh-544) ───────────────────────────────────
+    # Manifest-only, exactly like `package` above: five interacting keys is not
+    # a CLI shape. Emitting nothing would be the gh-490 silent-divergence trap
+    # (the replayed script would quietly produce a void `destroy()` again), so
+    # the reader is told to carry the table over.
+    destroy_lines: list[str] = []
+    for comp in all_comps:
+        if not C.destroy_spec(cfg, comp):
+            continue
+        destroy_lines.append(
+            f"# NOTE: [{comp}.destroy] has no CLI flag — copy the table into\n"
+            f"# just-makeit.toml and run `just-makeit apply`.\n"
+        )
+    if destroy_lines:
+        lines += destroy_lines
+        lines.append("\n")
+
     # ── module-level functions ─────────────────────────────────────────────────
     fn_lines: list[str] = []
     for mod in mods:

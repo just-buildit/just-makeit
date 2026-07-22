@@ -699,7 +699,10 @@ def _extract_c_function_bodies(
 
 
 def _restore_c_function_bodies(
-    new_source: str, preserved: dict[str, str], require_static: bool = True
+    new_source: str,
+    preserved: dict[str, str],
+    require_static: bool = True,
+    force_regen: "tuple[str, ...]" = (),
 ) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
@@ -725,11 +728,21 @@ def _restore_c_function_bodies(
     the fragment actually carries a ``StreamIter`` type, so a hypothetical
     user method literally named ``stream`` on a non-streamable object keeps its
     hand-written body.
+
+    *force_regen* names further functions to regenerate rather than preserve.
+    gh-541 uses it for the teardown wrappers of an object that declares
+    ``[<obj>.destroy]``: whether ``__exit__`` propagates a failed close is
+    manifest-derived, and a fragment frozen before the declaration would keep
+    the swallowing body — silently, which is the precise bug the declaration
+    exists to remove. Applied only to declaring objects, so a fragment whose
+    object has no destroy table is preserved exactly as before.
     """
     _INFRA_SUFFIXES = ("_dealloc", "_init")
     _STREAM_SUFFIXES = ("_stream", "_getiter", "_make_iter")
     _has_stream = any("StreamIter" in n for n in preserved)
     for fn_name, old_body in preserved.items():
+        if fn_name in force_regen:
+            continue
         if "StreamIter" in fn_name:
             continue
         if _has_stream and fn_name.endswith(_STREAM_SUFFIXES):
@@ -901,6 +914,15 @@ def _make_view_ctx(
             ctx["component"], "", "", create_fn=view["create_fn"]
         )
     )
+    # gh-541: a view is a second Python type over the SAME core, so it shares
+    # the parent's destructor contract — a view whose __exit__ swallowed a
+    # failure the parent's reports would be the original bug wearing a
+    # different class name.
+    ctx.update(
+        Ctx.make_destroy_ctx(
+            ctx["component"], ctx["ComponentW"], C.destroy_spec(cfg, obj)
+        )
+    )
     ctx.update(
         Ctx.make_stream_ctx(
             ctx["component"],
@@ -1034,6 +1056,15 @@ def build_component_ctxs(
                 create_fn=C.object_create_fn(cfg, obj),
             )
         )
+        # gh-541/gh-544: a module object's declared destructor contract,
+        # filled into its COMPONENT_TYPE_SECTION slots by the aggregator.
+        ctx.update(
+            Ctx.make_destroy_ctx(
+                ctx["component"],
+                ctx["ComponentW"],
+                C.destroy_spec(cfg, obj),
+            )
+        )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
         # COMPONENT_TYPE_SECTION slots; the per-object PyType_Ready for the
@@ -1133,7 +1164,17 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            frag = _restore_c_function_bodies(frag, preserved)
+            # gh-541: a declared destructor contract owns the teardown
+            # wrappers — see _restore_c_function_bodies' force_regen.
+            _w = ctx["ComponentW"]
+            _force = (
+                (f"{_w}_destroy", f"{_w}_exit")
+                if C.destroy_spec(cfg, ctx["component"])
+                else ()
+            )
+            frag = _restore_c_function_bodies(
+                frag, preserved, force_regen=_force
+            )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
     # Discover *_extra.c files — jm never creates or modifies them, but
@@ -1424,6 +1465,7 @@ def run(
     extra_include_dirs: list[str] = (),
     max_out: int = 0,
     create_fn: str | None = None,
+    destroy: "dict | None" = None,
     _hint: bool = True,
 ) -> None:
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
@@ -1478,6 +1520,7 @@ def run(
             extra_link_libs=list(extra_link_libs),
             extra_include_dirs=list(extra_include_dirs),
             create_fn=create_fn,
+            destroy=destroy,
             _hint=_hint and not variable_output,
         )
         if variable_output:
@@ -1576,6 +1619,11 @@ def run(
     # gh-482: undeclared at creation -> the historical MemoryError block.
     # gh-509: name the override constructor in the NULL message when set.
     ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
+    # gh-541/gh-544: same as the standalone path in _init.run — this render
+    # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
+    ctx.update(
+        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy)
+    )
 
     if create_impl_body is not None:
         ctx["create_assignments"] = _indent_body(create_impl_body)
@@ -1763,6 +1811,10 @@ def run(
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
     )
+    # gh-541/gh-544: persist the destructor contract BEFORE the aggregate
+    # re-render below — _regenerate_module reads it back out of this same
+    # in-memory cfg to fill the object's COMPONENT_TYPE_SECTION slots.
+    C.set_destroy_spec(cfg, comp, destroy or {})
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)

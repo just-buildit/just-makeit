@@ -10,10 +10,10 @@
     return obj;
 }
 
-void
+/*<<destroy_c_ret>>*/
 /*<<component>>*/_destroy(/*<<component>>*/_state_t *state)
 {
-/*<<destroy_impl>>*/    free(state);
+/*<<destroy_impl>>*/    free(state);/*<<destroy_ret_stmt>>*/
 }
 
 void

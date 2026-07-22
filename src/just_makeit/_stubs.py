@@ -1111,11 +1111,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     if _stream_pyi:
         lines.append(_stream_pyi.rstrip("\n"))
 
+    # gh-541/gh-544: the teardown stubs come from the ONE builder the
+    # standalone `.pyi` template also uses. There are two stub generators in
+    # this repo (this one for module-aggregated types, `_context._methods` /
+    # COMPONENT_PYI for standalone) and this repo has repeatedly shipped a fix
+    # to only one of them — so this deliberately shares the renderer rather
+    # than restating the method list. `pyi_destroy_methods` is
+    # "\n    def <name>...\n" per name, whose split reproduces the previous
+    # literal list exactly when nothing is declared.
+    lines += Ctx.make_destroy_ctx(
+        obj,
+        Component,
+        C.destroy_spec(cfg, obj),
+    )["pyi_destroy_methods"].split("\n")
     lines += [
-        "",
-        "    def destroy(self) -> None:",
-        '        """Release C resources immediately."""',
-        "",
         '    def __enter__(self) -> "' + Component + '": ...',
         "",
         "    def __exit__(self, *args: object) -> None: ...",

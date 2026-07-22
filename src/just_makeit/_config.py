@@ -2193,6 +2193,80 @@ def object_create_fn(cfg: dict, component: str) -> str | None:
     return cfg.get(component, {}).get("create_fn") or None
 
 
+# ── Destructor declaration ([<comp>.destroy], gh-541 / gh-544) ──────────────
+#
+# One table rather than five scalars, because the keys only make sense
+# together: `error`/`error_message` are meaningless without `returns = "int"`,
+# and `aliases` is meaningless without knowing what `name` is. Grouping them
+# also keeps the object surface honest — the whole teardown contract is one
+# block a reader can take in at once.
+#
+# Manifest-only, no CLI flag — same call as `package` (gh-523). Five
+# interacting keys is exactly the shape the CLI is the wrong tool for (see
+# `_cli_object`'s division of labour: the CLI handles simple scalars, TOML
+# handles anything with internal structure).
+
+# The only value of `returns` that changes anything. Anything else is either
+# the default (absent / "void") or an authoring error.
+DESTROY_RETURNS = frozenset({"", "void", "int"})
+
+
+def destroy_spec(cfg: dict, component: str) -> dict:
+    """Return the component's ``[<comp>.destroy]`` table ({} if undeclared).
+
+    Undeclared means the historical hardcoded behaviour: a Python method
+    literally named ``destroy()``, a ``void`` C destructor, and an ``__exit__``
+    that can never fail. Every render path collapses to byte-identical output
+    in that case, which is what makes the table safe to introduce.
+
+    Parameters
+    ----------
+    cfg : dict
+        Loaded manifest.
+    component : str
+        Component id, e.g. ``wfm_writer``.
+
+    Returns
+    -------
+    dict
+        The raw table. Keys: ``name``, ``aliases``, ``returns``, ``error``,
+        ``error_message``.
+
+    Examples
+    --------
+    >>> destroy_spec({"w": {"destroy": {"name": "close"}}}, "w")
+    {'name': 'close'}
+    >>> destroy_spec({"w": {}}, "w")
+    {}
+    """
+    spec = cfg.get(component, {}).get("destroy") or {}
+    return dict(spec) if isinstance(spec, dict) else {}
+
+
+def set_destroy_spec(cfg: dict, component: str, spec: dict) -> dict:
+    """Store (or clear, when *spec* is falsy) a component's destroy table."""
+    if spec:
+        cfg.setdefault(component, {})["destroy"] = dict(spec)
+    else:
+        cfg.get(component, {}).pop("destroy", None)
+    return cfg
+
+
+def destroy_name(cfg: dict, component: str) -> str:
+    """Python method name for teardown (default ``destroy``)."""
+    return destroy_spec(cfg, component).get("name") or "destroy"
+
+
+def destroy_aliases(cfg: dict, component: str) -> list[str]:
+    """Additional Python names bound to the same C function ([] if none)."""
+    return list(destroy_spec(cfg, component).get("aliases", []))
+
+
+def destroy_returns_int(cfg: dict, component: str) -> bool:
+    """True when the destructor is declared fallible (``returns = "int"``)."""
+    return destroy_spec(cfg, component).get("returns") == "int"
+
+
 def add_component(
     cfg: dict,
     component: str,
@@ -2995,6 +3069,27 @@ def _dump(cfg: dict) -> str:
                 )
                 lines.append(f'{_impl_key} = """\n{_body}\n"""')
         lines.append("")
+        # gh-541/gh-544: the destructor contract. Emitted before the [[...]]
+        # sub-tables purely for readability — TOML headers are absolute paths,
+        # so a following [[<comp>.state]] still binds to <comp>. Nothing is
+        # emitted when undeclared, so existing manifests are unchanged.
+        _destroy = comp_data.get("destroy") or {}
+        if _destroy:
+            lines.append(f"[{comp}.destroy]")
+            if _destroy.get("name"):
+                lines.append(f'name = "{_destroy["name"]}"')
+            if _destroy.get("aliases"):
+                _al = ", ".join(f'"{a}"' for a in _destroy["aliases"])
+                lines.append(f"aliases = [{_al}]")
+            if _destroy.get("returns"):
+                lines.append(f'returns = "{_destroy["returns"]}"')
+            if _destroy.get("error"):
+                lines.append(f'error = "{_destroy["error"]}"')
+            if _destroy.get("error_message"):
+                lines.append(
+                    _str_assign("error_message", _destroy["error_message"])
+                )
+            lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
             lines.append(f'name = "{a["name"]}"')
