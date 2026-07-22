@@ -19,7 +19,9 @@ view = c.push(block)
 │
 └─ returns numpy view wrapping c._out_buf[:n_out]
    ownership: object retains the buffer
-   lifetime:  view is stale after the NEXT push() — copy immediately
+   lifetime:  safe to keep — while this view is still referenced, the
+              next push() allocates a fresh buffer instead of reusing
+              this one (gh-437). Only never-retained views reuse in place.
 ```
 
 ### Output size constraint
