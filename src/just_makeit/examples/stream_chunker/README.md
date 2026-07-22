@@ -170,19 +170,22 @@ c = Chunker(chunk_size=CHUNK)
 bursts = [7, 50, 1, 40, 180, 3]  # sum = 281
 # Expected: floor(281 / 64) = 4 complete chunks (256 samples), 25 buffered.
 
-collected = []  # copies of complete-chunk views
+collected = []  # complete-chunk views, kept as-is
 total_in = 0
 
 for size in bursts:
     block = np.ones(size, dtype=np.complex64) * complex(total_in, 0)
     view = c.push(block)
-    # view is a zero-copy slice of the object's internal output buffer.
-    # It becomes stale on the next push() call — copy immediately.
+    # view is a zero-copy slice of the object's internal output buffer, and
+    # holding on to it is safe (gh-437): the binding keeps a weakref to the
+    # last view it handed out, so while this one is still referenced the next
+    # push() allocates a fresh buffer instead of overwriting it. Only the
+    # drain-immediately pattern (never retaining a view) reuses in place.
     if len(view):
         assert len(view) % CHUNK == 0, (
             f"output length {len(view)} is not a multiple of chunk_size {CHUNK}"
         )
-        collected.append(view.copy())
+        collected.append(view)
     total_in += size
 
 total_out = sum(len(v) for v in collected)
@@ -226,7 +229,9 @@ view = c.push(block)
 │
 └─ returns numpy view wrapping c._out_buf[:n_out]
    ownership: object retains the buffer
-   lifetime:  view is stale after the NEXT push() — copy immediately
+   lifetime:  safe to keep — while this view is still referenced, the
+              next push() allocates a fresh buffer instead of reusing
+              this one (gh-437). Only never-retained views reuse in place.
 ```
 
 ### Output size constraint

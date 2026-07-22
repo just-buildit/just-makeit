@@ -65,12 +65,12 @@ shape, pass a `--preset` — or the flags it stands for:
 
 And what state it carries:
 
-| State                             | How                                             |
-| --------------------------------- | ----------------------------------------------- |
-| Scalar defaults only              | `[[state]]` entries (the default path)          |
-| No internal state                 | `--no-state` + `[[init_params]]`                |
-| Public ctor ≠ internal state      | `[[state]]` + `[[init_params]]` + `create_impl` |
-| Some fields kept across `reset()` | `state.roles = "config"` (TOML only)            |
+| State                        | How                                             |
+| ---------------------------- | ----------------------------------------------- |
+| Scalar defaults only         | `[[state]]` entries (the default path)          |
+| No internal state            | `--no-state` + `[[init_params]]`                |
+| Public ctor ≠ internal state | `[[state]]` + `[[init_params]]` + `create_impl` |
+| A field overridable per call | `state.controllable = true` (TOML only)         |
 
 ## Shaping a method's output
 
@@ -125,9 +125,9 @@ Every common TOML knob has a CLI flag —
 is the authoritative status of each key. A small tail stays TOML-only by
 design:
 
-- `opaque` state fields, `no_ctor` per field, `roles = "config"`
-- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse_impl`, `string_enum:` init-param types
-- `buf_field` / `len_field` / `valid_field` / `expr` property variants
+- `opaque` state fields, `no_ctor` per field, `controllable` per field
+    (see [Arguments](arguments.md#default-optional-arguments))
+- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse`, `string_enum:` init-param types
 - `max_results` / `max_results_param` on methods and functions
 - `no_generate` modules, `extra_c` files, per-component `extra_link_libs`
 

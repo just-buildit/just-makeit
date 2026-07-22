@@ -119,9 +119,7 @@ positional-only).
     first array param's length (or the first integer scalar param, if
     there's no array param). `jm function make_window --module win   --param n:size_t --out-type float` generates `void make_window(float   *out, size_t n)`, called from Python as `make_window(512)`.
 - **`--result-field name:type`** — emit a list of `{name, type}` records
-    per call (repeatable). This path currently has known codegen gaps —
-    see the warning under [Patterns](../types.md#patterns) — so verify
-    the generated header and stub agree before relying on it.
+    per call (repeatable).
 
 ## Concrete types
 

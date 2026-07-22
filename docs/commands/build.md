@@ -340,17 +340,31 @@ generate — a read-only drift report. Must be run from the project root.
 just-makeit status
 ```
 
-Prints a table of files with one of three states:
+| Flag           | Description                                                                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--allow PATH` | Treat `PATH` (exact path or fnmatch glob) as a known deviation: reported as `ALLOWED`, not counted. Repeatable; combines with `[project] status_allow` in the manifest. |
+| `--json`       | Emit the report as JSON (`{path, state, allowed, dropped_symbols}` per entry) instead of a table.                                                                       |
+| `--diff`       | Print a unified diff per stale file.                                                                                                                                    |
+| `--check`      | One-line summary only — the per-file listing is suppressed, the exit code is unchanged. CI mode.                                                                        |
 
-| Status    | Meaning                                                      |
-| --------- | ------------------------------------------------------------ |
-| `OK`      | File matches what the manifest would generate.               |
-| `MISSING` | File is declared in the manifest but does not exist on disk. |
-| `STALE`   | File exists but differs from the manifest-generated content. |
+Prints a table of files in one of six states:
 
-`status` never writes anything; it is always safe to run. Use it to confirm
-that `jm apply` is a no-op before a release, or to see what changed after a
-manual edit to `just-makeit.toml`.
+| Status    | Meaning                                                                                                                                                                                                             | Gates CI? |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `OK`      | `apply` would leave the file untouched.                                                                                                                                                                             | no        |
+| `MISSING` | `apply` would create it — declared in the manifest, absent on disk.                                                                                                                                                 | yes       |
+| `STALE`   | `apply` would rewrite it from the manifest (glue regenerated, `_core.h` declarations merged).                                                                                                                       | yes       |
+| `ALLOWED` | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                               | no        |
+| `DROPPED` | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`. | yes       |
+| `DRIFT`   | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                   | yes       |
+
+The exit code is the count of gating drift, so `jm status --check` is a
+drop-in CI gate: zero means `jm apply` is a no-op.
+
+`status` never writes anything (it runs `apply` against a throwaway copy of
+the tree); it is always safe to run. Use it to confirm that `jm apply` is a
+no-op before a release, or to see what changed after a manual edit to
+`just-makeit.toml`.
 
 ______________________________________________________________________
 

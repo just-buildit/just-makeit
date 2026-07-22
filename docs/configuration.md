@@ -373,18 +373,23 @@ Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 
 ### `[[<component>.state]]` entries
 
-| TOML field                         | CLI flag                                             | Status |
-| ---------------------------------- | ---------------------------------------------------- | ------ |
-| `name`, `type`, `default`          | `jm object --state name:type[:default]` (repeatable) | ✅     |
-| `name`, `type`, `opaque = true`    | (TOML only)                                          | 🟡     |
-| `name`, `type`, `no_ctor = true`   | (TOML only)                                          | 🟡     |
-| `name`, `type`, `roles = "config"` | (TOML only)                                          | 🟡     |
+| TOML field                            | CLI flag                                             | Status |
+| ------------------------------------- | ---------------------------------------------------- | ------ |
+| `name`, `type`, `default`             | `jm object --state name:type[:default]` (repeatable) | ✅     |
+| `name`, `type`, `opaque = true`       | (TOML only)                                          | 🟡     |
+| `name`, `type`, `no_ctor = true`      | (TOML only)                                          | 🟡     |
+| `name`, `type`, `controllable = true` | (TOML only)                                          | 🟡     |
 
-The three rare modifiers (`opaque`, `no_ctor`, `roles`) currently
+The three rare modifiers (`opaque`, `no_ctor`, `controllable`) currently
 require editing `just-makeit.toml` directly. CLI flags are pending
 (syntax under discussion: `--state name:type:opaque`,
-`--state name:type:no-ctor`, `--state name:type:role=config`). Until
+`--state name:type:no-ctor`, `--state name:type:controllable`). Until
 those land, hand-editing the manifest is the workaround.
+
+`controllable = true` turns a state field into an optional per-call
+override on `step()` / `steps()` — see
+[Arguments — Default / optional arguments](arguments.md#default-optional-arguments)
+for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
@@ -418,23 +423,23 @@ those land, hand-editing the manifest is the workaround.
 
 ### `[[<component>.properties]]` entries
 
-| TOML field                                      | CLI flag                            | Status |
-| ----------------------------------------------- | ----------------------------------- | ------ |
-| `name`, `type`                                  | `jm property <obj> <prop> --type T` | ✅     |
-| `writable = true`                               | `jm property --writable`            | ✅     |
-| `field = true`                                  | `jm property --field`               | ✅     |
-| `buf_field`, `len_field`, `valid_field`, `expr` | (TOML only)                         | 🟡     |
+| TOML field                                      | CLI flag                                                               | Status      |
+| ----------------------------------------------- | ---------------------------------------------------------------------- | ----------- |
+| `name`, `type`                                  | `jm property <obj> <prop> --type T`                                    | ✅          |
+| `writable = true`                               | `jm property --writable`                                               | ✅          |
+| `field = true`                                  | `jm property --field`                                                  | ✅          |
+| `buf_field`, `len_field`, `valid_field`, `expr` | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr` | ✅ (0.30.2) |
 
 ### `[<component>]` lifecycle impl bodies
 
-| TOML field                     | CLI flag                                   | Status       |
-| ------------------------------ | ------------------------------------------ | ------------ |
-| `impl = "..."` (step body)     | `jm object --impl file::funcname`          | ✅           |
-| `impl_file = "path::N:M"`      | `jm object --impl file::N:M` (line range)  | ✅ (0.14)    |
-| `create_impl = "..."`          | `jm object --impl create::file::funcname`  | ✅ (0.13.23) |
-| `reset_impl = "..."`           | `jm object --impl reset::file::funcname`   | ✅ (0.13.23) |
-| `destroy_impl = "..."`         | `jm object --impl destroy::file::funcname` | ✅ (0.13.23) |
-| `init_post_parse_impl = "..."` | (TOML only)                                | 🟡           |
+| TOML field                 | CLI flag                                   | Status       |
+| -------------------------- | ------------------------------------------ | ------------ |
+| `impl = "..."` (step body) | `jm object --impl file::funcname`          | ✅           |
+| `impl_file = "path::N:M"`  | `jm object --impl file::N:M` (line range)  | ✅ (0.14)    |
+| `create_impl = "..."`      | `jm object --impl create::file::funcname`  | ✅ (0.13.23) |
+| `reset_impl = "..."`       | `jm object --impl reset::file::funcname`   | ✅ (0.13.23) |
+| `destroy_impl = "..."`     | `jm object --impl destroy::file::funcname` | ✅ (0.13.23) |
+| `init_post_parse = "..."`  | (TOML only)                                | 🟡           |
 
 The `--impl file::N:M` form lifts source lines `N..M` (inclusive, 1-based)
 instead of a named function body; it composes with the slot prefixes
@@ -474,15 +479,9 @@ clobber. Output is single-line, matching the rest of the package.
 ### Counts
 
 - **✅ on main**: ~66 keys (every common path; Phase 2 stack shipped in 0.13.23)
-- **🟡 CLI flag pending**: 15 keys — rare modifiers (`opaque`, `no_ctor`, `roles`, `buf_field`/`expr` property variants, `init_post_parse_impl`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
+- **🟡 CLI flag pending**: 11 keys — rare modifiers (`opaque`, `no_ctor`, `controllable`, `init_post_parse`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
 
 Phase 2 acceptance bar — "every TOML field has a 'Reachable via CLI' column ✓" — is met for the common path. The remaining 🟡 rows are tracked Phase 3 work, not by-design exceptions.
-
-**Caveat on `result_fields`:** the `✅` above means the field is CLI-settable
-(`--result-field`), not that the generated code compiles out of the box —
-the `_core.h` declaration and `_core.c` stub currently disagree on the C
-signature for a record-returning method/function. See the warning under
-[Types — Patterns](types.md#patterns).
 
 ______________________________________________________________________
 

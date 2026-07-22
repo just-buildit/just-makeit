@@ -191,17 +191,6 @@ jm function q15_to_float --module io \
 `const`). Python side: `q15_to_float(input_arr, output_arr, n)` —
 caller passes both buffers.
 
-!!! warning "Record-returning methods/functions (`--result-field`)"
-
-    `--result-field` (an event emitter returning a list or single record
-    of a user-defined C struct — see [`jm method`](commands/extend.md))
-    currently has known codegen gaps where the generated `_core.h`
-    declaration and the `_core.c` stub disagree on the C signature,
-    so a freshly scaffolded record-returning method/function does not
-    always compile as-is. If you hit a "conflicting types" error here,
-    that's why — check the generated header against the stub and
-    reconcile the signature by hand before filling in the body.
-
 ______________________________________________________________________
 
 ## Type slots — per-slot detail
