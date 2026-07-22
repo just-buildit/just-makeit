@@ -22,6 +22,10 @@ from pathlib import Path
 from . import _config as C
 from . import _glue
 from . import _types as T
+from ._context._methods import (
+    container_fn_names,
+    validate_container_property,
+)
 from ._init import (
     _inject_decls_into_core_h,
     _inject_struct_field,
@@ -43,6 +47,10 @@ def run(
     doc: str = "",
     view: str = "",
     enum: str = "",
+    value_type: str = "",
+    count_fn: str = "",
+    key_fn: str = "",
+    value_fn: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -52,13 +60,61 @@ def run(
         )
         sys.exit(1)
 
-    if not buf_field and not expr and ctype not in T._CTYPE_META:
-        supported = ", ".join(sorted(T._CTYPE_META))
+    # gh-543: a container property's `type` names a Python container, not a C
+    # type, so it is deliberately absent from _CTYPE_META.
+    container = T.is_container_type(ctype)
+    if (
+        not container
+        and not buf_field
+        and not expr
+        and ctype not in T._CTYPE_META
+    ):
+        supported = ", ".join(sorted(T._CTYPE_META) + list(T.CONTAINER_KINDS))
         print(
             f"error: unsupported --type '{ctype}'.\nSupported: {supported}",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-543: the container accessors are only meaningful on a container, and
+    # a silently-ignored flag is the foot-gun this project keeps paying for.
+    if not container:
+        for flag, val in (
+            ("--value-type", value_type),
+            ("--count-fn", count_fn),
+            ("--key-fn", key_fn),
+            ("--value-fn", value_fn),
+        ):
+            if val:
+                kinds = ", ".join(T.CONTAINER_KINDS)
+                print(
+                    f"error: {flag} applies only to a container property. "
+                    f"Pass --type with one of: {kinds}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    # gh-543: reject an incoherent container declaration before anything is
+    # printed or written, for the same reason the enum check below runs early.
+    if container:
+        try:
+            validate_container_property(
+                object_name,
+                {
+                    "name": prop_name,
+                    "type": ctype,
+                    "value_type": value_type,
+                    "key_fn": key_fn,
+                    "writable": writable,
+                    "field": field,
+                    "buf_field": buf_field,
+                    "expr": expr,
+                    "enum": enum,
+                },
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     cfg = C.load(root)
 
@@ -172,6 +228,19 @@ def run(
         prop_entry["expr"] = expr
     if enum:
         prop_entry["enum"] = enum
+    if container:
+        # Only record what was actually asked for; the render layer supplies
+        # the defaults, so an unspecified accessor stays unspecified in the
+        # manifest rather than freezing today's naming into the project.
+        if value_type:
+            prop_entry["value_type"] = value_type
+        for key, val in (
+            ("count_fn", count_fn),
+            ("key_fn", key_fn),
+            ("value_fn", value_fn),
+        ):
+            if val:
+                prop_entry[key] = val
     if view_entry is not None:
         C.add_view_property(cfg, object_name, view, prop_entry)
     else:
@@ -187,8 +256,30 @@ def run(
     #                    sacred _core.c.
     #   buf/expr      -> pure glue; their accessors are inlined into _ext.c, so
     #                    nothing is added to _core.h.
+    #   container     -> the plain-C accessors (count, and key for a dict, and
+    #                    value unless it returns a PyObject *). A PyObject *
+    #                    value_fn needs Python.h and so is forward-declared in
+    #                    the glue instead -- see _methods._container_getter.
     core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
-    if field:
+    if container:
+        fns = container_fn_names(object_name, prop_name, prop_entry)
+        state_t = f"const {object_name}_state_t *"
+        decls = [f"size_t {fns['count_fn']}({state_t}state);"]
+        if ctype == "dict":
+            decls.append(
+                f"const char *{fns['key_fn']}({state_t}state, size_t i);"
+            )
+        vtype = value_type or T.OBJECT_VALUE_TYPE
+        if vtype != T.OBJECT_VALUE_TYPE:
+            vdisp = T._ctype_display(vtype)
+            if not vdisp.endswith("*"):
+                vdisp += " "
+            decls.append(
+                f"{vdisp}{fns['value_fn']}({state_t}state, size_t i);"
+            )
+        if _inject_decls_into_core_h(core_h, object_name, decls):
+            print(f"  update  {core_h}")
+    elif field:
         disp = T._ctype_display(ctype)
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
@@ -215,7 +306,30 @@ def run(
 
     print()
     rw = "read/write" if writable else "read-only"
-    if field:
+    if container:
+        fns = container_fn_names(object_name, prop_name, prop_entry)
+        todo = [fns["count_fn"]]
+        if ctype == "dict":
+            todo.append(fns["key_fn"])
+        vtype = value_type or T.OBJECT_VALUE_TYPE
+        core_c = f"native/src/{object_name}/{object_name}_core.c"
+        if vtype == T.OBJECT_VALUE_TYPE:
+            print(
+                f"Done!  Implement {', '.join(f'{n}()' for n in todo)} in"
+                f" {core_c},\n"
+                f"       and {fns['value_fn']}() -- which returns a"
+                f" PyObject * and so needs\n"
+                f"       Python.h -- in a hand-written"
+                f" {object_name}_ext_extra.c alongside the\n"
+                f"       generated binding.  [{ctype}, {rw}]"
+            )
+        else:
+            todo.append(fns["value_fn"])
+            print(
+                f"Done!  Implement {', '.join(f'{n}()' for n in todo)}\n"
+                f"       in {core_c}  [{ctype}, {rw}]"
+            )
+    elif field:
         print(
             f"Done!  Struct field '{prop_name}' added to"
             f" {object_name}_state_t; getter/setter auto-implemented.  [{rw}]"

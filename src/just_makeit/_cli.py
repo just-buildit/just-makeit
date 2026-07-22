@@ -139,6 +139,12 @@ Commands:
     --expr "C expr"             Back property with an inline C expression.
     --enum name                 Decode the value through a top-level [[enum]]:
                                 the C side keeps the int, Python sees the string.
+    --value-type TYPE           Element type of a dict/list/tuple property. A C
+                                type means jm converts it; "object" means
+                                --value-fn returns a PyObject * itself.
+    --count-fn name             Entry count accessor  (default <obj>_num_<name>).
+    --key-fn name               Key accessor, dict only (default <obj>_<name>_key).
+    --value-fn name             Value accessor      (default <obj>_<name>_value).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -638,6 +644,10 @@ def main() -> None:
         expr = ""
         view = ""
         enum = ""  # gh-519
+        value_type = ""  # gh-543
+        count_fn = ""
+        key_fn = ""
+        value_fn = ""
 
         remaining = args[3:]
         i = 0
@@ -697,6 +707,11 @@ def main() -> None:
                 "--valid-field",
                 "--expr",
                 "--enum",
+                # gh-543: the container accessors.
+                "--value-type",
+                "--count-fn",
+                "--key-fn",
+                "--value-fn",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -711,6 +726,14 @@ def main() -> None:
                     valid_field = val
                 elif tok == "--enum":
                     enum = val  # gh-519
+                elif tok == "--value-type":
+                    value_type = val
+                elif tok == "--count-fn":
+                    count_fn = val
+                elif tok == "--key-fn":
+                    key_fn = val
+                elif tok == "--value-fn":
+                    value_fn = val
                 else:
                     expr = val
                 i += 1
@@ -747,6 +770,10 @@ def main() -> None:
             doc=doc,
             view=view,
             enum=enum,
+            value_type=value_type,
+            count_fn=count_fn,
+            key_fn=key_fn,
+            value_fn=value_fn,
         )
 
     elif cmd == "warning":

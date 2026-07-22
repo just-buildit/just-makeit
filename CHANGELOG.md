@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Container-valued object properties — `dict`, `list` and `tuple`
+    (gh-543).** A property could be a scalar, an enum, a computed value, an
+    inline expression or an ndarray view. Nothing dict- or sequence-shaped
+    could be declared, so a mapping had to be hand-written into a sacred ext
+    fragment — ~150 lines for doppler's `Reader.keywords`, ~25 for
+    `RateConverter.stages`. A fragment-added property also never reaches the
+    generated `.pyi`, so it stayed invisible to a type checker even though the
+    runtime was correct; making the kind declarative fixes the stub for free,
+    which is half the value.
+
+    The property is backed by a small iteration protocol the core implements:
+
+    ```toml
+    [[reader.properties]]
+    name       = "keywords"
+    type       = "dict"
+    count_fn   = "reader_num_keywords"    # size_t       (const state *)
+    key_fn     = "reader_keyword_tag"     # const char * (const state *, size_t)
+    value_fn   = "reader_keyword_value"   # <value_type> (const state *, size_t)
+    value_type = "object"
+    ```
+
+    All three accessor names default from the object and property name, so the
+    common declaration names none of them. jm generates the loop, the
+    container, the refcounting and every error path.
+
+    `value_type` decides who owns the conversion. A C type means jm emits it
+    and the accessor stays in the pure-C core — which is what covers a
+    `list[str]` of stage labels without dragging `Python.h` into a DSP
+    library. `object` means `value_fn` returns a `PyObject *` itself, the
+    escape hatch for a value whose Python type is data-dependent: each BLUE
+    keyword's type comes from a code stored in the file, so one yields a
+    `str`, the next an `int`, the next a `list[float]`. That function needs
+    `Python.h` and so lives in a hand-written `*_ext_extra.c`, forward-declared
+    above the getter because the extra is `#include`d after the fragment.
+
+    Two guards are load-bearing rather than defensive, both the gh-521 class: a
+    `key_fn` returning NULL is dereferenced by `PyDict_SetItemString`, and a
+    pointer-typed `value_fn` returning NULL reaches `strlen(NULL)` through
+    `PyUnicode_FromString`. Removing either from the generated binding turns
+    the test scenario into exit 139; both now raise a `RuntimeError` naming the
+    property, the accessor and the index. Container properties are read-only —
+    jm builds the container fresh per read, so a setter would mutate a copy the
+    caller never sees, and declaring one is a diagnostic rather than a
+    surprise.
+
+- **A standalone object can host a hand-written `<comp>_ext_extra.c`
+    (gh-543).** Module objects have had this hook since the aggregator was
+    introduced; a standalone object's `_ext.c` was wholly regenerated glue with
+    no equivalent, so hand-written Python-aware code had nowhere to live. jm
+    never creates or modifies the file — it wires it in when it exists, and
+    `jm apply` now seeds it into its temp render so a correctly-wired project
+    is not reported as drift.
+
 ### Fixed
 
 - **`jm split-objects` silently reverted an enum property to a raw `int`

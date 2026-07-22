@@ -179,6 +179,10 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     >>> _property_flags({"name": "buf", "type": "float[]",
     ...                  "buf_field": "data", "len_field": "n"}, None)[1:]
     ['    --buf-field data \\\\\\n', '    --len-field n \\\\\\n']
+    >>> _property_flags({"name": "kw", "type": "dict",
+    ...                  "value_type": "object",
+    ...                  "count_fn": "r_nkw"}, None)[1:]
+    ['    --value-type object \\\\\\n', '    --count-fn r_nkw \\\\\\n']
     """
     parts: list[str] = []
 
@@ -210,6 +214,19 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     # gh-490 note above warns about.
     if p.get("enum"):
         parts.append(_flag("--enum", p["enum"]))
+
+    # gh-543: a container property's accessors. Only what the manifest
+    # actually records is emitted -- an unspecified accessor is re-derived
+    # from the same default on replay, so omitting it round-trips exactly.
+    if p.get("value_type"):
+        parts.append(_flag("--value-type", p["value_type"]))
+    for _fn, _flagname in (
+        ("count_fn", "--count-fn"),
+        ("key_fn", "--key-fn"),
+        ("value_fn", "--value-fn"),
+    ):
+        if p.get(_fn):
+            parts.append(_flag(_flagname, p[_fn]))
 
     if p.get("doc"):
         parts.append(_flag("--doc", p["doc"]))

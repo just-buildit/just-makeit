@@ -2720,6 +2720,12 @@ def _property_dump_lines(p: dict, header: str) -> list[str]:
         lines.append(f'valid_field = "{p["valid_field"]}"')
     if p.get("expr"):
         lines.append(f'expr = "{p["expr"]}"')
+    # gh-543: a container property's accessors.
+    if p.get("value_type"):
+        lines.append(f'value_type = "{p["value_type"]}"')
+    for _fn in ("count_fn", "key_fn", "value_fn"):
+        if p.get(_fn):
+            lines.append(f'{_fn} = "{p[_fn]}"')
     lines.append("")
     return lines
 

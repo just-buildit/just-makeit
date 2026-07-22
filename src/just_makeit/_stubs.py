@@ -27,6 +27,7 @@ import re as _re
 
 from . import _config as C
 from . import _context as Ctx
+from . import _types as T
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -1203,11 +1204,31 @@ def _fn_stub(fn: dict, block=None) -> str:
 
 
 def _uses_any(cfg: dict, module: str) -> bool:
-    """True if any object in this module has a varargs/manual_stub method
-    (gh-428) — both render a ``(*args: Any, **kwargs: Any) -> Any`` stub."""
+    """True if any object in this module needs ``Any`` in its stub.
+
+    Two sources: a varargs/manual_stub method (gh-428), which renders as
+    ``(*args: Any, **kwargs: Any) -> Any``; and (gh-543) a container property
+    whose ``value_type`` is ``object``, which renders as ``dict[str, Any]`` /
+    ``list[Any]`` / ``tuple[Any, ...]`` because the core -- not jm -- decides
+    each value's Python type.
+
+    View properties are scanned alongside the object's own, mirroring
+    ``_uses_literal``: a container declared only on a view still lands in this
+    module's stub, and missing it would emit an undefined ``Any``.
+    """
     for obj in C.module_objects(cfg, module):
         for m in C.methods(cfg, obj):
             if m.get("varargs") or m.get("manual_stub"):
+                return True
+        props = list(C.properties(cfg, obj))
+        for v in C.views(cfg, obj):
+            props += C.view_properties(v)
+        for prop in props:
+            if (
+                T.is_container_type(prop.get("type", ""))
+                and (prop.get("value_type") or T.OBJECT_VALUE_TYPE)
+                == T.OBJECT_VALUE_TYPE
+            ):
                 return True
     return False
 

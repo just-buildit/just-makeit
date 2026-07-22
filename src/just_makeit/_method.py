@@ -28,6 +28,7 @@ from . import _stubs as S
 from . import _types as T
 from ._init import (
     _inject_decls_into_core_h,
+    standalone_extra_include,
 )
 from ._object import _regenerate_module
 
@@ -929,6 +930,9 @@ def run(
         ctx["extra_ext_sources"] = "".join(
             f" {f}" for f in ctx.get("varargs_binding_files", [])
         )
+
+        # gh-543: keep a hand-written extra wired through a method add.
+        ctx["extra_include"] = standalone_extra_include(root, object_name)
 
         def r(tmpl):
             return R.render(tmpl, ctx)

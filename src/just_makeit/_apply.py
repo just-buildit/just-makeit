@@ -284,8 +284,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
 
     # Seed _extra.c files from the real project so _regenerate_module()
     # detects and re-includes them in the temp aggregator.
-    for mod in mods:
-        cname = C.module_paths(mod).cname
+    # gh-543: standalone objects gained the same hook, so seed them too --
+    # otherwise the temp render drops the #include and apply reports the real
+    # project's correctly-wired _ext.c as drift.
+    for cname in [C.module_paths(m).cname for m in mods] + list(standalone):
         src_dir = project_root / "native" / "src" / cname
         dst_dir = temp_root / "native" / "src" / cname
         if src_dir.is_dir():
@@ -436,6 +438,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             doc=p.get("doc", ""),
             view=view,
             enum=p.get("enum", ""),  # gh-519
+            value_type=p.get("value_type", ""),  # gh-543
+            count_fn=p.get("count_fn", ""),
+            key_fn=p.get("key_fn", ""),
+            value_fn=p.get("value_fn", ""),
         )
 
     for comp in all_comps:

@@ -22,6 +22,25 @@ def _to_title(snake: str) -> str:
     return "".join(w[0].upper() + w[1:] for w in snake.split("_") if w)
 
 
+def standalone_extra_include(root: Path, component: str) -> str:
+    """``#include`` for a standalone object's hand-written extra (gh-543).
+
+    Mirrors what the module aggregator has always done for
+    ``<module>_ext_<obj>_extra.c`` (``_render.render_module_ext_aggregator``).
+    jm never creates or modifies the file; it only wires it in when it exists,
+    so hand-written code survives every regeneration of the glue around it.
+
+    Returns ``""`` when there is no such file, which is the overwhelmingly
+    common case and renders byte-identically to before this slot existed.
+    """
+    extra = f"{component}_ext_extra.c"
+    if (root / "native" / "src" / component / extra).exists():
+        return (
+            f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
+        )
+    return ""
+
+
 def _make_component_ctx(component: str) -> dict[str, str]:
     return {
         "component": component,
@@ -46,6 +65,14 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # otherwise, so a project without enum properties renders unchanged.
         # make_properties_ctx overwrites it on every path that has properties.
         "pyi_property_typing": "",
+        # gh-543: a standalone object's hand-written `<comp>_ext_extra.c`,
+        # #included when it exists. Module objects have had this since the
+        # aggregator was introduced; a standalone object had no hook at all,
+        # so a property whose value_fn returns a PyObject * -- which needs
+        # Python.h and so cannot live in the pure-C core -- had nowhere to go.
+        # Seeded here, the one place every component render path passes
+        # through, so the five COMPONENT_EXT_C call sites resolve it unchanged.
+        "extra_include": "",
         # Windows CMake boilerplate is opt-in (gh-213); default off so the
         # generated CMakeLists has no `if(WIN32 …)` block unless the project
         # lists `windows` in [project] platforms.

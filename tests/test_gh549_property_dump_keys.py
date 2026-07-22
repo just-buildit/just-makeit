@@ -70,11 +70,22 @@ class TestEveryKeyRoundTrips:
         "doc": "Window span.",
         "expr": "state->hi - state->lo",
     }
+    # gh-543 -- the keys added after this guard went in, which is exactly the
+    # case it exists to cover.
+    CONTAINER_PROP = {
+        "name": "keywords",
+        "type": "dict",
+        "doc": "Extended header.",
+        "value_type": "object",
+        "count_fn": "rdr_num_keywords",
+        "key_fn": "rdr_keyword_tag",
+        "value_fn": "rdr_keyword_value",
+    }
 
     @pytest.mark.parametrize(
         "prop",
-        [ENUM_PROP, BUF_PROP, EXPR_PROP],
-        ids=["enum", "buf_field", "expr"],
+        [ENUM_PROP, BUF_PROP, EXPR_PROP, CONTAINER_PROP],
+        ids=["enum", "buf_field", "expr", "container"],
     )
     def test_no_key_is_lost(self, prop):
         assert _round_trip(prop) == prop
