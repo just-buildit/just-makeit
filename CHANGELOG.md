@@ -48,7 +48,9 @@
     method entirely rather than stubbing it: no binding, no `<obj>_reset()`
     declared or defined in the core, no `.pyi` entry, and nothing in the
     generated tests or benchmarks that calls it. `no_state` alone still emits
-    `reset()`, unchanged.
+    `reset()`, unchanged. Standalone objects, module objects and views all
+    honour it, `jm apply` replays the key, and an object without the flag
+    renders byte-identically.
 
 ### Docs
 
@@ -72,25 +74,6 @@
     `# jm:hand` comment above a member in a `.pyi` makes the splice engine
     transplant it verbatim through every regeneration, with no manifest entry
     required — which is what lets a hand-written binding reach a type checker.
-
-### Added
-
-- **`no_reset` — an object that has nothing to reset (gh-542).** jm's object
-    shape always emitted `reset()`. Some objects have nothing coherent to
-    reset: a writer whose samples are already on disk, and whose written-sample
-    count drives the header patch applied at close, would be *corrupted* by a
-    reset rather than returned to a clean state — the honest answer is to
-    construct a new one. Every workaround degraded silently: a C no-op returns
-    `None`, so the caller believes the reset happened, and a hand-written raise
-    in the sacred fragment reverts to that no-op the moment a regeneration
-    drops it. `no_reset = "true"` (or `--no-reset` on `jm object` / `jm new`)
-    now removes the method rather than stubbing it — no binding, no
-    `<obj>_reset()` declared or defined in the core, no `.pyi` entry, and
-    nothing in the generated tests or benchmarks that calls it. Symmetric with
-    `no_step` / `no_state`, and independent of both: `no_state` alone still
-    emits `reset()`, unchanged. Standalone objects, module objects and views
-    all honour it, `jm apply` replays the key, and an object without the flag
-    renders byte-identically.
 
 ## [0.33.4] — 2026-07-22
 
