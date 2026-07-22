@@ -138,8 +138,17 @@ def _bench_method_block(component: str, m: dict) -> str:
     """Return a self-contained C bench timing block for method *m*.
 
     Returns an empty string when the method should not be benchmarked
-    (``bench == False`` in the method dict, or ``variable_output`` methods
-    whose output size is indeterminate at bench time).
+    (``bench == False`` in the method dict, or ``variable_output`` / ``out_type``
+    methods whose output size is indeterminate at bench time).
+
+    gh-529: an ``out_type`` method allocates a fresh output buffer per call and
+    takes a trailing ``*out`` pointer the C signature (and the ext wrapper)
+    supply, but the timing loop here has no such buffer to pass — only the
+    ``batch`` shape allocates one. Every other branch would emit a call missing
+    the ``out`` argument and the generated benchmark would not compile. Its
+    output is sized from a runtime parameter, exactly the ``variable_output``
+    situation, so it is skipped the same way rather than benched with a
+    fabricated buffer.
 
     The generated block is wrapped in ``{}`` for scope isolation so that
     per-method locals (buffers, sink variables) do not conflict with each
@@ -159,7 +168,12 @@ def _bench_method_block(component: str, m: dict) -> str:
         C source fragment (indented 4 spaces, blank line before/after) ready
         to paste into ``main()`` of the bench executable, or ``""`` to skip.
     """
-    if m.get("bench") is False or m.get("variable_output") or m.get("varargs"):
+    if (
+        m.get("bench") is False
+        or m.get("variable_output")
+        or m.get("varargs")
+        or m.get("out_type")  # gh-529: no out buffer in the timing loop
+    ):
         return ""
 
     name: str = m["name"]
@@ -2067,6 +2081,16 @@ def make_methods_ctx(
                 if len(ndarrays) > 1
                 else ndarrays[0]
             )
+        elif out_type:
+            # gh-529: `out_type` on a method allocates a fresh output array
+            # per call and returns it -- the C wrapper (the `elif out_type`
+            # branch above) does exactly what a function's out_type does, and
+            # the PyMethodDef docstring already says `-> ndarray`. Only this
+            # annotation lagged, reporting the scalar `return_type` and so
+            # contradicting both. `_stubs._obj_stub` carries the peer of this
+            # branch for the module-aggregated stub; the two must move
+            # together (see tests/test_gh529_method_out_type_pyi.py).
+            ret_ann = _pyi_ndarray(out_type)
         else:
             ret_ann = _pyi_scalar(return_type)
         # gh-219: single-output variable_output methods take an optional

@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A method's `out_type` reported a scalar `.pyi` return, and its generated
+    benchmark did not compile (gh-529).** A `[[<obj>.methods]]` entry with
+    `out_type = "float _Complex"` generates a C wrapper that allocates a fresh
+    output array per call and returns it as an ndarray — exactly what
+    `out_type` does on a `jm function` — and its PyMethodDef docstring already
+    read `-> ndarray`. Only the `.pyi` return annotation lagged, computed from
+    `return_type` (so `-> complex`, or `-> None` for a `void` return), telling
+    a type checker the method returned a scalar while the runtime returned an
+    array. Both `.pyi` generators carried the omission — `make_methods_ctx`
+    (standalone) and `_stubs._obj_stub` (module-aggregated) — and are fixed
+    together, pinned by a test that asserts the two spell the same annotation.
+    Separately, the timing loop in the generated benchmark had no output buffer
+    to pass, so an `out_type` method emitted a `<comp>_<name>(obj, …)` call
+    missing its trailing `*out` argument and the benchmark failed to compile;
+    such methods are now skipped in the benchmark the same way `variable_output`
+    methods already are (their output size is likewise a runtime value). The
+    fix is to make the annotation agree, not to reject `out_type` on methods:
+    the runtime already behaves like a function's.
+- **`[[state]]` + `[[init_params]]` gave a module stub whose `__init__`
+    signature contradicted its own docstring (gh-530).** When an object
+    declares both, the runtime constructor is init_params-based — the gh-69
+    contract: init_params drive `create()`, and scalar state stays internal,
+    set from defaults and reachable only through generated getters/setters. The
+    module-aggregated stub's docstring Parameters block already documented the
+    init_params, but its `def __init__` line was built from the state vars,
+    because that branch was ordered before the init_params one — the reverse of
+    the docstring builder. So the two halves of the same stub named different
+    constructor arguments, and the signature disagreed with what the extension
+    actually accepts. The standalone `<obj>.pyi` never had this (its signature
+    slot is overridden with the init_params one by the gh-69 machinery); only
+    the module peer lagged. Its branches now give init_params precedence,
+    matching both the runtime and the docstring. The state-only and
+    `no_state = true` + init_params paths are unchanged.
+
 ## [0.33.6] — 2026-07-22
 
 ### Added
