@@ -6,6 +6,7 @@ rendering dict.
 
 from __future__ import annotations
 
+from .. import _coerce
 from .._types import (
     _CTYPE_META,
     _ARRAY_DTYPE,
@@ -58,6 +59,12 @@ def _build_no_state_init_ctx(
       being forwarded to the C constructor.  Covers any C enum the caller
       exposes as human-readable names.
 
+    * Path         (``type = "path"``, gh-515)
+      — a required positional ``str | os.PathLike`` coerced through
+      ``PyUnicode_FSConverter`` (the ``O&`` form) into a borrowed ``PyBytes``;
+      C receives a ``const char *`` it must COPY during the call.  A filesystem
+      path has no sensible default, so it is never an optional keyword.
+
     * Scalar       (any type in ``_CTYPE_META``)
       — optional keyword with a default value; existing behaviour.
 
@@ -77,6 +84,9 @@ def _build_no_state_init_ctx(
     arr_ip: list[tuple[str, str, int, str]] = []
     str_enum_ip: list[tuple[str, list[str], str]] = []
     scalar_ip: list[tuple] = []
+    # gh-515: "path" is a pseudo-type — deliberately absent from _CTYPE_META —
+    # so it must be classified before any `_CTYPE_META[ct]` lookup can run.
+    path_ip: list[str] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
 
@@ -112,8 +122,25 @@ def _build_no_state_init_ctx(
                     )
         elif is_string_enum_type(ct):
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
+        elif ct == "path":
+            path_ip.append(name)
         else:
             scalar_ip.append((name, ct, dflt, dflt_raw, required_flag))
+
+    # gh-515: a path borrow must be released right after the C create() copies
+    # it (gh-219). On the dtype-dispatch / optional-array paths create() is
+    # emitted inside array_args_parse_block — several call sites, each in its
+    # own brace scope — so there is no single place to put that release, and
+    # generating the combination would leak. Reject it with an actionable error
+    # instead of emitting subtly wrong C.
+    if path_ip and (dispatch_meta or opt_arr_ip):
+        raise ValueError(
+            f"'{component}': a 'path' init-param cannot be combined with"
+            " array-dispatch or optional-array init-params."
+            f" Offending path param(s): {', '.join(path_ip)}."
+            " Drop the path param, or pass the path through a separate"
+            " setter/method instead."
+        )
 
     # --array-arg entries (dtype-string form)
     _aa = list(array_args)
@@ -131,6 +158,7 @@ def _build_no_state_init_ctx(
         n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
     }
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
+    _path_names: frozenset[str] = frozenset(path_ip)
 
     # gh-266: split scalar init-params into required (no default — parsed as a
     # mandatory positional, *before* the PyArg `|`) and optional (the historic
@@ -154,9 +182,12 @@ def _build_no_state_init_ctx(
     # that order — this mirrors what the ``sig_parts``/``call_parts`` loop
     # above already does correctly for the C ``create()`` signature.
     _order = {p[0]: i for i, p in enumerate(params)}
+    # gh-515: a path is ALWAYS required-positional — a filesystem path has no
+    # sensible default — so it joins required_entries, never optional_entries.
     required_entries = sorted(
         [("arr", n) for n, _, __, ___ in arr_ip]
-        + [("scalar", n) for n, *_ in req_scalar_ip],
+        + [("scalar", n) for n, *_ in req_scalar_ip]
+        + [("path", n) for n in path_ip],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
@@ -236,6 +267,18 @@ def _build_no_state_init_ctx(
             )
             call_parts.append(pname)
             c_create_parts_ordered.append("0")
+        elif pname in _path_names:
+            # gh-515/gh-219: C sees a borrowed `const char *` valid only for the
+            # duration of the call — the callee must copy it before returning.
+            sig_parts.append(f"{_coerce.PATH_C_TYPE}{pname}")
+            doc_parts.append(
+                f" * @param {pname}  Filesystem path"
+                " (borrowed; copy it before returning)."
+            )
+            call_parts.append(_coerce.path_call_expr(pname))
+            # The zero-seeded C smoke/bench create() passes NULL — jm cannot
+            # invent a valid path (see _unseedable_required).
+            c_create_parts_ordered.append("NULL")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(f"{ct_s} {pname}")
@@ -273,9 +316,11 @@ def _build_no_state_init_ctx(
         for kind, name in required_entries
         if kind == "arr"
     ]
-    parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa] + [
-        f"&{name}_obj" for kind, name in required_entries if kind == "arr"
-    ]
+    # Only the --array-arg entries are pre-seeded here: they occupy the leading
+    # "O" slots of required_fmt unconditionally. Every required_entries
+    # converter — array, scalar or path alike — is appended by the loop below,
+    # in declared order, so parse_args lines up with the format string.
+    parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa]
     post_lines: list[str] = []
 
     def _emit_scalar(name: str, ct: str, dflt: str, dflt_raw: str) -> str:
@@ -303,11 +348,25 @@ def _build_no_state_init_ctx(
     # array, optional scalar), matching their position ahead of the PyArg `|`
     # — but, per gh-422, in TOML declaration order relative to any required
     # arrays, not array-always-first.
+    #
+    # Every kind appends here so the argument order matches required_fmt, which
+    # is built from this same sequence. Hoisting the arrays ahead of the loop
+    # (as jm did before gh-515) desynchronised the two whenever a required
+    # scalar or path was declared first: the format said "iO" while the args
+    # were (&arr_obj, &scalar), so PyArg wrote an int through a PyObject * —
+    # and with a path's `O&` it read the address of a PyObject * as the
+    # converter function pointer.
     for kind, name in required_entries:
-        if kind == "scalar":
+        if kind == "arr":
+            parse_args.append(f"&{name}_obj")
+        elif kind == "scalar":
             ct, dflt, dflt_raw = _req_scalar_meta[name]
             parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
-        # "arr" entries already got their local_lines/parse_args above.
+        elif kind == "path":
+            # gh-515: one `O&` converter — path_addr() expands to the two
+            # comma-separated PyArg items that form expects.
+            local_lines.append("    " + _coerce.path_decl(name))
+            parse_args.append(_coerce.path_addr(name))
 
     # Optional string-enum / array / scalar kwargs, in TOML declaration
     # order (gh-422). (gh-244: a parse_type scalar such as size_t seeds its
@@ -329,6 +388,14 @@ def _build_no_state_init_ctx(
                 "    else {",
                 f'        PyErr_Format(PyExc_ValueError, "{name} must be one of'
                 f" {choices_str}, got '%s'\", {name}_str);",
+            ]
+            # gh-515/gh-219: every path borrow is already parsed by the time
+            # the enum check runs, so bail out through a release (mirrors
+            # _handle._init_fsfree).
+            enum_lines += [
+                f"        {_coerce.path_release(p)}" for p in path_ip
+            ]
+            enum_lines += [
                 "        return -1;",
                 "    }",
             ]
@@ -349,7 +416,11 @@ def _build_no_state_init_ctx(
     # Required converters (before the PyArg `|`): positional arrays and
     # required scalars, interleaved in declared order (gh-422).
     required_fmt = "O" * len(_aa) + "".join(
-        "O" if kind == "arr" else _CTYPE_META[_req_scalar_meta[name][0]]["fmt"]
+        "O"
+        if kind == "arr"
+        else _coerce.path_fmt()
+        if kind == "path"
+        else _CTYPE_META[_req_scalar_meta[name][0]]["fmt"]
         for kind, name in required_entries
     )
     optional_fmt = "".join(
@@ -370,7 +441,17 @@ def _build_no_state_init_ctx(
     init_parse_args = ", ".join(parse_args)
     create_call_args = ", ".join(call_parts)
 
-    if _aa or arr_ip or str_enum_ip or opt_arr_ip or scalar_ip:
+    # gh-515/gh-219: PyArg may fail *after* an earlier O& converter already
+    # produced a path borrow, so the failure path releases too. Py_XDECREF is
+    # NULL-safe, so this is also correct when the converter never ran.
+    if path_ip:
+        _releases = "".join(
+            f"        {_coerce.path_release(p)}\n" for p in path_ip
+        )
+        _parse_fail = f"    {{\n{_releases}        return -1;\n    }}\n"
+    else:
+        _parse_fail = "        return -1;\n"
+    if _aa or arr_ip or str_enum_ip or opt_arr_ip or scalar_ip or path_ip:
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
             f"{init_locals}\n"
@@ -378,7 +459,7 @@ def _build_no_state_init_ctx(
             f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
             f' "{init_parse_fmt}", kwlist,\n'
             f"                                     {init_parse_args}))\n"
-            f"        return -1;\n"
+            f"{_parse_fail}"
             f"{init_post_parse}"
         )
     else:
@@ -389,8 +470,16 @@ def _build_no_state_init_ctx(
     aapb_lines: list[str] = []
     allocated: list[str] = []
 
+    # gh-515/gh-219: array coercion runs *after* PyArg has already produced any
+    # path borrow, so every `return -1` bailout here must release it too or the
+    # PyBytes leaks. (The dispatch / optional-array branches below cannot be
+    # reached with a path param — that combination is rejected above.)
+    _path_cleanup = "".join(f" {_coerce.path_release(p)}" for p in path_ip)
+
     for (name, _), (ct, npy_enum) in zip(_aa, _aa_ctypes):
-        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in allocated)
+        cleanup = (
+            "".join(f" Py_DECREF({n}_arr);" for n in allocated) + _path_cleanup
+        )
         aapb_lines.append(
             f"    PyArrayObject *{name}_arr ="
             f" (PyArrayObject *)PyArray_FROM_OTF(\n"
@@ -401,7 +490,9 @@ def _build_no_state_init_ctx(
         allocated.append(name)
 
     for aname, act, andim, anpy in arr_ip:
-        cleanup = "".join(f" Py_DECREF({n}_arr);" for n in allocated)
+        cleanup = (
+            "".join(f" Py_DECREF({n}_arr);" for n in allocated) + _path_cleanup
+        )
         if aname in dispatch_meta:
             real_ect, real_npy, d_create_fn = dispatch_meta[aname]
             real_adisp = _ctype_display(real_ect)
@@ -548,6 +639,11 @@ def _build_no_state_init_ctx(
         create_line = ""
     else:
         create_line = f"    self->handle = {_create}({create_call_args});\n"
+        # gh-515/gh-219: release the path borrow only AFTER create() has copied
+        # the string — dropping it earlier is a use-after-free.
+        create_line += "".join(
+            f"    {_coerce.path_release(n)}\n" for n in path_ip
+        )
 
     # ── pyi / test helpers ────────────────────────────────────────────────
 
@@ -576,6 +672,9 @@ def _build_no_state_init_ctx(
     for kind, name in required_entries:
         if kind == "arr":
             pyi_parts.append(f"{name}: npt.ArrayLike")
+        elif kind == "path":
+            # gh-515: required, hence no `= ...` default.
+            pyi_parts.append(f"{name}: str")
         else:
             ct = _req_scalar_meta[name][0]
             pyi_parts.append(f"{name}: {_CTYPE_META[ct]['py_type']}")
@@ -642,20 +741,38 @@ def _build_no_state_init_ctx(
         hdr = create_blk.param_desc(name) if create_blk else None
         return _manifest_doc.get(name) or hdr or stub
 
-    if req_scalar_ip:
+    # gh-515: paths and required scalars are both default-less required params,
+    # so their doc sections sit together; sorting by declaration index keeps
+    # the section in TOML order (the gh-422 invariant).
+    _req_doc = [
+        (
+            _order[name],
+            f"    {name} : {_CTYPE_META[ct]['py_type']}\n"
+            f"        {_pdoc(name, True)}",
+        )
+        for name, ct, *_ in req_scalar_ip
+    ] + [
+        (_order[name], f"    {name} : str\n        {_pdoc(name, True)}")
+        for name in path_ip
+    ]
+    if _req_doc:
         pyi_doc_sections.append(
-            "\n".join(
-                f"    {name} : {_CTYPE_META[ct]['py_type']}\n"
-                f"        {_pdoc(name, True)}"
-                for name, ct, *_ in req_scalar_ip
-            )
+            "\n".join(s for _, s in sorted(_req_doc, key=lambda e: e[0]))
         )
     if opt_scalar_ip:
+        # gh-515: a param with no default carries no ", default …" clause.
+        # numpydoc already reads a bare `name : type` as having no default,
+        # whereas the trailing `, default ` jm used to emit was neither
+        # readable prose nor a literal anyone could copy into a call.
         pyi_doc_sections.append(
             "\n".join(
-                f"    {name} : {_CTYPE_META[ct]['py_type']},"
-                f" default {_py_default(ct, dflt)}\n"
-                f"        {_pdoc(name, False)}"
+                f"    {name} : {_CTYPE_META[ct]['py_type']}"
+                + (
+                    f", default {_py_default(ct, dflt)}"
+                    if dflt.strip()
+                    else ""
+                )
+                + f"\n        {_pdoc(name, False)}"
                 for name, ct, dflt, *_ in opt_scalar_ip
             )
         )
@@ -688,6 +805,12 @@ def _build_no_state_init_ctx(
             py_create_parts.append(
                 _py_default(ct, dflt or _CTYPE_META[ct]["zero"])
             )
+        elif kind == "path":
+            # gh-515: jm cannot invent a valid filesystem path, so emit the
+            # `...` sentinel — _unseedable_required() already marks the whole
+            # ctor unseedable, which suppresses the example and skips the
+            # generated tests that would otherwise use this string.
+            py_create_parts.append("...")
     for kind, name in optional_entries:
         if kind == "str_enum":
             py_create_parts.append(f'"{_str_enum_by_name[name][1]}"')
@@ -942,19 +1065,30 @@ def _make_gs_decls_impls(
 
 
 def _unseedable_required(init_params: list) -> list:
-    """Names of ``required`` scalar init-params that carry no default (gh-273).
+    """Names of init-params jm cannot seed a generated construction with.
 
-    Such a param has no value jm can put in a generated smoke test or doctest;
-    a validating constructor would reject the type's zero. Arrays are excluded
-    (they seed as ``np.zeros`` and are always positional). Returns the names in
-    declaration order (empty when the constructor is fully seedable)."""
+    Two kinds qualify:
+
+    * a ``required`` scalar carrying no default (gh-273) — a validating
+      constructor would reject the type's zero;
+    * a ``path`` param (gh-515) — jm cannot invent a filesystem path that
+      exists, and a path is always required regardless of the ``required``
+      flag, so the flag is not consulted for it.
+
+    Either way there is no value jm can put in a generated smoke test or
+    doctest. Arrays are excluded (they seed as ``np.zeros`` and are always
+    positional). Returns the names in declaration order (empty when the
+    constructor is fully seedable)."""
     return [
         p[0]
         for p in init_params
-        if len(p) > 8
-        and p[8]  # required
-        and not (len(p) > 2 and p[2])  # no default
-        and not str(p[1]).endswith("[]")  # scalar
+        if str(p[1]) == "path"
+        or (
+            len(p) > 8
+            and p[8]  # required
+            and not (len(p) > 2 and p[2])  # no default
+            and not str(p[1]).endswith("[]")  # scalar
+        )
     ]
 
 
@@ -1676,6 +1810,10 @@ def make_state_ctx(
     # gh-273: a required init-param with no default has no valid construction
     # seed, so suppress the doctest rather than emit one a validating ctor
     # rejects under `pytest --doctest-glob='*.pyi'`.
+    # gh-515: likewise when any argument rendered as the `...` sentinel — a
+    # non-required param with no default is equally unseedable, and `Rdr(...)`
+    # would hand the ctor an Ellipsis and raise. Same guard `_stubs.py` applies
+    # to its own construction example.
     pyi_examples = (
         _pyi_examples_block(
             ctor_scalars,
@@ -1684,7 +1822,9 @@ def make_state_ctx(
             py_create_args,
             Component,
         )
-        if ctor_scalars and not _unseedable_required(init_params)
+        if ctor_scalars
+        and not _unseedable_required(init_params)
+        and "..." not in py_create_args
         else ""
     )
 
@@ -1923,6 +2063,13 @@ def make_state_ctx(
             _ip_c, _ip_py = [], []
             for p in init_params:
                 n, ct = p[0], p[1]
+                if ct == "path":
+                    # gh-515: a path contributes one create() arg, and the
+                    # rebuild must keep the arity — NULL for C, the `...`
+                    # sentinel for Python (the ctor is unseedable anyway).
+                    _ip_c.append("NULL")
+                    _ip_py.append("...")
+                    continue
                 if ct not in _CTYPE_META:
                     continue
                 raw_dflt = p[2] if len(p) > 2 else ""

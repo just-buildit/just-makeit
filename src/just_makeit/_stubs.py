@@ -99,6 +99,11 @@ def _py(ctype: str) -> str:
     if ctype.startswith("string_enum:"):
         choices = ctype[len("string_enum:") :].split(",")
         return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
+    if ctype == "path":
+        # gh-515: a path init-param. `str` (not `str | os.PathLike`) keeps the
+        # object stub free of the `import os` the function stubs need — the
+        # binding accepts any os.fspath-able object either way.
+        return "str"
     return _CTYPE_TO_PY.get(ctype, "Any")
 
 
@@ -344,8 +349,17 @@ _ARRAY_RE = _re.compile(r"^([\w\s_]+)\[(\d+)\]$")
 
 
 def _py_default_stub(ctype: str, default: str) -> str:
-    """Convert a C default literal to a Python literal (stub helper)."""
-    if ctype not in _CTYPE_TO_PY:
+    """Convert a C default literal to a Python literal (stub helper).
+
+    An absent default renders as the ``...`` sentinel rather than as the empty
+    string (gh-515). Every consumer already understands ``...`` to mean "no
+    literal jm can seed": the construction example is suppressed by the
+    ``"..." in py_create_args`` guard, and the emitted signature stays valid
+    Python. Returning the raw empty default instead produced ``x: int = `` —
+    a SyntaxError that broke the whole stub for any downstream ``mypy`` run or
+    ``pytest --doctest-glob='*.pyi'`` sweep.
+    """
+    if ctype not in _CTYPE_TO_PY or not default.strip():
         return "..."
     kind_map = {
         "float": "float",
@@ -449,7 +463,8 @@ def _build_class_docstring(
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
-            if required:
+            # gh-515: a path is required by construction, whatever the flag says.
+            if required or ctype == "path":
                 # gh-266: no default — document it as a required parameter.
                 param_lines += [
                     f"    {name} : {py_t}",
@@ -460,8 +475,13 @@ def _build_class_docstring(
                 py_d = f'"{dflt}"' if dflt else "..."
             else:
                 py_d = _py_default_stub(ctype, dflt)
+            # gh-515: a param with no default carries no ", default …" clause.
+            # numpydoc already reads a bare `name : type` as having no default,
+            # whereas the trailing `, default ` jm used to emit was neither
+            # readable prose nor a literal anyone could copy into a call.
             param_lines += [
-                f"    {name} : {py_t}, default {py_d}",
+                f"    {name} : {py_t}"
+                + (f", default {py_d}" if dflt.strip() else ""),
                 f"        {_pdesc(name, manifest_doc, False)}",
             ]
     elif state_vars and not no_state:
@@ -767,7 +787,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             n, t = param[0], param[1]
             optional = param[6] if len(param) > 6 else False
             required = param[8] if len(param) > 8 else False
-            if required and not t.endswith("[]"):
+            # gh-515: a path is required-positional by construction (a
+            # filesystem path has no sensible default), so it is hoisted with
+            # the other default-less params rather than given a `= ...`.
+            if t == "path" or (required and not t.endswith("[]")):
                 req_parts.append(f"{n}: {_py(t)}")
             elif optional:
                 parts_init.append(f"{n}: {_py(t)} | None = None")
