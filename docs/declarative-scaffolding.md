@@ -267,6 +267,65 @@ write `free(state)` yourself — it is appended automatically.
 ordering rule applies: place the scalar key **before** any `[[buf.state]]`
 arrays.
 
+### Naming and failing the destructor — `[<obj>.destroy]`
+
+Two things the generated teardown used to hardcode: it was always called
+`destroy()`, and it was always `void` — so a close that is genuinely part of
+the work (a writer patching a header field and appending trailing metadata
+after the last sample) had no way to tell the caller it failed. One table
+covers both:
+
+```toml
+[wfm_writer.destroy]
+name          = "close"        # Python method name; default "destroy"
+aliases       = ["destroy"]    # extra names bound to the same C function
+returns       = "int"          # non-zero rc raises
+error         = "OSError"      # exception class (default RuntimeError)
+error_message = "failed to finalise the capture"
+```
+
+Manifest-only — there is no CLI flag (five interacting keys is not a CLI
+shape; `package` set the same precedent). Edit the TOML and run `jm apply`.
+
+`returns = "int"` changes the **sacred** core signature to
+`int wfm_writer_destroy(wfm_writer_state_t *state)` in both `_core.h` and
+`_core.c`. A freshly scaffolded component gets that from the template; an
+already-scaffolded one is patched in place by `jm apply`, which also gives the
+stub body a `return 0;` — but only when the body has no `return` yet, so a
+destructor you have already written is never touched.
+
+#### Where a failure surfaces
+
+| Path                              | On non-zero rc                                                     |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `close()` (and every alias)       | raises the declared exception                                      |
+| `__exit__`                        | raises — so a failing close propagates **out of the `with` block** |
+| `tp_dealloc` (garbage collection) | **swallowed**                                                      |
+
+The `__exit__` row is the point of the feature. This is the case that used to
+corrupt data in silence:
+
+```python
+with Writer(path) as w:
+    w.write(x)
+# <- disk full here. Before: nothing raised. Now: OSError.
+```
+
+The `tp_dealloc` swallow is deliberate, not an oversight. CPython runs
+`tp_dealloc` during refcount collapse: there is no caller to raise to, and an
+exception may already be in flight that must not be clobbered. Discarding the
+status there is the only correct choice, and the generated C says so in a
+comment. **If you need to know whether teardown succeeded, call `close()`
+explicitly or use a `with` block** — letting the object fall out of scope
+cannot report anything.
+
+Idempotence is preserved: the handle is cleared *before* the status is
+reported, so a second `close()` is a no-op returning `None`, never a double
+free — even when the first one raised.
+
+The `.pyi` stub declares the real method name, every alias, and the exception
+each can raise, so a type checker accepts `w.close()`.
+
 ### Opaque state fields — pointers and handles
 
 Heap buffers, file handles, FFTW plans, and other resources whose C type

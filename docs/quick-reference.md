@@ -704,6 +704,46 @@ jm error comp \
 <td>
 
 ```python
+# Teardown is named, and
+# can fail. A failing
+# close raises OUT of
+# the with block.
+with Writer(p) as w:
+    w.write(x)
+# -> OSError: ...
+w.destroy()  # alias
+```
+
+</td>
+<td>
+
+```toml
+[comp.destroy]
+name    = "close"
+aliases = ["destroy"]
+returns = "int"
+error   = "OSError"
+error_message = \
+  "close failed"
+```
+
+</td>
+<td>
+
+```text
+manifest only —
+no CLI flag; edit
+the TOML and run
+`jm apply`
+```
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+```python
 # Module-level function
 def apply(
     x: NDArray[np.float32],

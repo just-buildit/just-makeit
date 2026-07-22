@@ -139,6 +139,11 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "controllable_names": C.controllable_names(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),
         "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
+        # gh-541/gh-544: the destructor contract is manifest-only (no CLI
+        # flag), so the replay has to carry it explicitly — without this the
+        # temp scaffold renders a `void` destructor and the declared
+        # name/aliases/error vanish on a fresh checkout.
+        "destroy": C.destroy_spec(cfg, comp),
     }
 
 
@@ -587,6 +592,88 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         if updated != original:
             h_path.write_text(updated, encoding="utf-8")
             patched.append(h_path)
+    return patched
+
+
+def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
+    """Promote an existing component's destructor to ``int`` (gh-541).
+
+    ``returns = "int"`` is the one thing in ``[<comp>.destroy]`` that reaches
+    the *sacred* files: the glue calls ``int rc = <comp>_destroy(...)``, so the
+    declaration in ``_core.h`` and the definition in ``_core.c`` have to agree.
+    A freshly scaffolded component gets that for free — the templates carry the
+    slot. An *already scaffolded* one does not: ``_core.c`` is never
+    re-rendered and ``_core.h`` only ever gains missing declarations, so
+    without this the first build after declaring the table fails with a
+    conflicting-types error.
+
+    The patch is deliberately narrow and idempotent:
+
+    - ``void <comp>_destroy`` becomes ``int <comp>_destroy`` (both files);
+      anything already ``int`` is left alone.
+    - ``return 0;`` is appended to the ``_core.c`` body only when that body
+      contains no ``return`` at all, i.e. it is still the generated
+      ``free(state);`` stub. A body the user has already given a return path
+      is never touched — jm has no basis for guessing which branch should
+      report success.
+
+    Only the ``int`` direction is handled. Dropping the table back to ``void``
+    leaves a wider C signature whose status the glue simply ignores, which
+    still compiles — so there is nothing to undo, and undoing it would mean
+    deleting return statements the user wrote.
+
+    Returns
+    -------
+    list of Path
+        The files actually changed.
+    """
+    from ._init import _matching_brace
+
+    patched: list[Path] = []
+    mods = C.modules(cfg)
+    module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
+    all_comps = [c for c in C.components(cfg) if c not in module_owned]
+    all_comps += [o for m in mods for o in C.module_objects(cfg, m)]
+
+    for comp in all_comps:
+        if not C.destroy_returns_int(cfg, comp):
+            continue
+        void_decl = re.compile(rf"\bvoid(\s+){comp}_destroy\b")
+
+        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        if h_path.exists():
+            text = h_path.read_text(encoding="utf-8")
+            new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
+            if new != text:
+                h_path.write_text(new, encoding="utf-8")
+                patched.append(h_path)
+
+        c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        if not c_path.exists():
+            continue
+        text = c_path.read_text(encoding="utf-8")
+        new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
+        # Give the stub a success path. Located by the definition's own
+        # opening brace so a `<comp>_destroy` mentioned in a comment or a
+        # sibling function cannot be mistaken for it.
+        idx = new.find(f"{comp}_destroy")
+        while idx != -1:
+            brace = new.find("{", idx)
+            paren = new.find("(", idx)
+            if brace != -1 and paren != -1 and paren < brace:
+                end = _matching_brace(new, brace)
+                body = new[brace + 1 : end - 1]
+                if "return" not in body:
+                    new = (
+                        new[: end - 1].rstrip("\n")
+                        + "\n    return 0;\n"
+                        + new[end - 1 :]
+                    )
+                break
+            idx = new.find(f"{comp}_destroy", idx + 1)
+        if new != text:
+            c_path.write_text(new, encoding="utf-8")
+            patched.append(c_path)
     return patched
 
 
@@ -1654,6 +1741,10 @@ def run(
         _cfmt.format_project(temp_root, cfg, quiet=True)
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
+        # gh-541: promote an already-scaffolded component's sacred destructor
+        # to `int` when the manifest now declares it fallible. Must run before
+        # _sync_aggregates writes the glue that calls it.
+        impl_patched += _patch_destroy_signatures(root, cfg)
         updated = _sync_aggregates(
             temp_root,
             root,

@@ -127,6 +127,16 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             create_fn=C.object_create_fn(cfg, object_name),
         )
     )
+    # gh-541/gh-544: the declared destructor contract. Regenerated from the
+    # manifest on every pass — the hand-written close()/__exit__ this replaces
+    # was silently dropped by exactly this render.
+    ctx.update(
+        Ctx.make_destroy_ctx(
+            object_name,
+            ctx["ComponentW"],
+            C.destroy_spec(cfg, object_name),
+        )
+    )
     ctx.update(
         Ctx.make_stream_ctx(
             object_name,

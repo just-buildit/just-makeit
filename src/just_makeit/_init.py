@@ -51,6 +51,15 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # lists `windows` in [project] platforms.
         "win_cmake_component": "",
         "win_cmake_module": "",
+        # gh-541/gh-544: destructor slots. Seeded here — the one place every
+        # component render path passes through — so no path can leak a literal
+        # <<destroy_*>> into generated C. The undeclared values reproduce the
+        # pre-gh-541 hardcoded template text byte for byte. This is only a
+        # safety net: `ComponentW` is not settled until make_state_ctx has run
+        # (a no_state object's prefix gains an `Obj` suffix), so every real
+        # path re-runs make_destroy_ctx with the real prefix and the manifest's
+        # spec right after that.
+        **Ctx.make_destroy_ctx(component, _to_title(component)),
     }
 
 
@@ -630,6 +639,7 @@ def run(
     extra_link_libs: list[str] = (),
     extra_include_dirs: list[str] = (),
     create_fn: str | None = None,
+    destroy: "dict | None" = None,
     _hint: bool = True,
 ) -> None:
     if not component.replace("_", "").isalnum() or component[0].isdigit():
@@ -761,6 +771,15 @@ def run(
     # gh-482: likewise undeclared at creation, which yields the historical
     # MemoryError block — so this render stays byte-identical to before.
     ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
+    # gh-541/gh-544: the destructor contract. Re-run here with the settled
+    # ComponentW and the caller's spec, which `jm apply` supplies when
+    # replaying a manifest that declares [<comp>.destroy]. This is the render
+    # that also stamps the SACRED _core.h/_core.c signature, so a fresh
+    # scaffold of a fallible destructor gets `int <comp>_destroy(...)` and a
+    # `return 0;` stub without any hand edit.
+    ctx.update(
+        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy)
+    )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;
     # a later variable_output method re-points it (recomputed on every render).
@@ -1091,6 +1110,10 @@ def run(
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
     )
+    # gh-541/gh-544: persist the destructor contract so it survives the
+    # manifest round-trip. `jm apply` replays through this path, and a key
+    # apply silently drops is the second defect gh-519 shipped.
+    C.set_destroy_spec(cfg, comp, destroy or {})
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

@@ -40,9 +40,9 @@ typedef struct {
 
 /**
  * @brief Destroy a /*<<component>>*/ instance and release all memory.
- * @param state  May be NULL.
+ * @param state  May be NULL./*<<destroy_ret_doc>>*/
  */
-void /*<<component>>*/_destroy(/*<<component>>*/_state_t *state);
+/*<<destroy_c_ret>>*/ /*<<component>>*/_destroy(/*<<component>>*/_state_t *state);
 
 /*<<builtin_reset_decl>>*/
 

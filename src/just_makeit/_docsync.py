@@ -455,8 +455,17 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         sent = re.search(r"\{\s*NULL", ex_mask[open_idx:close_idx])
         rows_at = open_idx + sent.start() if sent else open_idx + 1
         rows_text = "".join(f"    {r},\n" for r in missing_rows)
+        # gh-544: a row may bind a name to a wrapper the fragment ALREADY
+        # defines — that is exactly what a destructor alias is
+        # (``{"close", ...}`` and ``{"destroy", ...}`` both point at
+        # ``<Obj>_destroy``). Splicing the function in again is a C
+        # redefinition error, so only genuinely new wrappers are inserted;
+        # the row itself is still added.
+        _existing_funcs = _extract_c_function_bodies(out)
         funcs_text = "\n\n".join(
-            ref_funcs[n] for n in missing_fn_names if n in ref_funcs
+            ref_funcs[n]
+            for n in missing_fn_names
+            if n in ref_funcs and n not in _existing_funcs
         )
         if funcs_text:
             funcs_text += "\n\n"
@@ -512,6 +521,23 @@ def refresh_module_fragment_docs(
             # fragment was last generated is missing entirely -- splice it in
             # additively rather than requiring delete-and-recreate.
             updated = transplant_missing_bindings(updated, reference)
+            # gh-541: the teardown wrappers are manifest-derived, not
+            # hand-owned, once [<obj>.destroy] exists. transplant_missing_
+            # bindings above is additive by name, so it adds the alias ROW but
+            # leaves a pre-existing `<Obj>_destroy`/`<Obj>_exit` body swallowing
+            # the status — the exact silent revert this feature exists to
+            # prevent. Overwrite those two from the reference. Scoped to
+            # declaring objects, so every other fragment is untouched.
+            if C.destroy_spec(cfg, ctx["component"]):
+                _w = ctx["ComponentW"]
+                _ref_funcs = O._extract_c_function_bodies(reference)
+                _own = {
+                    n: _ref_funcs[n]
+                    for n in (f"{_w}_destroy", f"{_w}_exit")
+                    if n in _ref_funcs
+                }
+                if _own:
+                    updated = O._restore_c_function_bodies(updated, _own)
             # gh-404: a serializable object whose sacred fragment predates the
             # flag (or was hand-written) lacks the state triplet — inject it.
             # (Usually already covered by the general splice above, since the
