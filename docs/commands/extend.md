@@ -328,7 +328,7 @@ ______________________________________________________________________
 just-makeit property <object> <prop_name>
     [--module name]
     --type TYPE
-    [--writable] [--field]
+    [--writable] [--field] [--enum NAME]
 ```
 
 Add a read-only (or read-write) Python property to an existing object.
@@ -338,6 +338,7 @@ just-makeit property nco phase --module source --type uint32_t
 just-makeit property nco phase_inc --module source --type uint32_t
 just-makeit property buffer capacity --type size_t --writable
 just-makeit property reader samples_read --module conv --type uint32_t --field
+just-makeit property reader file_type --type int --field --enum ftype
 ```
 
 Like `jm method`, a computed property is **additive and splice-free**: it
@@ -359,6 +360,57 @@ directly into the state struct and auto-implements the getter as
 | `--writable`    | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                    |
 | `--field`       | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. |
 | `--doc "text"`  | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                          |
+| `--enum NAME`   | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                       |
+
+### Enum-valued properties (`--enum`)
+
+A property whose C value is an index into a `[[enum]]` table can present that
+value to Python as its **string**, exactly as a `kind = "handle"` module's
+getters have always done. C still stores the `int`; only the Python face
+changes.
+
+```toml
+[[enum]]
+name = "ftype"
+values = ["raw", "wav", "blue"]     # order IS the C int: raw=0, wav=1, blue=2
+
+[[reader.properties]]
+name = "file_type"
+type = "int"
+field = true
+enum = "ftype"
+```
+
+```python
+>>> r.file_type
+'blue'
+>>> r.file_type = "wav"      # only when the property is --writable
+>>> r.file_type
+'wav'
+>>> r.file_type = "nope"
+ValueError: invalid file_type 'nope' (choices: raw, wav, blue)
+```
+
+The stub types it as `Literal["raw", "wav", "blue"]`, so a typo is caught by
+mypy rather than at runtime.
+
+Two things worth knowing:
+
+- **The value is range-checked.** If the C side holds an index the table
+    cannot contain — say a format code decoded from a file header that names a
+    variant you do not support — reading the property raises
+    `ValueError: file_type holds out-of-range ftype value 99 (valid: 0..2)`
+    rather than reading past the table (gh-521).
+- **`enum` is not the same as `string_enum:`.** `enum = "name"` references the
+    shared `[[enum]]` SSOT and is what properties, handle getters, and
+    `--param name:enum:<ename>` use. The inline `string_enum:a,b,c` form spells
+    its choices in the type itself and applies to **constructor init-params**.
+    Prefer the SSOT whenever the same choice set is used in more than one place —
+    that is the whole reason it exists.
+
+`--enum` cannot be combined with a `buf_field` property: an array of enum
+strings has no decoded form, and jm rejects it with a diagnostic rather than
+generating something misleading.
 
 ### Removing a method or property
 

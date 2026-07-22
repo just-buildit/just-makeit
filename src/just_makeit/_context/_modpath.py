@@ -22,14 +22,24 @@ from __future__ import annotations
 from .. import _config as C
 
 
-def make_module_ctx(module_id: str, pkg: str = "") -> dict[str, str]:
-    """Render slots for *module_id* (dotted ids nest; dotless ones don't)."""
+def make_module_ctx(
+    module_id: str, pkg: str = "", package: str = ""
+) -> dict[str, str]:
+    """Render slots for *module_id* (dotted ids nest; dotless ones don't).
+
+    *package* is the optional ``[module.X] package`` override (gh-523): the
+    package directory the ``.so`` / ``.pyi`` land in when the module lives
+    inside a sibling package rather than one named after itself. It replaces
+    ``module_pypath`` only — the C identifiers, the ``PyInit_`` leaf and the
+    ``.so`` basename are all still the module's own, since the extension keeps
+    its own name inside the shared package. Empty (the default) leaves every
+    slot exactly as before, so unpackaged modules render byte-identically."""
     mp = C.module_paths(module_id)
     nested = bool(mp.parents)
     return {
         "module": mp.cname,
         "module_leaf": mp.leaf,
-        "module_pypath": mp.pypath,
+        "module_pypath": package or mp.pypath,
         "module_output_name": (
             f"\n    OUTPUT_NAME {mp.leaf}" if nested else ""
         ),

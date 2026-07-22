@@ -81,6 +81,23 @@ Intermediate packages (`dsp`) get a plain `__init__.py`; the native sources
 stay in a single flat dir (`native/src/dsp_filters/`). Objects are added the
 same way: `just-makeit object fir --module dsp.filters`.
 
+A module can also land its Python artifacts **inside an existing package**
+instead of one named after itself, via the manifest-only `package` key
+(there is no CLI flag — add it to `just-makeit.toml` and run `just-makeit apply`):
+
+```toml
+[module.wfm_reader]
+objects = ["wfm_reader"]
+package = "wfm"          # .so, .pyi, tests/ and benchmarks/ go to src/<pkg>/wfm/
+```
+
+`from <pkg>.wfm import Reader` then works alongside whatever `wfm` already
+exports — the package's `__init__.py` gains the re-export rather than being
+overwritten, and two modules may share one package. The C side is unaffected:
+the sources stay in `native/src/wfm_reader/` and the `.so` is still
+`wfm_reader`. The same key works for `capsule`, `composer` and `handle`
+modules.
+
 Creates:
 
 | File                               | Purpose                                            |

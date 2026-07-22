@@ -112,7 +112,7 @@ def _rm(path: Path) -> None:
 
 
 def _object_paths(
-    root: Path, pkg: str, obj: str, module: str | None
+    root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*."""
     paths = [
@@ -122,7 +122,10 @@ def _object_paths(
         root / "native" / "benchmarks" / f"bench_{obj}_core.c",
     ]
     if module:
-        sub = root / "src" / pkg / C.module_paths(module).pypath
+        # gh-523: the module's Python artifacts may live in a `package`
+        # override rather than a directory named after the module.
+        mp = C.module_paths(module)
+        sub = root / "src" / pkg / (C.module_package(cfg, module) or mp.pypath)
         paths += [
             sub / "tests" / f"test_{obj}.py",
             sub / "benchmarks" / f"bench_{obj}.py",
@@ -211,7 +214,7 @@ def _remove_object_files(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> None:
     """Delete every generated file/dir for *obj* and strip its build wiring."""
-    for path in _object_paths(root, pkg, obj, module):
+    for path in _object_paths(root, cfg, pkg, obj, module):
         _rm(path)
     _strip_cmake_object(root, obj)
     _strip_umbrella(root, pkg, obj)
@@ -322,7 +325,8 @@ def _prune_parent_packages(
     # Every directory prefix occupied by a surviving module.
     needed: set[str] = set()
     for other in C.modules(cfg):
-        segs = C.module_paths(other).pypath.split("/")
+        other_mp = C.module_paths(other)
+        segs = (C.module_package(cfg, other) or other_mp.pypath).split("/")
         for d in range(1, len(segs) + 1):
             needed.add("/".join(segs[:d]))
     for depth in range(len(mp.parents), 0, -1):
@@ -387,7 +391,15 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     mp = C.module_paths(module)
     _rm(root / "native" / "inc" / mp.cname)
     _rm(root / "native" / "src" / mp.cname)
-    _rm(root / "src" / pkg / mp.pypath)
+    # gh-523: a module that landed inside a *shared* package owns only its own
+    # .pyi there — the package belongs to whoever else lives in it (doppler's
+    # `wfm` also holds Synth / Composer). Deleting the directory would take
+    # them with it, so only the module's own stub goes.
+    out_pkg = C.module_package(cfg, module)
+    if out_pkg:
+        _rm(root / "src" / pkg / out_pkg / f"{mp.leaf}.pyi")
+    else:
+        _rm(root / "src" / pkg / mp.pypath)
     _strip_cmake_module(root, mp.cname)
 
     cfg.get("module", {}).pop(module, None)

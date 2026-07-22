@@ -36,7 +36,15 @@ def run(
     extra_link_libs: list[str] | None = None,
     extra_types: list[str] | None = None,
     functions_in_core: bool = False,
+    package: str = "",
 ) -> None:
+    """Scaffold module *module* under *root*.
+
+    *package* (gh-523) is the ``[module.X] package`` override: the package
+    directory this module's Python artifacts (``.so``, ``.pyi``, re-export
+    ``__init__.py``, tests and benchmarks) land in, instead of one named
+    after the module. Empty means "a package of my own" — today's behaviour.
+    """
     err = C.validate_module_id(module)
     if err:
         print(f"error: {err}", file=sys.stderr)
@@ -52,7 +60,6 @@ def run(
 
     cfg = C.load(root)
     mp = C.module_paths(module)
-
     if module in C.modules(cfg):
         print(f"error: module '{module}' already exists.", file=sys.stderr)
         sys.exit(1)
@@ -74,6 +81,14 @@ def run(
         )
         sys.exit(1)
 
+    # gh-523: seed `package` into the in-memory cfg now that the "module
+    # already exists" checks above have passed, so every path helper below
+    # (and _stubs.make_module_pyi) reads the destination from the one place.
+    if package:
+        cfg.setdefault("module", {}).setdefault(module, {})["package"] = (
+            package
+        )
+
     pkg = C.project_name(cfg)
     Module = _to_title(mp.cname)
 
@@ -87,7 +102,10 @@ def run(
     mod_ctx = {"module": cname, "Module": Module, "MODULE": cname.upper()}
     # Render slots that split the module's roles (module=cname, module_leaf,
     # module_pypath, module_output_name, module_tp).
-    mod_slots = Ctx.make_module_ctx(module, pkg)
+    # gh-523: `package` redirects the Python-side artifacts into a sibling
+    # package; unset it resolves to the module's own pypath (zero churn).
+    out_pkg = C.module_package(cfg, module) or mp.pypath
+    mod_slots = Ctx.make_module_ctx(module, pkg, out_pkg)
 
     # C header and implementation for module-level functions
     _write(
@@ -126,14 +144,14 @@ def run(
 
     # Python subpackage at src/<pkg>/<pypath>/ (nested for dotted ids); ensure
     # the intermediate packages exist so `pkg.<parent>...` is importable.
-    ensure_parent_packages(root, pkg, mp)
-    pkg_module_dir = root / "src" / pkg / mp.pypath
+    ensure_parent_packages(root, pkg, mp, out_pkg)
+    pkg_module_dir = root / "src" / pkg / out_pkg
     # No objects yet, so no import line (an empty `from .<leaf> import` would be
-    # a SyntaxError).
-    _write(
-        pkg_module_dir / "__init__.py",
-        T.render(T.MODULE_INIT_PY_EMPTY, mod_slots),
-    )
+    # a SyntaxError). gh-523: create-only — when `package` aims the module at a
+    # pre-existing package, its __init__.py must never be stamped over.
+    mod_init = pkg_module_dir / "__init__.py"
+    if not mod_init.exists():
+        _write(mod_init, T.render(T.MODULE_INIT_PY_EMPTY, mod_slots))
     _write(
         pkg_module_dir / f"{mp.leaf}.pyi",
         S.make_module_pyi(cfg, module, root),
@@ -164,6 +182,8 @@ def run(
 
     # Config
     C.scaffold_module(cfg, module)
+    if package:
+        cfg["module"][module]["package"] = package
     # Optional Phase-2 metadata persisted into the [module.X] section so
     # jm apply's renderer picks them up. The renderer + dump already
     # handle these keys (gh-66 / v0.13.22 for include_dirs and link_libs;

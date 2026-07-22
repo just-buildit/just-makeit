@@ -1267,8 +1267,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     """
     pkg = C.project_name(cfg)
     objects = C.module_objects(cfg, module)
-    # The .pyi sits beside the .so at src/<pkg>/<pypath>/<leaf>.pyi.
+    # The .pyi sits beside the .so at src/<pkg>/<pypath>/<leaf>.pyi — or, when
+    # the module declares a gh-523 `package`, inside that package instead.
     mp = C.module_paths(module)
+    out_pkg = C.module_package(cfg, module) or mp.pypath
 
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
@@ -1277,8 +1279,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # gh-203: a streamable object's stub references Callable + Iterator.
     needs_stream = any(_obj_stream_pyi(cfg, o) for o in objects)
     parts: list[str] = [
-        f"# {mp.pypath}/{mp.leaf}.pyi — type stubs for the "
-        f"{module} C extension."
+        f"# {out_pkg}/{mp.leaf}.pyi — type stubs for the {module} C extension."
     ]
     if needs_literal or needs_any or needs_stream:
         typing_imports = ", ".join(
