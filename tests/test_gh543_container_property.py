@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
+from just_makeit._cli import main as cli_main
 from just_makeit._context import make_properties_ctx
 from just_makeit._context._methods import (
     container_fn_names,
@@ -669,3 +670,157 @@ class TestBuildAndRun:
             """,
         )
         assert out == "destroyed"
+
+
+class TestCli:
+    """The flags as a user actually reaches them.
+
+    Every other test here calls ``property_run`` directly, which skips the
+    argv parser entirely -- so a flag could be accepted by the function and
+    never wired into the CLI, and nothing would notice.
+
+    ``main()`` is driven in-process rather than through a subprocess (the way
+    ``test_cli.py`` does it) so the parser branches are actually attributed to
+    this suite; a subprocess run exercises them but reports them as uncovered.
+    """
+
+    @staticmethod
+    def _cli(monkeypatch, cwd, *args):
+        """Run ``jm <args>`` in *cwd*; returns the SystemExit code (0 if none)."""
+        monkeypatch.chdir(cwd)
+        monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
+        try:
+            cli_main()
+        except SystemExit as exc:
+            return exc.code or 0
+        return 0
+
+    @pytest.fixture()
+    def project(self, tmp_path):
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")])
+        return dest
+
+    def test_every_container_flag_reaches_the_manifest(
+        self, project, monkeypatch
+    ):
+        rc = self._cli(
+            monkeypatch,
+            project,
+            "property",
+            "rdr",
+            "keywords",
+            "--type",
+            "dict",
+            "--value-type",
+            "object",
+            "--count-fn",
+            "rdr_nkw",
+            "--key-fn",
+            "rdr_kwtag",
+            "--value-fn",
+            "rdr_kwval",
+        )
+        assert rc == 0
+        (prop,) = C.properties(C.load(project), "rdr")
+        assert prop["type"] == "dict"
+        assert prop["value_type"] == "object"
+        assert prop["count_fn"] == "rdr_nkw"
+        assert prop["key_fn"] == "rdr_kwtag"
+        assert prop["value_fn"] == "rdr_kwval"
+
+    def test_typed_non_pointer_value_declares_with_a_space(
+        self, project, monkeypatch
+    ):
+        """`double` needs a separator before the name; `const char *` must not
+        get one. Only the pointer case was covered before."""
+        rc = self._cli(
+            monkeypatch,
+            project,
+            "property",
+            "rdr",
+            "gains",
+            "--type",
+            "list",
+            "--value-type",
+            "double",
+        )
+        assert rc == 0
+        h = (project / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
+        assert (
+            "double rdr_gains_value(const rdr_state_t *state, size_t i);" in h
+        )
+
+    @pytest.mark.parametrize(
+        "flag, value",
+        [
+            ("--value-type", "object"),
+            ("--count-fn", "f"),
+            ("--key-fn", "f"),
+            ("--value-fn", "f"),
+        ],
+    )
+    def test_container_flags_are_rejected_on_a_scalar(
+        self, project, monkeypatch, capsys, flag, value
+    ):
+        """A silently ignored flag is the foot-gun this project keeps paying
+        for, so each one is an error rather than a no-op."""
+        rc = self._cli(
+            monkeypatch,
+            project,
+            "property",
+            "rdr",
+            "n",
+            "--type",
+            "size_t",
+            flag,
+            value,
+        )
+        assert rc == 1
+        assert (
+            "applies only to a container property" in capsys.readouterr().err
+        )
+        assert not C.properties(C.load(project), "rdr")
+
+    def test_incoherent_declaration_exits_before_touching_the_manifest(
+        self, project, monkeypatch, capsys
+    ):
+        rc = self._cli(
+            monkeypatch,
+            project,
+            "property",
+            "rdr",
+            "k",
+            "--type",
+            "list",
+            "--key-fn",
+            "f",
+        )
+        assert rc == 1
+        assert "only for a dict" in capsys.readouterr().err
+        assert not C.properties(C.load(project), "rdr")
+
+    def test_writable_container_is_refused(self, project, monkeypatch, capsys):
+        rc = self._cli(
+            monkeypatch,
+            project,
+            "property",
+            "rdr",
+            "k",
+            "--type",
+            "dict",
+            "--writable",
+        )
+        assert rc == 1
+        assert "read-only" in capsys.readouterr().err
+
+    def test_unsupported_type_lists_the_container_kinds(
+        self, project, monkeypatch, capsys
+    ):
+        rc = self._cli(
+            monkeypatch, project, "property", "rdr", "k", "--type", "nope"
+        )
+        assert rc == 1
+        err = capsys.readouterr().err
+        for kind in ("dict", "list", "tuple"):
+            assert kind in err
