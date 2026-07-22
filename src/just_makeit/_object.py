@@ -206,6 +206,7 @@ def _make_object_ctx(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    no_reset: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
     init_params: list[tuple] = (),
@@ -252,6 +253,7 @@ def _make_object_ctx(
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
+            no_reset=no_reset,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -290,6 +292,7 @@ def _make_object_ctx(
             import_line,
             ctx.get("py_create_args", ""),
             ctx["Component"],
+            no_reset=no_reset,
         )
         if (scalar_state or has_aa)
         else ""
@@ -847,6 +850,7 @@ def _make_view_ctx(
         array_args=C.array_args(cfg, obj),
         no_state=C.is_no_state(cfg, obj),
         no_step=C.is_no_step(cfg, obj),
+        no_reset=C.is_no_reset(cfg, obj),
         mutable=C.is_mutable(cfg, obj),
         step_delegates=C.step_delegates(cfg, obj),
         init_params=C.view_init_params(cfg, obj, view),
@@ -1006,6 +1010,7 @@ def build_component_ctxs(
             array_args=C.array_args(cfg, obj),
             no_state=C.is_no_state(cfg, obj),
             no_step=C.is_no_step(cfg, obj),
+            no_reset=C.is_no_reset(cfg, obj),
             mutable=C.is_mutable(cfg, obj),
             step_delegates=C.step_delegates(cfg, obj),
             init_params=C.init_params(cfg, obj),
@@ -1441,6 +1446,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    no_reset: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
@@ -1501,6 +1507,7 @@ def run(
             array_args=array_args,
             no_state=no_state,
             no_step=no_step,
+            no_reset=no_reset,
             mutable=mutable,
             step_delegates=step_delegates,
             serializable=serializable,
@@ -1589,6 +1596,7 @@ def run(
         array_args=array_args,
         no_state=no_state,
         no_step=no_step,
+        no_reset=no_reset,
         mutable=mutable,
         step_delegates=step_delegates,
         init_params=init_params,
@@ -1627,7 +1635,9 @@ def run(
 
     if create_impl_body is not None:
         ctx["create_assignments"] = _indent_body(create_impl_body)
-    if reset_impl_body is not None:
+    # gh-542: with no_reset there is no <comp>_reset() to hold a body, so a
+    # lifted reset impl would be spliced into the file bare. Drop it.
+    if reset_impl_body is not None and not no_reset:
         ctx["reset_assignments"] = _indent_body(reset_impl_body)
     if destroy_impl_body is not None:
         ctx["destroy_impl"] = _indent_body(destroy_impl_body) + "\n"
@@ -1791,6 +1801,7 @@ def run(
         array_args_=array_args,
         no_state_=no_state,
         no_step_=no_step,
+        no_reset_=no_reset,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,

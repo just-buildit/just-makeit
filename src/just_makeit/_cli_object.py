@@ -111,6 +111,7 @@ def run(args: list[str]) -> None:
     init_params_obj: list[tuple[str, str, str]] = []
     no_state = False
     no_step = False
+    no_reset = False
     mutable = False
     step_delegates = False
     serializable = False
@@ -251,6 +252,10 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--no-step":
             no_step = True
+            i += 1
+        elif tok == "--no-reset":
+            # gh-542: an object with nothing coherent to reset.
+            no_reset = True
             i += 1
         elif tok == "--step-delegates-to-steps":
             step_delegates = True
@@ -441,6 +446,7 @@ def run(args: list[str]) -> None:
         array_args=array_args_obj,
         no_state=no_state,
         no_step=no_step,
+        no_reset=no_reset,
         mutable=mutable,
         step_delegates=step_delegates,
         serializable=serializable,

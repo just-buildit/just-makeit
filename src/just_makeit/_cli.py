@@ -59,6 +59,9 @@ Commands:
     --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --no-reset                  Omit reset(): no binding, no C function, no
+                                .pyi entry. For an object with nothing
+                                coherent to reset.
     --step-delegates-to-steps   Generate step() as a thin delegator to steps()
                                 (one impl; step()==steps(..,1) byte-for-byte
                                 under -ffast-math). Scalar/void-arg objects only.

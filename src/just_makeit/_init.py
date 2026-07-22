@@ -60,6 +60,12 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # path re-runs make_destroy_ctx with the real prefix and the manifest's
         # spec right after that.
         **Ctx.make_destroy_ctx(component, _to_title(component)),
+        # gh-542: the slots that wrap a reset body — the sacred _core.c
+        # function and the generated test defs. Seeded here for the same
+        # reason as the destructor slots above: no render path may leak a
+        # literal <<reset_c_open>> into generated C. make_state_ctx overwrites
+        # them (and blanks them under `no_reset`) on every real path.
+        **Ctx._reset_wrapper_slots(component),
     }
 
 
@@ -618,6 +624,7 @@ def run(
     array_args: list[tuple[str, str]] = (),
     no_state: bool = False,
     no_step: bool = False,
+    no_reset: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
@@ -720,6 +727,7 @@ def run(
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
+            no_reset=no_reset,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -821,6 +829,7 @@ def run(
             import_line,
             ctx.get("py_create_args", ""),
             ctx["Component"],
+            no_reset=no_reset,
         )
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""
@@ -830,7 +839,9 @@ def run(
         from ._object import _indent_body
 
         ctx["create_assignments"] = _indent_body(create_impl_body)
-    if reset_impl_body is not None:
+    # gh-542: with no_reset there is no <comp>_reset() to hold a body, so a
+    # lifted reset impl would be spliced into the file bare. Drop it.
+    if reset_impl_body is not None and not no_reset:
         from ._object import _indent_body
 
         ctx["reset_assignments"] = _indent_body(reset_impl_body)
@@ -1096,6 +1107,7 @@ def run(
         array_args_=array_args,
         no_state_=no_state,
         no_step_=no_step,
+        no_reset_=no_reset,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,

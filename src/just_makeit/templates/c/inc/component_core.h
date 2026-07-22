@@ -2,7 +2,7 @@
  * @file /*<<component>>*/_core.h
  * @brief /*<<Component>>*/ component API.
  *
- * Lifecycle: create -> [step / steps / reset]* -> destroy
+ * Lifecycle: create -> [step / steps/*<<lifecycle_reset>>*/]* -> destroy
  *
  * Example:
  * @code

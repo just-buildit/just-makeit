@@ -903,12 +903,18 @@ def _pyi_examples_block(
     import_line: str,
     py_create_args: str,
     Component: str,
+    no_reset: bool = False,
 ) -> str:
     """Build an indented ``Examples`` section for a .pyi class docstring.
 
     Returns an empty string when no doctest-safe getter examples exist.
     The returned string ends with a trailing newline and is ready to embed
     directly before the closing ``\"\"\"`` in the class docstring.
+
+    no_reset (gh-542) drops the "Reset restores defaults" example. These
+    doctests execute under ``pytest --doctest-glob='*.pyi'``, so a
+    ``>>> obj.reset()`` line on an object that no longer defines the method
+    is not merely stale prose — it is a failing test.
     """
     getter_pairs: list[tuple[str, str]] = []
     for name, ct, dflt in scalar_vars:
@@ -931,7 +937,7 @@ def _pyi_examples_block(
         lines.append(f"    >>> obj.get_{name}()")
         lines.append(f"    {out}")
 
-    if getter_pairs:
+    if getter_pairs and not no_reset:
         first_name, first_out = getter_pairs[0]
         first_ct = next(ct for n, ct, _ in scalar_vars if n == first_name)
         kind = _CTYPE_META[first_ct]["kind"]
@@ -1149,6 +1155,97 @@ def _ctor_seed_slots(component: str, init_params: list) -> dict:
     }
 
 
+# gh-542: every slot that carries part of the reset() surface — the C
+# binding, its PyMethodDef row, the sacred _core.h declaration and _core.c
+# definition, the .pyi stub, and the generated CTest/pytest that exercise it.
+# `no_reset` blanks the lot, so the method is *removed* rather than stubbed:
+# a stub returns None and the caller believes the reset happened, which is the
+# silent degradation the flag exists to eliminate.
+_RESET_SLOTS = (
+    "builtin_reset_c",
+    "builtin_reset_pmd",
+    "builtin_reset_decl",
+    "builtin_reset_pyi",
+    "reset_assignments",
+    "reset_c_open",
+    "reset_c_close",
+    "reset_test_c",
+    "reset_test_py",
+    "reset_test_py_pure",
+    "reset_test_py_def",
+    "reset_test_py_pure_def",
+    "lifecycle_reset",
+)
+
+
+def _reset_wrapper_slots(component: str) -> dict[str, str]:
+    """Default text for the slots that *wrap* a reset body (gh-542).
+
+    These were hardcoded in the templates until `no_reset` needed to remove
+    the enclosing function/test rather than just empty its body. The values
+    below reproduce the previous template text byte for byte, so an object
+    without the flag renders identically.
+
+    Parameters
+    ----------
+    component : str
+        Lowercase component id — the C symbol prefix.
+
+    Examples
+    --------
+    >>> print(_reset_wrapper_slots("acq")["reset_c_open"], end="")
+    <BLANKLINE>
+    void
+    acq_reset(acq_state_t *state)
+    {
+    """
+    return {
+        "reset_c_open": (
+            f"\nvoid\n{component}_reset({component}_state_t *state)\n{{\n"
+        ),
+        "reset_c_close": "\n}\n",
+        "reset_test_py_def": "\n    def test_reset(self):\n",
+        "reset_test_py_pure_def": "\ndef test_reset():\n",
+        # The _core.h lifecycle summary. Blanked under `no_reset` so the
+        # sacred header does not advertise a verb the API no longer has.
+        "lifecycle_reset": " / reset",
+    }
+
+
+def _apply_no_reset(ctx: dict, no_reset: bool) -> dict:
+    """Blank every reset slot in *ctx* when *no_reset* is set (gh-542).
+
+    Applied immediately before `make_state_ctx` returns — after every
+    conditional `update()` — so no later branch can reintroduce a reset slot
+    the manifest asked to have removed.
+
+    Parameters
+    ----------
+    ctx : dict
+        The assembled context; mutated in place.
+    no_reset : bool
+        The object's ``no_reset`` manifest key.
+
+    Returns
+    -------
+    dict
+        The same *ctx*, for use as a return expression.
+
+    Examples
+    --------
+    >>> _apply_no_reset({"builtin_reset_pyi": "x"}, False)
+    {'builtin_reset_pyi': 'x'}
+    >>> _apply_no_reset({"builtin_reset_pyi": "x"}, True)["builtin_reset_pyi"]
+    ''
+    >>> sorted(_apply_no_reset({}, True).values())
+    ['', '', '', '', '', '', '', '', '', '', '', '', '']
+    """
+    if no_reset:
+        for key in _RESET_SLOTS:
+            ctx[key] = ""
+    return ctx
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -1161,6 +1258,7 @@ def make_state_ctx(
     opaque_fields: list[tuple[str, str]] = (),
     no_ctor_names: "frozenset[str]" = frozenset(),
     create_fn: "str | None" = None,
+    no_reset: bool = False,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1189,6 +1287,12 @@ def make_state_ctx(
     ``<component>_create`` directly and blank ``create_line``, so callers that
     use those paths must not also pass ``create_fn`` (the view generator
     rejects array-dispatch parents up front).
+
+    no_reset removes the reset() surface entirely (gh-542) — binding, C
+    declaration and definition, .pyi entry, and the generated tests that
+    call it.  For an object with nothing coherent to reset, a generated
+    no-op would report success for work that never happened; removing the
+    method makes the absence explicit instead.
     """
     _create = create_fn or f"{component}_create"
     if no_state:
@@ -1293,12 +1397,13 @@ def make_state_ctx(
                     create_fn=create_fn,
                 )
             )
+        base.update(_reset_wrapper_slots(component))
         if opaque_fields:
             base["state_struct_fields"] = "\n".join(
                 f"    {ct} {name};" for name, ct in opaque_fields
             )
         base.update(_ctor_seed_slots(component, list(init_params)))
-        return base
+        return _apply_no_reset(base, no_reset)
 
     if roles is None:
         roles = {}
@@ -1821,6 +1926,7 @@ def make_state_ctx(
             "from <<package>> import <<Component>>",
             py_create_args,
             Component,
+            no_reset=no_reset,
         )
         if ctor_scalars
         and not _unseedable_required(init_params)
@@ -2118,4 +2224,5 @@ def make_state_ctx(
             if _k in _init_ctx:
                 result[_k] = _init_ctx[_k]
     result.update(_ctor_seed_slots(component, list(init_params)))
-    return result
+    result.update(_reset_wrapper_slots(component))
+    return _apply_no_reset(result, no_reset)

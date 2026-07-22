@@ -638,6 +638,20 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def is_no_reset(cfg: dict, component: str) -> bool:
+    """Return True if the component was scaffolded with --no-reset.
+
+    gh-542: some objects have nothing coherent to reset — a writer whose
+    samples are already on disk and whose written-sample count drives the
+    header patch applied at close would be *corrupted* by a reset, not
+    returned to a clean state. The honest answer there is "construct a new
+    one", and the only way to say that without degrading silently (a C no-op
+    returns None, so the caller believes it worked) is to not ship the method
+    at all. Symmetric with `is_no_step` / `is_no_state`.
+    """
+    return _truthy(cfg.get(component, {}).get("no_reset"))
+
+
 def is_serializable(cfg: dict, component: str) -> bool:
     """Return True if the component exposes a serializable-state triplet.
 
@@ -2276,6 +2290,7 @@ def add_component(
     array_args_: list[tuple[str, str]] = (),
     no_state_: bool = False,
     no_step_: bool = False,
+    no_reset_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
     serializable_: bool = False,
@@ -2321,7 +2336,11 @@ def add_component(
         "state": state_entries,
     }
     # Only persisted when set — keeps existing manifests byte-identical so
-    # non-streamable objects produce no golden-output churn.
+    # non-streamable objects produce no golden-output churn. gh-542 keeps
+    # `no_reset` in this opt-in group (unlike `no_step`, which predates the
+    # convention and is always written) for the same reason.
+    if no_reset_:
+        entry["no_reset"] = "true"
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
@@ -3001,6 +3020,10 @@ def _dump(cfg: dict) -> str:
             "mutable",
             "no_state",
             "no_step",
+            # gh-542: must round-trip through _dump or `jm apply` silently
+            # drops the key and regenerates the reset() the manifest asked
+            # to have removed.
+            "no_reset",
             "step_delegates_to_steps",
             "serializable",
             "streamable",

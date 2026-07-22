@@ -50,7 +50,5 @@ class Test<<Component>>(unittest.TestCase):
 <<step_pytest_methods>>
     def test_getter_setter(self):
 <<getter_setter_test_py>>
-
-    def test_reset(self):
-<<reset_test_py>>
+<<reset_test_py_def>><<reset_test_py>>
 <<lifecycle_pytest_methods>>
