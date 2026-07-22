@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.6] — 2026-07-22
+
 ### Added
 
 - **Container-valued object properties — `dict`, `list` and `tuple`
