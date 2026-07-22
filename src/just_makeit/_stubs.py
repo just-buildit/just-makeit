@@ -1023,6 +1023,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         _stub_enable_out = (
             m_var and not m_multi and (not m_params or _m_single_array_param)
         )
+        # gh-527: a variable_output method with no input to size from is the
+        # generator shape -- make_methods_ctx emits `Py_ssize_t n = 1` for it
+        # and binds it as the leading `count` (kwlist {"count", "out"} when an
+        # out= is offered, a positional "|n" otherwise). The stub omitted it
+        # entirely, so the call that actually works (`obj.run(4)`) failed to
+        # type-check while `obj.run(out=...)` passed. `count` precedes `out`
+        # to match the kwlist order.
+        _stub_count_arg = m_var and m_arg == "void" and not m_params
+        if _stub_count_arg:
+            param_parts.append("count: int = 1")
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
 
