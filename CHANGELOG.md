@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm split-objects` silently reverted an enum property to a raw `int`
+    (gh-549).** `_property_dump_lines` emitted every property key except
+    `enum`. That stayed invisible because an ordinary save round-trips the
+    existing file through tomlkit, which preserves unknown keys generically —
+    the dumper is reached only for brand-new files and by `jm split-objects` /
+    `jm migrate`, which rewrite a section from the parsed dict. Splitting a
+    project therefore dropped the key from the manifest, and the next
+    regeneration emitted `def ft(self) -> int` in place of
+    `Literal["raw", "wav"]` and a bare `PyLong_FromLong` in place of the table
+    decode — discarding the gh-521 bounds check along with it. The same silent
+    public-API break gh-519 fixed, reached through a different door. The
+    regression test pins the whole property key set by round-trip equality
+    rather than checking `enum` alone, so the next key added cannot repeat it.
+
 ## [0.33.5] — 2026-07-22
 
 ### Added
