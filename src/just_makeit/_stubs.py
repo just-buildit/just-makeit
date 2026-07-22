@@ -776,12 +776,18 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     lines: list[str] = [f"class {Component}:"] + doc_lines
 
     # __init__
-    if state_vars and not no_state:
-        init_params_str = ", ".join(
-            f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars
-        )
-        lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
-    elif ip:
+    # gh-530: init_params take precedence over state vars, because the runtime
+    # constructor is init_params-based whenever both are declared (the gh-69
+    # contract: init_params drive create(); scalar state stays internal, set
+    # from defaults and reachable only via getters/setters). This ordering
+    # mirrors the class docstring's Parameters block (_build_class_docstring,
+    # which checks `if init_params:` first) -- the two had drifted, so an
+    # object with both `[[state]]` and `[[init_params]]` documented the
+    # init_params while the signature listed the state fields, and the two
+    # halves of the same stub disagreed. The standalone `component.pyi` never
+    # had this bug: `make_state_ctx` already overrides its signature slot with
+    # the init_params one. This is the module-aggregated peer.
+    if ip:
         # gh-266: a required scalar has no default, so it is emitted without a
         # `= ...` placeholder and hoisted ahead of every defaulted parameter —
         # a default-less stub arg after a defaulted one is a syntax error, and
@@ -809,6 +815,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else:
                 parts_init.append(f"{n}: {_py(t)} = ...")
         init_params_str = ", ".join(req_parts + parts_init)
+        lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
+    elif state_vars and not no_state:
+        # State-only object (no init_params): the scalar state vars ARE the
+        # constructor, each with a default.
+        init_params_str = ", ".join(
+            f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars
+        )
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
         lines.append("    def __init__(self, /, *args, **kwargs) -> None: ...")
@@ -1016,6 +1029,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 if len(ndarrays) > 1
                 else ndarrays[0]
             )
+        elif m.get("out_type"):
+            # gh-529: peer of the `out_type` branch in
+            # make_methods_ctx's return-annotation resolution -- a method
+            # with out_type returns a fresh ndarray, not the scalar m_ret.
+            # This is the module-aggregated .pyi; the standalone one lives in
+            # _context/_methods.py, and the two are pinned together by
+            # tests/test_gh529_method_out_type_pyi.py.
+            ret_ann = f"NDArray[{_np(m['out_type'])}]"
         else:
             ret_ann = _py(m_ret)
 
