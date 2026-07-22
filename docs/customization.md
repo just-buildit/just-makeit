@@ -45,6 +45,63 @@ re-asserts it (see
 
 ______________________________________________________________________
 
+## Hand-owning one member of a generated stub
+
+The table above calls `.pyi` **glue**, and by default it is — regenerated in
+full on every mutating command. But there is an escape hatch for a single
+member, which matters when the runtime has something the manifest cannot
+describe.
+
+The case that motivates it: you restore a `close()` in the sacred `_ext.c`
+fragment because that is the name your type has always used and every caller
+expects, while jm's object shape names the destructor `destroy()`. The runtime
+has `close()`; the regenerated stub does not; a type checker rejects
+`r.close()`. Hand-writing the binding is a complete answer for *behaviour* and,
+without this, only a partial one for *typing*.
+
+Put a `# jm:hand` comment directly above the member in the `.pyi`:
+
+```python
+    # jm:hand
+    def close(self) -> None:
+        """Close the reader (hand-written in the sacred fragment)."""
+```
+
+That member is now yours. Every subsequent `jm apply` transplants it verbatim
+into the fresh render, marker included, so it keeps surviving. It needs **no
+manifest entry at all** — jm never emits a placeholder for it, and one is not
+required.
+
+There are two ways to mark a member hand-owned, for two different situations:
+
+| Mechanism            | Use when                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `# jm:hand` comment  | The member has **no manifest counterpart** — a hand-added CPython overload, or a method whose name jm would not generate.            |
+| `manual_stub = true` | A declared method whose C binding you own entirely (spliced into a sacred `_ext_<obj>_extra.c`), so jm's stub is only a placeholder. |
+
+Both funnel through the same splice, and the behaviour depends on whether the
+freshly rendered stub has a member of that name:
+
+- **It does** (a manifest-derived member you hand-edited in place) — the
+    rendered span is replaced with your text, verbatim.
+- **It does not** (a purely hand-written addition) — your member is appended
+    after the last member of its class.
+
+Two things to know before relying on it:
+
+- **A property's getter and setter are one unit.** They share a Python name, so
+    marking either marks both. Splicing only the getter and leaving a stale
+    setter behind would be worse than not splicing at all.
+- **Renaming does not transfer ownership — you end up with both.** The splice
+    matches on `(class, member)` name. Rename a hand-owned member and it no
+    longer has a counterpart, so it is kept and *appended*, while the original
+    name is regenerated fresh from the manifest. The stub then carries your
+    renamed copy **and** a regenerated member you thought you had replaced. If
+    the intent was to override a generated member, keep its name; if it was to
+    add a new one, delete the generated member's manifest entry.
+
+______________________________________________________________________
+
 ## Typical workflow after scaffolding
 
 1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
