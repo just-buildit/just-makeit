@@ -42,6 +42,7 @@ def run(
     expr: str = "",
     doc: str = "",
     view: str = "",
+    enum: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -60,6 +61,28 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+
+    # gh-519: an `enum` property presents its C int as the [[enum]] string on
+    # the Python side. Validate the name *before* the manifest is written, so
+    # a typo is a jm diagnostic rather than an undeclared `_enum_<typo>`
+    # identifier surfacing in the user's compiler with the TOML already dirty.
+    if enum:
+        known = C.enums(cfg)
+        if enum not in known:
+            names = ", ".join(sorted(known)) or "(none declared)"
+            print(
+                f"error: unknown enum '{enum}'. Declare it as a top-level "
+                f"[[enum]] with that name.\nKnown enums: {names}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if buf_field:
+            print(
+                "error: --enum and --buf-field are mutually exclusive — an "
+                "array of enum strings has no decoded form.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Resolve component
     all_comps = C.components(cfg)
@@ -147,6 +170,8 @@ def run(
         prop_entry["valid_field"] = valid_field
     if expr:
         prop_entry["expr"] = expr
+    if enum:
+        prop_entry["enum"] = enum
     if view_entry is not None:
         C.add_view_property(cfg, object_name, view, prop_entry)
     else:

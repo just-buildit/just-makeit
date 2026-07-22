@@ -102,6 +102,10 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             Component,
             C.properties(cfg, object_name),
             frozenset(n for n, _, _ in state_vars_list),
+            # gh-519: the [[enum]] SSOT, so a property's `enum = "<name>"`
+            # decodes to its string on the Python side instead of leaking the
+            # raw int.
+            enums=C.enums(cfg),
         )
     )
     # gh-481: declared warnings. Re-rendered from the manifest on every pass,

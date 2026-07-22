@@ -424,6 +424,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             expr=p.get("expr", ""),
             doc=p.get("doc", ""),
             view=view,
+            enum=p.get("enum", ""),  # gh-519
         )
 
     for comp in all_comps:
