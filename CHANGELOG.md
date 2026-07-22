@@ -2,6 +2,73 @@
 
 ## [Unreleased]
 
+## [0.33.3] — 2026-07-22
+
+### Fixed
+
+- **Memory safety: a handle's enum decode read past the end of its table, and
+    could crash the interpreter (gh-521).** This is the significant fix in this
+    release; upgrading is recommended for any project using a
+    `kind = "handle"` module with an `enum`-decorated getter field.
+
+    The decoded-getter emitted a bare
+    `PyUnicode_FromString(_enum_<e>[<acc>])` — the SSOT table indexed by
+    whatever integer the C side was holding, with no bounds check. The index is
+    not an internal invariant: a handle module wraps an **external resource**,
+    so its enum-valued fields are typically decoded from data the process does
+    not control. gh-514's own motivating case was `wfm.Reader` decoding a Midas
+    BLUE header's `format` mode designator, where the entire premise was that
+    unsupported modes provably occur in real files.
+
+    So the reachable path was: open a capture whose header declares a code
+    outside the table, read the property, and index out of bounds. Observed in
+    a built extension as a **segmentation fault** (isolated to the getter —
+    constructing the same object without reading the property exited cleanly).
+    At exactly the table's length the index lands on the `NULL` terminator,
+    giving `PyUnicode_FromString(NULL)`; past that it reads adjacent memory,
+    which can also be returned to the caller as a plausible-looking string
+    rather than crashing. A malformed or hostile input file was therefore
+    enough to crash the process or surface unrelated bytes as a Python value.
+
+    An out-of-range code now raises a `ValueError` naming the offending value
+    and the valid range, which is a condition the caller can act on — reject
+    the file, report the unsupported mode. Plain, `scale` and `expr` fields
+    render byte-identically, and a field naming an enum absent from the SSOT
+    keeps the historical unchecked form rather than gaining a check that would
+    reject every value. The object-property decode added below carries the
+    identical check, so the two peer decode sites cannot drift apart again.
+
+- **`jm apply` replays a property's `enum` (gh-519).** Property replay
+    round-trips through `_property.run`, which had no `enum` parameter, so a
+    manifest-declared enum was discarded before the renderer ever saw it. The
+    key is now plumbed through the CLI (`--enum`), `apply`, and `jm script`.
+
+### Added
+
+- **Object properties honour `enum` via the `[[enum]]` SSOT (gh-519).** A
+    `kind = "handle"` module's getters have always decoded an enum-valued field
+    to the SSOT's string; an object property accepted the same `enum` key and
+    ignored it. Migrating a handle type to an object therefore turned every
+    enum-valued attribute in the public API from a string into an int —
+    silently, because unknown manifest keys pass through by design. The C side
+    still stores the int; only the Python face changes: the getter returns
+    `PyUnicode_FromString(_enum_<Component>_<name>[i])`, a writable setter
+    accepts the string and resolves it through `_enum_index_<Component>`
+    (raising `ValueError` listing the choices on a miss), and the stub
+    annotates `Literal["a", "b", ...]` instead of `int`. The tables reuse the
+    composer's `_enum_index` body and the handle's table layout rather than
+    growing a third copy, and only the enums a component actually references
+    are emitted; they are namespaced per type, because a module aggregator
+    compiles every object's *and* every view's fragment into one translation
+    unit. An unknown enum name — or `enum` combined with `buf_field`, where an
+    array of enum strings has no decoded form — is a jm diagnostic naming the
+    component and property rather than an undeclared identifier in the user's
+    compiler. A component declaring no enum renders byte-identically to before.
+
+    With this, all three parity gaps between a `kind = "handle"` module and an
+    object are closed (gh-514, gh-515, gh-519), so a handle → object migration
+    no longer silently downgrades the public API.
+
 ## [0.33.2] — 2026-07-22
 
 ### Fixed
