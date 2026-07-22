@@ -338,6 +338,7 @@ just-makeit property <object> <prop_name>
     [--module name]
     --type TYPE
     [--writable] [--field] [--enum NAME]
+    [--value-type TYPE] [--count-fn FN] [--key-fn FN] [--value-fn FN]
 ```
 
 Add a read-only (or read-write) Python property to an existing object.
@@ -348,6 +349,8 @@ just-makeit property nco phase_inc --module source --type uint32_t
 just-makeit property buffer capacity --type size_t --writable
 just-makeit property reader samples_read --module conv --type uint32_t --field
 just-makeit property reader file_type --type int --field --enum ftype
+just-makeit property reader stages --type list --value-type "const char *"
+just-makeit property reader keywords --type dict --value-type object
 ```
 
 Like `jm method`, a computed property is **additive and splice-free**: it
@@ -360,30 +363,35 @@ directly into the state struct and auto-implements the getter as
 
 **Arguments**
 
-| Argument           | Description                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`           | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                                                                                              |
-| `prop_name`        | Snake-case property name.                                                                                                                                                                                                                                                                                                                                                                            |
-| `--module name`    | Module the object belongs to (required for module objects).                                                                                                                                                                                                                                                                                                                                          |
-| `--type TYPE`      | C type of the property value.                                                                                                                                                                                                                                                                                                                                                                        |
-| `--writable`       | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                                                                                                                                                                 |
-| `--field`          | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. Requires the state struct to be a complete type — see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header). |
-| `--doc "text"`     | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
-| `--enum NAME`      | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
-| `--view ClassName` | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Requires `--module`.                                                                                                                                                                            |
+| Argument            | Description                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                                                                                              |
+| `prop_name`         | Snake-case property name.                                                                                                                                                                                                                                                                                                                                                                            |
+| `--module name`     | Module the object belongs to (required for module objects).                                                                                                                                                                                                                                                                                                                                          |
+| `--type TYPE`       | C type of the property value.                                                                                                                                                                                                                                                                                                                                                                        |
+| `--writable`        | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                                                                                                                                                                 |
+| `--field`           | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. Requires the state struct to be a complete type — see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header). |
+| `--doc "text"`      | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
+| `--enum NAME`       | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
+| `--value-type TYPE` | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
+| `--count-fn FN`     | Entry-count accessor for a container property. Default `<obj>_num_<prop>`.                                                                                                                                                                                                                                                                                                                           |
+| `--key-fn FN`       | Key accessor for a `dict` property. Default `<obj>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                      |
+| `--value-fn FN`     | Value accessor for a container property. Default `<obj>_<prop>_value`.                                                                                                                                                                                                                                                                                                                               |
+| `--view ClassName`  | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Requires `--module`.                                                                                                                                                                            |
 
 ### Choosing a property kind — and what each costs your header
 
-A property is backed one of four ways. The flags are not variations on a
+A property is backed one of five ways. The flags are not variations on a
 theme: they decide **who writes the C** and, crucially, **whether your state
 struct has to be a complete type in the public header**.
 
-| Kind           | Declared with      | Who implements the read                                                              | State struct                         |
-| -------------- | ------------------ | ------------------------------------------------------------------------------------ | ------------------------------------ |
-| **Computed**   | *no backing flag*  | you — jm declares `<obj>_get_<prop>(const <obj>_state_t *)` for the sacred `_core.c` | may stay **opaque**                  |
-| **Field**      | `--field`          | jm — injects `TYPE prop;` and returns `state->prop`                                  | must be **complete**                 |
-| **Expression** | `--expr "…"`       | jm — emits your C expression inline                                                  | complete, if the expr reads a member |
-| **Buffer**     | `--buf-field name` | jm — returns a numpy view over that member                                           | must be **complete**                 |
+| Kind           | Declared with              | Who implements the read                                                              | State struct                         |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
+| **Computed**   | *no backing flag*          | you — jm declares `<obj>_get_<prop>(const <obj>_state_t *)` for the sacred `_core.c` | may stay **opaque**                  |
+| **Field**      | `--field`                  | jm — injects `TYPE prop;` and returns `state->prop`                                  | must be **complete**                 |
+| **Expression** | `--expr "…"`               | jm — emits your C expression inline                                                  | complete, if the expr reads a member |
+| **Buffer**     | `--buf-field name`         | jm — returns a numpy view over that member                                           | must be **complete**                 |
+| **Container**  | `--type dict\|list\|tuple` | jm — generates the loop, refcounting and error paths; you supply count/key/value     | may stay **opaque**                  |
 
 **Omitting `--field` is not "unsupported" — it means "you implement the
 accessor".** That is the computed kind, and it is the one to reach for when the
@@ -464,6 +472,79 @@ Two things worth knowing:
 `--enum` cannot be combined with a `buf_field` property: an array of enum
 strings has no decoded form, and jm rejects it with a diagnostic rather than
 generating something misleading.
+
+### Container properties — `dict`, `list` and `tuple`
+
+A property whose `--type` is `dict`, `list` or `tuple` is backed by a small
+iteration protocol your core implements. jm generates the loop, the container,
+the refcounting and every error path; you supply the accessors.
+
+```toml
+[[reader.properties]]
+name       = "keywords"
+type       = "dict"
+count_fn   = "reader_num_keywords"    # size_t       (const state *)
+key_fn     = "reader_keyword_tag"     # const char * (const state *, size_t)
+value_fn   = "reader_keyword_value"   # <value_type> (const state *, size_t)
+value_type = "object"
+```
+
+All three accessor names default from the object and property name
+(`<obj>_num_<prop>`, `<obj>_<prop>_key`, `<obj>_<prop>_value`), so the common
+declaration names none of them. `key_fn` applies to `dict` only — a `list` or
+`tuple` is keyed by position, and passing it there is an error rather than a
+silently ignored flag.
+
+Container properties are **read-only**. jm builds the container fresh on every
+read, so a setter would mutate a copy the caller never sees; expose a method
+that mutates the core instead.
+
+#### Choosing a `value_type`
+
+This is the one real decision, and it is about **who owns the conversion**.
+
+| `value_type`                           | Conversion  | Where `value_fn` lives            |
+| -------------------------------------- | ----------- | --------------------------------- |
+| a C type (`double`, `const char *`, …) | jm emits it | the sacred `_core.c` — **pure C** |
+| `object`                               | you emit it | a hand-written `*_ext_extra.c`    |
+
+Prefer a C type. Your accessor returns an ordinary C value, jm converts it, and
+your core never includes `Python.h`:
+
+```c
+const char *rc_stage_name(const rc_state_t *state, size_t i);   /* -> list[str] */
+```
+
+Reach for `object` when the value's Python type is **data-dependent** and so
+cannot be annotated statically. The motivating case is a BLUE extended header,
+where each keyword's type comes from a code stored in the file itself — one
+keyword yields a `str`, the next an `int`, the next a `list[float]`. There,
+`value_fn` returns a `PyObject *` directly:
+
+```c
+PyObject *reader_keyword_value(const reader_state_t *state, size_t i);
+```
+
+It must return a **new reference**, or `NULL` with an exception set. Because it
+needs `Python.h` it cannot live in the pure-C core — put it in a hand-written
+`<obj>_ext_extra.c` (standalone) or `<module>_ext_<obj>_extra.c` (module),
+which jm wires in and never modifies. jm forward-declares it above the getter,
+so the `#include` order works out.
+
+#### Stubs, and why this beats hand-writing it
+
+The generated `.pyi` annotates as `dict[str, T]`, `list[T]` or `tuple[T, ...]`
+— `Any` for the `object` escape hatch. That is half the point: a property
+hand-written into a sacred fragment never reaches the stub at all, so it stays
+invisible to a type checker even though the runtime is correct.
+
+#### Errors you get for free
+
+A `key_fn` or a pointer-valued `value_fn` that returns `NULL` raises a
+`RuntimeError` naming the property, the accessor and the index. Both are real
+guards, not decoration: `PyUnicode_FromString(NULL)` reaches `strlen(NULL)` and
+crashes, so the unchecked form segfaults rather than raising. A partially built
+container is released on every failure path.
 
 ### Removing a method or property
 

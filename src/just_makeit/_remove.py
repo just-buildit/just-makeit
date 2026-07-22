@@ -25,6 +25,7 @@ from . import _stubs as S
 from ._init import (
     _to_title,
     _write_compile_commands,
+    standalone_extra_include,
 )
 from ._object import _regenerate_module
 
@@ -771,6 +772,8 @@ def _regenerate_object_bindings(
         return
 
     ctx = _object_ctx(cfg, obj, pkg, module)
+    # gh-543: keep a hand-written extra wired through a removal.
+    ctx["extra_include"] = standalone_extra_include(root, obj)
     ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
     if ext_c.exists():
         ext_c.write_text(R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8")

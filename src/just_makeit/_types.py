@@ -384,6 +384,44 @@ def enum_ref_name(ptype: str) -> str:
     return ptype[len("enum:") :]
 
 
+# gh-543: the container property kinds. A property whose `type` is one of
+# these is backed by an iteration protocol the core implements (count/key/value
+# accessors) rather than by a scalar C value, so it never reaches _CTYPE_META.
+CONTAINER_KINDS: tuple[str, ...] = ("dict", "list", "tuple")
+
+# The element type that means "the core hands back a PyObject * itself". The
+# escape hatch for values jm cannot type statically -- e.g. a value whose
+# Python type is chosen by a type code stored in the file being read.
+OBJECT_VALUE_TYPE = "object"
+
+
+def is_container_type(ctype: str) -> bool:
+    """Return True if ctype names a container property kind (gh-543).
+
+    >>> is_container_type("dict")
+    True
+    >>> is_container_type("double")
+    False
+    """
+    return ctype in CONTAINER_KINDS
+
+
+def is_valid_value_type(vtype: str) -> bool:
+    """Return True if vtype is a legal container element type (gh-543).
+
+    Either a scalar jm type -- jm emits the conversion itself -- or the
+    ``object`` escape hatch, where the core returns a ``PyObject *``.
+
+    >>> is_valid_value_type("const char *")
+    True
+    >>> is_valid_value_type("object")
+    True
+    >>> is_valid_value_type("double[]")
+    False
+    """
+    return vtype == OBJECT_VALUE_TYPE or vtype in _CTYPE_META
+
+
 def parse_array_type(ctype: str) -> tuple[str, int] | None:
     """Return (elem_ctype, size) if ctype is a valid array type, else None.
 

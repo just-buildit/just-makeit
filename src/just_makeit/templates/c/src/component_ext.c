@@ -86,6 +86,7 @@ static PyTypeObject /*<<ComponentW>>*/Type = {
     .tp_init      = (initproc)/*<<ComponentW>>*/_init,
 };
 
+/*<<extra_include>>*/
 /* ======================================================== */
 /* Module definition                                         */
 /* ======================================================== */

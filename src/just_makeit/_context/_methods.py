@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from .. import _types as T
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -2264,6 +2265,232 @@ def _property_enum(
     return name
 
 
+def container_fn_names(component: str, pname: str, p: dict) -> dict[str, str]:
+    """Resolve a container property's three accessor names (gh-543).
+
+    Each defaults from the component and property name -- mirroring how
+    ``create_fn`` defaults to ``<backing>_open`` -- so the common declaration
+    names nothing at all. ``key_fn`` is meaningful only for a ``dict``.
+    """
+    return {
+        "count_fn": p.get("count_fn") or f"{component}_num_{pname}",
+        "key_fn": p.get("key_fn") or f"{component}_{pname}_key",
+        "value_fn": p.get("value_fn") or f"{component}_{pname}_value",
+    }
+
+
+def validate_container_property(component: str, p: dict) -> None:
+    """Reject an incoherent container property (gh-543).
+
+    Raises ``ValueError`` so the caller turns it into a jm diagnostic. Every
+    check here would otherwise surface as a compiler error in generated code
+    the user did not write.
+    """
+    pname = p["name"]
+    kind = p.get("type", "")
+    where = f"{component}.{pname}"
+    vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
+    if not T.is_valid_value_type(vtype):
+        supported = ", ".join(sorted(T._CTYPE_META))
+        raise ValueError(
+            f"{where}: unsupported value_type '{vtype}'. Use "
+            f"'{T.OBJECT_VALUE_TYPE}' (value_fn returns a PyObject *) or one "
+            f"of: {supported}"
+        )
+    # A dict always has a key_fn -- `container_fn_names` defaults it -- so
+    # there is nothing to require here, only a misuse to reject.
+    if kind != "dict" and p.get("key_fn"):
+        raise ValueError(
+            f"{where}: key_fn is meaningful only for a dict property; "
+            f"a {kind} is keyed by position. Drop key_fn, or use type = "
+            f'"dict".'
+        )
+    if p.get("writable"):
+        raise ValueError(
+            f"{where}: a container property is read-only. jm generates the "
+            f"container fresh on every read, so a setter would mutate a copy "
+            f"the caller never sees. Expose a method that mutates the core "
+            f"instead."
+        )
+    for clash in ("field", "buf_field", "expr", "enum"):
+        if p.get(clash):
+            raise ValueError(
+                f"{where}: `{clash}` cannot be combined with a "
+                f"container property -- the value comes from value_fn, not "
+                f"from a struct member or an expression."
+            )
+
+
+def _container_getter(
+    component: str,
+    Component: str,
+    p: dict,
+    guard: str,
+) -> tuple[str, list[str]]:
+    """Render a container property's getter, plus the decls it needs.
+
+    Returns ``(getter_source, core_header_decls)``. The header decls are the
+    accessors that are plain C and so belong in the sacred ``_core.h``; a
+    ``PyObject *``-returning ``value_fn`` is *not* among them (it needs
+    ``Python.h``) and is instead forward-declared inline, immediately above the
+    getter. That forward declaration is mandatory rather than tidy: a
+    hand-written ``*_extra.c`` is ``#include``d *after* the object fragment in
+    the same translation unit, so the definition is not yet visible here.
+    """
+    pname = p["name"]
+    kind = p["type"]
+    fns = container_fn_names(component, pname, p)
+    vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
+    state_t = f"const {component}_state_t *"
+
+    decls = [
+        f"/**\n"
+        f" * @brief Number of entries in {pname}.\n"
+        f" * @param state  Must be non-NULL.\n"
+        f" */\n"
+        f"size_t {fns['count_fn']}({state_t}state);"
+    ]
+    if kind == "dict":
+        decls.append(
+            f"/**\n"
+            f" * @brief Key of entry @p i of {pname}, or NULL if out of range.\n"
+            f" * @param state  Must be non-NULL.\n"
+            f" * @param i      Entry index, 0-based.\n"
+            f" */\n"
+            f"const char *{fns['key_fn']}({state_t}state, size_t i);"
+        )
+
+    fwd = ""
+    # Statements that must run before the value conversion (a NULL guard for a
+    # pointer-valued accessor); empty for every other value type.
+    value_pre = ""
+    if vtype == T.OBJECT_VALUE_TYPE:
+        # The escape hatch: the core owns the conversion, so the value comes
+        # back already a PyObject *. It must return a NEW reference and set an
+        # exception when it returns NULL.
+        value_expr = f"{fns['value_fn']}(self->handle, _i)"
+        fwd = (
+            f"/* gh-543: implemented by hand (Python-aware, so it cannot live"
+            f" in the pure-C\n"
+            f" * core). Must return a new reference, or NULL with an"
+            f" exception set. */\n"
+            f"PyObject *{fns['value_fn']}({state_t}state, size_t i);\n\n"
+        )
+    else:
+        _vmeta = _CTYPE_META[vtype]
+        # Same pointer-spacing idiom the parse builders use (_render.py:622):
+        # `const char *` already ends in the star, so no separating space.
+        _vdisp = _ctype_display(vtype)
+        if not _vdisp.endswith("*"):
+            _vdisp += " "
+        if _vdisp.endswith("*"):
+            # A pointer-valued accessor is the one typed case that can hand
+            # back NULL, and the conversion would dereference it -- for the
+            # only such type today, `const char *`, PyUnicode_FromString(NULL)
+            # reaches strlen(NULL) and crashes. Same class as the gh-521
+            # unchecked table index, so it gets the same treatment: bind the
+            # call to a local, check it, then convert. `_r` is declared inside
+            # the loop body, so it cannot collide with the value local.
+            value_pre = (
+                f"        {_vdisp}_r = "
+                f"{fns['value_fn']}(self->handle, _i);\n"
+                f"        if (!_r) {{\n"
+                f"            PyErr_Format(PyExc_RuntimeError,\n"
+                f'                "{pname}: {fns["value_fn"]} returned NULL'
+                f' at index %zu", _i);\n'
+                f"            Py_DECREF(_c);\n"
+                f"            return NULL;\n"
+                f"        }}\n"
+            )
+            value_expr = _vmeta["to_py"]("_r")
+        else:
+            value_expr = _vmeta["to_py"](
+                f"{fns['value_fn']}(self->handle, _i)"
+            )
+        decls.append(
+            f"/**\n"
+            f" * @brief Value of entry @p i of {pname}.\n"
+            f" * @param state  Must be non-NULL.\n"
+            f" * @param i      Entry index, 0-based.\n"
+            f" */\n"
+            f"{_vdisp}{fns['value_fn']}({state_t}state, size_t i);"
+        )
+
+    head = (
+        f"{fwd}"
+        f"static PyObject *\n"
+        f"{Component}_getprop_{pname}"
+        f"({Component}Object *self, void *Py_UNUSED(closure))\n"
+        f"{{\n"
+        f"{guard}"
+        f"    size_t _n = {fns['count_fn']}(self->handle);\n"
+    )
+
+    if kind == "dict":
+        body = (
+            f"    PyObject *_c = PyDict_New();\n"
+            f"    if (!_c) return NULL;\n"
+            f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
+            f"        const char *_k = {fns['key_fn']}(self->handle, _i);\n"
+            f"        if (!_k) {{\n"
+            f"            PyErr_Format(PyExc_RuntimeError,\n"
+            f'                "{pname}: {fns["key_fn"]} returned NULL'
+            f' at index %zu", _i);\n'
+            f"            Py_DECREF(_c);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"{value_pre}"
+            f"        PyObject *_v = {value_expr};\n"
+            f"        if (!_v) {{\n"
+            f"            Py_DECREF(_c);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"        if (PyDict_SetItemString(_c, _k, _v) != 0) {{\n"
+            f"            Py_DECREF(_v);\n"
+            f"            Py_DECREF(_c);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"        Py_DECREF(_v);\n"
+            f"    }}\n"
+            f"    return _c;\n"
+            f"}}"
+        )
+    else:
+        # PyList_New/PyTuple_New zero every slot, so Py_DECREF on a
+        # part-filled container is safe; SET_ITEM steals, so the success path
+        # must NOT decref the value.
+        _New = "PyList_New" if kind == "list" else "PyTuple_New"
+        _SET = "PyList_SET_ITEM" if kind == "list" else "PyTuple_SET_ITEM"
+        body = (
+            f"    PyObject *_c = {_New}((Py_ssize_t)_n);\n"
+            f"    if (!_c) return NULL;\n"
+            f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
+            f"{value_pre}"
+            f"        PyObject *_v = {value_expr};\n"
+            f"        if (!_v) {{\n"
+            f"            Py_DECREF(_c);\n"
+            f"            return NULL;\n"
+            f"        }}\n"
+            f"        {_SET}(_c, (Py_ssize_t)_i, _v);\n"
+            f"    }}\n"
+            f"    return _c;\n"
+            f"}}"
+        )
+    return head + body, decls
+
+
+def _container_pyi(p: dict) -> str:
+    """Annotation for a container property (gh-543)."""
+    vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
+    elem = "Any" if vtype == T.OBJECT_VALUE_TYPE else _pyi_scalar(vtype)
+    kind = p["type"]
+    if kind == "dict":
+        return f"dict[str, {elem}]"
+    if kind == "list":
+        return f"list[{elem}]"
+    return f"tuple[{elem}, ...]"
+
+
 def make_properties_ctx(
     component: str,
     Component: str,
@@ -2321,9 +2548,18 @@ def make_properties_ctx(
         buf_field: str = p.get("buf_field", "")
         len_field: str = p.get("len_field", "n")
         valid_field: str = p.get("valid_field", "")
+        # gh-543: a container property is backed by count/key/value accessors
+        # rather than a scalar C value, so it never consults _CTYPE_META.
+        container: bool = T.is_container_type(ctype)
 
         meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
         disp = _ctype_display(ctype)
+
+        # gh-543: validate before anything is rendered, so an incoherent
+        # declaration is a jm diagnostic rather than a compiler error in code
+        # the user never wrote.
+        if container:
+            validate_container_property(component, p)
 
         # gh-519: an `enum`-decorated property stores the SSOT int in C but
         # presents the value as its string on the Python side.
@@ -2374,7 +2610,13 @@ def make_properties_ctx(
                 f"    return PyUnicode_FromString({_t}[_v]);\n"
             )
 
-        if buf_field:
+        if container:
+            getter, _c_decls = _container_getter(
+                component, Component, p, guard
+            )
+            if pname not in state_var_names:
+                decl_lines.extend(_c_decls)
+        elif buf_field:
             _elem_ct = ctype[:-2] if ctype.endswith("[]") else ctype
             _elem_meta = _CTYPE_META.get(
                 _elem_ct, _CTYPE_META["float _Complex"]
@@ -2561,6 +2803,8 @@ def make_properties_ctx(
             from .._stubs import _py as _stubs_py
 
             py_t = _stubs_py("string_enum:" + ",".join(enums[p_enum]))
+        elif container:
+            py_t = _container_pyi(p)
         elif buf_field:
             py_t = _pyi_ndarray(ctype)
         else:

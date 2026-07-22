@@ -24,7 +24,11 @@ from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
-from ._init import _make_component_ctx, _to_title
+from ._init import (
+    _make_component_ctx,
+    _to_title,
+    standalone_extra_include,
+)
 
 
 def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
@@ -200,6 +204,9 @@ def regenerate_standalone(
     to call on a manifest-only component (``jm apply`` is what materialises).
     """
     ctx = component_ctx(cfg, object_name, pkg)
+    # gh-543: component_ctx is manifest-only by contract, so the on-disk probe
+    # for a hand-written extra belongs here, in the caller that has `root`.
+    ctx["extra_include"] = standalone_extra_include(root, object_name)
 
     ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
     if ext_c.exists():
