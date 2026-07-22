@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.33.2] — 2026-07-22
+
+### Fixed
+
+- **Object `init_params` accept `type = "path"` (gh-515).** `path` is a
+    pseudo-type deliberately absent from `_CTYPE_META`; method and function
+    params learned it in gh-353, but object init-params never did, so `jm apply`
+    died with a bare `KeyError: 'path'`. An object built from a filename
+    therefore could not accept an `os.PathLike` while the equivalent
+    `kind = "handle"` module could, making a handle → object migration a
+    user-visible regression. A path init-param is now a required positional that
+    reuses the shared `_coerce` primitives, so the object glue matches the handle
+    and function generators exactly: `O&` + `PyUnicode_FSConverter` into a
+    borrowed `PyBytes`, with C receiving a `const char *` it copies during the
+    call. Per gh-219 that borrow is released only *after* `create()` copies it,
+    and on every pre-call bailout (PyArg failure, string-enum validation failure,
+    array coercion failure). Combining a path with dtype-dispatch or
+    optional-array init-params is rejected with an actionable error instead of
+    generating a leak, and a path marks the constructor unseedable so the
+    existing gh-273 machinery suppresses the `.pyi` example and skips the
+    generated tests.
+- **A string-ish `init_param` no longer emits an unparseable stub (gh-515).** A
+    scalar init-param with no default fell through to a branch that could not
+    synthesise a Python literal, and the empty string it returned was spliced
+    straight into the generated `.pyi` as `def __init__(self, path: str = )`.
+    That is a `SyntaxError`, so it broke the *entire* stub for any downstream
+    `mypy` run or `pytest --doctest-glob='*.pyi'` sweep rather than degrading a
+    single docstring — and it affected `int` and `size_t` as well as
+    `const char *`. Absent defaults now render as the `...` sentinel the stub
+    machinery already understands, and a param with no default no longer carries
+    a dangling `, default` clause. `_py_default` and its peer `_py_default_stub`
+    were fixed together so the two cannot drift; the float and complex branches
+    already produced valid zero literals and stay byte-identical.
+- **`PyArg` init arguments are passed in declaration order (gh-515).** The
+    required format string was built from the init-params in TOML declaration
+    order while the argument list hoisted every array ahead of the loop, so the
+    two disagreed whenever a required scalar or path was declared *before* an
+    array. The scalar form stored an `int` through a `PyObject *`; the path form
+    was worse, since `O&` consumes two varargs and `PyArg` would read the address
+    of a `PyObject *` as the converter function pointer and call it. Every
+    required converter now appends in declared order.
+- **`kind = "handle"` honours `create_error` / `create_error_message`
+    (gh-514).** gh-482 let a component translate a NULL `create()` into the
+    exception it actually meant, but that plumbing only ever reached objects — a
+    handle module hardcoded `RuntimeError: "<create_fn> failed"`, so setting
+    either key on `[module.<name>]` silently did nothing. The keys were invisible
+    rather than ignored: `create_error(cfg, comp)` reads `cfg[comp]`, while a
+    handle's keys live under `cfg["module"][name]`. Handle-scoped accessors now
+    feed the same renderer the object path uses, which gained a `handle_expr`
+    (`self->h` vs `self->handle`) and an `undeclared_body` parameter rather than
+    growing a second copy — so undeclared output stays byte-identical and no
+    existing handle module churns. This matters most for exactly this shape: a
+    handle module is what opens files, sockets and devices, and an open can fail
+    for several genuinely user-actionable reasons that all surfaced identically
+    as a message naming an internal C symbol. The category is also validated at
+    generation time now, so a TOML typo is a jm diagnostic listing the supported
+    names instead of an undeclared identifier in the user's compiler.
+
 ## [0.33.1] — 2026-07-19
 
 ### Fixed
