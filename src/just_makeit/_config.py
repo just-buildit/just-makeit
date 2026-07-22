@@ -1084,6 +1084,27 @@ def handle_init_fn(cfg: dict, module: str) -> str:
     return cfg.get("module", {}).get(module, {}).get("init_fn", "")
 
 
+def handle_create_error(cfg: dict, module: str) -> str:
+    """Exception class for a handle's ``create_fn`` failure (gh-514).
+
+    The handle counterpart of :func:`create_error`. The two cannot share one
+    accessor because a handle's keys live under ``[module.<name>]`` while an
+    object's live in its own top-level table, so ``create_error(cfg, comp)``
+    silently returned "" for every handle — the whole defect in gh-514.
+
+    Empty means undeclared, which keeps the historical blanket
+    ``RuntimeError: <create_fn> failed``.
+    """
+    return cfg.get("module", {}).get(module, {}).get("create_error", "")
+
+
+def handle_create_error_message(cfg: dict, module: str) -> str:
+    """Message paired with `handle_create_error` ("" if undeclared)."""
+    return (
+        cfg.get("module", {}).get(module, {}).get("create_error_message", "")
+    )
+
+
 def handle_create_args(cfg: dict, module: str) -> list[dict]:
     """Return a handle's ``[[module.X.create_args]]`` — the ``create_fn`` args.
 

@@ -461,7 +461,12 @@ The generated type carries:
     for an init-in-place C API, `init_fn` (jm `malloc`s `sizeof(handle_type)`,
     calls `init_fn(self->h, …)`, and `free`s on close; gh-315). It coerces
     `create_args` — enum-string→index via the SSOT, `os.fspath` for a `path` arg,
-    scalar casts — and runs an optional conditional `create_post` setter;
+    scalar casts — and runs an optional conditional `create_post` setter.
+    A NULL return raises `RuntimeError: "<create_fn> failed"` unless the module
+    declares `create_error` / `create_error_message` (gh-514), which is worth
+    doing: a handle module is the shape that opens external resources, and
+    "no such file, unrecognised container, or an unsupported format" tells the
+    caller what to fix where an internal C symbol name does not;
 - **methods** mapping `name → fn(self->h, …)`, in four shapes: scalar args
     (honoring `default` / keyword args, gh-319); an array-in arg (numpy-marshaled
     like the capsule path), optionally followed by trailing scalars
@@ -656,18 +661,19 @@ marshalling, the type slots, the JSON shape, and the CLI flag.
 
 **Handle only:**
 
-| table / key         | meaning                                                                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `handle_type`       | the opaque C handle type (default `<backing>_t`)                                                                                                                                                 |
-| `type_name`         | the generated CPython class name (`Writer`)                                                                                                                                                      |
-| `create_fn`         | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`)                                                                            |
-| `init_fn`           | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                             |
-| `[[X.create_post]]` | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                               |
-| `[[X.methods]]`     | `{name, fn, args[], returns?, nogil?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319)             |
-| `[[X.getters]]`     | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314) |
-| `close_fn`          | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                 |
-| `context_manager`   | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                                                                                                  |
-| `optional_backend`  | a weak-symbol backend; absent → `NotImplementedError`                                                                                                                                            |
+| table / key                             | meaning                                                                                                                                                                                          |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handle_type`                           | the opaque C handle type (default `<backing>_t`)                                                                                                                                                 |
+| `type_name`                             | the generated CPython class name (`Writer`)                                                                                                                                                      |
+| `create_fn`                             | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`)                                                                            |
+| `init_fn`                               | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                             |
+| `[[X.create_post]]`                     | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                               |
+| `create_error` / `create_error_message` | exception + message raised when `create_fn` returns NULL; undeclared → `RuntimeError: "<create_fn> failed"` (gh-514)                                                                             |
+| `[[X.methods]]`                         | `{name, fn, args[], returns?, nogil?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319)             |
+| `[[X.getters]]`                         | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314) |
+| `close_fn`                              | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                 |
+| `context_manager`                       | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                                                                                                  |
+| `optional_backend`                      | a weak-symbol backend; absent → `NotImplementedError`                                                                                                                                            |
 
 ______________________________________________________________________
 
