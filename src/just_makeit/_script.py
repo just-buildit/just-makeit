@@ -390,6 +390,17 @@ def run(root: Path) -> None:
 
     # ── modules ──────────────────────────────────────────────────────────────
     for mod in mods:
+        # gh-523: `package` has no CLI flag on any module kind — it is a
+        # manifest-only key. Emitting the bare `jm module` command would
+        # silently rebuild the module in a package of its own (the gh-490
+        # silent-divergence trap), so flag it for the reader instead.
+        pkg_override = C.module_package(cfg, mod)
+        if pkg_override:
+            lines.append(
+                f'# NOTE: [module.{mod}] package = "{pkg_override}" has no\n'
+                f"# CLI flag — re-add it to just-makeit.toml and run"
+                f" `just-makeit apply`.\n"
+            )
         lines.append(_render_cmd(["just-makeit", "module", mod], []))
 
     if mods:

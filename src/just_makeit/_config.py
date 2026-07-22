@@ -817,21 +817,36 @@ def module_init_params(cfg: dict, module: str) -> list[tuple]:
     ]
 
 
-def capsule_package(cfg: dict, module: str) -> str:
-    """Return the package directory a capsule module's ``.so`` / ``.pyi`` land in.
+def module_package(cfg: dict, module: str) -> str:
+    """Return the package directory a module's Python artifacts land in.
 
-    A capsule module has no ``PyTypeObject`` and frequently lives *inside* a
-    sibling object-group package rather than its own — doppler's ``ddc_fn``
-    extension is built into the ``ddc`` package so ``doppler.ddc`` can re-export
-    its free functions (``from .ddc_fn import ddcr_create``). Declare it with::
+    This is the canonical reader for ``[module.X] package`` and applies to
+    *every* module kind — plain object groups (gh-523), capsules, composers and
+    handles alike. A module frequently lives *inside* a sibling package rather
+    than its own: doppler's ``ddc_fn`` capsule is built into the ``ddc``
+    package so ``doppler.ddc`` can re-export its free functions, and its
+    ``wfm_reader`` object module lands in the pre-existing ``wfm`` package
+    beside ``Synth`` / ``Composer``. Declare it with::
 
-        [module.ddc_fn]
-        kind    = "capsule"
-        package = "ddc"
+        [module.wfm_reader]
+        objects = ["wfm_reader"]
+        package = "wfm"
 
-    When unset the module's own ``pypath`` is used, so a standalone capsule
-    module (``doppler.<module>``) needs no key."""
+    When unset the module's own ``pypath`` is used, so a standalone module
+    (``<pkg>.<module>``) needs no key. Callers spell the fallback explicitly —
+    ``C.module_package(cfg, m) or mp.pypath`` — because ``mp`` is already in
+    scope wherever the path is being built.
+
+    :func:`capsule_package` and :func:`handle_package` are kind-flavoured
+    aliases that delegate here; there is exactly one implementation."""
     return cfg.get("module", {}).get(module, {}).get("package", "")
+
+
+def capsule_package(cfg: dict, module: str) -> str:
+    """Package directory a capsule module's ``.so`` / ``.pyi`` land in.
+
+    Alias for :func:`module_package` — the key is not capsule-specific."""
+    return module_package(cfg, module)
 
 
 def capsule_header(cfg: dict, module: str) -> str:
@@ -1199,8 +1214,8 @@ def handle_package(cfg: dict, module: str) -> str:
 
     Like a capsule module, a handle frequently lives *inside* a sibling package
     (doppler's ``Writer`` lands in the ``wfm`` package). Defaults to the
-    module's own ``pypath`` when unset. See :func:`capsule_package`."""
-    return capsule_package(cfg, module)
+    module's own ``pypath`` when unset. See :func:`module_package`."""
+    return module_package(cfg, module)
 
 
 def handle_header(cfg: dict, module: str) -> str:
@@ -2795,6 +2810,14 @@ def _dump(cfg: dict) -> str:
             objs = data.get("objects", [])
             objs_str = ", ".join(f'"{o}"' for o in objs)
             lines.append(f"objects = [{objs_str}]")
+        # gh-523: `package` is not capsule/handle-specific — an object module
+        # can also land its .so / .pyi / __init__ exports inside a sibling
+        # package. The capsule branch above already emitted it (in its own
+        # key order), so only the non-capsule kinds need it here or the key
+        # would be silently dropped on the next save.
+        if data.get("kind") not in ("capsule", "composer", "handle"):
+            if data.get("package"):
+                lines.append(f'package = "{data["package"]}"')
         extra_t = data.get("extra_types", [])
         if extra_t:
             types_str = ", ".join(f'"{t}"' for t in extra_t)

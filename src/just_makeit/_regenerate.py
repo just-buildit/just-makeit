@@ -79,7 +79,9 @@ def run(
     pkg = C.project_name(cfg)
     module = C.component_module(cfg, component)
     paths = [
-        p for p in _object_paths(root, pkg, component, module) if p.exists()
+        p
+        for p in _object_paths(root, cfg, pkg, component, module)
+        if p.exists()
     ]
 
     core_h = root / "native" / "inc" / component / f"{component}_core.h"

@@ -406,9 +406,52 @@ def _fmt_from_import(module: str, names: list[str]) -> str:
     return f"from .{module} import {', '.join(names)}  # noqa: E402"
 
 
+def _parse_all_names(body: str) -> list[str]:
+    """Names listed in an ``__all__ = [...]`` body (the text between the
+    brackets, as captured by :data:`_ALL_RE`).
+
+    Comments are stripped and quoting is normalised, so both ``"Nco"`` and
+    ``'Nco'`` parse. Order is preserved and duplicates collapse.
+
+    >>> _parse_all_names('"Nco", "Mixer"')
+    ['Nco', 'Mixer']
+    >>> _parse_all_names('')
+    []
+    """
+    body = re.sub(r"#[^\n]*", "", body)
+    out: list[str] = []
+    for chunk in body.split(","):
+        name = chunk.strip().strip("\"'")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def _fmt_all(names: list[str]) -> str:
     """Render an ``__all__`` assignment (single-line canonical)."""
     return "__all__ = [" + ", ".join(f'"{n}"' for n in names) + "]"
+
+
+def package_siblings(cfg: dict, module: str) -> list[str]:
+    """Leaf names of the other modules whose Python artifacts share
+    *module*'s package directory (gh-523).
+
+    Two modules land in one package when one of them declares
+    ``package = "<the other>"`` (doppler's ``wfm_reader`` into ``wfm``), so
+    they merge into the *same* ``__init__.py``. Each is authoritative only for
+    its own ``from .<leaf> import ...`` line; the returned leaves let
+    :func:`_merge_module_init` recognise the neighbour's exports and leave them
+    alone instead of pruning them out of ``__all__`` on every other apply.
+    """
+    mp = C.module_paths(module)
+    out_pkg = C.module_package(cfg, module) or mp.pypath
+    return [
+        C.module_paths(other).leaf
+        for other in C.modules(cfg)
+        if other != module
+        and (C.module_package(cfg, other) or C.module_paths(other).pypath)
+        == out_pkg
+    ]
 
 
 def _merge_module_init(
@@ -416,6 +459,7 @@ def _merge_module_init(
     module: str,
     all_exports: list[str],
     reexports: dict[str, list[str]] | None = None,
+    siblings: list[str] | None = None,
 ) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
@@ -474,6 +518,16 @@ def _merge_module_init(
     export_set = set(all_exports)
     merged: list[str] = [n for n in existing_names if n in export_set]
     seen = set(merged)
+    # gh-523: names bound by a *sibling* module's own import line in this same
+    # package (`package = "..."` puts two modules in one __init__.py). They are
+    # that module's to manage, so they must survive this one's `__all__`
+    # rewrite — otherwise the two prune each other on alternate applies and the
+    # file never converges.
+    protected: set[str] = set()
+    for sib in siblings or []:
+        sm = _import_re(sib).search(existing)
+        if sm:
+            protected |= set(_parse_import_names(sm.group(0)))
     for name in all_exports:
         if name not in seen:
             merged.append(name)
@@ -553,9 +607,20 @@ def _merge_module_init(
     # The cost is that a fully-removed reexport sibling leaves a stale line for
     # the user to delete — strictly better than corrupting hand content.
 
-    # 3. Upsert __all__ (module exports followed by reexported names).
-    new_all = _fmt_all(all_names)
-    if _ALL_RE.search(result):
+    # 3. Upsert __all__ (module exports followed by reexported names). gh-523:
+    # a sibling module sharing this package keeps its own entries, in their
+    # existing positions, so the two modules converge instead of taking turns
+    # deleting each other. Everything else is still authoritative — a name the
+    # manifest dropped goes (gh-329).
+    am = _ALL_RE.search(result)
+    keep_set = set(all_names) | protected
+    ordered = (
+        [n for n in _parse_all_names(am.group(1)) if n in keep_set]
+        if am
+        else []
+    )
+    new_all = _fmt_all(ordered + [n for n in all_names if n not in ordered])
+    if am:
         result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
@@ -851,7 +916,7 @@ def _make_view_ctx(
     )
     _vdoc = view.get("doc") or f"{ctx['Component']} type."
     ctx["tp_doc"] = _build_ml_doc([_vdoc])
-    ctx.update(Ctx.make_module_ctx(module, pkg))
+    ctx.update(Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module)))
     ctx["frag_id"] = _view_frag_id(view)
     return ctx
 
@@ -997,7 +1062,9 @@ def build_component_ctxs(
         # Nested-module slots: override `module` to the cname (the fragment
         # file is <cname>_ext_<comp>.c) and supply `module_tp` for the dotted
         # tp_name. For a flat module these equal today's values (zero churn).
-        ctx.update(Ctx.make_module_ctx(module, pkg))
+        ctx.update(
+            Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module))
+        )
         # gh-504: a real object's fragment id is its component name (today's
         # behaviour); a view (below) overrides it so its fragment file differs.
         ctx["frag_id"] = ctx["component"]
@@ -1023,6 +1090,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     mp = C.module_paths(module)
     cname = mp.cname
     Module = _to_title(cname)
+    # gh-523: `package` redirects every Python-side artifact (.so output dir,
+    # .pyi, __init__ re-exports, tests/, benchmarks/) into a sibling package;
+    # unset it collapses to the module's own pypath, so nothing changes.
+    out_pkg = C.module_package(cfg, module) or mp.pypath
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
 
@@ -1174,8 +1245,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
 
     cmake_ctx = {
         # Nested-module slots (module=cname, module_pypath, module_output_name);
-        # flat modules collapse these to today's values.
-        **Ctx.make_module_ctx(module, pkg),
+        # flat modules collapse these to today's values. gh-523: `package`
+        # overrides module_pypath so LIBRARY_OUTPUT_DIRECTORY points at the
+        # sibling package the .so is meant to land in.
+        **Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module)),
         "Module": Module,
         "object_list": object_list,
         "module_comment": module_comment,
@@ -1271,9 +1344,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     all_exports = Components + fn_names + list(C.extra_types(cfg, module))
     reexports = C.module_reexports(cfg, module)
     # Nested module: ensure the intermediate packages exist, then write under
-    # the nested pypath.
-    ensure_parent_packages(root, pkg, mp)
-    pkg_module_dir = root / "src" / pkg / mp.pypath
+    # the nested pypath (or the gh-523 `package` destination).
+    ensure_parent_packages(root, pkg, mp, out_pkg)
+    pkg_module_dir = root / "src" / pkg / out_pkg
     init_path = pkg_module_dir / "__init__.py"
     existed = init_path.exists()
     if existed:
@@ -1284,7 +1357,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         base = R.render(
             R.MODULE_INIT_PY,
             {
-                **Ctx.make_module_ctx(module, pkg),
+                **Ctx.make_module_ctx(
+                    module, pkg, C.module_package(cfg, module)
+                ),
                 "Module": Module,
                 "object_imports": ", ".join(all_exports),
                 "object_all": ", ".join(f'"{name}"' for name in all_exports),
@@ -1292,7 +1367,13 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         )
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
     # must match/emit against the leaf, not the dotted id.
-    merged = _merge_module_init(base, mp.leaf, all_exports, reexports)
+    merged = _merge_module_init(
+        base,
+        mp.leaf,
+        all_exports,
+        reexports,
+        siblings=package_siblings(cfg, module),
+    )
     _write(init_path, merged, "update" if existed else "create")
 
     # Type stubs — regenerated in full every time the module changes.
@@ -1616,7 +1697,22 @@ def run(
 
     # Python tests and benchmarks for this module object — under the nested
     # pypath (src/<pkg>/dsp/filters/) for a dotted module id.
-    pkg_mod_dir = root / "src" / pkg / C.module_paths(module).pypath
+    # gh-523: honour the module's `package` override so the per-object tests
+    # and benchmarks land beside the .so, not in a directory named after the
+    # module that nothing else uses.
+    _mp = C.module_paths(module)
+    _out_pkg = C.module_package(cfg, module) or _mp.pypath
+    pkg_mod_dir = root / "src" / pkg / _out_pkg
+    # The generated test/bench import `from <package>.<module> import <Class>`,
+    # which must name the package the .so actually lands in — the `package`
+    # override when set, else the module's own pypath as a dotted import path.
+    # Without a package override this is exactly the module id (flat or
+    # dotted), so unpackaged modules render byte-identically.
+    _py_ctx = {**ctx, "module": _out_pkg.replace("/", ".")}
+
+    def r_py(tmpl):
+        return R.render(tmpl, _py_ctx)
+
     tests_init = pkg_mod_dir / "tests" / "__init__.py"
     if not tests_init.exists():
         _write(tests_init, R.TESTS_INIT_PY)
@@ -1628,11 +1724,13 @@ def run(
         if C.is_pytest_benchmark(cfg)
         else R.MODULE_BENCH_PY
     )
-    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r(test_py_tmpl))
+    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r_py(test_py_tmpl))
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
-    _write(pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r(bench_py_tmpl))
+    _write(
+        pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r_py(bench_py_tmpl)
+    )
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)

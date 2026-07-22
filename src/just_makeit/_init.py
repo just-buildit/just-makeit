@@ -61,7 +61,7 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
 
 
 def ensure_parent_packages(
-    root: Path, pkg: str, mp: "C.ModulePaths"
+    root: Path, pkg: str, mp: "C.ModulePaths", pypath: str | None = None
 ) -> list[Path]:
     """Create plain ``__init__.py`` markers for a nested module's parents.
 
@@ -69,11 +69,22 @@ def ensure_parent_packages(
     intermediate ``dsp`` package needs an ``__init__.py`` for ``pkg.dsp`` to be
     importable. Create-if-missing (never clobbers a hand-edited marker);
     returns the paths newly created. No-op for a flat module (no parents).
+
+    *pypath* overrides the module's own package path with the gh-523
+    ``package`` destination (which may itself be nested, e.g. ``dsp/wfm``);
+    the parents are then that path's own directory prefixes. The destination
+    directory itself is never created here — its ``__init__.py`` is the
+    module's re-export file, written (and merged) by the caller.
     """
     created: list[Path] = []
     base = root / "src" / pkg
-    for depth in range(1, len(mp.parents) + 1):
-        init = base.joinpath(*mp.parents[:depth]) / "__init__.py"
+    parents = (
+        [s for s in pypath.replace(".", "/").split("/") if s][:-1]
+        if pypath is not None
+        else list(mp.parents)
+    )
+    for depth in range(1, len(parents) + 1):
+        init = base.joinpath(*parents[:depth]) / "__init__.py"
         if not init.exists():
             _write(init, R.SUBPACKAGE_INIT_PY)
             created.append(init)

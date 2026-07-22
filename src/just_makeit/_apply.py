@@ -234,7 +234,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         if C.is_handle_module(cfg, mod):
             _handle.materialize(cfg, temp_root, mod)
             continue
-        _module.run(temp_root, mod)
+        # gh-523: `package` must reach the temp scaffold *at module-creation
+        # time* — it decides where every Python artifact is written, so the
+        # later metadata copy-down (extra_link_libs & co.) would be too late.
+        _module.run(temp_root, mod, package=C.module_package(cfg, mod))
 
     # After module scaffolding, copy module-level metadata (e.g.
     # extra_link_libs) from the real project TOML into the temp TOML so
@@ -771,12 +774,15 @@ def _merge_module_init_file(
     module: str,
     temp_path: Path,
     reexports: dict[str, list[str]] | None = None,
+    siblings: list[str] | None = None,
 ) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
     classes already in the real file. *reexports* (from the manifest) are
     folded into the import block and __all__ so a no_generate sibling's
-    re-exported names regenerate cleanly instead of being hand-edited glue."""
+    re-exported names regenerate cleanly instead of being hand-edited glue.
+    *siblings* (gh-523) are the leaf names of other modules sharing this
+    package — their exports are protected from the ``__all__`` rewrite."""
     from ._object import _merge_module_init
 
     temp_text = temp_path.read_text(encoding="utf-8")
@@ -794,7 +800,9 @@ def _merge_module_init_file(
         return False
 
     existing = real_path.read_text(encoding="utf-8")
-    merged = _merge_module_init(existing, module, exports, reexports)
+    merged = _merge_module_init(
+        existing, module, exports, reexports, siblings=siblings
+    )
     if merged != existing:
         real_path.write_text(merged, encoding="utf-8")
         return True
@@ -1116,7 +1124,7 @@ def _sync_aggregates(
             or C.is_handle_module(cfg, mod)
         ):
             mp = C.module_paths(mod)
-            out_pkg = C.capsule_package(cfg, mod) or mp.pypath
+            out_pkg = C.module_package(cfg, mod) or mp.pypath
             glue = [
                 f"native/src/{mp.cname}/{mp.cname}_ext.c",
                 f"native/src/{mp.cname}/CMakeLists.txt",
@@ -1143,27 +1151,37 @@ def _sync_aggregates(
         # Nested-module forms: cname (flat native dir), pypath (nested Python
         # dir), leaf (.so basename / import). Flat modules collapse all to mod.
         mp = C.module_paths(mod)
+        # gh-523: an object module may declare `package` to land its Python
+        # artifacts inside a sibling package; unset it is the module's own
+        # pypath, so unpackaged modules reconcile exactly as before.
+        out_pkg = C.module_package(cfg, mod) or mp.pypath
         # Re-create any intermediate package markers the user may have deleted
         # (create-only — never clobbers a hand-edited marker).
         from ._init import ensure_parent_packages
 
-        for init in ensure_parent_packages(root, pkg, mp):
+        for init in ensure_parent_packages(root, pkg, mp, out_pkg):
             updated.append(init)
         # Module subpackage __init__.py — merged so user wrapper classes
         # below the re-exports survive (the gh#1 contract). The import line is
         # `from .<leaf> import ...`, so merge against the leaf.
-        mod_init = root / "src" / pkg / mp.pypath / "__init__.py"
-        temp_mod_init = temp_root / "src" / pkg / mp.pypath / "__init__.py"
+        from ._object import package_siblings as _pkg_siblings
+
+        mod_init = root / "src" / pkg / out_pkg / "__init__.py"
+        temp_mod_init = temp_root / "src" / pkg / out_pkg / "__init__.py"
         if mod_init.exists() and temp_mod_init.exists():
             if _merge_module_init_file(
-                mod_init, mp.leaf, temp_mod_init, C.module_reexports(cfg, mod)
+                mod_init,
+                mp.leaf,
+                temp_mod_init,
+                C.module_reexports(cfg, mod),
+                siblings=_pkg_siblings(cfg, mod),
             ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.
         for rel in (
             f"native/src/{mp.cname}/{mp.cname}_ext.c",
             f"native/src/{mp.cname}/CMakeLists.txt",
-            f"src/{pkg}/{mp.pypath}/{mp.leaf}.pyi",
+            f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
         ):
             if _overwrite_if_changed(
                 root / rel,
