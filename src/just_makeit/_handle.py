@@ -721,6 +721,44 @@ def _decode_field(f: dict, scalar: bool) -> str:
     return _to_py(f["type"], acc)
 
 
+def _decode_field_stmts(f: dict, scalar: bool, n_choices: int) -> str:
+    """Statements ending in a ``return`` that decode one field (gh-521).
+
+    Every non-enum transform is the historical one-line
+    ``return <expr>;`` — byte-identical to what :func:`_decode_field` produced
+    inline before this split.
+
+    An ``enum`` field is range-checked first. A handle module wraps an
+    external resource, so its enum-valued fields are typically decoded from
+    data the process does not control — gh-514's motivating case was a Midas
+    BLUE header's format mode designator, where unsupported modes provably
+    occur in real files. Indexing the SSOT table blind therefore read past its
+    end on any code outside the table: at exactly ``n_choices`` that is the
+    NULL terminator (``PyUnicode_FromString(NULL)``), and beyond it arbitrary
+    memory. In a built extension this **segfaulted** the interpreter rather
+    than raising. The check turns an unsupported code into a ValueError the
+    caller can act on, which is the same distinction gh-514 was about.
+
+    ``n_choices`` is the enum's length from the ``[[enum]]`` SSOT; a
+    non-positive value means the enum could not be resolved, in which case the
+    unchecked form is kept rather than emitting a check that rejects
+    everything.
+    """
+    if not f.get("enum") or f.get("expr") or n_choices <= 0:
+        return f"    return {_decode_field(f, scalar)};"
+    acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
+    return (
+        f"    long _v = (long)({acc});\n"
+        f"    if (_v < 0 || _v >= {n_choices}) {{\n"
+        f"        PyErr_Format(PyExc_ValueError,\n"
+        f'            "{f["name"]} holds out-of-range {f["enum"]} value %ld"\n'
+        f'            " (valid: 0..{n_choices - 1})", _v);\n'
+        f"        return NULL;\n"
+        f"    }}\n"
+        f"    return PyUnicode_FromString(_enum_{f['enum']}[_v]);"
+    )
+
+
 def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     """Emit the decoded-getter getter functions + the getset table.
 
@@ -733,6 +771,9 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     obj = f"{tname}Object"
     funcs: list[str] = []
     rows: list[str] = []
+    # gh-521: the SSOT registry supplies each enum's length for the decode
+    # range check below.
+    _enum_reg = C.enums(cfg)
 
     closed_get = f"""    if (self->closed) {{
         PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
@@ -793,12 +834,15 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             else:
                 fetch = table_fetch
                 f_scalar = scalar
+            # gh-521: the enum decode is range-checked, so the body is built
+            # as statements rather than a single return expression.
+            _n_choices = len(_enum_reg.get(f.get("enum") or "", ()))
             funcs.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
 {fetch}
-    return {_decode_field(f, f_scalar)};
+{_decode_field_stmts(f, f_scalar, _n_choices)}
 }}
 """)
             # A field naming a `writable_fn` also emits a (setter) slot calling
