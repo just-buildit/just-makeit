@@ -48,3 +48,48 @@ def path_release(name: str) -> str:
     (gh-219), and on every pre-call error path. ``Py_XDECREF`` is NULL-safe, so
     it is correct even when ``PyUnicode_FSConverter`` never ran."""
     return f"Py_XDECREF({name});"
+
+
+# The **opaque-bytes handler** (gh-565): a Python ``bytes`` (any read-only
+# bytes-like) crosses into C as a borrowed ``(const void *, size_t)`` pair via
+# the ``y#`` PyArg format. Unlike the path handler there is NO release step —
+# ``y#`` does not create a new reference; it borrows the object's internal
+# buffer, valid for the duration of the call (the args tuple keeps the object
+# alive). The C callee must COPY the bytes before returning, exactly as it must
+# for a path. Used for a ``type = "bytes"`` init-param that expands to a
+# ``(const void *blob, size_t blob_len)`` constructor argument pair — the input
+# twin of a ``bytes``-returning method. Requires ``PY_SSIZE_T_CLEAN`` (defined
+# in every generated ext), so the ``#`` length target is a ``Py_ssize_t``.
+
+# The C constructor parameter type an opaque-bytes arg presents: a borrowed
+# buffer the callee must copy before returning.
+BYTES_C_TYPE = "const void *"
+
+
+def bytes_decl(name: str) -> list[str]:
+    """Binding locals for an opaque-bytes arg — the borrowed buffer pointer and
+    its length. ``y#`` fills both; neither needs releasing. Unindented; the
+    caller adds its own indent."""
+    return [
+        f"const char *{name} = NULL;  /* borrowed bytes buffer */",
+        f"Py_ssize_t {name}_len = 0;",
+    ]
+
+
+def bytes_fmt() -> str:
+    """PyArg format code for an opaque-bytes arg — ``y#`` fills the pointer and
+    length targets returned by :func:`bytes_addr`."""
+    return "y#"
+
+
+def bytes_addr(name: str) -> str:
+    """PyArg address fragment: the buffer pointer and length targets ``y#``
+    writes (two comma-separated items, mirroring an array's addr pair)."""
+    return f"&{name}, &{name}_len"
+
+
+def bytes_call_exprs(name: str) -> str:
+    """Expressions passed to the C call — the borrowed buffer as ``const void *``
+    and its length as ``size_t`` (two args, like a 1-D array). The callee MUST
+    copy the buffer before returning; the borrow lives only for the call."""
+    return f"(const void *){name}, (size_t){name}_len"

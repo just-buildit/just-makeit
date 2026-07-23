@@ -107,6 +107,9 @@ def _py(ctype: str) -> str:
         # object stub free of the `import os` the function stubs need — the
         # binding accepts any os.fspath-able object either way.
         return "str"
+    if ctype == "bytes":
+        # gh-565: an opaque-bytes init-param crosses as a plain `bytes`.
+        return "bytes"
     return _CTYPE_TO_PY.get(ctype, "Any")
 
 
@@ -570,8 +573,9 @@ def _build_class_docstring(
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
-            # gh-515: a path is required by construction, whatever the flag says.
-            if required or ctype == "path":
+            # gh-515/gh-565: a path or bytes blob is required by construction,
+            # whatever the flag says.
+            if required or ctype == "path" or ctype == "bytes":
                 # gh-266: no default — document it as a required parameter.
                 param_lines += [
                     f"    {name} : {py_t}",
@@ -910,7 +914,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
             # the other default-less params rather than given a `= ...`.
-            if t == "path" or (required and not t.endswith("[]")):
+            # gh-565: a bytes blob is required-positional for the same reason.
+            if (
+                t == "path"
+                or t == "bytes"
+                or (required and not t.endswith("[]"))
+            ):
                 req_parts.append(f"{n}: {_py(t)}")
             elif optional:
                 parts_init.append(f"{n}: {_py(t)} | None = None")

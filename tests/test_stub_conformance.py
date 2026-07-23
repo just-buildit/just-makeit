@@ -430,6 +430,17 @@ def shape_module_init_params_path(tmp):
     )
 
 
+def shape_module_init_params_bytes(tmp):
+    # gh-565: doppler's Plan restore shape — no_state + an opaque bytes
+    # init-param that expands to (const void *, size_t) and parses via y#.
+    return _mod(
+        tmp,
+        state=[],
+        no_state=True,
+        init_params=[("blob", "bytes", "")],
+    )
+
+
 def shape_module_state_plus_initparams(tmp):
     return _mod(
         tmp,
@@ -754,6 +765,7 @@ _SHAPES = {
     "module_method_out_type": shape_module_method_out_type,
     "module_method_variable_output": shape_module_method_variable_output,
     "module_init_params_path": shape_module_init_params_path,
+    "module_init_params_bytes": shape_module_init_params_bytes,
     "module_state_plus_initparams": shape_module_state_plus_initparams,
     "module_view": shape_module_view,
     "standalone_array_state": shape_standalone_array_state,
