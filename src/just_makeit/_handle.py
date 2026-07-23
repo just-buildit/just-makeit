@@ -128,6 +128,10 @@ def _arg_decl(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return "    " + _coerce.path_decl(n)
+    if a.get("type") == "bytes":
+        # gh-565: an opaque blob -> (const void *, size_t) via y#. Two locals;
+        # no release (y# borrows the buffer for the call's duration).
+        return "\n".join("    " + ln for ln in _coerce.bytes_decl(n))
     if a.get("type") == "string":
         # A borrowed const char * from PyArg "s" (NUL-terminated UTF-8). Like a
         # path but NOT an fspath — an in-memory string (e.g. a JSON spec). The
@@ -144,6 +148,8 @@ def _arg_fmt(a: dict) -> str:
     """PyArg_ParseTupleAndKeywords format char for one create-arg."""
     if a.get("type") == "path":
         return _coerce.path_fmt()
+    if a.get("type") == "bytes":
+        return _coerce.bytes_fmt()  # gh-565: y#
     if a.get("enum") or a.get("type") == "string":
         return "s"
     return _scalar_fmt(a["type"])
@@ -154,6 +160,8 @@ def _arg_addr(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return _coerce.path_addr(n)
+    if a.get("type") == "bytes":
+        return _coerce.bytes_addr(n)  # gh-565: &n, &n_len
     return f"&{n}"
 
 
@@ -162,6 +170,8 @@ def _create_call_arg(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return _coerce.path_call_expr(n)
+    if a.get("type") == "bytes":
+        return _coerce.bytes_call_exprs(n)  # gh-565: two args (ptr, len)
     if a.get("enum"):
         return f"_arg_{n}"  # validated enum index local
     return n
@@ -733,6 +743,84 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 """
 
 
+# ── module-level factories (alternate constructors — gh-565) ──────────────────
+
+
+def _emit_factory(cfg: dict, module: str, f: dict) -> str:
+    """Emit one module-level factory function — an alternate constructor.
+
+    ``PlanFromBlob(blob) -> Plan``: parse the factory's ``init_params`` (a
+    ``bytes`` blob / ``path`` / scalars, via the same ``_arg_*`` coercion the
+    ctor uses), call ``create_fn`` to build a FRESH handle, wrap it in a
+    tp_alloc'd instance of the module's type (bypassing ``tp_init`` — a restore
+    is not the primary ctor), and return it. The created object is named
+    ``self`` so :func:`_cache_fetch` / the destroy helpers apply verbatim.
+
+    A restore has no primary-ctor arguments, so the expr-stashed init scalars
+    (:func:`_stash_inits`) stay zero — a documented limitation, since the blob
+    reconstructs the handle wholesale and those Python-side values are simply
+    unavailable. ``cache = true`` getters ARE resolved (they read the rebuilt
+    handle, not the stashed inits)."""
+    tname = C.handle_type_name(cfg, module)
+    obj = f"{tname}Object"
+    htype = C.handle_type(cfg, module)
+    mp = C.module_paths(module)
+    fname = f["name"]
+    create_fn = f["create_fn"]
+    ips = list(f.get("init_params", []))
+
+    decls = "\n".join(_arg_decl(a) for a in ips)
+    fmt = "".join(_arg_fmt(a) for a in ips)
+    addrs = ", ".join(_arg_addr(a) for a in ips)
+    call_args = ", ".join(_create_call_arg(a) for a in ips)
+    parse = (
+        f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
+        "        return NULL;\n"
+        if ips
+        else "    (void)args;\n"
+    )
+    # path borrows are released only AFTER create_fn copies them (gh-219);
+    # bytes (y#) borrows need no release (valid for the call's duration).
+    fs_decref = "".join(
+        f"    {_coerce.path_release(a['name'])}\n"
+        for a in ips
+        if a.get("type") == "path"
+    )
+    # Alloc-failure cleanup destroys the just-built handle directly (self is
+    # not yet allocated, so the self->h teardown helpers do not apply here).
+    close_fn = C.handle_close_fn(cfg, module)
+    free_h = "free(_h); " if C.handle_init_fn(cfg, module) else ""
+    destroy_h = (f"{close_fn}(_h); " if close_fn else "") + free_h
+    cache = _cache_fetch(cfg, module)
+    cache_block = f"{cache}\n" if cache else ""
+    return f"""static PyObject *
+{mp.leaf}_{fname}(PyObject *_mod, PyObject *args)
+{{
+    (void)_mod;
+{decls}
+{parse}    {htype} *_h = {create_fn}({call_args});
+{fs_decref}    if (!_h) {{
+        PyErr_SetString(PyExc_ValueError, "{fname} failed");
+        return NULL;
+    }}
+    {obj} *self = ({obj} *){tname}Type.tp_alloc(&{tname}Type, 0);
+    if (!self) {{
+        {destroy_h}return NULL;
+    }}
+    self->h = _h;
+    self->closed = 0;
+{cache_block}    return (PyObject *)self;
+}}
+"""
+
+
+def render_factories(cfg: dict, module: str) -> str:
+    """All factory functions for *module* (empty when none are declared)."""
+    return "\n".join(
+        _emit_factory(cfg, module, f) for f in C.handle_factories(cfg, module)
+    )
+
+
 # ── getsets (decoded-getter property — THE genuinely-new C) ───────────────────
 
 
@@ -1209,8 +1297,30 @@ def render_ext(cfg: dict, module: str) -> str:
         render_type(cfg, module),
     ]
 
+    # Module-level factories (alternate constructors, gh-565): their functions
+    # plus a module PyMethodDef table wired into the moduledef. Absent factories
+    # keep the historical NULL m_methods slot (zero churn).
+    factories = C.handle_factories(cfg, module)
+    if factories:
+        parts.append(render_factories(cfg, module))
+        _fn_entries = "".join(
+            f'    {{"{f["name"]}", (PyCFunction){leaf}_{f["name"]},'
+            f" METH_VARARGS,\n"
+            f'     "Construct a {tname} via {f["create_fn"]}."}},\n'
+            for f in factories
+        )
+        parts.append(
+            f"static PyMethodDef {leaf}_functions[] = {{\n"
+            f"{_fn_entries}"
+            f"    {{NULL, NULL, 0, NULL}}\n"
+            f"}};\n"
+        )
+        _m_methods = f"{leaf}_functions"
+    else:
+        _m_methods = "NULL"
+
     parts.append(f"""static struct PyModuleDef _moduledef = {{
-    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, NULL,
+    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, {_m_methods},
     NULL, NULL, NULL, NULL
 }};
 
@@ -1285,6 +1395,8 @@ def _pyi_arg_ann(a: dict) -> str:
     """Python annotation for a handle create_arg (path, string, enum, scalar)."""
     if a.get("type") in ("path", "string"):
         return "str"
+    if a.get("type") == "bytes":
+        return "bytes"  # gh-565: opaque blob init-param
     if a.get("enum"):
         return "str"
     return _pyi_scalar(a.get("type", "int"))
@@ -1513,6 +1625,16 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines.append("    def __exit__(self, *exc: Any) -> None:")
         lines.append('        """Exit context and close the handle."""')
     lines.append("")
+
+    # Module-level factories (alternate constructors, gh-565): free functions
+    # that build a fresh handle via an alt create_fn and return the typed class.
+    for f in C.handle_factories(cfg, module):
+        ips = list(f.get("init_params", []))
+        sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
+        lines.append(f"def {f['name']}({sig}) -> {tname}:")
+        lines.append(f'    """Construct a {tname} via {f["create_fn"]}."""')
+        lines.append("")
+
     return "\n".join(lines)
 
 

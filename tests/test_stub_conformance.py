@@ -496,6 +496,7 @@ float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
 size_t ringbuf_save_bytes(const ringbuf_t *r);
 size_t ringbuf_save(const ringbuf_t *r, void *out);
+ringbuf_t *ringbuf_restore(const void *blob, size_t n);
 #endif
 """
 
@@ -556,6 +557,13 @@ size_t ringbuf_save(const ringbuf_t *r, void *out) {
     }
     return n;
 }
+ringbuf_t *ringbuf_restore(const void *blob, size_t n) {
+    size_t count = n / sizeof(float);
+    ringbuf_t *r = ringbuf_open(count ? count : 1);
+    if (!r) return NULL;
+    ringbuf_push(r, (const float *)blob, count);
+    return r;
+}
 """
 
 _RINGBUF_CMAKE = """\
@@ -611,6 +619,14 @@ def shape_handle(tmp):
             "close_fn": "ringbuf_close",
             "depends_on": [{"name": "ringbuf", "link": True}],
             "create_args": [{"name": "capacity", "type": "size_t"}],
+            # gh-565 slice 3: a module-level factory (alternate constructor).
+            "factories": [
+                {
+                    "name": "RingFromBlob",
+                    "create_fn": "ringbuf_restore",
+                    "init_params": [{"name": "blob", "type": "bytes"}],
+                }
+            ],
             "methods": [
                 {
                     "name": "push",

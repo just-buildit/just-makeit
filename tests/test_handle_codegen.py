@@ -365,6 +365,91 @@ class TestBytesReturn:
         )
 
 
+def _factory_cfg():
+    """A Ring handle with two module-level factories (gh-565 alternate
+    constructors): one over a `bytes` blob, one over a `path`."""
+    cfg = _ring_cfg()
+    cfg["module"]["ringbuf"]["factories"] = [
+        {
+            "name": "RingFromBlob",
+            "create_fn": "ringbuf_restore",
+            "init_params": [{"name": "blob", "type": "bytes"}],
+        },
+        {
+            "name": "RingFromFile",
+            "create_fn": "ringbuf_load",
+            "init_params": [{"name": "path", "type": "path"}],
+        },
+    ]
+    return cfg
+
+
+class TestFactories:
+    """gh-565 slice 3: module-level factory functions (alternate ctors)."""
+
+    def test_bytes_factory_reconstructs_and_wraps(self):
+        s = _handle.render_ext(_factory_cfg(), "ringbuf")
+        assert "ringbuf_RingFromBlob(PyObject *_mod, PyObject *args)" in s
+        assert 'if (!PyArg_ParseTuple(args, "y#", &blob, &blob_len))' in s
+        assert (
+            "ringbuf_t *_h = ringbuf_restore((const void *)blob,"
+            " (size_t)blob_len);" in s
+        )
+        assert 'PyErr_SetString(PyExc_ValueError, "RingFromBlob failed");' in s
+        # tp_alloc (bypassing tp_init) then set the handle fields directly.
+        assert (
+            "RingObject *self = (RingObject *)RingType.tp_alloc(&RingType, 0);"
+            in s
+        )
+        assert "self->h = _h;" in s and "self->closed = 0;" in s
+        # alloc-failure cleanup destroys the just-built handle.
+        assert "ringbuf_close(_h);" in s
+
+    def test_path_factory_releases_borrow_after_create(self):
+        s = _handle.render_ext(_factory_cfg(), "ringbuf")
+        i = s.index("ringbuf_RingFromFile(PyObject")
+        body = s[i : s.index("\nstatic ", i)]
+        assert (
+            'PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &path)'
+            in body
+        )
+        # gh-219: the fspath borrow is released only AFTER create_fn copies it,
+        # before the NULL check.
+        assert body.index(
+            "ringbuf_load(PyBytes_AS_STRING(path))"
+        ) < body.index("Py_XDECREF(path);")
+        assert body.index("Py_XDECREF(path);") < body.index("if (!_h)")
+
+    def test_module_methoddef_table_and_wiring(self):
+        s = _handle.render_ext(_factory_cfg(), "ringbuf")
+        assert "static PyMethodDef ringbuf_functions[] = {" in s
+        assert (
+            '{"RingFromBlob", (PyCFunction)ringbuf_RingFromBlob, METH_VARARGS,'
+            in s
+        )
+        assert (
+            '{"RingFromFile", (PyCFunction)ringbuf_RingFromFile, METH_VARARGS,'
+            in s
+        )
+        # the table is wired into the moduledef's m_methods slot.
+        assert (
+            'PyModuleDef_HEAD_INIT, "ringbuf", NULL, -1, ringbuf_functions,'
+            in s
+        )
+
+    def test_no_factories_keeps_null_m_methods(self):
+        s = _handle.render_ext(_ring_cfg(), "ringbuf")
+        assert 'PyModuleDef_HEAD_INIT, "ringbuf", NULL, -1, NULL,' in s
+        assert "ringbuf_functions" not in s
+
+    def test_factory_pyi_is_module_level_function(self):
+        pyi = _handle.render_pyi(_factory_cfg(), "ringbuf")
+        assert "def RingFromBlob(blob: bytes) -> Ring:" in pyi
+        assert "def RingFromFile(path: str) -> Ring:" in pyi
+        # module-level (no leading indentation), distinct from the class body.
+        assert "\ndef RingFromBlob(" in pyi
+
+
 class TestDecodedGetters:
     def test_plain_and_aliased_field(self):
         s = _wsrc()
