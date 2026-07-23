@@ -12,12 +12,15 @@
 #   make build             Build wheel into dist/
 #   make docs              Build docs site into site/
 #   make docs-serve        Build and serve docs with live reload
+#   make docs-check        Pre-push docs gate: strict build + docs tests
 #   make install           Install package in editable mode
 #   make setup             One-time per clone: uv sync + pre-commit install
 #   make bump-version VERSION=  Update version in pyproject.toml
 #   make check-version VERSION= Verify version matches
 #   make release-branch VERSION= Create release branch + bump
 #   make tag-release VERSION=   Tag merged main + push
+#   make release-watch VERSION= Watch release.yml + verify artifacts
+#   make ship VERSION=          tag-release then release-watch
 #   make clean             Remove build artifacts
 #   make examples-clean    Remove build artifacts from all examples
 #   make help              Show this message
@@ -34,7 +37,7 @@ BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 .PHONY: all test test-fast test-examples bench bench-save bench-compare \
         lint build docs docs-serve docs-check install setup \
         bump-version check-version release-branch tag-release \
-        release-watch release clean examples-clean help
+        release-watch ship clean examples-clean help
 
 all: test
 
@@ -167,7 +170,9 @@ endif
 	@REPO=just-buildit/just-makeit scripts/release-watch.sh "$(VERSION)"
 
 # Full release from a green, merged main: tag then watch+verify in one go.
-release: tag-release release-watch
+# Named `ship` (not `release`) to avoid the C-project convention where
+# `make release` is a cmake Release build.
+ship: tag-release release-watch
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
@@ -207,7 +212,7 @@ help:
 	@echo "  make release-branch VERSION=x.y.z create release branch"
 	@echo "  make tag-release VERSION=x.y.z   tag + push to trigger release"
 	@echo "  make release-watch VERSION=x.y.z watch release.yml + verify artifacts"
-	@echo "  make release VERSION=x.y.z       tag-release then release-watch"
+	@echo "  make ship VERSION=x.y.z          tag-release then release-watch"
 	@echo "  make clean         remove build artifacts"
 	@echo "  make examples-clean  remove build artifacts from all examples"
 	@echo ""
