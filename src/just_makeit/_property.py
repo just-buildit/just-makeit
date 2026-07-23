@@ -51,6 +51,12 @@ def run(
     count_fn: str = "",
     key_fn: str = "",
     value_fn: str = "",
+    codec: str = "",
+    entry_fn: str = "",
+    entry_type: str = "",
+    type_field: str = "",
+    count_field: str = "",
+    value_field: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -238,6 +244,15 @@ def run(
             ("count_fn", count_fn),
             ("key_fn", key_fn),
             ("value_fn", value_fn),
+            # gh-554: a codec property decodes via a generated helper over an
+            # entry_fn cursor — no hand value_fn. These carry the codec ref and
+            # the entry struct's field names.
+            ("codec", codec),
+            ("entry_fn", entry_fn),
+            ("entry_type", entry_type),
+            ("type_field", type_field),
+            ("count_field", count_field),
+            ("value_field", value_field),
         ):
             if val:
                 prop_entry[key] = val
@@ -269,14 +284,21 @@ def run(
             decls.append(
                 f"const char *{fns['key_fn']}({state_t}state, size_t i);"
             )
-        vtype = value_type or T.OBJECT_VALUE_TYPE
-        if vtype != T.OBJECT_VALUE_TYPE:
-            vdisp = T._ctype_display(vtype)
-            if not vdisp.endswith("*"):
-                vdisp += " "
-            decls.append(
-                f"{vdisp}{fns['value_fn']}({state_t}state, size_t i);"
-            )
+        if codec:
+            # gh-554: a codec property decodes an entry_fn cursor. jm does NOT
+            # declare entry_fn or its struct (the read mirror of the write
+            # side's undeclared sink_fn) — the user declares both in _core.h (or
+            # a `header` the property names), so jm injects only count_fn/key_fn.
+            pass
+        else:
+            vtype = value_type or T.OBJECT_VALUE_TYPE
+            if vtype != T.OBJECT_VALUE_TYPE:
+                vdisp = T._ctype_display(vtype)
+                if not vdisp.endswith("*"):
+                    vdisp += " "
+                decls.append(
+                    f"{vdisp}{fns['value_fn']}({state_t}state, size_t i);"
+                )
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")
     elif field:
@@ -306,7 +328,21 @@ def run(
 
     print()
     rw = "read/write" if writable else "read-only"
-    if container:
+    if container and codec:
+        fns = container_fn_names(object_name, prop_name, prop_entry)
+        e_fn = entry_fn or f"{object_name}_{prop_name}_entry"
+        core_c = f"native/src/{object_name}/{object_name}_core.c"
+        todo = [fns["count_fn"]]
+        if ctype == "dict":
+            todo.append(fns["key_fn"])
+        todo.append(e_fn)
+        print(
+            f"Done!  Implement {', '.join(f'{n}()' for n in todo)} in"
+            f" {core_c};\n"
+            f"       jm generates the '{codec}' decode over {e_fn}()."
+            f"  [{ctype}, {rw}]"
+        )
+    elif container:
         fns = container_fn_names(object_name, prop_name, prop_entry)
         todo = [fns["count_fn"]]
         if ctype == "dict":

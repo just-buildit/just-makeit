@@ -892,6 +892,7 @@ def _make_view_ctx(
             no_state=C.is_no_state(cfg, obj),
             serializable=C.is_serializable(cfg, obj),
             doc_blocks=doc_blocks,
+            codecs=C.codecs(cfg),
         )
     )
     ctx.update(
@@ -902,6 +903,7 @@ def _make_view_ctx(
             frozenset(n for n, _, _ in state_vars),
             doc_blocks=doc_blocks,
             enums=C.enums(cfg),  # gh-519
+            codecs=C.codecs(cfg),  # gh-554
         )
     )
     # gh-509: a view declares its OWN warnings ([[<obj>.views.warnings]]) —
@@ -1032,6 +1034,7 @@ def build_component_ctxs(
                 no_state=C.is_no_state(cfg, obj),
                 serializable=C.is_serializable(cfg, obj),
                 doc_blocks=_doc_blocks,
+                codecs=C.codecs(cfg),
             )
         )
         ctx.update(
@@ -1042,6 +1045,7 @@ def build_component_ctxs(
                 frozenset(n for n, _, _ in state_vars),
                 doc_blocks=_doc_blocks,
                 enums=C.enums(cfg),  # gh-519
+                codecs=C.codecs(cfg),  # gh-554
             )
         )
         # Declared warnings (gh-481) for a module object, filled into its

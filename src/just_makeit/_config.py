@@ -376,8 +376,8 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in ("project", "module", "include", "app", "enum"):
-            continue  # `app`/`enum`, like `project`, always live in the manifest
+        if key in ("project", "module", "include", "app", "enum", "codec"):
+            continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -408,6 +408,10 @@ def save(root: Path, cfg: dict) -> None:
         manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
     if cfg.get("enum"):
         manifest_content["enum"] = cfg["enum"]  # [[enum]] SSOT, manifest-owned
+    if cfg.get("codec"):
+        manifest_content["codec"] = cfg[
+            "codec"
+        ]  # [codec.X] SSOT, manifest-owned
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -439,7 +443,11 @@ def save(root: Path, cfg: dict) -> None:
 
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in ("project", "module", "app", "enum")]
+    return [
+        k
+        for k in cfg
+        if k not in ("project", "module", "app", "enum", "codec")
+    ]
 
 
 def modules(cfg: dict) -> list[str]:
@@ -1292,6 +1300,17 @@ def enums(cfg: dict) -> dict[str, list[str]]:
         if name:
             out[name] = list(e.get("values", []))
     return out
+
+
+def codecs(cfg: dict) -> dict:
+    """Return the project's declared variant codecs, ``{name: {…}}`` (gh-554).
+
+    The manifest-owned SSOT (like :func:`enums`) behind zero-hand-binding
+    read/write of discriminant-tagged binary values; a method packs one with
+    ``codec = "<name>"`` and a container property decodes one the same way. The
+    per-codec model helpers live in :mod:`just_makeit._codec`.
+    """
+    return cfg.get("codec", {}) or {}
 
 
 def resolve_enum_type(cfg: dict, ptype: str) -> str:
@@ -2765,10 +2784,19 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         _ekey = "extra_args" if "extra_args" in m else "params"
 
         def _param_inline(p: dict) -> str:
-            s = f'name = "{p["name"]}", type = "{p["type"]}"'
+            s = f'name = "{p["name"]}"'
+            # gh-554: a codec `role = "variant"` param carries no C type (jm
+            # packs it from a PyObject), so `type` is optional here.
+            if p.get("type"):
+                s += f', type = "{p["type"]}"'
             # gh-240: an optional scalar default round-trips as a string.
             if p.get("default") not in (None, ""):
                 s += f', default = "{p["default"]}"'
+            # gh-554: the codec arg role (discriminant / variant) must survive
+            # save()/load() — a per-param key the gh-257 generic passthrough
+            # (method-level scalars only) does not cover.
+            if p.get("role"):
+                s += f', role = "{p["role"]}"'
             # gh-432: capsule-typed params — the capsule name and the
             # foreign type's header must survive save()/load(); the
             # gh-257 generic passthrough covers only method-level
