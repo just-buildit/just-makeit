@@ -2362,6 +2362,7 @@ def _container_getter(
     Component: str,
     p: dict,
     guard: str,
+    cdc: dict | None = None,
 ) -> tuple[str, list[str]]:
     """Render a container property's getter, plus the decls it needs.
 
@@ -2400,7 +2401,16 @@ def _container_getter(
     # Statements that must run before the value conversion (a NULL guard for a
     # pointer-valued accessor); empty for every other value type.
     value_pre = ""
-    if vtype == T.OBJECT_VALUE_TYPE:
+    if cdc is not None:
+        # gh-554: a codec property. jm generates the per-entry decode from the
+        # [codec.X] table (the read mirror of the write pack), so there is no
+        # hand-written value_fn — the value comes from a static decode helper
+        # (emitted inline as `fwd`) over the entry_fn cursor.
+        fwd, value_expr, _entry_decls = _codec.render_decode(
+            component, Component, p, cdc
+        )
+        decls.extend(_entry_decls)
+    elif vtype == T.OBJECT_VALUE_TYPE:
         # The escape hatch: the core owns the conversion, so the value comes
         # back already a PyObject *. It must return a NEW reference and set an
         # exception when it returns NULL.
@@ -2515,10 +2525,14 @@ def _container_getter(
     return head + body, decls
 
 
-def _container_pyi(p: dict) -> str:
-    """Annotation for a container property (gh-543)."""
-    vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
-    elem = "Any" if vtype == T.OBJECT_VALUE_TYPE else _pyi_scalar(vtype)
+def _container_pyi(p: dict, cdc: dict | None = None) -> str:
+    """Annotation for a container property (gh-543; gh-554 codec)."""
+    if cdc is not None:
+        # gh-554: the value is the codec's Python union (read form, `list`).
+        elem = _codec.property_py_type(p, cdc)
+    else:
+        vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
+        elem = "Any" if vtype == T.OBJECT_VALUE_TYPE else _pyi_scalar(vtype)
     kind = p["type"]
     if kind == "dict":
         return f"dict[str, {elem}]"
@@ -2534,6 +2548,7 @@ def make_properties_ctx(
     state_var_names: frozenset[str] = frozenset(),
     doc_blocks: dict | None = None,
     enums: dict[str, list[str]] | None = None,
+    codecs: dict | None = None,
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
 
@@ -2647,8 +2662,16 @@ def make_properties_ctx(
             )
 
         if container:
+            _cdc = None
+            if _codec.is_codec_property(p):
+                _cdc = (codecs or {}).get(p["codec"])
+                if _cdc is None:
+                    raise _codec.CodecError(
+                        f"{component}.{pname}: property references codec "
+                        f"'{p['codec']}', not declared in [codec.*]."
+                    )
             getter, _c_decls = _container_getter(
-                component, Component, p, guard
+                component, Component, p, guard, cdc=_cdc
             )
             if pname not in state_var_names:
                 decl_lines.extend(_c_decls)
@@ -2840,7 +2863,12 @@ def make_properties_ctx(
 
             py_t = _stubs_py("string_enum:" + ",".join(enums[p_enum]))
         elif container:
-            py_t = _container_pyi(p)
+            _pcdc = (
+                (codecs or {}).get(p["codec"])
+                if _codec.is_codec_property(p)
+                else None
+            )
+            py_t = _container_pyi(p, _pcdc)
         elif buf_field:
             py_t = _pyi_ndarray(ctype)
         else:

@@ -114,6 +114,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             # decodes to its string on the Python side instead of leaking the
             # raw int.
             enums=C.enums(cfg),
+            codecs=C.codecs(cfg),
         )
     )
     # gh-481: declared warnings. Re-rendered from the manifest on every pass,

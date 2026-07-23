@@ -453,3 +453,137 @@ def render_method_pyi(m: dict, cdc: dict) -> list[str]:
         f" {var['name']}: {union}) -> None:",
         f'        """{brief}"""',
     ]
+
+
+# ── read decode: discriminant-tagged host buffer -> Python ─────────────────────
+#
+# A "codec property" declares `codec` + an `entry_fn` cursor (returning a struct
+# with a type-code / count / value-pointer) and jm generates the per-entry
+# decode that the gh-543 container getter otherwise takes from a hand-written
+# `value_fn`. The SAME codec table drives this and the write pack, so a value
+# packed with code 'D' reads back a Python float with zero drift.
+
+
+def _entry_field(p: dict, role: str, default: str) -> str:
+    return p.get(f"{role}_field", default)
+
+
+def render_decode(
+    component: str,
+    Component: str,
+    p: dict,
+    cdc: dict,
+) -> tuple[str, str, list[str]]:
+    """Render (decode-helper C, value expression, extra ``_core.h`` decls).
+
+    The helper is a ``static`` ext function ``<Component>_decode_<pname>`` taking
+    the entry struct pointer and returning a new reference: the ``bytes`` branch
+    yields ``str``; a numeric branch decodes ``count`` elements to ``int`` /
+    ``float`` and (with ``scalar_collapse``) returns a bare scalar when
+    ``count == 1``, else a ``list``. The value expression the container getter
+    substitutes is ``<helper>(<entry_fn>(self->handle, _i))``. The ``entry_fn``
+    is plain C, so it is declared in ``_core.h``; the helper needs ``Python.h``,
+    so it is emitted ``static`` in the ext (via the getter's inline ``fwd``).
+    """
+    pname = p["name"]
+    entry_fn = p.get("entry_fn") or f"{component}_{pname}_entry"
+    entry_t = p.get("entry_type") or f"{component}_{pname}_t"
+    tf = _entry_field(p, "type", "type")
+    cf = _entry_field(p, "count", "count")
+    vf = _entry_field(p, "value", "value")
+    # scalar_collapse is a codec-level decode policy (a value packed as a lone
+    # element reads back as a scalar, not a 1-list); a property may override it.
+    collapse = bool(p.get("scalar_collapse", cdc.get("scalar_collapse")))
+    header = p.get("header")
+    helper = f"{Component}_decode_{pname}"
+
+    esz_cases, int_cases, float_cases = [], [], []
+    for e in codec_entries(cdc):
+        code = e["code"]
+        if entry_is_bytes(e):
+            esz_cases.append(f"    case '{code}': _is_bytes = 1; break;")
+            continue
+        ct = e["ctype"]
+        is_f = T.scalar_py_annotation(ct) == "float"
+        esz_cases.append(
+            f"    case '{code}': _esz = sizeof({ct});"
+            f"{' _is_float = 1;' if is_f else ''} break;"
+        )
+        dec = (
+            f"        case '{code}': {{ {ct} _v; memcpy(&_v, _p, sizeof _v);"
+            f" _it = {{PY}}; break; }}"
+        )
+        if is_f:
+            float_cases.append(
+                dec.replace("{PY}", "PyFloat_FromDouble((double)_v)")
+            )
+        else:
+            int_cases.append(
+                dec.replace("{PY}", "PyLong_FromLongLong((long long)_v)")
+            )
+
+    collapse_block = (
+        f"""    if (_e->{cf} == 1) {{
+        PyObject *_s = PyList_GET_ITEM(_lst, 0);
+        Py_INCREF(_s);
+        Py_DECREF(_lst);
+        return _s;
+    }}
+"""
+        if collapse
+        else ""
+    )
+    inc = f'#include "{header}"\n' if header else ""
+    fn_c = f"""{inc}static PyObject *
+{helper}(const {entry_t} *_e)
+{{
+    size_t _esz = 0;
+    int _is_float = 0, _is_bytes = 0;
+    switch (_e->{tf}) {{
+{chr(10).join(esz_cases)}
+    default:
+        PyErr_Format(PyExc_ValueError, "unknown code '%c'", _e->{tf});
+        return NULL;
+    }}
+    if (_is_bytes)
+        return PyUnicode_FromStringAndSize((const char *)_e->{vf},
+                                           (Py_ssize_t)_e->{cf});
+    PyObject *_lst = PyList_New((Py_ssize_t)_e->{cf});
+    if (!_lst)
+        return NULL;
+    for (size_t _k = 0; _k < _e->{cf}; _k++) {{
+        const uint8_t *_p = (const uint8_t *)_e->{vf} + _k * _esz;
+        PyObject *_it = NULL;
+        if (_is_float) {{
+            switch (_e->{tf}) {{
+{chr(10).join(float_cases)}
+            default: break;
+            }}
+        }} else {{
+            switch (_e->{tf}) {{
+{chr(10).join(int_cases)}
+            default: break;
+            }}
+        }}
+        if (!_it) {{
+            Py_DECREF(_lst);
+            return NULL;
+        }}
+        PyList_SET_ITEM(_lst, (Py_ssize_t)_k, _it);
+    }}
+{collapse_block}    return _lst;
+}}
+
+"""
+    value_expr = f"{helper}({entry_fn}(self->handle, _i))"
+    # jm does NOT declare entry_fn or its struct — they are the user's (the read
+    # mirror of the write side, where jm never declares the sink_fn). The user
+    # declares `const <entry_type> *<entry_fn>(state, i)` and the struct in the
+    # object's _core.h (or a `header` the property names, #included above), so
+    # the decode helper sees a complete type. jm only calls it.
+    return fn_c, value_expr, []
+
+
+def property_py_type(p: dict, cdc: dict) -> str:
+    """The container ``.pyi`` value type for a codec property (read = ``list``)."""
+    return codec_py_union(cdc, seq="list")

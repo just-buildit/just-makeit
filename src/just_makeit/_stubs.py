@@ -1267,6 +1267,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         frozenset(state_names),
         doc_blocks=doc_blocks,
         enums=C.enums(cfg),  # gh-519: `enum` properties annotate as Literal
+        codecs=C.codecs(cfg),  # gh-554: codec properties annotate as the union
     )["property_stubs_pyi"]
     if _prop_pyi:
         lines += _prop_pyi.rstrip("\n").split("\n")

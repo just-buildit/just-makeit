@@ -448,6 +448,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             count_fn=p.get("count_fn", ""),
             key_fn=p.get("key_fn", ""),
             value_fn=p.get("value_fn", ""),
+            codec=p.get("codec", ""),  # gh-554
+            entry_fn=p.get("entry_fn", ""),
+            entry_type=p.get("entry_type", ""),
+            type_field=p.get("type_field", ""),
+            count_field=p.get("count_field", ""),
+            value_field=p.get("value_field", ""),
         )
 
     for comp in all_comps:
