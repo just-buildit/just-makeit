@@ -24,6 +24,8 @@ The whole gate self-skips when cmake / a C compiler / numpy / mypy is absent,
 mirroring `tests/test_examples.py`.
 """
 
+from __future__ import annotations
+
 import contextlib
 import io
 import os
