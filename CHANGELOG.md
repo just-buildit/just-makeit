@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.10] — 2026-07-23
+
 ### Added
 
 - **Zero-binding save/restore for `kind = "handle"` modules (gh-565).** The
