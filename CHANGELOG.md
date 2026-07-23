@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Declarative variant codecs — zero-hand-binding read/write of
+    discriminant-tagged binary values (gh-554).** A new top-level `[codec.X]`
+    table maps a runtime type code (e.g. a BLUE/SigMF keyword's `char`) to a C
+    element width; the *same* declaration drives both directions, so they cannot
+    drift. A method with `codec` + `sink_fn` and a `role = "variant"` param packs
+    a Python scalar-or-sequence into a host-order buffer and calls the sink
+    (`Writer.add_keyword(tag, type, value)`); a container property with `codec`
+    - an `entry_fn` cursor decodes each entry back to Python (`Reader.keywords`
+        as a `dict`). jm generates the entire binding — the per-code pack/decode, the
+        refcounting and error paths, and a *precise* `.pyi` union
+        (`str | int | float | Sequence[int] | Sequence[float]` on input,
+        `list[…]` on output) — so there is no hand marshaler on either side. jm
+        declares neither the write `sink_fn` nor the read `entry_fn`/struct: those
+        stay the user's pure-C contract, exactly as before. Replaces doppler's two
+        hand-written keyword-codec fragments.
+
 ## [0.33.8] — 2026-07-23
 
 ### Added
