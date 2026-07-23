@@ -2,11 +2,15 @@
 
 ## [Unreleased]
 
+## [0.33.11] — 2026-07-23
+
 ### Added
 
 - **Handle methods gain a `path` argument and an `error` status-raise (gh-565).**
-    Completes the save/restore family with `dump(path) -> None`: a `kind =   "handle"` method can now take a `type = "path"` argument (coerced to a
-    borrowed `const char *` via `os.fspath`, released after the call) and declare
+    Completes the save/restore family with `dump(path) -> None`: a
+    `kind = "handle"` method can now take a `type = "path"` argument (coerced to
+    a borrowed `const char *` via `os.fspath`, released after the call) and
+    declare
     `error = "<category>"` on an `int` return — the method returns `None` and
     raises the named exception (e.g. `OSError`) on a non-zero result, the
     handle-method mirror of an object method's `status_return`. Together with a
