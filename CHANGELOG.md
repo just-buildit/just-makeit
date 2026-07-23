@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.8] — 2026-07-23
+
 ### Added
 
 - **Stub-conformance matrix now covers `kind = "capsule"` modules.** A second
@@ -47,7 +49,8 @@
 - **An async-stream object in a module emitted `AsyncIterator` with no import.**
     The module-aggregated `.pyi` assembles its `from typing import …` line
     dynamically and included `Callable`/`Iterator` for a stream but never
-    `AsyncIterator`, so an `async_stream` object's `__aiter__(self) ->   AsyncIterator[...]` referenced an undefined name. The standalone template's
+    `AsyncIterator`, so an `async_stream` object's `__aiter__(self) -> AsyncIterator[...]`
+    referenced an undefined name. The standalone template's
     stream slot never had this gap — only the module peer did; surfaced by the
     new async-stream conformance shape. `AsyncIterator` is now imported whenever
     a module has an async-streamable object.
