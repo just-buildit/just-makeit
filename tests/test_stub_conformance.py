@@ -459,6 +459,182 @@ def shape_standalone_array_state(tmp):
     return d, d / "src" / "proj", "fir"
 
 
+# ── module kinds (slice 3) ───────────────────────────────────────────────────
+#
+# The capsule/handle/composer kinds each have their OWN `.pyi` generator
+# (`_handle.py` / `_capsule.py` / `_composer.py`), wholly separate from the
+# object/module path the shapes above exercise — so they are the highest-odds
+# location for undiscovered stub drift. Unlike an object (jm owns the C core),
+# a handle wraps a hand-C backing, so the shape vendors a tiny real resource as
+# a `[project] c_deps` OBJECT lib and links it in, exactly as the `composites`
+# example and `tests/test_handle_build.py` do.
+
+_RINGBUF_H = """\
+#ifndef RINGBUF_H
+#define RINGBUF_H
+#include <stddef.h>
+typedef struct ringbuf ringbuf_t;
+typedef struct { size_t used; } ringbuf_stats_t;
+ringbuf_t *ringbuf_open(size_t capacity);
+void ringbuf_close(ringbuf_t *r);
+size_t ringbuf_push(ringbuf_t *r, const float *x, size_t n);
+size_t ringbuf_push_gain(ringbuf_t *r, const float *x, size_t n, float gain);
+size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
+void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
+float ringbuf_get_gain(const ringbuf_t *r);
+void ringbuf_set_gain(ringbuf_t *r, float gain);
+#endif
+"""
+
+_RINGBUF_C = """\
+#include "ringbuf/ringbuf.h"
+#include <stdlib.h>
+struct ringbuf { float *buf; size_t cap, used, head; float gain; };
+ringbuf_t *ringbuf_open(size_t capacity) {
+    if (!capacity) return NULL;
+    ringbuf_t *r = calloc(1, sizeof *r);
+    if (!r) return NULL;
+    r->buf = malloc(capacity * sizeof *r->buf);
+    if (!r->buf) { free(r); return NULL; }
+    r->cap = capacity;
+    r->gain = 1.0f;
+    return r;
+}
+void ringbuf_close(ringbuf_t *r) { if (r) { free(r->buf); free(r); } }
+size_t ringbuf_push(ringbuf_t *r, const float *x, size_t n) {
+    size_t k = 0;
+    for (; k < n && r->used < r->cap; k++) {
+        r->buf[(r->head + r->used) % r->cap] = x[k];
+        r->used++;
+    }
+    return k;
+}
+size_t ringbuf_push_gain(ringbuf_t *r, const float *x, size_t n, float gain) {
+    size_t k = 0;
+    for (; k < n && r->used < r->cap; k++) {
+        r->buf[(r->head + r->used) % r->cap] = x[k] * gain;
+        r->used++;
+    }
+    return k;
+}
+size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n) {
+    size_t g = 0;
+    for (; g < n && r->used > 0; g++) {
+        out[g] = r->buf[r->head];
+        r->head = (r->head + 1) % r->cap;
+        r->used--;
+    }
+    return g;
+}
+void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out) {
+    out->used = r->used;
+}
+float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
+void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
+"""
+
+_RINGBUF_CMAKE = """\
+add_library(ringbuf_core OBJECT ringbuf.c)
+target_include_directories(ringbuf_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
+"""
+
+
+def _vendor_ringbuf(proj: Path) -> None:
+    """Drop the ringbuf c_dep (public header + OBJECT-lib source) into *proj*."""
+    inc = proj / "native" / "inc" / "ringbuf"
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "ringbuf.h").write_text(_RINGBUF_H, encoding="utf-8")
+    rb = proj / "native" / "src" / "ringbuf"
+    rb.mkdir(parents=True, exist_ok=True)
+    (rb / "ringbuf.c").write_text(_RINGBUF_C, encoding="utf-8")
+    (rb / "CMakeLists.txt").write_text(_RINGBUF_CMAKE, encoding="utf-8")
+
+
+def _inject_module(proj: Path, module: str, section: dict) -> None:
+    """Declare the ringbuf c_dep + a kind-module section, then apply."""
+    from just_makeit import _config as C
+
+    cfg = C.load(proj)
+    cfg["project"]["c_deps"] = ["ringbuf"]
+    cfg.setdefault("module", {})[module] = section
+    C.save(proj, cfg)
+    _q(apply_run, proj)
+
+
+def shape_handle(tmp):
+    """A `kind = "handle"` module: a typed class over an opaque hand-C resource.
+
+    Exercises `_handle.py`'s dedicated `.pyi` generator — create_fn ctor,
+    context-manager protocol, an array-in method, an array+scalar-default
+    method, an int-in -> array-out method, a decoded-getter property, and a
+    writable scalar property. `package = "."` lands `ring.so` in the package
+    root so the leaf import is `proj.ring` (stubtest target `ring`)."""
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, [], [])
+    _vendor_ringbuf(d)
+    _inject_module(
+        d,
+        "ring",
+        {
+            "kind": "handle",
+            "backing": "ringbuf",
+            "header": "ringbuf/ringbuf.h",
+            "package": ".",
+            "type_name": "Ring",
+            "context_manager": True,
+            "create_fn": "ringbuf_open",
+            "close_fn": "ringbuf_close",
+            "depends_on": [{"name": "ringbuf", "link": True}],
+            "create_args": [{"name": "capacity", "type": "size_t"}],
+            "methods": [
+                {
+                    "name": "push",
+                    "fn": "ringbuf_push",
+                    "returns": "size_t",
+                    "args": [{"name": "x", "type": "float[]"}],
+                },
+                {
+                    "name": "push_gain",
+                    "fn": "ringbuf_push_gain",
+                    "returns": "size_t",
+                    "args": [
+                        {"name": "x", "type": "float[]"},
+                        {"name": "gain", "type": "float", "default": "1.0f"},
+                    ],
+                },
+                {
+                    "name": "pop",
+                    "fn": "ringbuf_pop",
+                    "returns": "float[]",
+                    "args": [{"name": "n", "type": "size_t"}],
+                },
+            ],
+            "getters": [
+                {
+                    "fn": "ringbuf_stats",
+                    "out": "ringbuf_stats_t",
+                    "cache": False,
+                    "fields": [
+                        {"name": "used", "from": "used", "type": "size_t"}
+                    ],
+                },
+                {
+                    "fn": "ringbuf_get_gain",
+                    "out": "float",
+                    "fields": [
+                        {
+                            "name": "gain",
+                            "type": "float",
+                            "writable_fn": "ringbuf_set_gain",
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+    return d, d / "src" / "proj", "ring"
+
+
 _SHAPES = {
     "standalone_state": shape_standalone_state,
     "module_state": shape_module_state,
@@ -480,6 +656,8 @@ _SHAPES = {
     "module_state_plus_initparams": shape_module_state_plus_initparams,
     "module_view": shape_module_view,
     "standalone_array_state": shape_standalone_array_state,
+    # batch 3 — module kinds (own .pyi generators)
+    "handle": shape_handle,
 }
 
 

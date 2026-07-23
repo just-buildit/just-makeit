@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Stub-conformance matrix now covers `kind = "handle"` modules.** The gate
+    gained a buildable handle shape — a typed class over a vendored hand-C
+    ring-buffer resource (create_fn ctor, context-manager protocol, array-in
+    and int-in->array-out methods, a decoded-getter and a writable scalar
+    property) — exercising `_handle.py`'s dedicated `.pyi` generator, wholly
+    separate from the object/module path. This is the first of the three
+    `object-of-objects` kinds under the gate; capsule and composer follow once
+    their build harnesses land (gh-560).
 - **Stub-conformance matrix expanded to 19 shapes.** The gate (added last
     release) now covers, beyond the six core shapes: field/expr/enum
     properties, sync and async streams, the serializable state-blob triplet,
@@ -14,6 +22,14 @@
 
 ### Fixed
 
+- **A `kind = "handle"` type stub was missing `@final`.** A handle type is
+    `Py_TPFLAGS_DEFAULT` (never `BASETYPE`), so it cannot be subclassed at
+    runtime, but `_handle.py`'s `.pyi` generator — a separate peer from the
+    object/module generators that got `@final` last release — never marked the
+    class, so a type checker believed `Ring` was subclassable and stubtest
+    flagged the "cannot be subclassed / is a disjoint base" mismatch. The
+    handle class stub is now `@final`. Surfaced immediately by the new handle
+    conformance shape.
 - **An async-stream object in a module emitted `AsyncIterator` with no import.**
     The module-aggregated `.pyi` assembles its `from typing import …` line
     dynamically and included `Callable`/`Iterator` for a stream but never
