@@ -384,8 +384,12 @@ def _method_kwargs(m: dict) -> bool:
     margs = m.get("args", [])
     if not margs:
         return False
-    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     returns = m.get("returns")
+    if returns == "bytes":
+        return (
+            False  # (f) bytes-out: positional, like the array out_len_fn shape
+        )
+    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     ret_arr = bool(returns) and str(returns).endswith("[]")
     if ret_arr and not arrays:
         return False  # (c) int-in -> array-out
@@ -394,6 +398,40 @@ def _method_kwargs(m: dict) -> bool:
     if arrays:
         return len(arrays) != len(margs)  # (b) only when trailing scalars
     return True  # (a) scalar args
+
+
+def _scalar_string_argparse(margs: list[dict]) -> tuple[str, str, list[str]]:
+    """Positional parse of a handle method's scalar/``string`` args.
+
+    Shared by the two ``out_len_fn`` shapes — (e) array-out and the (f)
+    bytes-out below — so the arg marshaling can't drift between them. Returns
+    ``(decls, parse, calls)``: C local declarations, the ``PyArg_ParseTuple``
+    block (``(void)args;`` when there are none), and the call-through
+    expressions (``string`` -> ``const char *``; a scalar -> its safe-width
+    ``parse_type`` narrowed by ``to_c``)."""
+    decls, fmt_parts, addrs, calls = "", [], [], []
+    for a in margs:
+        an = a["name"]
+        if a.get("type") == "string":
+            decls += f"    const char *{an} = NULL;\n"
+            fmt_parts.append("s")
+            addrs.append(f"&{an}")
+            calls.append(an)
+        else:
+            meta = T._CTYPE_META[a["type"]]
+            pt = meta.get("parse_type", a["type"])  # safe-width parse target
+            to_c = meta.get("to_c")
+            decls += f"    {pt} {an}_raw = 0;\n"
+            fmt_parts.append(meta["fmt"])
+            addrs.append(f"&{an}_raw")
+            calls.append(to_c(an) if to_c else f"{an}_raw")
+    parse = (
+        f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
+        f"{', '.join(addrs)}))\n        return NULL;\n"
+        if margs
+        else "    (void)args;\n"
+    )
+    return decls, parse, calls
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -438,32 +476,15 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # (one string arg) and the scalar fast-path `at(snr, seed)->cf32[]`.
     # Positional (METH_VARARGS) — _method_kwargs() returns False for it.
     out_len_fn = m.get("out_len_fn")
+    if returns == "bytes" and not out_len_fn:
+        raise ValueError(
+            f"handle method '{name}': returns = \"bytes\" requires an"
+            " 'out_len_fn' (a `size_t <fn>(const <handle>*)` that sizes the"
+            " blob before it is filled)."
+        )
     if returns and str(returns).endswith("[]") and not array_in and out_len_fn:
         out_elem, out_npy = _array_elem_npy(returns)
-        decls, fmt_parts, addrs, calls = "", [], [], []
-        for a in margs:
-            an = a["name"]
-            if a.get("type") == "string":
-                decls += f"    const char *{an} = NULL;\n"
-                fmt_parts.append("s")
-                addrs.append(f"&{an}")
-                calls.append(an)
-            else:
-                meta = T._CTYPE_META[a["type"]]
-                pt = meta.get(
-                    "parse_type", a["type"]
-                )  # safe-width parse target
-                to_c = meta.get("to_c")
-                decls += f"    {pt} {an}_raw = 0;\n"
-                fmt_parts.append(meta["fmt"])
-                addrs.append(f"&{an}_raw")
-                calls.append(to_c(an) if to_c else f"{an}_raw")
-        parse = (
-            f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
-            f"{', '.join(addrs)}))\n        return NULL;\n"
-            if margs
-            else "    (void)args;\n"
-        )
+        decls, parse, calls = _scalar_string_argparse(margs)
         call_args = "".join(f", {c}" for c in calls)
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
@@ -477,6 +498,30 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {gil_open}    _got = {fn}(self->h{call_args}, _out);
 {gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)_got; /* trim */
     return arr;
+}}
+"""
+
+    # (f) scalar/string args → HANDLE-length `bytes` (gh-565). The write half of
+    # Plan save/restore: `size_t save_bytes(const h*)` sizes the blob, a temp
+    # buffer is filled by `size_t save(const h*, args…, void *out)`, and the
+    # result is COPIED into an immutable `bytes` — no aliasing, so none of the
+    # array shapes' deferred-free / view machinery applies. Positional
+    # (METH_VARARGS) — _method_kwargs() returns False for a bytes return.
+    if returns == "bytes" and out_len_fn:
+        decls, parse, calls = _scalar_string_argparse(margs)
+        call_args = "".join(f", {c}" for c in calls)
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args)
+{{
+{decls}{parse}{closed_guard}
+    size_t _n = (size_t){out_len_fn}(self->h);
+    char *_buf = (char *)PyMem_Malloc(_n ? _n : 1);
+    if (!_buf) return PyErr_NoMemory();
+    size_t _got;
+{gil_open}    _got = {fn}(self->h{call_args}, _buf);
+{gil_close}    PyObject *_r = PyBytes_FromStringAndSize(_buf, (Py_ssize_t)_got);
+    PyMem_Free(_buf);
+    return _r;
 }}
 """
 
@@ -1355,7 +1400,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         writable_out = [a for a in arrays if a.get("writable")]
         scalars = [a for a in margs if a not in arrays]
         ret_arr = bool(returns) and str(returns).endswith("[]")
-        if writable_out and ret_arr:
+        if returns == "bytes":
+            # (f) scalar/string args -> bytes (len from handle, gh-565).
+            sig = "self" + "".join(
+                f", {a['name']}: "
+                + (
+                    "str"
+                    if a.get("type") == "string"
+                    else _pyi_scalar(a["type"])
+                )
+                for a in margs
+            )
+            ann = "bytes"
+            doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
+        elif writable_out and ret_arr:
             # (d) execute(x, out) -> ndarray
             sig = "self, x: NDArray[Any], out: NDArray[Any]"
             ann = "NDArray[Any]"

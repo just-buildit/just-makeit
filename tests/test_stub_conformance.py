@@ -494,6 +494,8 @@ size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
+size_t ringbuf_save_bytes(const ringbuf_t *r);
+size_t ringbuf_save(const ringbuf_t *r, void *out);
 #endif
 """
 
@@ -542,6 +544,18 @@ void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out) {
 }
 float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
 void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
+size_t ringbuf_save_bytes(const ringbuf_t *r) {
+    return r->used * sizeof(float);
+}
+size_t ringbuf_save(const ringbuf_t *r, void *out) {
+    size_t n = r->used * sizeof(float);
+    char *dst = (char *)out;
+    for (size_t i = 0; i < r->used; i++) {
+        float v = r->buf[(r->head + i) % r->cap];
+        __builtin_memcpy(dst + i * sizeof(float), &v, sizeof(float));
+    }
+    return n;
+}
 """
 
 _RINGBUF_CMAKE = """\
@@ -603,6 +617,13 @@ def shape_handle(tmp):
                     "fn": "ringbuf_push",
                     "returns": "size_t",
                     "args": [{"name": "x", "type": "float[]"}],
+                },
+                {
+                    # gh-565 shape (f): handle-length `bytes` return.
+                    "name": "save",
+                    "fn": "ringbuf_save",
+                    "out_len_fn": "ringbuf_save_bytes",
+                    "returns": "bytes",
                 },
                 {
                     "name": "push_gain",

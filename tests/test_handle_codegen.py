@@ -191,6 +191,21 @@ def _rsrc():
     return _handle.render_ext(_ring_cfg(), "ringbuf")
 
 
+def _save_cfg(save_method=None):
+    """A Ring handle plus a gh-565 `save` method returning `bytes`, sized by an
+    `out_len_fn`. Pass *save_method* to override the method dict (e.g. to omit
+    out_len_fn for the validation test, or add a scalar arg)."""
+    cfg = _ring_cfg()
+    m = save_method or {
+        "name": "save",
+        "fn": "ringbuf_save",
+        "out_len_fn": "ringbuf_save_bytes",
+        "returns": "bytes",
+    }
+    cfg["module"]["ringbuf"]["methods"].append(m)
+    return cfg
+
+
 # ── tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -291,6 +306,63 @@ class TestMethods:
         i = s.index("Ring_pop(RingObject")
         pop_fn = s[i : s.index("\nstatic ", i)]
         assert "PySlice_New" not in pop_fn
+
+
+class TestBytesReturn:
+    """gh-565 shape (f): scalar/string args -> HANDLE-length `bytes`."""
+
+    def test_bytes_out_packs_pybytes(self):
+        s = _handle.render_ext(_save_cfg(), "ringbuf")
+        assert "Ring_save(RingObject *self, PyObject *args)" in s
+        # size from the handle, temp buffer, fill, COPY into immutable bytes,
+        # free the temp — no aliasing, no numpy machinery.
+        assert "size_t _n = (size_t)ringbuf_save_bytes(self->h);" in s
+        assert "char *_buf = (char *)PyMem_Malloc(_n ? _n : 1);" in s
+        assert "if (!_buf) return PyErr_NoMemory();" in s
+        assert "_got = ringbuf_save(self->h, _buf);" in s
+        assert (
+            "PyObject *_r = PyBytes_FromStringAndSize(_buf,"
+            " (Py_ssize_t)_got);" in s
+        )
+        assert "PyMem_Free(_buf);" in s
+        assert "PyArray_SimpleNew" not in s[s.index("Ring_save") :]
+
+    def test_bytes_out_pyi_is_bytes(self):
+        pyi = _handle.render_pyi(_save_cfg(), "ringbuf")
+        assert "def save(self) -> bytes:" in pyi
+
+    def test_bytes_out_with_scalar_arg(self):
+        # A scalar arg parses positionally and passes through before the buffer.
+        cfg = _save_cfg(
+            {
+                "name": "save",
+                "fn": "ringbuf_save",
+                "out_len_fn": "ringbuf_save_bytes",
+                "returns": "bytes",
+                "args": [{"name": "level", "type": "int"}],
+            }
+        )
+        s = _handle.render_ext(cfg, "ringbuf")
+        assert "_got = ringbuf_save(self->h, level_raw, _buf);" in s
+        pyi = _handle.render_pyi(cfg, "ringbuf")
+        assert "def save(self, level: int) -> bytes:" in pyi
+
+    def test_bytes_out_requires_out_len_fn(self):
+        bad = {"name": "save", "fn": "ringbuf_save", "returns": "bytes"}
+        with pytest.raises(ValueError, match="requires an 'out_len_fn'"):
+            _handle.render_ext(_save_cfg(bad), "ringbuf")
+
+    def test_bytes_method_is_positional(self):
+        assert (
+            _handle._method_kwargs(
+                {
+                    "name": "save",
+                    "returns": "bytes",
+                    "args": [{"name": "l", "type": "int"}],
+                }
+            )
+            is False
+        )
 
 
 class TestDecodedGetters:
