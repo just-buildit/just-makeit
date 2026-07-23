@@ -1474,6 +1474,13 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     needs_os = _uses_os(cfg, module)  # gh-353: a path param -> os.PathLike
     # gh-203: a streamable object's stub references Callable + Iterator.
     needs_stream = any(_obj_stream_pyi(cfg, o) for o in objects)
+    # An async-streamable object's stub also references AsyncIterator (its
+    # `__aiter__`). The module import assembly omitted it, so an async stream
+    # in a module emitted `-> AsyncIterator[...]` with no import -- an
+    # undefined name (the standalone template's stream slot never had this
+    # gap; only the module-aggregated peer did). Caught by the stub-conformance
+    # gate's async-stream shape.
+    needs_async = any(C.is_async_stream(cfg, o) for o in objects)
     parts: list[str] = [
         f"# {out_pkg}/{mp.leaf}.pyi — type stubs for the {module} C extension."
     ]
@@ -1485,6 +1492,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             x
             for x in [
                 "Any" if needs_any else "",
+                "AsyncIterator" if needs_async else "",
                 "Callable" if needs_stream else "",
                 "final" if needs_final else "",
                 "Iterator" if needs_stream else "",

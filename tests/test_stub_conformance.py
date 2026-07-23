@@ -39,12 +39,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._apply import run as apply_run
 from just_makeit._function import run as function_run
 from just_makeit._method import run as method_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
+from just_makeit._view import run as view_run
 
 
 # ── skip guard ──────────────────────────────────────────────────────────────
@@ -241,6 +243,222 @@ def shape_standalone_function(tmp):
     return d, d / "src" / "proj" / "widget", "widget"
 
 
+def _mod(tmp, obj="gizmo", state=(("gain", "double", "1.0"),), **objkw):
+    """Scaffold a module `widget` with one object; return (root, so_dir, leaf)."""
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, [], [])
+    _q(module_run, d, "widget", [obj])
+    _q(object_run, d, obj, module="widget", state_vars=list(state), **objkw)
+    return d, d / "src" / "proj" / "widget", "widget"
+
+
+def _append_core(root, comp, code):
+    """Append a C body to a component's sacred `_core.c`."""
+    core = root / "native" / "src" / comp / f"{comp}_core.c"
+    core.write_text(core.read_text() + "\n" + code + "\n")
+
+
+def _append_header(root, comp, code):
+    """Append a declaration to a component's `_core.h`, before the include
+    guard's closing `#endif` so a sibling `_ext` fragment sees it."""
+    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    text = h.read_text()
+    idx = text.rfind("#endif")
+    h.write_text(text[:idx] + code + "\n\n" + text[idx:])
+
+
+def _write_enum(root, name, values):
+    from just_makeit import _config as C
+
+    vals = ", ".join(f'"{v}"' for v in values)
+    with (root / C.FILENAME).open("a", encoding="utf-8") as fh:
+        fh.write(f'\n[[enum]]\nname = "{name}"\nvalues = [{vals}]\n')
+    _q(apply_run, root)
+
+
+# ── property kinds ──────────────────────────────────────────────────────────
+
+
+def shape_module_property_field(tmp):
+    d, so, leaf = _mod(tmp)
+    _q(
+        property_run,
+        d,
+        "gizmo",
+        "depth",
+        "widget",
+        "size_t",
+        False,
+        field=True,
+    )
+    return d, so, leaf
+
+
+def shape_standalone_property_expr(tmp):
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, ["osc"], [("gain", "double", "1.0")])
+    # An `--expr` property is inlined into the _ext.c getter, whose state
+    # pointer is `self->handle` (not a `state` alias).
+    _q(
+        property_run,
+        d,
+        "osc",
+        "hot",
+        None,
+        "bool",
+        False,
+        expr="self->handle->gain > 0.0",
+    )
+    return d, d / "src" / "proj", "osc"
+
+
+def shape_module_property_enum(tmp):
+    d, so, leaf = _mod(tmp, state=[("mode", "int", "0")])
+    _write_enum(d, "mode_kind", ["slow", "fast"])
+    _q(
+        property_run,
+        d,
+        "gizmo",
+        "mode",
+        "widget",
+        "int",
+        True,
+        field=True,
+        enum="mode_kind",
+    )
+    return d, so, leaf
+
+
+# ── lifecycle ───────────────────────────────────────────────────────────────
+
+
+def shape_module_no_reset(tmp):
+    return _mod(tmp, no_reset=True)
+
+
+def shape_module_streamable(tmp):
+    # A generator object (void arg) is the natural streamable shape.
+    return _mod(
+        tmp, arg_type="void", return_type="float _Complex", streamable=True
+    )
+
+
+def shape_module_async_stream(tmp):
+    return _mod(
+        tmp,
+        arg_type="void",
+        return_type="float _Complex",
+        streamable=True,
+        async_stream=True,
+    )
+
+
+def shape_module_serializable(tmp):
+    d, so, leaf = _mod(tmp, serializable=True)
+    # serializable generates the state-blob binding but calls a hand-written
+    # triplet (gh-400) the user declares in the sacred header and implements.
+    _append_header(
+        d,
+        "gizmo",
+        "size_t gizmo_state_bytes(const gizmo_state_t *s);\n"
+        "void gizmo_get_state(const gizmo_state_t *s, char *out);\n"
+        "int gizmo_set_state(gizmo_state_t *s, const char *in);",
+    )
+    _append_core(
+        d,
+        "gizmo",
+        "size_t gizmo_state_bytes(const gizmo_state_t *s)\n"
+        "{ (void)s; return sizeof(double); }\n"
+        "void gizmo_get_state(const gizmo_state_t *s, char *out)\n"
+        "{ *(double *)out = s->gain; }\n"
+        "int gizmo_set_state(gizmo_state_t *s, const char *in)\n"
+        "{ s->gain = *(const double *)in; return 0; }",
+    )
+    return d, so, leaf
+
+
+# ── methods ─────────────────────────────────────────────────────────────────
+
+
+def shape_module_method_out_type(tmp):
+    d, so, leaf = _mod(tmp)
+    _q(
+        method_run,
+        d,
+        "gizmo",
+        "render",
+        "widget",
+        "void",
+        "void",
+        False,
+        [],
+        params=[("n", "size_t")],
+        out_type="float _Complex",
+    )
+    return d, so, leaf
+
+
+def shape_module_method_variable_output(tmp):
+    d, so, leaf = _mod(tmp)
+    _q(
+        method_run,
+        d,
+        "gizmo",
+        "emit",
+        "widget",
+        "void",
+        "float _Complex",
+        True,
+        [],
+        params=[("n", "size_t")],
+    )
+    # jm stubs both the kernel and <comp>_<name>_max_out() in _core.c, so the
+    # scaffold links as-is (the gate imports the module, it does not call it).
+    return d, so, leaf
+
+
+# ── ctor / state ────────────────────────────────────────────────────────────
+
+
+def shape_module_init_params_path(tmp):
+    # doppler's reader shape: no_state + a path init-param.
+    return _mod(
+        tmp,
+        state=[],
+        no_state=True,
+        init_params=[("path", "path", "")],
+    )
+
+
+def shape_module_state_plus_initparams(tmp):
+    return _mod(
+        tmp,
+        state=[("cap", "size_t", "16")],
+        init_params=[("path", "path", "")],
+    )
+
+
+def shape_module_view(tmp):
+    # A view is a second class over the shared core, built by a create_fn.
+    d, so, leaf = _mod(tmp)
+    _q(view_run, d, "gizmo", "Peek", "widget", "gizmo_make_peek")
+    # jm declares and stubs the create_fn body, so the scaffold links as-is
+    # (the gate imports the module, it does not construct the view).
+    return d, so, leaf
+
+
+def shape_standalone_array_state(tmp):
+    d = _pkg(tmp)
+    _q(
+        new_run,
+        "proj",
+        d,
+        ["fir"],
+        [("taps", "double[4]", ""), ("gain", "double", "1.0")],
+    )
+    return d, d / "src" / "proj", "fir"
+
+
 _SHAPES = {
     "standalone_state": shape_standalone_state,
     "module_state": shape_module_state,
@@ -248,6 +466,20 @@ _SHAPES = {
     "module_method": shape_module_method,
     "standalone_property_computed": shape_standalone_property_computed,
     "module_function": shape_standalone_function,
+    # batch 2
+    "module_property_field": shape_module_property_field,
+    "standalone_property_expr": shape_standalone_property_expr,
+    "module_property_enum": shape_module_property_enum,
+    "module_no_reset": shape_module_no_reset,
+    "module_streamable": shape_module_streamable,
+    "module_async_stream": shape_module_async_stream,
+    "module_serializable": shape_module_serializable,
+    "module_method_out_type": shape_module_method_out_type,
+    "module_method_variable_output": shape_module_method_variable_output,
+    "module_init_params_path": shape_module_init_params_path,
+    "module_state_plus_initparams": shape_module_state_plus_initparams,
+    "module_view": shape_module_view,
+    "standalone_array_state": shape_standalone_array_state,
 }
 
 
