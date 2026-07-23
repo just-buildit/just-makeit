@@ -567,7 +567,7 @@ generated handle output — scaffold → `jm apply` → compile + a real C backi
 import → exercise — caught a codegen bug a string-assertion missed, and now
 guards the marshaling end-to-end in CI.
 
-### 5.5 Zero-binding save/restore (gh-565)
+### 5.5 Zero-binding save / restore (gh-565)
 
 A handle often wants to persist and reconstruct — a "prepare once, materialize
 many" plan that skips an expensive setup on reload. jm generates the whole
