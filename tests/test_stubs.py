@@ -479,7 +479,14 @@ class TestStringEnumStub:
 
     def test_literal_import_emitted(self, enum_project):
         pyi = _pyi(enum_project, "dsp", "myproj")
-        assert "from typing import Literal" in pyi
+        # `final` (every object class is @final) shares the typing import, so
+        # assert Literal is imported rather than pinning the exact line.
+        typing_line = next(
+            ln
+            for ln in pyi.splitlines()
+            if ln.startswith("from typing import")
+        )
+        assert "Literal" in typing_line
 
     def test_literal_before_numpy(self, enum_project):
         pyi = _pyi(enum_project, "dsp", "myproj")
@@ -487,7 +494,7 @@ class TestStringEnumStub:
         lit_idx = next(
             i
             for i, line in enumerate(lines)
-            if "from typing import Literal" in line
+            if line.startswith("from typing import") and "Literal" in line
         )
         np_idx = next(
             i for i, line in enumerate(lines) if "import numpy" in line

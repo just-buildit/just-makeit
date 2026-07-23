@@ -89,6 +89,12 @@ dev = [
     "cmakelang",
     "just-buildit",
     "mkdocstrings-python>=2.0.3; python_version >= '3.10'",
+    # Pinned: stubtest's strictness (e.g. @final / @disjoint_base class
+    # markers) is coupled to the mypy version, and the stub-conformance gate
+    # (tests/test_stub_conformance.py) must be deterministic across machines.
+    # Gated to >=3.10 (mypy 2.3 dropped 3.9); the gate self-skips without mypy,
+    # so the 3.9 leg simply does not run it.
+    "mypy==2.3.*; python_version >= '3.10'",
     "numpy",
     "pre-commit",
     "pytest",

@@ -83,7 +83,7 @@ class TestStringEnumPreservesDeclOrder:
         )
         pyi = (root / "src" / "wfm" / "pn.pyi").read_text(encoding="utf-8")
         assert (
-            "def __init__(self, poly: np.uint64 = 96,"
-            " seed: np.uint64 = 1, length: np.uint32 = 7,"
+            "def __init__(self, poly: int = 96,"
+            " seed: int = 1, length: int = 7,"
             ' lfsr: str = "galois")' in pyi
         )

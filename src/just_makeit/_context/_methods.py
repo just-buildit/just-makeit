@@ -20,26 +20,16 @@ from .._types import (
 )
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
+
 # Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
 # return stubs and make_properties_ctx's property stubs — keyed off
 # _CTYPE_META's "kind" rather than a parallel ctype table, so a new ctype
 # only needs its _CTYPE_META entry (see gh-450, where a second table in
 # _stubs.py drifted out of sync with this one).
-_KIND_TO_PY: dict[str, str] = {
-    "float": "float",
-    "int": "int",
-    "complex": "complex",
-    "str": "str",
-}
-
-
 def _pyi_scalar(ctype: str) -> str:
-    if ctype == "void":
-        return "None"
-    if ctype == "bool":
-        return "bool"
-    meta = _CTYPE_META.get(ctype)
-    return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
+    # Thin alias for the canonical scalar→Python-builtin mapping in _types, so
+    # the method-return and state-accessor annotations cannot drift.
+    return T.scalar_py_annotation(ctype)
 
 
 def _pyi_ndarray(ctype: str) -> str:

@@ -18,6 +18,7 @@ Public API:
 from ._sample import make_sample_ctx, resolve_return_type
 from ._state import (
     make_state_ctx,
+    state_accessor_stubs,
     _pyi_examples_block,
     _build_no_state_init_ctx,
     _unseedable_required,
@@ -39,6 +40,7 @@ __all__ = [
     "make_sample_ctx",
     "resolve_return_type",
     "make_state_ctx",
+    "state_accessor_stubs",
     "make_methods_ctx",
     "make_properties_ctx",
     "make_warnings_ctx",

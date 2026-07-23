@@ -152,26 +152,21 @@ class TestMakeStateCtx:
 
     def test_init_params_pyi_includes_default(self):
         ctx = self._ctx([("gain", "double", "1.0")])
-        assert ctx["init_params_pyi"] == "gain: np.float64 = 1.0"
+        assert ctx["init_params_pyi"] == "gain: float = 1.0"
 
     def test_init_params_pyi_multi(self):
         ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
-        assert (
-            ctx["init_params_pyi"] == "gain: np.float64 = 1.0, n: np.int32 = 4"
-        )
+        assert ctx["init_params_pyi"] == "gain: float = 1.0, n: int = 4"
 
     def test_init_params_pyi_float_strips_suffix(self):
         ctx = self._ctx([("x", "float", "0.5f")])
-        assert ctx["init_params_pyi"] == "x: np.float32 = 0.5"
+        assert ctx["init_params_pyi"] == "x: float = 0.5"
 
     def test_getter_setter_stubs_pyi(self):
         ctx = self._ctx([("gain", "double", "0.0")])
+        assert "def get_gain(self) -> float:" in ctx["getter_setter_stubs_pyi"]
         assert (
-            "def get_gain(self) -> np.float64:"
-            in ctx["getter_setter_stubs_pyi"]
-        )
-        assert (
-            "def set_gain(self, value: np.float64) -> None:"
+            "def set_gain(self, value: float) -> None:"
             in ctx["getter_setter_stubs_pyi"]
         )
 

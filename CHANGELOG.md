@@ -2,8 +2,47 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Stub-conformance gate — every importable symbol now has a matching stub
+    (`tests/test_stub_conformance.py`).** jm shipped a `.pyi` for every
+    object/module but nothing verified it agreed with the compiled extension;
+    the stub tests were `ast.parse` (syntax) and per-feature substring
+    assertions, so the same class of defect kept recurring one issue at a time
+    (gh-446, gh-519, gh-527, gh-529, gh-530, gh-543 were all stub bugs). The
+    gate scaffolds a minimal module per emit-path shape, builds it, and runs
+    `mypy.stubtest`, which imports the `.so`, walks every public symbol, and
+    fails on anything importable-but-unstubbed or any stub that disagrees with
+    the runtime. It runs in the coverage CI job (which has mypy, cmake and a
+    compiler) and self-skips where any of those is absent. `mypy` is pinned in
+    the dev group because stubtest's strictness is version-coupled.
+
 ### Fixed
 
+- **Standalone `.pyi` annotated scalar state as its numpy dtype.** A scalar
+    getter returns a Python builtin (`PyFloat_FromDouble` → `float`), but the
+    standalone stub annotated the ctor param, getter return and setter param as
+    `np.float64` / `np.int32` / … — the wrong type, and with a plain default
+    (`gain: np.float64 = 1.0`) an outright mypy error (`float` is not
+    `float64`). Scalars now annotate as `float` / `int` / `complex`, matching
+    the module generator and the runtime; array state keeps `NDArray[np.…]`.
+    The scalar→Python-builtin mapping is now a single source of truth
+    (`_types.scalar_py_annotation`) the method-return and state-accessor
+    renderers share.
+- **Module `.pyi` omitted every state `get_`/`set_` accessor.** The module
+    runtime emits `get_<v>()`/`set_<v>()` for each non-opaque state var (via the
+    same `make_state_ctx` that generates the standalone object), but the
+    module-aggregated stub writer emitted none of them — so the accessors were
+    importable yet invisible to a type checker. The accessor-stub emission is
+    extracted into one shared helper (`_context._state.state_accessor_stubs`)
+    the standalone and module generators both call, so they cannot drift.
+- **Generated object types were not marked `@final`.** A generated type is a
+    `Py_TPFLAGS_DEFAULT` extension type — it cannot be subclassed at runtime —
+    but the stub did not say so, so a type checker allowed subclassing that
+    fails at import. Object class stubs now carry `@final` in both generators.
+    (Composer types set `Py_TPFLAGS_BASETYPE` and are stubbed on a separate
+    path, so they stay subclassable.) `@final` also satisfies mypy's
+    disjoint-base check, so no extra marker is needed.
 - **A method's `out_type` reported a scalar `.pyi` return, and its generated
     benchmark did not compile (gh-529).** A `[[<obj>.methods]]` entry with
     `out_type = "float _Complex"` generates a C wrapper that allocates a fresh

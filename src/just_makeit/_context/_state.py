@@ -20,6 +20,7 @@ from .._types import (
     string_enum_choices,
     parse_array_type,
     is_valid_type,
+    scalar_py_annotation,
     SUPPORTED_TYPES,
 )
 from ._types import (
@@ -28,6 +29,64 @@ from ._types import (
     _py_default,
     _py_sample_val,
 )
+
+
+def state_accessor_stubs(
+    scalar_vars: list[tuple[str, str, str]],
+    array_info: list[tuple[str, str, int]],
+) -> str:
+    """`.pyi` method stubs for a component's state get_/set_ accessors.
+
+    The single source of truth for the accessor stubs, so the standalone
+    `<obj>.pyi` (via ``make_state_ctx``) and the module-aggregated
+    ``<module>.pyi`` (via ``_stubs._obj_stub``) cannot drift. The module
+    generator historically emitted *none* of these, so every module object's
+    ``get_<v>()``/``set_<v>()`` were importable at runtime yet absent from the
+    stub — invisible to a type checker (caught by the stub-conformance gate).
+
+    ``scalar_vars`` are ``(name, ctype, default)``; ``array_info`` are
+    ``(name, elem_ctype, size)`` for fixed-length array state. Returns the
+    block (leading/trailing newline) ready to splice, or ``""`` when there is
+    nothing to expose.
+    """
+    stub_groups: list[str] = []
+    for name, ct, _ in scalar_vars:
+        py_type = scalar_py_annotation(ct)
+        stub_groups.append(
+            "\n".join(
+                [
+                    f"    def get_{name}(self) -> {py_type}:",
+                    f'        """Return current {name}."""',
+                    "",
+                    f"    def set_{name}(self, value: {py_type}) -> None:",
+                    f'        """Set {name}."""',
+                ]
+            )
+        )
+    for name, elem_ct, size in array_info:
+        py_type = _CTYPE_META[elem_ct]["py_type"]
+        stub_groups.append(
+            "\n".join(
+                [
+                    f"    def get_{name}(self) -> NDArray[{py_type}]:",
+                    f'        """Return a copy of {name}'
+                    f' (length {size}, dtype {py_type})."""'
+                    "",
+                    f"    def get_{name}_view(self) -> NDArray[{py_type}]:",
+                    f'        """Return a read-only view of {name}.',
+                    "",
+                    "        Backed by the component's internal state buffer.",
+                    "        **Do not use after destroy().**",
+                    '        """',
+                    "",
+                    f"    def set_{name}(self, value:"
+                    f" NDArray[{py_type}]) -> None:",
+                    f'        """Set {name} from a {py_type}'
+                    f' array of length {size}."""',
+                ]
+            )
+        )
+    return "\n" + "\n\n".join(stub_groups) + "\n" if stub_groups else ""
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +736,7 @@ def _build_no_state_init_ctx(
             pyi_parts.append(f"{name}: str")
         else:
             ct = _req_scalar_meta[name][0]
-            pyi_parts.append(f"{name}: {_CTYPE_META[ct]['py_type']}")
+            pyi_parts.append(f"{name}: {scalar_py_annotation(ct)}")
     for kind, name in optional_entries:
         if kind == "str_enum":
             sdflt = _str_enum_by_name[name][1]
@@ -687,8 +746,7 @@ def _build_no_state_init_ctx(
         else:
             ct, dflt, _dr = _opt_scalar_meta[name]
             pyi_parts.append(
-                f"{name}: {_CTYPE_META[ct]['py_type']} ="
-                f" {_py_default(ct, dflt)}"
+                f"{name}: {scalar_py_annotation(ct)} = {_py_default(ct, dflt)}"
             )
     init_params_pyi = ", ".join(pyi_parts)
 
@@ -747,7 +805,7 @@ def _build_no_state_init_ctx(
     _req_doc = [
         (
             _order[name],
-            f"    {name} : {_CTYPE_META[ct]['py_type']}\n"
+            f"    {name} : {scalar_py_annotation(ct)}\n"
             f"        {_pdoc(name, True)}",
         )
         for name, ct, *_ in req_scalar_ip
@@ -766,7 +824,7 @@ def _build_no_state_init_ctx(
         # readable prose nor a literal anyone could copy into a call.
         pyi_doc_sections.append(
             "\n".join(
-                f"    {name} : {_CTYPE_META[ct]['py_type']}"
+                f"    {name} : {scalar_py_annotation(ct)}"
                 + (
                     f", default {_py_default(ct, dflt)}"
                     if dflt.strip()
@@ -1853,57 +1911,25 @@ def make_state_ctx(
 
     # ── PYI ─────────────────────────────────────────────────────────────
 
+    # gh-… stub conformance: a scalar state var crosses as a Python builtin
+    # (the getter returns PyFloat_FromDouble / PyLong_From…), so its ctor
+    # param, getter return and setter param annotate as float/int/complex, not
+    # the numpy dtype. Annotating `np.float64 = 1.0` was both wrong and a mypy
+    # error. Arrays keep NDArray[np.<dtype>] below. This matches the module
+    # generator (`_stubs._py`) and the runtime.
     init_params_pyi = ", ".join(
-        f"{name}: {_CTYPE_META[ct]['py_type']} = {_py_default(ct, dflt)}"
+        f"{name}: {scalar_py_annotation(ct)} = {_py_default(ct, dflt)}"
         for name, ct, dflt in ctor_scalars
     )
 
     pyi_param_docs = "\n".join(
-        f"    {name} : {_CTYPE_META[ct]['py_type']},"
+        f"    {name} : {scalar_py_annotation(ct)},"
         f" default {_py_default(ct, dflt)}\n"
         f"        {name} state variable."
         for name, ct, dflt in ctor_scalars
     )
 
-    stub_groups: list[str] = []
-    for name, ct, _ in scalar_vars:
-        py_type = _CTYPE_META[ct]["py_type"]
-        stub_groups.append(
-            "\n".join(
-                [
-                    f"    def get_{name}(self) -> {py_type}:",
-                    f'        """Return current {name}."""',
-                    "",
-                    f"    def set_{name}(self, value: {py_type}) -> None:",
-                    f'        """Set {name}."""',
-                ]
-            )
-        )
-    for name, elem_ct, size in array_info:
-        py_type = _CTYPE_META[elem_ct]["py_type"]
-        stub_groups.append(
-            "\n".join(
-                [
-                    f"    def get_{name}(self) -> NDArray[{py_type}]:",
-                    f'        """Return a copy of {name}'
-                    f' (length {size}, dtype {py_type})."""'
-                    "",
-                    f"    def get_{name}_view(self) -> NDArray[{py_type}]:",
-                    f'        """Return a read-only view of {name}.',
-                    "",
-                    "        Backed by the component's internal state buffer.",
-                    "        **Do not use after destroy().**",
-                    '        """',
-                    "",
-                    f"    def set_{name}(self, value: NDArray[{py_type}]) -> None:",
-                    f'        """Set {name} from a {py_type}'
-                    f' array of length {size}."""',
-                ]
-            )
-        )
-    getter_setter_stubs_pyi = (
-        "\n" + "\n\n".join(stub_groups) + "\n" if stub_groups else ""
-    )
+    getter_setter_stubs_pyi = state_accessor_stubs(scalar_vars, array_info)
 
     # ── Shared: create args ──────────────────────────────────────────────
 
