@@ -174,6 +174,5 @@ resize, expose a custom `resize` method that `realloc`s the buffer and updates
 
 ## See also
 
-- [opaque_counter example](opaque_counter.md) — the minimal "hello world" of opaque fields
 - [Declarative scaffolding — opaque state fields](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
 - [Declarative scaffolding — custom destroy() body](../declarative-scaffolding.md#custom-destroy-body-destroy_impl)

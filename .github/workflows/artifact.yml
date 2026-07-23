@@ -441,11 +441,6 @@ jobs:
           grep "iir_core"    native/src/filter/CMakeLists.txt
           grep "Iir"         src/my_filters/filter/__init__.py
 
-      # ── stream_chunker example ────────────────────────────────────────────────
-
-      - name: Run stream_chunker example
-        run: just-makeit example stream_chunker
-
       # ── jm script round-trip smoke test ─────────────────────────────────────
 
       - name: Scaffold complex project for script round-trip

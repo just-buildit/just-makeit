@@ -392,12 +392,12 @@ syntax. The type string can be anything the compiler accepts (raw
 pointers, typedef'd handles, function-pointer typedefs); the just-makeit
 type system doesn't inspect it.
 
-See the **opaque_counter** and **delay_line** bundled examples for
-minimal and realistic patterns:
+See the **delay_line** bundled example for both the minimal and the
+realistic pattern — it opens with a dead-simple heap-allocated field and
+builds up to a circular delay with a runtime-sized buffer:
 
 ```sh
-just-makeit example opaque_counter   # dead-simple: heap-allocated counter
-just-makeit example delay_line       # complex: circular delay with runtime length
+just-makeit example delay_line       # heap-allocated opaque state, minimal → realistic
 ```
 
 #### Pitfalls and idioms

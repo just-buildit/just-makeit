@@ -38,7 +38,7 @@ def _run_pytest(proj: Path) -> bool:
     if not src_dir.is_dir():
         return True
     # Only run if the C extension was actually compiled; scaffold-only
-    # examples (e.g. pytest_style) have no .so/.pyd and can't be imported.
+    # examples have no .so/.pyd and can't be imported.
     extensions = list(proj.rglob("*.so")) + list(proj.rglob("*.pyd"))
     if not extensions:
         print(
