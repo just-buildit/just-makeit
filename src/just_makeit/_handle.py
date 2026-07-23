@@ -1320,11 +1320,15 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"# class over an opaque {C.handle_type(cfg, module)} resource handle.",
         "from __future__ import annotations",
         "",
-        "from typing import Any",
+        "from typing import Any, final",
         "",
         "import numpy as np",
         "from numpy.typing import NDArray",
         "",
+        # A handle type is Py_TPFLAGS_DEFAULT (never BASETYPE), so it cannot be
+        # subclassed at runtime; @final tells the type checker so — and clears
+        # stubtest's "cannot be subclassed / is a disjoint base" mismatches.
+        "@final",
         f"class {tname}:",
     ]
 
