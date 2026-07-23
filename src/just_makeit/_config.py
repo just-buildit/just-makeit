@@ -376,8 +376,8 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in ("project", "module", "include", "app", "enum"):
-            continue  # `app`/`enum`, like `project`, always live in the manifest
+        if key in ("project", "module", "include", "app", "enum", "codec"):
+            continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -408,6 +408,10 @@ def save(root: Path, cfg: dict) -> None:
         manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
     if cfg.get("enum"):
         manifest_content["enum"] = cfg["enum"]  # [[enum]] SSOT, manifest-owned
+    if cfg.get("codec"):
+        manifest_content["codec"] = cfg[
+            "codec"
+        ]  # [codec.X] SSOT, manifest-owned
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -439,7 +443,11 @@ def save(root: Path, cfg: dict) -> None:
 
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in ("project", "module", "app", "enum")]
+    return [
+        k
+        for k in cfg
+        if k not in ("project", "module", "app", "enum", "codec")
+    ]
 
 
 def modules(cfg: dict) -> list[str]:
