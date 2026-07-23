@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import re as _re
+import textwrap
 
 from . import _config as C
 from . import _context as Ctx
@@ -222,6 +223,102 @@ def _line_start_offset(text: str, lineno: int) -> int:
     return sum(len(line) for line in lines[: lineno - 1])
 
 
+def _import_bindings(text: str) -> dict[str, ast.stmt]:
+    """Map each name a top-level import binds to its import node.
+
+    ``import numpy as np`` -> ``np``; ``import os`` -> ``os``;
+    ``import a.b.c`` -> ``a`` (the bound top name); ``from m import X`` -> ``X``;
+    ``from m import X as Y`` -> ``Y``. A single node may bind several names.
+    Best-effort: unparsable text yields an empty map.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return {}
+    out: dict[str, ast.stmt] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                out[alias.asname or alias.name.split(".")[0]] = node
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                out[alias.asname or alias.name] = node
+    return out
+
+
+def _referenced_names(block_text: str) -> set[str]:
+    """Every bare name referenced inside a transplanted member block.
+
+    The block is class-body-indented (``    def …``), so it is dedented before
+    parsing. Collecting ``ast.Name`` ids captures both a direct reference
+    (``Sequence``) and the root of an attribute chain (``np`` in ``np.float64``,
+    since walking the ``Attribute`` reaches its ``Name`` value). Best-effort.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(block_text))
+    except SyntaxError:
+        return set()
+    return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+
+
+def _imports_for_hand_members(
+    old_text: str, new_text: str, hand_blocks: list[str]
+) -> list[str]:
+    """Verbatim import lines a transplant needs but the fresh render lacks.
+
+    gh-557: ``_splice_manual_stub_bodies`` carries a ``# jm:hand`` member's text
+    but not the top-of-file import it references, so a hand stub using a
+    non-builtin name (e.g. ``Sequence``) lost ``from collections.abc import
+    Sequence`` on the next apply and left an unresolved name. This returns the
+    old import lines to reinstate, bounded on both sides: only imports a
+    transplanted member actually references, and only ones the fresh render
+    does not already emit (so an import jm legitimately dropped is not
+    resurrected).
+    """
+    referenced: set[str] = set()
+    for block in hand_blocks:
+        referenced |= _referenced_names(block)
+    if not referenced:
+        return []
+    old_imports = _import_bindings(old_text)
+    already = set(_import_bindings(new_text))
+    nodes: list[ast.stmt] = []
+    seen: set[int] = set()
+    for name in referenced:
+        node = old_imports.get(name)
+        if node is None or name in already or id(node) in seen:
+            continue
+        seen.add(id(node))
+        nodes.append(node)
+    nodes.sort(key=lambda n: n.lineno)
+    return [old_text[slice(*_node_span(old_text, n))] for n in nodes]
+
+
+def _inject_imports(text: str, imports: list[str]) -> str:
+    """Insert *imports* after the last existing top-level import in *text*.
+
+    Falls back to after the first line (the header comment) when the stub has
+    no imports at all, which for a generated stub does not occur but keeps the
+    helper total.
+    """
+    if not imports:
+        return text
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    last_end = None
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_end = _node_span(text, node)[1]
+    block = "\n".join(imports)
+    if last_end is None:
+        nl = text.find("\n")
+        cut = nl + 1 if nl != -1 else len(text)
+        return text[:cut] + block + "\n" + text[cut:]
+    return text[:last_end] + "\n" + block + text[last_end:]
+
+
 def _hand_marker_start(lines: list[str], member_lineno: int) -> int | None:
     """1-indexed line number of the ``# jm:hand`` marker immediately above
     *member_lineno* (skipping at most one blank separator line), or None."""
@@ -343,6 +440,14 @@ def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
         insertions.sort(key=lambda r: r[0], reverse=True)
         for offset, block in insertions:
             out = out[:offset] + block + out[offset:]
+
+    # gh-557: reinstate any top-of-file import a transplanted hand member
+    # references but the fresh render dropped (it was hand-added for that
+    # member, so jm never emits it).
+    out = _inject_imports(
+        out,
+        _imports_for_hand_members(old_text, out, list(hand_owned.values())),
+    )
     return out
 
 

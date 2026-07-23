@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`# jm:hand` dropped the top-of-file import its member needed (gh-557).** The
+    `.pyi` splice engine preserves a `# jm:hand`-marked member's text across a
+    regeneration but never touched the imports, so a hand member referencing a
+    non-builtin name lost the import that binds it — a `Sequence[int]` stub
+    silently lost `from collections.abc import Sequence` on the next
+    `jm apply`, leaving an unresolved name with no error (the same class of
+    silent stub break the stub-conformance gate catches, on the one path — a
+    hand-transplanted member — the gate does not generate). The splicer now
+    reinstates an old import, bounded on both sides: only when a transplanted
+    hand member references a name it binds, and only when the fresh render does
+    not already emit it — so a genuinely-dropped import is not resurrected and
+    jm's own imports are never duplicated. Split out of gh-554.
+
 ## [0.33.7] — 2026-07-23
 
 ### Added
