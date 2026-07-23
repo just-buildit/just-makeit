@@ -548,7 +548,12 @@ Fixed-size array constructor arguments added with `--array-arg`.
 ### `[[<object>.init_params]]`
 
 Constructor-only parameters added with `--init-param` (no getter/setter, no
-reset). Same `name` / `type` / `default` keys as `state`.
+reset). Same `name` / `type` / `default` keys as `state`. Besides the scalar /
+array types, two opaque pseudo-types are accepted (both required-positional, no
+default): `type = "path"` (an `os.fspath` coerced to a borrowed `const char *`,
+gh-515) and `type = "bytes"` (a read-only bytes-like coerced to a borrowed
+`(const void *, size_t)` pair via `y#`, gh-565). The C constructor must copy
+either borrow before returning.
 
 ### `[[<object>.methods]]`
 
