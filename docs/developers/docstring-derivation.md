@@ -44,16 +44,32 @@ ______________________________________________________________________
 
 ## Supported Doxygen tags
 
-| Tag                   | Maps to in `.pyi`           |
-| --------------------- | --------------------------- |
-| `@brief <text>`       | First line of the docstring |
-| Body text (no tag)    | Continuation of summary     |
-| `@param <name> <doc>` | `Parameters` section entry  |
-| `@return <doc>`       | `Returns` section entry     |
-| `@code` … `@endcode`  | `Examples` section doctest  |
+| Tag                          | Maps to in `.pyi`           |
+| ---------------------------- | --------------------------- |
+| `@brief <text>`              | First line of the docstring |
+| Body text (no tag)           | Continuation of summary     |
+| `@param <name> <doc>`        | `Parameters` section entry  |
+| `@return <doc>` / `@returns` | `Returns` section entry     |
+| `@code` … `@endcode`         | `Examples` section doctest  |
 
 Tags not in this table (e.g. `@note`, `@warning`, `@see`) are silently
 dropped — they have no numpy-docstring equivalent.
+
+### Inline word-references are reduced to the bare word
+
+Doxygen inline markup that references a single word — `@p name`, `@c name`,
+`@a name`, `@e name`, `@b name`, and `@ref name` — reads as noise in a Python
+docstring, so `_strip_doxy_inline` collapses each to just the word (`length @p code_len` → `length code_len`). This runs on the brief, body, params, and
+return text, but **not** inside `@code` blocks, which are copied verbatim.
+
+### A `@brief` that only restates the name is treated as empty
+
+`parse_doxygen_block` is given the C function name, and if the only content in
+the block is a brief that matches that name (ignoring `_`/spaces and case —
+jm's own `@brief gain_create.` scaffold shape), it returns `None`. The
+generators then keep their name-based fallback stub. This is why a freshly
+scaffolded header shows the generic docstring until a human writes real docs:
+a brief has to say something beyond the identifier before it "takes."
 
 ### Before and after: a concrete example
 
@@ -61,83 +77,83 @@ dropped — they have no numpy-docstring equivalent.
 
 ```c
 /**
- * @brief Construct a log-domain feedback AGC and return its heap state.
- * The loop integrator starts at 0 dB (unity gain) and the power detector
- * is pre-seeded to 10^(ref_db/10) linear, so the first block of
- * on-target samples produces no transient.
- *
+ * @brief Construct a log-domain feedback AGC.
  * @param ref_db   Target output power in dB (e.g. 0.0 for unity power).
  * @param loop_bw  Loop noise bandwidth in cycles/sample.
- * @param alpha    Power-detector EMA coefficient (0 < alpha < 1).
  * @return Heap-allocated agc_state_t, or NULL on allocation failure.
- * @code
- * >>> from doppler.agc import AGC
- * >>> agc = AGC(ref_db=0.0, loop_bw=0.0025, alpha=0.05)
- * @endcode
  */
-agc_state_t *agc_create(double ref_db, double loop_bw, double alpha);
+agc_state_t *agc_create(double ref_db, double loop_bw);
 ```
 
 **Generated `.pyi`** (`src/doppler/agc/agc.pyi`):
 
 ```python
 class AGC:
-    """Construct a log-domain feedback AGC and return its heap state.
-
-    The loop integrator starts at 0 dB (unity gain) and the power
-    detector is pre-seeded to 10^(ref_db/10) linear, so the first
-    block of on-target samples produces no transient.
+    """Construct a log-domain feedback AGC.
 
     Parameters
     ----------
-    ref_db : float
+    ref_db : float, default 0.0
         Target output power in dB (e.g. 0.0 for unity power).
-    loop_bw : float
+    loop_bw : float, default 0.0
         Loop noise bandwidth in cycles/sample.
-    alpha : float
-        Power-detector EMA coefficient (0 < alpha < 1).
-
-    Returns
-    -------
-    AGC
-        Heap-allocated AGC instance.
 
     Examples
     --------
+    Create with defaults:
+
     >>> from doppler.agc import AGC
-    >>> agc = AGC(ref_db=0.0, loop_bw=0.0025, alpha=0.05)
+    >>> obj = AGC(ref_db=0.0, loop_bw=0.0)
+    >>> obj.get_gain()
+    0.0
 
     """
 
     def __init__(
-        self, ref_db: float = ..., loop_bw: float = ..., alpha: float = ...
+        self, ref_db: float = ..., loop_bw: float = ...
     ) -> None: ...
 ```
 
+The class docstring is **summary + `Parameters` + a synthesized `Examples`
+block** (a construction call plus getter read-backs, and a reset round-trip
+when the object has resettable state). Note what `create()`'s block does **not**
+contribute to the *class* docstring: an extended-description paragraph, the
+`@return` text, and any `@code` snippet are all dropped here. The `@param`
+descriptions flow through only for an object built from `init_params` (a plain
+`--state` object documents its fields generically). To author your own runnable
+example, put `@code` on a **method** (below), not on `create()`.
+
 ______________________________________________________________________
 
-## `@code` blocks become runnable doctests
+## `@code` blocks become runnable doctests (on methods)
 
-Code inside `@code` / `@endcode` lands in the numpy `Examples` section.
-CI exercises these via:
+A `@code` / `@endcode` block on a **method** declaration (a
+`just-makeit method`, a property getter, or a free function) lands in that
+member's numpy `Examples` section as a runnable doctest. CI exercises these:
 
 ```sh
 uv run pytest --doctest-glob='*.pyi' -q $(find src/<pkg> -name '*.pyi')
 ```
 
-This means the examples in your C Doxygen comments are *actually run*
-against the built C extension every CI pass. If a comment says
+So the examples in your C Doxygen comments are *actually run* against the built
+C extension every CI pass. If a method comment says
 
 ```c
+/**
+ * @brief Scale a sample by the gain.
  * @code
  * >>> obj = Widget(0.5)
- * >>> obj.step(1.0)
+ * >>> obj.scale(1.0)
  * 0.5
  * @endcode
+ */
+float widget_scale(const widget_state_t *state, float x);
 ```
 
-…and the C implementation returns `0.6`, CI will catch it. Write your
-`@code` examples so they produce deterministic, printable output.
+…and the C implementation returns `0.6`, CI will catch it. Write your `@code`
+examples so they produce deterministic, printable output. (`@code` on the
+built-in `step()`/`steps()` or on `create()` is not surfaced — use a named
+method.)
 
 ______________________________________________________________________
 
