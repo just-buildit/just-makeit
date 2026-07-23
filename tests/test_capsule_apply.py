@@ -103,18 +103,19 @@ class TestRenderPyi:
             "module": {"ddc_fn": _capsule_module()},
         }
         s = _capsule.render_pyi(cfg, "ddc_fn")
-        assert "DDCRState = Any" in s
+        # The opaque handle is annotated `Any` inline — a named module-level
+        # alias (`DDCRState = Any`) would read to stubtest as a runtime constant
+        # the C extension never defines (slice-4 conformance fix).
+        assert "State = Any" not in s
+        assert "def ddcr_create(norm_freq: float, rate: float) -> Any:" in s
         assert (
-            "def ddcr_create(norm_freq: float, rate: float) -> DDCRState:" in s
+            "def ddcr_execute(state: Any, x: NDArray[Any], "
+            "out: NDArray[Any]) -> NDArray[Any]: ..." in s
         )
-        assert "def ddcr_execute(state: DDCRState, x: NDArray[Any], "
-        assert "def ddcr_reset(state: DDCRState) -> None: ..." in s
-        assert "def ddcr_destroy(state: DDCRState) -> None: ..." in s
-        assert "def ddcr_get_norm_freq(state: DDCRState) -> float: ..." in s
-        assert (
-            "def ddcr_set_norm_freq(state: DDCRState, value: float) -> None:"
-            in s
-        )
+        assert "def ddcr_reset(state: Any) -> None: ..." in s
+        assert "def ddcr_destroy(state: Any) -> None: ..." in s
+        assert "def ddcr_get_norm_freq(state: Any) -> float: ..." in s
+        assert "def ddcr_set_norm_freq(state: Any, value: float) -> None:" in s
         # read-only property has no setter
         assert "ddcr_set_rate" not in s
 
