@@ -689,6 +689,114 @@ One entry per `just-makeit function` call.
 
 ______________________________________________________________________
 
+## Variant codecs (`[codec.<name>]`)
+
+A **variant codec** (gh-554) maps a runtime *discriminant* value — a small tag,
+e.g. a BLUE/SigMF keyword's `char` type code — to a C **element width**, so one
+value can be encoded and decoded as any of a fixed set of C types chosen at call
+time. The *same* declared table drives both the input pack (Python → bytes) and
+the output decode (bytes → Python), so the two directions **cannot drift** —
+zero hand-written binding on either side.
+
+Declared once at the top level, keyed by name (like `[module.<name>]`):
+
+```toml
+[codec.blue_keyword]
+discriminant = "char"        # C type of the tag that selects a branch
+scalar_collapse = true       # decode: count == 1 -> a scalar, else a list
+entries = [
+  { code = "A", ctype = "char",    bytes = true },  # raw bytes -> str
+  { code = "B", ctype = "int8_t"  },                # -> int
+  { code = "I", ctype = "int16_t" },
+  { code = "L", ctype = "int32_t" },
+  { code = "X", ctype = "int64_t" },
+  { code = "F", ctype = "float"   },                # -> float
+  { code = "D", ctype = "double"  },
+]
+```
+
+| Codec key         | Type   | Notes                                                             |
+| ----------------- | ------ | ----------------------------------------------------------------- |
+| `discriminant`    | string | C type of the tag (`char`, or an int-family `_CTYPE_META` scalar) |
+| `scalar_collapse` | bool   | Decode a lone element as a scalar rather than a 1-element list    |
+| `entries`         | array  | `{ code, ctype, bytes? }` — one branch per discriminant value     |
+
+Each entry's numeric `ctype` must be a scalar in `_CTYPE_META`; the Python type
+it crosses as is **derived** from the ctype (`int` / `float`), so an entry never
+declares a redundant `py`. A `bytes = true` entry is packed raw and decoded as
+`str`.
+
+### Write — a codec method (`[[<obj>.methods]]`)
+
+A method with `codec` + `sink_fn` packs a variant argument into a host-order
+buffer and calls the sink. Among its `params`, one carries `role = "discriminant"` (the tag), one `role = "variant"` (the value jm packs); the rest
+are fixed passthroughs.
+
+```toml
+[[wfm_writer.methods]]
+name = "add_keyword"
+codec = "blue_keyword"
+sink_fn = "wfm_writer_add_keyword"   # int (state, <fixed...>, <disc>, const void *, size_t)
+params = [
+  { name = "tag",   type = "const char *" },        # fixed passthrough
+  { name = "type",  role = "discriminant" },        # the char code
+  { name = "value", role = "variant" },             # jm packs per codec
+]
+```
+
+jm generates the whole binding: parse, the per-code pack (a Python scalar **or**
+any sequence → the coded C width), the `sink_fn` call, and a *precise* `.pyi`
+union (`str | int | float | Sequence[int] | Sequence[float]`). jm does **not**
+declare `sink_fn` — that stays your pure-C contract.
+
+### Read — a codec container property (`[[<obj>.properties]]`)
+
+A container property with `codec` decodes each entry back to Python. It reuses
+the container cursor (`count_fn` / `key_fn` for a `dict`) and adds an `entry_fn`
+that returns a pointer to one entry struct, whose fields the codec decodes.
+
+```toml
+[[wfm_reader.properties]]
+name = "keywords"
+codec = "blue_keyword"
+count_fn = "wfm_reader_num_keywords"
+key_fn = "wfm_reader_keyword_tag"
+entry_fn = "wfm_reader_keyword"
+entry_type = "wfm_keyword_t"   # see the default-derivation note below
+type_field = "type"            # struct fields the decode reads
+count_field = "count"
+value_field = "value"
+```
+
+| Property key                                 | Default                    | Notes                                           |
+| -------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `codec`                                      | —                          | The `[codec.<name>]` to decode with             |
+| `entry_fn`                                   | `<obj>_<prop>_entry`       | Returns `const <entry_type> *(state, i)`        |
+| `entry_type`                                 | `<obj>_<prop>_t`           | The entry struct type — **often needs setting** |
+| `type_field` / `count_field` / `value_field` | `type` / `count` / `value` | The discriminant / length / payload members     |
+| `scalar_collapse`                            | codec's value              | Per-property override                           |
+| `header`                                     | —                          | `#include` the `.pyi`/ext needs for the struct  |
+
+jm generates the decode helper (bytes → `str`; a numeric branch decodes `count`
+elements to `int`/`float`, collapsing to a scalar when `count == 1` if
+`scalar_collapse`) and the `dict[str, str | int | float | list[int] | list[float]]` `.pyi`. As on the write side, jm declares **neither** `entry_fn`
+**nor** the entry struct — both are your pure-C contract.
+
+> **`entry_type` usually needs setting.** It defaults to `<obj>_<prop>_t`
+> (property `keywords` on `wfm_reader` → `wfm_reader_keywords_t`), but a shared,
+> element-named struct (`wfm_keyword_t`) will not match that guess and the decode
+> helper won't compile. Set `entry_type` explicitly whenever the struct isn't
+> named after the property.
+
+### Error surfaces
+
+Codec errors are intentionally generic: a non-zero `sink_fn` return raises
+`ValueError: <method> failed`; an unknown discriminant raises `ValueError: unsupported code '<c>'`; a multi-character discriminant string is a
+`PyArg`-level `TypeError`. If you need a domain-specific message, wrap the call
+in Python.
+
+______________________________________________________________________
+
 ## Inspecting config
 
 ```sh

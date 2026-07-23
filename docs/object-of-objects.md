@@ -41,6 +41,7 @@ ______________________________________________________________________
     - [5.2 The decoded-getter property](#52-the-decoded-getter-property)
     - [5.3 RAII, optional backends & the UAF rule](#53-raii-optional-backends-the-uaf-rule)
     - [5.4 Worked example: doppler's transport layer](#54-worked-example-dopplers-transport-layer)
+    - [5.5 Zero-binding save/restore (gh-565)](#55-zero-binding-save-restore-gh-565)
 - [6. Lifecycle & memory invariants](#6-lifecycle-memory-invariants)
 - [7. Validation discipline: reference-first](#7-validation-discipline-reference-first)
 - [8. Manifest reference](#8-manifest-reference)
@@ -461,18 +462,26 @@ The generated type carries:
     for an init-in-place C API, `init_fn` (jm `malloc`s `sizeof(handle_type)`,
     calls `init_fn(self->h, …)`, and `free`s on close; gh-315). It coerces
     `create_args` — enum-string→index via the SSOT, `os.fspath` for a `path` arg,
+    a borrowed `(const void *, size_t)` for a `bytes` arg (`y#`, gh-565),
     scalar casts — and runs an optional conditional `create_post` setter.
     A NULL return raises `RuntimeError: "<create_fn> failed"` unless the module
     declares `create_error` / `create_error_message` (gh-514), which is worth
     doing: a handle module is the shape that opens external resources, and
     "no such file, unrecognised container, or an unsupported format" tells the
     caller what to fix where an internal C symbol name does not;
-- **methods** mapping `name → fn(self->h, …)`, in four shapes: scalar args
+- **methods** mapping `name → fn(self->h, …)`, in six shapes: scalar args
     (honoring `default` / keyword args, gh-319); an array-in arg (numpy-marshaled
     like the capsule path), optionally followed by trailing scalars
     (`send(iq, fs, fc)`, gh-308); an int-in→array-out shape returning an
-    **independent** numpy-owned array; and an **array-in + writable array-out**
-    execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311);
+    **independent** numpy-owned array; an **array-in + writable array-out**
+    execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311); a
+    scalar/string-args → handle-length array-out shape (`out_len_fn` sizes the
+    result); and a scalar/string-args → handle-length **`bytes`** shape
+    (`returns = "bytes"` + `out_len_fn`: a temp buffer filled by
+    `fn(self->h, …, void *out)`, copied into an immutable `bytes` — `save()`, the
+    write half of §5.5 save/restore, gh-565);
+- **module-level factories** (§5.5) — alternate constructors that build a
+    *fresh* handle from a blob or file;
 - **decoded-getter properties** (§5.2), including **writable** scalar
     properties — the genuinely new code;
 - the **RAII protocol** (§5.3): an always-generated idempotent `close()` and a
@@ -557,6 +566,66 @@ shim); `ZmqSink` / `SampleClock` use the weak-symbol guard (POSIX-only);
 generated handle output — scaffold → `jm apply` → compile + a real C backing →
 import → exercise — caught a codegen bug a string-assertion missed, and now
 guards the marshaling end-to-end in CI.
+
+### 5.5 Zero-binding save / restore (gh-565)
+
+A handle often wants to persist and reconstruct — a "prepare once, materialize
+many" plan that skips an expensive setup on reload. jm generates the whole
+round-trip, no `_ext.c` and no Python: a handle serializes to `bytes` and a
+module-level factory rebuilds a fresh handle from that blob (or a file).
+
+**Write — `returns = "bytes"`.** A method whose output length comes from the
+handle declares an `out_len_fn`; jm sizes the blob with it, fills a temp buffer
+via `fn(self->h, …, void *out)`, copies the bytes into an immutable `bytes`
+object, and frees the temp. Because the return is an owned copy there is no
+aliasing — none of the array shapes' deferred-free / view machinery applies.
+
+```toml
+[[wfm_plan.methods]]
+name = "save"
+fn = "wfm_plan_save"           # size_t (const h*, void *out) -> bytes written
+out_len_fn = "wfm_plan_save_bytes"   # size_t (const h*)
+returns = "bytes"
+```
+
+**Restore — `[[module.<name>.factories]]`.** A factory is a *module-level*
+function (not a method, not a classmethod) that parses an init-param, calls an
+alternate `create_fn` to build a **fresh** handle, wraps it in the module's typed
+class, and returns it. The primary constructor is untouched and the type stays
+`@final`.
+
+```toml
+[[module.wfm_plan.factories]]
+name = "PlanFromBlob"
+create_fn = "wfm_plan_restore"      # h* (const void *blob, size_t n)
+init_params = [{ name = "blob", type = "bytes" }]
+
+[[module.wfm_plan.factories]]
+name = "PlanFromFile"
+create_fn = "wfm_plan_load"         # h* (const char *path)
+init_params = [{ name = "path", type = "path" }]
+```
+
+```python
+from wfm_plan import Plan, PlanFromBlob, PlanFromFile
+
+blob = p.save()                 # bytes
+p2 = PlanFromBlob(blob)         # a fresh, independent Plan
+p3 = PlanFromFile("plan.bin")   # ditto, from a file
+```
+
+| Factory key   | Notes                                                      |
+| ------------- | ---------------------------------------------------------- |
+| `name`        | The module-level function name (e.g. `PlanFromBlob`)       |
+| `create_fn`   | Alternate constructor `h* (…)` that returns a fresh handle |
+| `init_params` | `{name, type}` — a `bytes` blob, a `path`, or scalars      |
+
+> **Restore semantics.** A factory `tp_alloc`s the instance and **bypasses
+> `tp_init`**, so any *expr-stashed* init scalars (Python-side `create_args`
+> referenced by an `expr` getter, §5.2) stay zero — the blob reconstructs the
+> handle wholesale and those Python values aren't available on restore.
+> `cache = true` getters **are** resolved from the rebuilt handle. If a factory
+> needs a stashed scalar for an `expr` getter, pass it as an extra `init_param`.
 
 ______________________________________________________________________
 
