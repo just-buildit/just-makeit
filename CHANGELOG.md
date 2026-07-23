@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.9] — 2026-07-23
+
 ### Added
 
 - **Declarative variant codecs — zero-hand-binding read/write of
