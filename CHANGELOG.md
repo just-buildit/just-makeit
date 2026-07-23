@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.7] — 2026-07-23
+
 ### Added
 
 - **Stub-conformance gate — every importable symbol now has a matching stub
