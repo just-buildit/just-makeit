@@ -25,6 +25,12 @@ from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
+from just_makeit._stubs import (
+    _import_bindings,
+    _imports_for_hand_members,
+    _inject_imports,
+    _referenced_names,
+)
 
 
 def _scaffold(tmp_path):
@@ -140,3 +146,48 @@ class TestBounded:
         apply_run(dest)
         after = pyi.read_text(encoding="utf-8")
         assert after.count("import numpy as np") == 1
+
+
+class TestHelperEdgeCases:
+    """The helpers are best-effort: malformed input yields a benign no-op
+    rather than raising, and injection stays total when a stub has no imports.
+    """
+
+    def test_import_bindings_on_unparsable_text(self):
+        assert _import_bindings("def f(:  # not valid python") == {}
+
+    def test_referenced_names_on_unparsable_block(self):
+        assert _referenced_names("    def f(:  # broken") == set()
+
+    def test_referenced_names_maps_from_and_as(self):
+        binds = _import_bindings(
+            "import os\n"
+            "import numpy as np\n"
+            "import a.b.c\n"
+            "from collections.abc import Sequence\n"
+            "from x import y as z\n"
+        )
+        assert set(binds) == {"os", "np", "a", "Sequence", "z"}
+
+    def test_inject_imports_on_unparsable_text_is_noop(self):
+        bad = "class C(:  # broken"
+        assert _inject_imports(bad, ["import x"]) == bad
+
+    def test_inject_imports_when_no_existing_imports(self):
+        """A stub with no import lines gets them after the header line."""
+        text = "# header\nx = 1\n"
+        out = _inject_imports(text, ["from m import A"])
+        assert out == "# header\nfrom m import A\nx = 1\n"
+        assert out.splitlines()[1] == "from m import A"
+
+    def test_inject_imports_empty_list_is_noop(self):
+        assert _inject_imports("# header\n", []) == "# header\n"
+
+    def test_imports_for_hand_members_no_references(self):
+        # A member that references nothing importable yields no imports.
+        assert (
+            _imports_for_hand_members(
+                "import os\n", "", ["    def f(self) -> None: ..."]
+            )
+            == []
+        )
