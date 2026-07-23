@@ -32,9 +32,9 @@ ZENSICAL_RUN = $(UV) run --group dev
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
 .PHONY: all test test-fast test-examples bench bench-save bench-compare \
-        lint build docs docs-serve install setup \
+        lint build docs docs-serve docs-check install setup \
         bump-version check-version release-branch tag-release \
-        clean examples-clean help
+        release-watch release clean examples-clean help
 
 all: test
 
@@ -84,6 +84,15 @@ docs:
 docs-serve:
 	$(PYTHON) scripts/copy_examples.py
 	$(ZENSICAL_RUN) zensical serve
+
+# Pre-push docs gate: the strict build catches broken TOC anchors (which the
+# test suite does NOT — only the CI docs build does), and the docs test catches
+# mangled MkDocs tab blocks + other invariants. Run this before pushing docs.
+docs-check:
+	@echo "Docs gate: strict build (broken anchors) + docs invariants..."
+	$(PYTHON) scripts/copy_examples.py
+	$(ZENSICAL_RUN) zensical build --strict
+	$(PYTEST) tests/test_docs.py
 
 # ── Dev install ───────────────────────────────────────────────────────────────
 
@@ -144,6 +153,21 @@ endif
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 	git push origin "v$(VERSION)"
 	@echo "Tagged v$(VERSION) — release workflow starting on GitHub"
+	@echo "Watch + verify it with: make release-watch VERSION=$(VERSION)"
+
+# Autonomously watch release.yml for v$(VERSION): stream job outcomes, auto-rerun
+# ONE pre-publish flake (safe — publish is gated behind smoke), and verify the
+# real artifacts (PyPI per-version then latest, GitHub Release) at the end.
+# Collapses the manual tag->watch->rerun->verify babysitting into one command.
+release-watch:
+ifndef VERSION
+	@echo "usage: make release-watch VERSION=<x.y.z>"
+	@exit 1
+endif
+	@REPO=just-buildit/just-makeit scripts/release-watch.sh "$(VERSION)"
+
+# Full release from a green, merged main: tag then watch+verify in one go.
+release: tag-release release-watch
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
@@ -175,12 +199,15 @@ help:
 	@echo "  make build         build wheel → dist/"
 	@echo "  make docs          build docs → site/"
 	@echo "  make docs-serve    build and serve with live reload"
+	@echo "  make docs-check    pre-push docs gate (strict build + docs tests)"
 	@echo "  make install       install dev dependencies (uv sync)"
 	@echo "  make setup         one-time: uv sync + pre-commit install"
 	@echo "  make bump-version VERSION=x.y.z  update version in pyproject.toml"
 	@echo "  make check-version VERSION=x.y.z verify version matches"
 	@echo "  make release-branch VERSION=x.y.z create release branch"
 	@echo "  make tag-release VERSION=x.y.z   tag + push to trigger release"
+	@echo "  make release-watch VERSION=x.y.z watch release.yml + verify artifacts"
+	@echo "  make release VERSION=x.y.z       tag-release then release-watch"
 	@echo "  make clean         remove build artifacts"
 	@echo "  make examples-clean  remove build artifacts from all examples"
 	@echo ""
