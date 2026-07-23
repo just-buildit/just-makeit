@@ -30,11 +30,15 @@ ______________________________________________________________________
 version = "X.Y.Z"
 # jb.toml is auto-synced by the pre-commit hook (sync-jb-version)
 
-# CHANGELOG.md — add a new section at the top:
-## [X.Y.Z] — YYYY-MM-DD
-
-### Breaking / Added / Fixed / Docs
-- ...
+# CHANGELOG.md — entries were already added under `## [Unreleased]` in the
+# PR that made each change (add yours there when you author a change, not here).
+# The release step only PROMOTES that heading to the new version:
+## [Unreleased]        ->   ## [Unreleased]
+                            ## [X.Y.Z] — YYYY-MM-DD
+# (leave an empty [Unreleased] on top for the next cycle; sections are
+# Breaking / Added / Fixed / Docs, keep-a-changelog style). If a long-lived
+# branch left [Unreleased] lagging, populate it to match the shipped work now —
+# the release notes are extracted verbatim from this section.
 ```
 
 Commit on a branch and merge via PR (`main` is protected — no direct pushes):
