@@ -4,14 +4,20 @@
 
 ### Added
 
+- **Stub-conformance matrix now covers `kind = "capsule"` modules.** A second
+    `object-of-objects` kind under the gate — a buildable capsule shape over a
+    vendored hand-C `gadget` backing (init-param `create`, a `nogil`
+    variable-output `execute`, `reset`, and a writable scalar property),
+    exercising `_capsule.py`'s own free-function `.pyi` generator (no class —
+    an opaque `Any` handle threaded through module-level functions).
 - **Stub-conformance matrix now covers `kind = "handle"` modules.** The gate
     gained a buildable handle shape — a typed class over a vendored hand-C
     ring-buffer resource (create_fn ctor, context-manager protocol, array-in
     and int-in->array-out methods, a decoded-getter and a writable scalar
     property) — exercising `_handle.py`'s dedicated `.pyi` generator, wholly
-    separate from the object/module path. This is the first of the three
-    `object-of-objects` kinds under the gate; capsule and composer follow once
-    their build harnesses land (gh-560).
+    separate from the object/module path. Two of the three `object-of-objects`
+    kinds are now under the gate (handle + capsule); composer follows once its
+    build harness lands (gh-560).
 - **Stub-conformance matrix expanded to 19 shapes.** The gate (added last
     release) now covers, beyond the six core shapes: field/expr/enum
     properties, sync and async streams, the serializable state-blob triplet,
@@ -22,6 +28,14 @@
 
 ### Fixed
 
+- **A `kind = "capsule"` stub declared a phantom module-level type alias.** The
+    capsule `.pyi` emitted a named opaque-handle alias (`<Backing>State = Any`)
+    at module scope, which reads to a type checker — and to `mypy.stubtest` —
+    as a runtime constant the C extension never defines ("`GADGETState` is not
+    present at runtime"). The handle is now annotated `Any` inline on each
+    `state` parameter, with the header comment naming what it carries, so the
+    generated stub is stubtest-clean for downstream projects too. Surfaced by
+    the new capsule conformance shape.
 - **A `kind = "handle"` type stub was missing `@final`.** A handle type is
     `Py_TPFLAGS_DEFAULT` (never `BASETYPE`), so it cannot be subclassed at
     runtime, but `_handle.py`'s `.pyi` generator — a separate peer from the

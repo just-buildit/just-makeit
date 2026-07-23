@@ -550,12 +550,12 @@ def _vendor_ringbuf(proj: Path) -> None:
     (rb / "CMakeLists.txt").write_text(_RINGBUF_CMAKE, encoding="utf-8")
 
 
-def _inject_module(proj: Path, module: str, section: dict) -> None:
-    """Declare the ringbuf c_dep + a kind-module section, then apply."""
+def _inject_module(proj: Path, module: str, section: dict, c_dep: str) -> None:
+    """Declare the *c_dep* OBJECT lib + a kind-module section, then apply."""
     from just_makeit import _config as C
 
     cfg = C.load(proj)
-    cfg["project"]["c_deps"] = ["ringbuf"]
+    cfg["project"]["c_deps"] = [c_dep]
     cfg.setdefault("module", {})[module] = section
     C.save(proj, cfg)
     _q(apply_run, proj)
@@ -631,8 +631,109 @@ def shape_handle(tmp):
                 },
             ],
         },
+        c_dep="ringbuf",
     )
     return d, d / "src" / "proj", "ring"
+
+
+# A minimal backing for the capsule shape: the exact C API the generated
+# capsule ext expects — `<b>_create(init...)` -> `<b>_state_t *`, a
+# variable-output `<b>_execute(state, const IN*, n_in, OUT*, max_out)`, a void
+# `<b>_reset(state)`, `<b>_destroy(state)`, and scalar get/set accessors.
+_GADGET_H = """\
+#ifndef GADGET_H
+#define GADGET_H
+#include <stddef.h>
+#include <complex.h>
+typedef struct gadget gadget_state_t;
+gadget_state_t *gadget_create(double gain);
+void gadget_destroy(gadget_state_t *s);
+void gadget_reset(gadget_state_t *s);
+size_t gadget_execute(gadget_state_t *s, const float *in, size_t n_in,
+                      float _Complex *out, size_t max_out);
+double gadget_get_gain(const gadget_state_t *s);
+void gadget_set_gain(gadget_state_t *s, double gain);
+#endif
+"""
+
+_GADGET_C = """\
+#include "gadget/gadget.h"
+#include <stdlib.h>
+struct gadget { double gain; };
+gadget_state_t *gadget_create(double gain) {
+    gadget_state_t *s = calloc(1, sizeof *s);
+    if (s) s->gain = gain;
+    return s;
+}
+void gadget_destroy(gadget_state_t *s) { free(s); }
+void gadget_reset(gadget_state_t *s) { s->gain = 0.0; }
+size_t gadget_execute(gadget_state_t *s, const float *in, size_t n_in,
+                      float _Complex *out, size_t max_out) {
+    size_t k = 0;
+    for (; k < n_in && k < max_out; k++)
+        out[k] = (float _Complex)(in[k] * s->gain);
+    return k;
+}
+double gadget_get_gain(const gadget_state_t *s) { return s->gain; }
+void gadget_set_gain(gadget_state_t *s, double gain) { s->gain = gain; }
+"""
+
+_GADGET_CMAKE = """\
+add_library(gadget_core OBJECT gadget.c)
+target_include_directories(gadget_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
+"""
+
+
+def _vendor_gadget(proj: Path) -> None:
+    """Drop the gadget c_dep (public header + OBJECT-lib source) into *proj*."""
+    inc = proj / "native" / "inc" / "gadget"
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "gadget.h").write_text(_GADGET_H, encoding="utf-8")
+    src = proj / "native" / "src" / "gadget"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "gadget.c").write_text(_GADGET_C, encoding="utf-8")
+    (src / "CMakeLists.txt").write_text(_GADGET_CMAKE, encoding="utf-8")
+
+
+def shape_capsule(tmp):
+    """A `kind = "capsule"` module: free functions over an opaque PyCapsule.
+
+    Unlike handle/composer, a capsule exposes no Python *class* — its `.pyi`
+    (from `_capsule.py`'s own generator) is module-level `create`/`execute`/
+    `reset`/`destroy`/`get_`/`set_` functions over an opaque `Any` handle.
+    The shape vendors a minimal `gadget` backing whose C API matches exactly
+    what the generated ext calls, then stubtests the free-function surface."""
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, [], [])
+    _vendor_gadget(d)
+    _inject_module(
+        d,
+        "wrap",
+        {
+            "kind": "capsule",
+            "backing": "gadget",
+            "capsule_name": "proj.wrap.gadget_state",
+            "header": "gadget/gadget.h",
+            "package": ".",
+            "depends_on": [{"name": "gadget", "link": True}],
+            "init_params": [{"name": "gain", "type": "double"}],
+            "methods": [
+                {
+                    "name": "execute",
+                    "arg_type": "float[]",
+                    "return_type": "float _Complex[]",
+                    "caller_out": True,
+                    "nogil": True,
+                },
+                {"name": "reset"},
+            ],
+            "properties": [
+                {"name": "gain", "type": "double", "writable": True},
+            ],
+        },
+        c_dep="gadget",
+    )
+    return d, d / "src" / "proj", "wrap"
 
 
 _SHAPES = {
@@ -658,6 +759,7 @@ _SHAPES = {
     "standalone_array_state": shape_standalone_array_state,
     # batch 3 — module kinds (own .pyi generators)
     "handle": shape_handle,
+    "capsule": shape_capsule,
 }
 
 
