@@ -384,6 +384,59 @@ def _factory_cfg():
     return cfg
 
 
+def _dump_cfg(error="OSError", returns="int", args=None):
+    """A Ring handle with a gh-565 `dump(path)` status method (path arg +
+    int->raise)."""
+    cfg = _ring_cfg()
+    m = {"name": "dump", "fn": "ringbuf_dump", "returns": returns}
+    if error is not None:
+        m["error"] = error
+    m["args"] = [{"name": "path", "type": "path"}] if args is None else args
+    cfg["module"]["ringbuf"]["methods"].append(m)
+    return cfg
+
+
+class TestStatusMethod:
+    """gh-565: a `path` method arg + an `error = "<cat>"` int->raise status."""
+
+    def test_path_arg_coerced_and_released(self):
+        s = _handle.render_ext(_dump_cfg(), "ringbuf")
+        assert (
+            "Ring_dump(RingObject *self, PyObject *args, PyObject *kwds)" in s
+        )
+        assert "PyUnicode_FSConverter, &path" in s
+        body = s[
+            s.index("Ring_dump") : s.index("\nstatic ", s.index("Ring_dump"))
+        ]
+        # gh-219: the borrow is released AFTER the call copies the path.
+        assert body.index(
+            "ringbuf_dump(self->h, PyBytes_AS_STRING(path))"
+        ) < body.rindex("Py_XDECREF(path);")
+
+    def test_int_rc_raises_declared_exception(self):
+        s = _handle.render_ext(_dump_cfg(), "ringbuf")
+        assert (
+            'PyErr_Format(PyExc_OSError, "ringbuf_dump failed (rc=%d)",'
+            " (int)_rc);" in s
+        )
+        body = s[
+            s.index("Ring_dump") : s.index("\nstatic ", s.index("Ring_dump"))
+        ]
+        assert "Py_RETURN_NONE;" in body  # success path returns None
+
+    def test_pyi_is_none_return(self):
+        pyi = _handle.render_pyi(_dump_cfg(), "ringbuf")
+        assert "def dump(self, path: str) -> None:" in pyi
+
+    def test_unknown_error_category_rejected(self):
+        with pytest.raises(ValueError, match="not a recognised exception"):
+            _handle.render_ext(_dump_cfg(error="NotAThing"), "ringbuf")
+
+    def test_error_requires_int_return(self):
+        with pytest.raises(ValueError, match="requires an .int. status"):
+            _handle.render_ext(_dump_cfg(returns=None, args=[]), "ringbuf")
+
+
 class TestFactories:
     """gh-565 slice 3: module-level factory functions (alternate ctors)."""
 

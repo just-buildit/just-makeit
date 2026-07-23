@@ -62,12 +62,15 @@ size_t ringbuf_head(const ringbuf_t *r);
 size_t ringbuf_save_bytes(const ringbuf_t *r);
 size_t ringbuf_save(const ringbuf_t *r, void *out);
 ringbuf_t *ringbuf_restore(const void *blob, size_t n);
+int ringbuf_dump(const ringbuf_t *r, const char *path);
+ringbuf_t *ringbuf_load(const char *path);
 #endif
 """
 
 _RINGBUF_C = """\
 #include "ringbuf/ringbuf.h"
 #include <stdlib.h>
+#include <stdio.h>
 struct ringbuf { float *buf; size_t cap, used, head; float gain; };
 ringbuf_t *ringbuf_open(size_t capacity) {
     if (!capacity) return NULL;
@@ -139,6 +142,29 @@ ringbuf_t *ringbuf_restore(const void *blob, size_t n) {
     ringbuf_push(r, (const float *)blob, count);
     return r;
 }
+int ringbuf_dump(const ringbuf_t *r, const char *path) {
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 1;                       /* e.g. bad directory */
+    for (size_t i = 0; i < r->used; i++) {
+        float v = r->buf[(r->head + i) % r->cap];
+        if (fwrite(&v, sizeof(float), 1, fp) != 1) { fclose(fp); return 2; }
+    }
+    return fclose(fp) != 0 ? 3 : 0;          /* short write surfaces here */
+}
+ringbuf_t *ringbuf_load(const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    size_t count = (sz > 0) ? (size_t)sz / sizeof(float) : 0;
+    ringbuf_t *r = ringbuf_open(count ? count : 1);
+    if (!r) { fclose(fp); return NULL; }
+    if (count) { size_t g = fread(r->buf, sizeof(float), count, fp); (void)g; }
+    r->used = count;
+    fclose(fp);
+    return r;
+}
 """
 
 
@@ -152,15 +178,28 @@ def _ringbuf_module() -> dict:
         "create_fn": "ringbuf_open",
         "close_fn": "ringbuf_close",
         "create_args": [{"name": "capacity", "type": "size_t"}],
-        # gh-565: a module-level alternate constructor over an opaque blob.
+        # gh-565: module-level alternate constructors over a blob and a file.
         "factories": [
             {
                 "name": "RingFromBlob",
                 "create_fn": "ringbuf_restore",
                 "init_params": [{"name": "blob", "type": "bytes"}],
-            }
+            },
+            {
+                "name": "RingFromFile",
+                "create_fn": "ringbuf_load",
+                "init_params": [{"name": "path", "type": "path"}],
+            },
         ],
         "methods": [
+            {
+                # gh-565: a path method arg + an int->raise status (error).
+                "name": "dump",
+                "fn": "ringbuf_dump",
+                "returns": "int",
+                "error": "OSError",
+                "args": [{"name": "path", "type": "path"}],
+            },
             {
                 "name": "push",
                 "fn": "ringbuf_push",
@@ -520,6 +559,31 @@ def test_bytes_factory_restore_roundtrip(tmp_path):
     assert r.used == 4
     # RAII still works on a factory-built instance.
     r2.close()
+
+
+def test_dump_and_file_factory_roundtrip(tmp_path):
+    """gh-565: dump(path) writes via C (no I/O in Python), returns None on
+    success and raises the declared OSError on a non-zero rc; PlanFromFile-style
+    path factory reads it back."""
+    mod = _build_ring_so(tmp_path)
+    Ring, RingFromFile = mod.Ring, mod.RingFromFile
+
+    r = Ring(capacity=8)
+    r.push(np.array([1.0, 2.5, -3.0], dtype=np.float32))
+    p = tmp_path / "ring.bin"
+
+    # Success: the C write path returns 0 -> the binding returns None.
+    assert r.dump(str(p)) is None
+    assert p.exists()
+
+    # The path factory reconstructs from the file.
+    r2 = RingFromFile(str(p))
+    assert isinstance(r2, Ring)
+    assert r2.pop(3).tolist() == [1.0, 2.5, -3.0]
+
+    # A non-zero rc (unwritable path) raises the declared OSError.
+    with pytest.raises(OSError):
+        r.dump(str(tmp_path / "no-such-dir" / "ring.bin"))
 
 
 def test_mixed_array_scalar_method_passes_scalars(tmp_path):
