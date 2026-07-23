@@ -442,6 +442,44 @@ def is_valid_type(ctype: str) -> bool:
     return ctype in _CTYPE_META or parse_array_type(ctype) is not None
 
 
+# The Python *builtin* a scalar C value crosses back as. A scalar getter
+# returns PyFloat_FromDouble / PyLong_From… — a Python float/int, NOT a numpy
+# scalar — so a scalar `.pyi` annotation must be the builtin. (Arrays are a
+# separate case: they cross as NDArray[np.<dtype>], using `py_type`.) Keyed on
+# `kind` so every scalar of a kind maps identically.
+_KIND_TO_PY: dict[str, str] = {
+    "float": "float",
+    "int": "int",
+    "complex": "complex",
+    "str": "str",
+}
+
+
+def scalar_py_annotation(ctype: str) -> str:
+    """Python-type annotation for a SCALAR C value (gh-… stub conformance).
+
+    The single source of truth for "what Python type does a scalar getter
+    return / a scalar ctor param accept". The runtime hands back a Python
+    builtin, so annotating a scalar as its numpy dtype (``np.float64``) both
+    mis-describes the type and, with a plain default like ``= 1.0``, is an
+    outright mypy error (``float`` is not ``float64``). Arrays keep the numpy
+    dtype via ``NDArray[...]`` and do not use this.
+
+    >>> scalar_py_annotation("double")
+    'float'
+    >>> scalar_py_annotation("size_t")
+    'int'
+    >>> scalar_py_annotation("float _Complex")
+    'complex'
+    """
+    if ctype == "void":
+        return "None"
+    if ctype == "bool":
+        return "bool"
+    meta = _CTYPE_META.get(ctype)
+    return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
+
+
 def _ctype_display(ct: str) -> str:
     """Internal key -> C display form: 'float _Complex' -> 'float complex'."""
     return ct.replace("_Complex", "complex")

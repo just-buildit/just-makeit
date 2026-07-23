@@ -80,7 +80,8 @@ class TestAsyncCodegen:
         assert C.is_streamable(cfg, "osc") is True  # implied
         pyi = (root / "src/proj/osc.pyi").read_text()
         assert (
-            "from typing import Any, AsyncIterator, Callable, Iterator" in pyi
+            "from typing import Any, final, AsyncIterator, Callable, Iterator"
+            in pyi
         )
         assert (
             "def __aiter__(self) -> AsyncIterator[NDArray[np.float32]]:" in pyi

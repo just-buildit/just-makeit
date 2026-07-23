@@ -1,7 +1,8 @@
-from typing import Any<<pyi_stream_typing>><<pyi_property_typing>>
+from typing import Any, final<<pyi_stream_typing>><<pyi_property_typing>>
 import numpy as np
 from numpy.typing import NDArray
 
+@final
 class <<Component>>:
     """<<Component>> component.
 

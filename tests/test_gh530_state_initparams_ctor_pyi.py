@@ -146,14 +146,14 @@ class TestStandaloneWasNeverBroken:
         return dest
 
     def test_standalone_state_only_ctor(self, project):
-        # The standalone generator annotates a state var with its numpy scalar
-        # type (np.float64), where the module generator uses plain `float` --
-        # a pre-existing cross-generator difference, unrelated to gh-530. What
-        # matters here is only that the standalone ctor is still state-based
-        # and untouched by the module-path reorder.
+        # Both generators now annotate a scalar state var as its Python builtin
+        # (`float`) -- the standalone's old `np.float64` was wrong (the getter
+        # returns a Python float) and is fixed by the stub-conformance work.
+        # What matters here is only that the standalone ctor is still
+        # state-based and untouched by the module-path reorder.
         block = _pyi_class_block(
             (project / "src" / "dsp" / "rdr.pyi").read_text(), "Rdr"
         )
         sig = block.split("def __init__")[1].split("\n")[0]
-        assert "gain: np.float64" in sig
+        assert "gain: float" in sig
         assert "filepath" not in sig

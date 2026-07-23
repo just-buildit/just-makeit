@@ -86,7 +86,7 @@ class TestOptionalArray2D:
     def test_pyi_optional_signature(self):
         ctx = _ctx(self.PARAMS)
         assert "bank: npt.ArrayLike | None = None" in ctx["init_params_pyi"]
-        assert "rate: np.float64 = 0.0" in ctx["init_params_pyi"]
+        assert "rate: float = 0.0" in ctx["init_params_pyi"]
 
     def test_py_create_args_omits_optional_array(self):
         ctx = _ctx(self.PARAMS)

@@ -99,7 +99,7 @@ class TestStreamCodegen:
             "--streamable",
         )
         pyi = (root / "src/proj/wave.pyi").read_text()
-        assert "from typing import Any, Callable, Iterator" in pyi
+        assert "from typing import Any, final, Callable, Iterator" in pyi
         assert "def stream(" in pyi
         assert "on_block: Callable[[NDArray[np.float32]], None] | None" in pyi
         assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
@@ -138,7 +138,7 @@ class TestStreamCodegen:
         assert "StreamIter" not in ext
         assert "stream" not in ext
         pyi = (root / "src/proj/wave.pyi").read_text()
-        assert "from typing import Any\n" in pyi
+        assert "from typing import Any, final\n" in pyi
         assert "stream" not in pyi
 
 

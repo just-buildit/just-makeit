@@ -127,9 +127,9 @@ class TestStub:
         )
         # Required hoisted ahead of the defaulted param, and carries no default.
         assert init.index("block_size") < init.index("gain")
-        assert "block_size: np.uintp," in init
-        assert "block_size: np.uintp =" not in init
-        assert "gain: np.float64 = 1.5" in init
+        assert "block_size: int," in init
+        assert "block_size: int =" not in init
+        assert "gain: float = 1.5" in init
 
 
 class TestRoundTrip:

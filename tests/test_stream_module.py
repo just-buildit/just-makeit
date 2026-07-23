@@ -85,7 +85,7 @@ class TestStreamModuleCodegen:
         # Module objects share one <module>.pyi; the stream stubs land under
         # the streamable class.
         pyi = (root / "src/proj/dsp/dsp.pyi").read_text()
-        assert "from typing import Callable, Iterator" in pyi
+        assert "from typing import Callable, final, Iterator" in pyi
         assert "def stream(" in pyi
         assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
 

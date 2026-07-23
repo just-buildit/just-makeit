@@ -773,7 +773,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         custom_reset=bool(ip) or no_reset,
         create_blk=_create_blk,
     )
-    lines: list[str] = [f"class {Component}:"] + doc_lines
+    # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
+    # cannot be subclassed at runtime; the stub says so with @final. (Composer
+    # types, which do set BASETYPE, are stubbed on a separate path.)
+    lines: list[str] = ["@final", f"class {Component}:"] + doc_lines
 
     # __init__
     # gh-530: init_params take precedence over state vars, because the runtime
@@ -1109,6 +1112,26 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             '        """Restore mutable state from a get_state() blob."""',
         ]
 
+    # State get_/set_ accessors. The module runtime emits these for every
+    # non-opaque state var (via make_state_ctx, the same builder that generates
+    # the standalone object), but this stub writer historically emitted none of
+    # them — so `obj.get_gain()` was importable yet invisible to a type checker.
+    # Reuse the ONE builder the standalone `.pyi` uses (state_accessor_stubs),
+    # computing the accessor set exactly as make_state_ctx does: scalars are the
+    # _CTYPE_META state vars, arrays the fixed-length ones; opaque fields (in
+    # neither set) get no accessor, matching the C.
+    _acc_scalars = [
+        (n, ct, d) for n, ct, d in state_vars if ct in T._CTYPE_META
+    ]
+    _acc_arrays: list[tuple[str, str, int]] = []
+    for n, ct, _ in state_vars:
+        _parsed = T.parse_array_type(ct)
+        if _parsed:
+            _acc_arrays.append((n, _parsed[0], _parsed[1]))
+    _acc_pyi = Ctx.state_accessor_stubs(_acc_scalars, _acc_arrays)
+    if _acc_pyi:
+        lines += _acc_pyi.rstrip("\n").lstrip("\n").split("\n")
+
     # Properties — rendered by make_properties_ctx, the same builder that emits
     # the C getset table and the standalone .pyi. This used to be an
     # independent second implementation, and the two had diverged in exactly
@@ -1349,12 +1372,16 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     parts: list[str] = [
         f"# {out_pkg}/{mp.leaf}.pyi — type stubs for the {module} C extension."
     ]
-    if needs_literal or needs_any or needs_stream:
+    # Every object class is @final (a Py_TPFLAGS_DEFAULT extension type cannot
+    # be subclassed), so `final` is imported whenever the module has objects.
+    needs_final = bool(objects)
+    if needs_literal or needs_any or needs_stream or needs_final:
         typing_imports = ", ".join(
             x
             for x in [
                 "Any" if needs_any else "",
                 "Callable" if needs_stream else "",
+                "final" if needs_final else "",
                 "Iterator" if needs_stream else "",
                 "Literal" if needs_literal else "",
             ]
