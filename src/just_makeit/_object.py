@@ -892,6 +892,7 @@ def _make_view_ctx(
             no_state=C.is_no_state(cfg, obj),
             serializable=C.is_serializable(cfg, obj),
             doc_blocks=doc_blocks,
+            codecs=C.codecs(cfg),
         )
     )
     ctx.update(
@@ -1032,6 +1033,7 @@ def build_component_ctxs(
                 no_state=C.is_no_state(cfg, obj),
                 serializable=C.is_serializable(cfg, obj),
                 doc_blocks=_doc_blocks,
+                codecs=C.codecs(cfg),
             )
         )
         ctx.update(

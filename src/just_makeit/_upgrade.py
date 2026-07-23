@@ -258,6 +258,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     py_create_args=comp_ctx.get("py_create_args", ""),
                     no_state=C.is_no_state(cfg, comp),
                     serializable=C.is_serializable(cfg, comp),
+                    codecs=C.codecs(cfg),
                 )
             )
             # NO_STEP components with no init_params have an empty

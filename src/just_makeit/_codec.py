@@ -188,3 +188,268 @@ def validate_codec(name: str, cdc: dict) -> None:
                 f"{where}: entry '{code}' ctype '{ct}' is not an int or float "
                 "scalar (only int/float elements, or bytes=true, are supported)."
             )
+
+
+# ── write pack: PyObject -> discriminant-tagged host buffer -> sink_fn ─────────
+#
+# A "codec method" declares `codec` + `sink_fn` and, among its `params`, one
+# `role = "discriminant"` (the tag that selects a branch) and one
+# `role = "variant"` (the value jm packs). Every other param is a fixed scalar/
+# string passed straight through. jm generates the whole binding — parse,
+# per-code pack of a scalar-or-sequence into a host-order buffer, the sink call,
+# and rc->error — so the method body is 100% generated (no hand marshaler).
+
+
+def _param_role(p: dict) -> str:
+    return p.get("role", "fixed")
+
+
+def method_discriminant(m: dict) -> dict | None:
+    """The `role = "discriminant"` param, or None."""
+    return next(
+        (p for p in m.get("params", []) if _param_role(p) == "discriminant"),
+        None,
+    )
+
+
+def method_variant(m: dict) -> dict | None:
+    """The `role = "variant"` param, or None."""
+    return next(
+        (p for p in m.get("params", []) if _param_role(p) == "variant"), None
+    )
+
+
+def method_fixed_params(m: dict) -> list[dict]:
+    """The passthrough params (no role / role="fixed"), in declared order."""
+    return [p for p in m.get("params", []) if _param_role(p) == "fixed"]
+
+
+_STRING_TYPES = ("const char *", "char *", "string", "path")
+
+
+def _fixed_parse(p: dict) -> tuple[str, str, str, str]:
+    """Return (decl, fmt char, &addr, call-arg) for a fixed passthrough param."""
+    name, t = p["name"], p.get("type", "const char *")
+    if t in _STRING_TYPES:
+        return f"    const char *{name} = NULL;", "s", f"&{name}", name
+    meta = T._CTYPE_META.get(t)
+    if not meta:
+        raise CodecError(
+            f"codec method: fixed param '{name}' has bad type '{t}'"
+        )
+    return f"    {t} {name} = 0;", meta["fmt"], f"&{name}", name
+
+
+def validate_codec_method(component: str, m: dict, cdc: dict) -> None:
+    """Raise :class:`CodecError` if a codec method is missing required pieces."""
+    where = f"{component}.{m.get('name', '?')}"
+    if not m.get("sink_fn"):
+        raise CodecError(f"{where}: a codec method needs a 'sink_fn'.")
+    if method_discriminant(m) is None:
+        raise CodecError(f"{where}: needs one param with role='discriminant'.")
+    if method_variant(m) is None:
+        raise CodecError(f"{where}: needs one param with role='variant'.")
+
+
+def render_pack(
+    component: str,
+    Component: str,
+    wrapper_prefix: str,
+    m: dict,
+    cdc: dict,
+    guard: str,
+    state_expr: str = "self->handle",
+) -> tuple[str, str, str]:
+    """Render (C body, PyMethodDef line, ``.pyi`` line) for a codec-pack method.
+
+    The generated method parses the fixed params, the single-character
+    discriminant (PyArg ``"C"``), and the variant object (``"O"``); switches on
+    the discriminant per *cdc* to pack a scalar-or-sequence into a host-order
+    buffer of the coded width (the ``bytes`` branch takes the string raw); calls
+    ``sink_fn(state, <fixed…>, <disc>, buf, count)``; and maps a non-zero return
+    to ``ValueError``. Elements coerce via ``PyFloat_AsDouble`` /
+    ``PyLong_AsLongLong`` — the value type is fixed by the codec, not the
+    manifest, which is exactly why the pack can be generated.
+    """
+    validate_codec_method(component, m, cdc)
+    name = m["name"]
+    fn = f"{wrapper_prefix}_{name}"
+    sink = m["sink_fn"]
+    disc = method_discriminant(m)
+    var = method_variant(m)
+    fixed = method_fixed_params(m)
+    dname, vname = disc["name"], var["name"]
+
+    # parse: fixed fmts + discriminant "C" (a single char) + variant "O".
+    decls, fmts, addrs, kwl = [], [], [], []
+    for p in fixed:
+        d, f, a, _ = _fixed_parse(p)
+        decls.append(d)
+        fmts.append(f)
+        addrs.append(a)
+        kwl.append(f'"{p["name"]}"')
+    decls.append(f"    int _{dname}_i = 0;")
+    fmts.append("C")
+    addrs.append(f"&_{dname}_i")
+    kwl.append(f'"{dname}"')
+    decls.append(f"    PyObject *{vname} = NULL;")
+    fmts.append("O")
+    addrs.append(f"&{vname}")
+    kwl.append(f'"{vname}"')
+
+    # per-code branches built from the codec entries.
+    esz_cases, int_cases, float_cases = [], [], []
+    for e in codec_entries(cdc):
+        code = e["code"]
+        if entry_is_bytes(e):
+            esz_cases.append(f"    case '{code}': _is_bytes = 1; break;")
+            continue
+        ct = e["ctype"]
+        is_f = T.scalar_py_annotation(ct) == "float"
+        esz_cases.append(
+            f"    case '{code}': _esz = sizeof({ct});"
+            f"{' _is_float = 1;' if is_f else ''} break;"
+        )
+        cast = (
+            f"      case '{code}': {{ {ct} _v = ({ct})_d;"
+            " memcpy(_p, &_v, sizeof _v); break; }"
+        )
+        (float_cases if is_f else int_cases).append(
+            cast if is_f else cast.replace("_d", "_ll")
+        )
+
+    fixed_call = "".join(f"{a[1:]}, " for a in addrs[: len(fixed)])  # strip &
+    sink_scalar = f"{sink}({state_expr}, {fixed_call}_{dname}, _s, (size_t)_n)"
+    sink_buffer = f"{sink}({state_expr}, {fixed_call}_{dname}, _buf, _count)"
+    fail = (
+        f'        PyErr_SetString(PyExc_ValueError, "{name} failed");\n'
+        "        return NULL;"
+    )
+
+    body = f"""static PyObject *
+{fn}({Component}Object *self, PyObject *args, PyObject *kwds)
+{{
+{guard}    static char *_kwlist[] = {{ {", ".join(kwl)}, NULL }};
+{chr(10).join(decls)}
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{"".join(fmts)}", _kwlist,
+                                     {", ".join(addrs)}))
+        return NULL;
+    char _{dname} = (char)_{dname}_i;
+
+    size_t _esz = 0;
+    int _is_float = 0, _is_bytes = 0;
+    switch (_{dname}) {{
+{chr(10).join(esz_cases)}
+    default:
+        PyErr_Format(PyExc_ValueError, "unsupported code '%c'", _{dname});
+        return NULL;
+    }}
+
+    if (_is_bytes) {{
+        if (!PyUnicode_Check({vname})) {{
+            PyErr_SetString(PyExc_TypeError, "value must be a str");
+            return NULL;
+        }}
+        Py_ssize_t _n = 0;
+        const char *_s = PyUnicode_AsUTF8AndSize({vname}, &_n);
+        if (!_s)
+            return NULL;
+        if ({sink_scalar} != 0) {{
+{fail}
+        }}
+        Py_RETURN_NONE;
+    }}
+
+    PyObject *_seq = NULL;
+    size_t _count = 1;
+    if (PySequence_Check({vname}) && !PyUnicode_Check({vname})) {{
+        _seq = PySequence_Fast({vname}, "value must be a number or a sequence");
+        if (!_seq)
+            return NULL;
+        _count = (size_t)PySequence_Fast_GET_SIZE(_seq);
+    }}
+    if (_count == 0) {{
+        PyErr_SetString(PyExc_ValueError, "value sequence is empty");
+        Py_XDECREF(_seq);
+        return NULL;
+    }}
+    uint8_t *_buf = (uint8_t *)malloc(_count * _esz);
+    if (!_buf) {{
+        PyErr_NoMemory();
+        Py_XDECREF(_seq);
+        return NULL;
+    }}
+    for (size_t _i = 0; _i < _count; _i++) {{
+        PyObject *_item = _seq ? PySequence_Fast_GET_ITEM(_seq, _i) : {vname};
+        uint8_t *_p = _buf + _i * _esz;
+        if (_is_float) {{
+            double _d = PyFloat_AsDouble(_item);
+            if (_d == -1.0 && PyErr_Occurred())
+                goto _err;
+            switch (_{dname}) {{
+{chr(10).join(float_cases)}
+            default: break;
+            }}
+        }} else {{
+            long long _ll = PyLong_AsLongLong(_item);
+            if (_ll == -1 && PyErr_Occurred())
+                goto _err;
+            switch (_{dname}) {{
+{chr(10).join(int_cases)}
+            default: break;
+            }}
+        }}
+        continue;
+    _err:
+        free(_buf);
+        Py_XDECREF(_seq);
+        return NULL;
+    }}
+    int _rc = {sink_buffer};
+    free(_buf);
+    Py_XDECREF(_seq);
+    if (_rc != 0) {{
+{fail}
+    }}
+    Py_RETURN_NONE;
+}}
+"""
+
+    pmd = (
+        f'    {{"{name}", (PyCFunction)(void *){fn},'
+        " METH_VARARGS | METH_KEYWORDS,\n"
+        f'     "{name}(...) -- add a codec-typed value."}},\n'
+    )
+    pyi = "\n".join(render_method_pyi(m, cdc)) + "\n"
+    return body, pmd, pyi
+
+
+def _fixed_pyi(p: dict) -> str:
+    """The `.pyi` annotation for a fixed passthrough param."""
+    t = p.get("type", "const char *")
+    if t in _STRING_TYPES:
+        return "str"
+    return T.scalar_py_annotation(t)
+
+
+def render_method_pyi(m: dict, cdc: dict) -> list[str]:
+    """The class-method ``.pyi`` lines for a codec-pack method.
+
+    The single renderer for the codec method signature, called by BOTH the
+    standalone stub (via :func:`render_pack`) and the module-aggregated stub
+    (``_stubs._obj_stub``), so the two peer generators cannot drift. The variant
+    input accepts a scalar or any sequence, so it is typed with the ``Sequence``
+    form of the codec's Python union.
+    """
+    name = m["name"]
+    disc = method_discriminant(m)
+    var = method_variant(m)
+    fixed = method_fixed_params(m)
+    fixed_sig = "".join(f", {p['name']}: {_fixed_pyi(p)}" for p in fixed)
+    union = codec_py_union(cdc, seq="Sequence")
+    brief = m.get("doc") or f"{name.replace('_', ' ').capitalize()}."
+    return [
+        f"    def {name}(self{fixed_sig}, {disc['name']}: str,"
+        f" {var['name']}: {union}) -> None:",
+        f'        """{brief}"""',
+    ]

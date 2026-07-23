@@ -209,6 +209,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # the enum tables) against the same declared enums as the real project.
     if cfg.get("enum"):
         tcfg["enum"] = cfg["enum"]
+    # gh-554: likewise carry the [codec.X] SSOT so a replayed codec-pack method
+    # resolves its `codec` against the same declared table as the real project.
+    if cfg.get("codec"):
+        tcfg["codec"] = cfg["codec"]
     # gh-393: carry [project.bench] so the replayed scaffold honours the
     # project's configured benchmark block_sizes (#390) — otherwise a new
     # object materialised by `jm apply` reintroduces the default _1k suite.
@@ -420,6 +424,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             doc=m.get("doc", ""),
             from_apply=True,
             view=view,
+            codec=m.get("codec", ""),
+            sink_fn=m.get("sink_fn", ""),
         )
 
     def _replay_property(comp, mod, p, view=""):

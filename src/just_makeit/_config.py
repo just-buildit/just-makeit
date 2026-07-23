@@ -1302,6 +1302,17 @@ def enums(cfg: dict) -> dict[str, list[str]]:
     return out
 
 
+def codecs(cfg: dict) -> dict:
+    """Return the project's declared variant codecs, ``{name: {…}}`` (gh-554).
+
+    The manifest-owned SSOT (like :func:`enums`) behind zero-hand-binding
+    read/write of discriminant-tagged binary values; a method packs one with
+    ``codec = "<name>"`` and a container property decodes one the same way. The
+    per-codec model helpers live in :mod:`just_makeit._codec`.
+    """
+    return cfg.get("codec", {}) or {}
+
+
 def resolve_enum_type(cfg: dict, ptype: str) -> str:
     """Expand an ``enum:<name>`` reference to its ``string_enum:`` spec.
 
@@ -2773,10 +2784,19 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         _ekey = "extra_args" if "extra_args" in m else "params"
 
         def _param_inline(p: dict) -> str:
-            s = f'name = "{p["name"]}", type = "{p["type"]}"'
+            s = f'name = "{p["name"]}"'
+            # gh-554: a codec `role = "variant"` param carries no C type (jm
+            # packs it from a PyObject), so `type` is optional here.
+            if p.get("type"):
+                s += f', type = "{p["type"]}"'
             # gh-240: an optional scalar default round-trips as a string.
             if p.get("default") not in (None, ""):
                 s += f', default = "{p["default"]}"'
+            # gh-554: the codec arg role (discriminant / variant) must survive
+            # save()/load() — a per-param key the gh-257 generic passthrough
+            # (method-level scalars only) does not cover.
+            if p.get("role"):
+                s += f', role = "{p["role"]}"'
             # gh-432: capsule-typed params — the capsule name and the
             # foreign type's header must survive save()/load(); the
             # gh-257 generic passthrough covers only method-level

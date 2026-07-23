@@ -26,6 +26,7 @@ import ast
 import re as _re
 import textwrap
 
+from . import _codec as _codec
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
@@ -1082,6 +1083,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 ' future regens."""',
             ]
             continue
+        # codec-pack method (gh-554): the SAME renderer the standalone stub
+        # uses (via _codec.render_pack), so the two .pyi peers cannot drift.
+        if _codec.is_codec_method(m):
+            cdc = C.codecs(cfg).get(m["codec"])
+            if cdc is not None:
+                lines += ["", *_codec.render_method_pyi(m, cdc)]
+            continue
         m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg = m.get("arg_type", "void")
@@ -1481,6 +1489,18 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # gap; only the module-aggregated peer did). Caught by the stub-conformance
     # gate's async-stream shape.
     needs_async = any(C.is_async_stream(cfg, o) for o in objects)
+    # gh-554: a codec-pack method's variant arg is typed with the codec's
+    # Python union in `Sequence` form (it accepts a scalar or any sequence), so
+    # `Sequence` must be imported whenever the module has one — else the stub
+    # references an undefined name (the same class of gap as needs_async).
+    _codec_tbl = C.codecs(cfg)
+    needs_sequence = any(
+        "Sequence["
+        in _codec.codec_py_union(_codec_tbl[m["codec"]], seq="Sequence")
+        for o in objects
+        for m in C.methods(cfg, o)
+        if _codec.is_codec_method(m) and m.get("codec") in _codec_tbl
+    )
     parts: list[str] = [
         f"# {out_pkg}/{mp.leaf}.pyi — type stubs for the {module} C extension."
     ]
@@ -1501,6 +1521,8 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             if x
         )
         parts.append(f"from typing import {typing_imports}")
+    if needs_sequence:
+        parts.append("from collections.abc import Sequence")
     if needs_os:
         parts.append("import os")
     if needs_numpy:

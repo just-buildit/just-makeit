@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from .. import _codec as _codec
 from .. import _types as T
 from .._types import (
     _CTYPE_META,
@@ -163,6 +164,7 @@ def _bench_method_block(component: str, m: dict) -> str:
         or m.get("variable_output")
         or m.get("varargs")
         or m.get("out_type")  # gh-529: no out buffer in the timing loop
+        or m.get("codec")  # gh-554: a codec-pack method has no C core to time
     ):
         return ""
 
@@ -426,6 +428,7 @@ def make_methods_ctx(
     no_state: bool = False,
     doc_blocks: dict | None = None,
     serializable: bool = False,
+    codecs: dict | None = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -530,6 +533,25 @@ def make_methods_ctx(
                 f"docstring in the .pyi — jm preserves it verbatim on"
                 f' future regens."""\n'
             )
+            continue
+
+        # ── codec-pack method (variant-typed input; gh-554) ──────────────
+        # jm generates the whole binding — parse, per-code pack of a
+        # scalar-or-sequence, the sink call, and rc->error — from the
+        # declared `[codec.X]` table. No hand marshaler.
+        if _codec.is_codec_method(m):
+            cdc = (codecs or {}).get(m["codec"])
+            if cdc is None:
+                raise _codec.CodecError(
+                    f"{component}.{name}: method references codec "
+                    f"'{m['codec']}', which is not declared in [codec.*]."
+                )
+            c_body, pmd, pyi = _codec.render_pack(
+                component, Component, wrapper_prefix, m, cdc, guard
+            )
+            method_c_parts.append(c_body)
+            pmd_lines.append(pmd)
+            pyi_lines.append(pyi)
             continue
 
         arg_type: str = m.get("arg_type", "void")

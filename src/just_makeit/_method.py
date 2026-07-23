@@ -573,6 +573,8 @@ def run(
     doc: str = "",
     from_apply: bool = False,
     view: str = "",
+    codec: str = "",
+    sink_fn: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -705,11 +707,14 @@ def run(
 
     # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
-    if manual_stub:
+    if manual_stub or codec:
         # manual_stub (gh-428): the C binding already exists, hand-written,
         # inside the user's already-sacred _ext_<obj>_extra.c fragment -- jm
         # never created it and must declare nothing for it (unlike varargs,
         # which owns and creates a fresh <comp>_<name>_core.c stub file).
+        # codec (gh-554): a codec-pack method has no core fn at all — jm
+        # generates the whole binding in the ext and calls an external sink_fn,
+        # so there is likewise no _core.c stub / _core.h prototype to write.
         pass
     elif varargs:
         # Varargs methods live in a sacred per-method file compiled into the
@@ -781,7 +786,7 @@ def run(
     # Varargs methods have no typed C prototype — their binding is Python-aware
     # and lives in the sacred binding .c file, not _core.h.
     proto_lines: list[str] = []
-    if not varargs and not manual_stub:
+    if not varargs and not manual_stub and not codec:
         proto_lines = _build_method_prototype(
             object_name,
             method_name,
@@ -841,6 +846,12 @@ def run(
     }
     if doc:
         method_entry["doc"] = doc
+    if codec:
+        # gh-554: a codec-pack method — jm generates the whole binding from the
+        # [codec.X] table and calls the external sink_fn; arg_type/return_type
+        # above are inert placeholders (a codec method has neither).
+        method_entry["codec"] = codec
+        method_entry["sink_fn"] = sink_fn
     if varargs:
         method_entry["varargs"] = True
     if manual_stub:
