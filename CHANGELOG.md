@@ -2,8 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Stub-conformance matrix expanded to 19 shapes.** The gate (added last
+    release) now covers, beyond the six core shapes: field/expr/enum
+    properties, sync and async streams, the serializable state-blob triplet,
+    `out_type` and `variable_output` methods, `path` init-params, a
+    `[[state]]`+`[[init_params]]` constructor, a view class, and fixed-length
+    array state accessors (`get_`/`get_view`/`set_`). Each is now guarded
+    against stub/runtime drift.
+
 ### Fixed
 
+- **An async-stream object in a module emitted `AsyncIterator` with no import.**
+    The module-aggregated `.pyi` assembles its `from typing import …` line
+    dynamically and included `Callable`/`Iterator` for a stream but never
+    `AsyncIterator`, so an `async_stream` object's `__aiter__(self) ->   AsyncIterator[...]` referenced an undefined name. The standalone template's
+    stream slot never had this gap — only the module peer did; surfaced by the
+    new async-stream conformance shape. `AsyncIterator` is now imported whenever
+    a module has an async-streamable object.
 - **`# jm:hand` dropped the top-of-file import its member needed (gh-557).** The
     `.pyi` splice engine preserves a `# jm:hand`-marked member's text across a
     regeneration but never touched the imports, so a hand member referencing a
