@@ -695,23 +695,63 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (a) scalar(s) → scalar / None. With args, support keyword passing +
-    # defaults (#319) via PyArg_ParseTupleAndKeywords (mirrors tp_init and
-    # module functions); a no-arg method stays a plain METH_VARARGS stub.
-    call = ", ".join(["self->h"] + [a["name"] for a in margs])
-    if returns:
+    # (a) scalar / path args → scalar / None / status-raise. With args, support
+    # keyword passing + defaults (#319) via PyArg_ParseTupleAndKeywords (mirrors
+    # tp_init and module functions); a no-arg method stays a plain METH_VARARGS
+    # stub. A `path` arg (gh-565) crosses as a borrowed `const char *` via the
+    # ctor's `_arg_*` coercion, released after the call (gh-219). An `error =
+    # "<category>"` (gh-565) marks an `int`-returning method a status check: the
+    # method returns None and raises the declared exception on a non-zero rc,
+    # the handle-method mirror of the object side's `status_return` (gh-432) and
+    # of `wfm_writer.destroy`'s fallible close (gh-541).
+    err_cat = m.get("error")
+    if err_cat and err_cat not in C.ERROR_CATEGORIES:
+        supported = ", ".join(sorted(C.ERROR_CATEGORIES))
+        raise ValueError(
+            f"handle method '{name}': error '{err_cat}' is not a recognised"
+            f" exception. Supported: {supported}."
+        )
+    if err_cat and not returns:
+        raise ValueError(
+            f"handle method '{name}': error requires an `int` status return"
+            ' (declare returns = "int").'
+        )
+    call = ", ".join(["self->h"] + [_create_call_arg(a) for a in margs])
+    # path borrows are released only AFTER the C call has copied them (gh-219).
+    fs_release = "".join(
+        f"    {_coerce.path_release(a['name'])}\n"
+        for a in margs
+        if a.get("type") == "path"
+    )
+    if err_cat:
+        ret = f"""    {returns} _rc;
+{gil_open}    _rc = {fn}({call});
+{gil_close}{fs_release}    if (_rc != 0) {{
+        PyErr_Format(PyExc_{err_cat}, "{fn} failed (rc=%d)", (int)_rc);
+        return NULL;
+    }}
+    Py_RETURN_NONE;"""
+    elif returns:
         ret = f"""    {returns} r;
 {gil_open}    r = {fn}({call});
-{gil_close}    return {_to_py(returns, "r")};"""
+{gil_close}{fs_release}    return {_to_py(returns, "r")};"""
     else:
         ret = f"""{gil_open}    {fn}({call});
-{gil_close}    Py_RETURN_NONE;"""
+{gil_close}{fs_release}    Py_RETURN_NONE;"""
 
     if margs:
         decls = ""
         fmt_parts = []
+        addrs_list = []
         inserted = False
         for a in margs:
+            if a.get("type") == "path":
+                # gh-565: the ctor's fspath coercion (O& + FSConverter), a
+                # required positional — no `default`, so it never trips the `|`.
+                decls += _arg_decl(a) + "\n"
+                fmt_parts.append(_arg_fmt(a))
+                addrs_list.append(_arg_addr(a))
+                continue
             d = a.get("default")
             init = f" = {d}" if d is not None else ""
             decls += f"    {a['type']} {a['name']}{init};\n"
@@ -719,15 +759,27 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 fmt_parts.append("|")  # everything after is optional
                 inserted = True
             fmt_parts.append(_scalar_fmt(a["type"]))
+            addrs_list.append(f"&{a['name']}")
         fmt = "".join(fmt_parts)
         kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
-        addrs = ", ".join(f"&{a['name']}" for a in margs)
+        addrs = ", ".join(addrs_list)
+        # gh-219: release any path borrow if PyArg fails after its converter ran.
+        fs_fail = "".join(
+            f"        {_coerce.path_release(a['name'])}\n"
+            for a in margs
+            if a.get("type") == "path"
+        )
+        parse_fail = (
+            f" {{\n{fs_fail}        return NULL;\n    }}"
+            if fs_fail
+            else " return NULL;"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)
 {{
     static char *kwlist[] = {{{kwlist}, NULL}};
 {decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
-            {addrs})) return NULL;
+            {addrs})){parse_fail}
 {closed_guard}
 {ret}
 }}
@@ -1567,13 +1619,19 @@ def render_pyi(cfg: dict, module: str) -> str:
             ]
             doc_call = f"{name}({', '.join(scalar_doc)})"
         elif margs:
-            # (a) scalars -> scalar / None; a `default` shows as `= ...` (#319).
+            # (a) scalar / path args -> scalar / None; a `default` shows as
+            # `= ...` (#319). A path arg is `str` (gh-565); an `error` status
+            # method returns None (the int rc is consumed as the raise trigger).
             sig = "self, " + ", ".join(
-                f"{a['name']}: {_pyi_scalar(a['type'])}"
+                f"{a['name']}: {_pyi_arg_ann(a)}"
                 + (" = ..." if a.get("default") is not None else "")
                 for a in margs
             )
-            ann = _pyi_scalar(returns) if returns else "None"
+            ann = (
+                "None"
+                if m.get("error")
+                else (_pyi_scalar(returns) if returns else "None")
+            )
             arg_doc = [
                 f"{a['name']}={a['default']}"
                 if a.get("default") is not None
