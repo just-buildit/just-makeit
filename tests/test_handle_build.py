@@ -59,6 +59,9 @@ size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
 size_t ringbuf_head(const ringbuf_t *r);
+size_t ringbuf_save_bytes(const ringbuf_t *r);
+size_t ringbuf_save(const ringbuf_t *r, void *out);
+ringbuf_t *ringbuf_restore(const void *blob, size_t n);
 #endif
 """
 
@@ -118,6 +121,24 @@ size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
 float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
 void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
 size_t ringbuf_head(const ringbuf_t *r) { return r->head; }
+size_t ringbuf_save_bytes(const ringbuf_t *r) {
+    return r->used * sizeof(float);
+}
+size_t ringbuf_save(const ringbuf_t *r, void *out) {
+    char *dst = (char *)out;
+    for (size_t i = 0; i < r->used; i++) {
+        float v = r->buf[(r->head + i) % r->cap];
+        __builtin_memcpy(dst + i * sizeof(float), &v, sizeof(float));
+    }
+    return r->used * sizeof(float);
+}
+ringbuf_t *ringbuf_restore(const void *blob, size_t n) {
+    size_t count = n / sizeof(float);
+    ringbuf_t *r = ringbuf_open(count ? count : 1);
+    if (!r) return NULL;
+    ringbuf_push(r, (const float *)blob, count);
+    return r;
+}
 """
 
 
@@ -131,12 +152,27 @@ def _ringbuf_module() -> dict:
         "create_fn": "ringbuf_open",
         "close_fn": "ringbuf_close",
         "create_args": [{"name": "capacity", "type": "size_t"}],
+        # gh-565: a module-level alternate constructor over an opaque blob.
+        "factories": [
+            {
+                "name": "RingFromBlob",
+                "create_fn": "ringbuf_restore",
+                "init_params": [{"name": "blob", "type": "bytes"}],
+            }
+        ],
         "methods": [
             {
                 "name": "push",
                 "fn": "ringbuf_push",
                 "returns": "size_t",
                 "args": [{"name": "x", "type": "float[]"}],
+            },
+            {
+                # gh-565 shape (f): handle-length `bytes` return.
+                "name": "save",
+                "fn": "ringbuf_save",
+                "out_len_fn": "ringbuf_save_bytes",
+                "returns": "bytes",
             },
             {
                 "name": "push_gain",  # #308: array + trailing scalar
@@ -433,6 +469,57 @@ def test_generated_handle_so_compiles_imports_and_runs(tmp_path):
 
     r.clear()
     assert r.used == 0
+
+
+def test_bytes_save_roundtrip(tmp_path):
+    """gh-565 shape (f): save() returns handle-length `bytes`, sized by
+    out_len_fn, packed by fn, COPIED into an immutable bytes object."""
+    Ring = _build_ring_so(tmp_path).Ring
+    r = Ring(capacity=8)
+
+    # Empty handle -> zero-length blob (out_len_fn returns 0; the buffer is
+    # still allocated with a floor of 1 so PyMem_Malloc never sees 0).
+    assert r.save() == b""
+
+    xs = np.array([1.5, -2.0, 3.25], dtype=np.float32)
+    assert r.push(xs) == 3
+    blob = r.save()
+    assert isinstance(blob, bytes)
+    # The backing serializes the live float ring in FIFO order; decode and
+    # compare to prove the (const void*, size_t) marshaling is bit-exact.
+    assert np.frombuffer(blob, dtype=np.float32).tolist() == xs.tolist()
+    # save() does not consume the ring (it is a read-only snapshot).
+    assert r.used == 3
+    assert r.save() == blob
+
+
+def test_bytes_factory_restore_roundtrip(tmp_path):
+    """gh-565 slice 3: a module-level factory (alternate constructor) rebuilds a
+    fresh handle from a blob. RingFromBlob(r.save()) reconstructs the ring, and
+    the reconstructed instance IS the module's typed class (usable as one)."""
+    mod = _build_ring_so(tmp_path)
+    Ring, RingFromBlob = mod.Ring, mod.RingFromBlob
+
+    r = Ring(capacity=8)
+    r.push(np.array([1.5, -2.0, 3.25, 4.0], dtype=np.float32))
+    blob = r.save()
+
+    # Rebuild a brand-new Ring straight from the bytes — no primary ctor.
+    r2 = RingFromBlob(blob)
+    assert isinstance(r2, Ring)
+    # It carries the same contents: its own save() round-trips identically.
+    assert r2.save() == blob
+    assert np.frombuffer(r2.save(), dtype=np.float32).tolist() == [
+        1.5,
+        -2.0,
+        3.25,
+        4.0,
+    ]
+    # It is an independent handle: draining r2 does not touch r.
+    assert r2.pop(4).tolist() == [1.5, -2.0, 3.25, 4.0]
+    assert r.used == 4
+    # RAII still works on a factory-built instance.
+    r2.close()
 
 
 def test_mixed_array_scalar_method_passes_scalars(tmp_path):

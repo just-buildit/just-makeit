@@ -128,6 +128,10 @@ def _arg_decl(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return "    " + _coerce.path_decl(n)
+    if a.get("type") == "bytes":
+        # gh-565: an opaque blob -> (const void *, size_t) via y#. Two locals;
+        # no release (y# borrows the buffer for the call's duration).
+        return "\n".join("    " + ln for ln in _coerce.bytes_decl(n))
     if a.get("type") == "string":
         # A borrowed const char * from PyArg "s" (NUL-terminated UTF-8). Like a
         # path but NOT an fspath — an in-memory string (e.g. a JSON spec). The
@@ -144,6 +148,8 @@ def _arg_fmt(a: dict) -> str:
     """PyArg_ParseTupleAndKeywords format char for one create-arg."""
     if a.get("type") == "path":
         return _coerce.path_fmt()
+    if a.get("type") == "bytes":
+        return _coerce.bytes_fmt()  # gh-565: y#
     if a.get("enum") or a.get("type") == "string":
         return "s"
     return _scalar_fmt(a["type"])
@@ -154,6 +160,8 @@ def _arg_addr(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return _coerce.path_addr(n)
+    if a.get("type") == "bytes":
+        return _coerce.bytes_addr(n)  # gh-565: &n, &n_len
     return f"&{n}"
 
 
@@ -162,6 +170,8 @@ def _create_call_arg(a: dict) -> str:
     n = a["name"]
     if a.get("type") == "path":
         return _coerce.path_call_expr(n)
+    if a.get("type") == "bytes":
+        return _coerce.bytes_call_exprs(n)  # gh-565: two args (ptr, len)
     if a.get("enum"):
         return f"_arg_{n}"  # validated enum index local
     return n
@@ -384,8 +394,12 @@ def _method_kwargs(m: dict) -> bool:
     margs = m.get("args", [])
     if not margs:
         return False
-    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     returns = m.get("returns")
+    if returns == "bytes":
+        return (
+            False  # (f) bytes-out: positional, like the array out_len_fn shape
+        )
+    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     ret_arr = bool(returns) and str(returns).endswith("[]")
     if ret_arr and not arrays:
         return False  # (c) int-in -> array-out
@@ -394,6 +408,40 @@ def _method_kwargs(m: dict) -> bool:
     if arrays:
         return len(arrays) != len(margs)  # (b) only when trailing scalars
     return True  # (a) scalar args
+
+
+def _scalar_string_argparse(margs: list[dict]) -> tuple[str, str, list[str]]:
+    """Positional parse of a handle method's scalar/``string`` args.
+
+    Shared by the two ``out_len_fn`` shapes — (e) array-out and the (f)
+    bytes-out below — so the arg marshaling can't drift between them. Returns
+    ``(decls, parse, calls)``: C local declarations, the ``PyArg_ParseTuple``
+    block (``(void)args;`` when there are none), and the call-through
+    expressions (``string`` -> ``const char *``; a scalar -> its safe-width
+    ``parse_type`` narrowed by ``to_c``)."""
+    decls, fmt_parts, addrs, calls = "", [], [], []
+    for a in margs:
+        an = a["name"]
+        if a.get("type") == "string":
+            decls += f"    const char *{an} = NULL;\n"
+            fmt_parts.append("s")
+            addrs.append(f"&{an}")
+            calls.append(an)
+        else:
+            meta = T._CTYPE_META[a["type"]]
+            pt = meta.get("parse_type", a["type"])  # safe-width parse target
+            to_c = meta.get("to_c")
+            decls += f"    {pt} {an}_raw = 0;\n"
+            fmt_parts.append(meta["fmt"])
+            addrs.append(f"&{an}_raw")
+            calls.append(to_c(an) if to_c else f"{an}_raw")
+    parse = (
+        f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
+        f"{', '.join(addrs)}))\n        return NULL;\n"
+        if margs
+        else "    (void)args;\n"
+    )
+    return decls, parse, calls
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -438,32 +486,15 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # (one string arg) and the scalar fast-path `at(snr, seed)->cf32[]`.
     # Positional (METH_VARARGS) — _method_kwargs() returns False for it.
     out_len_fn = m.get("out_len_fn")
+    if returns == "bytes" and not out_len_fn:
+        raise ValueError(
+            f"handle method '{name}': returns = \"bytes\" requires an"
+            " 'out_len_fn' (a `size_t <fn>(const <handle>*)` that sizes the"
+            " blob before it is filled)."
+        )
     if returns and str(returns).endswith("[]") and not array_in and out_len_fn:
         out_elem, out_npy = _array_elem_npy(returns)
-        decls, fmt_parts, addrs, calls = "", [], [], []
-        for a in margs:
-            an = a["name"]
-            if a.get("type") == "string":
-                decls += f"    const char *{an} = NULL;\n"
-                fmt_parts.append("s")
-                addrs.append(f"&{an}")
-                calls.append(an)
-            else:
-                meta = T._CTYPE_META[a["type"]]
-                pt = meta.get(
-                    "parse_type", a["type"]
-                )  # safe-width parse target
-                to_c = meta.get("to_c")
-                decls += f"    {pt} {an}_raw = 0;\n"
-                fmt_parts.append(meta["fmt"])
-                addrs.append(f"&{an}_raw")
-                calls.append(to_c(an) if to_c else f"{an}_raw")
-        parse = (
-            f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
-            f"{', '.join(addrs)}))\n        return NULL;\n"
-            if margs
-            else "    (void)args;\n"
-        )
+        decls, parse, calls = _scalar_string_argparse(margs)
         call_args = "".join(f", {c}" for c in calls)
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
@@ -477,6 +508,30 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {gil_open}    _got = {fn}(self->h{call_args}, _out);
 {gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)_got; /* trim */
     return arr;
+}}
+"""
+
+    # (f) scalar/string args → HANDLE-length `bytes` (gh-565). The write half of
+    # Plan save/restore: `size_t save_bytes(const h*)` sizes the blob, a temp
+    # buffer is filled by `size_t save(const h*, args…, void *out)`, and the
+    # result is COPIED into an immutable `bytes` — no aliasing, so none of the
+    # array shapes' deferred-free / view machinery applies. Positional
+    # (METH_VARARGS) — _method_kwargs() returns False for a bytes return.
+    if returns == "bytes" and out_len_fn:
+        decls, parse, calls = _scalar_string_argparse(margs)
+        call_args = "".join(f", {c}" for c in calls)
+        return f"""static PyObject *
+{tname}_{name}({obj} *self, PyObject *args)
+{{
+{decls}{parse}{closed_guard}
+    size_t _n = (size_t){out_len_fn}(self->h);
+    char *_buf = (char *)PyMem_Malloc(_n ? _n : 1);
+    if (!_buf) return PyErr_NoMemory();
+    size_t _got;
+{gil_open}    _got = {fn}(self->h{call_args}, _buf);
+{gil_close}    PyObject *_r = PyBytes_FromStringAndSize(_buf, (Py_ssize_t)_got);
+    PyMem_Free(_buf);
+    return _r;
 }}
 """
 
@@ -686,6 +741,84 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {ret}
 }}
 """
+
+
+# ── module-level factories (alternate constructors — gh-565) ──────────────────
+
+
+def _emit_factory(cfg: dict, module: str, f: dict) -> str:
+    """Emit one module-level factory function — an alternate constructor.
+
+    ``PlanFromBlob(blob) -> Plan``: parse the factory's ``init_params`` (a
+    ``bytes`` blob / ``path`` / scalars, via the same ``_arg_*`` coercion the
+    ctor uses), call ``create_fn`` to build a FRESH handle, wrap it in a
+    tp_alloc'd instance of the module's type (bypassing ``tp_init`` — a restore
+    is not the primary ctor), and return it. The created object is named
+    ``self`` so :func:`_cache_fetch` / the destroy helpers apply verbatim.
+
+    A restore has no primary-ctor arguments, so the expr-stashed init scalars
+    (:func:`_stash_inits`) stay zero — a documented limitation, since the blob
+    reconstructs the handle wholesale and those Python-side values are simply
+    unavailable. ``cache = true`` getters ARE resolved (they read the rebuilt
+    handle, not the stashed inits)."""
+    tname = C.handle_type_name(cfg, module)
+    obj = f"{tname}Object"
+    htype = C.handle_type(cfg, module)
+    mp = C.module_paths(module)
+    fname = f["name"]
+    create_fn = f["create_fn"]
+    ips = list(f.get("init_params", []))
+
+    decls = "\n".join(_arg_decl(a) for a in ips)
+    fmt = "".join(_arg_fmt(a) for a in ips)
+    addrs = ", ".join(_arg_addr(a) for a in ips)
+    call_args = ", ".join(_create_call_arg(a) for a in ips)
+    parse = (
+        f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
+        "        return NULL;\n"
+        if ips
+        else "    (void)args;\n"
+    )
+    # path borrows are released only AFTER create_fn copies them (gh-219);
+    # bytes (y#) borrows need no release (valid for the call's duration).
+    fs_decref = "".join(
+        f"    {_coerce.path_release(a['name'])}\n"
+        for a in ips
+        if a.get("type") == "path"
+    )
+    # Alloc-failure cleanup destroys the just-built handle directly (self is
+    # not yet allocated, so the self->h teardown helpers do not apply here).
+    close_fn = C.handle_close_fn(cfg, module)
+    free_h = "free(_h); " if C.handle_init_fn(cfg, module) else ""
+    destroy_h = (f"{close_fn}(_h); " if close_fn else "") + free_h
+    cache = _cache_fetch(cfg, module)
+    cache_block = f"{cache}\n" if cache else ""
+    return f"""static PyObject *
+{mp.leaf}_{fname}(PyObject *_mod, PyObject *args)
+{{
+    (void)_mod;
+{decls}
+{parse}    {htype} *_h = {create_fn}({call_args});
+{fs_decref}    if (!_h) {{
+        PyErr_SetString(PyExc_ValueError, "{fname} failed");
+        return NULL;
+    }}
+    {obj} *self = ({obj} *){tname}Type.tp_alloc(&{tname}Type, 0);
+    if (!self) {{
+        {destroy_h}return NULL;
+    }}
+    self->h = _h;
+    self->closed = 0;
+{cache_block}    return (PyObject *)self;
+}}
+"""
+
+
+def render_factories(cfg: dict, module: str) -> str:
+    """All factory functions for *module* (empty when none are declared)."""
+    return "\n".join(
+        _emit_factory(cfg, module, f) for f in C.handle_factories(cfg, module)
+    )
 
 
 # ── getsets (decoded-getter property — THE genuinely-new C) ───────────────────
@@ -1164,8 +1297,30 @@ def render_ext(cfg: dict, module: str) -> str:
         render_type(cfg, module),
     ]
 
+    # Module-level factories (alternate constructors, gh-565): their functions
+    # plus a module PyMethodDef table wired into the moduledef. Absent factories
+    # keep the historical NULL m_methods slot (zero churn).
+    factories = C.handle_factories(cfg, module)
+    if factories:
+        parts.append(render_factories(cfg, module))
+        _fn_entries = "".join(
+            f'    {{"{f["name"]}", (PyCFunction){leaf}_{f["name"]},'
+            f" METH_VARARGS,\n"
+            f'     "Construct a {tname} via {f["create_fn"]}."}},\n'
+            for f in factories
+        )
+        parts.append(
+            f"static PyMethodDef {leaf}_functions[] = {{\n"
+            f"{_fn_entries}"
+            f"    {{NULL, NULL, 0, NULL}}\n"
+            f"}};\n"
+        )
+        _m_methods = f"{leaf}_functions"
+    else:
+        _m_methods = "NULL"
+
     parts.append(f"""static struct PyModuleDef _moduledef = {{
-    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, NULL,
+    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, {_m_methods},
     NULL, NULL, NULL, NULL
 }};
 
@@ -1240,6 +1395,8 @@ def _pyi_arg_ann(a: dict) -> str:
     """Python annotation for a handle create_arg (path, string, enum, scalar)."""
     if a.get("type") in ("path", "string"):
         return "str"
+    if a.get("type") == "bytes":
+        return "bytes"  # gh-565: opaque blob init-param
     if a.get("enum"):
         return "str"
     return _pyi_scalar(a.get("type", "int"))
@@ -1355,7 +1512,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         writable_out = [a for a in arrays if a.get("writable")]
         scalars = [a for a in margs if a not in arrays]
         ret_arr = bool(returns) and str(returns).endswith("[]")
-        if writable_out and ret_arr:
+        if returns == "bytes":
+            # (f) scalar/string args -> bytes (len from handle, gh-565).
+            sig = "self" + "".join(
+                f", {a['name']}: "
+                + (
+                    "str"
+                    if a.get("type") == "string"
+                    else _pyi_scalar(a["type"])
+                )
+                for a in margs
+            )
+            ann = "bytes"
+            doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
+        elif writable_out and ret_arr:
             # (d) execute(x, out) -> ndarray
             sig = "self, x: NDArray[Any], out: NDArray[Any]"
             ann = "NDArray[Any]"
@@ -1455,6 +1625,16 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines.append("    def __exit__(self, *exc: Any) -> None:")
         lines.append('        """Exit context and close the handle."""')
     lines.append("")
+
+    # Module-level factories (alternate constructors, gh-565): free functions
+    # that build a fresh handle via an alt create_fn and return the typed class.
+    for f in C.handle_factories(cfg, module):
+        ips = list(f.get("init_params", []))
+        sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
+        lines.append(f"def {f['name']}({sig}) -> {tname}:")
+        lines.append(f'    """Construct a {tname} via {f["create_fn"]}."""')
+        lines.append("")
+
     return "\n".join(lines)
 
 

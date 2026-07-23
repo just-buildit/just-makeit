@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Zero-binding save/restore for `kind = "handle"` modules (gh-565).** The
+    round-trip twin of the variant codec, for opaque blobs rather than
+    discriminant-tagged values — jm generates the whole binding both ways:
+    - **`type = "bytes"` init-param / create-arg** — a Python `bytes` (any
+        read-only bytes-like) crosses into C as a borrowed `(const void *, size_t)`
+        pair via `y#`; the callee copies before returning, like a `path`. Works as
+        an object init-param, a handle create-arg, and a factory init-param.
+
+    - **Handle method `returns = "bytes"`** — a handle-length blob: an `out_len_fn`
+        sizes it, `fn(h, args…, void *out)` fills a temp buffer, and the result is
+        copied into an immutable `bytes` (`Writer.save() -> bytes`). No aliasing, so
+        none of the array shapes' deferred-free machinery applies.
+
+    - **`[[module.X.factories]]` — module-level alternate constructors.** A factory
+        parses an init-param (a `bytes` blob or a `path`), calls an alternate
+        `create_fn` to build a *fresh* handle, and returns it wrapped in the
+        module's typed class: `PlanFromBlob(blob) -> Plan` / `PlanFromFile(path) ->     Plan`. The primary constructor is untouched and the type stays `@final`.
+
+        Together these let a handle serialize to `bytes` and reconstruct from a blob
+        (or file) with no hand-written `_ext.c` and no Python — `PlanFromBlob(p.save())`
+        round-trips.
+
 ## [0.33.9] — 2026-07-23
 
 ### Added

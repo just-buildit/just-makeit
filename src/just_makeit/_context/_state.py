@@ -146,6 +146,9 @@ def _build_no_state_init_ctx(
     # gh-515: "path" is a pseudo-type — deliberately absent from _CTYPE_META —
     # so it must be classified before any `_CTYPE_META[ct]` lookup can run.
     path_ip: list[str] = []
+    # gh-565: "bytes" is likewise a pseudo-type (opaque blob -> const void*,
+    # size_t) — classified here for the same reason.
+    bytes_ip: list[str] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
 
@@ -183,6 +186,8 @@ def _build_no_state_init_ctx(
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
         elif ct == "path":
             path_ip.append(name)
+        elif ct == "bytes":
+            bytes_ip.append(name)
         else:
             scalar_ip.append((name, ct, dflt, dflt_raw, required_flag))
 
@@ -199,6 +204,18 @@ def _build_no_state_init_ctx(
             f" Offending path param(s): {', '.join(path_ip)}."
             " Drop the path param, or pass the path through a separate"
             " setter/method instead."
+        )
+    # gh-565: a 'bytes' init-param is a positional opaque blob; the dtype-
+    # dispatch / optional-array create() is emitted in array_args_parse_block's
+    # own brace scopes, where routing the (ptr, len) pair is untested and has no
+    # real use (doppler's Plan restore takes a bytes blob alone). Reject the
+    # combination with an actionable error rather than emit unverified C.
+    if bytes_ip and (dispatch_meta or opt_arr_ip):
+        raise ValueError(
+            f"'{component}': a 'bytes' init-param cannot be combined with"
+            " array-dispatch or optional-array init-params."
+            f" Offending bytes param(s): {', '.join(bytes_ip)}."
+            " Pass the blob through a separate setter/method instead."
         )
 
     # --array-arg entries (dtype-string form)
@@ -218,6 +235,7 @@ def _build_no_state_init_ctx(
     }
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
     _path_names: frozenset[str] = frozenset(path_ip)
+    _bytes_names: frozenset[str] = frozenset(bytes_ip)
 
     # gh-266: split scalar init-params into required (no default — parsed as a
     # mandatory positional, *before* the PyArg `|`) and optional (the historic
@@ -246,7 +264,10 @@ def _build_no_state_init_ctx(
     required_entries = sorted(
         [("arr", n) for n, _, __, ___ in arr_ip]
         + [("scalar", n) for n, *_ in req_scalar_ip]
-        + [("path", n) for n in path_ip],
+        + [("path", n) for n in path_ip]
+        # gh-565: an opaque blob has no sensible default, so — like a path —
+        # a bytes init-param is always a required positional.
+        + [("bytes", n) for n in bytes_ip],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
@@ -338,6 +359,22 @@ def _build_no_state_init_ctx(
             # The zero-seeded C smoke/bench create() passes NULL — jm cannot
             # invent a valid path (see _unseedable_required).
             c_create_parts_ordered.append("NULL")
+        elif pname in _bytes_names:
+            # gh-565: an opaque blob expands to a `(const void *, size_t)` pair,
+            # like a 1-D array. The buffer is borrowed for the call's duration
+            # (y#); the callee must copy it before returning.
+            sig_parts.append(
+                f"{_coerce.BYTES_C_TYPE}{pname}, size_t {pname}_len"
+            )
+            doc_parts.append(
+                f" * @param {pname}  Opaque byte buffer"
+                f" (length passed as {pname}_len; borrowed, copy before"
+                " returning)."
+            )
+            call_parts.append(_coerce.bytes_call_exprs(pname))
+            # The zero-seeded C smoke/bench create() passes an empty buffer —
+            # jm cannot invent a valid blob (see _unseedable_required).
+            c_create_parts_ordered.append("NULL, 0")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(f"{ct_s} {pname}")
@@ -426,6 +463,14 @@ def _build_no_state_init_ctx(
             # comma-separated PyArg items that form expects.
             local_lines.append("    " + _coerce.path_decl(name))
             parse_args.append(_coerce.path_addr(name))
+        elif kind == "bytes":
+            # gh-565: one `y#` converter fills the (buffer, length) pair —
+            # bytes_addr() is the two comma-separated PyArg items. No release:
+            # `y#` borrows the buffer for the call's duration.
+            local_lines.extend(
+                "    " + line for line in _coerce.bytes_decl(name)
+            )
+            parse_args.append(_coerce.bytes_addr(name))
 
     # Optional string-enum / array / scalar kwargs, in TOML declaration
     # order (gh-422). (gh-244: a parse_type scalar such as size_t seeds its
@@ -479,6 +524,8 @@ def _build_no_state_init_ctx(
         if kind == "arr"
         else _coerce.path_fmt()
         if kind == "path"
+        else _coerce.bytes_fmt()
+        if kind == "bytes"
         else _CTYPE_META[_req_scalar_meta[name][0]]["fmt"]
         for kind, name in required_entries
     )
@@ -510,7 +557,15 @@ def _build_no_state_init_ctx(
         _parse_fail = f"    {{\n{_releases}        return -1;\n    }}\n"
     else:
         _parse_fail = "        return -1;\n"
-    if _aa or arr_ip or str_enum_ip or opt_arr_ip or scalar_ip or path_ip:
+    if (
+        _aa
+        or arr_ip
+        or str_enum_ip
+        or opt_arr_ip
+        or scalar_ip
+        or path_ip
+        or bytes_ip
+    ):
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
             f"{init_locals}\n"
@@ -734,6 +789,9 @@ def _build_no_state_init_ctx(
         elif kind == "path":
             # gh-515: required, hence no `= ...` default.
             pyi_parts.append(f"{name}: str")
+        elif kind == "bytes":
+            # gh-565: an opaque blob; required, hence no `= ...` default.
+            pyi_parts.append(f"{name}: bytes")
         else:
             ct = _req_scalar_meta[name][0]
             pyi_parts.append(f"{name}: {scalar_py_annotation(ct)}")
@@ -802,17 +860,26 @@ def _build_no_state_init_ctx(
     # gh-515: paths and required scalars are both default-less required params,
     # so their doc sections sit together; sorting by declaration index keeps
     # the section in TOML order (the gh-422 invariant).
-    _req_doc = [
-        (
-            _order[name],
-            f"    {name} : {scalar_py_annotation(ct)}\n"
-            f"        {_pdoc(name, True)}",
-        )
-        for name, ct, *_ in req_scalar_ip
-    ] + [
-        (_order[name], f"    {name} : str\n        {_pdoc(name, True)}")
-        for name in path_ip
-    ]
+    _req_doc = (
+        [
+            (
+                _order[name],
+                f"    {name} : {scalar_py_annotation(ct)}\n"
+                f"        {_pdoc(name, True)}",
+            )
+            for name, ct, *_ in req_scalar_ip
+        ]
+        + [
+            (_order[name], f"    {name} : str\n        {_pdoc(name, True)}")
+            for name in path_ip
+        ]
+        + [
+            # gh-565: a bytes blob is a default-less required param, documented
+            # alongside the paths and required scalars in TOML order.
+            (_order[name], f"    {name} : bytes\n        {_pdoc(name, True)}")
+            for name in bytes_ip
+        ]
+    )
     if _req_doc:
         pyi_doc_sections.append(
             "\n".join(s for _, s in sorted(_req_doc, key=lambda e: e[0]))
@@ -868,6 +935,11 @@ def _build_no_state_init_ctx(
             # `...` sentinel — _unseedable_required() already marks the whole
             # ctor unseedable, which suppresses the example and skips the
             # generated tests that would otherwise use this string.
+            py_create_parts.append("...")
+        elif kind == "bytes":
+            # gh-565: jm cannot invent a valid opaque blob (an empty buffer is
+            # generally rejected by the restore/decode), so emit the same `...`
+            # sentinel — _unseedable_required() marks the ctor unseedable.
             py_create_parts.append("...")
     for kind, name in optional_entries:
         if kind == "str_enum":
@@ -1147,6 +1219,7 @@ def _unseedable_required(init_params: list) -> list:
         p[0]
         for p in init_params
         if str(p[1]) == "path"
+        or str(p[1]) == "bytes"  # gh-565: opaque blob has no seed value
         or (
             len(p) > 8
             and p[8]  # required
@@ -2200,6 +2273,13 @@ def make_state_ctx(
                     # rebuild must keep the arity — NULL for C, the `...`
                     # sentinel for Python (the ctor is unseedable anyway).
                     _ip_c.append("NULL")
+                    _ip_py.append("...")
+                    continue
+                if ct == "bytes":
+                    # gh-565: a bytes blob contributes TWO create() args
+                    # (const void *, size_t) — keep the arity with "NULL, 0";
+                    # the ctor is unseedable, so Python gets the `...` sentinel.
+                    _ip_c.append("NULL, 0")
                     _ip_py.append("...")
                     continue
                 if ct not in _CTYPE_META:

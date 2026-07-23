@@ -1161,6 +1161,20 @@ def handle_create_post(cfg: dict, module: str) -> list[dict]:
     return list(cfg.get("module", {}).get(module, {}).get("create_post", []))
 
 
+def handle_factories(cfg: dict, module: str) -> list[dict]:
+    """Return a handle's ``[[module.X.factories]]`` — module-level alternate
+    constructors (gh-565).
+
+    Each is ``{name, create_fn, init_params}``: a module-level function that
+    parses its ``init_params`` (a ``bytes`` blob or a ``path``, or scalars),
+    calls ``create_fn`` to build a FRESH handle, wraps it in the module's typed
+    class, and returns it — e.g. ``PlanFromBlob(blob) -> Plan`` over
+    ``wfm_plan_restore``. The write twin of a ``returns = "bytes"`` method; the
+    two together give zero-binding save/restore. ``init_params`` reuse the same
+    ``{name, type, default?}`` shape as ``create_args``."""
+    return list(cfg.get("module", {}).get(module, {}).get("factories", []))
+
+
 def handle_methods(cfg: dict, module: str) -> list[dict]:
     """Return a handle's ``[[module.X.methods]]`` — handle methods.
 

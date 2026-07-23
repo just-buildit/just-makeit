@@ -26,6 +26,19 @@ def test_path_primitives():
     assert _coerce.path_release("p") == "Py_XDECREF(p);"
 
 
+def test_bytes_primitives():
+    # gh-565: an opaque-bytes arg crosses as a borrowed (const void*, size_t)
+    # pair via y#. No release step — y# borrows the buffer for the call.
+    assert _coerce.BYTES_C_TYPE == "const void *"
+    assert _coerce.bytes_decl("b") == [
+        "const char *b = NULL;  /* borrowed bytes buffer */",
+        "Py_ssize_t b_len = 0;",
+    ]
+    assert _coerce.bytes_fmt() == "y#"
+    assert _coerce.bytes_addr("b") == "&b, &b_len"
+    assert _coerce.bytes_call_exprs("b") == "(const void *)b, (size_t)b_len"
+
+
 def test_handle_path_arg_routes_through_coerce():
     a = {"name": "path", "type": "path"}
     assert _coerce.path_fmt() == _handle._arg_fmt(a)

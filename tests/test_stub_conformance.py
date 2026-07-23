@@ -430,6 +430,17 @@ def shape_module_init_params_path(tmp):
     )
 
 
+def shape_module_init_params_bytes(tmp):
+    # gh-565: doppler's Plan restore shape — no_state + an opaque bytes
+    # init-param that expands to (const void *, size_t) and parses via y#.
+    return _mod(
+        tmp,
+        state=[],
+        no_state=True,
+        init_params=[("blob", "bytes", "")],
+    )
+
+
 def shape_module_state_plus_initparams(tmp):
     return _mod(
         tmp,
@@ -483,6 +494,9 @@ size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
+size_t ringbuf_save_bytes(const ringbuf_t *r);
+size_t ringbuf_save(const ringbuf_t *r, void *out);
+ringbuf_t *ringbuf_restore(const void *blob, size_t n);
 #endif
 """
 
@@ -531,6 +545,25 @@ void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out) {
 }
 float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
 void ringbuf_set_gain(ringbuf_t *r, float gain) { r->gain = gain; }
+size_t ringbuf_save_bytes(const ringbuf_t *r) {
+    return r->used * sizeof(float);
+}
+size_t ringbuf_save(const ringbuf_t *r, void *out) {
+    size_t n = r->used * sizeof(float);
+    char *dst = (char *)out;
+    for (size_t i = 0; i < r->used; i++) {
+        float v = r->buf[(r->head + i) % r->cap];
+        __builtin_memcpy(dst + i * sizeof(float), &v, sizeof(float));
+    }
+    return n;
+}
+ringbuf_t *ringbuf_restore(const void *blob, size_t n) {
+    size_t count = n / sizeof(float);
+    ringbuf_t *r = ringbuf_open(count ? count : 1);
+    if (!r) return NULL;
+    ringbuf_push(r, (const float *)blob, count);
+    return r;
+}
 """
 
 _RINGBUF_CMAKE = """\
@@ -586,12 +619,27 @@ def shape_handle(tmp):
             "close_fn": "ringbuf_close",
             "depends_on": [{"name": "ringbuf", "link": True}],
             "create_args": [{"name": "capacity", "type": "size_t"}],
+            # gh-565 slice 3: a module-level factory (alternate constructor).
+            "factories": [
+                {
+                    "name": "RingFromBlob",
+                    "create_fn": "ringbuf_restore",
+                    "init_params": [{"name": "blob", "type": "bytes"}],
+                }
+            ],
             "methods": [
                 {
                     "name": "push",
                     "fn": "ringbuf_push",
                     "returns": "size_t",
                     "args": [{"name": "x", "type": "float[]"}],
+                },
+                {
+                    # gh-565 shape (f): handle-length `bytes` return.
+                    "name": "save",
+                    "fn": "ringbuf_save",
+                    "out_len_fn": "ringbuf_save_bytes",
+                    "returns": "bytes",
                 },
                 {
                     "name": "push_gain",
@@ -754,6 +802,7 @@ _SHAPES = {
     "module_method_out_type": shape_module_method_out_type,
     "module_method_variable_output": shape_module_method_variable_output,
     "module_init_params_path": shape_module_init_params_path,
+    "module_init_params_bytes": shape_module_init_params_bytes,
     "module_state_plus_initparams": shape_module_state_plus_initparams,
     "module_view": shape_module_view,
     "standalone_array_state": shape_standalone_array_state,
