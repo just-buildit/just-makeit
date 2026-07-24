@@ -28,7 +28,7 @@ ______________________________________________________________________
 | Generator (`void -> y`)              | [NCO tone](examples/nco_tone.md)                 |
 | Consumer / sink (`x -> void`)        | [Accumulator](examples/accumulator.md)           |
 | Blockwise (`T[] -> U[]`)             | [IQ file](examples/iqfile.md)                    |
-| Reader (no `step()`, custom methods) | [Stream chunker](examples/stream_chunker.md)     |
+| Reader (no `step()`, custom methods) | [Array processing](examples/array_processing.md) |
 | Process a whole block (`steps`)      | [Array processing](examples/array_processing.md) |
 
 ## State and lifecycle
@@ -37,7 +37,7 @@ ______________________________________________________________________
 | ------------------------------------------- | -------------------------------------------------------- |
 | State variables with defaults               | [Running stats](examples/running_stats.md)               |
 | Mutable state (`--mutable`)                 | [NCO tone](examples/nco_tone.md)                         |
-| Opaque heap state (`create` / `destroy`)    | [Opaque counter](examples/opaque_counter.md)             |
+| Opaque heap state (`create` / `destroy`)    | [Delay line](examples/delay_line.md)                     |
 | `create` / `reset` / `destroy` + heap field | [Delay line](examples/delay_line.md)                     |
 | Declarative TOML fragment (`jm apply`)      | [Declarative scaffold](examples/declarative_scaffold.md) |
 | `no_state` / user-facing init-params        | [Feature tour](feature-tour.md)                          |
@@ -74,10 +74,10 @@ ______________________________________________________________________
 
 ## Performance
 
-| Feature                                 | Example                                              |
-| --------------------------------------- | ---------------------------------------------------- |
-| `JM_HOT` / `JM_FORCEINLINE` annotations | [FIR filter](examples/fir_filter.md)                 |
-| SIMD batch dispatch (`JM_DEFINE_STEPS`) | [Sliding correlator](examples/sliding_correlator.md) |
+| Feature                                 | Example                              |
+| --------------------------------------- | ------------------------------------ |
+| `JM_HOT` / `JM_FORCEINLINE` annotations | [FIR filter](examples/fir_filter.md) |
+| SIMD batch dispatch (`JM_DEFINE_STEPS`) | [FIR filter](examples/fir_filter.md) |
 
 ## Composing objects out of objects
 
@@ -97,17 +97,17 @@ ______________________________________________________________________
 
 ## Streaming
 
-| Feature                                | Example                                      |
-| -------------------------------------- | -------------------------------------------- |
-| `streamable` → `stream()` / `__iter__` | `stream_source`                              |
-| Blockwise streaming                    | `stream_blockwise`                           |
-| Async iteration                        | `stream_source_async`                        |
-| Re-framing a stream into fixed chunks  | [Stream chunker](examples/stream_chunker.md) |
+| Feature                                | Example                                          |
+| -------------------------------------- | ------------------------------------------------ |
+| `streamable` → `stream()` / `__iter__` | `stream_source`                                  |
+| Blockwise streaming                    | `stream_blockwise`                               |
+| Async iteration                        | `stream_source_async`                            |
+| Re-framing a stream into fixed chunks  | [Array processing](examples/array_processing.md) |
 
 ## Applications and tooling
 
 | Feature                                           | Example                                    |
 | ------------------------------------------------- | ------------------------------------------ |
-| C exe / console script / PEP 723 from a component | [App targets](examples/jm_app.md)          |
+| C exe / console script / PEP 723 from a component | [Three faces](examples/three_face.md)      |
 | Full lifecycle (build, test, bench, docs)         | [Full workflow](examples/full_workflow.md) |
-| `--pytest` / `--pytest-benchmark` test styles     | [pytest style](examples/pytest_style.md)   |
+| `--pytest` / `--pytest-benchmark` test styles     | [Full workflow](examples/full_workflow.md) |

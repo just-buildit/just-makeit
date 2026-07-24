@@ -12,9 +12,7 @@ cat <<'MSG'
     my_corr/        Sliding cross-correlator (batch method, variable output)
     my_power/       Sliding power estimator
     my_arrays/      Array-typed inputs and multi-output methods
-    my_chunker/     Stream rechunker (stateless object)
     my_filters/     Multiple objects compiled into one .so (filter module)
-    dsp_toolkit/    Multi-module project with init params
     iqfile/         IQ file reader with Python properties
 
   Browse a project:
