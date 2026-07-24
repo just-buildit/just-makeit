@@ -422,10 +422,20 @@ now carries the full numpy-style docstring — including the `@code` block as an
         """
 ```
 
-That doctest is not decoration: CI runs
-`pytest --doctest-glob='*.pyi'` against the *built* extension, so if the
-kernel ever drifts from its documented example the build fails. The enrichment
-for both types is scripted:
+That doctest is not decoration: CI runs `pytest --doctest-glob='*.pyi'`
+against the *built* extension, so if the kernel ever drifts from its documented
+example the build fails:
+
+```termynal
+$ pytest --doctest-glob='*.pyi' src/my_acc/accumulator/accumulator.pyi
+{d}collected 1 item{/d}
+
+src/my_acc/accumulator/accumulator.pyi {g}.{/g}                       {g}[100%]{/g}
+
+{g}1 passed{/g} in 0.05s
+```
+
+The enrichment for both types is scripted:
 
 ```sh
 python3 .steps/04b_doxygen.py
