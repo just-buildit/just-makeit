@@ -771,6 +771,12 @@ def _regenerate_object_bindings(
         _regenerate_module(root, cfg, module, pkg)
         return
 
+    # Seed the header's create() Doxygen so the shared chain keeps a
+    # hand-written class @brief/@param through the regen instead of reverting to
+    # the generic stub (same reasoning as _glue.regenerate_standalone).
+    from ._object import _load_doc_blocks
+
+    cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj)
     ctx = _object_ctx(cfg, obj, pkg, module)
     # gh-543: keep a hand-written extra wired through a removal.
     ctx["extra_include"] = standalone_extra_include(root, obj)

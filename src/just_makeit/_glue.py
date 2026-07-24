@@ -193,6 +193,26 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""
     )
+    # Class docstring via the one shared builder (identical to the module .pyi
+    # path), so the two generators never drift. doc_blocks carry the sacred
+    # header's create() @brief/@param; they are seeded on cfg by callers that
+    # have `root` (regenerate_standalone below, and jm method/apply) — absent,
+    # this falls back to {} and the generic "<Component> component." summary,
+    # byte-identical to the pre-unification template.
+    from . import _stubs as _S
+
+    ctx["class_docstring"] = _S.class_docstring_block(
+        object_name,
+        Component,
+        state_vars_list,
+        C.is_no_state(cfg, object_name),
+        init_params,
+        f"from {pkg} import {Component}",
+        ctx.get("py_create_args", ""),
+        doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
+        manifest_doc=cfg.get(object_name, {}).get("doc", ""),
+        custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
+    )
     return ctx
 
 
@@ -205,6 +225,17 @@ def regenerate_standalone(
     materialised yet is left alone rather than half-written, so this is safe
     to call on a manifest-only component (``jm apply`` is what materialises).
     """
+    # Seed the sacred header's create() Doxygen (filtered of jm's own scaffold
+    # boilerplate) so component_ctx can enrich the class docstring — it is
+    # manifest-only by contract and has no `root`. Absent header -> {} -> the
+    # generic summary. This mirrors the module path (_object.build_component_ctxs
+    # seeds the same key) so a header-authored @brief/@param survives every
+    # standalone regen instead of reverting to the generic stub.
+    from ._object import _load_doc_blocks
+
+    cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
+        root, object_name
+    )
     ctx = component_ctx(cfg, object_name, pkg)
     # gh-543: component_ctx is manifest-only by contract, so the on-disk probe
     # for a hand-written extra belongs here, in the caller that has `root`.

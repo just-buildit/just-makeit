@@ -426,8 +426,15 @@ def _build_ctx(
     parsed: dict,
     pkg: str,
     defaults: dict[str, str] | None = None,
+    doc_blocks: dict | None = None,
 ) -> dict:
-    """Build the same context dict ``_init.run`` produces for a component."""
+    """Build the same context dict ``_init.run`` produces for a component.
+
+    *doc_blocks* — the sacred header's parsed create() Doxygen (filtered of
+    scaffold boilerplate), so the class docstring enriches from a hand-written
+    ``@brief``/``@param`` exactly like every other regeneration path. ``None``
+    yields the generic ``"<Component> component."`` summary.
+    """
     ctx = _make_component_ctx(comp)
     ctx.update(
         {
@@ -530,6 +537,20 @@ def _build_ctx(
         ctx.get("py_create_args", ""),
         ctx["Component"],
     )
+    # Class docstring via the one shared builder (identical to _init.run and the
+    # module path), enriched from the header's create() @brief/@param when
+    # doc_blocks are supplied.
+    ctx["class_docstring"] = S.class_docstring_block(
+        comp,
+        ctx["Component"],
+        state_vars,
+        is_opaque,
+        init_params,
+        f"from {pkg} import {ctx['Component']}",
+        ctx.get("py_create_args", ""),
+        doc_blocks=doc_blocks,
+        custom_reset=bool(init_params),
+    )
     return ctx
 
 
@@ -568,7 +589,12 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     pkg = _read_pkg(root)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     defaults = parse_reset_defaults(core_c)
-    ctx = _build_ctx(component, parsed, pkg, defaults)
+    # The header's create() Doxygen (filtered of scaffold boilerplate) enriches
+    # the class docstring on bind, matching every other regeneration path.
+    from ._object import _load_doc_blocks
+
+    doc_blocks = _load_doc_blocks(root, component)
+    ctx = _build_ctx(component, parsed, pkg, defaults, doc_blocks)
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:

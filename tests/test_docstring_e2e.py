@@ -142,6 +142,45 @@ class TestDerivedDocstrings:
         level_doc = pyi.split("def level")[1].split('"""')[1]
         assert "The current output level in dBFS." in level_doc
 
+    def test_standalone_class_summary_derives_from_create_brief(
+        self, tmp_path
+    ):
+        """The STANDALONE .pyi class summary must enrich from the header's
+        create() @brief, exactly like the module path above. The two .pyi
+        generators previously drifted: the standalone template hardcoded
+        ``"<Component> component."`` while the module aggregator derived it
+        from the header. Both now route through _stubs.class_docstring_block,
+        and the apply/status path (temp-scaffold replay had a trivial header)
+        re-renders from the real header so the drift gate agrees."""
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        object_run(
+            dest,
+            "gain",
+            module=None,
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        text = header.read_text(encoding="utf-8")
+        block = "/**\n * @brief A configurable scalar gain stage.\n */\n"
+        decl_re = re.compile(
+            r"(?:^[ \t]*/\*\*(?:(?!\*/)[\s\S])*?\*/[ \t]*\r?\n)?"
+            r"(^(?![ \t]*[*/])[^\n=]*\bgain_create\s*\([^;]*\);)",
+            re.MULTILINE,
+        )
+        text2 = decl_re.sub(block + r"\1", text, count=1)
+        assert text2 != text, "could not locate gain_create declaration"
+        header.write_text(text2, encoding="utf-8")
+
+        apply_run(dest)
+
+        pyi = (dest / "src" / "dsp" / "gain.pyi").read_text(encoding="utf-8")
+        class_doc = pyi.split("class Gain:")[1].split('"""')[1]
+        assert "A configurable scalar gain stage." in class_doc
+        assert "<<" not in pyi  # no placeholder leak
+
     def test_property_getset_and_tp_doc_carry_brief(self):
         """C PyGetSetDef doc and tp_doc derive from the header (generator
         level — the per-object _ext fragment is preserved by apply)."""

@@ -627,9 +627,14 @@ def _build_class_docstring(
     # Only emit a runnable construction example when every constructor
     # argument has a safe literal. An array/no-default arg renders as `...`
     # (ellipsis), which is not a valid call — emitting it would produce a
-    # doctest that raises TypeError. In that case, skip the Examples block
-    # entirely rather than ship a broken example.
-    if "..." in py_create_args:
+    # doctest that raises TypeError. A *required* init-param with no default
+    # (gh-273) has no safe seed either, even when its type's zero literal is
+    # non-empty (double -> "0.0"), so key off `required`, not the rendered
+    # text. In either case skip the Examples block rather than ship a broken
+    # example. (This suppression was previously only in the standalone
+    # pyi_examples path; folding it here fixes the module path's latent copy
+    # of the same gh-273 bug too.)
+    if "..." in py_create_args or Ctx._unseedable_required(init_params):
         lines.append('    """')
         return lines
 
@@ -680,6 +685,51 @@ def _build_class_docstring(
     lines += ex
     lines.append('    """')
     return lines
+
+
+def class_docstring_block(
+    obj: str,
+    Component: str,
+    state_vars: list,
+    no_state: bool,
+    init_params: list,
+    import_line: str,
+    py_create_args: str,
+    *,
+    doc_blocks: dict | None = None,
+    manifest_doc: str = "",
+    custom_reset: bool = False,
+) -> str:
+    """Assemble a component's class docstring block (the whole ``\"\"\"...\"\"\"``,
+    4-space indented, ready to drop under ``class X:``).
+
+    The single entry point for BOTH ``.pyi`` generators — the standalone
+    ``COMPONENT_PYI`` template's ``<<class_docstring>>`` slot and the module
+    aggregator — so the class summary and ``Parameters`` never drift between
+    them (the recurring two-generator bug; see gh-446). Summary and params
+    derive from the sacred ``<obj>_create`` Doxygen (``@brief`` -> summary,
+    ``@param`` -> each ``Parameters`` entry). jm's own scaffold boilerplate is
+    already filtered out of *doc_blocks* upstream (``_is_scaffold_brief``), so
+    an un-enriched header falls back to the generic ``"<Component> component."``
+    and produces byte-identical output to the pre-unification template.
+    """
+    create_blk = (doc_blocks or {}).get(f"{obj}_create")
+    brief = manifest_doc or (
+        create_blk.brief if (create_blk and create_blk.brief) else ""
+    )
+    return "\n".join(
+        _build_class_docstring(
+            Component,
+            state_vars,
+            no_state,
+            list(init_params),
+            import_line,
+            py_create_args,
+            brief=brief,
+            custom_reset=custom_reset,
+            create_blk=create_blk,
+        )
+    )
 
 
 def _numpy_doc_lines(
@@ -860,29 +910,25 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else f"from ... import {Component}"
     )
 
-    # Class docstring
-    _create_blk = doc_blocks.get(f"{obj}_create")
-    _class_brief = cfg.get(obj, {}).get("doc") or (
-        _create_blk.brief if (_create_blk and _create_blk.brief) else ""
-    )
-    doc_lines = _build_class_docstring(
+    # Class docstring — same shared builder the standalone COMPONENT_PYI path
+    # uses (class_docstring_block), so the two .pyi generators never drift.
+    # init_params imply a create_impl that derives state from the params (the
+    # #69 contract), so the first state var is config — not guaranteed zeroed by
+    # reset(); skip the "reset restores defaults" demo there. gh-542: `no_reset`
+    # removes the method, so the demo would be a failing doctest under
+    # `pytest --doctest-glob='*.pyi'`, not just stale prose.
+    doc_lines = class_docstring_block(
+        obj,
         Component,
         state_vars,
         no_state,
         list(ip),
         import_line,
         py_create_args,
-        brief=_class_brief,
-        # init_params imply a create_impl that derives state from the params
-        # (the #69 contract), so the first state var is config — not guaranteed
-        # zeroed by reset(). Skip the "reset restores defaults" demo there.
-        # (init_params survive the apply-path cfg; reset_impl/create_impl don't.)
-        # gh-542: `no_reset` removes the method, so the demo would be a
-        # failing doctest under `pytest --doctest-glob='*.pyi'`, not just
-        # stale prose.
+        doc_blocks=doc_blocks,
+        manifest_doc=cfg.get(obj, {}).get("doc", ""),
         custom_reset=bool(ip) or no_reset,
-        create_blk=_create_blk,
-    )
+    ).split("\n")
     # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
     # cannot be subclassed at runtime; the stub says so with @final. (Composer
     # types, which do set BASETYPE, are stubbed on a separate path.)

@@ -1358,6 +1358,29 @@ def _sync_aggregates(
             continue
         if only_comp is not None and comp != only_comp:
             continue
+        # The temp scaffold was replayed with a trivial header, so its .pyi
+        # carries the generic "<Component> component." class summary. If the
+        # real (sacred) header enriches create()'s @brief/@param, re-render the
+        # temp .pyi from those blocks so apply/status agree with bind/regenerate
+        # — otherwise a header-authored class docstring would read as drift. An
+        # un-enriched header returns {} and this is skipped entirely (the temp
+        # .pyi is already correct and byte-identical), so it costs nothing there.
+        from ._object import _load_doc_blocks
+
+        _real_blocks = _load_doc_blocks(root, comp)
+        if _real_blocks:
+            from . import _glue
+            from . import _render as _R
+
+            cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
+            _temp_pyi = temp_root / "src" / pkg / f"{comp}.pyi"
+            if _temp_pyi.exists():
+                _temp_pyi.write_text(
+                    _R.render(
+                        _R.COMPONENT_PYI, _glue.component_ctx(cfg, comp, pkg)
+                    ),
+                    encoding="utf-8",
+                )
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.
