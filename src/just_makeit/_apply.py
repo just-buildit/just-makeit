@@ -244,7 +244,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-306: a handle module emits its typed-class binding / CMake / .pyi
         # directly from the manifest (no object-group scaffold).
         if C.is_handle_module(cfg, mod):
-            _handle.materialize(cfg, temp_root, mod)
+            _handle.materialize(cfg, temp_root, mod, project_root=project_root)
             continue
         # gh-523: `package` must reach the temp scaffold *at module-creation
         # time* — it decides where every Python artifact is written, so the
