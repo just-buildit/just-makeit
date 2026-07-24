@@ -127,11 +127,11 @@ ______________________________________________________________________
 
 | Goal                                 | Page                                                      |
 | ------------------------------------ | --------------------------------------------------------- |
-| Scaffold → implement → test loop     | [Workflow](workflow.md)                                   |
+| Scaffold → implement → test loop     | [Workflows](workflows/index.md)                                   |
 | All generated file layouts           | [Artifacts](artifacts.md)                                 |
 | Tour every feature in one project    | [Feature tour](feature-tour.md)                           |
 | Runnable bundled examples            | [Examples](examples/index.md)                             |
-| Generated C and Python API reference | [Workflow → Generated C API](workflow.md#generated-c-api) |
+| Generated C and Python API reference | [Workflows → Project layout & API](workflows/layout-and-api.md#generated-c-api) |
 | Command options                      | [Commands → Scaffold](commands/scaffold.md)               |
 
 ______________________________________________________________________
