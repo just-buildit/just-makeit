@@ -401,9 +401,7 @@ def main() -> None:
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(
-            f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr
-        )
+        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
         sys.exit(1)
 
     header.write_text(text, encoding="utf-8")
