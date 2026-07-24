@@ -822,12 +822,22 @@ Regenerate and `gain.pyi` carries:
         """
 ```
 
-That doctest runs against the *built* extension in CI
-(`pytest --doctest-glob='*.pyi'`), so it stays honest — if the C returns `3.1`
-the build fails. A `just-makeit property` getter's `@brief` becomes the
-property docstring the same way. The built-in `step()`/`steps()` keep their
-standard docstrings — a `@param` on `step` refines the argument description,
-but they are not the place for a `@brief` or `@code`.
+That doctest runs against the *built* extension — if the C returns `3.1`, it
+fails:
+
+```termynal
+$ pytest --doctest-glob='*.pyi' src/my_dsp/gain.pyi
+{d}collected 1 item{/d}
+
+src/my_dsp/gain.pyi {g}.{/g}                                          {g}[100%]{/g}
+
+{g}1 passed{/g} in 0.03s
+```
+
+A `just-makeit property` getter's `@brief` becomes the property docstring the
+same way. The built-in `step()`/`steps()` keep their standard docstrings — a
+`@param` on `step` refines the argument description, but they are not the place
+for a `@brief` or `@code`.
 
 ### Which Doxygen tags jm reads
 
