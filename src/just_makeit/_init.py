@@ -861,6 +861,24 @@ def run(
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""
     )
+    # Class docstring via the one shared builder (same as the module .pyi path),
+    # so the summary/Parameters can never drift between the two generators. The
+    # scaffold/create path has only jm's own boilerplate Doxygen in the header,
+    # so doc_blocks=None yields the generic "<Component> component." — a header
+    # enriched later re-derives on the next `jm bind`/mutation (the _glue path).
+    from . import _stubs as _S
+
+    ctx["class_docstring"] = _S.class_docstring_block(
+        component,
+        ctx["Component"],
+        vars_ or [],
+        no_state,
+        init_params,
+        import_line,
+        ctx.get("py_create_args", ""),
+        doc_blocks=None,
+        custom_reset=bool(init_params) or no_reset,
+    )
 
     if create_impl_body is not None:
         from ._object import _indent_body

@@ -931,6 +931,14 @@ def run(
         # pyi_examples with the real package, so every `jm method` regenerated
         # the stub's doctest as `>>> from <<package>> import <<Component>>`
         # (the gh-481 bug, which only the _glue-backed paths got fixed).
+        # Seed the header's create() Doxygen so the shared chain enriches the
+        # class docstring from a hand-written @brief/@param instead of reverting
+        # it to the generic stub on every `jm method` (see regenerate_standalone).
+        from ._object import _load_doc_blocks
+
+        cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
+            root, object_name
+        )
         ctx = _glue.component_ctx(cfg, object_name, pkg)
 
         # The only slot this command needs beyond the shared base:

@@ -426,8 +426,15 @@ def _build_ctx(
     parsed: dict,
     pkg: str,
     defaults: dict[str, str] | None = None,
+    doc_blocks: dict | None = None,
 ) -> dict:
-    """Build the same context dict ``_init.run`` produces for a component."""
+    """Build the same context dict ``_init.run`` produces for a component.
+
+    *doc_blocks* — the sacred header's parsed create() Doxygen (filtered of
+    scaffold boilerplate), so the class docstring enriches from a hand-written
+    ``@brief``/``@param`` exactly like every other regeneration path. ``None``
+    yields the generic ``"<Component> component."`` summary.
+    """
     ctx = _make_component_ctx(comp)
     ctx.update(
         {
@@ -474,6 +481,9 @@ def _build_ctx(
             py_create_args=ctx.get("py_create_args", ""),
             no_state=is_opaque,
             serializable=C._truthy(parsed.get("serializable")),
+            # Enrich method docstrings from the header's Doxygen (same as the
+            # module path); None -> generic stub, unchanged.
+            doc_blocks=doc_blocks,
         )
     )
     ctx.update(
@@ -488,6 +498,9 @@ def _build_ctx(
             # default (None) means enum support is simply absent on this path
             # and the render stays byte-identical (same reasoning as the
             # empty make_warnings_ctx below).
+            # Enrich property docstrings from the getter's @brief (same as the
+            # module path); None -> generic, unchanged.
+            doc_blocks=doc_blocks,
         )
     )
     # gh-481: `bind` reflects a hand-written _core.h rather than the manifest,
@@ -506,6 +519,44 @@ def _build_ctx(
     # text it produced before this feature existed. Re-run with the settled
     # ComponentW so the PyMethodDef entry names the right static function.
     ctx.update(Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"]))
+
+    # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
+    # slot with the <<package>>/<<Component>> placeholder that only _init.run and
+    # _glue resolve; _build_ctx claims to produce "the same context dict
+    # _init.run produces" but skipped this step, so `jm bind` wrote a literal
+    # `>>> from <<package>> import <<Component>>` into the regenerated .pyi. That
+    # went unnoticed because the placeholder scan covers .py/.c/.h/.toml/.txt but
+    # not .pyi — the one file it corrupts.
+    scalar_state = (
+        [
+            (n, ct, dflt)
+            for n, ct, dflt in state_vars
+            if not T.parse_array_type(ct)
+        ]
+        if not is_opaque
+        else []
+    )
+    ctx["pyi_examples"] = Ctx._pyi_examples_block(
+        scalar_state,
+        False,
+        f"from {pkg} import {ctx['Component']}",
+        ctx.get("py_create_args", ""),
+        ctx["Component"],
+    )
+    # Class docstring via the one shared builder (identical to _init.run and the
+    # module path), enriched from the header's create() @brief/@param when
+    # doc_blocks are supplied.
+    ctx["class_docstring"] = S.class_docstring_block(
+        comp,
+        ctx["Component"],
+        state_vars,
+        is_opaque,
+        init_params,
+        f"from {pkg} import {ctx['Component']}",
+        ctx.get("py_create_args", ""),
+        doc_blocks=doc_blocks,
+        custom_reset=bool(init_params),
+    )
     return ctx
 
 
@@ -544,7 +595,12 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     pkg = _read_pkg(root)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     defaults = parse_reset_defaults(core_c)
-    ctx = _build_ctx(component, parsed, pkg, defaults)
+    # The header's create() Doxygen (filtered of scaffold boilerplate) enriches
+    # the class docstring on bind, matching every other regeneration path.
+    from ._object import _load_doc_blocks
+
+    doc_blocks = _load_doc_blocks(root, component)
+    ctx = _build_ctx(component, parsed, pkg, defaults, doc_blocks)
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:
