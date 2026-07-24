@@ -92,6 +92,7 @@ def _replace_function(src: str, name: str, replacement: str) -> str:
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
 
@@ -119,6 +120,35 @@ def run(root: Path) -> None:
     pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text()
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
+
+    # 1b. Enrich the sacred header so the .pyi class docstring reads as a real
+    #     sentence, not the generic "<Type> component." fallback. The header is
+    #     the single source of truth for docs: jm turns the create() @brief into
+    #     the class summary. We replace only that one line (the ctor params keep
+    #     their generic scaffold docs), then `jm apply` re-derives the .pyi from
+    #     the edited header.
+    class_summary = (
+        "Free-running ramp signal source that emits a monotonically "
+        "increasing float32 sequence, advancing by a fixed increment per "
+        "sample, streamable in blocks via stream() and __iter__."
+    )
+    header = proj / "native" / "inc" / "ramp" / "ramp_core.h"
+    htext = header.read_text(encoding="utf-8")
+    scaffold = " * @brief Create a ramp instance."
+    assert scaffold in htext, "scaffold create @brief not found in header"
+    header.write_text(
+        htext.replace(scaffold, f" * @brief {class_summary}", 1),
+        encoding="utf-8",
+    )
+    apply_run(proj)
+
+    # The enriched summary reached the regenerated stub (not the fallback).
+    pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text()
+    assert "class Ramp:" in pyi
+    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    assert "Ramp component." not in pyi, (
+        "generic fallback summary still present"
+    )
 
     # 2. Splice in step() — the SAME .steps/02_step.c the README embeds, so the
     #    taught function is the compiled function.

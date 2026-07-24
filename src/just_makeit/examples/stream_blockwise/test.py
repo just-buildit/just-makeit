@@ -101,6 +101,7 @@ def _splice(src: str, name: str, snippet_file: str) -> str:
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
 
@@ -128,6 +129,36 @@ def run(root: Path) -> None:
     pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text()
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.complex64]]:" in pyi
+
+    # 1b. Enrich the sacred header so the .pyi class docstring reads as a real
+    #     sentence, not the generic "<Type> component." fallback. The header is
+    #     the single source of truth for docs: jm turns the create() @brief into
+    #     the class summary. We replace only that one line (the total/pos ctor
+    #     params keep their generic scaffold docs), then `jm apply` re-derives
+    #     the .pyi from the edited header.
+    class_summary = (
+        "Finite source of complex64 samples that drains as it is pulled: "
+        "each run(n) hands back up to the n samples still remaining and an "
+        "empty block once exhausted, so stream() iterates it to a "
+        "self-terminating stop."
+    )
+    header = proj / "native" / "inc" / "drainer" / "drainer_core.h"
+    htext = header.read_text(encoding="utf-8")
+    scaffold = " * @brief Create a drainer instance."
+    assert scaffold in htext, "scaffold create @brief not found in header"
+    header.write_text(
+        htext.replace(scaffold, f" * @brief {class_summary}", 1),
+        encoding="utf-8",
+    )
+    apply_run(proj)
+
+    # The enriched summary reached the regenerated stub (not the fallback).
+    pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text()
+    assert "class Drainer:" in pyi
+    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    assert "Drainer component." not in pyi, (
+        "generic fallback summary still present"
+    )
 
     # 2. Splice in run_max_out() and run() — the SAME .steps/02_*.c the README
     #    embeds, so the taught functions are the compiled functions.

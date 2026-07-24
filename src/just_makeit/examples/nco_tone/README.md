@@ -13,7 +13,7 @@ just-makeit example nco_tone
 
 !!! note "External dependency"
 
-    This example links against the [Doppler](https://github.com/ju-plaggemann/doppler)
+    This example links against the [Doppler](https://github.com/doppler-dsp/doppler)
     DSP library. The test runner auto-fetches a prebuilt tarball when Doppler is
     not already installed; no manual step is needed unless you are working offline.
 

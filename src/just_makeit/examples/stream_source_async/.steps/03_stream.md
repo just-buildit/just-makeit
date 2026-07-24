@@ -21,6 +21,10 @@ What `--async-stream` adds on top of the sync iterator:
   supports `jm method --nogil`). For a plain producer, `async for` still works
   and yields control between blocks; it just doesn't overlap the kernel itself.
 
+The generated `ramp.pyi` class docstring is hand-authored in the header's
+`create()` `@brief`, so `help(Ramp)` reads as a real sentence rather than the
+generic `Ramp component.` fallback.
+
 The sync `for blk in obj.stream(...)` / `for blk in obj` forms are untouched and
 work on the same object — `--async-stream` only *adds* the async surface. See
 the [`stream_source`](stream_source.md) example for the synchronous

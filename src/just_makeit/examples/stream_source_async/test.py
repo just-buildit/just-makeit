@@ -127,6 +127,36 @@ def run(root: Path) -> None:
         encoding="utf-8",
     )
 
+    # 2b. Enrich the sacred header so the .pyi class docstring reads as a real
+    #     sentence, not the generic "Ramp component." fallback. The header is
+    #     the single source of truth for docs: jm turns the create() @brief
+    #     into the class summary. We replace only that one line (the ctor
+    #     params keep their generic scaffold docs), then `jm apply` re-derives
+    #     the .pyi from the edited header.
+    from just_makeit._apply import run as apply_run
+
+    class_summary = (
+        "Free-running ramp source that emits successive float32 samples from "
+        "internal state, drivable synchronously (`for`) or asynchronously "
+        "(`async for`) over the same object."
+    )
+    scaffold = " * @brief Create a ramp instance."
+    htext = core_h.read_text(encoding="utf-8")
+    assert scaffold in htext, "scaffold create @brief not found in header"
+    core_h.write_text(
+        htext.replace(scaffold, f" * @brief {class_summary}", 1),
+        encoding="utf-8",
+    )
+    apply_run(proj)
+
+    # The enriched summary reached the regenerated stub (not the fallback).
+    pyi = (proj / "src" / "stream_source_async_demo" / "ramp.pyi").read_text()
+    assert "class Ramp:" in pyi
+    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    assert "Ramp component." not in pyi, (
+        "generic fallback summary still present"
+    )
+
     # 3. Build (cmake + ctest runs the generated C smoke test).
     _cmd(
         [

@@ -38,8 +38,9 @@ def _cmd(args, cwd):
 
 
 def run(root: Path) -> None:
-    from just_makeit._new import run as jm_new
     from just_makeit._add import run as jm_add
+    from just_makeit._apply import run as apply_run
+    from just_makeit._new import run as jm_new
 
     # 1. Scaffold
     jm_new(
@@ -109,6 +110,19 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
+    # 5b. Enrich the sacred header with a real Doxygen @brief on create(), then
+    #     `jm apply` to re-derive the .pyi from it. The scaffold @brief is
+    #     boilerplate ("Create a running_stats instance."), which jm filters to
+    #     the generic "RunningStats component." summary; a real one-line brief
+    #     becomes the class docstring's summary. This is a light enrichment —
+    #     running_stats has only auto-generated state accessors, no hand-written
+    #     named method, so there is no @code doctest to run. The standalone
+    #     object's `.tp_doc` uses a fixed "Wraps ..." template independent of
+    #     create()'s @brief, so this touches only the .pyi and leaves the C
+    #     binding (and the `jm bind` round-trip below) byte-for-byte unchanged.
+    _cmd([sys.executable, str(STEPS / "07_doxygen.py")], cwd=proj)
+    apply_run(proj)
+
     # 6. Verify the rebuilt module computes the right statistics, including the
     #    newly added min/max state. This proves the re-implemented body really
     #    uses the state that `jm add` introduced.
@@ -135,6 +149,15 @@ def run(root: Path) -> None:
     assert "class RunningStats:" in pyi
     assert "min_val" in pyi
     assert "max_val" in pyi
+
+    # The Doxygen enrichment (step 5b) reached the stub: the class docstring
+    # summary is now the create() @brief, not the generic placeholder.
+    assert (
+        "Streaming mean, variance, and running min/max via Welford's" in pyi
+    ), "enriched class @brief missing from .pyi"
+    assert "RunningStats component." not in pyi, (
+        "generic class summary should have been replaced by the enrichment"
+    )
 
     # 6. `jm bind` round-trip — proves the binding can be regenerated from
     # the header alone (no TOML consulted). This validates the Phase 1
