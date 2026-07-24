@@ -422,18 +422,37 @@ now carries the full numpy-style docstring — including the `@code` block as an
         """
 ```
 
-That doctest is not decoration: CI runs `pytest --doctest-glob='*.pyi'`
-against the *built* extension, so if the kernel ever drifts from its documented
-example the build fails:
+That doctest is not decoration: it runs against the *built* extension, so if
+the kernel ever drifts from its documented example the build fails. Pass `-v`
+to watch every `>>>` line execute:
 
 ```termynal
-$ pytest --doctest-glob='*.pyi' src/my_acc/accumulator/accumulator.pyi
-{d}collected 1 item{/d}
-
-src/my_acc/accumulator/accumulator.pyi {g}.{/g}                       {g}[100%]{/g}
-
-{g}1 passed{/g} in 0.05s
+$ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
+{d}Trying:{/d}
+    a.step(1.0); a.step(2.0); a.step(3.0)
+{d}Expecting nothing{/d}
+{g}ok{/g}
+{d}Trying:{/d}
+    a.get()
+{d}Expecting:{/d}
+    6.0
+{g}ok{/g}
+{d}Trying:{/d}
+    a.step(1 + 2j); a.step(3 + 4j)
+{d}Expecting nothing{/d}
+{g}ok{/g}
+{d}Trying:{/d}
+    a.get()
+{d}Expecting:{/d}
+    (4+6j)
+{g}ok{/g}
+{d}...{/d}
+{g}25 passed and 0 failed.{/g}
+{g}Test passed.{/g}
 ```
+
+In CI the whole suite is driven at once with
+`pytest --doctest-glob='*.pyi'`.
 
 The enrichment for both types is scripted:
 

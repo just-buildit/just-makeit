@@ -106,16 +106,23 @@ Regenerate and `gain.pyi` carries:
         """
 ```
 
-That doctest runs against the *built* extension — if the C returns `3.1`, it
-fails:
+That doctest runs against the *built* extension — pass `-v` to watch each
+`>>>` line execute (if the C returned `3.1`, the `scale` step would fail
+instead of `ok`):
 
 ```termynal
-$ pytest --doctest-glob='*.pyi' src/my_dsp/gain.pyi
-{d}collected 1 item{/d}
-
-src/my_dsp/gain.pyi {g}.{/g}                                          {g}[100%]{/g}
-
-{g}1 passed{/g} in 0.03s
+$ python -m doctest -v src/my_dsp/gain.pyi
+{d}Trying:{/d}
+    from my_dsp import Gain
+{d}Expecting nothing{/d}
+{g}ok{/g}
+{d}Trying:{/d}
+    Gain(2.0).scale(1.5)
+{d}Expecting:{/d}
+    3.0
+{g}ok{/g}
+{d}...{/d}
+{g}Test passed.{/g}
 ```
 
 A `just-makeit property` getter's `@brief` becomes the property docstring the
