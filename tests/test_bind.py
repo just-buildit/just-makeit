@@ -71,6 +71,27 @@ class TestBindByteIdenticalToScaffold:
 
         assert ext_c.read_text(encoding="utf-8") == original
 
+    def test_regenerated_pyi_has_no_placeholders(self, tmp_path):
+        """bind must resolve the .pyi doctest placeholders like _init.run does.
+
+        Regression: _build_ctx claims to produce "the same context dict
+        _init.run produces" but skipped the pyi_examples re-seed with the real
+        package name. make_state_ctx seeds that slot with the
+        <<package>>/<<Component>> placeholder, so `jm bind` wrote a literal
+        ``>>> from <<package>> import <<Component>>`` into the regenerated
+        .pyi — a broken doctest under ``pytest --doctest-glob='*.pyi'``. The
+        project-wide placeholder scan never covered .pyi, so nothing caught it.
+        """
+        root = tmp_path / "proj"
+        _scaffold_filter(root)
+        pyi = root / "src" / "my_dsp" / "my_filter.pyi"
+
+        bind_run(root, "my_filter")
+
+        text = pyi.read_text(encoding="utf-8")
+        assert "<<" not in text, f"unresolved placeholder in {pyi}:\n{text}"
+        assert ">>> from my_dsp import MyFilter" in text
+
     def test_check_mode_passes_for_freshly_scaffolded(self, tmp_path):
         root = tmp_path / "proj"
         _scaffold_filter(root)

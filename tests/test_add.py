@@ -84,6 +84,7 @@ class TestAddStateVar:
         for path in project.rglob("*"):
             if path.is_file() and path.suffix in (
                 ".py",
+                ".pyi",
                 ".c",
                 ".h",
                 ".toml",

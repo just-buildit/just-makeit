@@ -506,6 +506,30 @@ def _build_ctx(
     # text it produced before this feature existed. Re-run with the settled
     # ComponentW so the PyMethodDef entry names the right static function.
     ctx.update(Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"]))
+
+    # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
+    # slot with the <<package>>/<<Component>> placeholder that only _init.run and
+    # _glue resolve; _build_ctx claims to produce "the same context dict
+    # _init.run produces" but skipped this step, so `jm bind` wrote a literal
+    # `>>> from <<package>> import <<Component>>` into the regenerated .pyi. That
+    # went unnoticed because the placeholder scan covers .py/.c/.h/.toml/.txt but
+    # not .pyi — the one file it corrupts.
+    scalar_state = (
+        [
+            (n, ct, dflt)
+            for n, ct, dflt in state_vars
+            if not T.parse_array_type(ct)
+        ]
+        if not is_opaque
+        else []
+    )
+    ctx["pyi_examples"] = Ctx._pyi_examples_block(
+        scalar_state,
+        False,
+        f"from {pkg} import {ctx['Component']}",
+        ctx.get("py_create_args", ""),
+        ctx["Component"],
+    )
     return ctx
 
 
