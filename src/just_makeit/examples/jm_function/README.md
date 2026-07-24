@@ -32,10 +32,9 @@ ______________________________________________________________________
     Python callable with no class, no `self`
 - The difference between a **regular function** (sacred `name.c` file) and
     an **`--inline` function** (static inline body in the module header)
-- Array parameters (`--param "x:float _Complex[]"`) and scalar parameters
-    in the same function
-- `--out-type` — allocating a typed output array per call and returning it
-    without a pre-allocated buffer
+- Scalar parameters and a scalar return, exposed as a bare Python callable
+- **Document once, in C** — a Doxygen comment on the declaration becomes the
+    generated `.pyi` docstring, and a `@code` block becomes a runnable doctest
 
 ______________________________________________________________________
 
@@ -48,15 +47,13 @@ cd my_utils
 # Add a stateful gain object so the module has something else in it
 just-makeit object gain --module utils \
     --arg-type float --return-type float \
-    --state "scale:float:1.0"
+    --state "gain:float:1.0"
 
 # Regular function: own .c file, linker can see it
 just-makeit function linear_to_db --module utils \
-    --param "x:float _Complex[]" \
-    --param "floor:float" \
-    --return-type void \
-    --out-type float \
-    --doc "Convert complex magnitudes to dB, clipped at floor dB."
+    --param "x:float" \
+    --return-type float \
+    --doc "Convert linear amplitude to dB (20*log10(x))."
 
 # Inline function: static inline in utils_core.h, no .c file
 just-makeit function clamp --module utils \
@@ -84,11 +81,11 @@ native/inc/utils/utils_core.h      ← declaration injected automatically
 #include "utils/utils_core.h"
 
 /* <<IMPLEMENT: linear_to_db>> */
-void
-linear_to_db(const float complex *x, size_t x_len,
-             float floor, float *out)
+float
+linear_to_db(float x)
 {
-    (void)x; (void)x_len; (void)floor; (void)out;
+    (void)x;
+    return (float)0.0f; /* placeholder */
 }
 ```
 
@@ -108,18 +105,13 @@ ______________________________________________________________________
 
 ## 3. Implement
 
-**`linear_to_db`:**
+**`linear_to_db`** (add `#include <math.h>` for `log10f`):
 
 ```c
-void
-linear_to_db(const float complex *x, size_t x_len,
-             float floor, float *out)
+float
+linear_to_db(float x)
 {
-    for (size_t i = 0; i < x_len; i++) {
-        float mag2 = crealf(x[i]) * crealf(x[i]) + cimagf(x[i]) * cimagf(x[i]);
-        float db = (mag2 > 0.0f) ? 10.0f * log10f(mag2) : floor;
-        out[i] = (db > floor) ? db : floor;
-    }
+    return 20.0f * log10f(x > 0.0f ? x : 1e-10f);
 }
 ```
 
@@ -145,18 +137,103 @@ pip install -e .
 ```
 
 ```python
-import numpy as np
-from my_utils import utils
+from my_utils.utils import linear_to_db, clamp
 
-# linear_to_db: allocates and returns a float32 output array
-signal = (np.random.randn(64) + 1j * np.random.randn(64)).astype(np.complex64)
-db = utils.linear_to_db(signal, floor=-80.0)
-print(db.dtype, db.shape)   # float32 (64,)
+# linear_to_db: scalar in, scalar out
+print(linear_to_db(10.0))   # 20.0
+print(linear_to_db(1.0))    # 0.0
 
 # clamp: scalar in, scalar out
-print(utils.clamp(1.5, 0.0, 1.0))   # 1.0
-print(utils.clamp(-0.5, 0.0, 1.0))  # 0.0
+print(clamp(1.5, 0.0, 1.0))    # 1.0
+print(clamp(-0.5, 0.0, 1.0))   # 0.0
 ```
+
+______________________________________________________________________
+
+## 5. Document once, in C — rich stubs and runnable doctests
+
+The sacred header is also the single source of truth for **documentation**. A
+Doxygen `/** ... */` comment on a function's declaration flows straight into
+the generated `.pyi` docstring, and a `@code` block becomes a **runnable
+doctest**. Free functions are an ideal home for doctests — they take plain
+scalars and return plain scalars, so the `>>>` lines read like ordinary
+Python. Add a comment above the `linear_to_db` declaration in
+`native/inc/utils/utils_core.h`:
+
+```c
+/**
+ * @brief Convert linear amplitude to dB (20*log10(x)).
+ * @param x  Linear amplitude (must be > 0).
+ * @return The amplitude expressed in decibels.
+ * @code
+ * >>> from my_utils.utils import linear_to_db
+ * >>> linear_to_db(1.0)
+ * 0.0
+ * >>> linear_to_db(10.0)
+ * 20.0
+ * @endcode
+ */
+float linear_to_db(float x);
+```
+
+`jm apply` re-derives the stub, and `src/my_utils/utils/utils.pyi` now carries
+the full numpy-style docstring — including the `@code` block as an `Examples`
+doctest:
+
+```python
+def linear_to_db(x: float) -> float:
+    """Convert linear amplitude to dB (20*log10(x)).
+
+    Parameters
+    ----------
+    x : float
+        Linear amplitude (must be > 0).
+
+    Returns
+    -------
+    float
+        The amplitude expressed in decibels.
+
+    Examples
+    --------
+    >>> from my_utils.utils import linear_to_db
+    >>> linear_to_db(1.0)
+    0.0
+    >>> linear_to_db(10.0)
+    20.0
+
+    """
+```
+
+That doctest is not decoration: it runs against the *built* extension, so if
+the kernel ever drifts from its documented example the build fails. Pass `-v`
+to watch every `>>>` line execute:
+
+```termynal
+$ python -m doctest -v src/my_utils/utils/utils.pyi
+{d}Trying:{/d}
+    linear_to_db(1.0)
+{d}Expecting:{/d}
+    0.0
+{g}ok{/g}
+{d}Trying:{/d}
+    linear_to_db(10.0)
+{d}Expecting:{/d}
+    20.0
+{g}ok{/g}
+{d}Trying:{/d}
+    clamp(5.0, 0.0, 3.0)
+{d}Expecting:{/d}
+    3.0
+{g}ok{/g}
+{d}...{/d}
+{g}5 passed and 0 failed.{/g}
+{g}Test passed.{/g}
+```
+
+The same treatment applies to the inline `clamp` — the Doxygen sits above its
+`static inline` definition. In CI the whole suite is driven at once with
+`pytest --doctest-glob='*.pyi'`.
 
 ______________________________________________________________________
 
@@ -168,10 +245,11 @@ once created — your implementation is safe across any number of `jm apply`
 runs. With `--inline`, the body lives in the module header as a `static inline`
 — no `.c` file, no link-time symbol, inlined at every call site.
 
-**`--out-type` allocates the output.** The Python wrapper allocates a
-NumPy array of the given element type on each call, passes `*out` to C, and
-returns the array. The C function writes directly into the buffer — no copy.
-The output length equals `len(x) / out_divisor` (default divisor: 1).
+**Document once, in C.** A Doxygen comment on the function declaration is the
+single source of truth for its Python docstring: `@brief`/`@param`/`@return`
+render as numpy-style prose and a `@code` block becomes a runnable doctest.
+`jm apply` re-derives the `.pyi` from the header, and CI executes every `>>>`
+against the built extension via `pytest --doctest-glob='*.pyi'`.
 
 **Functions are module-level, not class methods.** They appear as bare callables
 (`utils.clamp(...)`, not `obj.clamp(...)`). For per-instance behaviour, use

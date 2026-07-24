@@ -14,6 +14,7 @@ Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/jm_function/test.py
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ def _cmd(args, cwd):
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._new import run as jm_new
     from just_makeit._module import run as jm_module
     from just_makeit._object import run as jm_object
@@ -142,6 +144,21 @@ def run(root: Path) -> None:
     # ── 4. Patch stubs with real implementations. ────────────────────────
     _cmd([sys.executable, str(STEPS / "02_patch.py")], cwd=dest)
 
+    # ── 4b. Enrich the header with Doxygen, regenerate the stub. ─────────
+    # The sacred header is the single source of truth for docs: hand-written
+    # @brief/@param/@return/@code comments on each module-level function
+    # become rich numpy-style .pyi docstrings, and a @code block becomes a
+    # runnable doctest. `jm apply` re-derives the glue (.pyi included) from
+    # the edited header. This also exercises `jm apply` correctly preserving
+    # the inline flag — clamp must NOT be re-materialized as a `.c` file.
+    _cmd([sys.executable, str(STEPS / "03_doxygen.py")], cwd=dest)
+    apply_run(dest)
+
+    # apply must leave the inline function inline — no clamp.c on replay.
+    assert not (dest / "native/src/utils/clamp.c").exists(), (
+        "jm apply wrongly materialized clamp.c for an inline function"
+    )
+
     # ── 5. CMake configure + build + CTest. ──────────────────────────────
     _cmd(
         [
@@ -210,6 +227,46 @@ print("jm_function: all Python checks passed")
     assert "class Gain:" in pyi, "utils.pyi missing Gain class"
     assert "linear_to_db" in pyi, "utils.pyi missing linear_to_db"
     assert "clamp" in pyi, "utils.pyi missing clamp"
+
+    # The Doxygen enrichment (step 4b) reached the stub: @param/@return prose
+    # and a @code block on each function rendered as a runnable Examples
+    # doctest.
+    assert "The amplitude expressed in decibels." in pyi, (
+        "linear_to_db @return prose missing from stub"
+    )
+    assert ">>> linear_to_db(10.0)" in pyi and "20.0" in pyi, (
+        "linear_to_db @code doctest missing from stub"
+    )
+    assert "Clamp x to the closed interval [lo, hi]." in pyi, (
+        "clamp @brief missing from stub"
+    )
+    assert ">>> clamp(5.0, 0.0, 3.0)" in pyi, (
+        "clamp @code doctest missing from stub"
+    )
+
+    # ── 8. The header-authored doctests actually run against the built .so ─
+    # This is the whole point: `pytest --doctest-glob='*.pyi'` imports the
+    # compiled extension and executes every `>>>` in the enriched stub. If a
+    # kernel drifts from its documented example, CI fails here.
+    doctest_res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--doctest-glob=*.pyi",
+            "-q",
+            str(Path("src") / "my_utils" / "utils" / "utils.pyi"),
+        ],
+        cwd=dest,
+        env={**os.environ, "PYTHONPATH": str(dest / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert doctest_res.returncode == 0, (
+        "header-authored .pyi doctests failed:\n"
+        f"{doctest_res.stdout}\n{doctest_res.stderr}"
+    )
+    print(doctest_res.stdout.strip().splitlines()[-1])
 
 
 if __name__ == "__main__":

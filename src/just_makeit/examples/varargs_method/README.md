@@ -100,15 +100,33 @@ dict straight to C — no `PyArg_ParseTuple` is generated for you.  The
 binding lives one layer above the pure-C core and can call any public C
 function declared in `filter_core.h`.
 
+### A typed companion, for contrast
+
+`--varargs` buys an open-ended signature, but it costs documentability: the
+binding lives in `filter_configure_core.c` (a `PyObject *` file), so jm has no
+header declaration to attach docs to and the `.pyi` stub stays the bare
+`configure(*args, **kwargs) -> Any`.  Add a plain typed method — declared *in*
+`filter_core.h` — so we have something the header can fully document:
+
+```sh
+cd my_filter
+just-makeit method filter current_gain --return-type double
+```
+
+`current_gain()` reads the gain back. Being header-declared, its `@brief`,
+`@return`, and a `@code` doctest flow straight into the `.pyi` (see step 3).
+
 ---
 
 ## 3. Implement
 
-Two stubs need bodies:
+Three stubs need bodies:
 
 - `filter_step` in `native/inc/filter/filter_core.h` — multiply input by gain.
 - `filter_configure` in `native/src/filter/filter_configure_core.c` — parse
   the `gain=` keyword argument and write it to state.
+- `filter_current_gain` in `native/src/filter/filter_core.c` — return
+  `state->gain`.
 
 ```python
 """Patch filter_step and filter_configure stubs with implementations.
@@ -141,6 +159,27 @@ else:
 configure_c = pathlib.Path("native/src/filter/filter_configure_core.c")
 configure_c.write_text((STEPS / "03_configure.c").read_text())
 print(f"patched {configure_c}")
+
+# -- 3. Implement the typed filter_current_gain reader in filter_core.c --
+core = pathlib.Path("native/src/filter/filter_core.c")
+core_text = core.read_text()
+current_gain_re = re.compile(
+    r"/\* <<IMPLEMENT: current_gain >> \*/\n"
+    r"double\s*\nfilter_current_gain\(filter_state_t \*state\)\n\{.*?\}",
+    re.DOTALL,
+)
+current_gain_impl = (
+    "double\n"
+    "filter_current_gain(filter_state_t *state)\n"
+    "{\n"
+    "    return state->gain;\n"
+    "}"
+)
+if current_gain_re.search(core_text):
+    core.write_text(current_gain_re.sub(current_gain_impl, core_text))
+    print(f"patched {core}")
+else:
+    print("filter_current_gain: already patched or stub changed — skipping")
 ```
 
 `filter_step` — one multiply:
@@ -197,6 +236,98 @@ filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
 The static `kwlist` array controls which keyword names are accepted and
 enables `TypeError` on unknown keywords.
 
+### Document once, in C — rich stubs and a runnable doctest
+
+The sacred header is also the single source of truth for **documentation**. A
+Doxygen `/** ... */` comment on `create()` or a *header-declared* method flows
+straight into the generated `.pyi` docstring, and a `@code` block becomes a
+**runnable doctest**.
+
+This is exactly where the `--varargs` trade-off shows up. `configure()`'s
+binding lives in `filter_configure_core.c` — a `PyObject *` file, not the
+header — so jm has no declaration to attach docs to, and its stub stays the
+bare `configure(*args, **kwargs) -> Any`. The typed `current_gain()`, declared
+in `filter_core.h`, is fully documentable. Add a comment to it — the `@code`
+doctest deliberately drives `configure()` so both faces of the object are
+exercised from one example:
+
+```c
+/**
+ * @brief Return the filter's current gain coefficient.
+ *
+ * The typed, self-documenting companion to the flexible varargs
+ * configure(): configure() writes the gain, current_gain() reads it
+ * back.
+ * @return The gain most recently set by the constructor or configure().
+ * @code
+ * >>> from my_filter import Filter
+ * >>> f = Filter(gain=1.0)
+ * >>> f.configure(gain=6.0)
+ * >>> f.current_gain()
+ * 6.0
+ * @endcode
+ */
+double filter_current_gain(filter_state_t *state);
+```
+
+`just-makeit apply` re-derives the stub, and `src/my_filter/filter.pyi` now
+carries the full numpy-style docstring — including the `@code` block as an
+`Examples` doctest:
+
+```python
+    def current_gain(self) -> float:
+        """Return the filter's current gain coefficient.
+
+        Returns
+        -------
+        float
+            The gain most recently set by the constructor or configure().
+
+        Examples
+        --------
+        >>> from my_filter import Filter
+        >>> f = Filter(gain=1.0)
+        >>> f.configure(gain=6.0)
+        >>> f.current_gain()
+        6.0
+
+        """
+```
+
+That doctest is not decoration: it runs against the *built* extension, so if
+the kernel ever drifts from its documented example the build fails. Pass `-v`
+to watch every `>>>` line execute:
+
+```termynal
+$ python -m doctest -v src/my_filter/filter.pyi
+{d}Trying:{/d}
+    f = Filter(gain=1.0)
+{d}Expecting nothing{/d}
+{g}ok{/g}
+{d}Trying:{/d}
+    f.configure(gain=6.0)
+{d}Expecting nothing{/d}
+{g}ok{/g}
+{d}Trying:{/d}
+    f.current_gain()
+{d}Expecting:{/d}
+    6.0
+{g}ok{/g}
+{d}...{/d}
+{g}Test passed.{/g}
+```
+
+In CI the whole suite is driven at once with
+`pytest --doctest-glob='*.pyi'`.
+
+The enrichment is scripted (it stamps the project's package name into the
+doctest import automatically):
+
+```sh
+python3 .steps/04b_doxygen.py
+just-makeit apply
+```
+
 ---
 
 ## 4. Build and test
@@ -234,6 +365,10 @@ assert f.step(1.0) == 2.0
 # no args: gain unchanged
 f.configure()
 assert f.step(1.0) == 2.0
+
+# current_gain() reads back what configure() set (the typed companion)
+f.configure(gain=6.0)
+assert f.current_gain() == 6.0
 
 print("configure: PASSED")
 ```

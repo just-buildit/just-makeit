@@ -130,6 +130,95 @@ binding fragment `bank_ext_seededacc.c` alongside the parent's
 
 ______________________________________________________________________
 
+## Document once, in C
+
+The sacred header is also the single source of truth for **documentation**. A
+Doxygen `/** ... */` comment on `acc_create()` or a named method flows straight
+into the generated `bank.pyi`, and a `@code` block on a method becomes a
+**runnable doctest**. Document `acc_total`:
+
+```c
+/**
+ * @brief Return the running sum without mutating the accumulator.
+ * @return The sum of every sample stepped so far.
+ * @code
+ * >>> from acc_bank.bank import Acc
+ * >>> a = Acc(sum=0.0)
+ * >>> a.step(1.0)
+ * 1.0
+ * >>> a.step(2.5)
+ * 3.5
+ * >>> a.total()
+ * 3.5
+ * @endcode
+ */
+double acc_total(acc_state_t *state);
+```
+
+`jm apply` re-derives the stub, and `Acc.total` in `bank.pyi` now carries the
+full numpy-style docstring — including the `@code` block as an `Examples`
+doctest:
+
+```python
+    def total(self) -> float:
+        """Return the running sum without mutating the accumulator.
+
+        Returns
+        -------
+        float
+            The sum of every sample stepped so far.
+
+        Examples
+        --------
+        >>> from acc_bank.bank import Acc
+        >>> a = Acc(sum=0.0)
+        >>> a.step(1.0)
+        1.0
+        >>> a.step(2.5)
+        3.5
+        >>> a.total()
+        3.5
+
+        """
+```
+
+That doctest is not decoration: it runs against the *built* extension, so if
+`step()` or `total()` ever drifts from its documented example the build fails.
+Pass `-v` to watch every `>>>` line execute:
+
+```termynal
+$ python -m doctest -v src/acc_bank/bank/bank.pyi
+{d}Trying:{/d}
+    a.step(1.0)
+{d}Expecting:{/d}
+    1.0
+{g}ok{/g}
+{d}Trying:{/d}
+    a.step(2.5)
+{d}Expecting:{/d}
+    3.5
+{g}ok{/g}
+{d}Trying:{/d}
+    a.total()
+{d}Expecting:{/d}
+    3.5
+{g}ok{/g}
+{g}5 passed and 0 failed.{/g}
+{g}Test passed.{/g}
+```
+
+In CI the whole suite is driven at once with `pytest --doctest-glob='*.pyi'`.
+
+**A view is documented differently.** `acc_create()`'s `@brief` becomes the
+parent `Acc` summary, but the view's summary keys off its own `<obj>_create`
+name — and `SeededAcc` shares `acc`, so there is no header to enrich; its
+summary is the generic default. Field-backed property docs (`depth`, `runs`)
+likewise come from the `jm property --doc` value you already passed, not a
+header comment. The header documents the shared C surface; the manifest
+documents what each class adds on top.
+
+______________________________________________________________________
+
 ## The two classes
 
 After a build, one `.so` exports both — same `step()` behaviour, different

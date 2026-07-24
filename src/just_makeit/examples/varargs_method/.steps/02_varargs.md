@@ -45,3 +45,19 @@ Unlike `--param` methods, `--varargs` passes the raw `args` tuple and `kwargs`
 dict straight to C — no `PyArg_ParseTuple` is generated for you.  The
 binding lives one layer above the pure-C core and can call any public C
 function declared in `filter_core.h`.
+
+### A typed companion, for contrast
+
+`--varargs` buys an open-ended signature, but it costs documentability: the
+binding lives in `filter_configure_core.c` (a `PyObject *` file), so jm has no
+header declaration to attach docs to and the `.pyi` stub stays the bare
+`configure(*args, **kwargs) -> Any`.  Add a plain typed method — declared *in*
+`filter_core.h` — so we have something the header can fully document:
+
+```sh
+cd my_filter
+just-makeit method filter current_gain --return-type double
+```
+
+`current_gain()` reads the gain back. Being header-declared, its `@brief`,
+`@return`, and a `@code` doctest flow straight into the `.pyi` (see step 3).

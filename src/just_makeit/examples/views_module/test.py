@@ -27,6 +27,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).parent
+STEPS = HERE / ".steps"
+
 
 def _make_env():
     return {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
@@ -50,6 +53,7 @@ def _patch(path: Path, old: str, new: str) -> None:
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._module import run as module_run
     from just_makeit._new import run as new_run
     from just_makeit._method import run as method_run
@@ -172,6 +176,16 @@ def run(root: Path) -> None:
         "    return state->sum;",
     )
 
+    # ── 3b. Enrich the header with Doxygen, regenerate the stubs ─────────────
+    # The sacred header is the single source of truth for docs: a hand-written
+    # @brief on acc_create() becomes the Acc class summary, and acc_total()'s
+    # @brief/@return/@code block becomes a rich docstring with a RUNNABLE
+    # doctest. `jm apply` re-derives the glue (.pyi included) from the header.
+    # (View gotcha, see 04b_doxygen.py: the view's summary and its field-backed
+    # property docs are NOT header-driven — they come from the manifest.)
+    _cmd([sys.executable, str(STEPS / "04b_doxygen.py")], cwd=dest)
+    apply_run(dest)
+
     # ── 4. Build + C tests ───────────────────────────────────────────────────
     _cmd(["make"], cwd=dest, env=_make_env())
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=dest)
@@ -233,6 +247,46 @@ print("views_module: all checks passed")
     assert "seed: float" in next(
         ln for ln in view_block.splitlines() if "__init__" in ln
     )
+
+    # The Doxygen enrichment (step 3b) reached the stub. The parent's create()
+    # @brief is the Acc class summary, and acc_total()'s @brief/@return/@code
+    # rendered as a runnable Examples doctest.
+    assert "Create an empty accumulator" in pyi, "class @brief missing"
+    assert "Return the running sum without mutating" in pyi, (
+        "total() @brief missing"
+    )
+    assert ">>> a.total()" in pyi and "3.5" in pyi, (
+        "total() @code doctest missing"
+    )
+    # Property docstrings (authored once via `jm property --doc`, the manifest
+    # SSOT for field-backed props) land in the stub for both classes.
+    assert '"""parent depth"""' in pyi, "parent property doc missing"
+    assert '"""seed depth"""' in pyi, "view override property doc missing"
+    assert '"""reseed count"""' in pyi, "view-only property doc missing"
+
+    # ── 7. The header-authored doctest runs against the built .so ────────────
+    # `pytest --doctest-glob='*.pyi'` imports the compiled extension and
+    # executes every `>>>` in the enriched stub. If step() or total() ever
+    # drifts from its documented example, CI fails here.
+    doctest_res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--doctest-glob=*.pyi",
+            "-q",
+            str(Path("src") / "acc_bank" / "bank" / "bank.pyi"),
+        ],
+        cwd=dest,
+        env={**_make_env(), "PYTHONPATH": str(dest / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert doctest_res.returncode == 0, (
+        "header-authored .pyi doctests failed:\n"
+        f"{doctest_res.stdout}\n{doctest_res.stderr}"
+    )
+    print(doctest_res.stdout.strip().splitlines()[-1])
 
 
 if __name__ == "__main__":
