@@ -64,17 +64,50 @@ def _cmd(args, cwd, env=None):
 # are the create/close lifecycle, `_push`/`_pop` the array methods, `_stats`
 # fills a live struct the decoded getters read, and `_get_gain`/`_set_gain`
 # back the writable `gain` property.
+# The vendored header carries hand-written Doxygen. jm parses it and flows the
+# prose into `ring.pyi`: `ringbuf_open`'s @brief becomes the `Ring` class
+# summary, a method fn's @brief/@param/@return (plus its @code block, a runnable
+# doctest) documents that method, and a single-field getter's @brief documents
+# its property (gh-374). This is "Document once, in C" for the handle path.
 _RINGBUF_H = """\
 #ifndef RINGBUF_H
 #define RINGBUF_H
 #include <stddef.h>
 typedef struct ringbuf ringbuf_t;
 typedef struct { size_t used; } ringbuf_stats_t;
+/**
+ * @brief Open a fixed-capacity FIFO ring buffer of 32-bit floats.
+ *
+ * The buffer holds up to `capacity` samples; a push past capacity drops the
+ * overflow and reports how many were accepted.
+ *
+ * @param capacity  Maximum number of samples buffered at once.
+ */
 ringbuf_t *ringbuf_open(size_t capacity);
 void ringbuf_close(ringbuf_t *r);
+/**
+ * @brief Append samples to the buffer, scaling each by the current gain.
+ * @param x  Samples to append (oldest-to-newest).
+ * @return The number of samples accepted; fewer than requested once full.
+ * @code
+ * >>> import numpy as np
+ * >>> from composites.ring import Ring
+ * >>> r = Ring(capacity=4)
+ * >>> r.push(np.array([1, 2, 3, 4, 5, 6], np.float32))
+ * 4
+ * @endcode
+ */
 size_t ringbuf_push(ringbuf_t *r, const float *x, size_t n);
+/**
+ * @brief Remove and return the oldest buffered samples, FIFO order.
+ * @param n  Maximum number of samples to remove.
+ * @return A new array of the popped samples (up to `n`, fewer if drained).
+ */
 size_t ringbuf_pop(ringbuf_t *r, float *out, size_t n);
 void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
+/**
+ * @brief The gain applied to every pushed sample.
+ */
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
 #endif
@@ -274,6 +307,20 @@ def run(root: Path) -> None:
     assert "ringbuf_core" in ring_cmake  # depends_on link = true
     pyi = (proj / "src/composites/ring.pyi").read_text("utf-8")
     assert "class Ring" in pyi and "@gain.setter" in pyi  # writable property
+
+    # 4b. The vendored header's Doxygen flowed into ring.pyi (gh-374): the
+    #     class summary from ringbuf_open's @brief, a full numpy method doc
+    #     (@brief/@param/@return + a runnable @code doctest) on push from
+    #     ringbuf_push, and the single-field gain property's @brief from
+    #     ringbuf_get_gain. Multi-field getter fields (used/fill_fraction) stay
+    #     manifest-synthesized — one struct @brief cannot name each field.
+    assert "Open a fixed-capacity FIFO ring buffer" in pyi, "class @brief"
+    assert "Append samples to the buffer" in pyi, "push @brief"
+    assert "The number of samples accepted" in pyi, "push @return"
+    assert ">>> r.push(np.array([1, 2, 3, 4, 5, 6], np.float32))" in pyi, (
+        "push @code doctest missing"
+    )
+    assert "The gain applied to every pushed sample." in pyi, "gain @brief"
     top = (proj / "CMakeLists.txt").read_text("utf-8")
     assert "add_subdirectory(native/src/ringbuf)" in top  # c_dep wired
     assert "add_subdirectory(native/src/ring)" in top  # handle module wired
@@ -297,6 +344,31 @@ def run(root: Path) -> None:
     # 6. Exercise the typed Ring class through the built .so.
     env = {**os.environ, "PYTHONPATH": str(proj / "src")}
     _cmd([sys.executable, str(HERE / "smoke.py")], cwd=proj, env=env)
+
+    # 7. The header-authored doctest runs against the BUILT extension: pytest
+    #    imports ring.so and executes every `>>>` in ring.pyi. If push() ever
+    #    drifts from its documented example the build fails here — the same gate
+    #    the object/function examples use, now covering the handle path (gh-374).
+    doctest_res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--doctest-glob=*.pyi",
+            "-q",
+            str(Path("src") / "composites" / "ring.pyi"),
+        ],
+        cwd=proj,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if doctest_res.returncode != 0:
+        raise AssertionError(
+            "header-authored ring.pyi doctest failed:\n"
+            f"{doctest_res.stdout}\n{doctest_res.stderr}"
+        )
 
 
 if __name__ == "__main__":
