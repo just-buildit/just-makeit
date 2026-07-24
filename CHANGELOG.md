@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## [0.33.12] — 2026-07-24
+
+### Added
+
+- **Handle-module stubs enrich from their backing header (closes the remaining
+    gh-374 gap).** A `kind = "handle"` module synthesized its `.pyi` entirely
+    from the manifest — the class summary was a hardcoded `"<Type> handle."`,
+    methods `"push(x) -> int."` — so a documented backing header reached the C
+    but never the Python stub. The vendored backing header's Doxygen now flows
+    through the same pipeline objects use: `create_fn`'s `@brief`/`@param`
+    become the class summary and constructor `Parameters`; a method's
+    `@brief`/`@param`/`@return` become a full numpy docstring and its `@code` a
+    runnable doctest; a single-field getter's `@brief` becomes its property
+    docstring. Reuses `_stubs._numpy_doc_lines` rather than growing another
+    peer docstring renderer. With no doc blocks present the output is
+    byte-identical to the old stub.
+
+### Fixed
+
+- **Standalone `.pyi` docstrings now enrich from the C header.** Only *module*
+    objects picked up header Doxygen; a standalone object silently kept the
+    generic template docstring. The standalone and module generators were two
+    peer implementations of the same thing and had drifted. Both now share one
+    `class_docstring_block()` builder, so a standalone object's class summary,
+    constructor `Parameters`, method docstrings, and property docstrings all
+    derive from the header.
+- **`jm bind` no longer leaks `<<package>>` placeholders into the generated
+    `.pyi`.** The bind path rendered its stub before the real package name was
+    known, emitting the literal placeholder token into committed output.
+- **`jm apply` preserves `inline =` when replaying functions.** A function
+    declared inline lost the flag on replay, so `jm apply` regenerated it as a
+    non-inline function and produced a manifest-drift diff.
+
+### Changed
+
+- **Example gallery curated from 26 to 20 showcase projects.** Removed six
+    examples that duplicated coverage or demonstrated superseded patterns:
+    `dsp_toolkit`, `jm_app`, `opaque_counter`, `pytest_style`,
+    `sliding_correlator`, and `stream_chunker`. The remaining 20 all build,
+    test, and now document themselves from their C headers.
+
+### Docs
+
+- **New "Enriching stubs from your C header" guide.** Documents the full
+    header-Doxygen to `.pyi` pipeline: which tags jm reads on `create()` versus
+    on a method, why the class `Examples` block is always jm-synthesized (a
+    `@code` on `create()` is not rendered), and the three reasons enrichment
+    appears not to "take".
+- **The 1048-line Workflow page is split into a 10-page Workflows section**
+    (standalone, package, module, edit lifecycle, layout and API, type stubs,
+    enriching stubs, testing, distribution) with a routing index.
+- **All 20 gallery examples now document themselves from C.** Seven carry
+    runnable header-derived doctests (`accumulator`, `array_processing`,
+    `jm_function`, `varargs_method`, `views_module`, `composites`, `iqfile`);
+    the rest carry header-derived class summaries.
+- Corrected `developers/docstring-derivation.md`, whose before/after example
+    claimed `create()`'s `@return`, extended description, and `@code` reached
+    the class docstring. They do not — the doc now matches verified output.
+
 ## [0.33.11] — 2026-07-23
 
 ### Added
