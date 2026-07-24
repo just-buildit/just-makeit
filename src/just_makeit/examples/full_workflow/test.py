@@ -22,6 +22,7 @@ Also runnable directly: python3 examples/full_workflow/test.py
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,36 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).parent
+
+# Hand-authored one-sentence class summaries. The sacred `<obj>_core.h` header
+# is the single source of truth for docs: `jm` turns the `@brief` on
+# `<obj>_create()` into the generated class's docstring summary (state `@param`
+# entries stay generic and need no enrichment). This practices exactly what the
+# README's "Doxygen (C API)" section preaches — add `/** @brief ... */` and it
+# flows straight through to the rendered docs. A follow-up `jm apply`
+# regenerates the `.pyi` from these edited comments.
+CLASS_SUMMARIES = {
+    "gain": "Scale each input sample by a constant gain factor.",
+    "ema": "Exponentially weighted moving average — a one-pole "
+    "low-pass smoother.",
+}
+
+
+def _enrich_headers(proj: Path) -> None:
+    """Replace jm's scaffold `@brief` on each `<obj>_create` with a real one."""
+    for obj, summary in CLASS_SUMMARIES.items():
+        header = proj / "native" / "inc" / obj / f"{obj}_core.h"
+        text = header.read_text(encoding="utf-8")
+        scaffold_re = re.compile(
+            rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
+            rf"(?={obj}_state_t \*{obj}_create)",
+            re.DOTALL,
+        )
+        text, n = scaffold_re.subn(
+            f"/**\n * @brief {summary}\n */\n", text, count=1
+        )
+        assert n == 1, f"{obj}_create scaffold brief not found"
+        header.write_text(text, encoding="utf-8")
 
 
 def _cmd(args, cwd, **kw):
@@ -181,6 +212,7 @@ def _try_docs(proj: Path) -> None:
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._new import run as jm_new
     from just_makeit._init import run as jm_init
 
@@ -278,6 +310,19 @@ p.write_text(src)
         ],
         cwd=proj,
     )
+
+    # 4b. Enrich the sacred headers with real Doxygen, then regenerate the
+    # glue. The hand-written `@brief` on each `<obj>_create` becomes the
+    # generated class's docstring summary; `jm apply` re-derives the `.pyi`
+    # (and other glue) from the edited comments without touching the `.c`
+    # implementations patched above.
+    _enrich_headers(proj)
+    apply_run(proj)
+
+    gain_pyi = (proj / "src" / "my_dsp" / "gain.pyi").read_text()
+    ema_pyi = (proj / "src" / "my_dsp" / "ema.pyi").read_text()
+    assert CLASS_SUMMARIES["gain"] in gain_pyi, "gain class @brief missing"
+    assert CLASS_SUMMARIES["ema"] in ema_pyi, "ema class @brief missing"
 
     # 5. Build
     _cmake_build(proj)

@@ -219,6 +219,12 @@ delay states; the output is narrowed back to `float` on return.
 > **Note:** both `fir_steps()` and `biquad_steps()` in their respective
 > `_core.c` files loop over `_step()` automatically — no changes needed there.
 
+While the headers are open, the `@brief` on each object's `create()` is the
+single source of truth for that class's docstring: replace the scaffold
+`@brief Create a fir instance.` with a real one-line summary and `jm apply`
+regenerates the module `.pyi` with it (instead of the generic `Fir component.`
+fallback).
+
 ---
 
 ## 5. Build and test

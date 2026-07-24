@@ -262,7 +262,11 @@ renders JavaDoc-style comments, and writes a full HTML site to
 - Optimise output for C (no class hierarchy noise)
 
 Add `/** @brief ... */` comments above your functions and structs and they
-appear automatically in the rendered output.
+appear automatically in the rendered output. This example already does exactly
+that: the `@brief` on each `<obj>_create()` in `native/inc/<obj>/<obj>_core.h`
+is a real one-sentence class summary (`gain`, `ema`), which `jm apply` also
+flows through into the generated Python docstrings — so the same comment feeds
+both the Doxygen C site and the Zensical Python pages.
 
 ### Zensical + mkdocstrings (Python API)
 

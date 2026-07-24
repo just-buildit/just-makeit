@@ -46,6 +46,7 @@ def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
     from just_makeit._app import run as jm_app
+    from just_makeit._apply import run as apply_run
     from just_makeit import _config as C
 
     proj = root / "gaintool"
@@ -83,6 +84,32 @@ def run(root: Path) -> None:
     )
     assert "add_executable(gaintool" in cmake and "gain_core" in cmake
     assert "gaintool.cli:main" in pyproject
+
+    # ── 3b. Enrich the sacred header so the .pyi class docstring reads as a
+    #        real sentence, not the generic "<Type> component." fallback ──
+    # The header is the single source of truth for docs: jm turns the create()
+    # @brief into the class summary. We replace only that one line (the --gain
+    # ctor param keeps its generic scaffold doc), then `jm apply` re-derives
+    # the .pyi from the edited header.
+    class_summary = (
+        "Scalar gain stage that multiplies each float32 sample by a "
+        "constant factor, exposed three ways: a C binary, a Python CLI, "
+        "and a Python module."
+    )
+    header = proj / "native" / "inc" / "gain" / "gain_core.h"
+    htext = header.read_text()
+    scaffold = " * @brief Create a gain instance."
+    assert scaffold in htext, "scaffold create @brief not found in header"
+    header.write_text(htext.replace(scaffold, f" * @brief {class_summary}", 1))
+    apply_run(proj)
+
+    # The enriched summary reached the regenerated stub (not the fallback).
+    pyi = (proj / "src" / "gaintool" / "gain.pyi").read_text()
+    assert "class Gain:" in pyi
+    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    assert "Gain component." not in pyi, (
+        "generic fallback summary still present"
+    )
 
     # ── 4. Build the shared core + C binary + Python extension; ctest ────
     _cmd(

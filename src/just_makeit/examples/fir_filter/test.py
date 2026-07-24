@@ -125,6 +125,7 @@ def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
     from just_makeit._add import run as jm_add
     from just_makeit._perf import run as jm_perf
+    from just_makeit._apply import run as apply_run
 
     # 1. Scaffold
     jm_new(
@@ -186,12 +187,29 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
+    # 5b. Enrich the header with a real class summary, then regenerate the
+    #     stub. The sacred header is the single source of truth for docs: the
+    #     hand-written @brief on fir_filter_create() becomes the .pyi class
+    #     docstring summary. `jm apply` re-derives the glue (.pyi included)
+    #     from the edited header without touching the hand-patched kernel.
+    _cmd([sys.executable, str(STEPS / "08_doxygen.py")], cwd=proj)
+    apply_run(proj)
+
     # 6. Verify type stub
     pyi = (proj / "src" / "my_fir" / "fir_filter.pyi").read_text()
     assert "class FirFilter:" in pyi
     assert "def step(self, x: complex) -> complex:" in pyi
     assert "def steps(self, x: NDArray[np.complex64]" in pyi
     assert "n_taps" in pyi
+
+    # The header enrichment (step 5b) reached the class docstring: the real
+    # @brief now leads the summary, not the generic "FirFilter component."
+    assert "A 16-tap real-coefficient FIR filter" in pyi, (
+        "enriched class summary missing from .pyi"
+    )
+    assert "FirFilter component." not in pyi, (
+        "generic fallback summary still present — enrichment did not land"
+    )
 
     # 7. Install smoke: cmake --install + find_package consumer + pkg-config
     _install_smoke(proj)
