@@ -141,3 +141,59 @@ The patch scripts automate these edits:
 python3 .steps/04_patch_f32.py
 python3 .steps/04_patch_cf64.py
 ```
+
+### Document once, in C — rich stubs and runnable doctests
+
+The sacred header is also the single source of truth for **documentation**. A
+Doxygen `/** ... */` comment on `create()` or a named method flows straight
+into the generated `.pyi` docstring, and a `@code` block on a method becomes a
+**runnable doctest**. Add a comment to `acc_f32_get`:
+
+```c
+/**
+ * @brief Return the current accumulated sum.
+ * @return The running sum of every sample added so far.
+ * @code
+ * >>> from my_acc.accumulator import AccF32
+ * >>> a = AccF32()
+ * >>> a.step(1.0); a.step(2.0); a.step(3.0)
+ * >>> a.get()
+ * 6.0
+ * @endcode
+ */
+float acc_f32_get(acc_f32_state_t *state);
+```
+
+`jm apply` re-derives the stub, and `src/my_acc/accumulator/accumulator.pyi`
+now carries the full numpy-style docstring — including the `@code` block as an
+`Examples` doctest:
+
+```python
+    def get(self) -> float:
+        """Return the current accumulated sum.
+
+        Returns
+        -------
+        float
+            The running sum of every sample added so far.
+
+        Examples
+        --------
+        >>> from my_acc.accumulator import AccF32
+        >>> a = AccF32()
+        >>> a.step(1.0); a.step(2.0); a.step(3.0)
+        >>> a.get()
+        6.0
+
+        """
+```
+
+That doctest is not decoration: CI runs
+`pytest --doctest-glob='*.pyi'` against the *built* extension, so if the
+kernel ever drifts from its documented example the build fails. The enrichment
+for both types is scripted:
+
+```sh
+python3 .steps/04b_doxygen.py
+just-makeit apply
+```
