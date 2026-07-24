@@ -244,7 +244,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-306: a handle module emits its typed-class binding / CMake / .pyi
         # directly from the manifest (no object-group scaffold).
         if C.is_handle_module(cfg, mod):
-            _handle.materialize(cfg, temp_root, mod)
+            _handle.materialize(cfg, temp_root, mod, project_root=project_root)
             continue
         # gh-523: `package` must reach the temp scaffold *at module-creation
         # time* — it decides where every Python artifact is written, so the
@@ -564,6 +564,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 ],
                 return_type=fn.get("return_type", "void"),
                 impl_body=f_impl,
+                # An inline function lives as a `static inline` body in the
+                # module header with no `.c` file. Without replaying the flag
+                # the replay treats it as a regular function and materializes
+                # a `<name>.c` that redefines the header body — a double
+                # definition the linker rejects. Peer to out_type/enum/default
+                # below: the replay must preserve every shape-bearing key.
+                inline=bool(fn.get("inline")),
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),

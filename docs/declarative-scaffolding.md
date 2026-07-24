@@ -837,4 +837,4 @@ ______________________________________________________________________
 
 - [developers/declarative-scaffolding.md](developers/declarative-scaffolding.md) — the design doc behind this feature
 - [`jm apply`, `jm regenerate`, and `jm remove` reference](commands/extend.md)
-- [Workflow](workflow.md) — the imperative CLI flow these commands sit alongside
+- [Workflows](workflows/index.md) — the imperative CLI flow these commands sit alongside

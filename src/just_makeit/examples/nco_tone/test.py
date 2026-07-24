@@ -20,6 +20,7 @@ Also runnable directly: python3 examples/nco_tone/test.py [--doppler-prefix PATH
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -256,18 +257,51 @@ def _patch_step(core_h: Path) -> None:
     core_h.write_text(text.replace(_STEP_OLD, _STEP_NEW), encoding="utf-8")
 
 
-def run(root: Path, doppler_prefix: str | None = None) -> None:
-    if doppler_prefix is None:
-        doppler_prefix = _find_doppler_prefix()
-    if doppler_prefix is None:
-        print(
-            "nco_tone: SKIP — doppler not found (pass --doppler-prefix PATH)"
-        )
-        return
+# Hand-authored Doxygen class summary. jm parses the create()'s @brief from the
+# sacred header and uses it verbatim as the generated .pyi class-docstring
+# summary; without enrichment it falls back to the generic "Tone component."
+# (jm filters its own scaffold @brief out via _is_scaffold_brief). A follow-up
+# `jm apply` re-derives the .pyi from the edited header.
+_CLASS_SUMMARY = (
+    "Create a numerically-controlled oscillator (NCO) that generates a "
+    "complex-exponential tone at a fixed normalized frequency."
+)
 
+
+def _enrich_class_summary(core_h: Path) -> None:
+    """Replace jm's scaffold create() @brief with a real class summary.
+
+    Mirrors the accumulator example's ``.steps/04b_doxygen.py`` create-brief
+    step: the whole ``/** ... */`` block above ``tone_state_t *tone_create``
+    collapses to a single ``@brief`` sentence. Idempotent — a second call is a
+    no-op once the summary is present."""
+    text = core_h.read_text(encoding="utf-8")
+    if _CLASS_SUMMARY in text:
+        return  # already enriched
+    scaffold_re = re.compile(
+        r"/\*\*\n \* @brief Create a tone instance\..*?"
+        r"(?=tone_state_t \*tone_create)",
+        re.DOTALL,
+    )
+    new_create = f"/**\n * @brief {_CLASS_SUMMARY}\n */\n"
+    text, n = scaffold_re.subn(new_create, text, count=1)
+    if n != 1:
+        raise AssertionError(
+            f"tone_create scaffold @brief not found in {core_h}"
+        )
+    core_h.write_text(text, encoding="utf-8")
+
+
+def run(root: Path, doppler_prefix: str | None = None) -> None:
     from just_makeit import _config as C
     from just_makeit._apply import run as jm_apply
     from just_makeit._new import run as jm_new
+
+    # NOTE: scaffolding + the Doxygen-enrichment check below need no doppler —
+    # they only generate and parse text. The doppler-dependent build is
+    # deferred until step 8, so the .pyi class-summary assertion (step 7b)
+    # still runs even when the doppler tarball is unavailable and the build
+    # skips. Do NOT reinstate an early doppler skip here.
 
     # 1. Empty project.
     proj = root / "nco_tone_demo"
@@ -321,6 +355,33 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
         )
         core_h.write_text(h_text, encoding="utf-8")
     _patch_step(core_h)
+
+    # 7b. Enrich the header with a hand-authored Doxygen class summary and
+    # regenerate the .pyi. This runs BEFORE the doppler-dependent build, so the
+    # class-docstring assertion below is exercised on every CI leg regardless of
+    # whether the tarball download (step 8) succeeds. `jm apply` re-derives the
+    # .pyi from the edited header; create()'s @brief becomes the class summary.
+    _enrich_class_summary(core_h)
+    jm_apply(proj)
+    pyi = (proj / "src" / "nco_tone_demo" / "tone.pyi").read_text(
+        encoding="utf-8"
+    )
+    assert _CLASS_SUMMARY in pyi, (
+        "enriched class summary missing from tone.pyi:\n" + pyi
+    )
+    assert "Tone component." not in pyi, (
+        "generic scaffold summary still present in tone.pyi"
+    )
+
+    # From here on we need a real doppler install to configure/build/link.
+    if doppler_prefix is None:
+        doppler_prefix = _find_doppler_prefix()
+    if doppler_prefix is None:
+        print(
+            "nco_tone: enrichment verified; SKIP build — doppler not found "
+            "(pass --doppler-prefix PATH)"
+        )
+        return
 
     # 8. cmake configure + build + ctest.
     # cmake doesn't search lib64/cmake on all platforms, so resolve

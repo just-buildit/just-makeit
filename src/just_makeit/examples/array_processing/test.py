@@ -12,17 +12,19 @@ Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/array_processing/test.py
 """
 
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).parent
+STEPS = HERE / ".steps"
 
 
-def _cmd(args, cwd):
+def _cmd(args, cwd, **kw):
     r = subprocess.run(
-        args, cwd=cwd, capture_output=True, text=True, timeout=600
+        args, cwd=cwd, capture_output=True, text=True, timeout=600, **kw
     )
     if r.returncode != 0:
         raise AssertionError(
@@ -34,8 +36,9 @@ def _cmd(args, cwd):
 
 
 def run(root: Path) -> None:
-    from just_makeit._new import run as jm_new
+    from just_makeit._apply import run as apply_run
     from just_makeit._method import run as jm_method
+    from just_makeit._new import run as jm_new
 
     # ── Pattern 1 & 2: EMA object (steps() auto-generated; method for uint32) ──
 
@@ -64,6 +67,14 @@ def run(root: Path) -> None:
         multi_output=[],
     )
 
+    # Implement quantize + enrich the sacred header with Doxygen, then let
+    # `jm apply` re-derive the glue (.pyi included). The hand-written
+    # @brief/@param/@return/@code comments on ema_create() and ema_quantize()
+    # become a rich numpy-style class docstring and a runnable doctest that CI
+    # executes against the built extension.
+    _cmd([sys.executable, str(STEPS / "06_doxygen.py")], cwd=proj_ema)
+    apply_run(proj_ema)
+
     _cmd(
         [
             "cmake",
@@ -78,6 +89,44 @@ def run(root: Path) -> None:
     )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj_ema)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_ema)
+
+    # The Doxygen enrichment reached the stub: class summary from create()'s
+    # @brief, method prose from @brief/@param/@return, and a @code block on
+    # quantize() rendered as a runnable Examples doctest.
+    ema_pyi_text = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+    assert "Exponential moving average filter" in ema_pyi_text, (
+        "class @brief missing from ema.pyi"
+    )
+    assert (
+        "Quantize one sample to an unsigned integer code." in ema_pyi_text
+    ), "quantize @brief missing from ema.pyi"
+    assert (
+        ">>> e.quantize(3.4)" in ema_pyi_text
+        and ">>> e.quantize(3.6)" in ema_pyi_text
+    ), "quantize() @code doctest missing from ema.pyi"
+
+    # The header-authored doctest actually runs against the built .so:
+    # `pytest --doctest-glob='*.pyi'` imports the compiled extension and
+    # executes every `>>>` in the enriched stub. If quantize ever drifts from
+    # its documented example, CI fails here.
+    doctest_res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--doctest-glob=*.pyi",
+            "-q",
+            str(Path("src") / "my_arrays" / "ema.pyi"),
+        ],
+        cwd=proj_ema,
+        env={**os.environ, "PYTHONPATH": str(proj_ema / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert doctest_res.returncode == 0, (
+        "header-authored .pyi doctests failed:\n"
+        f"{doctest_res.stdout}\n{doctest_res.stderr}"
+    )
 
     # ── Patterns 3 & 4: hbdecim object with --variable-output ─────────────────
 

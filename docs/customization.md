@@ -161,7 +161,7 @@ just-makeit object bpf \
 
 Adds a `bpf/` object directory, updates `CMakeLists.txt`, registers the
 object in `just-makeit.toml`, and adds the Python type stub and test.
-See the [Workflow](workflow.md) page for the full multi-object layout.
+See the [Multi-extension package](workflows/package.md) page for the full multi-object layout.
 
 ______________________________________________________________________
 

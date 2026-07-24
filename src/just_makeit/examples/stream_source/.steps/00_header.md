@@ -22,6 +22,10 @@ This example builds a free-running ramp oscillator, marks it streamable, and
 walks through everything the generator gives you: `stream(block)`, the
 `count` cap, the `on_block` hook, and `__iter__`.
 
+The generated `Ramp` class also carries a real one-sentence summary rather
+than the generic `Ramp component.` fallback — jm lifts it straight from the
+`@brief` you write above `ramp_create` in the sacred `ramp_core.h` header.
+
 ## TL;DR — see it work first
 
 ```sh

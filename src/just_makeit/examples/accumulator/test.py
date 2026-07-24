@@ -33,6 +33,7 @@ def _cmd(args, cwd, **kw):
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._method import run as method_run
     from just_makeit._module import run as module_run
     from just_makeit._new import run as new_run
@@ -188,6 +189,15 @@ def run(root: Path) -> None:
     ).read_text()
     assert "state->acc += x;" in h_cf64, "acc_cf64_step not patched"
 
+    # ── 5b. Enrich the headers with Doxygen, regenerate the stubs ─────────────
+    # The sacred header is the single source of truth for docs: hand-written
+    # @brief/@param/@return/@code comments on create() and the named methods
+    # become rich numpy-style .pyi docstrings, and a method's @code block
+    # becomes a runnable doctest. `jm apply` re-derives the glue (.pyi included)
+    # from the edited headers.
+    _cmd([sys.executable, str(STEPS / "04b_doxygen.py")], cwd=dest)
+    apply_run(dest)
+
     # ── 6. Build ──────────────────────────────────────────────────────────────
     _cmd(["make"], cwd=dest, env=_make_env())
 
@@ -301,6 +311,40 @@ print("accumulator: all checks passed")
     assert "def steps(self" in pyi
     assert "def get(self" in pyi
     assert "def dump(self" in pyi
+
+    # The Doxygen enrichment (step 5b) reached the stub: class summaries from
+    # create()'s @brief, method prose from @brief/@param/@return, and a @code
+    # block on get()/madd() rendered as a runnable Examples doctest.
+    assert "Create a 32-bit float accumulator" in pyi, "class @brief missing"
+    assert "Return the current accumulated sum." in pyi, (
+        "method @brief missing"
+    )
+    assert ">>> a.get()" in pyi and "6.0" in pyi, "get() @code doctest missing"
+    assert "(4+6j)" in pyi, "AccCf64 get() @code doctest missing"
+
+    # ── 10. The header-authored doctests actually run against the built .so ────
+    # This is the whole point: `pytest --doctest-glob='*.pyi'` imports the
+    # compiled extension and executes every `>>>` in the enriched stub. If a
+    # kernel drifts from its documented example, CI fails here.
+    doctest_res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--doctest-glob=*.pyi",
+            "-q",
+            str(Path("src") / "my_acc" / "accumulator" / "accumulator.pyi"),
+        ],
+        cwd=dest,
+        env={**_make_env(), "PYTHONPATH": str(dest / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert doctest_res.returncode == 0, (
+        "header-authored .pyi doctests failed:\n"
+        f"{doctest_res.stdout}\n{doctest_res.stderr}"
+    )
+    print(doctest_res.stdout.strip().splitlines()[-1])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,17 @@ site_dir: site
 nav:
   - Home: index.md
   - Getting started:
-    - Workflow: workflow.md
+    - Workflows:
+      - Overview: workflows/index.md
+      - Standalone extension: workflows/standalone.md
+      - Multi-extension package: workflows/package.md
+      - Grouped module types: workflows/module.md
+      - Edit lifecycle: workflows/edit-lifecycle.md
+      - Project layout & API: workflows/layout-and-api.md
+      - Type stubs & doctests: workflows/type-stubs.md
+      - Enriching stubs: workflows/enriching-stubs.md
+      - Testing & benchmarking: workflows/testing.md
+      - Distribution & config: workflows/distribution.md
     - Decision tree: decision-tree.md
     - Feature tour: feature-tour.md
   - Guides:

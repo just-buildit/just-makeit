@@ -17,4 +17,8 @@ assert f.step(1.0) == 2.0
 f.configure()
 assert f.step(1.0) == 2.0
 
+# current_gain() reads back what configure() set (the typed companion)
+f.configure(gain=6.0)
+assert f.current_gain() == 6.0
+
 print("configure: PASSED")

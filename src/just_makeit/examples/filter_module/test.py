@@ -39,6 +39,7 @@ def _cmd(args, cwd, **kw):
 
 
 def run(root: Path) -> None:
+    from just_makeit._apply import run as apply_run
     from just_makeit._module import run as module_run
     from just_makeit._new import run as new_run
     from just_makeit._object import run as object_run
@@ -130,6 +131,14 @@ def run(root: Path) -> None:
     _cmd([sys.executable, str(STEPS / "04_patch_fir.py")], cwd=dest)
     _cmd([sys.executable, str(STEPS / "04_patch_biquad.py")], cwd=dest)
 
+    # ── 4b. Enrich the headers with a class summary, regenerate the stubs ─────
+    # The sacred header is the single source of truth for docs: a hand-written
+    # @brief on each object's create() becomes that class's summary in the
+    # shared module .pyi (instead of the generic "<Type> component." fallback).
+    # `jm apply` re-derives the glue (.pyi included) from the edited headers.
+    _cmd([sys.executable, str(STEPS / "04b_doxygen.py")], cwd=dest)
+    apply_run(dest)
+
     # ── 5. Build ──────────────────────────────────────────────────────────────
     _cmd(["make"], cwd=dest, env=_make_env())
 
@@ -216,6 +225,15 @@ print("filter_module: all checks passed")
     assert "class Biquad:" in pyi
     assert "import numpy as np" in pyi
     assert "def steps(self, x: NDArray" in pyi
+
+    # The header enrichment (step 4b) reached the shared module stub: each
+    # class summary comes from its create()'s @brief, not the generic fallback.
+    assert "windowed-sinc FIR filter" in pyi, "Fir class @brief missing"
+    assert "RBJ biquad" in pyi, "Biquad class @brief missing"
+    assert "Fir component." not in pyi, "Fir fell back to generic summary"
+    assert "Biquad component." not in pyi, (
+        "Biquad fell back to generic summary"
+    )
 
 
 if __name__ == "__main__":

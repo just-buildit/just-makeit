@@ -29,6 +29,7 @@ guard*; everything else calls the reused helpers.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import _capsule
 from . import _coerce
@@ -36,6 +37,9 @@ from . import _composer
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
+
+if TYPE_CHECKING:
+    from ._docstring import DoxyBlock
 
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
 
@@ -1454,20 +1458,55 @@ def _pyi_arg_ann(a: dict) -> str:
     return _pyi_scalar(a.get("type", "int"))
 
 
+def _method_block(
+    doc_blocks: dict[str, str], fn: str | None, name: str | None
+) -> DoxyBlock | None:
+    """Parse the Doxygen block for C function *fn* out of *doc_blocks*.
+
+    *doc_blocks* maps a C function name to its raw ``/** ... */`` comment (as
+    produced by :func:`_docstring.extract_doc_blocks` over the vendored backing
+    header). Returns a :class:`_docstring.DoxyBlock`, or ``None`` when there is
+    no block or the block is only jm's trivial scaffold brief. *name* lets the
+    parser suppress that trivial-brief case (gh-374)."""
+    raw = doc_blocks.get(fn) if fn else None
+    if not raw:
+        return None
+    from ._docstring import parse_doxygen_block
+
+    return parse_doxygen_block(raw, name)
+
+
 def _pyi_class_docstring(
     tname: str,
-    create_args: list,
+    create_args: list[dict[str, object]],
     enum_reg: dict[str, list[str]],
+    create_block: DoxyBlock | None = None,
 ) -> list[str]:
     """Indented lines (4-space) for the class-level numpy-style docstring.
 
     Emits a ``Parameters`` block from *create_args* with default values and
     enum choices surfaced — the content hidden by ``= ...`` in the signature.
-    Without header-parsed prose, enum choice lists and default values are the
-    only content we can synthesize from the manifest (gh-374)."""
+    When *create_block* (the parsed Doxygen for the ``create_fn``) is present,
+    its ``@brief`` becomes the class summary, its body paragraphs the extended
+    description, and its ``@param`` descriptions annotate the matching
+    constructor parameters — so the vendored backing header documents the class
+    (gh-374). Absent a block, the summary falls back to ``"<Type> handle."`` and
+    the output is byte-identical to the pre-enrichment stub."""
+    from ._docstring import _wrap, group_paragraphs
+
+    summary = f"{tname} handle."
+    body: list[str] = []
+    if create_block is not None and create_block.brief:
+        summary = create_block.brief
+        body = group_paragraphs(create_block.body)
+    if not create_args and not body:
+        return [f'    """{summary}"""']
+    lines: list[str] = [f'    """{summary}', ""]
+    for para in body:  # extended description before the Parameters block
+        lines += [f"    {w}" for w in _wrap(para, 72)] + [""]
     if not create_args:
-        return [f'    """{tname} handle."""']
-    lines: list[str] = [f'    """{tname} handle.', ""]
+        lines.append('    """')
+        return lines
     lines += ["    Parameters", "    ----------"]
     for a in create_args:
         n = a["name"]
@@ -1481,6 +1520,9 @@ def _pyi_class_docstring(
             else:
                 type_line += f', default ``"{dv}"``'
         lines.append(type_line)
+        pdesc = create_block.param_desc(n) if create_block else None
+        if pdesc:
+            lines.append(f"        {pdesc}")
         if a.get("enum"):
             choices = enum_reg.get(a["enum"], [])
             if choices:
@@ -1508,14 +1550,26 @@ def _pyi_prop_doc(
     return f"{fname} ({ann})."
 
 
-def render_pyi(cfg: dict, module: str) -> str:
+def render_pyi(
+    cfg: dict, module: str, doc_blocks: dict[str, str] | None = None
+) -> str:
     """Render a class-shaped ``<leaf>.pyi`` for a handle module.
 
     Emits the class, its ``__init__`` signature (from ``create_args``), each
     method, each decoded-getter property, and (when enabled) ``__enter__`` /
-    ``__exit__`` / ``close`` — all with numpy-style docstrings synthesized
-    from the manifest (gh-306/gh-374). Defaults and enum choices are surfaced
-    in the class ``Parameters`` block; header-derived prose is a follow-up."""
+    ``__exit__`` / ``close`` — with numpy-style docstrings. Defaults and enum
+    choices are surfaced in the class ``Parameters`` block from the manifest
+    (gh-306/gh-374).
+
+    *doc_blocks* maps a C function name to the raw Doxygen block extracted from
+    the vendored backing header (see :func:`_docstring.extract_doc_blocks`). When
+    supplied, header prose flows into the stub: the ``create_fn``'s ``@brief``
+    becomes the class summary, a method ``fn``'s ``@brief``/``@param``/``@return``
+    (plus any ``@code`` block, which becomes a runnable ``Examples`` doctest)
+    documents that method, and a single-field getter's ``@brief`` documents its
+    property. An empty/absent map reproduces the pre-enrichment stub exactly
+    (gh-374)."""
+    doc_blocks = doc_blocks or {}
     tname = C.handle_type_name(cfg, module)
     C.handle_backing(cfg, module)
     mp = C.module_paths(module)
@@ -1541,8 +1595,15 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"class {tname}:",
     ]
 
-    # Class-level docstring: Parameters block — defaults + enum choices.
-    lines.extend(_pyi_class_docstring(tname, create_args, enum_reg))
+    # Class-level docstring: summary + body from the create_fn's Doxygen (when
+    # the backing header documents it), then a Parameters block (defaults + enum
+    # choices + any header @param prose).
+    create_block = _method_block(
+        doc_blocks, C.handle_create_fn(cfg, module), None
+    )
+    lines.extend(
+        _pyi_class_docstring(tname, create_args, enum_reg, create_block)
+    )
 
     # __init__ from create_args (docstring lives on the class above).
     init_params = []
@@ -1644,14 +1705,48 @@ def render_pyi(cfg: dict, module: str) -> str:
             ann = _pyi_scalar(returns) if returns else "None"
             doc_call = f"{name}()"
         lines.append(f"    def {name}({sig}) -> {ann}:")
-        lines.append(f'        """{doc_call} -> {ann}."""')
+        # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
+        # stub to a full numpy docstring — @param/@return prose plus a runnable
+        # @code doctest. Python-facing args only: an array arg is NDArray, the
+        # rest map through _pyi_arg_ann (gh-374).
+        m_block = _method_block(doc_blocks, m.get("fn"), name)
+        if m_block is not None:
+            from ._stubs import _numpy_doc_lines
+
+            py_params = [
+                (
+                    a["name"],
+                    "NDArray[Any]"
+                    if str(a.get("type", "")).endswith("[]")
+                    else _pyi_arg_ann(a),
+                )
+                for a in margs
+            ]
+            lines.extend(
+                _numpy_doc_lines(m_block, name, py_params, ann, indent=8)
+            )
+        else:
+            lines.append(f'        """{doc_call} -> {ann}."""')
 
     # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):
-        for f in g.get("fields", []):
+        # A single-field getter's @brief documents its one property; a
+        # multi-field struct getter carries one @brief for the whole struct,
+        # which cannot name each field, so those stay manifest-synthesized
+        # (gh-374 — the same header-vs-manifest split views_module documents).
+        g_fields = g.get("fields", [])
+        g_block = (
+            _method_block(doc_blocks, g.get("fn"), None)
+            if len(g_fields) == 1
+            else None
+        )
+        for f in g_fields:
             enum_name: str | None = f.get("enum")
             ann = "str" if enum_name else _pyi_scalar(f["type"])
-            doc = _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
+            if g_block is not None and g_block.brief and not enum_name:
+                doc = g_block.brief
+            else:
+                doc = _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
             lines.append("    @property")
             lines.append(f"    def {f['name']}(self) -> {ann}:")
             lines.append(f'        """{doc}"""')
@@ -1699,18 +1794,46 @@ def render_pyi(cfg: dict, module: str) -> str:
 # ── materialization (driven by jm apply's _replay; mirrors _capsule) ──────────
 
 
-def materialize(cfg: dict, root: Path, module: str) -> None:
+def _backing_doc_blocks(
+    cfg: dict, module: str, project_root: Path | None
+) -> dict[str, str]:
+    """Parse Doxygen from the module's vendored backing header, keyed by fn.
+
+    The vendored resource lives under the *real* project's ``native/inc``, not
+    the pristine replay scaffold (a ``c_deps`` header is never re-materialized),
+    so this reads from *project_root*. Returns ``{}`` when the header is absent
+    or *project_root* is unknown, which reproduces the un-enriched stub exactly
+    (gh-374)."""
+    header_rel = C.handle_header(cfg, module)
+    if not header_rel or project_root is None:
+        return {}
+    hp = Path(project_root) / "native" / "inc" / header_rel
+    if not hp.exists():
+        return {}
+    from ._docstring import extract_doc_blocks
+
+    return extract_doc_blocks(hp.read_text(encoding="utf-8"))
+
+
+def materialize(
+    cfg: dict, root: Path, module: str, project_root: Path | None = None
+) -> None:
     """Write a handle module's generated files into *root* (a project tree).
 
     Emits the binding ``<cname>_ext.c``, the module ``CMakeLists.txt``, and the
     ``.pyi`` stub, then wires ``add_subdirectory`` into the top ``CMakeLists.txt``
     under the ``# ── Modules`` sentinel. Mirrors ``_capsule.materialize`` — the
-    handle shape has no ``_core`` / per-object scaffolding either."""
+    handle shape has no ``_core`` / per-object scaffolding either.
+
+    *project_root* points at the real project so the ``.pyi`` can pick up
+    Doxygen from the vendored backing header (gh-374); it defaults to *root*
+    for a direct materialize."""
     from ._init import _write
 
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.handle_package(cfg, module) or mp.pypath
+    doc_blocks = _backing_doc_blocks(cfg, module, project_root or root)
 
     _write(
         root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
@@ -1722,7 +1845,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     )
     _write(
         root / "src" / pkg / out_pkg / f"{mp.leaf}.pyi",
-        render_pyi(cfg, module),
+        render_pyi(cfg, module, doc_blocks),
     )
 
     # Wire the top CMakeLists add_subdirectory (Modules sentinel), like

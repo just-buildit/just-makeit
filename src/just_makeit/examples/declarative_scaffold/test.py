@@ -71,6 +71,39 @@ default = "1.0f"
 '''
 
 
+# Enrich the sacred header's Doxygen so the generated .pyi class docstring
+# reads as a real sentence instead of jm's generic "<Type> component."
+# fallback. The fragment's inline `impl` heredoc only injects a plain C
+# banner comment (`/* Agc — … */`) into the header — that is not a Doxygen
+# @brief and never reaches the .pyi. The class SUMMARY comes from the
+# `<obj>_create` @brief, so we hand-author it here and let a follow-up
+# `jm apply` re-derive the .pyi from the edited header. Light enrichment:
+# the class summary only — no custom `jm method`, hence no runnable doctest.
+_DOXY_SUMMARY = (
+    "Automatic gain control: an EMA power tracker with a gain "
+    "pass-through, updating the tracked power one complex sample at a time."
+)
+_DOXY_BRIEF_OLD = "@brief Create a agc instance."
+_DOXY_BRIEF_NEW = f"@brief {_DOXY_SUMMARY}"
+
+
+def _enrich_doxygen(core_h: Path) -> None:
+    """Replace jm's scaffold create() @brief with a real class summary.
+
+    Idempotent: a no-op if the header already carries the enriched brief.
+    """
+    text = core_h.read_text(encoding="utf-8")
+    if _DOXY_BRIEF_NEW in text:
+        return  # already enriched
+    if _DOXY_BRIEF_OLD not in text:
+        raise AssertionError(
+            f"scaffold Doxygen not found in {core_h}: "
+            f"{_DOXY_BRIEF_OLD!r} — template changed?"
+        )
+    text = text.replace(_DOXY_BRIEF_OLD, _DOXY_BRIEF_NEW, 1)
+    core_h.write_text(text, encoding="utf-8")
+
+
 def run(root: Path) -> None:
     from just_makeit import _config as C
     from just_makeit._apply import run as jm_apply
@@ -105,6 +138,23 @@ def run(root: Path) -> None:
     )
     assert "/* Agc — EMA power tracker" in core_h, core_h
     assert "{Component}" not in core_h
+
+    # ── 3b. Enrich the header's create() @brief so the .pyi class docstring
+    #        reads as a real sentence, then re-apply to re-derive the glue.
+    #        The `impl` banner comment is not a Doxygen @brief; the class
+    #        summary is authored on `agc_create` (the single source of truth
+    #        for docs) and flows to the stub via `jm apply`.
+    core_h_path = proj / "native" / "inc" / "agc" / "agc_core.h"
+    _enrich_doxygen(core_h_path)
+    jm_apply(proj)
+
+    pyi = (proj / "src" / "demo" / "agc.pyi").read_text(encoding="utf-8")
+    assert _DOXY_SUMMARY in pyi, (
+        "enriched class summary missing from .pyi:\n" + pyi[:400]
+    )
+    assert "Agc component." not in pyi, (
+        "generic fallback summary should be gone once the header is enriched"
+    )
 
     # ── 4. cmake + build + ctest. ────────────────────────────────────────
     _cmd(

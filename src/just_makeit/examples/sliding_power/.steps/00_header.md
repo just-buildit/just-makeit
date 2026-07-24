@@ -11,7 +11,10 @@ Two update strategies are shown:
 - **step()** — O(1) recursive: `sum_sq += new² − old²`
 - **SIMD recompute** — horizontally sums the delay line with `JM_ADD_F32` /
   `JM_HSUM_F32` from `jm_simd.h`; used for periodic recalibration and as a
-  clean demonstration of the v0.5 macro set.
+  clean demonstration of the `jm_simd.h` macro set.
+
+The generated `.pyi` also carries a hand-authored class summary lifted from
+the `@brief` on `power_est_create()` in the sacred header.
 
 ## TL;DR — see it work first
 

@@ -69,6 +69,30 @@ def run(root: Path) -> None:
     )
     header.write_text(stub_re.sub(impl, text))
 
+    # Enrich the sacred header: replace jm's trivial scaffold @brief on
+    # power_est_create() with a real one-sentence summary. The header is the
+    # single source of truth for docs — `jm apply` re-derives the .pyi from it,
+    # turning create()'s @brief into the class-level docstring summary (instead
+    # of the generic "PowerEst component." fallback). Run after the step patch
+    # so both edits land on the finished header.
+    from just_makeit._apply import run as apply_run
+
+    text = header.read_text()
+    scaffold_re = _re.compile(
+        r"/\*\*\n \* @brief Create a power_est instance\..*?"
+        r"(?=power_est_state_t \*power_est_create)",
+        _re.DOTALL,
+    )
+    create_brief = (
+        "Create a sliding-window signal-power estimator over a "
+        "64-sample window, zeroed."
+    )
+    new_create = f"/**\n * @brief {create_brief}\n */\n"
+    text, n = scaffold_re.subn(new_create, text, count=1)
+    assert n == 1, "power_est_create scaffold brief not found"
+    header.write_text(text)
+    apply_run(dest)
+
     env = _make_env()
 
     # Build
@@ -127,6 +151,12 @@ print("ok")
     assert "class PowerEst:" in pyi
     assert "def step(self, x: complex) -> float:" in pyi
     assert "def steps(self, x: NDArray[np.complex64]" in pyi
+
+    # The header-authored class summary (create()'s @brief) reached the stub,
+    # replacing the generic "PowerEst component." fallback.
+    assert "Create a sliding-window signal-power estimator" in pyi, (
+        "class @brief summary missing from .pyi"
+    )
 
 
 if __name__ == "__main__":

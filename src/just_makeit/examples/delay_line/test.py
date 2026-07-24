@@ -115,6 +115,47 @@ def _patch_step(core_h: Path) -> None:
     )
 
 
+# Enrich the sacred header's Doxygen so the generated .pyi class docstring
+# reads as a real sentence instead of jm's generic "<Type> component."
+# fallback.  create()'s @brief becomes the class SUMMARY; a follow-up
+# `jm apply` re-derives the .pyi from these comments.  This is an opaque-state
+# object with no custom `jm method`, so there is no runnable doctest — the
+# enrichment is the class summary (plus a real @param for the C API docs).
+_DOXY_SUMMARY = (
+    "Create a circular delay line: a ring buffer that delays each input "
+    "sample by a runtime-configurable number of samples."
+)
+_DOXY_BRIEF_OLD = "@brief Create a delay_line instance."
+_DOXY_BRIEF_NEW = f"@brief {_DOXY_SUMMARY}"
+
+# `length` is a scalar state field that doubles as a constructor argument, so
+# the .pyi's Parameters section is derived from the manifest (generic
+# "length state variable." text), not from this @param — but the header is the
+# single source of truth for the Doxygen C API docs, so give it a real
+# description there too.
+_DOXY_PARAM_DESC = (
+    "Delay length in samples; sizes the heap-allocated ring buffer "
+    "(chosen at construction, preserved across reset)."
+)
+_DOXY_PARAM_OLD = "@param length  Initial length (default: 16)."
+_DOXY_PARAM_NEW = f"@param length  {_DOXY_PARAM_DESC}"
+
+
+def _enrich_doxygen(core_h: Path) -> None:
+    text = core_h.read_text(encoding="utf-8")
+    if _DOXY_BRIEF_NEW in text:
+        return  # already enriched
+    for old in (_DOXY_BRIEF_OLD, _DOXY_PARAM_OLD):
+        if old not in text:
+            raise AssertionError(
+                f"scaffold Doxygen not found in {core_h}: {old!r} "
+                "— template changed?"
+            )
+    text = text.replace(_DOXY_BRIEF_OLD, _DOXY_BRIEF_NEW, 1)
+    text = text.replace(_DOXY_PARAM_OLD, _DOXY_PARAM_NEW, 1)
+    core_h.write_text(text, encoding="utf-8")
+
+
 # Hand-written C smoke test that matches our reset semantics (length is
 # preserved across reset because it's the configured ring-buffer size).
 _C_TEST_BODY = """\
@@ -267,6 +308,30 @@ def run(root: Path) -> None:
     body_pos = c.index("free(state->taps);")
     free_pos = c.index("free(state);")
     assert body_pos < free_pos
+
+    # 4b. Enrich the sacred header with a real Doxygen class summary, then
+    #     regenerate the glue so the .pyi class docstring reads as a real
+    #     sentence instead of jm's generic "DelayLine component." fallback.
+    #     `jm apply` re-derives the .pyi from the edited header; the sacred
+    #     header itself (including our step() patch below) is left untouched.
+    _enrich_doxygen(core_h)
+    jm_apply(proj)
+
+    pyi = (proj / "src" / "delay_line_demo" / "delay_line.pyi").read_text(
+        encoding="utf-8"
+    )
+    assert _DOXY_SUMMARY in pyi, (
+        "enriched class summary missing from .pyi:\n" + pyi[:400]
+    )
+    assert "DelayLine component." not in pyi, (
+        "generic class-summary fallback still present in .pyi"
+    )
+    # The @param enrichment lives in the C header (Doxygen C API docs); the
+    # .pyi Parameters are manifest-derived so it does not surface there.
+    h_enriched = core_h.read_text(encoding="utf-8")
+    assert _DOXY_PARAM_DESC in h_enriched, (
+        "enriched @param missing from header"
+    )
 
     # 5. Patch step() to implement the ring-delay.
     _patch_step(core_h)
