@@ -2140,10 +2140,22 @@ def make_methods_ctx(
             if _pyi_param_desc
             else "        "
         )
+        # @code ... @endcode from the header becomes a runnable Examples
+        # doctest, mirroring the module-aggregated peer (_stubs._numpy_doc_lines)
+        # so a standalone object's method docstrings are as rich as a module's.
+        _pyi_examples_section = ""
+        if _block and _block.examples:
+            _ex_body = "\n".join(
+                f"        {ex}".rstrip() for ex in _block.examples
+            )
+            _pyi_examples_section = (
+                f"        Examples\n        --------\n{_ex_body}\n\n"
+            )
         _pyi_doc = (
             f'        """{_brief or f"{name}."}\n\n'
             f"{_pyi_params_section}\n"
             f"        {_pyi_ret_desc}\n"
+            f"{_pyi_examples_section}"
             f'        """\n'
             if (sig or ret_ann != "None")
             else f'        """{name}."""\n'

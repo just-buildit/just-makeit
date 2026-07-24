@@ -181,6 +181,85 @@ class TestDerivedDocstrings:
         assert "A configurable scalar gain stage." in class_doc
         assert "<<" not in pyi  # no placeholder leak
 
+    def test_standalone_method_docstring_derives_from_header(self, tmp_path):
+        """A STANDALONE object's custom-method docstring must enrich from the
+        header's @brief/@param/@return AND carry the @code Examples doctest,
+        exactly like the module aggregator. Both were generic on the standalone
+        path (make_methods_ctx got no doc_blocks; the .pyi builder emitted no
+        Examples) while module objects got the full treatment."""
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        object_run(
+            dest,
+            "gain",
+            module=None,
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        method_run(dest, "gain", "scale", None, "float", "float", False, [])
+        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        text = header.read_text(encoding="utf-8")
+        block = (
+            "/**\n"
+            " * @brief Scale a sample and return the product.\n"
+            " * @param x  Input sample.\n"
+            " * @return Scaled sample.\n"
+            " * @code\n"
+            " * >>> from dsp import Gain\n"
+            " * >>> Gain(2.0).scale(1.5)\n"
+            " * 3.0\n"
+            " * @endcode\n"
+            " */\n"
+        )
+        text2 = re.sub(
+            r"(?m)^(float\s+gain_scale\s*\()", block + r"\1", text, count=1
+        )
+        assert text2 != text, "could not locate gain_scale declaration"
+        header.write_text(text2, encoding="utf-8")
+
+        apply_run(dest)
+
+        pyi = (dest / "src" / "dsp" / "gain.pyi").read_text(encoding="utf-8")
+        scale_doc = pyi.split("def scale")[1].split('"""')[1]
+        assert "Scale a sample and return the product." in scale_doc
+        assert "Input sample." in scale_doc
+        assert "Scaled sample." in scale_doc
+        # @code becomes a runnable Examples doctest
+        assert "Examples" in scale_doc
+        assert ">>> Gain(2.0).scale(1.5)" in scale_doc
+        assert "<<" not in pyi
+
+    def test_standalone_property_docstring_derives_from_header(self, tmp_path):
+        """A STANDALONE object's property docstring must derive from the
+        getter's @brief, like the module path. It was generic (make_properties_ctx
+        got no doc_blocks on the standalone regen paths)."""
+        dest = tmp_path / "dsp"
+        new_run("dsp", dest)
+        object_run(
+            dest,
+            "gain",
+            module=None,
+            state_vars=[("gain", "float", "1.0f")],
+            arg_type="float",
+            return_type="float",
+        )
+        property_run(dest, "gain", "level", None, "float", False)
+        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        text = header.read_text(encoding="utf-8")
+        block = "/**\n * @brief The current output level in dBFS.\n */\n"
+        text2 = re.sub(
+            r"(?m)^(float\s+gain_get_level\s*\()", block + r"\1", text, count=1
+        )
+        assert text2 != text, "could not locate gain_get_level declaration"
+        header.write_text(text2, encoding="utf-8")
+
+        apply_run(dest)
+
+        pyi = (dest / "src" / "dsp" / "gain.pyi").read_text(encoding="utf-8")
+        level_doc = pyi.split("def level")[1].split('"""')[1]
+        assert "The current output level in dBFS." in level_doc
+
     def test_property_getset_and_tp_doc_carry_brief(self):
         """C PyGetSetDef doc and tp_doc derive from the header (generator
         level — the per-object _ext fragment is preserved by apply)."""

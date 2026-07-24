@@ -101,6 +101,11 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, object_name),
             serializable=C.is_serializable(cfg, object_name),
+            # Enrich standalone method docstrings from the header's Doxygen just
+            # like the module path (_object.build_component_ctxs) — seeded on cfg
+            # by the root-having callers (regenerate_standalone / jm method /
+            # apply); absent -> {} -> the generic name-based stub, unchanged.
+            doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
             codecs=C.codecs(cfg),
         )
     )
@@ -114,6 +119,9 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             # decodes to its string on the Python side instead of leaking the
             # raw int.
             enums=C.enums(cfg),
+            # Enrich standalone property docstrings from the getter's @brief,
+            # same as the module path (_object); absent -> generic, unchanged.
+            doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
             codecs=C.codecs(cfg),
         )
     )

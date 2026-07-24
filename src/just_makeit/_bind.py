@@ -481,6 +481,9 @@ def _build_ctx(
             py_create_args=ctx.get("py_create_args", ""),
             no_state=is_opaque,
             serializable=C._truthy(parsed.get("serializable")),
+            # Enrich method docstrings from the header's Doxygen (same as the
+            # module path); None -> generic stub, unchanged.
+            doc_blocks=doc_blocks,
         )
     )
     ctx.update(
@@ -495,6 +498,9 @@ def _build_ctx(
             # default (None) means enum support is simply absent on this path
             # and the render stays byte-identical (same reasoning as the
             # empty make_warnings_ctx below).
+            # Enrich property docstrings from the getter's @brief (same as the
+            # module path); None -> generic, unchanged.
+            doc_blocks=doc_blocks,
         )
     )
     # gh-481: `bind` reflects a hand-written _core.h rather than the manifest,
