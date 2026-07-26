@@ -1356,6 +1356,13 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 if _l not in _colib:
                     _colib.append(_l)
             _colib_block = "\n    ".join(_colib) + "\n    " if _colib else ""
+            # gh-537: the two consumers below want DIFFERENT sets. test/bench
+            # (_colib_block, above) link every declared dep including test-only
+            # ones — that is what a test-only dep is for. The core's PUBLIC link
+            # must not, or the dependency propagates straight back into the
+            # Python extension and ships after all, which is the bug.
+            _test_only_cores = C.depends_test_only_cores(cfg, obj)
+            _core_pub = [c for c in _colib if c not in _test_only_cores]
             # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
             # the deps propagate transitively to the Python extension. The
             # `jm object` path sets extra_link_on_object_core (run()); apply
@@ -1364,9 +1371,9 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             # into the generated CMakeLists and breaks the build.
             extra_link_on_object_core = (
                 f"target_link_libraries({obj}_core PUBLIC\n    "
-                + "\n    ".join(_colib)
+                + "\n    ".join(_core_pub)
                 + ")\n"
-                if _colib
+                if _core_pub
                 else ""
             )
             # gh-531: the module's extra_include_dirs reach the module's own
@@ -1722,8 +1729,17 @@ def run(
     # as test/bench. Mirrors extra_link_on_core (_init.py) for standalone
     # components. Without this, a cross-module dep like ["obj_a_core"] reaches
     # only test/bench and the Python .so fails with undefined symbols.
-    if _obj_libs:
-        _elibs = "\n    ".join(_obj_libs)
+    # gh-537: test-only deps stay off the core's PUBLIC link line — from there
+    # they would propagate into the Python extension and ship after all, which
+    # is exactly what test_only exists to prevent. They remain on
+    # extra_link_libs_block (test/bench) above.
+    _test_only = [
+        (n if n.endswith("_core") else f"{n}_core")
+        for n in C.dep_names([d for d in depends_on if C._dep_test_only(d)])
+    ]
+    _core_pub_libs = [lib for lib in _obj_libs if lib not in _test_only]
+    if _core_pub_libs:
+        _elibs = "\n    ".join(_core_pub_libs)
         ctx["extra_link_on_object_core"] = (
             f"target_link_libraries({ctx['component']}_core PUBLIC\n"
             f"    {_elibs})\n"
@@ -1758,7 +1774,14 @@ def run(
     _inc_root = root / "native" / "inc"
     ctx["depends_includes"] = "".join(
         "\n" + inc
-        for inc in _dep_header_includes(_inc_root, C.dep_names(depends_on))
+        # gh-537: a test_only dep's header stays out of the object's PUBLIC
+        # core header. The C test includes it directly; pulling it in here
+        # would make the shipped header advertise a dependency the shipped
+        # artifact does not have — the same untruth test_only exists to fix.
+        for inc in _dep_header_includes(
+            _inc_root,
+            C.dep_names([d for d in depends_on if not C._dep_test_only(d)]),
+        )
         + [
             f'#include "{h}"'
             for h in C.param_headers(cfg, object_name)
