@@ -64,6 +64,17 @@ RUFF_PATHS = .
 # of this regex in .pre-commit-config.yaml.
 MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$$)
 
+# just-makeit's OWN runtime dependencies, mirrored from pyproject.toml's
+# `[project] dependencies`. `--no-project` excludes the project *and its
+# dependencies*, but the suite imports just_makeit from `src/` — so without
+# these it runs the code under test with its dependencies missing. tomlkit's
+# absence is silent (`_write_doc` falls back to `_dump`, and ~8 round-trip tests
+# fail with no hint why); tomli's is fatal on 3.9/3.10, where `C.tomllib` is the
+# backport. pyproject stays the source of truth — tests/test_test_env.py fails
+# if this list drifts from it, so the duplication cannot rot.
+JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
+                  --with "tomli>=2.0.0; python_version < '3.11'"
+
 # pytest runs three ways. The deltas are spelled out here rather than in three
 # parallel command strings that drift independently:
 #   PYTEST          unit suite — `--no-project` keeps the project env OUT, so
@@ -72,9 +83,11 @@ MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/
 #   PYTEST_B        the same, plus pytest-benchmark.
 #   PYTEST_EXAMPLES example builds — deliberately WITHOUT `--no-project`, since
 #                   these need `just-makeit` itself importable from the project
-#                   env (just-buildit arrives transitively as its build dep).
+#                   env (just-buildit arrives transitively as its build dep), so
+#                   its runtime deps arrive with it.
 PYTEST_DEPS     = --with pytest --with numpy
-PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit
+PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
+                  --with just-buildit
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
