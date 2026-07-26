@@ -583,12 +583,24 @@ def _vendor_ringbuf(proj: Path) -> None:
     (rb / "CMakeLists.txt").write_text(_RINGBUF_CMAKE, encoding="utf-8")
 
 
-def _inject_module(proj: Path, module: str, section: dict, c_dep: str) -> None:
-    """Declare the *c_dep* OBJECT lib + a kind-module section, then apply."""
+def _inject_module(
+    proj: Path,
+    module: str,
+    section: dict,
+    c_dep: str,
+    enums: list[dict] | None = None,
+) -> None:
+    """Declare the *c_dep* OBJECT lib + a kind-module section, then apply.
+
+    *enums* populates the top-level ``[[enum]]`` SSOT, which the composer kind
+    needs — its source discriminant and timeline loop are enum-validated.
+    """
     from just_makeit import _config as C
 
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = [c_dep]
+    if enums:
+        cfg["enum"] = enums
     cfg.setdefault("module", {})[module] = section
     C.save(proj, cfg)
     _q(apply_run, proj)
@@ -784,6 +796,186 @@ def shape_capsule(tmp):
     return d, d / "src" / "proj", "wrap"
 
 
+# ── composer (gh-560) ────────────────────────────────────────────────────────
+#
+# The last of the three module kinds to reach the gate. Composer is the widest
+# `.pyi` surface jm emits — FOUR classes (source / segment / timeline /
+# composer) from one generator — and until now it was only ever compiled against
+# doppler's real `wfm_source_t`, so nothing here could build it.
+#
+# The backing is deliberately tiny. With `json.enabled` off the generated ext
+# calls exactly four external symbols, and the struct layout is fixed by
+# `_build_<backing>_segments`: a segment owns `sources` / `n_sources` plus its
+# own declared fields, and a source is just its declared fields.
+
+_MIXER_H = """\
+#ifndef MIXER_H
+#define MIXER_H
+#include <stddef.h>
+#include <complex.h>
+typedef struct { int type; double freq; } mixer_source_t;
+typedef struct {
+    mixer_source_t *sources;
+    size_t          n_sources;
+    double          fs;
+    size_t          num_samples;
+} mixer_segment_t;
+typedef struct mixer_state mixer_state_t;
+mixer_state_t *mixer_create(const mixer_segment_t *segs, size_t n,
+                            int repeat, int continuous);
+void mixer_destroy(mixer_state_t *s);
+size_t mixer_execute(mixer_state_t *s, float _Complex *out, size_t max);
+const mixer_segment_t *mixer_segments(const mixer_state_t *s, size_t *n,
+                                      int *repeat, int *continuous);
+#endif
+"""
+
+# A real (if trivial) composer: it deep-copies the spec, then drains each
+# segment's num_samples as a ramp scaled by the first source's freq. Enough
+# behaviour that execute()/compose() return something a test can assert on,
+# and enough lifetime handling that the gate exercises a genuine backing.
+_MIXER_C = """\
+#include "mixer/mixer.h"
+#include <stdlib.h>
+struct mixer_state {
+    mixer_segment_t *segs;
+    size_t           n;
+    int              repeat, continuous;
+    size_t           seg_i, pos;
+};
+mixer_state_t *mixer_create(const mixer_segment_t *segs, size_t n,
+                            int repeat, int continuous) {
+    mixer_state_t *s = calloc(1, sizeof *s);
+    if (!s) return NULL;
+    s->segs = calloc(n ? n : 1, sizeof *s->segs);
+    if (!s->segs) { free(s); return NULL; }
+    for (size_t i = 0; i < n; i++) {
+        s->segs[i] = segs[i];
+        s->segs[i].sources = calloc(segs[i].n_sources ? segs[i].n_sources : 1,
+                                    sizeof *s->segs[i].sources);
+        if (!s->segs[i].sources) { mixer_destroy(s); return NULL; }
+        for (size_t k = 0; k < segs[i].n_sources; k++)
+            s->segs[i].sources[k] = segs[i].sources[k];
+    }
+    s->n = n; s->repeat = repeat; s->continuous = continuous;
+    return s;
+}
+void mixer_destroy(mixer_state_t *s) {
+    if (!s) return;
+    for (size_t i = 0; i < s->n; i++) free(s->segs[i].sources);
+    free(s->segs);
+    free(s);
+}
+size_t mixer_execute(mixer_state_t *s, float _Complex *out, size_t max) {
+    size_t k = 0;
+    while (k < max) {
+        if (s->seg_i >= s->n) {
+            if (!s->repeat && !s->continuous) break;
+            s->seg_i = 0; s->pos = 0;
+            if (!s->n) break;
+        }
+        mixer_segment_t *sg = &s->segs[s->seg_i];
+        if (s->pos >= sg->num_samples) { s->seg_i++; s->pos = 0; continue; }
+        double f = sg->n_sources ? sg->sources[0].freq : 0.0;
+        out[k++] = (float)(f * (double)s->pos) + 0.0f * _Complex_I;
+        s->pos++;
+    }
+    return k;
+}
+const mixer_segment_t *mixer_segments(const mixer_state_t *s, size_t *n,
+                                      int *repeat, int *continuous) {
+    if (n) *n = s->n;
+    if (repeat) *repeat = s->repeat;
+    if (continuous) *continuous = s->continuous;
+    return s->segs;
+}
+"""
+
+_MIXER_CMAKE = """\
+add_library(mixer_core OBJECT mixer.c)
+target_include_directories(mixer_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
+"""
+
+
+def _vendor_mixer(proj: Path) -> None:
+    """Drop the mixer c_dep (public header + OBJECT-lib source) into *proj*."""
+    inc = proj / "native" / "inc" / "mixer"
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "mixer.h").write_text(_MIXER_H, encoding="utf-8")
+    mx = proj / "native" / "src" / "mixer"
+    mx.mkdir(parents=True, exist_ok=True)
+    (mx / "mixer.c").write_text(_MIXER_C, encoding="utf-8")
+    (mx / "CMakeLists.txt").write_text(_MIXER_CMAKE, encoding="utf-8")
+
+
+def shape_composer(tmp):
+    """A `kind = "composer"` module: the four-class object-of-objects surface.
+
+    Exercises `_composer.py`'s own `.pyi` generator — a source type with an
+    enum-validated discriminant and a factory, a multi-source segment, a
+    timeline with a loop enum, and the composer itself with `execute` /
+    `compose` / `stream`. `stream = true` is deliberate: it is the one shape
+    whose iterator type is a non-subclassable `Py_TPFLAGS_DEFAULT` type object,
+    so the stub's `Iterator[...]` return is checked against a real runtime."""
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, [], [])
+    _vendor_mixer(d)
+    _inject_module(
+        d,
+        "mix",
+        {
+            "kind": "composer",
+            "backing": "mixer",
+            "capsule_name": "proj.mix.mixer_state",
+            "header": "mixer/mixer.h",
+            "package": ".",
+            "depends_on": [{"name": "mixer", "link": True}],
+            "composes": ["mixer_synth"],
+            "source": {
+                "object": "mixer_synth",
+                "struct": "mixer_source_t",
+                "type_name": "Synth",
+                "fields": [
+                    {
+                        "name": "type",
+                        "type": "int",
+                        "enum": "wave",
+                        "default": "tone",
+                    },
+                    {"name": "freq", "type": "double", "default": "0.0"},
+                ],
+            },
+            "segment": {
+                "type_name": "Segment",
+                "struct": "mixer_segment_t",
+                "fields": [
+                    {"name": "fs", "type": "double", "default": "1e6"},
+                    {
+                        "name": "num_samples",
+                        "type": "size_t",
+                        "default": "64",
+                    },
+                ],
+                "sources": "multi",
+            },
+            "timeline": {
+                "type_name": "Timeline",
+                "loop": ["once", "repeat"],
+            },
+            "oo": {
+                "factories": ["tone"],
+                "emit": "ctypes",
+                "discriminant": "type",
+                "composer_type_name": "Composer",
+            },
+            "composer": {"stream": True},
+        },
+        c_dep="mixer",
+        enums=[{"name": "wave", "values": ["tone", "noise"]}],
+    )
+    return d, d / "src" / "proj", "mix"
+
+
 _SHAPES = {
     "standalone_state": shape_standalone_state,
     "module_state": shape_module_state,
@@ -809,6 +1001,7 @@ _SHAPES = {
     # batch 3 — module kinds (own .pyi generators)
     "handle": shape_handle,
     "capsule": shape_capsule,
+    "composer": shape_composer,
 }
 
 

@@ -885,10 +885,30 @@ class TestComposerStream:
             " -> Iterator[NDArray[np.complex64]]:" in pyi
         )
         assert "from typing import Any, Iterator" in pyi
-        # absent without the table — and Iterator is not imported
+        # absent without the table
         plain = _composer.render_pyi(_cfg(), "wfm_compose")
         assert "def stream(" not in plain
-        assert "from typing import Any\n" in plain
+
+    def test_iterator_imported_for_a_timeline_too(self):
+        """gh-560: `Iterator` is not stream-specific.
+
+        A Timeline's `__iter__` is annotated `Iterator[<Segment>]`, so the
+        import is needed whenever a timeline exists. This test previously
+        asserted the opposite (`from typing import Any\\n` with streaming off),
+        which held only because `__iter__` was left unannotated — and an
+        unannotated `__iter__` is exactly the kind of gap the stub-conformance
+        gate exists to catch.
+        """
+        plain = _composer.render_pyi(_cfg(), "wfm_compose")
+        assert "class Timeline:" in plain
+        assert "from typing import Any, Iterator" in plain
+        assert "def __iter__(self) -> Iterator[Segment]: ..." in plain
+
+        # ...and with no timeline at all, Iterator is not imported.
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"].pop("timeline")
+        no_tl = _composer.render_pyi(cfg, "wfm_compose")
+        assert "from typing import Any\n" in no_tl
 
 
 def _flat_cfg():
@@ -958,15 +978,29 @@ class TestSegmentFlatAccessors:
         s = _composer.render_segment_type(_cfg(), "wfm_compose")
         assert "Segment_flat_" not in s
 
+    @staticmethod
+    def _segment_block(pyi: str) -> str:
+        """Just the Segment class. gh-560 made the SOURCE type declare its own
+        fields too (they are real getsets), so a whole-file substring check can
+        no longer tell a flat Segment accessor from Synth's own attribute."""
+        start = pyi.index("class Segment:")
+        rest = pyi[start:]
+        nxt = rest.find("\nclass ", 1)
+        return rest if nxt < 0 else rest[:nxt]
+
     def test_pyi_declares_flat_attributes(self):
-        pyi = _composer.render_pyi(_flat_cfg(), "wfm_compose")
-        assert "    freq: float" in pyi
-        assert "    type: str" in pyi  # enum field → str
-        assert "    bits: bytes | None" in pyi
-        # absent without the table
-        assert "    freq: float" not in _composer.render_pyi(
-            _cfg(), "wfm_compose"
+        seg = self._segment_block(
+            _composer.render_pyi(_flat_cfg(), "wfm_compose")
         )
+        assert "    freq: float" in seg
+        assert "    type: str" in seg  # enum field → str
+        assert "    bits: bytes | None" in seg
+        # absent from Segment without the table
+        plain = self._segment_block(
+            _composer.render_pyi(_cfg(), "wfm_compose")
+        )
+        assert "    freq: float" not in plain
+        assert "    bits: bytes | None" not in plain
 
     def test_generic_non_wfm_composer(self):
         """Proves the engine is a generic object-of-objects templater, not
