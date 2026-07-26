@@ -93,3 +93,110 @@ def bytes_call_exprs(name: str) -> str:
     and its length as ``size_t`` (two args, like a 1-D array). The callee MUST
     copy the buffer before returning; the borrow lives only for the call."""
     return f"(const void *){name}, (size_t){name}_len"
+
+
+# The **caller-supplied output buffer** handler (gh-581): an `out=` argument is
+# the caller saying "write into THIS array, do not allocate". Marshaling it with
+# a bare ``PyArray_FROM_OTF(out_obj, NPY_X, …| NPY_ARRAY_WRITEABLE)`` quietly
+# breaks that promise whenever the dtype does not already match: FROM_OTF casts
+# into a NEW temporary, the kernel fills the temporary, and the temporary is
+# freed on the way out — so the call returns a correct-looking result while the
+# caller's buffer is never touched. The failure is invisible (a reuse-one-buffer
+# streaming loop still reads correct return values), which is what makes it worth
+# a hard guard rather than a doc note.
+#
+# So every generator that accepts an `out=` REQUIRES the exact output dtype up
+# front and rejects anything else. `PyArray_FROM_OTF` still runs afterwards, but
+# only to pick up the contiguity flag — with the dtype already proven equal it
+# can no longer cast, so the array it returns is always the caller's own buffer.
+#
+# The guard is a strict tightening: code that relied on the cast was, by
+# definition, not getting its buffer written.
+
+
+def out_buffer_guard(
+    obj_var: str,
+    npy_enum: str,
+    *,
+    label: str = "out",
+    decrefs: str = "",
+    indent: str = "    ",
+) -> str:
+    """Emit the exact-dtype guard for a caller-supplied ``out=`` buffer.
+
+    Every generator that lets a caller pass their own output array emits this
+    identical check, so it lives here once (see the module note above for why
+    the check has to exist at all).
+
+    Parameters
+    ----------
+    obj_var : str
+        Name of the borrowed ``PyObject *`` holding the caller's argument, as
+        parsed by ``PyArg_ParseTuple*`` — e.g. ``"out_obj"``.
+    npy_enum : str
+        The required numpy type enum, e.g. ``"NPY_COMPLEX64"``. An array of any
+        other dtype is rejected rather than cast.
+    label : str, optional
+        Name of the argument as the user typed it, used in the error message.
+        Defaults to ``"out"``; the handle generator passes its declared output
+        array's name instead.
+    decrefs : str, optional
+        C statements releasing anything already acquired on the success path,
+        run before the early ``return NULL`` — e.g. ``"Py_DECREF(in_arr);"``.
+        Empty when the guard is the first thing after argument parsing.
+    indent : str, optional
+        Leading whitespace for the emitted block. Four spaces at function scope,
+        eight inside an ``if (out_obj && out_obj != Py_None)`` branch.
+
+    Returns
+    -------
+    str
+        A newline-terminated C block. Contains literal braces, so interpolate it
+        into an f-string as a value (``f"{guard}"``) — never paste it into an
+        f-string *literal*, where its braces would need doubling.
+
+    Examples
+    --------
+    >>> print(out_buffer_guard("out_obj", "NPY_COMPLEX64"), end="")
+        /* Require the exact output dtype — no silent cast (a cast writes
+         * into a temp copy instead of the caller's buffer). */
+        if (!PyArray_Check(out_obj) ||
+            PyArray_TYPE((PyArrayObject *)out_obj) != NPY_COMPLEX64 ||
+            !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {
+            PyErr_SetString(PyExc_TypeError,
+                "out must be a writable ndarray of the output dtype");
+            return NULL;
+        }
+
+    A guard inside a branch, with an input array already owned:
+
+    >>> print(out_buffer_guard("out_obj", "NPY_FLOAT32",
+    ...                        decrefs="Py_DECREF(in_arr);",
+    ...                        indent=" " * 8), end="")
+            /* Require the exact output dtype — no silent cast (a cast writes
+             * into a temp copy instead of the caller's buffer). */
+            if (!PyArray_Check(out_obj) ||
+                PyArray_TYPE((PyArrayObject *)out_obj) != NPY_FLOAT32 ||
+                !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {
+                PyErr_SetString(PyExc_TypeError,
+                    "out must be a writable ndarray of the output dtype");
+                Py_DECREF(in_arr);
+                return NULL;
+            }
+    """
+    i = indent
+    release = f"{i}    {decrefs}\n" if decrefs else ""
+    return (
+        f"{i}/* Require the exact output dtype — no silent cast (a cast"
+        f" writes\n"
+        f"{i} * into a temp copy instead of the caller's buffer). */\n"
+        f"{i}if (!PyArray_Check({obj_var}) ||\n"
+        f"{i}    PyArray_TYPE((PyArrayObject *){obj_var}) != {npy_enum} ||\n"
+        f"{i}    !PyArray_ISWRITEABLE((PyArrayObject *){obj_var})) {{\n"
+        f"{i}    PyErr_SetString(PyExc_TypeError,\n"
+        f'{i}        "{label} must be a writable ndarray of the output'
+        f' dtype");\n'
+        f"{release}"
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+    )

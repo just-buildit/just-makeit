@@ -597,6 +597,19 @@ def _build_params_parse(
                 else "NPY_ARRAY_C_CONTIGUOUS"
             )
             const_qual = "" if is_out else "const "
+            # gh-581: an `out` param names the caller's own buffer, so require
+            # the exact dtype before FROM_OTF gets a chance to cast it into a
+            # temp the callee fills and we then discard. Mirrors the same guard
+            # in _context/_parse.py — the two builders must not drift.
+            if is_out:
+                arr_acq.append(
+                    _coerce.out_buffer_guard(
+                        obj_var,
+                        npy_enum,
+                        label=pname,
+                        decrefs=prior_decrefs.strip(),
+                    ).rstrip("\n")
+                )
             arr_acq.append(
                 f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"

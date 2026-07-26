@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **An `out=` buffer of the wrong dtype is now rejected instead of silently
+    cast into a temporary (gh-581).** The object generator's `out=` paths and
+    the module-function generator's `out` params marshaled the caller's array
+    with a bare `PyArray_FROM_OTF(…, NPY_ARRAY_WRITEABLE)`. When the dtype did
+    not already match, `FROM_OTF` casts into a *new temporary*: the kernel
+    filled the temporary, the temporary was freed on the way out, and the call
+    returned a correct-looking result while the caller's buffer — the entire
+    reason they passed `out=` — was never written. The failure was invisible to
+    anyone who only read the return value. All `out=` paths now require an
+    exact-dtype, writable `ndarray` and raise `TypeError` otherwise.
+
+    The handle and capsule generators already had this guard, so the same class
+    silently lost the check when its `kind` changed. The guard now lives once in
+    `_coerce.out_buffer_guard()` and all four generators emit it, retiring the
+    two hand-rolled copies (which had already drifted in wording).
+
+    This is strictly a tightening: code relying on the cast was, by definition,
+    not getting its buffer written. Callers passing a list or a wrong-dtype
+    array to `out=` should either pass a matching-dtype array or drop `out=` and
+    use the returned array.
+
 ## [0.33.12] — 2026-07-24
 
 ### Added

@@ -585,6 +585,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         xn, on = a["name"], o["name"]
         in_elem, in_npy = _array_elem_npy(a["type"])
         out_elem, out_npy = _array_elem_npy(o["type"])
+        _out_guard = _coerce.out_buffer_guard(
+            f"{on}_obj", out_npy, label=on, decrefs=f"Py_DECREF({xn}_arr);"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
@@ -595,17 +598,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         {xn}_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
     if (!{xn}_arr) return NULL;
 
-    /* Require the exact output dtype — no silent cast (a cast writes into a
-     * temp copy instead of the caller's buffer). */
-    if (!PyArray_Check({on}_obj) ||
-        PyArray_TYPE((PyArrayObject *){on}_obj) != {out_npy} ||
-        !PyArray_ISWRITEABLE((PyArrayObject *){on}_obj)) {{
-        PyErr_SetString(PyExc_TypeError,
-            "{on} must be a writable ndarray of the output dtype");
-        Py_DECREF({xn}_arr);
-        return NULL;
-    }}
-    PyArrayObject *{on}_arr = (PyArrayObject *)PyArray_FROM_OTF(
+{_out_guard}    PyArrayObject *{on}_arr = (PyArrayObject *)PyArray_FROM_OTF(
         {on}_obj, {out_npy}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
     if (!{on}_arr) {{ Py_DECREF({xn}_arr); return NULL; }}
 
