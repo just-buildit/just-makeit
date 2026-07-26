@@ -33,35 +33,6 @@
     than a hardcoded `x`/`out`, which matters once the shape is keyword-capable:
     the stub's parameter names are what a caller types.
 
-### Fixed
-
-- **A view now inherits its parent's `create_error` translation (gh-580).** A
-    `[[<obj>.views]]` flavor got no create-failure translation at all — the
-    generator passed an empty category unconditionally — so every construction
-    failure on a view surfaced as the blanket `MemoryError` that gh-482 exists
-    to replace.
-
-    That was backwards for this case. A view exists precisely *because* its
-    constructor takes different, usually more, parameters than the parent's:
-    `RateConverter_create(rate, compensate)` has two ways to be handed something
-    invalid, `RateConverter_create_matched(rate, compensate, pulse, beta, span,   pulse_sps, num_phases)` has seven. The flavor is the constructor that most
-    needs the translation, and it was the only one that could not have it.
-
-    Declaring the error on the parent now covers both front doors. A view that
-    wants its own wording — naming the extra parameters the parent's message
-    cannot — declares it with `jm error <obj> --module <mod> --view <Class>`.
-    Category and message resolve independently, so a view may refine just the
-    wording under the parent's category. Only an explicit declaration is written
-    to the manifest: an inherited translation keeps tracking the parent instead
-    of being frozen into a copy that silently stops following it.
-
-    Note the deliberate contrast with gh-509's view *warnings*, which are **not**
-    inherited — a warning describes a condition the view may simply not have,
-    while an error describes the same object refusing to construct.
-
-    A project that declares nothing is unaffected: with no parent translation,
-    a view's failure block is byte-identical to before.
-
 ### Changed
 
 - **The Makefile is now the single source of truth for how dev tools are
@@ -95,6 +66,64 @@
     aggregator so the branch ruleset actually blocks on it.
 
 ### Fixed
+
+- **A view now inherits its parent's `create_error` translation (gh-580).** A
+    `[[<obj>.views]]` flavor got no create-failure translation at all — the
+    generator passed an empty category unconditionally — so every construction
+    failure on a view surfaced as the blanket `MemoryError` that gh-482 exists
+    to replace.
+
+    That was backwards for this case. A view exists precisely *because* its
+    constructor takes different, usually more, parameters than the parent's:
+    `RateConverter_create(rate, compensate)` has two ways to be handed something
+    invalid, `RateConverter_create_matched(rate, compensate, pulse, beta, span,   pulse_sps, num_phases)` has seven. The flavor is the constructor that most
+    needs the translation, and it was the only one that could not have it.
+
+    Declaring the error on the parent now covers both front doors. A view that
+    wants its own wording — naming the extra parameters the parent's message
+    cannot — declares it with `jm error <obj> --module <mod> --view <Class>`.
+    Category and message resolve independently, so a view may refine just the
+    wording under the parent's category. Only an explicit declaration is written
+    to the manifest: an inherited translation keeps tracking the parent instead
+    of being frozen into a copy that silently stops following it.
+
+    Note the deliberate contrast with gh-509's view *warnings*, which are **not**
+    inherited — a warning describes a condition the view may simply not have,
+    while an error describes the same object refusing to construct.
+
+    A project that declares nothing is unaffected: with no parent translation,
+    a view's failure block is byte-identical to before.
+
+- **`make test` supplies just-makeit's own runtime dependencies.** The unit
+    suite runs under `uv run --no-project`, which excludes the project *and its
+    dependencies*, while the tests import `just_makeit` straight from `src/` —
+    so the code under test ran with its dependencies missing. In a fresh clone
+    or worktree that produced ~8 failures across `test_codec_*` and
+    `test_app_gen` that all pointed at TOML serialization rather than at the
+    environment, because a missing `tomlkit` is **silent**: `_write_doc` falls
+    back to `_dump` by design, and comment/key preservation quietly stops.
+    (Below 3.11 a missing `tomli` is outright fatal — it *is* `C.tomllib`.) CI
+    was unaffected: it installs the project properly via `jm-install-deps`.
+
+    `pyproject.toml` stays the source of truth; the Makefile mirrors it, and
+    `tests/test_test_env.py` fails if the two drift in either direction, so the
+    duplication cannot rot.
+
+- **Running a single test file works again.** A few test modules
+    (`test_app_gen.py` among them) import `just_makeit` without adding `src/` to
+    `sys.path`, relying on some earlier-collected module having done it — so
+    `pytest tests/test_app_gen.py` on its own, the workflow `CLAUDE.md`
+    documents, died with `ModuleNotFoundError`. A new `tests/conftest.py` puts
+    this repo's `src/` first on `sys.path` for every run.
+
+    Position matters as much as presence: ahead of an editable install, so a
+    sibling worktree's install can no longer shadow the tree under test. That
+    failure mode is genuinely confusing — a function you are looking at is
+    reported missing from its own module.
+
+    The same `conftest.py` refuses to collect when a runtime dependency is
+    absent, replacing the misleading pile of failures with one line naming the
+    dependency and the fix.
 
 - **`docs/developers/why-zensical.md` is formattable again.** Its termynal
     prefix table wrote `` `$ ` `` and `` `# ` `` — inline code whose **trailing
