@@ -408,7 +408,12 @@ def _method_kwargs(m: dict) -> bool:
     if ret_arr and not arrays:
         return False  # (c) int-in -> array-out
     if any(a.get("writable") for a in arrays) and ret_arr:
-        return False  # (d) array-in + writable array-out
+        # (d) array-in + writable array-out. Bare form is positional; with
+        # trailing scalars (gh-582) it parses with keywords exactly as (b)
+        # does. This MUST track _emit_method's (d) branch — registering the
+        # 3-arg C signature as METH_VARARGS hands the kwargs pointer to
+        # whatever the ABI put there.
+        return len(arrays) != len(margs)
     if arrays:
         return len(arrays) != len(margs)  # (b) only when trailing scalars
     return True  # (a) scalar args
@@ -566,12 +571,18 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (d) array-in + writable array-out → out[:n_out] view (#311). A writable
-    # array arg + an array return marks a caller-buffer execute: marshal a
-    # borrowed input and a writable exact-dtype output (no silent cast — a cast
-    # would write into a temp copy, not the caller's buffer), call
-    # fn(h, in, n_in, out, max_out), and return the zero-copy view out[:n_out],
-    # which pins the caller's array (gh-219). Mirrors capsule _emit_execute.
+    # (d) array-in (+ optional trailing scalars) + writable array-out →
+    # out[:n_out] view (#311, scalars #582). A writable array arg + an array
+    # return marks a caller-buffer execute: marshal a borrowed input and a
+    # writable exact-dtype output (no silent cast — a cast would write into a
+    # temp copy, not the caller's buffer), call
+    # fn(h, in, n_in, <scalars>, out, max_out), and return the zero-copy view
+    # out[:n_out], which pins the caller's array (gh-219). Mirrors capsule
+    # _emit_execute.
+    #
+    # gh-582: a control-port variant of an existing (d) method — a streaming
+    # block plus a couple of loop controls — is the block form of a shape that
+    # already existed, so the missing scalars were a gap rather than a decision.
     writable_out = [a for a in array_in if a.get("writable")]
     if writable_out and returns and str(returns).endswith("[]"):
         o = writable_out[0]
@@ -585,14 +596,77 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         xn, on = a["name"], o["name"]
         in_elem, in_npy = _array_elem_npy(a["type"])
         out_elem, out_npy = _array_elem_npy(o["type"])
+        # gh-582: trailing scalars, the same feature shape (b) got in gh-308.
+        # Everything that is neither the input nor the output array, in DECLARED
+        # order — the Python signature follows the manifest, and the C call
+        # threads them between n_in and out_data, which is where the natural C
+        # signature puts them:
+        #   fn(h, in, n_in, <scalars>, out, max_out)
+        d_others = [s for s in margs if s is not a and s is not o]
+        if any(str(s.get("type", "")).endswith("[]") for s in d_others):
+            raise NotImplementedError(
+                f"handle method '{name}': shape (d) takes exactly one input "
+                "array and one writable output array"
+            )
+        d_scal_call = "".join(f", {s['name']}" for s in d_others)
+        # With no scalars the parse stays the historical positional "OO", so
+        # every existing (d) method's generated C is byte-identical. With
+        # scalars it becomes keyword-capable exactly as (b) is, `|` splitting
+        # off any defaults.
+        #
+        # The PYTHON order is (x, out, scalars…) even though the C order is
+        # (in, n_in, scalars, out, max_out). Two reasons, both about the
+        # Python side:
+        #   * `out` is required and a scalar may carry a default. Python cannot
+        #     express a required parameter after an optional one positionally,
+        #     and PyArg's `|` makes *everything* after it optional — declaring
+        #     out last would let `f(x, ctrl)` parse with `out` never assigned.
+        #   * it keeps `scale_ctrl(x, out, …)` a strict extension of the
+        #     existing `scale(x, out)`: adding a control port does not reorder
+        #     the parameters a caller already passes.
+        if d_others:
+            d_decls = ""
+            d_fmt = ["O", "O"]  # x, out — both required, both first
+            d_inserted = False
+            for s in d_others:
+                dflt = s.get("default")
+                init = f" = {dflt}" if dflt is not None else ""
+                d_decls += f"    {s['type']} {s['name']}{init};\n"
+                if dflt is not None and not d_inserted:
+                    d_fmt.append("|")
+                    d_inserted = True
+                d_fmt.append(_scalar_fmt(s["type"]))
+            d_fmt_s = "".join(d_fmt)
+            d_kwlist = ", ".join(
+                f'"{n}"' for n in [xn, on] + [s["name"] for s in d_others]
+            )
+            d_addrs = "".join(f", &{s['name']}" for s in d_others)
+            d_sig = (
+                f"{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)"
+            )
+            d_parse = (
+                f"    static char *kwlist[] = {{{d_kwlist}, NULL}};\n"
+                f"    PyObject *{xn}_obj, *{on}_obj;\n"
+                f"{d_decls}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
+                f' "{d_fmt_s}", kwlist,\n'
+                f"            &{xn}_obj, &{on}_obj{d_addrs}))\n"
+                f"        return NULL;"
+            )
+        else:
+            d_sig = f"{tname}_{name}({obj} *self, PyObject *args)"
+            d_parse = (
+                f"    PyObject *{xn}_obj, *{on}_obj;\n"
+                f'    if (!PyArg_ParseTuple(args, "OO", &{xn}_obj,'
+                f" &{on}_obj)) return NULL;"
+            )
         _out_guard = _coerce.out_buffer_guard(
             f"{on}_obj", out_npy, label=on, decrefs=f"Py_DECREF({xn}_arr);"
         )
         return f"""static PyObject *
-{tname}_{name}({obj} *self, PyObject *args)
+{d_sig}
 {{
-    PyObject *{xn}_obj, *{on}_obj;
-    if (!PyArg_ParseTuple(args, "OO", &{xn}_obj, &{on}_obj)) return NULL;
+{d_parse}
 {closed_guard}
     PyArrayObject *{xn}_arr = (PyArrayObject *)PyArray_FROM_OTF(
         {xn}_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
@@ -607,7 +681,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA({xn}_arr);
     {out_elem} *out_data = ({out_elem} *)PyArray_DATA({on}_arr);
     size_t n_out;
-{gil_open}    n_out = {fn}(self->h, in_data, n_in, out_data, max_out);
+{gil_open}    n_out = {fn}(self->h, in_data, n_in{d_scal_call}, out_data, max_out);
 {gil_close}    Py_DECREF({xn}_arr);
 
     /* Return {on}_arr[:n_out] — zero-copy view into the caller's buffer. */
@@ -1632,10 +1706,29 @@ def render_pyi(
             ann = "bytes"
             doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
         elif writable_out and ret_arr:
-            # (d) execute(x, out) -> ndarray
-            sig = "self, x: NDArray[Any], out: NDArray[Any]"
+            # (d) execute(x, out[, scalars...]) -> ndarray.
+            # Declared names, not a hardcoded x/out: gh-582 makes this shape
+            # keyword-capable as soon as it carries scalars, so the stub's
+            # parameter names are what a caller types — they must match the
+            # kwlist. Order matches the binding's: x, out, then the scalars
+            # (see _emit_method's (d) branch for why out precedes them).
+            _d_out = writable_out[0]
+            _d_in = [a for a in arrays if a is not _d_out][0]
+            _d_scalars = [a for a in margs if a not in arrays]
+            sig = (
+                f"self, {_d_in['name']}: NDArray[Any]"
+                f", {_d_out['name']}: NDArray[Any]"
+            )
+            for a in _d_scalars:
+                dflt = a.get("default")
+                sig += f", {a['name']}: {_pyi_scalar(a['type'])}"
+                if dflt is not None:
+                    sig += " = ..."
             ann = "NDArray[Any]"
-            doc_call = f"{name}(x, out)"
+            _d_names = [_d_in["name"], _d_out["name"]] + [
+                a["name"] for a in _d_scalars
+            ]
+            doc_call = f"{name}({', '.join(_d_names)})"
         elif ret_arr and not arrays and m.get("out_len_fn"):
             # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
             sig = "self, " + ", ".join(

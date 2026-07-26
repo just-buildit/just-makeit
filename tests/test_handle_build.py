@@ -56,6 +56,9 @@ void ringbuf_stats(const ringbuf_t *r, ringbuf_stats_t *out);
 void ringbuf_info(const ringbuf_t *r, ringbuf_info_t *out);
 size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
                      float *out, size_t max_out);
+size_t ringbuf_scale_ctrl(const ringbuf_t *r, const float *in, size_t n_in,
+                          float extra, float bias,
+                          float *out, size_t max_out);
 float ringbuf_get_gain(const ringbuf_t *r);
 void ringbuf_set_gain(ringbuf_t *r, float gain);
 size_t ringbuf_head(const ringbuf_t *r);
@@ -119,6 +122,17 @@ size_t ringbuf_scale(const ringbuf_t *r, const float *in, size_t n_in,
                      float *out, size_t max_out) {
     size_t k = 0;
     for (; k < n_in && k < max_out; k++) out[k] = in[k] * r->gain;
+    return k;
+}
+/* gh-582: the block form of ringbuf_scale with two control ports — the
+   scalars sit between n_in and the output buffer, which is the natural C
+   signature for a streaming block plus loop controls. */
+size_t ringbuf_scale_ctrl(const ringbuf_t *r, const float *in, size_t n_in,
+                          float extra, float bias,
+                          float *out, size_t max_out) {
+    size_t k = 0;
+    for (; k < n_in && k < max_out; k++)
+        out[k] = in[k] * r->gain * extra + bias;
     return k;
 }
 float ringbuf_get_gain(const ringbuf_t *r) { return r->gain; }
@@ -238,6 +252,22 @@ def _ringbuf_module() -> dict:
                 "nogil": True,
                 "args": [
                     {"name": "x", "type": "float[]"},
+                    {"name": "out", "type": "float[]", "writable": True},
+                ],
+            },
+            {
+                # gh-582 shape (d) + trailing scalars: the control-port variant
+                # of `scale`. `bias` carries a default, which is what forces the
+                # `|` into the format string and makes the explicit
+                # required-`out` check load-bearing.
+                "name": "scale_ctrl",
+                "fn": "ringbuf_scale_ctrl",
+                "returns": "float[]",
+                "nogil": True,
+                "args": [
+                    {"name": "x", "type": "float[]"},
+                    {"name": "extra", "type": "float"},
+                    {"name": "bias", "type": "float", "default": "0.0f"},
                     {"name": "out", "type": "float[]", "writable": True},
                 ],
             },
@@ -655,6 +685,45 @@ def test_writable_property_and_execute_shape(tmp_path):
             np.array([1, 2], dtype=np.float32),
             np.zeros(2, dtype=np.float64),
         )
+
+
+def test_execute_shape_with_trailing_scalars(tmp_path):
+    """gh-582: shape (d) carrying control scalars, like shape (b) already could.
+
+    `scale_ctrl(x, extra, bias=0.0, out)` threads its scalars between `n_in` and
+    the output buffer — `fn(h, in, n_in, extra, bias, out, max_out)` — which is
+    the natural C signature for a streaming block with control ports.
+    """
+    Ring = _build_ring_so(tmp_path).Ring
+    r = Ring(capacity=8)
+    r.gain = 2.0
+    x = np.array([1, 2, 3, 4], dtype=np.float32)
+
+    # positional, default bias: 1*2*3 = 6, 2*2*3 = 12, ...
+    out = np.zeros(4, dtype=np.float32)
+    y = r.scale_ctrl(x, out, 3.0)
+    assert y.tolist() == [6.0, 12.0, 18.0, 24.0]
+    assert out.tolist() == [6.0, 12.0, 18.0, 24.0]  # caller's buffer written
+    assert y.base is out  # still the zero-copy view
+
+    # the default is a real default, and the scalars are keyword-capable
+    out2 = np.zeros(4, dtype=np.float32)
+    y2 = r.scale_ctrl(x, out2, extra=3.0, bias=1.0)
+    assert y2.tolist() == [7.0, 13.0, 19.0, 25.0]
+
+    # `out` precedes the scalars, so it stays REQUIRED even though `bias`
+    # carries a default: PyArg's `|` makes everything after it optional, and a
+    # required parameter cannot follow an optional one positionally.
+    with pytest.raises(TypeError):
+        r.scale_ctrl(x)
+
+    # the exact-dtype guard still applies on this path
+    with pytest.raises(TypeError):
+        r.scale_ctrl(x, np.zeros(4, dtype=np.float64), 3.0)
+
+    # a short output buffer truncates to max_out, as with bare scale()
+    short = np.zeros(2, dtype=np.float32)
+    assert r.scale_ctrl(x, short, 1.0).tolist() == [2.0, 4.0]
 
 
 def test_cache_true_getter_resolved_in_tp_init(tmp_path):

@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Handle method shape (d) can carry trailing scalars (gh-582).** Shape (b)
+    (array-in → scalar return) got trailing scalars in gh-308, but shape (d)
+    (array-in + writable array-out → `out[:n_out]` view) hardcoded
+    `fn(h, in, n_in, out, max_out)` with nowhere to put them — so a streaming
+    block *with a control port*, the block form of a shape that already existed,
+    could not be declared at all. Scalars now thread through to
+    `fn(h, in, n_in, <scalars…>, out, max_out)`, which is the natural C
+    signature.
+
+    The Python signature is `method(x, out, <scalars…>)` — the output buffer
+    stays second, ahead of the scalars, even though C takes it last. Two
+    reasons: `out` is required while a scalar may carry a default, and Python
+    cannot express a required parameter after an optional one (PyArg's `|` makes
+    *everything* after it optional, so declaring `out` last would let a call
+    omitting it parse with the pointer never assigned); and it keeps
+    `scale_ctrl(x, out, …)` a strict extension of the existing `scale(x, out)`,
+    so adding a control port does not reorder parameters a caller already
+    passes.
+
+    As with shape (b), the method becomes keyword-capable exactly when it
+    carries scalars, and a `default` makes that scalar optional. The exact-dtype
+    `out` guard, the `out[:n_out]` zero-copy view, and the bare two-argument
+    form are unchanged — a shape (d) method with no scalars generates
+    byte-identical C.
+
+    The generated `.pyi` now uses the method's *declared* argument names rather
+    than a hardcoded `x`/`out`, which matters once the shape is keyword-capable:
+    the stub's parameter names are what a caller types.
+
 ### Fixed
 
 - **A view now inherits its parent's `create_error` translation (gh-580).** A
