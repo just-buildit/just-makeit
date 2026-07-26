@@ -164,6 +164,9 @@ Commands:
     --category name             Exception class, e.g. ValueError (required).
     --message text              Exception text (required).
     --module name               Module the object lives in.
+    --view ClassName            Give a view its OWN translation instead of the
+                                object's (requires --module). A view inherits the
+                                parent's unless you declare this.
                                 Note: applies to EVERY create() failure, a real
                                 allocation failure included — NULL cannot say why.
 
@@ -865,12 +868,13 @@ def main() -> None:
         module = None
         category = ""
         message = ""
+        view = ""
 
         remaining = args[2:]
         i = 0
         while i < len(remaining):
             tok = remaining[i]
-            if tok in ("--module", "--category", "--message"):
+            if tok in ("--module", "--category", "--message", "--view"):
                 i += 1
                 if i >= len(remaining):
                     print(f"error: {tok} requires a value", file=sys.stderr)
@@ -880,6 +884,8 @@ def main() -> None:
                     module = val
                 elif tok == "--category":
                     category = val
+                elif tok == "--view":
+                    view = val
                 else:
                     message = val
                 i += 1
@@ -897,6 +903,7 @@ def main() -> None:
             category,
             message,
             module=module,
+            view=view,
         )
 
     elif cmd == "function":
