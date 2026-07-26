@@ -1,5 +1,5 @@
 #include "/*<<component>>*///*<<component>>*/_core.h"
-
+/*<<state_struct_def>>*/
 /*<<component>>*/_state_t *
 /*<<component>>*/_create(/*<<create_params>>*/)
 {

@@ -111,6 +111,7 @@ def run(args: list[str]) -> None:
     init_params_obj: list[tuple[str, str, str]] = []
     no_state = False
     no_step = False
+    opaque_state = False
     no_reset = False
     mutable = False
     step_delegates = False
@@ -252,6 +253,11 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--no-step":
             no_step = True
+            i += 1
+        elif tok == "--opaque-state":
+            # gh-588: forward-declare the struct; the definition stays in
+            # hand-written _core.c instead of being exported as API.
+            opaque_state = True
             i += 1
         elif tok == "--no-reset":
             # gh-542: an object with nothing coherent to reset.
@@ -447,6 +453,7 @@ def run(args: list[str]) -> None:
         no_state=no_state,
         no_step=no_step,
         no_reset=no_reset,
+        opaque_state=opaque_state,
         mutable=mutable,
         step_delegates=step_delegates,
         serializable=serializable,

@@ -20,14 +20,7 @@
 extern "C" {
 #endif
 
-/**
- * @brief /*<<Component>>*/ state.
- *
- * Allocate with /*<<component>>*/_create().
- */
-typedef struct {
-/*<<state_struct_fields>>*//*<<property_struct_fields>>*/
-} /*<<component>>*/_state_t;
+/*<<state_struct_decl>>*/
 
 /**
  * @brief Create a /*<<component>>*/ instance.

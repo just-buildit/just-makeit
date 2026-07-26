@@ -59,6 +59,9 @@ Commands:
     --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --opaque-state              Forward-declare the state struct in the header and
+                                define it in _core.c, so its members stay private.
+                                Requires --no-step; excludes --state.
     --no-reset                  Omit reset(): no binding, no C function, no
                                 .pyi entry. For an object with nothing
                                 coherent to reset.

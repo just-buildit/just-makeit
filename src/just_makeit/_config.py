@@ -646,6 +646,23 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def is_opaque_state(cfg: dict, component: str) -> bool:
+    """True if the state struct is forward-declared in the header (gh-588).
+
+    An object's ``<comp>_state_t`` is otherwise always a *complete* type in the
+    public header, so adopting the object kind for a resource-ish component
+    means exporting every member as API — a `FILE *`, a scratch buffer, a
+    decoded-keyword array. ``opaque_state`` emits
+    ``typedef struct <comp>_state <comp>_state_t;`` instead and leaves the
+    definition to hand-written ``_core.c``, which is what the handle kind gives
+    you for nothing (#525 finding 8).
+
+    Not to be confused with `opaque_fields`, which declares individual members
+    of a *published* struct that jm does not manage.
+    """
+    return _truthy(cfg.get(component, {}).get("opaque_state"))
+
+
 def is_no_reset(cfg: dict, component: str) -> bool:
     """Return True if the component was scaffolded with --no-reset.
 
@@ -2377,6 +2394,7 @@ def add_component(
     no_state_: bool = False,
     no_step_: bool = False,
     no_reset_: bool = False,
+    opaque_state_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
     serializable_: bool = False,
@@ -2427,6 +2445,8 @@ def add_component(
     # convention and is always written) for the same reason.
     if no_reset_:
         entry["no_reset"] = "true"
+    if opaque_state_:
+        entry["opaque_state"] = "true"
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
@@ -3139,6 +3159,9 @@ def _dump(cfg: dict) -> str:
             # drops the key and regenerates the reset() the manifest asked
             # to have removed.
             "no_reset",
+            # gh-588: same reasoning — dropping it would republish the whole
+            # struct in the public header on the next apply.
+            "opaque_state",
             "step_delegates_to_steps",
             "serializable",
             "streamable",
