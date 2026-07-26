@@ -1606,6 +1606,31 @@ def render_composer_type(cfg: dict, module: str) -> str:
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
     pkg = C.project_name(cfg)
+
+    # gh-560: when rebuilding source objects out of a resolved segment array,
+    # deep-copy EVERY declared bytes field (`<name>` + `n_<name>`) rather than a
+    # hardcoded `bits`/`n_bits`. Two bugs in one:
+    #   * a source with no bytes field at all did not compile — the block
+    #     referenced members that the struct never had, so a composer could only
+    #     exist if its source looked like doppler's `wfm_source_t`;
+    #   * a source with a bytes field under any other name, or with more than
+    #     one (the multi-bytes case `_attach_bytes` already supports), had that
+    #     field left ALIASING the composer state's buffer instead of owned, so
+    #     the rebuilt object and the state both freed it.
+    # Empty when the source declares no bytes field, which is the common case.
+    src_bytes_copy = "".join(
+        f"""            if (syn->src.{n} && syn->src.n_{n}) {{
+                uint8_t *copy = (uint8_t *)malloc(syn->src.n_{n});
+                if (copy)
+                    memcpy(copy, syn->src.{n}, syn->src.n_{n});
+                syn->src.{n} = copy;
+            }} else {{
+                syn->src.{n} = NULL;
+                syn->src.n_{n} = 0;
+            }}
+"""
+        for n in (f["name"] for f in src.get("fields", []) if f.get("bytes"))
+    )
     pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
     obj = f"{cname}Object"
@@ -2063,18 +2088,9 @@ _{backing}_segments_to_list(const {seg_struct} *src, size_t n)
                 Py_DECREF(list);
                 return NULL;
             }}
-            syn->src = src[i].{sources_member}[k]; /* scalars + bits ptr */
+            syn->src = src[i].{sources_member}[k]; /* scalars + bytes ptrs */
             syn->fs = src[i].fs;
-            if (syn->src.bits && syn->src.n_bits) {{
-                uint8_t *copy = (uint8_t *)malloc(syn->src.n_bits);
-                if (copy)
-                    memcpy(copy, syn->src.bits, syn->src.n_bits);
-                syn->src.bits = copy;
-            }} else {{
-                syn->src.bits = NULL;
-                syn->src.n_bits = 0;
-            }}
-            PyList_SET_ITEM(srclist, (Py_ssize_t)k, (PyObject *)syn);
+{src_bytes_copy}            PyList_SET_ITEM(srclist, (Py_ssize_t)k, (PyObject *)syn);
         }}
         {seg_t}Object *sg =
             ({seg_t}Object *){seg_t}Type.tp_alloc(&{seg_t}Type, 0);
@@ -2714,7 +2730,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     src_sig = _pyi_field_sig(src_fields)
     seg_scalar_sig = _pyi_field_sig(seg_fields)
     has_stream = bool(C.composer_stream(cfg, module).get("stream"))
-    typing_imports = "Any, Iterator" if has_stream else "Any"
+    # gh-560: a Timeline's `__iter__` is annotated too, so Iterator is needed
+    # whenever a timeline exists — not only for the composer's stream().
+    typing_imports = "Any, Iterator" if (has_stream or tl_t) else "Any"
 
     # The fs segment field also appears at the end of Synth.__init__.
     fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
@@ -2724,17 +2742,34 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
         "from __future__ import annotations",
         f"from typing import {typing_imports}",
+        # gh-560: every composer type is a C type with its own instance layout,
+        # so it is a *disjoint base* — it cannot be combined with another such
+        # base by multiple inheritance. Unlike the handle and object kinds,
+        # these are Py_TPFLAGS_BASETYPE (subclassing them is a shipped feature,
+        # 0.19.17), so `@final` would be a lie; `@disjoint_base` is the accurate
+        # marker. It lives in typing_extensions, whose stubs mypy bundles — a
+        # `.pyi` is never executed, so this adds no runtime dependency.
+        "from typing_extensions import disjoint_base",
         "import numpy as np",
         "from numpy.typing import NDArray",
         "",
+        "@disjoint_base",
         f"class {src_t}:",
     ]
     lines.extend(_pyi_doc_lines(src_t, synth_doc_fields, enum_reg))
     lines += [
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
-        "    def __getattr__(self, name: str) -> Any: ...",
     ]
+    # gh-560: the declared fields are real read/write getsets on the type, so
+    # they belong in the stub. They were missing, and a blanket
+    # `def __getattr__(self, name: str) -> Any` stood in their place — which
+    # the runtime never had (no tp_getattro is emitted; fields are tp_getset).
+    # That hatch told a type checker every attribute exists, which is exactly
+    # what hid the omission: `synth.freq` checked fine for the wrong reason,
+    # and so did `synth.frq`.
+    lines += [f"    {f['name']}: {_pyi_field_type(f)}" for f in src_fields]
+    lines.append("    fs: float")
     if _source_generates(cfg, module):
         lines += [
             "    def steps(self, n: int) -> NDArray[np.complex64]:",
@@ -2748,10 +2783,13 @@ def render_pyi(cfg: dict, module: str) -> str:
     for c in _source_computed(cfg, module):
         pytype = "float" if c["type"] in ("double", "float") else "int"
         lines.append(f"    {c['name']}: {pytype}")
-    lines += ["", f"class {seg_t}:"]
+    lines += ["", "@disjoint_base", f"class {seg_t}:"]
     lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
     lines += [
         f"    sources: list[{src_t}]",
+        # gh-560: the segment's own scalar fields are getsets too (same
+        # omission as the source's above).
+        *[f"    {f['name']}: {_pyi_field_type(f)}" for f in seg_fields],
         # Feature 4 — flat single-source accessors (read-only; AttributeError on
         # a multi-source segment).
         *[
@@ -2769,15 +2807,18 @@ def render_pyi(cfg: dict, module: str) -> str:
             f"    def add(self, *others: {seg_t}) -> {tl_t}:",
             f'        """Append segments; return a {tl_t}."""',
             "",
+            "@disjoint_base",
             f"class {tl_t}:",
             f'    """{tl_t}."""',
             f"    segments: list[{seg_t}]",
             f"    def __init__(self, segments: list[{seg_t}]) -> None: ...",
             f"    def add(self, *segments: {seg_t}) -> {tl_t}:",
             '        """Append and return self."""',
-            "    def __iter__(self): ...",
+            f"    def __iter__(self) -> Iterator[{seg_t}]: ...",
             "    def __len__(self) -> int: ...",
-            "    def __getitem__(self, i): ...",
+            # gh-560: `/` — a tp_as_sequence slot takes its index positionally
+            # and cannot be called by keyword, so the stub must say so.
+            f"    def __getitem__(self, i: int, /) -> {seg_t}: ...",
         ]
     seg_or_tl = (
         f"{seg_t} | {tl_t} | list[{seg_t}] | None"
@@ -2786,6 +2827,7 @@ def render_pyi(cfg: dict, module: str) -> str:
     )
     lines += [
         "",
+        "@disjoint_base",
         f"class {cname}:",
         f'    """{cname}.',
         "",
