@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A collocated object's core target now sees its module's
+    `extra_include_dirs` (gh-531).** jm emitted only `native/inc` and
+    `native/inc/<obj>` on `<obj>_core`, so a core whose `_core.c` / `_core.h`
+    includes a vendored header could not compile. The module's
+    `extra_include_dirs` reached the module's *own* core and the `.so`, but
+    never a collocated object's — and the only way out was reshaping the
+    project rather than the manifest (doppler moved a private `wfm_names.h`
+    into `native/inc/` for exactly this: "arguably tidier, but forced rather
+    than chosen").
+
+    They are emitted `PUBLIC`, so the object's test and bench executables
+    inherit them transitively — a core that needs a vendored header to compile
+    needs it to link its own C test too. The standalone (non-collocated) path
+    already did this via `extra_include_dirs_on_core`; this closes the gap
+    between the two shapes.
+
+    Link deps were already covered: a module's `extra_link_libs` reach a
+    collocated core verbatim, with no `_core` suffixing, so a vendored target
+    can be named as-is.
+
+    Opt-in by construction — a module that declares nothing generates
+    byte-identical CMake.
+
 ### Added
 
 - **`--opaque-state`: an object's state struct can stay out of the public

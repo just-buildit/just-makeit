@@ -1369,10 +1369,26 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
                 if _colib
                 else ""
             )
+            # gh-531: the module's extra_include_dirs reach the module's own
+            # core and the .so, but never reached a COLLOCATED object's core —
+            # so a core whose .c/.h includes a vendored header (cJSON.h) could
+            # not compile, and the only way out was reshaping the project. They
+            # are PUBLIC so test/bench inherit them transitively too.
+            _coinc = C.extra_include_dirs(cfg, module) if module else []
+            extra_include_dirs_on_object_core = (
+                f"target_include_directories({obj}_core PUBLIC\n    "
+                + "\n    ".join(_coinc)
+                + ")\n"
+                if _coinc
+                else ""
+            )
             ctx_cmake = {
                 **ctx_,
                 "extra_link_libs_block": _colib_block,
                 "extra_link_on_object_core": extra_link_on_object_core,
+                "extra_include_dirs_on_object_core": (
+                    extra_include_dirs_on_object_core
+                ),
             }
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
             # Append the collocated object's extra sources: a legacy
@@ -1714,6 +1730,23 @@ def run(
         )
     else:
         ctx["extra_link_on_object_core"] = ""
+    # gh-531: same for include dirs. The module's own extra_include_dirs count
+    # too — a collocated object belongs to the module, and if the module needs a
+    # vendored header its objects' cores generally do as well. Without this the
+    # only fix was reshaping the project (doppler moved a private header into
+    # native/inc/ to work around it).
+    _mod_incs = C.extra_include_dirs(cfg, module) if module else []
+    _all_incs = list(extra_include_dirs) + [
+        d for d in _mod_incs if d not in extra_include_dirs
+    ]
+    if _all_incs:
+        _eincs = "\n    ".join(_all_incs)
+        ctx["extra_include_dirs_on_object_core"] = (
+            f"target_include_directories({ctx['component']}_core PUBLIC\n"
+            f"    {_eincs})\n"
+        )
+    else:
+        ctx["extra_include_dirs_on_object_core"] = ""
 
     # gh-170: include each depends_on component's header so opaque fields of
     # its types compile (mirrors the standalone path in _init.run). Only deps
