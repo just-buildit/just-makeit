@@ -28,9 +28,11 @@ pytest tests/test_templates.py
 # Run a single test by name
 pytest tests/test_templates.py::test_make_state_ctx_no_state
 
-# Lint/format
-uvx ruff format --line-length=79 src/ tests/
-uvx ruff check src/ tests/
+# Lint/format — ALWAYS via make; never `uvx ruff` or a global install.
+# `uvx` resolves to whatever ruff released today, which formats differently
+# from the pinned one and silently rewrites unrelated files.
+make format   # auto-fix (ruff + mdformat)
+make lint     # the gate CI runs (all pre-commit hooks, all files)
 
 # Run a bundled end-to-end example (scaffolds fresh in /tmp, builds, tests)
 just-makeit example fir_filter

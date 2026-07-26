@@ -210,11 +210,43 @@ jobs:
           report_type: test_results
           fail_ci_if_error: false
 
+  # Formatting/lint gate. Until this existed, `make lint` was local-only: a
+  # broken hook could sit on main indefinitely (docs/developers/why-zensical.md
+  # failed mdformat from #469 until gh-581's cleanup found it, because nothing
+  # in CI ever ran the hooks). Runs the SAME `make lint` a developer runs, so
+  # the two can never disagree about tools, versions, or flags.
+  lint:
+    name: Lint
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          # >=3.10 so mdformat is installable; `make lint-mdformat` would
+          # otherwise self-skip and the gate would silently check nothing.
+          python-version: "3.12"
+
+      - name: Install dev tooling
+        run: uv sync --group dev
+
+      - name: Run make lint
+        run: make lint
+
+      # A hook that rewrites a file exits non-zero, so the step above already
+      # failed — but the diff is what tells you WHAT to fix.
+      - name: Show what the hooks changed
+        if: failure()
+        run: git --no-pager diff
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, examples, install-deps-smoke, coverage]
+    needs: [changes, test, examples, install-deps-smoke, coverage, lint]
     if: always()
     steps:
       - run: |
