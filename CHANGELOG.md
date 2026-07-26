@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--opaque-state`: an object's state struct can stay out of the public
+    header (gh-588).** jm always published `<comp>_state_t` as a *complete*
+    type, so adopting the object kind for a resource-ish component meant
+    exporting every member as API — doppler's reader struct holds a `FILE *`, a
+    scratch buffer and a decoded-keyword array, none of it interface. The handle
+    kind never had this problem, which is the divergence #525 (finding 8)
+    reported.
+
+    With the flag the header carries only
+    `typedef struct <comp>_state <comp>_state_t;` and the definition is
+    generated into hand-written `_core.c`. This works because the generated
+    binding only ever handles the state through a pointer; the one thing that
+    cannot is the `static inline <comp>_step()` that lives in the header and
+    dereferences it, so `--opaque-state` requires `--no-step` and rejects
+    `--state`. Both are jm diagnostics that explain the conflict, not
+    incomplete-type errors in code the user never wrote.
+
+    Not to be confused with the existing `opaque_fields`, which declares
+    individual members of a *published* struct that jm does not manage.
+
+    Opt-in and off by default: a project that does not use it generates
+    byte-identical C and an untouched manifest.
+
+    Worth stating what this did **not** need to change: a property without
+    `field = true` has always been accessor-backed
+    (`<comp>_get_<name>(self->handle)`), so properties never forced the struct
+    open — only `field = true` ones and the inline `step()` did.
+
 ### Fixed
 
 - **The composer `.pyi` no longer claims a `__getattr__` the runtime does not

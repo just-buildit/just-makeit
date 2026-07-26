@@ -1377,6 +1377,68 @@ def _apply_no_reset(ctx: dict, no_reset: bool) -> dict:
     return ctx
 
 
+def _state_struct_decl(
+    component: str, Component: str, fields: str, opaque: bool = False
+) -> str:
+    """The state struct as the PUBLIC header declares it.
+
+    Default: the complete type jm has always emitted, byte-identical — the
+    ``property_struct_fields`` token stays nested so `make_properties_ctx`,
+    which runs later, still lands its fields inside the braces.
+
+    gh-588 ``opaque_state``: a forward declaration instead, leaving the
+    definition to hand-written ``_core.c``. Otherwise an object's struct is
+    *always* published in full, so adopting the object kind for a resource-ish
+    component — doppler's reader holds a ``FILE *``, a scratch buffer and a
+    decoded-keyword array — means exporting all of it as API. The handle kind
+    never had that problem, and the divergence is what #525 called out.
+
+    Mechanically the binding only ever handles the state through a pointer
+    (``self->handle``; create/destroy/reset all take one), so an incomplete
+    type is fine. The blocker is the ``static inline <comp>_step()`` that lives
+    in this header and dereferences state — hence ``opaque_state`` requires
+    ``no_step``, which `_object` validates rather than leaving to the compiler.
+    """
+    if opaque:
+        return (
+            f"/**\n"
+            f" * @brief {Component} state (opaque).\n"
+            f" *\n"
+            f" * The definition lives in {component}_core.c; this header\n"
+            f" * exports only the handle type. Allocate with\n"
+            f" * {component}_create().\n"
+            f" */\n"
+            f"typedef struct {component}_state {component}_state_t;"
+        )
+    return (
+        f"/**\n"
+        f" * @brief {Component} state.\n"
+        f" *\n"
+        f" * Allocate with {component}_create().\n"
+        f" */\n"
+        f"typedef struct {{\n"
+        f"{fields}/*<<property_struct_fields>>*/\n"
+        f"}} {component}_state_t;"
+    )
+
+
+def _state_struct_def(component: str, fields: str, opaque: bool) -> str:
+    """The state struct's *definition*, for ``_core.c`` (gh-588).
+
+    Empty unless ``opaque_state`` — and empty renders as the blank line that
+    already sat between the include and the first function, so a non-opaque
+    ``_core.c`` is byte-identical.
+
+    Under ``opaque_state`` the header carries only
+    ``typedef struct <c>_state <c>_state_t;``, so the definition has to be
+    ``struct <c>_state { … };`` here — a named struct, not the anonymous one
+    the public form uses.
+    """
+    if not opaque:
+        return ""
+    return f"\nstruct {component}_state {{\n{fields}}};\n"
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -1390,6 +1452,7 @@ def make_state_ctx(
     no_ctor_names: "frozenset[str]" = frozenset(),
     create_fn: "str | None" = None,
     no_reset: bool = False,
+    opaque_state: bool = False,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1533,6 +1596,15 @@ def make_state_ctx(
             base["state_struct_fields"] = "\n".join(
                 f"    {ct} {name};" for name, ct in opaque_fields
             )
+        base["state_struct_decl"] = _state_struct_decl(
+            component,
+            Component,
+            base["state_struct_fields"] + "\n",
+            opaque_state,
+        )
+        base["state_struct_def"] = _state_struct_def(
+            component, base["state_struct_fields"] + "\n", opaque_state
+        )
         base.update(_ctor_seed_slots(component, list(init_params)))
         return _apply_no_reset(base, no_reset)
 
@@ -2148,6 +2220,12 @@ def make_state_ctx(
     reset_test_c = "\n".join(rst_lines)
 
     result: dict[str, str] = {
+        "state_struct_decl": _state_struct_decl(
+            component, Component, state_struct_fields + "\n", opaque_state
+        ),
+        "state_struct_def": _state_struct_def(
+            component, state_struct_fields + "\n", opaque_state
+        ),
         "state_struct_fields": state_struct_fields,
         "create_params": create_params,
         "create_param_docs": create_param_docs,

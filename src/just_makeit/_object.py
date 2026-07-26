@@ -213,6 +213,7 @@ def _make_object_ctx(
     init_post_parse_impl: str = "",
     class_name: str | None = None,
     opaque_fields: list[tuple[str, str]] = (),
+    opaque_state: bool = False,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable: list[tuple[str, str]] = (),
     doc_blocks: dict | None = None,
@@ -251,6 +252,7 @@ def _make_object_ctx(
             init_params=init_params,
             init_post_parse_impl=init_post_parse_impl,
             opaque_fields=opaque_fields,
+            opaque_state=opaque_state,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
             no_reset=no_reset,
@@ -857,6 +859,7 @@ def _make_view_ctx(
         class_name=view["class_name"],
         create_fn=view["create_fn"],
         opaque_fields=C.opaque_fields(cfg, obj),
+        opaque_state=C.is_opaque_state(cfg, obj),
         no_ctor_names=C.no_ctor_names(cfg, obj),
         controllable=C.controllable_state_vars(cfg, obj),
         doc_blocks=doc_blocks,
@@ -1028,6 +1031,7 @@ def build_component_ctxs(
             init_params=C.init_params(cfg, obj),
             class_name=C.class_name(cfg, obj),
             opaque_fields=C.opaque_fields(cfg, obj),
+            opaque_state=C.is_opaque_state(cfg, obj),
             no_ctor_names=C.no_ctor_names(cfg, obj),
             controllable=C.controllable_state_vars(cfg, obj),
             doc_blocks=_doc_blocks,
@@ -1474,6 +1478,7 @@ def run(
     init_params: list[tuple] = (),
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
+    opaque_state: bool = False,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     variable_output: bool = False,
@@ -1488,6 +1493,30 @@ def run(
     destroy: "dict | None" = None,
     _hint: bool = True,
 ) -> None:
+    # gh-588: `opaque_state` forward-declares the struct, so anything that
+    # dereferences it from the PUBLIC header is incoherent. Say so here rather
+    # than let the user meet it as an incomplete-type error in generated C they
+    # did not write.
+    if opaque_state and not no_step:
+        print(
+            "error: --opaque-state requires --no-step.\n"
+            f"The generated {object_name}_step() is `static inline` in the "
+            "public header and\ndereferences the state, which an opaque type "
+            "cannot satisfy. Use --no-step,\nor drop --opaque-state.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if opaque_state and state_vars:
+        print(
+            "error: --opaque-state cannot be combined with --state.\n"
+            "A declared state variable generates a field in the struct jm "
+            "publishes, and\n--opaque-state exists to stop publishing it. "
+            "Hand-write the fields in\n"
+            f"{object_name}_core.c and expose what callers need as "
+            "properties.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
         print(
             f"error: '{object_name}' is not a valid object name.\n"
@@ -1534,6 +1563,7 @@ def run(
             destroy_impl_body=destroy_impl_body,
             init_params=init_params,
             opaque_fields=opaque_fields,
+            opaque_state=opaque_state,
             no_ctor_names=no_ctor_names,
             controllable_names=controllable_names,
             class_name=class_name,
@@ -1816,6 +1846,7 @@ def run(
         no_state_=no_state,
         no_step_=no_step,
         no_reset_=no_reset,
+        opaque_state_=opaque_state,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
