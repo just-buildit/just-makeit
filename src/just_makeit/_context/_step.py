@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import _coerce
 from .._types import (
     _CTYPE_META,
     _KIND_PY_ISINSTANCE,
@@ -243,6 +244,14 @@ def make_step_ctx(
             f"            &x_obj, &out_obj{ctrl_parse_refs}))\n"
             f"        return NULL;\n"
         )
+        # gh-581: reject a wrong-dtype `out=` before FROM_OTF can cast it into
+        # a temp — the caller asked for THEIR buffer to be written.
+        _out_guard_bw = _coerce.out_buffer_guard(
+            "out_obj",
+            out_np_enum_bw,
+            decrefs="Py_DECREF(x_arr);",
+            indent=" " * 8,
+        )
         steps_ext_fn_bw = (
             f"static PyObject *\n"
             f"{Component}_steps({Component}Object *self,"
@@ -260,6 +269,7 @@ def make_step_ctx(
             f"        return NULL;\n"
             f"    Py_ssize_t n = PyArray_SIZE(x_arr);\n"
             f"    if (out_obj && out_obj != Py_None) {{\n"
+            f"{_out_guard_bw}"
             f"        PyArrayObject *out_arr = (PyArrayObject *)\n"
             f"        PyArray_FROM_OTF(\n"
             f"            out_obj, {out_np_enum_bw},\n"
@@ -1106,6 +1116,14 @@ def make_step_ctx(
             # PyArg_ParseTupleAndKeywords so `out` and any control overrides
             # are keyword-capable through one binding (per-block; the parse
             # amortizes). Control locals default to the live field.
+            # gh-581: reject a wrong-dtype `out=` before FROM_OTF can cast it
+            # into a temp — the caller asked for THEIR buffer to be written.
+            _out_guard_main = _coerce.out_buffer_guard(
+                "out_obj",
+                out_np_enum,
+                decrefs="Py_DECREF(in_arr);",
+                indent=" " * 8,
+            )
             steps_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_steps"
@@ -1135,6 +1153,7 @@ def make_step_ctx(
                 f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
                 f"\n"
                 f"    if (out_obj && out_obj != Py_None) {{\n"
+                f"{_out_guard_main}"
                 f"        PyArrayObject *out_arr = (PyArrayObject *)"
                 f"PyArray_FROM_OTF(\n"
                 f"            out_obj, {out_np_enum},\n"

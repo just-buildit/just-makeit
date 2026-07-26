@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import _coerce
 from . import _config as C
 from . import _types as T
 
@@ -98,6 +99,9 @@ def _emit_execute(backing: str, method: dict) -> str:
     nogil = bool(method.get("nogil"))
     gil_open = "    Py_BEGIN_ALLOW_THREADS\n" if nogil else ""
     gil_close = "    Py_END_ALLOW_THREADS\n" if nogil else ""
+    _out_guard = _coerce.out_buffer_guard(
+        "out_obj", out_npy, decrefs="Py_DECREF(x_arr);"
+    )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 {{
@@ -113,17 +117,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
         x_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
     if (!x_arr) return NULL;
 
-    /* Require the exact output dtype — no silent cast; a cast would write
-     * into a temp copy instead of the caller's buffer. */
-    if (!PyArray_Check(out_obj) ||
-        PyArray_TYPE((PyArrayObject *)out_obj) != {out_npy} ||
-        !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {{
-        PyErr_SetString(PyExc_TypeError,
-            "out must be a writable ndarray of the output dtype");
-        Py_DECREF(x_arr);
-        return NULL;
-    }}
-    PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
+{_out_guard}    PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
         out_obj, {out_npy}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
     if (!out_arr) {{ Py_DECREF(x_arr); return NULL; }}
 

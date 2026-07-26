@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 
 from .. import _codec as _codec
+from .. import _coerce
 from .. import _types as T
 from .._types import (
     _CTYPE_META,
@@ -679,6 +680,20 @@ def make_methods_ctx(
         _from_line = [f"    >>> from {pkg} import {Component}"] if pkg else []
         _obj_line = f"    >>> obj = {Component}({py_create_args})"
 
+        # gh-581: every `out=` branch below requires the exact output dtype
+        # before marshaling, so FROM_OTF cannot cast the caller's buffer into a
+        # temp that the kernel fills and then discards. Two flavors: with an
+        # input array already owned (release it on the reject path) and without.
+        _out_guard_in = _coerce.out_buffer_guard(
+            "out_obj",
+            ret_np,
+            decrefs="Py_DECREF(in_arr);",
+            indent=" " * 8,
+        )
+        _out_guard = _coerce.out_buffer_guard(
+            "out_obj", ret_np, indent=" " * 8
+        )
+
         # ── batch method ─────────────────────────────────────────────────
         if batch:
             if has_arg:
@@ -710,6 +725,7 @@ def make_methods_ctx(
                     f"    if (!in_arr) return NULL;\n"
                     f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
                     f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"{_out_guard_in}"
                     f"        PyArrayObject *out_arr ="
                     f" (PyArrayObject *)PyArray_FROM_OTF(\n"
                     f"            out_obj, {ret_np},\n"
@@ -766,6 +782,7 @@ def make_methods_ctx(
                     f"            _kwlist, &n, &out_obj))\n"
                     f"        return NULL;\n"
                     f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"{_out_guard}"
                     f"        PyArrayObject *out_arr ="
                     f" (PyArrayObject *)PyArray_FROM_OTF(\n"
                     f"            out_obj, {ret_np},\n"
@@ -1364,8 +1381,15 @@ def make_methods_ctx(
                         if none_on_empty
                         else ""
                     )
+                    _vo_out_guard = _coerce.out_buffer_guard(
+                        "out_obj",
+                        _vo_out_np,
+                        decrefs=_decref_early_vo.strip(),
+                        indent=" " * 8,
+                    )
                     _out_branch = (
                         f"    if (out_obj && out_obj != Py_None) {{\n"
+                        f"{_vo_out_guard}"
                         f"        PyArrayObject *out_arr ="
                         f" (PyArrayObject *)PyArray_FROM_OTF(\n"
                         f"            out_obj, {_vo_out_np},\n"
