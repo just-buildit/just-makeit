@@ -1437,6 +1437,23 @@ def _dep_links(d) -> bool:
     return bool(d.get("link")) if isinstance(d, dict) else False
 
 
+def _dep_test_only(d) -> bool:
+    """Whether a depends_on entry exists only to link the component's C test.
+
+    gh-537: ``depends_on`` is additive — a dependency lands on the component's
+    core, its test and bench, *and* the shipped ``.so``. That is right for a
+    real dependency, but a component whose C test round-trips through a sibling
+    (doppler's reader writes the captures it then reads back) has to declare
+    that sibling, which then ships inside the artifact. The cost is not the few
+    KB: the manifest ends up asserting a dependency the shipped artifact does
+    not have, and the manifest is meant to be the project's source of truth.
+
+    ``{name = "wfm_writer", test_only = true}`` keeps the dependency on the test
+    and bench link lines and off everything the artifact is built from.
+    """
+    return bool(d.get("test_only")) if isinstance(d, dict) else False
+
+
 def depends_on(cfg: dict, component: str) -> list[str]:
     """Return the transitive C OBJECT library deps for a component.
 
@@ -1445,8 +1462,37 @@ def depends_on(cfg: dict, component: str) -> list[str]:
     library target sees all required object files. An entry may be a bare
     string (``"fir"``) or a ``{name = "fir", link = true}`` table (gh-225);
     this returns the names either way (header includes + aggregate-lib
-    objects apply to both forms)."""
-    return [_dep_name(d) for d in cfg.get(component, {}).get("depends_on", [])]
+    objects apply to both forms).
+
+    gh-537: ``test_only`` entries are excluded here. This accessor feeds what
+    the shipped artifact is built from — header includes and the aggregate
+    library's objects — and a test-only dependency belongs in neither. Callers
+    that build the *test/bench* link line take :func:`depends_on_raw` (or
+    :func:`depends_test_cores`) instead, which keep them.
+    """
+    return [
+        _dep_name(d)
+        for d in cfg.get(component, {}).get("depends_on", [])
+        if not _dep_test_only(d)
+    ]
+
+
+def depends_test_only_cores(cfg: dict, component: str) -> list[str]:
+    """``<name>_core`` targets declared ``test_only`` for a component (gh-537).
+
+    These link the component's C test and bench and nothing else — not the
+    core's PUBLIC link line (which would propagate them straight back into the
+    Python extension), not the ``.so``, not the aggregate library.
+    """
+    out: list[str] = []
+    for d in cfg.get(component, {}).get("depends_on", []):
+        if not _dep_test_only(d):
+            continue
+        name = _dep_name(d)
+        core = name if name.endswith("_core") else f"{name}_core"
+        if core not in out:
+            out.append(core)
+    return out
 
 
 def depends_on_raw(cfg: dict, component: str) -> list:
@@ -1475,7 +1521,10 @@ def dep_link_libs(entries) -> list[str]:
     Names are normalised to the ``<name>_core`` OBJECT-lib target."""
     out: list[str] = []
     for d in entries:
-        if _dep_links(d):
+        # gh-537: a test_only entry never reaches a shipped target, even if it
+        # also carries link = true — the two would be contradictory, and
+        # silently honouring `link` is how the dependency ends up in the .so.
+        if _dep_links(d) and not _dep_test_only(d):
             name = _dep_name(d)
             out.append(name if name.endswith("_core") else f"{name}_core")
     return out
@@ -3028,6 +3077,10 @@ def _dump(cfg: dict) -> str:
                         inner = f'name = "{d["name"]}"'
                         if d.get("link"):
                             inner += ", link = true"
+                        # gh-537: dropping this republishes a test-only dep
+                        # into the artifact on the next apply.
+                        if d.get("test_only"):
+                            inner += ", test_only = true"
                         parts.append(f"{{ {inner} }}")
                     else:
                         parts.append(f'"{d}"')
@@ -3199,6 +3252,8 @@ def _dump(cfg: dict) -> str:
                     inner = f'name = "{d["name"]}"'
                     if d.get("link"):
                         inner += ", link = true"
+                    if d.get("test_only"):  # gh-537, see above
+                        inner += ", test_only = true"
                     parts.append(f"{{ {inner} }}")
                 else:
                     parts.append(f'"{d}"')

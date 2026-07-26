@@ -227,6 +227,12 @@ Key points:
 - `depends_on` entries with `link = true` add each `<name>_core` to the `.so`'s
     link line (CMake does not pull OBJECT-lib objects transitively into a final
     `.so`, so the link must be direct).
+- `depends_on` entries with `test_only = true` link the component's C test and
+    bench and **nothing else** — not the core's `PUBLIC` link line, the `.so`,
+    the aggregate library, or the public core header. For a component whose test
+    round-trips through a sibling (a reader that writes the captures it reads
+    back), this keeps the manifest from asserting a dependency the shipped
+    artifact does not have. It wins over `link = true` if both are set.
 
 ### 3.3 Capsule mechanics & lifetime
 

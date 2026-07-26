@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`depends_on` entries can be `test_only` (gh-537).** `depends_on` is
+    additive by design (gh-254) — a dependency lands on the component's core,
+    its test and bench, *and* the shipped artifact. That is right for a real
+    dependency and wrong for one a component needs only to link its C test:
+    doppler's reader round-trips through the writer (it writes the captures it
+    then reads back), so it must declare the writer, which then ships inside the
+    reader module.
+
+    The cost is not the few KB. The manifest ends up asserting a dependency the
+    shipped artifact does not have, and the manifest is meant to be the
+    project's source of truth.
+
+    ```toml
+    depends_on = [{ name = "wfm_writer", test_only = true }]
+    ```
+
+    keeps the dependency on the test and bench link lines and off every surface
+    the artifact is built from: the core's `PUBLIC` link line (from where it
+    would propagate straight back into the Python extension and ship anyway),
+    the `.so`, the aggregate library's `target_sources`, and the object's public
+    core header — the test includes that header itself.
+
+    `test_only` wins over `link = true` if both are set: the two are
+    contradictory, and silently honouring `link` is exactly how the dependency
+    ends up in the `.so`.
+
+    Manifest-only, like the rest of `depends_on`. Opt-in — an entry without the
+    key behaves exactly as before, pinned by tests.
+
 ### Fixed
 
 - **A collocated object's core target now sees its module's
