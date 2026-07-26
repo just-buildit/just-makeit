@@ -52,3 +52,15 @@ repos:
       - mdformat-gfm
       - mdformat-gfm-alerts
       - mdformat-mkdocs
+
+  # Must stay LAST: an example README inlines its .steps/ scripts verbatim, so
+  # this has to observe the rewrites ruff-format/clang-format just made rather
+  # than race them. Otherwise a reformatted step script leaves the README
+  # quoting pre-format text and only CI notices (assemble.py --check).
+  - repo: local
+    hooks:
+      - id: assemble-examples
+        name: re-assemble example READMEs from .steps/
+        entry: python3 scripts/assemble_examples.py
+        language: system
+        files: ^src/just_makeit/examples/[^/]+/\.steps/
