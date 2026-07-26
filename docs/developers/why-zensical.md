@@ -309,10 +309,14 @@ terminal widgets by `src/just_makeit/_termynal_fence.py`.
 
 ### Line types
 
+Prefixes are written quoted below because the **trailing space is part of the
+prefix** — `_termynal_fence.py` matches `line.startswith("$ ")`, so `$foo` is a
+static output line while `$ foo` is typed input.
+
 | Prefix            | Rendered as                                   |
 | ----------------- | --------------------------------------------- |
-| `$ `              | Typed input (animated character-by-character) |
-| `# `              | Comment line (no typing animation; dim style) |
+| `"$ "`            | Typed input (animated character-by-character) |
+| `"# "`            | Comment line (no typing animation; dim style) |
 | _(blank line)_    | Vertical gap spacer                           |
 | _(anything else)_ | Static output line                            |
 

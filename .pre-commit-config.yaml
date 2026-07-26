@@ -1,3 +1,14 @@
+# This file decides WHEN a check runs (which paths trigger it) and in what
+# order. It does NOT decide how a tool is invoked or which version it is —
+# the Makefile owns invocation, pyproject.toml's `dev` group owns versions,
+# and uv.lock pins them. Hooks for Python tooling therefore call `make`
+# targets rather than repeating a command line that can drift from `make
+# format` (it did: an unpinned `uvx ruff` reformatted files the pinned ruff
+# left alone, and unpinned mdformat `additional_dependencies` drifted the
+# plugin set out from under a config that still claimed otherwise).
+#
+# clang-format and cmake-format stay on their upstream mirrors: they are not
+# Python project dependencies, so pinning them in pyproject would be a lie.
 repos:
   - repo: local
     hooks:
@@ -13,12 +24,37 @@ repos:
     hooks:
       - id: uv-lock
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
+  # Python + markdown formatting, dispatched through the Makefile so the hook
+  # and `make format` cannot disagree. Each runs over the whole tree
+  # (pass_filenames: false) because that is what its make target does — a hook
+  # scoped to staged files could pass while the CI gate, which lints
+  # everything, fails on the same commit.
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix,  --unsafe-fixes]
+        name: ruff
+        entry: make -s lint-ruff
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+
       - id: ruff-format
+        name: ruff format
+        entry: make -s lint-ruff-format
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+
+      # The plugin set and the exclusions both live in the Makefile now: the
+      # excludes were previously duplicated here as a regex, and the plugins
+      # were unpinned `additional_dependencies`. `make lint-mdformat`
+      # self-skips on Python 3.9, where mdformat 1.x will not install.
+      - id: mdformat
+        name: mdformat
+        entry: make -s lint-mdformat
+        language: system
+        pass_filenames: false
+        types: [markdown]
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v22.1.8
@@ -38,20 +74,6 @@ repos:
         # cmake-format reads .cmake-format.yaml; its isolated hook env needs
         # PyYAML to parse it, else the hook dies with ModuleNotFoundError.
         additional_dependencies: [pyyaml]
-
-  - repo: https://github.com/hukkin/mdformat
-    rev: 1.0.0 # Use latest version
-    hooks:
-    - id: mdformat
-      # templates/ holds <<placeholder>> markdown that isn't valid until
-      # rendered; mdformat escapes the `<` (e.g. `# \<<project>>`), which
-      # then renders a stray backslash and breaks mkdocstrings/zensical.
-      exclude: ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$)
-      # Add optional plugins (e.g., for GFM or code block formatting)
-      additional_dependencies:
-      - mdformat-gfm
-      - mdformat-gfm-alerts
-      - mdformat-mkdocs
 
   # Must stay LAST: an example README inlines its .steps/ scripts verbatim, so
   # this has to observe the rewrites ruff-format/clang-format just made rather

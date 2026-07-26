@@ -2,7 +2,47 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The Makefile is now the single source of truth for how dev tools are
+    invoked.** Tool names and flags lived in four places at once — the Makefile,
+    `.pre-commit-config.yaml`, the CI workflows, and a bare `uvx ruff` line in
+    `CLAUDE.md` — and they had drifted. Each file now owns exactly one
+    concern: `pyproject.toml`'s `dev` group declares *which*
+    tools at *what* versions (locked by `uv.lock`), the Makefile declares *how*
+    they run, and `.pre-commit-config.yaml` declares *when* a check fires. The
+    `ruff` and `mdformat` hooks dispatch to `make lint-ruff` /
+    `make lint-ruff-format` / `make lint-mdformat`, so a hook cannot format
+    differently from `make format`. `clang-format` and `cmake-format` stay on
+    their upstream mirrors — they are not Python project dependencies.
+
+    New `make format` auto-fixes; `make lint` remains the gate. Both are safe to
+    run from a worktree now: the hook-install guard checked `.git/hooks/...`,
+    which never exists in a worktree (`.git` is a file there), so it retried the
+    install on every run and died outright when `core.hooksPath` was set.
+
+- **`ruff` and `mdformat` are pinned in the `dev` group.** `ruff==0.15.21`, and
+    `mdformat==1.0.0` with its three plugins pinned exactly. The plugins were
+    previously unpinned pre-commit `additional_dependencies`, which is how the
+    hook env drifted to `mdformat-mkdocs 5.1.4` while the config still read as
+    though it were pinned. mdformat is gated to Python >=3.10 (1.x dropped 3.9)
+    like `mypy` and `zensical`; `make lint-mdformat` self-skips without it.
+
+- **CI now runs the lint gate.** `make lint` was local-only, so a broken hook
+    could sit on `main` indefinitely — and did: `docs/developers/why-zensical.md`
+    failed `mdformat` from #469 until it turned up by accident. The new `Lint`
+    job runs the identical `make lint`, and is wired into the `CI passed`
+    aggregator so the branch ruleset actually blocks on it.
+
 ### Fixed
+
+- **`docs/developers/why-zensical.md` is formattable again.** Its termynal
+    prefix table wrote `` `$ ` `` and `` `# ` `` — inline code whose **trailing
+    space is semantically load-bearing** (`_termynal_fence.py` matches
+    `line.startswith("$ ")`). mdformat rewrites those to `` `$` ``, which renders
+    different HTML, so its round-trip validator correctly refused to write the
+    file. The prefixes are now written quoted (`` `"$ "` ``) with a note
+    explaining why, which round-trips cleanly and is clearer besides.
 
 - **An `out=` buffer of the wrong dtype is now rejected instead of silently
     cast into a temporary (gh-581).** The object generator's `out=` paths and

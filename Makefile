@@ -8,7 +8,8 @@
 #   make bench             Run scaffold benchmarks (pytest-benchmark)
 #   make bench-save        Save benchmark baseline (tagged with git describe)
 #   make bench-compare     Compare against last saved baseline
-#   make lint              Run pre-commit hooks on all files
+#   make lint              Run pre-commit hooks on all files (the CI gate)
+#   make format            Auto-fix formatting (ruff + mdformat)
 #   make build             Build wheel into dist/
 #   make docs              Build docs site into site/
 #   make docs-serve        Build and serve docs with live reload
@@ -28,14 +29,59 @@
 SHELL      = /bin/sh
 PYTHON     ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
 UV         = uv
-PYTEST          = $(UV) run --no-project --with pytest --with numpy --with just-buildit pytest
-PYTEST_B        = $(UV) run --no-project --with pytest --with pytest-benchmark --with numpy --with just-buildit pytest
-PYTEST_EXAMPLES = $(UV) run --with pytest --with numpy pytest
-ZENSICAL_RUN = $(UV) run --group dev
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
+# ── Tooling ───────────────────────────────────────────────────────────────────
+# This block is the ONLY place a tool binary is named or given flags. Humans,
+# the pre-commit hooks, and CI all reach the tools through the targets below,
+# so changing a flag (or a tool) is a one-line edit here rather than a hunt
+# through the Makefile, .pre-commit-config.yaml, and the workflow files.
+# Versions live in pyproject.toml's `dev` group and are locked by uv.lock.
+#
+# Corollary: do NOT invoke a linter with `uvx` (or a global install). `uvx ruff`
+# resolves to whatever released today, which formats differently from the
+# pinned ruff and silently rewrites unrelated files. Use `make format`.
+DEV_RUN    = $(UV) run --group dev
+RUFF       = $(DEV_RUN) ruff
+MDFORMAT   = $(DEV_RUN) mdformat
+ZENSICAL   = $(DEV_RUN) zensical
+PRE_COMMIT = $(DEV_RUN) pre-commit
+
+# Each formatter runs over the whole tree so `make format` and the pre-commit
+# hook can never disagree about scope. ruff reads its own excludes from
+# pyproject.toml; mdformat has no config file here, so its exclusions are named
+# once, below, instead of being duplicated into the hook config.
+#
+# examples/ and src/just_makeit/examples/ are GENERATED (assembled from
+# .steps/), and templates/ holds <<placeholder>> markdown that is not valid
+# until rendered — mdformat escapes the `<`, which then renders a stray
+# backslash and breaks mkdocstrings/zensical. docs/index.md is the zensical
+# landing page and is hand-laid-out.
+RUFF_PATHS = .
+# mdformat's own --exclude needs Python >=3.13 (it uses glob.translate), so the
+# file list is built here instead: every tracked .md minus these prefixes. That
+# also keeps the exclusions greppable in one place rather than as a second copy
+# of this regex in .pre-commit-config.yaml.
+MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$$)
+
+# pytest runs three ways. The deltas are spelled out here rather than in three
+# parallel command strings that drift independently:
+#   PYTEST          unit suite — `--no-project` keeps the project env OUT, so
+#                   the suite exercises the installed-package path; the
+#                   generated projects it scaffolds build with just-buildit.
+#   PYTEST_B        the same, plus pytest-benchmark.
+#   PYTEST_EXAMPLES example builds — deliberately WITHOUT `--no-project`, since
+#                   these need `just-makeit` itself importable from the project
+#                   env (just-buildit arrives transitively as its build dep).
+PYTEST_DEPS     = --with pytest --with numpy
+PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit
+PYTEST          = $(PYTEST_ISOLATED) pytest
+PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
+PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
+
 .PHONY: all test test-fast test-examples bench bench-save bench-compare \
-        lint build docs docs-serve docs-check install setup \
+        lint format lint-ruff lint-ruff-format lint-mdformat \
+        build docs docs-serve docs-check install setup \
         bump-version check-version release-branch tag-release \
         release-watch ship clean examples-clean help
 
@@ -67,9 +113,48 @@ bench-compare:
 
 # ── Lint ──────────────────────────────────────────────────────────────────────
 
+# `lint` is the gate (CI runs exactly this); `format` is the fixer you run
+# locally. Both go through the tool variables above, so neither can drift from
+# what the pre-commit hooks do — the hooks call these same targets.
+# The hook install is a convenience, not the gate — so it must never be able to
+# fail the gate. `git rev-parse --git-path` resolves the real hooks dir (in a
+# worktree `.git` is a FILE, so the old `test -f .git/hooks/...` guard always
+# missed and tried to reinstall), and a `core.hooksPath` that makes pre-commit
+# refuse to install is reported rather than fatal.
 lint:
-	@test -f .git/hooks/pre-commit || pre-commit install
-	$(UV) run --group dev pre-commit run --all-files
+	@hook=$$(git rev-parse --git-path hooks/pre-commit 2>/dev/null); \
+	 if [ -n "$$hook" ] && [ ! -f "$$hook" ]; then \
+	     $(PRE_COMMIT) install >/dev/null 2>&1 \
+	         || echo "note: git hook not installed (continuing with lint)"; \
+	 fi
+	$(PRE_COMMIT) run --all-files
+
+format:
+	$(RUFF) format $(RUFF_PATHS)
+	$(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
+	@$(MAKE) -s lint-mdformat
+
+# Individual tool targets. These exist so .pre-commit-config.yaml can invoke a
+# Makefile target instead of repeating the command line — the hooks decide WHEN
+# to run (which paths trigger them); these decide HOW.
+lint-ruff:
+	$(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
+
+lint-ruff-format:
+	$(RUFF) format $(RUFF_PATHS)
+
+# mdformat needs Python >=3.10 (see pyproject's dev group). On a 3.9 dev env it
+# is simply absent, so skip with a notice rather than failing — the CI lint job
+# runs a modern Python and enforces it there. Same self-skip pattern as the
+# mypy-backed stub-conformance gate.
+lint-mdformat:
+	@if $(MDFORMAT) --version >/dev/null 2>&1; then \
+	    git ls-files '*.md' \
+	        | grep -Ev '$(MD_EXCLUDE_RE)' \
+	        | xargs -r $(MDFORMAT); \
+	else \
+	    echo "mdformat unavailable (needs Python >=3.10) — skipping"; \
+	fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -82,11 +167,11 @@ build:
 
 docs:
 	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL_RUN) zensical build --clean --strict
+	$(ZENSICAL) build --clean --strict
 
 docs-serve:
 	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL_RUN) zensical serve
+	$(ZENSICAL) serve
 
 # Pre-push docs gate: the strict build catches broken TOC anchors (which the
 # test suite does NOT — only the CI docs build does), and the docs test catches
@@ -94,7 +179,7 @@ docs-serve:
 docs-check:
 	@echo "Docs gate: strict build (broken anchors) + docs invariants..."
 	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL_RUN) zensical build --strict
+	$(ZENSICAL) build --strict
 	$(PYTEST) tests/test_docs.py
 
 # ── Dev install ───────────────────────────────────────────────────────────────
@@ -104,7 +189,7 @@ install:
 
 setup:
 	$(UV) sync --group dev
-	pre-commit install
+	$(PRE_COMMIT) install
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
@@ -200,7 +285,8 @@ help:
 	@echo "  make bench         run scaffold benchmarks"
 	@echo "  make bench-save    save baseline (git describe tag)"
 	@echo "  make bench-compare compare against last saved baseline"
-	@echo "  make lint          run pre-commit hooks on all files"
+	@echo "  make lint          run pre-commit hooks on all files (CI gate)"
+	@echo "  make format        auto-fix formatting (ruff + mdformat)"
 	@echo "  make build         build wheel → dist/"
 	@echo "  make docs          build docs → site/"
 	@echo "  make docs-serve    build and serve with live reload"

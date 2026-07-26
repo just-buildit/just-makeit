@@ -85,9 +85,29 @@ exclude_lines = [
 
 
 [dependency-groups]
+# This group is the single source of truth for DEV TOOL VERSIONS. The Makefile
+# is the single source of truth for how those tools are INVOKED, and every
+# caller — humans, pre-commit hooks, CI — routes through a Makefile target.
+# Nothing should install a linter another way (an unpinned `uvx ruff` resolves
+# to whatever released today and silently reformats files the pinned ruff does
+# not), and nothing should carry a second copy of the version.
 dev = [
     "cmakelang",
     "just-buildit",
+    # Formatters. Pinned exactly: a formatter is only useful if every machine
+    # and CI agree byte-for-byte on its output, so these move deliberately, not
+    # on resolution. `ruff` must match the version the CI lint gate runs.
+    "ruff==0.15.21",
+    # mdformat's plugins were previously unpinned pre-commit
+    # `additional_dependencies`, which is how the env drifted to
+    # mdformat-mkdocs 5.1.4 while the config still claimed 1.0.0. Gated to
+    # >=3.10 (mdformat 1.x dropped 3.9) like mypy/zensical below; `make
+    # lint-mdformat` self-skips when it is unavailable, so the 3.9 dev leg
+    # still works and CI (which runs a modern Python) still enforces.
+    "mdformat==1.0.0; python_version >= '3.10'",
+    "mdformat-gfm==1.0.0; python_version >= '3.10'",
+    "mdformat-gfm-alerts==2.0.0; python_version >= '3.10'",
+    "mdformat-mkdocs==5.1.4; python_version >= '3.10'",
     "mkdocstrings-python>=2.0.3; python_version >= '3.10'",
     # Pinned: stubtest's strictness (e.g. @final / @disjoint_base class
     # markers) is coupled to the mypy version, and the stub-conformance gate
