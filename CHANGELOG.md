@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.13] — 2026-07-26
+
 ### Added
 
 - **`depends_on` entries can be `test_only` (gh-537).** `depends_on` is
@@ -33,33 +35,6 @@
     Manifest-only, like the rest of `depends_on`. Opt-in — an entry without the
     key behaves exactly as before, pinned by tests.
 
-### Fixed
-
-- **A collocated object's core target now sees its module's
-    `extra_include_dirs` (gh-531).** jm emitted only `native/inc` and
-    `native/inc/<obj>` on `<obj>_core`, so a core whose `_core.c` / `_core.h`
-    includes a vendored header could not compile. The module's
-    `extra_include_dirs` reached the module's *own* core and the `.so`, but
-    never a collocated object's — and the only way out was reshaping the
-    project rather than the manifest (doppler moved a private `wfm_names.h`
-    into `native/inc/` for exactly this: "arguably tidier, but forced rather
-    than chosen").
-
-    They are emitted `PUBLIC`, so the object's test and bench executables
-    inherit them transitively — a core that needs a vendored header to compile
-    needs it to link its own C test too. The standalone (non-collocated) path
-    already did this via `extra_include_dirs_on_core`; this closes the gap
-    between the two shapes.
-
-    Link deps were already covered: a module's `extra_link_libs` reach a
-    collocated core verbatim, with no `_core` suffixing, so a vendored target
-    can be named as-is.
-
-    Opt-in by construction — a module that declares nothing generates
-    byte-identical CMake.
-
-### Added
-
 - **`--opaque-state`: an object's state struct can stay out of the public
     header (gh-588).** jm always published `<comp>_state_t` as a *complete*
     type, so adopting the object kind for a resource-ish component meant
@@ -88,47 +63,6 @@
     (`<comp>_get_<name>(self->handle)`), so properties never forced the struct
     open — only `field = true` ones and the inline `step()` did.
 
-### Fixed
-
-- **The composer `.pyi` no longer claims a `__getattr__` the runtime does not
-    have (gh-560).** The source class stub carried
-    `def __getattr__(self, name: str) -> Any`, but no composer type emits
-    `tp_getattro` — fields are real `tp_getset` entries. The hatch told a type
-    checker that *every* attribute exists, which is precisely what hid the next
-    two bugs: `synth.freq` checked out for the wrong reason, and so did
-    `synth.frq`.
-
-- **Composer field properties are declared in the stub.** The source's and
-    segment's own fields (`type`, `freq`, `fs`, `num_samples`, …) are read/write
-    getsets at runtime and were missing from the `.pyi` entirely, masked by the
-    `__getattr__` above.
-
-- **Composer classes are marked `@disjoint_base`.** Each is a C type with its
-    own instance layout, so it cannot be combined with another such base by
-    multiple inheritance. Unlike the handle and object kinds these are
-    `Py_TPFLAGS_BASETYPE` — subclassing them is a shipped feature (0.19.17) — so
-    `@final` would be false; `@disjoint_base` is the accurate marker. It comes
-    from `typing_extensions`, whose stubs mypy bundles, and a `.pyi` is never
-    executed, so this adds no runtime dependency.
-
-- **`Timeline.__getitem__` and `__iter__` are typed correctly.** `__getitem__`
-    is a `tp_as_sequence` slot, so its index is positional-only (`i: int, /`);
-    `__iter__` now says `Iterator[<Segment>]` instead of being unannotated.
-    `Iterator` is consequently imported whenever a timeline exists, not only
-    when `stream = true`.
-
-- **A composer whose source declares no `bytes` field now compiles.** When
-    rebuilding source objects from a resolved segment array, the generator
-    emitted a hardcoded `bits` / `n_bits` deep-copy — doppler's `wfm_source_t`
-    spelled out in what is meant to be a generic templater. Two defects in one:
-    a source without such a field referenced struct members that do not exist
-    (a hard compile error), and a source whose bytes field is named anything
-    else — or which has more than one, a case `_attach_bytes` already supports —
-    had that buffer left *aliasing* the composer state's copy rather than owned,
-    so both freed it. The deep-copy is now generated per declared `bytes` field.
-
-### Added
-
 - **The stub-conformance gate covers the composer kind (gh-560).** Composer was
     the last of the three `object-of-objects` kinds outside the gate, and the
     only one that could not be reached because it had no self-contained
@@ -136,8 +70,6 @@
     `wfm_source_t`. A minimal `mixer` backing (four external symbols) now
     scaffolds, builds, imports and stubtests the full four-class surface. Every
     fix above is something that gate found on its first run.
-
-### Added
 
 - **Handle method shape (d) can carry trailing scalars (gh-582).** Shape (b)
     (array-in → scalar return) got trailing scalars in gh-308, but shape (d)
@@ -201,6 +133,66 @@
     aggregator so the branch ruleset actually blocks on it.
 
 ### Fixed
+
+- **A collocated object's core target now sees its module's
+    `extra_include_dirs` (gh-531).** jm emitted only `native/inc` and
+    `native/inc/<obj>` on `<obj>_core`, so a core whose `_core.c` / `_core.h`
+    includes a vendored header could not compile. The module's
+    `extra_include_dirs` reached the module's *own* core and the `.so`, but
+    never a collocated object's — and the only way out was reshaping the
+    project rather than the manifest (doppler moved a private `wfm_names.h`
+    into `native/inc/` for exactly this: "arguably tidier, but forced rather
+    than chosen").
+
+    They are emitted `PUBLIC`, so the object's test and bench executables
+    inherit them transitively — a core that needs a vendored header to compile
+    needs it to link its own C test too. The standalone (non-collocated) path
+    already did this via `extra_include_dirs_on_core`; this closes the gap
+    between the two shapes.
+
+    Link deps were already covered: a module's `extra_link_libs` reach a
+    collocated core verbatim, with no `_core` suffixing, so a vendored target
+    can be named as-is.
+
+    Opt-in by construction — a module that declares nothing generates
+    byte-identical CMake.
+
+- **The composer `.pyi` no longer claims a `__getattr__` the runtime does not
+    have (gh-560).** The source class stub carried
+    `def __getattr__(self, name: str) -> Any`, but no composer type emits
+    `tp_getattro` — fields are real `tp_getset` entries. The hatch told a type
+    checker that *every* attribute exists, which is precisely what hid the next
+    two bugs: `synth.freq` checked out for the wrong reason, and so did
+    `synth.frq`.
+
+- **Composer field properties are declared in the stub.** The source's and
+    segment's own fields (`type`, `freq`, `fs`, `num_samples`, …) are read/write
+    getsets at runtime and were missing from the `.pyi` entirely, masked by the
+    `__getattr__` above.
+
+- **Composer classes are marked `@disjoint_base`.** Each is a C type with its
+    own instance layout, so it cannot be combined with another such base by
+    multiple inheritance. Unlike the handle and object kinds these are
+    `Py_TPFLAGS_BASETYPE` — subclassing them is a shipped feature (0.19.17) — so
+    `@final` would be false; `@disjoint_base` is the accurate marker. It comes
+    from `typing_extensions`, whose stubs mypy bundles, and a `.pyi` is never
+    executed, so this adds no runtime dependency.
+
+- **`Timeline.__getitem__` and `__iter__` are typed correctly.** `__getitem__`
+    is a `tp_as_sequence` slot, so its index is positional-only (`i: int, /`);
+    `__iter__` now says `Iterator[<Segment>]` instead of being unannotated.
+    `Iterator` is consequently imported whenever a timeline exists, not only
+    when `stream = true`.
+
+- **A composer whose source declares no `bytes` field now compiles.** When
+    rebuilding source objects from a resolved segment array, the generator
+    emitted a hardcoded `bits` / `n_bits` deep-copy — doppler's `wfm_source_t`
+    spelled out in what is meant to be a generic templater. Two defects in one:
+    a source without such a field referenced struct members that do not exist
+    (a hard compile error), and a source whose bytes field is named anything
+    else — or which has more than one, a case `_attach_bytes` already supports —
+    had that buffer left *aliasing* the composer state's copy rather than owned,
+    so both freed it. The deep-copy is now generated per declared `bytes` field.
 
 - **A view now inherits its parent's `create_error` translation (gh-580).** A
     `[[<obj>.views]]` flavor got no create-failure translation at all — the
