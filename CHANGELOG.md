@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A view now inherits its parent's `create_error` translation (gh-580).** A
+    `[[<obj>.views]]` flavor got no create-failure translation at all — the
+    generator passed an empty category unconditionally — so every construction
+    failure on a view surfaced as the blanket `MemoryError` that gh-482 exists
+    to replace.
+
+    That was backwards for this case. A view exists precisely *because* its
+    constructor takes different, usually more, parameters than the parent's:
+    `RateConverter_create(rate, compensate)` has two ways to be handed something
+    invalid, `RateConverter_create_matched(rate, compensate, pulse, beta, span,   pulse_sps, num_phases)` has seven. The flavor is the constructor that most
+    needs the translation, and it was the only one that could not have it.
+
+    Declaring the error on the parent now covers both front doors. A view that
+    wants its own wording — naming the extra parameters the parent's message
+    cannot — declares it with `jm error <obj> --module <mod> --view <Class>`.
+    Category and message resolve independently, so a view may refine just the
+    wording under the parent's category. Only an explicit declaration is written
+    to the manifest: an inherited translation keeps tracking the parent instead
+    of being frozen into a copy that silently stops following it.
+
+    Note the deliberate contrast with gh-509's view *warnings*, which are **not**
+    inherited — a warning describes a condition the view may simply not have,
+    while an error describes the same object refusing to construct.
+
+    A project that declares nothing is unaffected: with no parent translation,
+    a view's failure block is byte-identical to before.
+
 ### Changed
 
 - **The Makefile is now the single source of truth for how dev tools are

@@ -712,6 +712,7 @@ just-makeit error <object>
     --category NAME
     --message TEXT
     [--module name]
+    [--view ClassName]
 ```
 
 Translate a `create()` failure into a specific Python exception. By default a
@@ -733,15 +734,47 @@ likely cause.
 
 **Arguments**
 
-| Argument          | Description                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| `object`          | Object name (must already exist in `just-makeit.toml`).                                                     |
-| `--category NAME` | Exception class — a Python built-in exception (`ValueError`, `RuntimeError`, `OverflowError`, …). Required. |
-| `--message TEXT`  | Text for the raised exception. Required.                                                                    |
-| `--module name`   | Module the object belongs to (required for module objects).                                                 |
+| Argument           | Description                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `object`           | Object name (must already exist in `just-makeit.toml`).                                                     |
+| `--category NAME`  | Exception class — a Python built-in exception (`ValueError`, `RuntimeError`, `OverflowError`, …). Required. |
+| `--message TEXT`   | Text for the raised exception. Required.                                                                    |
+| `--module name`    | Module the object belongs to (required for module objects).                                                 |
+| `--view ClassName` | Give a [view](#just-makeit-view) its own translation instead of the object's. Requires `--module`.          |
 
 Each object has a single failure translation, so re-running replaces it rather
 than accumulating. Remove it with `just-makeit remove error <obj> --object <obj>` — `error` takes no name because there is only ever one per object.
+
+### Views inherit their parent's translation
+
+A view is a second Python class over the same C core, so declaring the error on
+the parent covers **both** front doors — you do not need to repeat it:
+
+```sh
+just-makeit error rateconv --module resample \
+    --category ValueError \
+    --message "RateConverter: invalid parameter (need rate > 0)"
+# RateConverter(...)        -> ValueError
+# MatchedRateConverter(...) -> ValueError, same message
+```
+
+This matters because a view exists precisely when the constructor takes
+different — usually *more* — parameters, so it is the constructor with the most
+ways to be handed something invalid.
+
+Add `--view` when the view's extra parameters deserve their own wording:
+
+```sh
+just-makeit error rateconv --module resample --view MatchedRateConverter \
+    --category ValueError \
+    --message "MatchedRateConverter: invalid pulse/beta/span combination"
+```
+
+Only an explicit `--view` declaration is written to the manifest; an inherited
+translation keeps tracking the parent rather than being frozen into a copy.
+Note the contrast with [`just-makeit warning`](#just-makeit-warning), where a
+view does **not** inherit: a warning describes a condition the view may not
+have, while an error describes the same object refusing to construct.
 
 ______________________________________________________________________
 

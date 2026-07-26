@@ -908,16 +908,26 @@ def _make_view_ctx(
     )
     # gh-509: a view declares its OWN warnings ([[<obj>.views.warnings]]) —
     # its underpowered PyErr_WarnEx guards a bool field on the shared state
-    # struct, exactly as the parent's would. errors/stream remain the parent's
-    # concern (empty ctxs keep those COMPONENT_TYPE_SECTION slots blank).
+    # struct, exactly as the parent's would. stream remains the parent's
+    # concern (an empty ctx keeps those COMPONENT_TYPE_SECTION slots blank).
     ctx.update(
         Ctx.make_warnings_ctx(
             ctx["component"], ctx["Component"], C.view_warnings(view)
         )
     )
+    # gh-580: errors go the OTHER way from warnings — a view INHERITS the
+    # parent's create_error unless it declares its own. A view and its parent
+    # build the same object through different constructors, so the parent's
+    # translation is right for both; passing "" here (as this did until
+    # gh-580) meant the flavor with the most ways to be given a bad argument
+    # was the only one that could not report them, falling back to the blanket
+    # MemoryError gh-482 exists to replace.
     ctx.update(
         Ctx.make_errors_ctx(
-            ctx["component"], "", "", create_fn=view["create_fn"]
+            ctx["component"],
+            C.view_create_error(cfg, obj, view),
+            C.view_create_error_message(cfg, obj, view),
+            create_fn=view["create_fn"],
         )
     )
     # gh-541: a view is a second Python type over the SAME core, so it shares

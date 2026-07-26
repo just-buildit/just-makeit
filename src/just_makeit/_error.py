@@ -42,6 +42,7 @@ def run(
     message: str,
     *,
     module: str | None = None,
+    view: str = "",
 ) -> None:
     """Declare `object_name`'s create()-failure translation.
 
@@ -57,6 +58,12 @@ def run(
         Text for the raised exception.
     module : str, optional
         Owning module, for a module object.
+    view : str, optional
+        Target a view's OWN translation (``[[<obj>.views]]``'s ``create_error``)
+        instead of the object's (gh-580). Requires `module` — views are a
+        module-object feature. Without this, a view inherits whatever the parent
+        declares, which is usually what you want; declare a view's own only when
+        its extra constructor parameters deserve their own wording.
 
     Notes
     -----
@@ -107,13 +114,36 @@ def run(
         )
         sys.exit(1)
 
-    previous = C.create_error(cfg, object_name)
-    C.set_create_error(cfg, object_name, category, message)
+    # gh-580: --view targets a view's OWN translation rather than the object's.
+    # A view is module-only, so --module is required — same shape as
+    # `jm warning --view` (gh-509).
+    if view:
+        if not module:
+            print(
+                "error: --view requires --module (views are module-only).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        v = C._find_view(cfg, object_name, view)
+        if v is None:
+            print(
+                f"error: no view '{view}' on object '{object_name}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        previous = v.get("create_error", "")
+        C.set_view_create_error(cfg, object_name, view, category, message)
+    else:
+        previous = C.create_error(cfg, object_name)
+        C.set_create_error(cfg, object_name, category, message)
     C.save(root, cfg)
 
     verb = "replacing" if previous else "adding"
+    target = (
+        f"view '{view}' of '{object_name}'" if view else f"'{object_name}'"
+    )
     print(
-        f"just-makeit: {verb} create() error translation on '{object_name}'"
+        f"just-makeit: {verb} create() error translation on {target}"
         f" -> {category}" + (f" in module '{module}'" if module else "")
     )
     if previous and previous != category:
@@ -124,9 +154,12 @@ def run(
     _glue.regenerate(root, cfg, object_name, module, C.project_name(cfg))
 
     if category != "MemoryError":
+        # Name the constructor this translation actually covers: a view is
+        # backed by its own create_fn, not <object>_create.
+        cfn = v["create_fn"] if view else f"{object_name}_create"
         print()
         print(
-            f"Note: every {object_name}_create() failure now reports as"
+            f"Note: every {cfn}() failure now reports as"
             f" {category},\n      including a genuine allocation failure."
             " create() returning NULL\n      cannot distinguish them."
         )

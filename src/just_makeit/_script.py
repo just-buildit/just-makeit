@@ -512,6 +512,25 @@ def run(root: Path) -> None:
                         _warning_flags(w, mod) + [_flag("--view", cls)],
                     )
                 )
+            # gh-580: the view's OWN create_error, if it declared one. Read the
+            # raw key rather than C.view_create_error() — the accessor resolves
+            # the parent's value, and re-emitting an inherited translation as an
+            # explicit `jm error --view` would turn inheritance into a frozen
+            # copy on every round-trip.
+            if v.get("create_error"):
+                err_flags = []
+                if mod:
+                    err_flags.append(_flag("--module", mod))
+                err_flags.append(_flag("--category", v["create_error"]))
+                err_flags.append(
+                    _flag("--message", v.get("create_error_message", ""))
+                )
+                view_lines.append(
+                    _render_cmd(
+                        ["just-makeit", "error", comp],
+                        err_flags + [_flag("--view", cls)],
+                    )
+                )
     if view_lines:
         lines += view_lines
         lines.append("\n")

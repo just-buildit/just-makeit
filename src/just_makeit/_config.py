@@ -1730,6 +1730,59 @@ def view_warnings(view: dict) -> list[dict]:
     return list(view.get("warnings", []))
 
 
+def view_create_error(cfg: dict, component: str, view: dict) -> str:
+    """A view's create()-failure category, INHERITING the parent's (gh-580).
+
+    Unlike `view_warnings` — where a view carries no parent warnings, so an
+    undeclared view warns about nothing — a view and its parent construct the
+    *same* object through different C constructors. The parent's translation is
+    therefore almost always right for the view too, and inheriting it is what
+    makes the common case correct with no extra declaration.
+
+    That matters because a view exists precisely when the constructor takes
+    different, usually *more*, parameters: ``RateConverter_create(rate,
+    compensate)`` has two ways to be handed something invalid,
+    ``RateConverter_create_matched(rate, compensate, pulse, beta, span,
+    pulse_sps, num_phases)`` has seven. Before gh-580 the flavor was the only
+    constructor that could not have a translation, so every failure on the
+    class that needed it most surfaced as the blanket ``MemoryError`` that
+    gh-482 exists to replace.
+
+    Resolution is per key, with `view_create_error_message` as the sibling: a
+    view declaring only a message refines the wording under the parent's
+    category, and one declaring only a category reuses the parent's text. As at
+    the object level, a message without a category is inert — `make_errors_ctx`
+    renders the undeclared block whenever the category is empty.
+    """
+    if "create_error" in view:
+        return view["create_error"]
+    return create_error(cfg, component)
+
+
+def view_create_error_message(cfg: dict, component: str, view: dict) -> str:
+    """Message paired with `view_create_error`, inherited the same way."""
+    if "create_error_message" in view:
+        return view["create_error_message"]
+    return create_error_message(cfg, component)
+
+
+def set_view_create_error(
+    cfg: dict, component: str, class_name: str, category: str, message: str
+) -> dict:
+    """Declare a view's OWN create()-failure translation (gh-580).
+
+    Mirrors `set_create_error` at the object level and `add_view_warning`'s
+    view targeting. Re-running replaces rather than accumulates: one failure
+    channel, one translation.
+    """
+    view = _find_view(cfg, component, class_name)
+    if view is None:
+        raise KeyError(f"no view {class_name!r} on component {component!r}")
+    view["create_error"] = category
+    view["create_error_message"] = message
+    return cfg
+
+
 def add_view_warning(
     cfg: dict, component: str, class_name: str, warning: dict
 ) -> dict:
@@ -3272,6 +3325,18 @@ def _dump(cfg: dict) -> str:
             if v.get("exclude_methods"):
                 em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
                 lines.append(f"exclude_methods = [{em}]")
+            # gh-580: a view's OWN create_error, when it overrides rather than
+            # inheriting the parent's. Only the explicitly-declared keys are
+            # written — dumping the resolved value would freeze an inherited
+            # translation into a copy that then stops tracking the parent.
+            if v.get("create_error"):
+                lines.append(f'create_error = "{v["create_error"]}"')
+                lines.append(
+                    _str_assign(
+                        "create_error_message",
+                        v.get("create_error_message", ""),
+                    )
+                )
             # gh-504/gh-509: a view's own added/overriding members and its own
             # warnings nest under it. All the view's scalar keys above must
             # precede these subtables (TOML binds [[<comp>.views.properties]]
