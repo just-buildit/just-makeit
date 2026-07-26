@@ -474,7 +474,10 @@ The generated type carries:
     like the capsule path), optionally followed by trailing scalars
     (`send(iq, fs, fc)`, gh-308); an int-in→array-out shape returning an
     **independent** numpy-owned array; an **array-in + writable array-out**
-    execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311); a
+    execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311),
+    which may itself carry trailing scalars for a control port
+    (`execute_ctrl(x, out, rate, freq=0.0)` → `fn(h, in, n_in, rate, freq, out,   max_out)`, gh-582 — note `out` stays *second* in Python so it remains
+    required ahead of any defaulted scalar); a
     scalar/string-args → handle-length array-out shape (`out_len_fn` sizes the
     result); and a scalar/string-args → handle-length **`bytes`** shape
     (`returns = "bytes"` + `out_len_fn`: a temp buffer filled by
