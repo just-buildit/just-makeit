@@ -29,6 +29,9 @@ deletes ``_PYBUILD_FMT``. That *closes* the class rather than rejecting it:
 validation is the backstop for genuine typos.
 """
 
+# `str | None` below is 3.10+ syntax at runtime; jm still supports 3.9.
+from __future__ import annotations
+
 import contextlib
 import io
 import os
