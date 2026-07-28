@@ -260,3 +260,43 @@ has no defined output length, so it is rejected.
 `blockwise` preset). For a reduction (array in → one value), use a scalar
 return type. To emit a variable-length block, use a `--multi-output` or
 `--variable-output` method.
+
+______________________________________________________________________
+
+## `unknown return_type` when running `jm apply`
+
+**Symptom:** `jm apply` refuses to generate:
+
+```
+error: unsupported return_type in just-makeit.toml:
+module 'ber' function 'ber_lock_symbol': unknown return_type 'long'.
+  Supported: void, bool, const char *, double, ...
+  Did you mean 'int64_t'? ('long' has a platform-dependent width.)
+```
+
+**Cause:** the manifest declares a `return_type` that is not one of jm's
+registered types. Common causes are a natural C spelling whose width is
+platform-dependent (`long`, `unsigned`, `ssize_t`), the *display* form of a
+complex type (`float complex` — jm stores `float _Complex`), or a plain typo.
+
+Before jm 0.33.14 this was accepted silently: the generated binding called
+the C function, discarded its return value and emitted `Py_RETURN_NONE`. It
+compiled cleanly and surfaced only at runtime, as a `None` where a number was
+expected (gh-595). The check exists so that class of bug fails at generation
+time instead.
+
+**Fix:** use the fixed-width equivalent the error suggests (`int64_t` for
+`long`, `uint32_t` for `unsigned`, `ptrdiff_t` for `ssize_t`), and change the
+C function's own return type to match — the manifest and the C prototype have
+to agree.
+
+A `return_type` naming your own struct is **not** an error when the entry also
+declares `result_fields`; that is the record shape, where the type names the
+struct jm fills in rather than a value it converts:
+
+```toml
+[[module.ber.functions]]
+name = "scan"
+return_type = "ber_align_t"          # a user struct — fine, because:
+result_fields = [{name = "lag", type = "int"}]
+```

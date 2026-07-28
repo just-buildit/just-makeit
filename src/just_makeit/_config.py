@@ -29,6 +29,8 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 from typing import NamedTuple
 
+from . import _types as _T
+
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
@@ -1684,6 +1686,124 @@ def init_post_parse(cfg: dict, component: str) -> str:
 def methods(cfg: dict, component: str) -> list[dict]:
     """Return declared extra methods for component (empty list if none)."""
     return list(cfg.get(component, {}).get("methods", []))
+
+
+# gh-595: method shapes for which `return_type` is not a Python-bound scalar,
+# so an unregistered spelling is legitimate rather than a typo.
+#
+# - result_fields: names the user's record struct (`peaks_result_t`), used as
+#   the `<struct> *result` buffer element or, with `single`, returned by value.
+# - codec: a codec-pack method has no C core at all — `_method.run` treats its
+#   arg_type/return_type as inert placeholders (gh-554).
+# - manual_stub: the C binding is hand-written and jm declares nothing for it
+#   (gh-428).
+# - varargs: jm writes a sacred *args/**kwargs binding whose signature the
+#   manifest's return_type does not describe.
+_RETURN_TYPE_EXEMPT_KEYS = ("result_fields", "codec", "manual_stub", "varargs")
+
+
+def _return_type_error(entry: dict, what: str, exempt_keys: tuple) -> str:
+    """Validate one function/method entry's ``return_type``; "" when fine.
+
+    Parameters
+    ----------
+    entry : dict
+        A ``[[...functions]]`` or ``[[...methods]]`` table.
+    what : str
+        Human-readable location, e.g. ``"module 'ber' function
+        'ber_lock_symbol'"``, used to open the message.
+    exempt_keys : tuple of str
+        Keys whose presence legitimises an unregistered ``return_type``.
+
+    Returns
+    -------
+    str
+        A multi-line error message, or ``""`` if the entry is valid.
+    """
+    rt = entry.get("return_type", "")
+    # An absent return_type takes the generator default, which is registered.
+    if not rt or any(entry.get(k) for k in exempt_keys):
+        return ""
+    if _T.is_supported_return_type(rt, allow_array=True):
+        return ""
+    help_text = _T.unsupported_return_type_help(rt)
+    indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+    return f"{what}: unknown return_type '{rt}'.\n{indented}"
+
+
+def return_type_errors(cfg: dict) -> list[str]:
+    """Every unsupported ``return_type`` declared anywhere in the manifest.
+
+    The manifest is the project's SSOT, but until gh-595 nothing checked the
+    types it declared: an unregistered ``return_type`` on a module function
+    silently generated a binding that called the C function, discarded its
+    result and returned ``None`` — compiling cleanly and failing only at
+    runtime. ``jm apply`` calls this and refuses to generate when it returns
+    anything, which is the manifest-path counterpart of the check the
+    ``jm function`` / ``jm method`` front-ends have always done.
+
+    Covers module functions, component methods, view methods, and capsule /
+    composer module methods — every table with a ``return_type`` that reaches
+    a generated binding.
+
+    Parameters
+    ----------
+    cfg : dict
+        Parsed ``just-makeit.toml`` (including any merged fragments).
+
+    Returns
+    -------
+    list of str
+        One message per offending entry, in manifest order. Empty when the
+        manifest is clean.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"ber": {"functions": [
+    ...     {"name": "lock", "return_type": "long"}]}}}
+    >>> print(return_type_errors(cfg)[0].splitlines()[0])
+    module 'ber' function 'lock': unknown return_type 'long'.
+    """
+    errors: list[str] = []
+    for mod in modules(cfg):
+        for fn in module_functions(cfg, mod):
+            # A function's out_type forces the C return to void and makes
+            # return_type inert (see _render.fn_c_decl), so it exempts too.
+            err = _return_type_error(
+                fn,
+                f"module {mod!r} function {fn.get('name', '?')!r}",
+                _RETURN_TYPE_EXEMPT_KEYS + ("out_type",),
+            )
+            if err:
+                errors.append(err)
+        for m in module_methods(cfg, mod):
+            err = _return_type_error(
+                m,
+                f"module {mod!r} method {m.get('name', '?')!r}",
+                _RETURN_TYPE_EXEMPT_KEYS,
+            )
+            if err:
+                errors.append(err)
+    for comp in components(cfg):
+        for m in methods(cfg, comp):
+            err = _return_type_error(
+                m,
+                f"{comp!r} method {m.get('name', '?')!r}",
+                _RETURN_TYPE_EXEMPT_KEYS,
+            )
+            if err:
+                errors.append(err)
+        for v in views(cfg, comp):
+            vname = v.get("class_name", "?")
+            for m in view_methods(v):
+                err = _return_type_error(
+                    m,
+                    f"{comp!r} view {vname!r} method {m.get('name', '?')!r}",
+                    _RETURN_TYPE_EXEMPT_KEYS,
+                )
+                if err:
+                    errors.append(err)
+    return errors
 
 
 def add_method(cfg: dict, component: str, method: dict) -> dict:

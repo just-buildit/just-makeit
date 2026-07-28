@@ -340,14 +340,10 @@ def run(args: list[str]) -> None:
     # gh-244: a result_fields method's --return-type names the user's record
     # struct (the buffer element type for a list, or the returned record for
     # --single), not a scalar — so it's exempt from the scalar allowlist.
-    if (
-        return_type != "void"
-        and return_type not in T._CTYPE_META
-        and not result_fields
-    ):
+    if not T.is_supported_return_type(return_type) and not result_fields:
         print(
             f"error: --return-type '{return_type}' must be void or a scalar.\n"
-            f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+            f"{T.unsupported_return_type_help(return_type)}",
             file=sys.stderr,
         )
         sys.exit(1)

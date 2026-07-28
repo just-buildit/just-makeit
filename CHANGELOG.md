@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **An unrecognised `return_type` is no longer silently dropped (gh-595).** A
+    manifest entry declaring a type jm does not know — `return_type = "long"` on
+    a `[[module.X.functions]]` table — generated a binding that called the C
+    function, threw the result away and emitted `Py_RETURN_NONE`. No error, no
+    warning, and code that compiled cleanly; the failure surfaced only at
+    runtime, as a `None` where a number was expected.
+
+    The missing type was incidental. Any unrecognised spelling behaved the same
+    way, so a typo (`"unsigned"`, `"ssize_t"`, a stray space) shipped just as
+    quietly — and the manifest is the project's source of truth precisely so
+    that class of thing gets caught.
+
+    `jm apply` now validates every declared `return_type` and refuses to
+    generate, naming the offending table and suggesting a fixed-width
+    equivalent:
+
+    ```
+    module 'ber' function 'ber_lock_symbol': unknown return_type 'long'.
+      Did you mean 'int64_t'? ('long' has a platform-dependent width.)
+    ```
+
+    Width-varying C spellings stay unregistered on purpose — a binding's PyArg
+    format char has to match an exact width — so the hint steers to `int64_t` /
+    `uint32_t` / `ptrdiff_t` rather than jm guessing a width.
+
+    Shapes where an unregistered type is legitimate are exempt and keep
+    generating: `result_fields` (the type names a user record struct), a
+    function's `out_type` (which forces the C return to `void`), and the
+    `codec` / `manual_stub` / `varargs` methods whose `return_type` is an inert
+    placeholder. An array return (`"float _Complex[]"`) remains valid in a
+    manifest and invalid on the `--return-type` flags, as before.
+
+    The `jm function` / `jm method` front-ends already rejected these spellings;
+    only the TOML path was unguarded. All three checks — and the object-level
+    one in `make_sample_ctx` — now share one predicate
+    (`_types.is_supported_return_type`) instead of three copies of the rule.
+
 ## [0.33.13] — 2026-07-26
 
 ### Added

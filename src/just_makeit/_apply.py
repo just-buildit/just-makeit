@@ -1708,6 +1708,21 @@ def run(
         )
         sys.exit(1)
 
+    # gh-595: refuse to generate from a manifest declaring a return_type no
+    # binding can convert. Left unchecked these do not fail — they produce a
+    # binding that calls the C function, drops its result and returns None,
+    # compiling cleanly and surfacing only as a runtime `None`. The CLI
+    # front-ends have always rejected the same spellings; this closes the gap
+    # on the TOML path, which is the one the manifest-as-SSOT workflow uses.
+    rt_errors = C.return_type_errors(cfg)
+    if rt_errors:
+        print(
+            "error: unsupported return_type in "
+            f"{C.FILENAME}:\n" + "\n".join(rt_errors),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a
     # standalone module over its existing (possibly hand-owned) native dir.
