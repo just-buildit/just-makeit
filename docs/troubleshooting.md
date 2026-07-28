@@ -205,6 +205,38 @@ just-makeit regenerate <comp>   # deletes the component's files, re-runs apply
 
 ______________________________________________________________________
 
+## I changed a method's shape in the TOML but its binding kept the old one
+
+**Symptom:** you added a `param` to an existing `[[<obj>.methods]]` entry (or
+changed a param's type), ran `jm apply`, and the generated binding in
+`native/src/<mod>/<mod>_ext_<obj>.c` still has the old signature. No error, no
+warning — it just quietly keeps generating the previous shape.
+
+**Cause:** the per-object ext fragment is **sacred**, same contract as
+`_core.c` above. `jm apply` is additive: it materializes files and methods
+that are *missing*, and reconciles wiring — it does not re-render a binding
+that already exists. So the shape frozen at the method's first `apply` is the
+one you keep.
+
+The asymmetry is easy to trip over, because adding a *new* method to the
+manifest does work on the next `apply` — only re-shaping an existing one is a
+no-op.
+
+**Fix:** delete the fragment and re-apply, which is jm's sanctioned migration
+mechanic (the manifest is the source of truth, so the glue can always be
+rebuilt from it):
+
+```sh
+rm native/src/<mod>/<mod>_ext_<obj>.c
+just-makeit apply
+```
+
+For a standalone (non-module) object the file is
+`native/src/<obj>/<obj>_ext.c`. Your `_core.c` algorithm is untouched either
+way — only the generated glue is rebuilt.
+
+______________________________________________________________________
+
 ## Generated header has `const T *` on a parameter that my function writes into
 
 **Symptom:** The generated (or refreshed) `_core.h` declares a function

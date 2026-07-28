@@ -209,6 +209,79 @@ _RETURN_TYPE_HINTS: dict[str, tuple[str, str]] = {
 }
 
 
+def c_param_parts(params) -> list[str]:
+    """Expand a method/function param list into C parameter declarations.
+
+    The one place that knows how a declared param becomes C. An array param
+    expands to **two** C parameters — a const element pointer and a `size_t`
+    length — and every generated prototype, stub signature and binding call
+    has to agree on that expansion or the project will not link.
+
+    Accepts either shape jm carries params in: ``(name, type)`` tuples (the
+    CLI form) or ``{"name": ..., "type": ...}`` dicts (the manifest / apply
+    replay form, which also carries `default`, `capsule`, `out`).
+
+    Parameters
+    ----------
+    params : list of tuple or list of dict
+        Declared params, in order.
+
+    Returns
+    -------
+    list of str
+        C parameter declarations, e.g.
+        ``["const float complex *rx", "size_t rx_len", "size_t t0"]``.
+
+    Examples
+    --------
+    >>> c_param_parts([("rx", "float _Complex[]"), ("t0", "size_t")])
+    ['const float complex *rx', 'size_t rx_len', 'size_t t0']
+    >>> c_param_parts([{"name": "n", "type": "int", "default": "4"}])
+    ['int n']
+    """
+    parts: list[str] = []
+    for p in params:
+        pname, ptype = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
+        if is_array_param_type(ptype):
+            elem_disp = _ctype_display(array_elem_ctype(ptype))
+            parts.append(f"const {elem_disp} *{pname}")
+            parts.append(f"size_t {pname}_len")
+        else:
+            parts.append(f"{_ctype_display(ptype)} {pname}")
+    return parts
+
+
+def c_param_suppress(params) -> list[str]:
+    """``(void)name;`` statements matching :func:`c_param_parts`' expansion.
+
+    A generated stub must silence every parameter it does not yet use,
+    including the synthesised ``<name>_len`` of an array param — otherwise the
+    scaffold warns (or fails under ``-Werror``) the moment it is compiled.
+
+    Parameters
+    ----------
+    params : list of tuple or list of dict
+        Declared params, in order — the same input as ``c_param_parts``.
+
+    Returns
+    -------
+    list of str
+        One ``(void)x;`` per generated C parameter.
+
+    Examples
+    --------
+    >>> c_param_suppress([("rx", "float[]"), ("t0", "size_t")])
+    ['(void)rx;', '(void)rx_len;', '(void)t0;']
+    """
+    out: list[str] = []
+    for p in params:
+        pname, ptype = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
+        out.append(f"(void){pname};")
+        if is_array_param_type(ptype):
+            out.append(f"(void){pname}_len;")
+    return out
+
+
 def is_supported_return_type(
     return_type: str, *, allow_array: bool = False
 ) -> bool:

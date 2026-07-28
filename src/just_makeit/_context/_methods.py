@@ -19,6 +19,7 @@ from .._types import (
     _ctype_display,
     is_array_param_type,
     array_elem_ctype,
+    c_param_parts,
 )
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
@@ -853,18 +854,24 @@ def make_methods_ctx(
 
         # ── declarations for _core.h ─────────────────────────────────────
         if result_fields:
+            # gh-594: this is the peer of _method._build_method_prototype's
+            # record branch and must render the identical signature -- params
+            # expanded (array -> ptr + `_len`), and `single` returning the
+            # record by value instead of the results[]/max_results out-params.
+            # It previously did neither, so a record method declared here got
+            # a prototype the binding could not call.
+            _rf_parts = ["{}_state_t *state".format(component)]
             if has_arg:
+                _rf_parts += [f"const {arg_disp} *in", "size_t n_in"]
+            _rf_parts += c_param_parts(params)
+            if single_record:
                 decl_lines.append(
-                    f"size_t {component}_{name}"
-                    f"({component}_state_t *state,"
-                    f" const {arg_disp} *in, size_t n_in,"
-                    f" {ret_disp} *result, size_t max_results);"
+                    f"{ret_disp} {component}_{name}({', '.join(_rf_parts)});"
                 )
             else:
+                _rf_parts += [f"{ret_disp} *result", "size_t max_results"]
                 decl_lines.append(
-                    f"size_t {component}_{name}"
-                    f"({component}_state_t *state,"
-                    f" {ret_disp} *result, size_t max_results);"
+                    f"size_t {component}_{name}({', '.join(_rf_parts)});"
                 )
         elif variable_output:
             extra_params = "".join(
@@ -1586,66 +1593,51 @@ def make_methods_ctx(
                 f"}};\n"
                 f"static PyTypeObject *{_sid}_type = NULL;\n\n"
             )
-            # Method params (scalars; a `default` makes it an optional kwarg,
-            # gh-240). Array params in a single method are not supported.
-            _sp_decls: list[str] = []
-            _sp_fmt = ""
-            _sp_addrs: list[str] = []
-            _sp_callargs: list[str] = []
-            _sp_kwnames: list[str] = []
-            _sp_seen_default = False
-            for _p in params:
-                _pn = _p["name"]
-                _pt = _p["type"]
-                _pmeta = _CTYPE_META.get(_pt, {})
-                _pdefault = _p.get("default", "")
-                if _pdefault and not _sp_seen_default:
-                    _sp_fmt += "|"
-                    _sp_seen_default = True
-                _sp_decls.append(
-                    f"    {_ctype_display(_pt)} {_pn} = {_pdefault or '0'};"
-                )
-                _sp_fmt += _pmeta.get("fmt", "d")
-                _sp_addrs.append(f"&{_pn}")
-                _sp_callargs.append(_pn)
-                _sp_kwnames.append(_pn)
+            # gh-594: method params go through the SAME builder every other
+            # method shape uses (`_build_params_parse`), rather than the
+            # scalar-only loop that used to live here. That loop emitted
+            # `_ctype_display(type)` as a declaration and `_CTYPE_META.get(
+            # type, {}).get("fmt", "d")` as a format char, so an array param
+            # rendered the invalid `float complex[] rx = 0;`, parsed as a
+            # scalar double, and passed no length -- three compile errors from
+            # one omission. The shared builder already handles arrays (ptr +
+            # `_len`), capsules, `parse_type` scalars and gh-240 defaults, and
+            # keeping one copy is what stops this shape drifting from the rest
+            # again.
             _has_kw = bool(params)
-            _call_tail = "".join(f", {a}" for a in _sp_callargs)
-            _decl_block = ("\n".join(_sp_decls) + "\n") if _sp_decls else ""
+            _sp_kwnames = [_p["name"] for _p in params]
 
-            if has_arg and _has_kw:
-                _kw = "".join(f'"{n}", ' for n in (["x"] + _sp_kwnames))
-                _s_parse = (
-                    f"    PyObject *in_obj = NULL;\n"
-                    f"{_decl_block}"
-                    f"    static char *_kwlist[] = {{{_kw}NULL}};\n"
-                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
-                    f' "O{_sp_fmt}",\n'
-                    f"            _kwlist, &in_obj, {', '.join(_sp_addrs)}))\n"
-                    f"        return NULL;\n"
-                    f"    PyArrayObject *in_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
-                    f"    if (!in_arr) return NULL;\n"
-                    f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
+            if _has_kw:
+                # A record method's `arg_type` is always the block input
+                # (`const T *in, size_t n_in` in the prototype -- see
+                # _method._methods_c_stub_result_single), so the primary arg
+                # joins the param list in its array form regardless of whether
+                # the manifest spelled the `[]`.
+                _x_type = (
+                    arg_type if arg_type.endswith("[]") else f"{arg_type}[]"
                 )
+                _pp_params = (
+                    [{"name": "x", "type": _x_type}] if has_arg else []
+                ) + [dict(_p) for _p in params]
+                _s_parse, _p_call, _p_cleanup = _build_params_parse(_pp_params)
+                # Any array acquired above must be released on the structseq
+                # type-creation failure path too, not just after the call.
+                _cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
+                _fail = f" {{{' ' + _cleanup_inline if _cleanup_inline else ''} return NULL; }}"
                 _s_ensure = (
                     f"    if (!{_sid}_type) {{\n"
                     f"        {_sid}_type ="
                     f" PyStructSequence_NewType(&{_sid}_desc);\n"
-                    f"        if (!{_sid}_type)"
-                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"        if (!{_sid}_type){_fail}\n"
                     f"    }}\n"
                 )
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
-                        f"{component}_{name}(self->handle,\n"
-                        f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
-                        f" n_in{_call_tail})",
+                        f"{component}_{name}(self->handle, {_p_call})",
                         nogil,
                     )
-                    + "    Py_DECREF(in_arr);\n"
+                    + _p_cleanup
                 )
             elif has_arg:
                 _s_parse = (
@@ -1675,28 +1667,6 @@ def make_methods_ctx(
                         nogil,
                     )
                     + "    Py_DECREF(in_arr);\n"
-                )
-            elif _has_kw:
-                _kw = "".join(f'"{n}", ' for n in _sp_kwnames)
-                _s_parse = (
-                    f"{_decl_block}"
-                    f"    static char *_kwlist[] = {{{_kw}NULL}};\n"
-                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
-                    f' "{_sp_fmt}",\n'
-                    f"            _kwlist, {', '.join(_sp_addrs)}))\n"
-                    f"        return NULL;\n"
-                )
-                _s_ensure = (
-                    f"    if (!{_sid}_type) {{\n"
-                    f"        {_sid}_type ="
-                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
-                    f"        if (!{_sid}_type) return NULL;\n"
-                    f"    }}\n"
-                )
-                _s_call = _single_kernel_block(
-                    ret_disp,
-                    f"{component}_{name}(self->handle{_call_tail})",
-                    nogil,
                 )
             else:
                 _s_parse = ""
