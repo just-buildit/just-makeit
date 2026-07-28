@@ -177,6 +177,127 @@ _CTYPE_META: dict[str, dict] = {
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
 
+# gh-595: natural C spellings that are NOT manifest keys, mapped to the key a
+# user reaching for them almost certainly wants, and why. The width-varying
+# integer spellings are deliberately absent from _CTYPE_META — a generated
+# binding's PyArg format char has to match an exact width — so the hint steers
+# to the fixed-width equivalent rather than registering an ambiguous type. The
+# `complex` entries catch the display form (`_ctype_display` renders
+# `float _Complex` as `float complex`), which reads as the obvious spelling but
+# is not the key jm stores.
+_WIDTH_NOTE = "has a platform-dependent width"
+_SPELLING_NOTE = "is the display form; jm stores the `_Complex` spelling"
+_RETURN_TYPE_HINTS: dict[str, tuple[str, str]] = {
+    "char": ("int8_t", _WIDTH_NOTE),
+    "short": ("int16_t", _WIDTH_NOTE),
+    "long": ("int64_t", _WIDTH_NOTE),
+    "long long": ("int64_t", _WIDTH_NOTE),
+    "unsigned": ("uint32_t", _WIDTH_NOTE),
+    "unsigned char": ("uint8_t", _WIDTH_NOTE),
+    "unsigned short": ("uint16_t", _WIDTH_NOTE),
+    "unsigned int": ("uint32_t", _WIDTH_NOTE),
+    "unsigned long": ("uint64_t", _WIDTH_NOTE),
+    "unsigned long long": ("uint64_t", _WIDTH_NOTE),
+    "ssize_t": ("ptrdiff_t", _WIDTH_NOTE),
+    "intptr_t": ("ptrdiff_t", _WIDTH_NOTE),
+    "intp": ("ptrdiff_t", _WIDTH_NOTE),
+    "str": ("const char *", "is a Python type, not a C one"),
+    "char *": ("const char *", "must be const in a return position"),
+    "float complex": ("float _Complex", _SPELLING_NOTE),
+    "double complex": ("double _Complex", _SPELLING_NOTE),
+    "long double complex": ("long double _Complex", _SPELLING_NOTE),
+}
+
+
+def is_supported_return_type(
+    return_type: str, *, allow_array: bool = False
+) -> bool:
+    """True when ``return_type`` is ``void`` or a registered scalar.
+
+    The single predicate behind every "is this return type real?" check —
+    the two CLI front-ends (``jm function --return-type`` /
+    ``jm method --return-type``) and the manifest validation that ``jm apply``
+    runs. Keeping one copy matters: before gh-595 the CLI rejected an
+    unregistered type while the TOML path silently generated a binding that
+    discarded the C return value and handed back ``None``.
+
+    A record shape (``result_fields``) legitimately names a user-defined
+    struct here, so callers pass that exemption themselves rather than this
+    predicate trying to guess the shape.
+
+    Parameters
+    ----------
+    return_type : str
+        The manifest/CLI return type string, e.g. ``"int64_t"``.
+    allow_array : bool, optional
+        Also accept an array spelling (``"T[]"``) whose element type is
+        registered. The two front-ends differ here and always have: the
+        ``--return-type`` flags are scalar-or-void only ("must be void or a
+        scalar"), while a manifest may declare an array return on a block or
+        capsule method, so the manifest walk opts in. Default False, matching
+        the CLI.
+
+    Returns
+    -------
+    bool
+        True if a binding can convert this type back to Python.
+
+    Examples
+    --------
+    >>> is_supported_return_type("void")
+    True
+    >>> is_supported_return_type("size_t")
+    True
+    >>> is_supported_return_type("long")
+    False
+    >>> is_supported_return_type("float _Complex[]")
+    False
+    >>> is_supported_return_type("float _Complex[]", allow_array=True)
+    True
+    >>> is_supported_return_type("long[]", allow_array=True)
+    False
+    """
+    if return_type == "void" or return_type in _CTYPE_META:
+        return True
+    if allow_array and return_type.endswith("[]"):
+        return return_type[:-2] in _CTYPE_META
+    return False
+
+
+def unsupported_return_type_help(return_type: str) -> str:
+    """Two-line explanation for an unsupported ``return_type``.
+
+    Renders the supported set, plus a "did you mean" line when the offending
+    spelling is a known C synonym of a registered type (see
+    ``_RETURN_TYPE_HINTS``).
+
+    Parameters
+    ----------
+    return_type : str
+        The rejected type string, used to look up a suggestion.
+
+    Returns
+    -------
+    str
+        Message body (no trailing newline), ready to append to an
+        ``error: ...`` first line.
+
+    Examples
+    --------
+    >>> print(unsupported_return_type_help("long"))
+    Supported: void, bool, const char *, double, double _Complex, float, float _Complex, int, int16_t, int32_t, int64_t, int8_t, long double _Complex, ptrdiff_t, size_t, uint16_t, uint32_t, uint64_t, uint8_t
+    Did you mean 'int64_t'? ('long' has a platform-dependent width.)
+    >>> print(unsupported_return_type_help("nope"))
+    Supported: void, bool, const char *, double, double _Complex, float, float _Complex, int, int16_t, int32_t, int64_t, int8_t, long double _Complex, ptrdiff_t, size_t, uint16_t, uint32_t, uint64_t, uint8_t
+    """
+    msg = f"Supported: void, {', '.join(sorted(_CTYPE_META))}"
+    hinted = _RETURN_TYPE_HINTS.get(return_type.strip())
+    if hinted:
+        suggestion, why = hinted
+        msg += f"\nDid you mean '{suggestion}'? ('{return_type}' {why}.)"
+    return msg
+
+
 # Maps py_type -> NumPy C-API enum constant (for ext.c array ops).
 _NP_ENUM: dict[str, str] = {
     "np.float32": "NPY_FLOAT",

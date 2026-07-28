@@ -11,6 +11,8 @@ from .._types import (
     _ctype_display,
     _KIND_PY_ISINSTANCE,
     _KIND_PY_TEST_VAL,
+    is_supported_return_type,
+    unsupported_return_type_help,
 )
 from ._types import _py_default  # noqa: F401 – kept for any future callers
 from ._parse import _step_parse_block
@@ -454,12 +456,11 @@ def make_sample_ctx(
     if (
         not is_void_return
         and not arg_type.endswith("[]")
-        and return_type not in _CTYPE_META
+        and not is_supported_return_type(return_type)
     ):
-        supported = ", ".join(sorted(_CTYPE_META))
         raise ValueError(
             f"unsupported --return-type value '{return_type}'."
-            f" Supported scalar types: void, {supported}"
+            f" {unsupported_return_type_help(return_type)}"
         )
 
     # Return-type-derived values (fallbacks used when return_type == "void").
