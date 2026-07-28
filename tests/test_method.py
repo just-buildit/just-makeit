@@ -2104,7 +2104,12 @@ class TestMethodSingleRecord:
         assert 'PyArg_ParseTupleAndKeywords(args, kwds, "Odd|d",' in ext
         assert '{"x", "lo", "hi", "guard_hz", NULL}' in ext
         assert "double guard_hz = 0.0;" in ext
-        assert "n_in, lo, hi, guard_hz);" in ext
+        # gh-594: the single-record binding now parses through the shared
+        # _build_params_parse (so array params work at all), which names the
+        # primary input's locals x/x_len rather than in_arr/n_in. Same arity
+        # and types as the prototype declares -- only the local names moved,
+        # and they now match every other method shape.
+        assert "x, x_len, lo, hi, guard_hz);" in ext
         assert (
             '{"analyze", (PyCFunction)(void *)Tm_analyze,'
             " METH_VARARGS | METH_KEYWORDS," in ext
@@ -2119,7 +2124,7 @@ class TestMethodSingleRecord:
         apply_run(dest)
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
         assert "double guard_hz = 0.0;" in ext
-        assert "n_in, lo, hi, guard_hz);" in ext
+        assert "x, x_len, lo, hi, guard_hz);" in ext
         assert "PyStructSequence_New(Tm_analyze_type)" in ext
         assert "PyList_New" not in ext
 

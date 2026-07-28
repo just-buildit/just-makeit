@@ -156,10 +156,17 @@ def _methods_c_stub_result_fields(
     arg_type: str,
     return_type: str,
     max_results: int = 64,
+    params: list | None = None,
 ) -> str:
-    """C stub for a method that returns a list of structs (result_fields)."""
+    """C stub for a method that returns a list of structs (result_fields).
+
+    ``params`` expand into the signature exactly as they do in
+    :func:`_build_method_prototype` (gh-594) — the stub *is* the definition
+    that prototype declares, so the two must not drift.
+    """
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
+    params = params or []
     if has_arg:
         arg_disp = _block_in_elem_disp(arg_type)
         step_param = f", const {arg_disp} *in, size_t n_in"
@@ -167,6 +174,14 @@ def _methods_c_stub_result_fields(
     else:
         step_param = ""
         suppress = ""
+    _p_parts = T.c_param_parts(params)
+    if _p_parts:
+        step_param += ", " + ", ".join(_p_parts)
+        suppress += (
+            ("" if not suppress else "\n")
+            + "    "
+            + " ".join(T.c_param_suppress(params))
+        )
     lines = [
         "/* <<IMPLEMENT: push input, fill result[], return count >> */",
         "size_t",
@@ -187,6 +202,7 @@ def _methods_c_stub_result_single(
     name: str,
     arg_type: str,
     return_type: str,
+    params: list | None = None,
 ) -> str:
     """C stub for a method that returns one record struct by value (gh-244).
 
@@ -194,9 +210,14 @@ def _methods_c_stub_result_single(
     ``results[]`` buffer / ``max_results`` — the kernel computes and returns one
     ``<return_type>`` value, which the binding unpacks into a named
     PyStructSequence.
+
+    ``params`` expand into the signature as everywhere else (gh-594); before
+    that fix this stub took only ``state``, while the generated binding called
+    it with every declared param — a guaranteed "too many arguments".
     """
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
+    params = params or []
     if has_arg:
         arg_disp = _block_in_elem_disp(arg_type)
         step_param = f", const {arg_disp} *in, size_t n_in"
@@ -204,6 +225,14 @@ def _methods_c_stub_result_single(
     else:
         step_param = ""
         suppress = ""
+    _p_parts = T.c_param_parts(params)
+    if _p_parts:
+        step_param += ", " + ", ".join(_p_parts)
+        suppress += (
+            ("" if not suppress else "\n")
+            + "    "
+            + " ".join(T.c_param_suppress(params))
+        )
     lines = [
         "/* <<IMPLEMENT: compute and return the record >> */",
         ret_disp,
@@ -443,11 +472,20 @@ def _build_method_prototype(
     # shape (size_t count + results[]/max_results out-params, or one record
     # by value with `single`), not the generic scalar/array fallback below.
     if result_fields:
+        # gh-594: the record shapes used to build their signature from
+        # `arg_type` alone, silently dropping every declared `param`. The
+        # binding passed them anyway, so a `single` method with params gave
+        # "too many arguments to function" and a non-single one quietly
+        # ignored params on both sides. Params expand here exactly as they do
+        # for every other shape (T.c_param_parts) -- array -> ptr + `_len`.
         step_param = (
             f", const {_block_in_elem_disp(arg_type)} *in, size_t n_in"
             if has_arg
             else ""
         )
+        _p_parts = T.c_param_parts(params)
+        if _p_parts:
+            step_param += ", " + ", ".join(_p_parts)
         if single:
             return (
                 f"{ret_disp} {component}_{name}"
@@ -736,6 +774,7 @@ def run(
                 method_name,
                 arg_type,
                 return_type,
+                params=[(p["name"], p["type"]) for p in params],
             )
         elif result_fields:
             stub = _methods_c_stub_result_fields(
@@ -744,6 +783,7 @@ def run(
                 arg_type,
                 return_type,
                 max_results,
+                params=[(p["name"], p["type"]) for p in params],
             )
         elif variable_output:
             stub = _methods_c_stub_variable(

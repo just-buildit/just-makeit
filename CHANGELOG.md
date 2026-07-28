@@ -4,6 +4,46 @@
 
 ### Fixed
 
+- **A record method's `params` now reach its C signature (gh-594).** Reported
+    as "`single = true` + an array param generates malformed C", and it did:
+
+    ```c
+    float complex[] rx = 0;                    /* not valid C */
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "d|K", ...))
+    ber_align_t _r = meter_align(self->handle, rx, t0);
+    ```
+
+    Three symptoms from one omission — the array type emitted verbatim as a
+    declaration, parsed as a scalar `double`, and passed with no length.
+
+    The reported table listed `single = true` with *scalar-only* params as
+    correct. In a fresh project it was not: the header declared
+    `ber_align_t meter_align(meter_state_t *state);` while the binding called
+    it with every param — "too many arguments to function". (A project that
+    hand-maintains the C header, as doppler does, happens to paper over this.)
+    A **non-single** `result_fields` method dropped params on both sides at
+    once: self-consistent, compiles, and silently ignores every declared param.
+
+    So the real defect was one rule missing from four places — the prototype
+    builder, the two record stub bodies, the peer prototype builder in
+    `make_methods_ctx` (which additionally ignored `single`, declaring a
+    `results[]`/`max_results` buffer for a method that returns one record by
+    value), and the binding, which had a private scalar-only param loop instead
+    of the `_build_params_parse` every other method shape already used.
+
+    Params now expand identically everywhere — an array param becoming
+    `const T *name, size_t name_len` — through one helper
+    (`_types.c_param_parts`) and the shared parse builder:
+
+    ```c
+    ber_align_t meter_align(meter_state_t *state,
+                            const float complex *rx, size_t rx_len, size_t t0);
+    ```
+
+    The `single`-record binding's local for a primary array input is now
+    `x`/`x_len` rather than `in_arr`/`n_in`, matching every other shape; the
+    prototype and call agree as before.
+
 - **An unrecognised `return_type` is no longer silently dropped (gh-595).** A
     manifest entry declaring a type jm does not know — `return_type = "long"` on
     a `[[module.X.functions]]` table — generated a binding that called the C
