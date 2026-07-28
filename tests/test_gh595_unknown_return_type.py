@@ -89,7 +89,7 @@ class TestPredicate:
 
 
 class TestManifestWalk:
-    """`C.return_type_errors` finds every offending table, and only those."""
+    """`C.manifest_type_errors` finds every offending table, and only those."""
 
     def test_flags_the_issue_manifest(self):
         cfg = {
@@ -101,7 +101,7 @@ class TestManifestWalk:
                 }
             }
         }
-        errors = C.return_type_errors(cfg)
+        errors = C.manifest_type_errors(cfg)
         assert len(errors) == 1
         assert "module 'ber' function 'ber_lock_symbol'" in errors[0]
         assert "unknown return_type 'long'" in errors[0]
@@ -118,7 +118,7 @@ class TestManifestWalk:
                 }
             }
         }
-        assert C.return_type_errors(cfg) == []
+        assert C.manifest_type_errors(cfg) == []
 
     def test_result_fields_record_struct_is_exempt(self):
         # The doppler shape from the issue: a user struct + result_fields.
@@ -135,7 +135,7 @@ class TestManifestWalk:
                 }
             }
         }
-        assert C.return_type_errors(cfg) == []
+        assert C.manifest_type_errors(cfg) == []
 
     @pytest.mark.parametrize(
         "key,value",
@@ -153,7 +153,7 @@ class TestManifestWalk:
                 ]
             }
         }
-        assert C.return_type_errors(cfg) == []
+        assert C.manifest_type_errors(cfg) == []
 
     def test_function_out_type_makes_return_type_inert(self):
         # fn_c_decl forces the C return to void when out_type is set, so
@@ -171,7 +171,7 @@ class TestManifestWalk:
                 }
             }
         }
-        assert C.return_type_errors(cfg) == []
+        assert C.manifest_type_errors(cfg) == []
 
     def test_array_return_on_a_method_is_accepted(self):
         cfg = {
@@ -183,7 +183,7 @@ class TestManifestWalk:
                 }
             }
         }
-        assert C.return_type_errors(cfg) == []
+        assert C.manifest_type_errors(cfg) == []
 
     def test_component_and_view_methods_are_walked(self):
         cfg = {
@@ -197,7 +197,7 @@ class TestManifestWalk:
                 ],
             }
         }
-        errors = C.return_type_errors(cfg)
+        errors = C.manifest_type_errors(cfg)
         assert len(errors) == 2
         assert "'meter' method 'a'" in errors[0]
         assert "'meter' view 'MeterView' method 'b'" in errors[1]

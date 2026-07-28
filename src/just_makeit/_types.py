@@ -337,8 +337,10 @@ def is_supported_return_type(
     return False
 
 
-def unsupported_return_type_help(return_type: str) -> str:
-    """Two-line explanation for an unsupported ``return_type``.
+def unsupported_return_type_help(
+    return_type: str, *, allow_void: bool = True
+) -> str:
+    """Two-line explanation for an unsupported type.
 
     Renders the supported set, plus a "did you mean" line when the offending
     spelling is a known C synonym of a registered type (see
@@ -348,6 +350,11 @@ def unsupported_return_type_help(return_type: str) -> str:
     ----------
     return_type : str
         The rejected type string, used to look up a suggestion.
+    allow_void : bool, optional
+        Whether ``void`` belongs in the supported list. True for a return type;
+        False for a ``result_fields`` entry (gh-598), where every field is a
+        value the binding must convert, so ``void`` is not a candidate and
+        listing it would send the reader down a dead end.
 
     Returns
     -------
@@ -360,10 +367,11 @@ def unsupported_return_type_help(return_type: str) -> str:
     >>> print(unsupported_return_type_help("long"))
     Supported: void, bool, const char *, double, double _Complex, float, float _Complex, int, int16_t, int32_t, int64_t, int8_t, long double _Complex, ptrdiff_t, size_t, uint16_t, uint32_t, uint64_t, uint8_t
     Did you mean 'int64_t'? ('long' has a platform-dependent width.)
-    >>> print(unsupported_return_type_help("nope"))
-    Supported: void, bool, const char *, double, double _Complex, float, float _Complex, int, int16_t, int32_t, int64_t, int8_t, long double _Complex, ptrdiff_t, size_t, uint16_t, uint32_t, uint64_t, uint8_t
+    >>> print(unsupported_return_type_help("nope", allow_void=False))
+    Supported: bool, const char *, double, double _Complex, float, float _Complex, int, int16_t, int32_t, int64_t, int8_t, long double _Complex, ptrdiff_t, size_t, uint16_t, uint32_t, uint64_t, uint8_t
     """
-    msg = f"Supported: void, {', '.join(sorted(_CTYPE_META))}"
+    _prefix = "void, " if allow_void else ""
+    msg = f"Supported: {_prefix}{', '.join(sorted(_CTYPE_META))}"
     hinted = _RETURN_TYPE_HINTS.get(return_type.strip())
     if hinted:
         suggestion, why = hinted
@@ -443,20 +451,65 @@ _KIND_PY_TEST_VAL: dict[str, str] = {
     "str": '"hello"',
 }
 
-# Py_BuildValue format char + C cast type (without parentheses).
-# Applied as f"({cast}){expr}" — empty string means no cast needed.
-_PYBUILD_FMT: dict[str, tuple[str, str]] = {
-    "float": ("f", ""),
-    "double": ("d", ""),
-    "int": ("i", ""),
-    "int32_t": ("i", "int"),
-    "uint32_t": ("I", "unsigned int"),
-    "int64_t": ("L", "long long"),
-    "uint64_t": ("K", "unsigned long long"),
-    "size_t": ("K", "unsigned long long"),
-    "unsigned int": ("I", "unsigned int"),
-    "unsigned long": ("k", "unsigned long"),
-}
+
+def record_tuple_build(result_fields: list[dict], accessor: str) -> str:
+    """``Py_BuildValue`` arguments for one ``result_fields`` record (gh-598).
+
+    Renders the format string and argument list that turn one C record struct
+    into a Python tuple, e.g.::
+
+        "(NN)", PyLong_FromLongLong((long long)_results[_i].idx),
+                PyFloat_FromDouble(_results[_i].mag)
+
+    Every field converts through its ``_CTYPE_META["to_py"]`` — the same
+    primitive the ``single = true`` record path, scalar returns and property
+    getters already use — so a type is converted correctly or not at all.
+
+    This replaced a second, smaller ``_PYBUILD_FMT`` table that mapped a field
+    type to a bare format char plus an optional cast, and fell back to
+    ``("i", "")`` on a miss. The fallback supplied **no cast**, so an unmapped
+    field reached ``Py_BuildValue``'s varargs under an ``int`` format — an ABI
+    mismatch rather than a conversion. It did not take a typo to hit: ten types
+    registered in ``_CTYPE_META`` were absent from that table, so a plain
+    ``ptrdiff_t`` field silently truncated (5000000000 read back as 705032704)
+    while compiling without a warning. Five of the ten (``bool``, ``int8_t``,
+    ``int16_t``, ``uint8_t``, ``uint16_t``) were *accidentally* correct because
+    default argument promotion widens them to ``int``, which is precisely what
+    made the gap survive: a test sweeping small integer types comes back green.
+
+    The ``N`` format takes a ``PyObject *`` and **steals** the reference, which
+    is the documented idiom for an object constructed in the argument list — so
+    the conversions cannot leak, and a NULL from any of them propagates as a
+    failed ``Py_BuildValue`` the callers already check.
+
+    Parameters
+    ----------
+    result_fields : list of dict
+        ``[{"name": ..., "type": ...}, ...]``; every type must be registered in
+        ``_CTYPE_META`` (``jm apply`` validates this up front, so a ``KeyError``
+        here means a caller bypassed that check).
+    accessor : str
+        C expression for the record being converted, without a trailing dot —
+        e.g. ``"_results[_i]"`` or ``"results[i]"``.
+
+    Returns
+    -------
+    str
+        The complete ``Py_BuildValue`` argument text: a quoted format string,
+        then one converted field per entry, comma-separated.
+
+    Examples
+    --------
+    >>> print(record_tuple_build([{"name": "n", "type": "size_t"}], "r[i]"))
+    "(N)", PyLong_FromUnsignedLongLong((unsigned long long)r[i].n)
+    """
+    fmt = "(" + "N" * len(result_fields) + ")"
+    items = [
+        _CTYPE_META[f["type"]]["to_py"](f"{accessor}.{f['name']}")
+        for f in result_fields
+    ]
+    return ", ".join([f'"{fmt}"'] + items)
+
 
 # Regex for fixed-size array state types like 'float[64]' or 'double _Complex[32]'.
 _ARRAY_RE = _re.compile(r"^(.+)\[(\d+)\]$")

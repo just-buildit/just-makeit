@@ -300,11 +300,20 @@ ______________________________________________________________________
 **Symptom:** `jm apply` refuses to generate:
 
 ```
-error: unsupported return_type in just-makeit.toml:
+error: unsupported type in just-makeit.toml:
 module 'ber' function 'ber_lock_symbol': unknown return_type 'long'.
   Supported: void, bool, const char *, double, ...
   Did you mean 'int64_t'? ('long' has a platform-dependent width.)
 ```
+
+The same check covers `result_fields` entries (gh-598), which report as
+
+```
+'det' method 'scan': result field 'idx' has unknown type 'wat_t'.
+```
+
+(`void` is absent from a field's supported list — every record field is a
+value the binding has to convert.)
 
 **Cause:** the manifest declares a `return_type` that is not one of jm's
 registered types. Common causes are a natural C spelling whose width is

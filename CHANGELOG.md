@@ -4,6 +4,42 @@
 
 ### Fixed
 
+- **`result_fields` no longer builds a record through a cast-less `"i"`
+    (gh-598).** Both list-of-records builders derived a `Py_BuildValue` format
+    char from a `_PYBUILD_FMT` table that fell back to `("i", "")` on a miss.
+    The fallback supplied **no cast**, so the field reached `Py_BuildValue`'s
+    varargs under an `int` format — an ABI mismatch rather than a conversion.
+
+    It did not take a typo. `_PYBUILD_FMT` was a *second, smaller* table than
+    `_CTYPE_META`, and ten fully registered types were absent from it, so a
+    plain `ptrdiff_t` field silently truncated:
+
+    ```
+    idx returned : 705032704
+    idx expected : 5000000000
+    ```
+
+    Compiling cleanly, with the right field names and a plausible number.
+
+    Five of the ten (`bool`, `int8_t`, `int16_t`, `uint8_t`, `uint16_t`) were
+    *accidentally* correct — default argument promotion widens them to `int` —
+    which is what let the gap survive: a sweep across small integer types comes
+    back green. The genuinely broken ones were `ptrdiff_t` (truncated),
+    `const char *` (pointer read as `int`) and the three `_Complex` types.
+
+    Fields now convert through `_CTYPE_META`'s `to_py` — the primitive the
+    `single = true` record path, scalar returns and property getters already
+    used — via the shared `_types.record_tuple_build`, and `_PYBUILD_FMT` is
+    deleted. This *closes* the class rather than rejecting it: `ptrdiff_t`,
+    `const char *` and the complex types now work in a record.
+
+    `jm apply` additionally validates `result_fields` types, so a genuine typo
+    is a manifest error rather than a renderer traceback. `C.return_type_errors`
+    is now `C.manifest_type_errors`, covering both this and gh-595's check.
+
+    **Behaviour change:** a `bool` result field now crosses as a Python `bool`
+    (`True`/`False`) rather than the `1`/`0` int the `"i"` path produced.
+
 - **A record method's `params` now reach its C signature (gh-594).** Reported
     as "`single = true` + an array param generates malformed C", and it did:
 

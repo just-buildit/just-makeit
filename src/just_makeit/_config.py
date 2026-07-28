@@ -1731,20 +1731,64 @@ def _return_type_error(entry: dict, what: str, exempt_keys: tuple) -> str:
     return f"{what}: unknown return_type '{rt}'.\n{indented}"
 
 
-def return_type_errors(cfg: dict) -> list[str]:
-    """Every unsupported ``return_type`` declared anywhere in the manifest.
+def _result_field_errors(entry: dict, what: str) -> list[str]:
+    """Validate one entry's ``result_fields`` types (gh-598).
+
+    Simpler than the ``return_type`` rule: a result field is always a scalar
+    the binding has to convert into a Python object, so there is no shape that
+    legitimises an unregistered type the way ``result_fields`` / ``out_type`` /
+    ``codec`` do for a return type. Arrays are not a record field either.
+
+    This is the backstop, not the primary fix — ``record_tuple_build`` now
+    converts through ``_CTYPE_META``, so a registered type is *correct* rather
+    than merely accepted. What remains is turning a genuine typo into a clear
+    manifest error instead of a ``KeyError`` traceback from the renderer.
+
+    Parameters
+    ----------
+    entry : dict
+        A function/method table that may carry ``result_fields``.
+    what : str
+        Human-readable location, used to open each message.
+
+    Returns
+    -------
+    list of str
+        One message per offending field, in declaration order.
+    """
+    errors: list[str] = []
+    for f in entry.get("result_fields", []) or []:
+        ftype = f.get("type", "")
+        if ftype in _T.SUPPORTED_TYPES:
+            continue
+        help_text = _T.unsupported_return_type_help(ftype, allow_void=False)
+        indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+        errors.append(
+            f"{what}: result field {f.get('name', '?')!r} has unknown "
+            f"type '{ftype}'.\n{indented}"
+        )
+    return errors
+
+
+def manifest_type_errors(cfg: dict) -> list[str]:
+    """Every unusable type declared anywhere in the manifest.
 
     The manifest is the project's SSOT, but until gh-595 nothing checked the
-    types it declared: an unregistered ``return_type`` on a module function
-    silently generated a binding that called the C function, discarded its
-    result and returned ``None`` — compiling cleanly and failing only at
-    runtime. ``jm apply`` calls this and refuses to generate when it returns
-    anything, which is the manifest-path counterpart of the check the
-    ``jm function`` / ``jm method`` front-ends have always done.
+    types it declared, and both tables that consumed them fell through
+    silently rather than failing:
+
+    - an unregistered ``return_type`` generated a binding that called the C
+      function, discarded its result and returned ``None`` (gh-595);
+    - an unmapped ``result_fields`` type reached ``Py_BuildValue`` under an
+      ``int`` format with no cast, truncating wide values (gh-598).
+
+    Both compiled cleanly. ``jm apply`` calls this and refuses to generate when
+    it returns anything, which is the manifest-path counterpart of the check
+    the ``jm function`` / ``jm method`` front-ends have always done.
 
     Covers module functions, component methods, view methods, and capsule /
-    composer module methods — every table with a ``return_type`` that reaches
-    a generated binding.
+    composer module methods — every table whose types reach a generated
+    binding.
 
     Parameters
     ----------
@@ -1754,55 +1798,58 @@ def return_type_errors(cfg: dict) -> list[str]:
     Returns
     -------
     list of str
-        One message per offending entry, in manifest order. Empty when the
-        manifest is clean.
+        One message per offending declaration, in manifest order. Empty when
+        the manifest is clean.
 
     Examples
     --------
     >>> cfg = {"module": {"ber": {"functions": [
     ...     {"name": "lock", "return_type": "long"}]}}}
-    >>> print(return_type_errors(cfg)[0].splitlines()[0])
+    >>> print(manifest_type_errors(cfg)[0].splitlines()[0])
     module 'ber' function 'lock': unknown return_type 'long'.
+    >>> cfg = {"det": {"methods": [{"name": "scan", "return_type": "hit_t",
+    ...     "result_fields": [{"name": "idx", "type": "wat_t"}]}]}}
+    >>> print(manifest_type_errors(cfg)[0].splitlines()[0])
+    'det' method 'scan': result field 'idx' has unknown type 'wat_t'.
     """
     errors: list[str] = []
+
+    def _check(entry: dict, what: str, exempt: tuple) -> None:
+        err = _return_type_error(entry, what, exempt)
+        if err:
+            errors.append(err)
+        errors.extend(_result_field_errors(entry, what))
+
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
             # A function's out_type forces the C return to void and makes
             # return_type inert (see _render.fn_c_decl), so it exempts too.
-            err = _return_type_error(
+            _check(
                 fn,
                 f"module {mod!r} function {fn.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS + ("out_type",),
             )
-            if err:
-                errors.append(err)
         for m in module_methods(cfg, mod):
-            err = _return_type_error(
+            _check(
                 m,
                 f"module {mod!r} method {m.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS,
             )
-            if err:
-                errors.append(err)
     for comp in components(cfg):
         for m in methods(cfg, comp):
-            err = _return_type_error(
+            _check(
                 m,
                 f"{comp!r} method {m.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS,
             )
-            if err:
-                errors.append(err)
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
             for m in view_methods(v):
-                err = _return_type_error(
+                _check(
                     m,
                     f"{comp!r} view {vname!r} method {m.get('name', '?')!r}",
                     _RETURN_TYPE_EXEMPT_KEYS,
                 )
-                if err:
-                    errors.append(err)
     return errors
 
 

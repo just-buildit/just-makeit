@@ -1708,17 +1708,18 @@ def run(
         )
         sys.exit(1)
 
-    # gh-595: refuse to generate from a manifest declaring a return_type no
-    # binding can convert. Left unchecked these do not fail — they produce a
-    # binding that calls the C function, drops its result and returns None,
-    # compiling cleanly and surfacing only as a runtime `None`. The CLI
+    # gh-595 / gh-598: refuse to generate from a manifest declaring a type no
+    # binding can convert. Left unchecked neither failed — an unknown
+    # return_type produced a binding that dropped the C result and returned
+    # None, and an unmapped result-field type reached Py_BuildValue under an
+    # "i" with no cast, truncating wide values. Both compiled cleanly. The CLI
     # front-ends have always rejected the same spellings; this closes the gap
     # on the TOML path, which is the one the manifest-as-SSOT workflow uses.
-    rt_errors = C.return_type_errors(cfg)
-    if rt_errors:
+    type_errors = C.manifest_type_errors(cfg)
+    if type_errors:
         print(
-            "error: unsupported return_type in "
-            f"{C.FILENAME}:\n" + "\n".join(rt_errors),
+            f"error: unsupported type in {C.FILENAME}:\n"
+            + "\n".join(type_errors),
             file=sys.stderr,
         )
         sys.exit(1)
