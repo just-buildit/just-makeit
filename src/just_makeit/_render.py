@@ -13,7 +13,7 @@ from pathlib import Path
 from ._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
-    _PYBUILD_FMT,
+    record_tuple_build,
     _ctype_display,
     _join_fmt_with_optional,
     array_elem_ctype,
@@ -776,20 +776,10 @@ def _py_wrapper_for_function(
         py_args = "PyObject *Py_UNUSED(args)"
 
     if result_fields:
-        # Build list-of-tuples from struct array.
-        _rf_fmt_parts: list[str] = []
-        _rf_arg_parts: list[str] = []
-        for _rf in result_fields:
-            _rft = _rf["type"]
-            _rfn = _rf["name"]
-            _fmt_c, _cast = _PYBUILD_FMT.get(_rft, ("i", ""))
-            _rf_fmt_parts.append(_fmt_c)
-            _val = f"_results[_i].{_rfn}"
-            if _cast:
-                _val = f"({_cast}){_val}"
-            _rf_arg_parts.append(_val)
-        _bvfmt = '"(' + "".join(_rf_fmt_parts) + ')"'
-        _bvargs = ", ".join(_rf_arg_parts)
+        # Build list-of-tuples from struct array. gh-598: fields convert
+        # through _CTYPE_META's to_py (the shared record_tuple_build), not a
+        # second format-char table that fell back to a cast-less "i".
+        _bv = record_tuple_build(result_fields, "_results[_i]")
         _rt_disp = _ctype_display(return_type)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
         # max_results_param names an existing param already in call_args (the
@@ -815,7 +805,7 @@ def _py_wrapper_for_function(
             f"    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
             f"    if (!_lst) {{ free(_results); return NULL; }}\n"
             f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
-            f"        PyObject *_tup = Py_BuildValue({_bvfmt}, {_bvargs});\n"
+            f"        PyObject *_tup = Py_BuildValue({_bv});\n"
             f"        if (!_tup) {{ free(_results); Py_DECREF(_lst); return NULL; }}\n"
             f"        PyList_SET_ITEM(_lst, (Py_ssize_t)_i, _tup);\n"
             f"    }}\n"

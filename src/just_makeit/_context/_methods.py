@@ -15,7 +15,7 @@ from .._types import (
     _NP_ENUM,
     _CTYPE_TO_NPY,
     _KIND_PY_TEST_VAL,
-    _PYBUILD_FMT,
+    record_tuple_build,
     _ctype_display,
     is_array_param_type,
     array_elem_ctype,
@@ -1721,19 +1721,10 @@ def make_methods_ctx(
                 f' {_rec_name} record ({_s_names})."}},\n'
             )
         elif result_fields:
-            _rf_fmt_parts: list[str] = []
-            _rf_arg_parts: list[str] = []
-            for _rf in result_fields:
-                _rft = _rf["type"]
-                _rfn = _rf["name"]
-                _fmt_c, _cast = _PYBUILD_FMT.get(_rft, ("i", ""))
-                _rf_fmt_parts.append(_fmt_c)
-                _rft_val = f"results[i].{_rfn}"
-                if _cast:
-                    _rft_val = f"({_cast}){_rft_val}"
-                _rf_arg_parts.append(_rft_val)
-            _bvfmt = '"(' + "".join(_rf_fmt_parts) + ')"'
-            _bvargs = ", ".join(_rf_arg_parts)
+            # gh-598: peer of _render's list-of-records builder — both go
+            # through record_tuple_build so a field type converts via
+            # _CTYPE_META's to_py rather than a cast-less "i" fallback.
+            _bv = record_tuple_build(result_fields, "results[i]")
             if has_arg:
                 _rf_parse = (
                     f"    PyObject *in_obj = NULL;\n"
@@ -1780,7 +1771,7 @@ def make_methods_ctx(
                 f"    if (!lst) return NULL;\n"
                 f"    for (size_t i = 0; i < n_out; i++) {{\n"
                 f"        PyObject *tup ="
-                f" Py_BuildValue({_bvfmt}, {_bvargs});\n"
+                f" Py_BuildValue({_bv});\n"
                 f"        if (!tup)"
                 f" {{ Py_DECREF(lst); return NULL; }}\n"
                 f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
