@@ -1460,10 +1460,16 @@ def make_methods_ctx(
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
+                # gh-604: this default ships into the user's compiled .so as
+                # the method's __doc__, so it has to describe what the binding
+                # actually does. It previously advertised the reuse buffer
+                # ("zero-copy view into an internally managed buffer … a
+                # still-referenced buffer is retired, never reused in place")
+                # and was wrong on both clauses once that buffer was deleted.
                 _brief
-                or "Zero-copy view into an internally managed buffer;"
-                " safe to keep across calls (a still-referenced buffer is"
-                " retired, never reused in place).",
+                or "Returns a new NumPy-owned array each call — independent"
+                " of every other result, and safe to keep. Pass out= to"
+                " write into your own buffer instead.",
                 "",
                 "    >>> import numpy as np",
                 *_from_line,

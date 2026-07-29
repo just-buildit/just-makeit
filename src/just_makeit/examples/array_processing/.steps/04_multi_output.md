@@ -1,7 +1,7 @@
 ## 4. `method --variable-output --multi-output` — parallel output streams
 
-`--multi-output TYPE` adds a second pre-allocated output buffer alongside the
-primary one.  The Python call returns a tuple.  The flag is repeatable for
+`--multi-output TYPE` adds a second output array alongside the primary one;
+each call allocates both from NumPy and returns them independently owned.  The Python call returns a tuple.  The flag is repeatable for
 three or more streams.
 
 ```{04_multi_output.sh}

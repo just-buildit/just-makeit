@@ -105,8 +105,8 @@ A reflectable header must:
     size_t <comp>_<verb>(<comp>_state_t *, ..., T *out);
     ```
     The pair is recognised by name + signature; bind allocates a
-    sized buffer once at `__init__` and returns a zero-copy ndarray
-    view on each call.
+    NumPy-owned ndarray per call, sized `max(max_out(), n)`, and
+    returns it trimmed to the count the kernel reports.
 
 Every other `<comp>_*` declaration in the header is treated as a
 custom method on the Python class. Module-level functions (not

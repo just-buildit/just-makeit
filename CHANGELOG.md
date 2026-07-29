@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/memory-ownership.md` — the array memory policy (gh-604).** The
+    question "who owns this array and what keeps it alive?" was answered three
+    different ways over about a year, and the first two answers were wrong in
+    ways that took a heap overflow and a 1.5 GB leak to surface. This writes
+    the answer down as a rule per layer, with the measurements behind each and
+    the history that produced them:
+
+    - **Layer 1 — C.** A DSP kernel never allocates an output; outputs are
+        caller-supplied out-parameters.
+    - **Layer 2 — Python.** NumPy owns each call's result; nothing is shared
+        between calls.
+    - **Layer 3 — `out=`.** For *placement and determinism*, not throughput.
+
+    Includes a per-shape ownership table (who allocates, what the result
+    aliases, what keeps it alive, whether `out=` applies), rules for adding new
+    array shapes, and the measured cost of allocation — ~130 ns and flat in
+    `n`, ×1.6 when sizes vary, ×5-11 when every result is retained.
+
+    Two findings worth flagging in their own right: `out=` is a **fixed** ~60 ns
+    *slower* than allocating, so it should never be described as an
+    optimisation; and its real benefit is tail latency at large blocks
+    (**2.6× better p99 at n=65536**, and *worse* p99 below n≈1024, where the
+    allocator never leaves its free-list).
+
 ### Changed
 
 - **`variable_output` results are now NumPy-owned; the reuse buffer is gone

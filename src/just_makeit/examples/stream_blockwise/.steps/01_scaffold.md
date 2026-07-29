@@ -13,8 +13,8 @@ The flags that matter:
 | `--state total:int32_t:20` | Total samples this source will ever emit.                                                       |
 | `--state pos:int32_t:0`    | How many have been emitted so far.                                                              |
 
-`--variable-output` makes the object a generator: a pre-allocated output buffer
-is sized once at `__init__`, and each `run(n)` returns a **zero-copy view** into
-it. `--streamable` notices the `variable_output` method and picks it as the
+`--variable-output` makes the object a generator: each `run(n)` allocates a
+NumPy-owned array, lets the kernel fill it, and returns it trimmed to the count
+produced. `--streamable` notices the `variable_output` method and picks it as the
 stream producer (it wins over the built-in `steps`), so `stream()` calls `run`
 block by block and stops the moment it returns an empty block.

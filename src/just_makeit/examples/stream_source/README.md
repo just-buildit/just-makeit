@@ -176,7 +176,8 @@ What you get from the one `--streamable` flag:
   is the seam you wrap.
 - **`__iter__`** — `for blk in ramp:` uses the `--stream-block` default (256).
 
-A source's blocks are independent allocations (`steps()` mallocs a fresh array
-each call), so `list(ramp.stream(...))` is safe. A *blockwise* producer
-(`--variable-output`) instead returns a zero-copy view into a reused buffer —
-see the `stream_blockwise` example for that case and its copy-before-next rule.
+Every block is an independent allocation — both `steps()` and a
+`--variable-output` producer return a fresh NumPy-owned array per call — so
+`list(ramp.stream(...))` is safe, and so is accumulating blocks from a
+blockwise producer. See [Array memory
+ownership](../memory-ownership.md).

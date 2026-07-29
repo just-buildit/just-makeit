@@ -36,7 +36,7 @@ appended, ready for you to implement.
 | `--param name:type[]`       | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                                                                                                                                                                                   |
 | `--return-type TYPE`        | C type of the return value (`void` for no return).                                                                                                                                                                                                                                                                               |
 | `--arg-type TYPE`           | C type of a single array-style input. Use `void` for count-only inputs.                                                                                                                                                                                                                                                          |
-| `--variable-output`         | Pre-allocate output buffer at init; return zero-copy numpy view. See below.                                                                                                                                                                                                                                                      |
+| `--variable-output`         | Self-sizing output: allocate a NumPy-owned array per call and trim to the returned count. See below.                                                                                                                                                                                                                             |
 | `--multi-output TYPE`       | Add a second (or further) output array. Repeatable; produces a tuple return.                                                                                                                                                                                                                                                     |
 | `--out-type TYPE`           | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`.                                                                                 |
 | `--out-divisor N`           | Divide the input length by `N` to determine the output array length when `--out-type` is active (default: 1). Use `2` for methods that interpret the input as interleaved I/Q pairs (e.g. a CI8 buffer where each complex sample is 2 bytes).                                                                                    |
@@ -230,13 +230,17 @@ out = nco.steps_ctrl(ctrl)   # ctrl is float32 ndarray; returns float32 ndarray
 
 ______________________________________________________________________
 
-#### `--variable-output` — pre-allocated zero-copy batch
+#### `--variable-output` — self-sizing output
 
-Use `--variable-output` when the **maximum output count is bounded by the
-object's state and knowable at init time** (decimators, FIFOs with fixed
-capacity). The generated code calls `<method>_max_out(state)` at init time,
-pre-allocates a fixed output buffer, and returns a **zero-copy numpy view**
-into that buffer on every call — no per-call `malloc`.
+Use `--variable-output` when the method's output count is **not** simply the
+input count — decimators, FIFOs, detectors, anything that returns "however many
+it produced". The generated binding allocates a NumPy-owned array of
+`max(<method>_max_out(state), n)` per call, lets the kernel write straight into
+it, and returns it trimmed to the count the kernel reported.
+
+Each result is independent: it owns its memory, survives `destroy()`, and never
+aliases another call's result. See [Array memory
+ownership](../memory-ownership.md) for the policy and the measurements.
 
 ```sh
 just-makeit method hbdecim execute --module resample \
@@ -259,7 +263,7 @@ size_t hbdecim_execute(hbdecim_state_t *state,
 Python call:
 
 ```python
-out = decim.execute(block)   # zero-copy view into the output buffer
+out = decim.execute(block)   # a fresh NumPy-owned array, trimmed to n_out
 ```
 
 | Use case                                   | `_max_out` at init | Use `--variable-output`?  |
@@ -269,21 +273,17 @@ out = decim.execute(block)   # zero-copy view into the output buffer
 | FIR filter, output ≤ input length          | 0 (unknown)        | Yes — lazy-alloc kicks in |
 | NCO extended outputs, 1:1 rate             | 0 (unknown)        | Yes — lazy-alloc kicks in |
 
-**Lazy-alloc when `_max_out` returns 0:** if `{comp}_{method}_max_out()` returns 0
-at construction (e.g. a FIR whose tap count isn't known until `_create` runs), the
-output buffer is left `NULL` — no `malloc(0)` hazard. On the **first Python call**
-the wrapper re-queries `max_out()`; if it still returns 0 it falls back to the input
-length `n`, then allocates. Every subsequent call takes the pre-allocated zero-copy
-path. The only practical implication: make sure `_max_out` returns a valid bound by
-the time the first call happens.
+**`max_out()` returning 0 is legal** and means "unknown" — the binding then
+sizes the allocation from the call itself. It is a *sizing contract*, not a
+guarantee: the real bound is `n_out <= max(max_out(state), n_requested)`,
+because a generator's `steps(count)` writes exactly `count`. If your kernel
+must know the capacity it was actually given, add `pass_capacity = true`.
 
-**Returned views stay valid (gh-437):** accumulating the returned arrays is
-safe. The binding keeps a weak reference to the view it last handed out; while
-that view is still referenced, the next call allocates a fresh buffer instead
-of writing over it, and the old buffer is retired and freed at dealloc. Only
-the drain-immediately pattern — where the caller has dropped the previous view
-by the time it calls again — reuses the buffer in place, which is the zero-copy
-hot path.
+**Accumulating results is safe.** Every call returns an independent
+NumPy-owned array, so holding them in a list, concatenating them, or passing
+them on cannot be disturbed by a later call. This used to require a weakref
+liveness probe over a shared buffer (gh-437); that machinery is gone, and the
+guarantee is now structural rather than defended at runtime (gh-604).
 
 ______________________________________________________________________
 
@@ -314,15 +314,15 @@ const float complex *_ng0 = (const float complex *)PyArray_DATA(x_arr);
 size_t _ng1 = (size_t)PyArray_SIZE(x_arr);
 size_t n_out;
 Py_BEGIN_ALLOW_THREADS
-n_out = ddc_execute(self->handle, _ng0, _ng1, self->_execute_buf, cap);
+n_out = ddc_execute(self->handle, _ng0, _ng1, _d0, _cap);
 Py_END_ALLOW_THREADS
 ```
 
-The numpy accessors are hoisted into locals **before** the block so no Python
-C-API runs while the GIL is dropped; the buffer realloc and any error-raising
-stay above it, under the GIL. A worker that gives each thread its **own**
-object and output buffer then scales across cores instead of serialising on
-the GIL.
+Every numpy accessor is hoisted into a local **before** the block — including
+the output data pointer `_d0` — so no Python C-API runs while the GIL is
+dropped; the allocation and any error-raising stay above it, under the GIL. A
+worker that gives each thread its **own** object then scales across cores
+instead of serialising on the GIL.
 
 It is **opt-in** because releasing the GIL is sound only under that
 one-object-per-stream contract — jm cannot verify it, so you assert it by

@@ -5,10 +5,10 @@ import numpy as np
 from stream_blockwise_demo import Drainer
 
 # stream(8) over total=20 yields blocks of 8, 8, 4, then stops on the empty
-# (drained) block. A variable_output producer returns a zero-copy VIEW into a
-# reused buffer, so copy each block before pulling the next one.
+# (drained) block. Every block is an independent NumPy-owned array, so they
+# can be collected directly -- no copy needed.
 d = Drainer(total=20, pos=0)
-collected = [block.copy() for block in d.stream(8)]
+collected = list(d.stream(8))
 print("drained in blocks:", [b.shape[0] for b in collected])
 assert [b.shape for b in collected] == [(8,), (8,), (4,)]
 assert collected[0].dtype == np.complex64
