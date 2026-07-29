@@ -499,7 +499,9 @@ class TestMethodOutKwarg:
         ext = self._add(project, arg="float _Complex")
         # validation against max_out + writable contiguous buffer
         assert "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE" in ext
-        assert "nco_execute_cf32_max_out(self->handle)" in ext
+        # gh-607: max_out() is called with the same count (n) about to be
+        # passed to the kernel.
+        assert "nco_execute_cf32_max_out(self->handle, (size_t)n)" in ext
         assert "PyExc_ValueError" in ext
         # the returned view is pinned to the caller's array, not self
         assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
@@ -542,7 +544,9 @@ class TestMethodOutKwarg:
         self._add(project, arg="float _Complex")
         pyi = (project / "src" / "dsp" / "nco.pyi").read_text(encoding="utf-8")
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self) -> int:" in pyi
+        # gh-607: max_out() mirrors the kernel's own count param (n_in for
+        # an array-arg method).
+        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
 
     def test_multi_output_stays_positional(self, project):
         ext = self._add(project, arg="void", multi=["float _Complex"])
@@ -640,7 +644,12 @@ class TestVariableOutputSingleArrayParam:
     ):
         ext = self._ext(project)
         assert "if (out_obj && out_obj != Py_None) {" in ext
-        assert "nco_steps_max_out(self->handle)" in ext
+        # gh-607: max_out() is called with the array's own length — the
+        # same value about to be passed to the kernel.
+        assert (
+            "nco_steps_max_out(self->handle, (size_t)PyArray_SIZE(x_arr))"
+            in ext
+        )
         assert "size_t _min_cap = _omax > (size_t)PyArray_SIZE(x_arr)" in ext
         assert "if (_cap < _min_cap) {" in ext
 
@@ -653,7 +662,9 @@ class TestVariableOutputSingleArrayParam:
         self._ext(project)
         pyi = (project / "src" / "dsp" / "nco.pyi").read_text(encoding="utf-8")
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def steps_max_out(self) -> int:" in pyi
+        # gh-607: max_out() mirrors the kernel's own count param — the
+        # array's own `_len` name for a single-array-param method.
+        assert "def steps_max_out(self, x_len: int) -> int:" in pyi
 
     def test_returned_view_pinned_to_callers_array(self, project):
         ext = self._ext(project)

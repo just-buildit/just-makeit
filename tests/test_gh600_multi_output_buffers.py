@@ -115,7 +115,12 @@ class TestNoSharedBuffer:
     def test_capacity_is_decided_per_call(self):
         src = _c(MULTI)
         assert "size_t _need = (size_t)n;" in src
-        assert "size_t _cap = nco_steps_ovf_max_out(self->handle);" in src
+        # gh-607: max_out() is called with the same count (n) about to be
+        # passed to the kernel, mirroring the kernel's own parameter name.
+        assert (
+            "size_t _cap = nco_steps_ovf_max_out(self->handle, (size_t)n);"
+            in src
+        )
         # The whole point: cap must cover the caller's n, not just max_out().
         assert "if (!_cap || _cap < _need) _cap = _need;" in src
 
