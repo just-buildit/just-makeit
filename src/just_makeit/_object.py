@@ -1106,7 +1106,12 @@ def build_component_ctxs(
             )
         )
         # Class C __doc__ (tp_doc): TOML `doc` > create()'s @brief > default.
-        _cblk = _doc_blocks.get(f"{obj}_create")
+        # gh-602: an object with a `create_fn` override (e.g.
+        # `acq_create_continuous`) is actually constructed by that function,
+        # not the derived `<obj>_create` — its Doxygen is what tp_init
+        # actually calls, so the transplant must key off it too.
+        _cfn = C.object_create_fn(cfg, obj) or f"{obj}_create"
+        _cblk = _doc_blocks.get(_cfn)
         _cdoc = (
             cfg.get(obj, {}).get("doc")
             or (_cblk.brief if (_cblk and _cblk.brief) else "")
