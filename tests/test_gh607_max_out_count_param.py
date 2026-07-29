@@ -16,6 +16,8 @@ the kernel is told its exact capacity via the 5-arg form and the clamp is
 dropped, trusting the bound the kernel itself now enforces.
 """
 
+from __future__ import annotations
+
 import contextlib
 import io
 import os
