@@ -172,11 +172,12 @@ class TestMakeStateCtx:
 
     def test_py_create_args_uses_default(self):
         ctx = self._ctx([("gain", "double", "1.5")])
-        assert ctx["py_create_args"] == "1.5"
+        # gh-610: keyword construction, immune to a kwlist reorder.
+        assert ctx["py_create_args"] == "gain=1.5"
 
     def test_py_create_args_multi(self):
         ctx = self._ctx([("gain", "double", "1.0"), ("n", "int", "4")])
-        assert ctx["py_create_args"] == "1.0, 4"
+        assert ctx["py_create_args"] == "gain=1.0, n=4"
 
     def test_c_create_args_uses_default(self):
         ctx = self._ctx([("gain", "double", "1.5")])
@@ -248,7 +249,9 @@ class TestMakeStateCtx:
             [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
             init_params=[("nsamp", "size_t", ""), ("avg", "bool", "")],
         )
-        assert ctx["py_create_args"] == "4, true"
+        # gh-610: keyword construction, and a bool default renders as
+        # Python's True/False rather than the C/TOML spelling.
+        assert ctx["py_create_args"] == "nsamp=4, avg=True"
 
 
 class TestParseArrayType:
@@ -435,7 +438,7 @@ class TestMakeStateCtxArrays:
         ctx = self._ctx(
             [("gain", "double", "1.0"), ("coeffs", "float[16]", None)]
         )
-        assert ctx["py_create_args"] == "1.0"
+        assert ctx["py_create_args"] == "gain=1.0"
         assert ctx["c_create_args"] == "1.0"
 
     def test_array_getter_setter_test_py(self):

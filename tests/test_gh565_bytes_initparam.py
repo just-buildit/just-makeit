@@ -65,9 +65,12 @@ def test_kwlist_and_pyi_slot():
 
 def test_ctor_is_unseedable_no_example():
     # jm cannot invent a valid opaque blob, so the smoke/example is suppressed
-    # (the `...` sentinel), exactly as for a path.
+    # (the `...` sentinel), exactly as for a path. gh-610: rendered as a
+    # keyword arg like every other param, but still containing the `...`
+    # sentinel the "..." in py_create_args" suppression check looks for.
     ctx = _ctx()
-    assert ctx["py_create_args"] == "..."
+    assert ctx["py_create_args"] == "blob=..."
+    assert "..." in ctx["py_create_args"]
 
 
 def test_module_stub_peer_matches(tmp_path):
