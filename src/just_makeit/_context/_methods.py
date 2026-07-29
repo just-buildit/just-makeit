@@ -2775,7 +2775,16 @@ def make_properties_ctx(
                 f"}}"
             )
         elif p.get("expr"):
-            _expr = p["expr"]
+            # gh-602: expr is arbitrary author-supplied C, unlike the field/
+            # call accessors below (a member access or function call, both
+            # already safe under a cast with no parens needed). to_py()'s
+            # cast binds tighter than anything lower-precedence, so a ternary
+            # or comma expression must be parenthesized before the cast is
+            # applied, or the cast silently lands on just the first operand.
+            # The enum-decode path (_decode_stmts below, when p_enum is set)
+            # already wraps its accessor in its own parens (`(long)(acc)`) —
+            # skip adding a second layer there.
+            _expr = p["expr"] if p_enum else f"({p['expr']})"
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"

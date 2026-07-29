@@ -699,6 +699,7 @@ def class_docstring_block(
     doc_blocks: dict | None = None,
     manifest_doc: str = "",
     custom_reset: bool = False,
+    create_fn: str | None = None,
 ) -> str:
     """Assemble a component's class docstring block (the whole ``\"\"\"...\"\"\"``,
     4-space indented, ready to drop under ``class X:``).
@@ -708,12 +709,15 @@ def class_docstring_block(
     aggregator — so the class summary and ``Parameters`` never drift between
     them (the recurring two-generator bug; see gh-446). Summary and params
     derive from the sacred ``<obj>_create`` Doxygen (``@brief`` -> summary,
-    ``@param`` -> each ``Parameters`` entry). jm's own scaffold boilerplate is
-    already filtered out of *doc_blocks* upstream (``_is_scaffold_brief``), so
-    an un-enriched header falls back to the generic ``"<Component> component."``
-    and produces byte-identical output to the pre-unification template.
+    ``@param`` -> each ``Parameters`` entry) — or, when the object declares a
+    ``create_fn`` override (gh-602), from *that* function's Doxygen instead,
+    since it is the constructor ``tp_init`` actually calls. jm's own scaffold
+    boilerplate is already filtered out of *doc_blocks* upstream
+    (``_is_scaffold_brief``), so an un-enriched header falls back to the
+    generic ``"<Component> component."`` and produces byte-identical output
+    to the pre-unification template.
     """
-    create_blk = (doc_blocks or {}).get(f"{obj}_create")
+    create_blk = (doc_blocks or {}).get(create_fn or f"{obj}_create")
     brief = manifest_doc or (
         create_blk.brief if (create_blk and create_blk.brief) else ""
     )
@@ -928,6 +932,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         doc_blocks=doc_blocks,
         manifest_doc=cfg.get(obj, {}).get("doc", ""),
         custom_reset=bool(ip) or no_reset,
+        create_fn=C.object_create_fn(cfg, obj),
     ).split("\n")
     # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
     # cannot be subclassed at runtime; the stub says so with @final. (Composer
