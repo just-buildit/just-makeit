@@ -63,6 +63,31 @@ def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
     return T._ctype_display(src)
 
 
+def _max_out_count_param(
+    arg_type: str, params: list[tuple[str, str]] | None
+) -> "tuple[str, str | None]":
+    """gh-607: the count parameter ``*_max_out()`` takes, mirroring the
+    shape's own kernel count argument — the same value the binding is about
+    to pass to the kernel — rather than inventing a fourth name for the same
+    concept.
+
+    Returns ``(decl, name)``: ``decl`` is the C parameter text to append
+    (``", size_t n_in"``); ``name`` is the identifier the stub body
+    suppresses/uses, or ``None`` only for the all-scalar-params shape, whose
+    kernel has no size-bearing argument to mirror — ``max_out`` stays
+    zero-arg for that one shape (there is nothing to pass).
+    """
+    params = params or []
+    if arg_type != "void":
+        return ", size_t n_in", "n_in"
+    for pn, pt in params:
+        if T.is_array_param_type(pt):
+            return f", size_t {pn}_len", f"{pn}_len"
+    if not params:
+        return ", size_t n", "n"
+    return "", None
+
+
 def _methods_c_stub_variable(
     component: str,
     name: str,
@@ -83,6 +108,12 @@ def _methods_c_stub_variable(
 
     ``pass_capacity`` (gh-138) appends a trailing ``size_t max_out`` output
     capacity parameter, for a C API that bounds-checks the caller's buffer.
+
+    gh-607: ``<comp>_<name>_max_out`` takes the same count parameter as the
+    method's own kernel call (see :func:`_max_out_count_param`) — the
+    binding calls it with exactly the value it is about to pass to the
+    kernel, so ``0`` is an ordinary answer (e.g. "this call produces
+    nothing"), not a "no information" sentinel.
     """
     ret_disp = _out_elem_disp(return_type, out_type)
     has_arg = arg_type != "void"
@@ -118,21 +149,26 @@ def _methods_c_stub_variable(
     cap_param = ", size_t max_out" if pass_capacity else ""
     cap_suppress = " (void)max_out;" if pass_capacity else ""
 
+    moc_decl, moc_name = _max_out_count_param(arg_type, params)
+    moc_suppress = f" (void){moc_name};" if moc_name else ""
+
     if max_out > 0:
         _max_out_head = f"/* Worst-case output count for {name}() — set via --max-out {max_out}. */"
         _max_out_body = f"    return {max_out};"
     else:
         _max_out_head = (
-            f"/* <<IMPLEMENT: return maximum possible output samples for {name}"
-            f" given current state >> */"
+            "/* <<IMPLEMENT: return maximum possible output samples for"
+            f" {name} given current state"
+            + (f" and {moc_name}" if moc_name else "")
+            + " >> */"
         )
         _max_out_body = "    return 0; /* placeholder */"
     lines = [
         _max_out_head,
         "size_t",
-        f"{component}_{name}_max_out({component}_state_t *state)",
+        f"{component}_{name}_max_out({component}_state_t *state{moc_decl})",
         "{",
-        "    (void)state;",
+        f"    (void)state;{moc_suppress}",
         _max_out_body,
         "}",
         "",
@@ -543,9 +579,11 @@ def _build_method_prototype(
         else:
             step_param = ", size_t n"
         out_disp = _out_elem_disp(return_type, out_type)
+        moc_decl, _ = _max_out_count_param(arg_type, params)
         return "\n".join(
             [
-                f"size_t {component}_{name}_max_out({component}_state_t *state);",
+                f"size_t {component}_{name}_max_out({component}_state_t"
+                f" *state{moc_decl});",
                 f"size_t {component}_{name}({component}_state_t *state"
                 f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]

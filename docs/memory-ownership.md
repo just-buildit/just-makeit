@@ -100,7 +100,8 @@ result.
 
 Per-call allocation needs the output length *before* the kernel runs. Where a
 kernel can return fewer samples than requested, the binding allocates
-`max(max_out(), n)` and trims.
+`max(max_out(state, n), n)` and trims (or, with `pass_capacity`, exactly
+`max_out(state, n)` — see below).
 
 The trim is not a copy. Where the kernel fills the allocation exactly — the
 generator shape's normal case — a fast path returns the array directly. Where
@@ -111,37 +112,54 @@ amount at stake is governed entirely by how tight `max_out()` is. A kernel
 whose `max_out()` is a fixed internal cap rather than a function of the input
 produces a large over-allocation on every call:
 
-| method              | n_in | n_out | `max_out()` | allocated           |
-| ------------------- | ---- | ----- | ----------- | ------------------- |
-| `Resampler.execute` | 1024 | 512   | 65,536      | **128× the output** |
-| `LO.steps`          | 64   | 64    | 65,536      | 1024×               |
-| `FIR.execute`       | 1024 | 1024  | 0 (unknown) | sized from `n`      |
+| method              | n_in | n_out | `max_out(state, n_in)`  | allocated           |
+| ------------------- | ---- | ----- | ----------------------- | ------------------- |
+| `Resampler.execute` | 1024 | 512   | fixed cap, ignores n_in | **128× the output** |
+| `LO.steps`          | 64   | 64    | fixed cap, ignores n_in | 1024×               |
+| `FIR.execute`       | 1024 | 1024  | `return 0;`             | sized from `n`      |
 
 !!! warning "`max_out()` should be a per-call bound"
 
     A fixed cap makes the allocation — and, if the result is trimmed by a view
     rather than shrunk, the *retention* — proportional to the cap instead of
-    the data. Return a bound computed from the input length. See
-    [gh-607](https://github.com/just-buildit/just-makeit/issues/607), which
-    tracks making that the signature rather than the convention.
+    the data. Return a bound computed from the count argument, not a constant
+    — see the signature below ([gh-607](https://github.com/just-buildit/just-makeit/issues/607)).
 
 ### `max_out()` is a sizing contract, nothing else
 
 With no instance buffer, `max_out()` sizes nothing internal. It does two
 things: bounds the per-call allocation, and validates `out=`.
 
-It is **not** a reliable call-independent upper bound. A generator's
+Since gh-607, `*_max_out()` takes the same count the binding is about to pass
+to the kernel — named to mirror the kernel's own parameter for that method's
+shape (`n_in` for an array-arg method, `<param>_len` for a single-array-param
+method, `n` for a generator; an all-scalar-params method has no count to
+mirror and its `max_out()` stays zero-arg). A fixed-output kernel takes the
+parameter and ignores it — `(void)n_in;` — uniformly, since jm cannot tell
+from the manifest whether a given block's output is call-independent.
+
+It is **not** a reliable call-independent upper bound even so. A generator's
 `steps(count)` writes exactly `count` samples, which can exceed it. The real
-contract is:
+contract, **without** `pass_capacity`:
 
 ```
-n_out <= max(max_out(state), n_requested)
+n_out <= max(max_out(state, n), n)
 ```
 
-Returning `0` is legal and means "unknown" — the binding then sizes from the
-call. If your kernel needs to know the true capacity it was given, declare
-`pass_capacity = true` and take a trailing `size_t max_out`; that is the
-mechanism for a kernel that must bounds-check rather than trust.
+`0` is an ordinary answer now, not a "the kernel doesn't know" sentinel — a
+decimator still filling its history productively returns `0` for a short
+input. Without `pass_capacity` the binding clamps the allocation to at least
+what the call needs regardless of what `max_out()` returns, so a
+mechanically-migrated `return 0;` still allocates `n` and is safe — nothing
+about `max_out()` is memory-safety-critical on this path.
+
+**With** `pass_capacity = true`, the kernel takes a trailing `size_t max_out`
+and the binding trusts the bound exactly: it allocates `max_out(state, n)`
+with **no clamp**, and passes that same capacity to the kernel. The kernel is
+now the one enforcing the bound — an under-reporting `max_out()` truncates at
+the kernel rather than overflowing the allocation. Opt in when a kernel can
+genuinely bounds-check its own writes; the exact allocation is the entire
+point of doing so.
 
 ## Layer 3 — `out=` is for placement and determinism
 
@@ -232,7 +250,9 @@ above — slicing is the common way to arrive at both problems, except a strided
 slice now raises where a merely misaligned one is quietly slower.
 
 An undersized `out=` raises `ValueError`; the requirement is
-`len(out) >= max(max_out(), n_requested)`.
+`len(out) >= max(max_out(state, n_requested), n_requested)` — independent of
+`pass_capacity`, since `out=` validates the *caller's* buffer, not the
+internal allocation.
 
 ## Who owns what, by shape
 

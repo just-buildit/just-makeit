@@ -77,13 +77,13 @@ And what state it carries:
 
 For [`jm method`](commands/extend.md#just-makeit-method), the output shape is a TOML setting on the method:
 
-| Output                             | Setting                                                    |
-| ---------------------------------- | ---------------------------------------------------------- |
-| Fixed N out for N in (resampler)   | `out_type="float"`, `out_divisor=2`                        |
-| Variable count out (event emitter) | `variable_output=true` (provide `<comp>_<name>_max_out()`) |
-| A list of records (events)         | `result_fields=[{name, type}, …]`                          |
-| Several parallel buffers           | `multi_output=["float _Complex", …]`                       |
-| Excluded from benchmarks           | `bench=false`                                              |
+| Output                             | Setting                                                            |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| Fixed N out for N in (resampler)   | `out_type="float"`, `out_divisor=2`                                |
+| Variable count out (event emitter) | `variable_output=true` (provide `<comp>_<name>_max_out(state, n)`) |
+| A list of records (events)         | `result_fields=[{name, type}, …]`                                  |
+| Several parallel buffers           | `multi_output=["float _Complex", …]`                               |
+| Excluded from benchmarks           | `bench=false`                                                      |
 
 ## Wiring an external library
 
