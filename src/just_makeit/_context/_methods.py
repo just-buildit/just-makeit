@@ -421,6 +421,26 @@ def serializable_triplet_parts(
     return c_funcs, pmd, pyi
 
 
+def _max_out_count_param_ctx(
+    has_arg: bool, has_params: bool, params: "list[dict]"
+) -> "tuple[str, str | None]":
+    """gh-607: peer of ``_method._max_out_count_param`` — the same per-shape
+    count parameter ``*_max_out()`` takes, adapted for this module's
+    dict-shaped ``params`` (vs. ``_method.py``'s ``(name, type)`` tuples).
+    Duplicated rather than imported: importing ``_method.py`` here would
+    cycle (``_method`` -> ``_object`` -> ``_context`` -> ``_context._methods``).
+    Keep the two in sync.
+    """
+    if has_arg:
+        return ", size_t n_in", "n_in"
+    if has_params:
+        for p in params:
+            if is_array_param_type(p["type"]):
+                return f", size_t {p['name']}_len", f"{p['name']}_len"
+        return "", None
+    return ", size_t n", "n"
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -884,10 +904,13 @@ def make_methods_ctx(
                 f", {_ctype_display(rt)} *out{i + 1}"
                 for i, rt in enumerate(multi_output)
             )
+            _moc_decl, _ = _max_out_count_param_ctx(
+                has_arg, has_params, params
+            )
             if has_arg:
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out"
-                    f"({component}_state_t *state);\n"
+                    f"({component}_state_t *state{_moc_decl});\n"
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
@@ -906,7 +929,7 @@ def make_methods_ctx(
                         )
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out"
-                    f"({component}_state_t *state);\n"
+                    f"({component}_state_t *state{_moc_decl});\n"
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
@@ -915,7 +938,7 @@ def make_methods_ctx(
             else:
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out"
-                    f"({component}_state_t *state);\n"
+                    f"({component}_state_t *state{_moc_decl});\n"
                     f"size_t {component}_{name}"
                     f"({component}_state_t *state, size_t n,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
@@ -1042,6 +1065,9 @@ def make_methods_ctx(
                 )
                 decref_in = "    Py_DECREF(in_arr);\n"
                 _lazy_fallback = "(size_t)n"
+                # gh-607: the count `*_max_out()` is called with — the same
+                # value about to be passed to the kernel as n_in.
+                _moc_arg: str | None = _lazy_fallback
             elif has_params:
                 _pb_lines: list[str] = []
                 _cd_parts: list[str] = ["self->handle"]
@@ -1153,6 +1179,11 @@ def make_methods_ctx(
                     if _first_arr is not None
                     else f"{component}_{name}_max_out(self->handle)"
                 )
+                # gh-607: an all-scalar params shape (no array to size from)
+                # has no count for the kernel to take either — max_out()
+                # stays zero-arg for this one shape, matching
+                # `_max_out_count_param`'s design (there is nothing to pass).
+                _moc_arg = _lazy_fallback if _first_arr is not None else None
             else:
                 if _enable_out:
                     parse_block = (
@@ -1174,6 +1205,13 @@ def make_methods_ctx(
                 call_data = f"self->handle, (size_t)n, {_VO_BUF_TOKEN}"
                 decref_in = ""
                 _lazy_fallback = "(size_t)n"
+                # gh-607: same value about to be passed to the kernel as n.
+                _moc_arg = _lazy_fallback
+
+            # gh-607: `*_max_out()`'s call-site argument list — empty only
+            # for the all-scalar-params shape, whose kernel has no count to
+            # mirror (see `_max_out_count_param_ctx`).
+            _moc_call_arg = f", {_moc_arg}" if _moc_arg else ""
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
@@ -1264,7 +1302,7 @@ def make_methods_ctx(
                     f" {_decref_early_vo}return NULL; }}\n"
                     f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                     f"        size_t _omax ="
-                    f" {component}_{name}_max_out(self->handle);\n"
+                    f" {component}_{name}_max_out(self->handle{_moc_call_arg});\n"
                     # max_out() alone is not always a true call-independent
                     # upper bound — a generator's steps(count) writes exactly
                     # the caller's requested size, which can exceed it.
@@ -1318,9 +1356,21 @@ def make_methods_ctx(
             _vo_alloc = (
                 f"    size_t _need = {_lazy_fallback};\n"
                 f"    size_t _cap ="
-                f" {component}_{name}_max_out(self->handle);\n"
-                f"    if (!_cap || _cap < _need) _cap = _need;\n"
-                f"    npy_intp _adim = (npy_intp)_cap;\n"
+                f" {component}_{name}_max_out(self->handle{_moc_call_arg});\n"
+                # gh-607: without pass_capacity, the kernel is never told its
+                # capacity, so max_out() is only a sizing HINT and the alloc
+                # is clamped to at least what the call needs — a mechanically
+                # migrated `return 0;` still allocates `_need` and is safe.
+                # With pass_capacity the kernel enforces the bound itself
+                # (it's handed `_cap` below), so the exact bound is trusted
+                # and the clamp is dropped — that's the entire point of
+                # opting in: exact allocation instead of a defensive one.
+                + (
+                    "    (void)_need;\n"
+                    if pass_capacity
+                    else "    if (!_cap || _cap < _need) _cap = _need;\n"
+                )
+                + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(
                     f"    PyObject *arr{i} ="
                     f" PyArray_SimpleNew(1, &_adim, {_out_np_enums[i]});\n"
@@ -1499,27 +1549,63 @@ def make_methods_ctx(
             if _enable_out:
                 # gh-219: expose <verb>_max_out() so callers can size the
                 # `out=` buffer they pass in.
-                _mo_doc = (
-                    f"{name}_max_out() -> int\\n\\n"
-                    f"Max output length {name}() can produce for the current"
-                    f" state.\\nUse to size the ``out=`` buffer."
+                # gh-607: it takes the same count the binding is about to
+                # pass to the kernel (see `_max_out_count_param_ctx`) — a
+                # caller who wants to size a buffer for `execute(x, out=…)`
+                # calls `execute_max_out(len(x))`, mirroring the call
+                # they're about to make. The all-scalar-params shape has no
+                # count to mirror and stays the original zero-arg form.
+                _pymo_decl, _pymo_name = _max_out_count_param_ctx(
+                    has_arg, has_params, params
                 )
-                method_c_parts.append(
-                    f"static PyObject *\n"
-                    f"{wrapper_prefix}_{name}_max_out"
-                    f"({Component}Object *self,"
-                    f" PyObject *Py_UNUSED(ignored))\n"
-                    f"{{\n"
-                    f"{guard}"
-                    f"    return PyLong_FromSize_t(\n"
-                    f"        {component}_{name}_max_out(self->handle));\n"
-                    f"}}"
-                )
-                pmd_lines.append(
-                    f'    {{"{name}_max_out",'
-                    f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
-                    f'     METH_NOARGS, "{_mo_doc}"}},\n'
-                )
+                if _pymo_name:
+                    _mo_doc = (
+                        f"{name}_max_out({_pymo_name}) -> int\\n\\n"
+                        f"Max output length {name}() can produce for"
+                        f" {_pymo_name}.\\nUse to size the ``out=`` buffer."
+                    )
+                    method_c_parts.append(
+                        f"static PyObject *\n"
+                        f"{wrapper_prefix}_{name}_max_out"
+                        f"({Component}Object *self, PyObject *args)\n"
+                        f"{{\n"
+                        f"{guard}"
+                        f"    Py_ssize_t {_pymo_name} = 0;\n"
+                        f'    if (!PyArg_ParseTuple(args, "n",'
+                        f" &{_pymo_name}))\n"
+                        f"        return NULL;\n"
+                        f"    return PyLong_FromSize_t(\n"
+                        f"        {component}_{name}_max_out(self->handle,"
+                        f" (size_t){_pymo_name}));\n"
+                        f"}}"
+                    )
+                    pmd_lines.append(
+                        f'    {{"{name}_max_out",'
+                        f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
+                        f'     METH_VARARGS, "{_mo_doc}"}},\n'
+                    )
+                else:
+                    _mo_doc = (
+                        f"{name}_max_out() -> int\\n\\n"
+                        f"Max output length {name}() can produce for the"
+                        f" current state.\\nUse to size the ``out=`` buffer."
+                    )
+                    method_c_parts.append(
+                        f"static PyObject *\n"
+                        f"{wrapper_prefix}_{name}_max_out"
+                        f"({Component}Object *self,"
+                        f" PyObject *Py_UNUSED(ignored))\n"
+                        f"{{\n"
+                        f"{guard}"
+                        f"    return PyLong_FromSize_t(\n"
+                        f"        {component}_{name}_max_out(self->handle));\n"
+                        f"}}"
+                    )
+                    pmd_lines.append(
+                        f'    {{"{name}_max_out",'
+                        f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
+                        f'     METH_NOARGS, "{_mo_doc}"}},\n'
+                    )
         elif result_fields and single_record:
             # gh-244: return ONE named record as a PyStructSequence (named,
             # unpackable) instead of a list[tuple]. The C kernel returns the
@@ -2109,11 +2195,23 @@ def make_methods_ctx(
         )
         pyi_lines.append(stub)
         if _stub_enable_out:
-            pyi_lines.append(
-                f"    def {name}_max_out(self) -> int:\n"
-                f'        """Max output length {name}() can produce'
-                f' for the current state."""\n'
+            # gh-607: mirror the same count parameter as the C wrapper.
+            _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
+                has_arg, has_params, params
             )
+            if _stub_moc_name:
+                pyi_lines.append(
+                    f"    def {name}_max_out"
+                    f"(self, {_stub_moc_name}: int) -> int:\n"
+                    f'        """Max output length {name}() can produce'
+                    f' for {_stub_moc_name}."""\n'
+                )
+            else:
+                pyi_lines.append(
+                    f"    def {name}_max_out(self) -> int:\n"
+                    f'        """Max output length {name}() can produce'
+                    f' for the current state."""\n'
+                )
 
     # ── serializable: generate the state-blob binding (gh-400) ──────────────
     # Calls the hand-written C triplet (size_t <c>_state_bytes(const T*); void

@@ -79,7 +79,7 @@ every shape that just-makeit can represent.
 | `void comp_steps(s, const T *in, n, U *out)` (blockwise)                    | `.steps(in)` → ndarray    |
 | `T comp_get_field(const comp_t *s)` / `void comp_set_field(comp_t *s, T v)` | property                  |
 | `T comp_verb(comp_t *s, T in)` (custom verb)                                | `.verb(x)` method         |
-| `size_t comp_verb(s, T *out, n)` + `comp_verb_max_out(s)`                   | variable-output `.verb()` |
+| `size_t comp_verb(s, T *out, n)` + `comp_verb_max_out(s, n)`                | variable-output `.verb()` |
 | `typedef struct comp_t comp_t;` (opaque forward decl)                       | opaque state              |
 | constructor params not in the struct body                                   | `__init__` keyword args   |
 

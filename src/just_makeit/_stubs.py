@@ -1258,12 +1258,35 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         )
         lines += ["", header, *_doc]
         if _stub_enable_out:
-            lines += [
-                "",
-                f"    def {m_name}_max_out(self) -> int:",
-                f'        """Max output length {m_name}() can produce'
-                f' for the current state."""',
-            ]
+            # gh-607: mirror make_methods_ctx's `_max_out_count_param_ctx` —
+            # `*_max_out()` now takes the same count the binding is about to
+            # pass to the kernel; the all-scalar-params shape has none to
+            # mirror and stays the original zero-arg form.
+            _stub_moc_name: str | None = None
+            if m_arg != "void":
+                _stub_moc_name = "n_in"
+            elif m_params:
+                for p in m_params:
+                    if p["type"].endswith("[]"):
+                        _stub_moc_name = f"{p['name']}_len"
+                        break
+            else:
+                _stub_moc_name = "n"
+            if _stub_moc_name:
+                lines += [
+                    "",
+                    f"    def {m_name}_max_out"
+                    f"(self, {_stub_moc_name}: int) -> int:",
+                    f'        """Max output length {m_name}() can produce'
+                    f' for {_stub_moc_name}."""',
+                ]
+            else:
+                lines += [
+                    "",
+                    f"    def {m_name}_max_out(self) -> int:",
+                    f'        """Max output length {m_name}() can produce'
+                    f' for the current state."""',
+                ]
 
     # serializable (gh-400): state-blob triplet, sibling to reset. The module
     # .pyi is assembled here independently of make_methods_ctx's

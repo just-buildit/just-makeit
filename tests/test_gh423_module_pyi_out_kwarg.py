@@ -47,13 +47,14 @@ class TestModulePyiOutKwarg:
         root = self._scaffold(tmp_path, arg_type="float _Complex")
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self) -> int:" in pyi
+        # gh-607: max_out() mirrors the kernel's own count param.
+        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
 
     def test_single_array_param_gets_out_kwarg_and_max_out(self, tmp_path):
         root = self._scaffold(tmp_path, params=[("x", "float _Complex[]")])
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
 
     def test_extra_param_method_gets_no_out_kwarg(self, tmp_path):
         # Farrow.delay-shaped: variable_output with a genuine extra scalar

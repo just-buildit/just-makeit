@@ -366,6 +366,15 @@ def _implement_c_bodies(proj: Path):
         "    return x * lfo_step(state->osc);",
     )
     # resamp — variable_output + pass_capacity + nogil (decimate by 2)
+    # gh-607: with pass_capacity, the allocation is exactly max_out(state,
+    # n_in) — no clamp — so a stub that still returns 0 truncates the
+    # kernel's own output to nothing. The real bound is every other sample.
+    _patch(
+        src / "resamp" / "resamp_core.c",
+        "    (void)state; (void)n_in;\n    return 0; /* placeholder */",
+        "    (void)state;\n    return (n_in + 1) / 2;"
+        " /* decimate by 2, rounding up */",
+    )
     _patch(
         src / "resamp" / "resamp_core.c",
         "    (void)state;\n"
