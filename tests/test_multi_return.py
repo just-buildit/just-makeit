@@ -45,7 +45,7 @@ class TestTupleOfArrays:
         # the second output (uint8 overflow flags) is a second NumPy array
         # (arr0 = phase, arr1 = overflow) packed into the returned tuple
         assert "arr1" in body
-        assert "PyArray_SimpleNewFromData" in body
+        assert "PyArray_SimpleNew(1, &_adim, NPY_UINT8)" in body
 
 
 class TestListOfRecords:

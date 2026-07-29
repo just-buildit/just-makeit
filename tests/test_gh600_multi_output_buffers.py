@@ -24,8 +24,10 @@ the gh-437 live-view check) and its multi-output path had not — so adopting
 the declarative form silently reintroduced memory corruption.
 
 **The fix** makes NumPy own every output: each call allocates its arrays at
-``max(max_out(), n)``, the kernel writes straight into them, and a trimmed
-view of the filled prefix is returned pinned to the full array. That deletes
+``max(max_out(), n)``, the kernel writes straight into them, and each is
+shrunk in place to the filled length (a gh-604 follow-up — returning a view
+pinned to the full allocation retained up to 128x the data when ``max_out()``
+is a fixed cap; see gh-607). That deletes
 the instance buffer, the ``__init__`` malloc, the retired freelist and the
 view-liveness weakref for this shape — the aliasing hazards those exist to
 manage cannot arise when no memory is shared between calls. It is also what
@@ -127,9 +129,14 @@ class TestNoSharedBuffer:
     def test_result_is_trimmed_to_n_out(self):
         src = _c(MULTI)
         assert "npy_intp _odim = (npy_intp)n_out;" in src
-        # The view is pinned to the full allocation, which owns the memory.
-        assert "PyArray_SetBaseObject((PyArrayObject *)v0, arr0);" in src
-        assert "PyArray_SetBaseObject((PyArrayObject *)v1, arr1);" in src
+        # gh-604 follow-up: shrink each fresh array in place rather than
+        # returning a view pinned to the full allocation. The view retained
+        # the whole allocation for as long as the caller held the result,
+        # which for a fixed-cap max_out() meant up to 128x the data (gh-607).
+        assert "PyArray_Resize(" in src
+        assert "PyArray_SetBaseObject" not in src
+        # The shrunk arrays themselves are the results; Resize returns None.
+        assert "PyTuple_Pack(2, arr0, arr1)" in src
 
     def test_single_output_uses_the_same_storage_rule(self):
         """gh-600 applied this to multi-output; gh-604 applied it to both.

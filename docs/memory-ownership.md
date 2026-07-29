@@ -39,17 +39,28 @@ must free. The `--perf` tier holds to this too: `JM_DEFINE_STEPS` uses a
 stack-resident scratch buffer sized at compile time, so the entire SIMD path
 is allocation-free by construction.
 
-The one heap object the generated C API hands out is the state itself, from
-`comp_create()`, released by `comp_destroy()`.
+!!! note "Scope: sample-producing kernels"
 
-!!! note "Scope: DSP kernels"
+    This rule is about the entry points that carry **samples** out of a DSP
+    block. It is deliberately not phrased as "nothing in the C API returns a
+    pointer" — a rule that is 98% true collects exceptions until it means
+    nothing. A survey of one real consumer found 123 pointer-returning
+    functions on the public surface, 91 of them `*_create` / `*_open`
+    constructors, and **not one sample-producing kernel returning a pointer to
+    internal storage**. The rule is exactly true where it is stated.
 
-    This rule is about **DSP kernels** — the signal-processing entry points jm
-    generates and that you hand-write against them. It is deliberately not
-    phrased as "nothing in the C API returns a pointer", because that is not
-    true of every neighbouring surface: doppler's messaging API, for instance,
-    has `dp_msg_data(dp_msg_t *)`. A rule that is 98% true collects
-    exceptions until it means nothing. This one is exactly true for kernels.
+    The other pointer-returning shapes are real, and each has its own
+    one-line contract:
+
+    | shape                  | example                        | contract                                |
+    | ---------------------- | ------------------------------ | --------------------------------------- |
+    | constructor            | `comp_create()`                | **caller frees**, via `comp_destroy()`  |
+    | introspection accessor | `RateConverter_stages_value()` | borrowed; valid while the object lives  |
+    | zero-copy receive      | `dp_msg_data()`                | borrowed; valid until the matching free |
+    | serialized metadata    | `wfm_spec_to_json()`           | **caller frees** the returned string    |
+
+    Two of those hand out heap the caller must release. That does not weaken
+    the kernel rule — it is why the kernel rule is worth stating separately.
 
 **Why it holds.** A caller-owned output is the only arrangement where
 lifetime is not a question. The C caller already knows how long it needs the
@@ -91,17 +102,28 @@ Per-call allocation needs the output length *before* the kernel runs. Where a
 kernel can return fewer samples than requested, the binding allocates
 `max(max_out(), n)` and trims.
 
-The trim is a **view**, not a copy — `PyArray_SimpleNewFromData` over the same
-memory with `PyArray_SetBaseObject` pinning the full allocation. So the cost
-is one small object plus **retained over-allocation**: the view keeps
-`_cap - n_out` unused elements resident until the view itself is dropped.
-Where the kernel fills the allocation exactly — the generator shape's normal
-case — a fast path returns the array directly and there is no view at all.
+The trim is not a copy. Where the kernel fills the allocation exactly — the
+generator shape's normal case — a fast path returns the array directly. Where
+it writes fewer, the array is shrunk in place, which releases the tail.
 
-The thing to watch on a short-writing kernel is therefore **memory, not CPU**.
-A kernel whose `max_out()` is far above its typical `n_out` will keep the
-difference alive for as long as the caller keeps the result. If that matters,
-tighten `max_out()` or use `out=`.
+**The thing to watch on a short-writing kernel is memory, not CPU** — and the
+amount at stake is governed entirely by how tight `max_out()` is. A kernel
+whose `max_out()` is a fixed internal cap rather than a function of the input
+produces a large over-allocation on every call:
+
+| method              | n_in | n_out | `max_out()` | allocated           |
+| ------------------- | ---- | ----- | ----------- | ------------------- |
+| `Resampler.execute` | 1024 | 512   | 65,536      | **128× the output** |
+| `LO.steps`          | 64   | 64    | 65,536      | 1024×               |
+| `FIR.execute`       | 1024 | 1024  | 0 (unknown) | sized from `n`      |
+
+!!! warning "`max_out()` should be a per-call bound"
+
+    A fixed cap makes the allocation — and, if the result is trimmed by a view
+    rather than shrunk, the *retention* — proportional to the cap instead of
+    the data. Return a bound computed from the input length. See
+    [gh-607](https://github.com/just-buildit/just-makeit/issues/607), which
+    tracks making that the signature rather than the convention.
 
 ### `max_out()` is a sizing contract, nothing else
 

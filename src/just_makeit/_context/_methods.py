@@ -1360,35 +1360,31 @@ def make_methods_ctx(
                 if none_on_empty
                 else ""
             )
-            # n_out <= _cap, so hand back a view of the filled prefix pinned
-            # to the full array (SetBaseObject steals the reference). Every
-            # view is built before any base is stolen, keeping one uniform
-            # failure path.
-            _vo_views = (
-                "    npy_intp _odim = (npy_intp)n_out;\n"
-                + "".join(
-                    f"    PyObject *v{i} = PyArray_SimpleNewFromData(\n"
-                    f"        1, &_odim, {_out_np_enums[i]}, _d{i});\n"
-                    for i in _idx
-                )
-                + (
-                    "    if (!v0) { Py_DECREF(arr0); return NULL; }\n"
-                    if _n_out_arrays == 1
-                    else f"    if ({' || '.join(f'!v{i}' for i in _idx)}) {{\n"
-                    f"        {' '.join(f'Py_XDECREF(v{i});' for i in _idx)}"
-                    f" {_decref_arrs}\n"
-                    f"        return NULL;\n"
-                    f"    }}\n"
-                )
-                + "".join(
-                    f"    PyArray_SetBaseObject("
-                    f"(PyArrayObject *)v{i}, arr{i});\n"
-                    for i in _idx
-                )
+            # n_out <= _cap. Shrink each array in place rather than
+            # returning a view pinned to the full allocation: the array is
+            # fresh, unshared and refcount-1, so PyArray_Resize reallocs the
+            # buffer down and RELEASES the tail.
+            #
+            # gh-604 follow-up: the view form retained the whole allocation
+            # for as long as the caller held the result, which is governed by
+            # how tight max_out() is, not by the data. A kernel whose
+            # max_out() is a fixed internal cap (a resampler at 65536 emitting
+            # 512) retained 128x the samples it returned. Shrinking makes
+            # retention proportional to the data instead of the cap. See
+            # gh-607 for making max_out() a per-call bound, which removes the
+            # over-allocation itself rather than just its retention.
+            _vo_views = "    npy_intp _odim = (npy_intp)n_out;\n" + "".join(
+                f"    PyArray_Dims _rs{i} = {{&_odim, 1}};\n"
+                f"    PyObject *v{i} = PyArray_Resize(\n"
+                f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
+                f" NPY_CORDER);\n"
+                f"    if (!v{i}) {{ {_decref_arrs} return NULL; }}\n"
+                f"    Py_DECREF(v{i});\n"
+                for i in _idx
             )
             if _n_out_arrays == 1:
                 _vo_exact_return = "        return arr0;\n"
-                _vo_return = "    return v0;\n"
+                _vo_return = "    return arr0;\n"
             else:
                 _vo_exact_return = (
                     f"        PyObject *_exact = PyTuple_Pack("
@@ -1397,11 +1393,13 @@ def make_methods_ctx(
                     + "".join(f"        Py_DECREF(arr{i});\n" for i in _idx)
                     + "        return _exact;\n"
                 )
+                # The arrays were shrunk in place, so THEY are the results
+                # -- PyArray_Resize returns None, not a new array.
                 _vo_return = (
                     f"    PyObject *result = PyTuple_Pack("
                     f"{_n_out_arrays},"
-                    f" {', '.join(f'v{i}' for i in _idx)});\n"
-                    + "".join(f"    Py_DECREF(v{i});\n" for i in _idx)
+                    f" {', '.join(f'arr{i}' for i in _idx)});\n"
+                    + "".join(f"    Py_DECREF(arr{i});\n" for i in _idx)
                     + "    return result;\n"
                 )
             # Exact-fill fast path: when the kernel filled the whole

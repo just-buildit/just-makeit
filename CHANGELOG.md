@@ -71,6 +71,14 @@
     gh-600 had already moved multi-output to this form; both shapes now share
     one emitter.
 
+    **Trim shrinks in place rather than returning a view.** A view pinned to
+    the full allocation retained all of it for as long as the caller held the
+    result, and that is governed by how tight `max_out()` is rather than by
+    the data — a resampler whose `max_out()` is a fixed 65,536 emitting 512
+    samples retained **128×** what it returned. `PyArray_Resize` on the fresh,
+    unshared array releases the tail instead. Making `max_out()` a per-call
+    bound (gh-607) removes the over-allocation itself.
+
     **`out=` is unchanged** and remains the explicit zero-allocation contract —
     and it is the one that can actually promise it, since a caller-owned buffer
     cannot silently alias a previous result.
