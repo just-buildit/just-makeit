@@ -151,6 +151,13 @@ def _build_no_state_init_ctx(
     bytes_ip: list[str] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
+    # gh-611: a plain array with a declared default is genuinely optional —
+    # parsed as a keyword defaulting to an empty array when omitted — rather
+    # than hoisted as a mandatory positional ahead of every defaulted scalar.
+    # Distinct from `opt_arr_ip`: that feature calls an alternate create_fn
+    # when the array is supplied; this one always calls the same create_fn,
+    # passing (NULL, 0) for the array when omitted.
+    def_arr_ip: list[tuple[str, str, int, str]] = []
 
     for param in params:
         name, ct, dflt = param[:3]
@@ -172,6 +179,28 @@ def _build_no_state_init_ctx(
                         _CTYPE_TO_NPY[elem_ct],
                         alt_create_fn,
                     )
+                )
+            elif dflt:
+                if real_type and real_create_fn_p:
+                    raise ValueError(
+                        f"'{component}': array init-param '{name}' cannot"
+                        " combine a default with dtype dispatch"
+                        " (real_type/real_create_fn)."
+                    )
+                if ndim == 2:
+                    raise ValueError(
+                        f"'{component}': array init-param '{name}' — a"
+                        " defaulted (optional) array is only supported for"
+                        " 1-D arrays."
+                    )
+                if dflt != "[]":
+                    raise ValueError(
+                        f"'{component}': array init-param '{name}' declares"
+                        f' default = {dflt!r}; only default = "[]" (empty'
+                        " array) is supported."
+                    )
+                def_arr_ip.append(
+                    (name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct])
                 )
             else:
                 arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
@@ -227,6 +256,9 @@ def _build_no_state_init_ctx(
     _arr_meta: dict[str, tuple] = {
         n: (act, andim) for n, act, andim, _ in arr_ip
     }
+    _def_arr_meta: dict[str, tuple] = {
+        n: (act, andim) for n, act, andim, _ in def_arr_ip
+    }
     _str_enum_meta: dict[str, tuple] = {
         sn: (choices, sdflt) for sn, choices, sdflt in str_enum_ip
     }
@@ -273,6 +305,7 @@ def _build_no_state_init_ctx(
     optional_entries = sorted(
         [("str_enum", n) for n, _, __ in str_enum_ip]
         + [("opt_arr", n) for n, *_ in opt_arr_ip]
+        + [("def_arr", n) for n, *_ in def_arr_ip]
         + [("scalar", n) for n, *_ in opt_scalar_ip],
         key=lambda e: _order[e[1]],
     )
@@ -334,6 +367,22 @@ def _build_no_state_init_ctx(
                     f"(const {adisp} *)PyArray_DATA({pname}_arr), {pname}_len"
                 )
                 c_create_parts_ordered.append("NULL, 0")
+        elif pname in _def_arr_meta:
+            # gh-611: a defaulted array's C signature is identical to a
+            # required array's — the only difference is that `{pname}_arr`
+            # may be NULL (omitted), so the data pointer is ternary-guarded.
+            act, andim = _def_arr_meta[pname]
+            adisp = _ctype_display(act)
+            sig_parts.append(f"const {adisp} *{pname}, size_t {pname}_len")
+            doc_parts.append(
+                f" * @param {pname}  Input {adisp} array"
+                f" (length passed as {pname}_len; omitted -> empty)."
+            )
+            call_parts.append(
+                f"{pname}_arr ? (const {adisp} *)PyArray_DATA({pname}_arr)"
+                f" : NULL, {pname}_len"
+            )
+            c_create_parts_ordered.append("NULL, 0")
         elif pname in _str_enum_meta:
             choices, _ = _str_enum_meta[pname]
             sig_parts.append(f"int {pname}")
@@ -507,6 +556,12 @@ def _build_no_state_init_ctx(
         elif kind == "opt_arr":
             local_lines.append(f"    PyObject *{name}_obj = NULL;")
             parse_args.append(f"&{name}_obj")
+        elif kind == "def_arr":
+            # gh-611: same Python-level parse as opt_arr (optional PyObject*,
+            # NULL default) — the array conversion below fills in an empty
+            # array rather than dispatching to an alternate create_fn.
+            local_lines.append(f"    PyObject *{name}_obj = NULL;")
+            parse_args.append(f"&{name}_obj")
         else:  # "scalar"
             ct, dflt, dflt_raw = _opt_scalar_meta[name]
             parse_args.append(_emit_scalar(name, ct, dflt, dflt_raw))
@@ -533,7 +588,7 @@ def _build_no_state_init_ctx(
         "s"
         if kind == "str_enum"
         else "O"
-        if kind == "opt_arr"
+        if kind in ("opt_arr", "def_arr")
         else _CTYPE_META[_opt_scalar_meta[name][0]]["fmt"]
         for kind, name in optional_entries
     )
@@ -562,6 +617,7 @@ def _build_no_state_init_ctx(
         or arr_ip
         or str_enum_ip
         or opt_arr_ip
+        or def_arr_ip
         or scalar_ip
         or path_ip
         or bytes_ip
@@ -583,6 +639,10 @@ def _build_no_state_init_ctx(
 
     aapb_lines: list[str] = []
     allocated: list[str] = []
+    # gh-611: a def_arr's `{name}_arr` may stay NULL (omitted) — tracked
+    # separately so its cleanup/final-decref use the NULL-safe Py_XDECREF
+    # rather than the unconditional Py_DECREF `allocated` gets.
+    maybe_allocated: list[str] = []
 
     # gh-515/gh-219: array coercion runs *after* PyArg has already produced any
     # path borrow, so every `return -1` bailout here must release it too or the
@@ -683,6 +743,29 @@ def _build_no_state_init_ctx(
             )
             allocated.append(aname)
 
+    # gh-611: a defaulted array's `{aname}_arr` starts NULL/len 0 (the "[]"
+    # default) and is only converted when the caller actually supplied it —
+    # unlike opt_arr_ip below, this always feeds the same create() call
+    # (create_call_args, via the ternary-guarded call_parts entry emitted in
+    # the sig_parts loop above), never an alternate create_fn.
+    for aname, act, andim, anpy in def_arr_ip:
+        cleanup = (
+            "".join(f" Py_DECREF({n}_arr);" for n in allocated)
+            + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
+            + _path_cleanup
+        )
+        aapb_lines.append(
+            f"    PyArrayObject *{aname}_arr = NULL;\n"
+            f"    size_t {aname}_len = 0;\n"
+            f"    if ({aname}_obj && {aname}_obj != Py_None) {{\n"
+            f"        {aname}_arr = (PyArrayObject *)PyArray_FROM_OTF(\n"
+            f"            {aname}_obj, {anpy}, NPY_ARRAY_C_CONTIGUOUS);\n"
+            f"        if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+            f"        {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
+            f"    }}\n"
+        )
+        maybe_allocated.append(aname)
+
     scalar_call_str = create_call_args
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
         odisp = _ctype_display(oact)
@@ -747,7 +830,7 @@ def _build_no_state_init_ctx(
     array_args_parse_block = "".join(aapb_lines)
     array_args_decref = "".join(
         f"    Py_DECREF({name}_arr);\n" for name in allocated
-    )
+    ) + "".join(f"    Py_XDECREF({name}_arr);\n" for name in maybe_allocated)
 
     if dispatch_meta or opt_arr_ip:
         create_line = ""
@@ -801,6 +884,10 @@ def _build_no_state_init_ctx(
             pyi_parts.append(f'{name}: str = "{sdflt}"')
         elif kind == "opt_arr":
             pyi_parts.append(f"{name}: npt.ArrayLike | None = None")
+        elif kind == "def_arr":
+            # gh-611: genuinely optional (empty when omitted), not None —
+            # distinct from opt_arr's dispatch-flavoured `| None = None`.
+            pyi_parts.append(f"{name}: npt.ArrayLike = ...")
         else:
             ct, dflt, _dr = _opt_scalar_meta[name]
             pyi_parts.append(
