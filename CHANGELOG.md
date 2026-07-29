@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`variable_output` results are now NumPy-owned; the reuse buffer is gone
+    (gh-604).** The generated binding kept one per-instance output buffer, grew
+    it on demand, and — because a previously returned view might still alias it
+    (gh-219) — retired the old buffer to a freelist rather than freeing it,
+    using a weakref to detect that liveness (gh-437). Retired buffers were
+    freed only in `tp_dealloc`.
+
+    The trap: **binding the result to a name is enough to make the view live**,
+    so an ordinary streaming loop took the retire path on every call and
+    retained a buffer per call for the object's lifetime.
+
+    ```python
+    for _ in range(3000):
+        x = lo.steps(65536)     # RSS growth: 1,547,520 KiB -> 448 KiB
+    ```
+
+    Measurement also settled the design question — the buffer was not merely
+    leaky but *slower*, because each call malloc'd fresh memory and touched new
+    pages against a monotonically growing heap:
+
+    | n         | pattern | before       | after              |
+    | --------- | ------- | ------------ | ------------------ |
+    | 65,536    | hold    | 96,272 ns    | 20,795 ns (-78%)   |
+    | 1,048,576 | hold    | 1,502,726 ns | 239,348 ns (-84%)  |
+    | 65,536    | drop    | 20,659 ns    | 20,665 ns (a wash) |
+
+    So it cost a page fault per call to avoid an allocation that costs nothing
+    at realistic block sizes, and its failure mode when the precondition was not
+    met was "6x slower and growing" rather than "no speedup".
+
+    Each call now allocates its outputs from NumPy at `max(max_out(), n)`, the
+    kernel writes straight into them, and the result is returned directly when
+    the kernel filled the allocation exactly (the generator shape's normal
+    case) or as a trimmed view pinned to it otherwise. This deletes
+    `_<name>_buf`, `_<name>_buf_cap`, `_<name>_retired{,_n,_cap}` and
+    `_<name>_view_ref`, the `__init__` allocation, the dealloc loop, the gh-219
+    deferred-free and the gh-437 liveness probe.
+
+    gh-600 had already moved multi-output to this form; both shapes now share
+    one emitter.
+
+    **`out=` is unchanged** and remains the explicit zero-allocation contract —
+    and it is the one that can actually promise it, since a caller-owned buffer
+    cannot silently alias a previous result.
+
+    Callers see no API change: results are still ndarrays of the same dtype and
+    length. Anything relying on two results aliasing the same memory was
+    relying on the bug.
+
 ### Fixed
 
 - **Multi-output `variable_output` no longer overflows a fixed-cap heap buffer

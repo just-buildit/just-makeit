@@ -131,15 +131,23 @@ class TestNoSharedBuffer:
         assert "PyArray_SetBaseObject((PyArrayObject *)v0, arr0);" in src
         assert "PyArray_SetBaseObject((PyArrayObject *)v1, arr1);" in src
 
-    def test_single_output_keeps_its_reuse_buffer(self):
-        """The fix must not disturb the single-output hot path."""
+    def test_single_output_uses_the_same_storage_rule(self):
+        """gh-600 applied this to multi-output; gh-604 applied it to both.
+
+        When gh-600 landed, this asserted the *opposite* — that single-output
+        kept its per-instance reuse buffer, since gh-600 deliberately left the
+        hot path alone. gh-604 then measured that buffer: any loop binding its
+        result took the retire path, growing RSS ~514 KiB per call and running
+        6-8x slower than letting NumPy own the array. Both shapes now follow
+        one rule, so this asserts the convergence rather than the difference.
+        """
         single = dict(MULTI)
         del single["multi_output"]
         ctx = make_methods_ctx("nco", "Nco", [single])
-        assert "_steps_ovf_buf" in ctx["extra_buf_fields"]
-        assert "_steps_ovf_retired" in ctx["extra_buf_fields"]
-        assert "_steps_ovf_view_ref" in ctx["extra_buf_fields"]
-        assert "malloc" in ctx["extra_buf_alloc"]
+        assert ctx["extra_buf_fields"] == ""
+        assert ctx["extra_buf_alloc"] == ""
+        assert ctx["extra_buf_free"] == ""
+        assert "PyArray_SimpleNew(" in ctx["extra_methods_c"]
 
     def test_input_array_released_on_the_allocation_failure_path(self):
         src = _c(MULTI_CTRL)
