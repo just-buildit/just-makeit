@@ -972,64 +972,61 @@ def make_methods_ctx(
             decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
 
         # ── pre-allocated buffer fields + alloc + free ───────────────────
-        if variable_output:
-            all_return_types = [_vo_out_elem] + list(multi_output)
-            _malloc_lines: list[str] = []
-            for i, rt in enumerate(all_return_types):
-                suffix = f"_{i}" if i > 0 else ""
-                rt_disp = _ctype_display(rt)
-                field_name = f"_{name}_buf{suffix}"
-                buf_fields.append(
-                    f"    {rt_disp} *{field_name};"
-                    f"  /* pre-allocated output for {name} */\n"
-                )
-                buf_free.append(f"    free(self->{field_name});\n")
-                _malloc_lines.append(
-                    f"        self->{field_name} = malloc("
-                    f"_max * sizeof({rt_disp}));\n"
-                    f"        if (!self->{field_name}) {{"
-                    f" PyErr_NoMemory(); return -1; }}\n"
-                )
+        # gh-600: multi-output owns nothing — each call allocates its outputs
+        # from NumPy and lets the kernel write straight into them, so there is
+        # no instance buffer to declare, size at __init__, grow, retire or
+        # free. The reuse machinery below is single-output only. (Before this,
+        # multi-output declared the buffers and sized them ONCE from
+        # max_out() at construction, then wrote `n` elements into them with no
+        # capacity check — a heap overflow for any n past that cap.)
+        if variable_output and not multi_output:
+            rt_disp = _vo_out_disp
             buf_fields.append(
-                f"    size_t _{name}_buf_cap;  /* allocated capacity for {name} */\n"
+                f"    {rt_disp} *_{name}_buf;"
+                f"  /* pre-allocated output for {name} */\n"
+                f"    size_t _{name}_buf_cap;"
+                f"  /* allocated capacity for {name} */\n"
             )
-            if not multi_output:
-                # Deferred-free freelist (gh-219): on grow we retire the old
-                # buffer here instead of freeing it, because a previously
-                # returned array may still alias it (SetBaseObject pins self,
-                # not the buffer).  Retired buffers are freed at dealloc, so
-                # they outlive any array that referenced them.  Empty on the
-                # fixed-block hot path (no growth after warmup -> zero cost).
-                buf_fields.append(
-                    f"    void **_{name}_retired;  /* gh-219 deferred free */\n"
-                    f"    size_t _{name}_retired_n;\n"
-                    f"    size_t _{name}_retired_cap;\n"
-                )
-                # gh-437: weakref to the last returned view.  While the
-                # caller still holds that view, the next call must not
-                # reuse the buffer in place (a same-size call would
-                # silently overwrite the caller's data) — it retires the
-                # buffer instead, exactly like a grow.
-                buf_fields.append(
-                    f"    PyObject *_{name}_view_ref;"
-                    f"  /* gh-437 last returned view */\n"
-                )
-                buf_free.append(
-                    f"    for (size_t _i = 0;"
-                    f" _i < self->_{name}_retired_n; _i++)\n"
-                    f"        free(self->_{name}_retired[_i]);\n"
-                    f"    free(self->_{name}_retired);\n"
-                    f"    Py_XDECREF(self->_{name}_view_ref);\n"
-                )
+            buf_free.append(f"    free(self->_{name}_buf);\n")
+            # Deferred-free freelist (gh-219): on grow we retire the old
+            # buffer here instead of freeing it, because a previously
+            # returned array may still alias it (SetBaseObject pins self,
+            # not the buffer).  Retired buffers are freed at dealloc, so
+            # they outlive any array that referenced them.  Empty on the
+            # fixed-block hot path (no growth after warmup -> zero cost).
+            buf_fields.append(
+                f"    void **_{name}_retired;  /* gh-219 deferred free */\n"
+                f"    size_t _{name}_retired_n;\n"
+                f"    size_t _{name}_retired_cap;\n"
+            )
+            # gh-437: weakref to the last returned view.  While the
+            # caller still holds that view, the next call must not
+            # reuse the buffer in place (a same-size call would
+            # silently overwrite the caller's data) — it retires the
+            # buffer instead, exactly like a grow.
+            buf_fields.append(
+                f"    PyObject *_{name}_view_ref;"
+                f"  /* gh-437 last returned view */\n"
+            )
+            buf_free.append(
+                f"    for (size_t _i = 0;"
+                f" _i < self->_{name}_retired_n; _i++)\n"
+                f"        free(self->_{name}_retired[_i]);\n"
+                f"    free(self->_{name}_retired);\n"
+                f"    Py_XDECREF(self->_{name}_view_ref);\n"
+            )
             buf_alloc.append(
                 f"    {{\n"
                 f"        size_t _max ="
                 f" {component}_{name}_max_out(self->handle);\n"
                 f"        if (_max) {{\n"
-                + "".join(_malloc_lines)
-                + f"            self->_{name}_buf_cap = _max;\n"
-                + "        }\n"
-                "    }\n"
+                f"            self->_{name}_buf = malloc("
+                f"_max * sizeof({rt_disp}));\n"
+                f"            if (!self->_{name}_buf) {{"
+                f" PyErr_NoMemory(); return -1; }}\n"
+                f"            self->_{name}_buf_cap = _max;\n"
+                f"        }}\n"
+                f"    }}\n"
             )
 
         # ── Python wrapper in ext.c ──────────────────────────────────────
@@ -1221,9 +1218,32 @@ def make_methods_ctx(
                 _lazy_fallback = "(size_t)n"
 
             if multi_output:
+                # gh-600: NumPy owns every output. Each call allocates its own
+                # arrays at the worst-case length and the kernel writes
+                # straight into them, so there is no shared reuse buffer to
+                # overflow, grow, retire, or alias — the entire gh-219/gh-437
+                # apparatus the single-output path needs is simply absent here.
+                #
+                # Replaces a fixed-cap scheme that malloc'd once in __init__
+                # from max_out() and then wrote `n` elements with no capacity
+                # check: `steps(n)` past that cap corrupted the heap (a
+                # segfault or a glibc abort, depending on the allocator).
+                # doppler had already hit and fixed exactly this by hand
+                # (doppler#116) before the declarative form reintroduced it.
                 all_rts = [return_type] + list(multi_output)
-                call_extra = "".join(
-                    f", self->_{name}_buf_{i}" for i in range(1, len(all_rts))
+                _n = len(all_rts)
+                # gh-600 bug 1: the body parses with
+                # PyArg_ParseTupleAndKeywords whenever the method has params
+                # (_enable_kw), and the PyMethodDef row already says
+                # METH_VARARGS | METH_KEYWORDS — but this signature was
+                # hardcoded without `kwds`, so the generated C did not
+                # compile ("'kwds' undeclared"). Same rule as the
+                # single-output sibling.
+                _mo_sig = (
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)\n"
+                    if _enable_kw
+                    else f"({Component}Object *self, PyObject *args)\n"
                 )
                 np_enums = [
                     _NP_ENUM[
@@ -1233,54 +1253,88 @@ def make_methods_ctx(
                     ]
                     for rt in all_rts
                 ]
-                arr_decls = "\n".join(
-                    f"    PyObject *arr{i} ="
-                    f" PyArray_SimpleNewFromData(\n"
-                    f"        1, &dim, {np_enums[i]},"
-                    f" self->_{name}_buf"
-                    f"{'_' + str(i) if i > 0 else ''});"
-                    for i in range(len(all_rts))
+                # Any pre-call failure must still release the input arrays.
+                _mo_early = (
+                    " ".join(
+                        ln.strip()
+                        for ln in decref_in.splitlines()
+                        if ln.strip()
+                    )
+                    + " "
+                    if decref_in.strip()
+                    else ""
                 )
-                incref_lines = "\n".join(
-                    f"    PyArray_SetBaseObject("
-                    f"(PyArrayObject *)arr{i},"
-                    f" (PyObject *)self); Py_INCREF(self);"
-                    for i in range(len(all_rts))
+                # The kernel writes into the fresh arrays, not self->_buf.
+                _mo_data = call_data.replace(
+                    f"self->_{name}_buf",
+                    "PyArray_DATA((PyArrayObject *)arr0)",
                 )
-                null_checks = " || ".join(
-                    f"!arr{i}" for i in range(len(all_rts))
+                _mo_extra = "".join(
+                    f", PyArray_DATA((PyArrayObject *)arr{i})"
+                    for i in range(1, _n)
                 )
-                decref_cleanup = " ".join(
-                    f"Py_XDECREF(arr{i});" for i in range(len(all_rts))
-                )
-                pack_args = ", ".join(f"arr{i}" for i in range(len(all_rts)))
-                decref_after = "\n".join(
-                    f"    Py_DECREF(arr{i});" for i in range(len(all_rts))
+                # pass_capacity forwards the allocation we just made, not a
+                # struct field that no longer exists.
+                _mo_cap_arg = ", _cap" if pass_capacity else ""
+                _mo_alloc = (
+                    f"    size_t _need = {_lazy_fallback};\n"
+                    f"    size_t _cap ="
+                    f" {component}_{name}_max_out(self->handle);\n"
+                    f"    if (!_cap || _cap < _need) _cap = _need;\n"
+                    f"    npy_intp _adim = (npy_intp)_cap;\n"
+                    + "".join(
+                        f"    PyObject *arr{i} ="
+                        f" PyArray_SimpleNew(1, &_adim, {np_enums[i]});\n"
+                        for i in range(_n)
+                    )
+                    + f"    if ({' || '.join(f'!arr{i}' for i in range(_n))}) {{\n"
+                    f"        {' '.join(f'Py_XDECREF(arr{i});' for i in range(_n))}"
+                    f" {_mo_early}return NULL;\n"
+                    f"    }}\n"
                 )
                 _kernel_mo = _kernel_call_block(
-                    f"{component}_{name}({call_data}{call_extra}{_cap_arg})",
+                    f"{component}_{name}({_mo_data}{_mo_extra}{_mo_cap_arg})",
                     nogil,
+                )
+                # The kernel reports n_out <= _cap, so hand back a view of the
+                # filled prefix pinned to the full array (SetBaseObject steals
+                # the reference). Every view is built before any base is
+                # stolen, so the failure path stays uniform.
+                _mo_views = (
+                    "    npy_intp _odim = (npy_intp)n_out;\n"
+                    + "".join(
+                        f"    PyObject *v{i} = PyArray_SimpleNewFromData(\n"
+                        f"        1, &_odim, {np_enums[i]},"
+                        f" PyArray_DATA((PyArrayObject *)arr{i}));\n"
+                        for i in range(_n)
+                    )
+                    + f"    if ({' || '.join(f'!v{i}' for i in range(_n))}) {{\n"
+                    f"        {' '.join(f'Py_XDECREF(v{i});' for i in range(_n))}"
+                    f" {' '.join(f'Py_DECREF(arr{i});' for i in range(_n))}\n"
+                    f"        return NULL;\n"
+                    f"    }}\n"
+                    + "".join(
+                        f"    PyArray_SetBaseObject("
+                        f"(PyArrayObject *)v{i}, arr{i});\n"
+                        for i in range(_n)
+                    )
                 )
                 wrapper = (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self, PyObject *args)\n"
+                    f"{_mo_sig}"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    f"{_mo_alloc}"
                     f"{_kernel_mo}"
-                    f"    npy_intp dim = (npy_intp)n_out;\n"
-                    f"{arr_decls}\n"
-                    f"    if ({null_checks}) {{\n"
-                    f"        {decref_cleanup} return NULL;\n"
-                    f"    }}\n"
-                    f"{incref_lines}\n"
-                    f"    PyObject *result = PyTuple_Pack("
-                    f"{len(all_rts)}, {pack_args});\n"
-                    f"{decref_after}\n"
                     f"{decref_in}"
-                    f"    return result;\n"
-                    f"}}"
+                    f"{_mo_views}"
+                    f"    PyObject *result = PyTuple_Pack("
+                    f"{_n}, {', '.join(f'v{i}' for i in range(_n))});\n"
+                    + "".join(f"    Py_DECREF(v{i});\n" for i in range(_n))
+                    + "    return result;\n"
+                    "}"
                 )
             else:
                 _none_on_empty_line = (
@@ -1534,8 +1588,16 @@ def make_methods_ctx(
                 if _enable_kw
                 else "METH_VARARGS"
             )
+            # A METH_KEYWORDS wrapper is a PyCFunctionWithKeywords, so it must
+            # launder through `void *` — casting it straight to PyCFunction is
+            # an incompatible function-pointer cast (a warning today, an error
+            # under -Werror and stricter C standards). Every other keyword
+            # PyMethodDef in this generator already does this.
+            _vo_cast = (
+                "(PyCFunction)(void *)" if _enable_kw else "(PyCFunction)"
+            )
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
+                f'    {{"{name}", {_vo_cast}{wrapper_prefix}_{name},'
                 f" {_vo_flags},\n"
                 f"     {_build_ml_doc(_vo_doc_lines)}}},\n"
             )
