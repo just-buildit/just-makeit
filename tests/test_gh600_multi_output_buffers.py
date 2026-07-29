@@ -287,8 +287,13 @@ class TestRuntime:
         """Each call allocates; the views must release their base arrays."""
         r = self._run(
             built,
-            "import resource\n"
+            # ru_maxrss is KiB on Linux but BYTES on macOS — normalise in the
+            # child, which knows its own platform. Reading it raw makes an
+            # 800 KiB run look like an 800 MB leak on macOS only (and this
+            # test did exactly that on its first CI run).
+            "import resource, sys\n"
             "from p.nco import Nco\n"
+            "unit = 1024 if sys.platform == 'darwin' else 1\n"
             "o = Nco()\n"
             "for _ in range(50):\n"
             "    o.steps_ovf(100000)\n"
@@ -296,11 +301,11 @@ class TestRuntime:
             "for _ in range(500):\n"
             "    o.steps_ovf(100000)\n"
             "end = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
-            "growth = end - base\n"
-            "print(growth)\n",
+            "print((end - base) // unit)\n",
         )
         assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
         growth_kb = int(r.stdout.strip())
-        # 500 leaked 100k-element pairs would be ~250 MB; a correct run is
-        # flat. Bar is loose enough for allocator noise on any platform.
-        assert growth_kb < 64 * 1024, f"grew {growth_kb} kB — leaking"
+        # 500 leaked 100k-element pairs (uint32 + uint8) would be ~250 MB; a
+        # correct run is flat. The bar is loose enough for allocator noise on
+        # any platform while still catching a per-call retention.
+        assert growth_kb < 64 * 1024, f"grew {growth_kb} KiB — leaking"
