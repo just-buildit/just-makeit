@@ -220,6 +220,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
         custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
+        create_fn=C.object_create_fn(cfg, object_name),
     )
     return ctx
 
