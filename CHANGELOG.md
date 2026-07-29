@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `default = "[]"` array init-param — and now a required array declared
+    after a scalar — changes positional constructor order (gh-611).** A plain
+    1-D array init-param with `default = "[]"` used to be hoisted to the front
+    of the generated constructor's kwlist/C signature regardless of its
+    declared position; it is now genuinely optional and keeps its declared
+    position among the other keyword params, matching what the `.pyi` already
+    showed. Separately, a *required* array (no default at all) declared after
+    a scalar is still correctly hoisted ahead of it in the kwlist — the C ABI
+    requires every default-less param before any defaulted one — and the
+    module-aggregated `.pyi` (`_stubs.py`) now matches that hoisted order
+    instead of printing manifest order with a fake `= ...` default.
+    **Breaking:** any existing *positional* construction call for an object
+    with such an array now needs its argument order updated to match the
+    (already-correct) kwlist order shown above.
+
 ## [0.33.15] — 2026-07-29
 
 ### Added
