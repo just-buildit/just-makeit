@@ -16,8 +16,15 @@ the kernel is told its exact capacity via the 5-arg form and the clamp is
 dropped, trusting the bound the kernel itself now enforces.
 """
 
+import contextlib
+import io
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -235,13 +242,45 @@ class TestPassCapacityClampBehavior:
         assert "if (!_cap || _cap < _need) _cap = _need;" not in ext
         assert "(void)_need;" in ext
 
-    def test_out_validation_still_uses_max_of_max_out_and_call_size(
+    def test_out_validation_without_pass_capacity_uses_max_of_both(
         self, tmp_path
     ):
-        # The out= buffer-validation path is independent of pass_capacity
-        # (it's about the *caller's* buffer, not the internal alloc) and
-        # must keep requiring capacity for whichever is larger — gh-219
-        # follow-up, unaffected by this change beyond the added argument.
+        # Without pass_capacity, the out= buffer-validation path must keep
+        # requiring capacity for whichever is larger of max_out() and the
+        # call's own count — gh-219 follow-up, unaffected by this change
+        # beyond the added argument. The kernel is never handed `_cap`
+        # here, so max_out() alone is not a trustworthy bound for a
+        # generator whose steps(count) can ask for more than it advertises.
+        root = _scaffold(tmp_path)
+        method_run(
+            root,
+            "ddc",
+            "execute",
+            None,
+            "float _Complex",
+            "float _Complex",
+            True,
+            [],
+        )
+        ext = _ext_c(root)
+        assert (
+            "size_t _omax = ddc_execute_max_out(self->handle, (size_t)n);"
+            in ext
+        )
+        assert (
+            "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);" in ext
+        )
+
+    def test_out_validation_with_pass_capacity_trusts_max_out_alone(
+        self, tmp_path
+    ):
+        # gh-607 review (PR #617): with pass_capacity, the binding already
+        # trusts the kernel with exactly _omax bytes on the internal-alloc
+        # path (clamp dropped, see test_with_pass_capacity_clamp_is_dropped
+        # above). Requiring a caller-supplied out= buffer to also cover
+        # max(_omax, n) was a contradiction -- it rejected a buffer sized to
+        # the exact bound the binding itself would have allocated. The
+        # validation must now match the same trust: len(out) >= _omax only.
         root = _scaffold(tmp_path)
         method_run(
             root,
@@ -259,6 +298,162 @@ class TestPassCapacityClampBehavior:
             "size_t _omax = ddc_execute_max_out(self->handle, (size_t)n);"
             in ext
         )
+        assert "size_t _min_cap = _omax;" in ext
         assert (
-            "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);" in ext
+            "size_t _min_cap = _omax > (size_t)n ? _omax : ((size_t)n);"
+            not in ext
         )
+
+
+def _skip_reason() -> str | None:
+    if not shutil.which("cmake"):
+        return "cmake not found"
+    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+        return "no C compiler found"
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        return "numpy not importable"
+    return None
+
+
+_SKIP = _skip_reason()
+
+# gh-607 review (PR #617): the reviewer's own repro. A pass_capacity
+# resampler at rate 0.5 has a true bound of ceil(n_in * rate) + 2 -- for
+# n_in = 1024 that's 514, well under n_in itself. Before the fix, out=
+# validation demanded max(514, 1024) = 1024 even though the binding itself
+# was already willing to allocate and hand the kernel exactly 514
+# internally. `ceil` needs <math.h>, added to the include block below.
+_MAX_OUT_STUB = (
+    "size_t\nrc_execute_max_out(rc_state_t *state, size_t n_in)\n{\n"
+    "    (void)state; (void)n_in;\n"
+    "    return 0; /* placeholder */\n}"
+)
+_MAX_OUT_IMPL = (
+    "size_t\nrc_execute_max_out(rc_state_t *state, size_t n_in)\n{\n"
+    "    return (size_t)ceil((double)n_in * state->rate) + 2;\n}"
+)
+_EXECUTE_STUB = (
+    "size_t\nrc_execute(rc_state_t *state, const float complex *in,"
+    " size_t n_in, float complex *out, size_t max_out)\n{\n"
+    "    (void)state;\n    (void)in; (void)n_in;\n"
+    "    (void)out; (void)max_out;\n    return 0; /* placeholder */\n}"
+)
+_EXECUTE_IMPL = (
+    "size_t\nrc_execute(rc_state_t *state, const float complex *in,"
+    " size_t n_in, float complex *out, size_t max_out)\n{\n"
+    "    size_t n_out = (size_t)((double)n_in * state->rate);\n"
+    "    if (n_out > max_out) n_out = max_out;\n"
+    "    for (size_t i = 0; i < n_out; i++) out[i] = in[i];\n"
+    "    return n_out;\n}"
+)
+
+
+@pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
+class TestPassCapacityOutBufferAcceptsExactMaxOutRuntime:
+    """The reviewer's exact repro from the PR #617 review, built and run for
+    real: a pass_capacity method whose true bound is smaller than n_in must
+    accept an out= buffer sized to max_out()'s answer rather than requiring
+    it to also cover n_in."""
+
+    @pytest.fixture(scope="class")
+    def built(self, tmp_path_factory):
+        dest = tmp_path_factory.mktemp("gh607review") / "p"
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("p", dest)
+            object_run(
+                dest,
+                "rc",
+                module=None,
+                state_vars=[("rate", "double", "0.5")],
+                no_step=True,
+            )
+            method_run(
+                dest,
+                "rc",
+                "execute",
+                None,
+                "float _Complex",
+                "float _Complex",
+                True,
+                [],
+                pass_capacity=True,
+            )
+        core = dest / "native/src/rc/rc_core.c"
+        text = core.read_text(encoding="utf-8")
+        assert _MAX_OUT_STUB in text, "stub shape changed; update this test"
+        assert _EXECUTE_STUB in text, "stub shape changed; update this test"
+        text = text.replace(_MAX_OUT_STUB, _MAX_OUT_IMPL).replace(
+            _EXECUTE_STUB, _EXECUTE_IMPL
+        )
+        text = text.replace(
+            '#include "rc/rc_core.h"',
+            '#include "rc/rc_core.h"\n#include <math.h>',
+        )
+        core.write_text(text, encoding="utf-8")
+
+        build = dest / "build"
+        for cmd in (
+            [
+                "cmake",
+                "-S",
+                str(dest),
+                "-B",
+                str(build),
+                f"-DPython3_EXECUTABLE={sys.executable}",
+            ],
+            ["cmake", "--build", str(build)],
+        ):
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600
+            )
+            assert r.returncode == 0, f"{cmd[0]}:\n{r.stdout}\n{r.stderr}"
+        return dest
+
+    def _run(self, dest: Path, body: str):
+        return subprocess.run(
+            [sys.executable, "-c", body],
+            cwd=dest,
+            env={**os.environ, "PYTHONPATH": str(dest / "src")},
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+    def test_out_sized_to_max_out_is_accepted_even_though_smaller_than_n_in(
+        self, built
+    ):
+        r = self._run(
+            built,
+            "import numpy as np\n"
+            "from p.rc import Rc\n"
+            "r = Rc(0.5)\n"
+            "n_in = 1024\n"
+            "x = np.zeros(n_in, dtype=np.complex64)\n"
+            "assert r.execute_max_out(n_in) == 514, r.execute_max_out(n_in)\n"
+            "out = np.empty(514, dtype=np.complex64)\n"
+            "result = r.execute(x, out=out)\n"
+            "assert len(result) == 512, len(result)\n"
+            "print('ok')\n",
+        )
+        assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+        assert r.stdout.strip() == "ok"
+
+    def test_out_smaller_than_max_out_is_still_rejected(self, built):
+        r = self._run(
+            built,
+            "import numpy as np\n"
+            "from p.rc import Rc\n"
+            "r = Rc(0.5)\n"
+            "x = np.zeros(1024, dtype=np.complex64)\n"
+            "out = np.empty(513, dtype=np.complex64)\n"
+            "try:\n"
+            "    r.execute(x, out=out)\n"
+            "    print('accepted')\n"
+            "except ValueError as e:\n"
+            "    print('rejected:', e)\n",
+        )
+        assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+        assert r.stdout.strip().startswith("rejected:")
+        assert "need >= 514" in r.stdout

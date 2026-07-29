@@ -1303,15 +1303,31 @@ def make_methods_ctx(
                     f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                     f"        size_t _omax ="
                     f" {component}_{name}_max_out(self->handle{_moc_call_arg});\n"
-                    # max_out() alone is not always a true call-independent
-                    # upper bound — a generator's steps(count) writes exactly
-                    # the caller's requested size, which can exceed it.
-                    # Require capacity for whichever is larger, matching the
-                    # internal path's own `_cap < _need` fallback so the two
-                    # agree instead of out= silently under-validating.
-                    f"        size_t _min_cap = _omax > {_lazy_fallback}"
-                    f" ? _omax : ({_lazy_fallback});\n"
-                    f"        if (_cap < _min_cap) {{\n"
+                    # Without pass_capacity, max_out() alone is not always a
+                    # true call-independent upper bound — a generator's
+                    # steps(count) writes exactly the caller's requested
+                    # size, which can exceed it. Require capacity for
+                    # whichever is larger, matching the internal path's own
+                    # `_cap < _need` fallback so the two agree instead of
+                    # out= silently under-validating.
+                    #
+                    # With pass_capacity the kernel is handed `_cap` below
+                    # and trusted to respect it exactly -- that is the same
+                    # trust already extended on the internal-allocation path
+                    # (`_vo_alloc`'s clamp is dropped there under the same
+                    # condition). Requiring anything more than _omax here
+                    # would reject a caller-owned buffer sized to the exact
+                    # bound the binding itself would have allocated.
+                    + (
+                        "        size_t _min_cap = _omax;\n"
+                        if pass_capacity
+                        else (
+                            f"        size_t _min_cap = _omax >"
+                            f" {_lazy_fallback}"
+                            f" ? _omax : ({_lazy_fallback});\n"
+                        )
+                    )
+                    + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
                     f'                "out has %zu elements,'
                     f' need >= %zu",\n'
