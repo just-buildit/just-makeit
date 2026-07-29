@@ -585,6 +585,23 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             )
 
 
+def _impl_marker(comp: str) -> str:
+    """gh-609: one-line provenance comment for a manifest-``impl``-sourced body.
+
+    `_patch_step_impls` re-injects this component's ``_step`` body from
+    ``[comp].impl``/``impl_file`` on every apply — the generated header
+    otherwise gives no hint that the function body is a build product rather
+    than hand-written C, which is exactly what let a hand-edit to the header
+    look like ordinary DSP code worth keeping, right up until `apply` silently
+    reverted it. The comment is regenerated fresh from ``impl_body`` on every
+    write, so it never drifts out of sync with which manifest key is the
+    actual source."""
+    return (
+        f"/* jm: body sourced from [{comp}] impl/impl_file in the project"
+        f" manifest — edit there, not here; `jm apply` overwrites this. */"
+    )
+
+
 def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
     """Inject ``impl``/``impl_file`` bodies from the manifest into headers.
 
@@ -593,8 +610,19 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
     added an ``impl`` key to the TOML.  This function runs afterwards and
     patches every component that carries an ``impl`` or ``impl_file`` key,
     using ``patch_function_body()`` which is safe to run on both newly-created
-    and pre-existing headers (it replaces only the matching function body)."""
+    and pre-existing headers (it replaces only the matching function body).
+
+    gh-609: the injected body always carries `_impl_marker()` as its first
+    line, so a hand-editor sees at a glance that a "real C" function is
+    actually a build product. And if the ON-DISK body (before this patch)
+    neither matches what the manifest currently says NOR still carries the
+    fresh-scaffold TODO stub (`_remove._STUB_MARKER`), something changed it
+    since the last apply — most likely a hand-edit of the generated header
+    instead of the manifest `impl`. That divergence is about to be silently
+    overwritten, which is exactly what cost the gh-609 reporter an afternoon;
+    a warning at the point of the overwrite is the cheap fix for it."""
     from . import _impl as I
+    from ._remove import _STUB_MARKER
 
     mods = C.modules(cfg)
     module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
@@ -616,8 +644,19 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         if not h_path.exists():
             continue
         original = h_path.read_text(encoding="utf-8")
-        updated = I.patch_function_body(original, f"{comp}_step", impl_body)
+        marked_body = f"{_impl_marker(comp)}\n{impl_body}"
+        updated = I.patch_function_body(original, f"{comp}_step", marked_body)
         if updated != original:
+            if _STUB_MARKER not in original:
+                rel = h_path.relative_to(root)
+                print(
+                    f"warning: {rel}: {comp}_step body differs from the"
+                    f" [{comp}] impl/impl_file in the manifest; the"
+                    " manifest is the source of truth — overwriting"
+                    " the header from it. If you meant to change the"
+                    f" body, edit {comp}'s impl/impl_file instead.",
+                    file=sys.stderr,
+                )
             h_path.write_text(updated, encoding="utf-8")
             patched.append(h_path)
     return patched
