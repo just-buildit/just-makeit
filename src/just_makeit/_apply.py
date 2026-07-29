@@ -150,6 +150,36 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
     }
 
 
+def _dep_cap_placeholders(cfg: dict, deps: list[str]) -> dict:
+    """``{dep}_{method}_cap`` -> ``", 1"`` | ``""`` for every method of every
+    entry in *deps* (gh-609).
+
+    An inline body that composes a dependency's kernel one sample at a
+    time — the only shape `_patch_step_impls` ever regenerates — ends the
+    call with this placeholder instead of hand-writing the capacity
+    argument:
+
+        fir_execute(state->fir, &imp, 1, &sym{fir_execute_cap})
+
+    `pass_capacity` only ever applies to a named (`variable_output`)
+    method, so this only needs to look at `C.methods`, not the default
+    step. The capacity is always the literal `1`: the caller is a
+    single-sample step body, so it can only ever hand the dependency one
+    output slot. Every method gets an entry, including
+    `pass_capacity = False` ones (value `""`), so flipping the flag back
+    off never leaves an unresolved `{...}` token in generated C — the next
+    `apply` just re-expands the placeholder to the empty string.
+    """
+    out: dict = {}
+    for dep in deps:
+        for m in C.methods(cfg, dep):
+            name = m.get("name")
+            if not name:
+                continue
+            out[f"{dep}_{name}_cap"] = ", 1" if m.get("pass_capacity") else ""
+    return out
+
+
 def _object_ctx(cfg: dict, comp: str, module: str | None) -> dict:
     """Interpolation context for an object's impl body."""
     return {
@@ -159,6 +189,7 @@ def _object_ctx(cfg: dict, comp: str, module: str | None) -> dict:
         "Module": _to_title(module) if module else "",
         "arg_type": C.arg_type(cfg, comp),
         "return_type": C.return_type(cfg, comp),
+        **_dep_cap_placeholders(cfg, C.depends_on(cfg, comp)),
     }
 
 

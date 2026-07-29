@@ -201,6 +201,11 @@ Write the body inline in TOML using these interpolated placeholders:
 | `{return_type}` | C type of `step()` return value |
 | `{method}`      | method name (in `[[methods]]`)  |
 
+A `depends_on` object also gets a `{<dep>_<method>_cap}` placeholder per
+dependency method — see
+[declarative-scaffolding.md](declarative-scaffolding.md) for how to use it
+when a step body calls into a dependency's kernel (gh-609).
+
 ```toml
 [gain]
 impl = """

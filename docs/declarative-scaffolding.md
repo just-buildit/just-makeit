@@ -114,14 +114,33 @@ default = "1.0f"
 
 Known placeholders:
 
-| Placeholder                    | Substituted with                                          |
-| ------------------------------ | --------------------------------------------------------- |
-| `{component}`                  | lowercase object name (`agc`)                             |
-| `{Component}`                  | title-cased class name (`Agc`)                            |
-| `{module}` / `{Module}`        | module name / title-cased                                 |
-| `{arg_type}` / `{return_type}` | step argument and return types                            |
-| `{method}`                     | method name (only on `[[X.methods]]` sections)            |
-| `{function}`                   | function name (only on `[[module.X.functions]]` sections) |
+| Placeholder                    | Substituted with                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `{component}`                  | lowercase object name (`agc`)                                                 |
+| `{Component}`                  | title-cased class name (`Agc`)                                                |
+| `{module}` / `{Module}`        | module name / title-cased                                                     |
+| `{arg_type}` / `{return_type}` | step argument and return types                                                |
+| `{method}`                     | method name (only on `[[X.methods]]` sections)                                |
+| `{function}`                   | function name (only on `[[module.X.functions]]` sections)                     |
+| `{<dep>_<method>_cap}`         | `, 1` if `<dep>`'s `<method>` has `pass_capacity = true`, else empty (gh-609) |
+
+The `{<dep>_<method>_cap}` placeholder exists for every `depends_on` entry
+crossed with every one of that dependency's `[[X.methods]]`, so it is always
+defined — including as the empty string when `pass_capacity` is off. A
+`_step` body that composes another object one sample at a time should always
+end a call into that object's method with this placeholder rather than a
+hand-written capacity argument:
+
+```c
+fir_execute(state->fir, &imp, 1, &sym{fir_execute_cap})
+```
+
+When `fir.execute` later turns on `pass_capacity`, the call expands to the
+5-arg form on the very next `apply` — no edit needed on the consuming side,
+and no drift-check failure from a stale hand-patched arity. The `1` is a
+capacity, not a coincidence: this placeholder is only correct in a body that
+hands the dependency exactly one output slot per call (the `_step` shape);
+it does not generalise to a method that forwards more than one sample.
 
 Two more keys are honoured on object and method sections:
 
