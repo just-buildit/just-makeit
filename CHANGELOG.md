@@ -2,8 +2,29 @@
 
 ## [Unreleased]
 
+## [0.33.16] — 2026-07-29
+
 ### Fixed
 
+- **`jm apply` now warns before silently overwriting a hand-edited,
+    manifest-`impl`-sourced C function body, and marks the injected body with
+    a one-line provenance comment (gh-609).** The comment names the actual
+    file the `impl`/`impl_file` key lives in — the top-level manifest for a
+    flat project, or the owning `objects/<name>.toml` fragment for a
+    split-layout one — so a diverged body is discoverable instead of silently
+    reverting. `jm status --check`'s internal scratch-copy replay no longer
+    leaks this same warning misleadingly.
+- **An object's `create_fn` override is now honored by the docstring
+    transplant, and a property `expr` is parenthesized before its cast
+    (gh-602).** A `create_fn` override (a non-default C constructor) used to
+    leave both the module object's C `tp_doc` and the shared `.pyi` class
+    docstring keyed off the *derived* `<obj>_create` name, silently falling
+    back to the generic scaffold string when that name didn't exist as a real
+    function. A property's `expr` was wrapped in a numeric cast with no
+    parentheses around the expression itself, so a ternary (or anything
+    lower-precedence than a cast) had the cast bind to only its first operand
+    — compiling cleanly while computing the wrong thing for narrower or
+    signed arms.
 - **A `default = "[]"` array init-param — and now a required array declared
     after a scalar — changes positional constructor order (gh-611).** A plain
     1-D array init-param with `default = "[]"` used to be hoisted to the front
@@ -18,6 +39,16 @@
     **Breaking:** any existing *positional* construction call for an object
     with such an array now needs its argument order updated to match the
     (already-correct) kwlist order shown above.
+- **Benchmark fixtures and `.pyi` construction doctests now build objects
+    with keyword arguments, and a `bool` default renders as Python's
+    `True`/`False` instead of the C/TOML literal (gh-610).** A positional
+    construction call rotted silently on any kwlist reorder (gh-422 moved
+    `string_enum` params out of a fixed hoisted position without breaking
+    compilation); keyword construction is immune by construction and
+    self-documenting. The `true`/`false` literal bug was more severe than a
+    cosmetic bench wart — it was baked into the generated `.pyi` constructor
+    signature itself (`def __init__(self, flag: bool = true)`), which is
+    invalid Python and failed to parse.
 
 ### Changed
 
