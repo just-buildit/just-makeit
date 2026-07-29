@@ -483,11 +483,11 @@ Methods on stateful objects (`jm method OBJ METHOD`) accept the same
 set as module-function params (`--param` plus `--out-param` semantics),
 extended with three TOML-only knobs that don't yet have CLI flags:
 
-| TOML field                          | Effect                                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `variable_output = true`            | Method returns up to `<comp>_<verb>_max_out()` samples; the binding pre-allocates the buffer once.                                                           |
-| `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                              |
-| `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist. |
+| TOML field                          | Effect                                                                                                                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `variable_output = true`            | Method returns up to `max(<comp>_<verb>_max_out(), n)` samples; the binding allocates a NumPy-owned array per call. See [Array memory ownership](memory-ownership.md). |
+| `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                                        |
+| `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist.           |
 
 ______________________________________________________________________
 

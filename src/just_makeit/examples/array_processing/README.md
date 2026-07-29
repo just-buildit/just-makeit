@@ -259,7 +259,7 @@ the per-call allocation from the caller's responsibility. See §3.
 
 ---
 
-## 3. `method --variable-output` — pre-allocated, zero-copy batch
+## 3. `method --variable-output` — self-sizing batch
 
 Use this when the **maximum output count is bounded by state and knowable at
 init time**.  The classic case is a rate-changing block: a 2× decimator with
@@ -332,41 +332,52 @@ hbdecim_execute (hbdecim_state_t *state, const float complex *in, size_t n_in,
 import numpy as np
 from my_decim import Hbdecim
 
-d = Hbdecim()           # __init__ calls execute_max_out(); mallocs output buffer once
+d = Hbdecim()
 
 block = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
-view  = d.execute(block)  # returns zero-copy view; shape (≤512,)
+out = d.execute(block)   # a new array, shape (≤512,)
 ```
 
-`d.execute(block)` returns a **numpy view** into the object's internal output
-buffer.  No allocation happens on this call path at all.
+`d.execute(block)` returns a **NumPy-owned array**, sized
+`max(execute_max_out(), n)` and trimmed to the count the kernel reported.
 
 ### Array ownership for `--variable-output`
 
 ```
-d = Hbdecim()
+out = d.execute(block)
 │
-└─ ext calls hbdecim_execute_max_out()  → 512
-   ext mallocs float complex[512]       ← one malloc, at __init__
-   stored as d._out_buf (opaque)
-
-view = d.execute(block)
+├─ ext allocates a NumPy array of max(execute_max_out(), 1024)
+│  └─ the kernel writes straight into it — no copy
 │
-├─ calls hbdecim_execute(state, block.data, 1024, d._out_buf)  → returns 512
+├─ calls hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
 │
-└─ returns numpy view wrapping d._out_buf[:512]
-   ownership: object retains the buffer
-   lifetime:  view is valid until the NEXT call to d.execute()
-              — do not hold the view across calls; copy if you need to keep it
-
-# Safe: process, then copy if needed
-view = d.execute(block)
-keep = view.copy()       # independent array, survives next call
+└─ returns it trimmed to 512
+   ownership: the returned array owns its memory
+   lifetime:  independent of the object and of every other result
 ```
 
-**Critical constraint**: the view becomes **stale on the next `execute()` call**
-because the object overwrites the same buffer.  Copy before calling again if
-you need to retain more than one block.
+Every result is independent. Accumulating them is safe, and always was
+intended to be:
+
+```python
+chunks = [d.execute(b) for b in blocks]   # each keeps its own data
+whole = np.concatenate(chunks)
+```
+
+Nothing the object does later can disturb an array you already hold — not a
+same-size call, not a larger one, not `destroy()`.
+
+!!! note "This used to be a constraint, and no longer is"
+
+    Earlier versions returned a view into a buffer the object reused, so a
+    result went stale on the next call and had to be copied. Two mechanisms
+    were built to make that safe (gh-219, gh-437) before the approach was
+    abandoned in gh-604 — measurement showed it retained ~514 KiB per call and
+    ran 6-8× slower than simply allocating. If you have code that defensively
+    copies each result, you can drop the copy.
+
+To write into your own buffer instead, pass `out=` — see
+[Array memory ownership](../memory-ownership.md) for when that is worth it.
 
 ### When to use `--variable-output`
 
@@ -382,8 +393,8 @@ you need to retain more than one block.
 
 ## 4. `method --variable-output --multi-output` — parallel output streams
 
-`--multi-output TYPE` adds a second pre-allocated output buffer alongside the
-primary one.  The Python call returns a tuple.  The flag is repeatable for
+`--multi-output TYPE` adds a second output array alongside the primary one;
+each call allocates both from NumPy and returns them independently owned.  The Python call returns a tuple.  The flag is repeatable for
 three or more streams.
 
 ```sh

@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/memory-ownership.md` — the array memory policy (gh-604).** The
+    question "who owns this array and what keeps it alive?" was answered three
+    different ways over about a year, and the first two answers were wrong in
+    ways that took a heap overflow and a 1.5 GB leak to surface. This writes
+    the answer down as a rule per layer, with the measurements behind each and
+    the history that produced them:
+
+    - **Layer 1 — C.** A DSP kernel never allocates an output; outputs are
+        caller-supplied out-parameters.
+    - **Layer 2 — Python.** NumPy owns each call's result; nothing is shared
+        between calls.
+    - **Layer 3 — `out=`.** For *placement and determinism*, not throughput.
+
+    Includes a per-shape ownership table (who allocates, what the result
+    aliases, what keeps it alive, whether `out=` applies), rules for adding new
+    array shapes, and the measured cost of allocation — ~130 ns and flat in
+    `n`, ×1.6 when sizes vary, ×5-11 when every result is retained.
+
+    Two findings worth flagging in their own right: `out=` is a **fixed** ~60 ns
+    *slower* than allocating, so it should never be described as an
+    optimisation; and its real benefit is tail latency at large blocks
+    (**2.6× better p99 at n=65536**, and *worse* p99 below n≈1024, where the
+    allocator never leaves its free-list).
+
+### Changed
+
+- **`variable_output` results are now NumPy-owned; the reuse buffer is gone
+    (gh-604).** The generated binding kept one per-instance output buffer, grew
+    it on demand, and — because a previously returned view might still alias it
+    (gh-219) — retired the old buffer to a freelist rather than freeing it,
+    using a weakref to detect that liveness (gh-437). Retired buffers were
+    freed only in `tp_dealloc`.
+
+    The trap: **binding the result to a name is enough to make the view live**,
+    so an ordinary streaming loop took the retire path on every call and
+    retained a buffer per call for the object's lifetime.
+
+    ```python
+    for _ in range(3000):
+        x = lo.steps(65536)     # RSS growth: 1,547,520 KiB -> 448 KiB
+    ```
+
+    Measurement also settled the design question — the buffer was not merely
+    leaky but *slower*, because each call malloc'd fresh memory and touched new
+    pages against a monotonically growing heap:
+
+    | n         | pattern | before       | after              |
+    | --------- | ------- | ------------ | ------------------ |
+    | 65,536    | hold    | 96,272 ns    | 20,795 ns (-78%)   |
+    | 1,048,576 | hold    | 1,502,726 ns | 239,348 ns (-84%)  |
+    | 65,536    | drop    | 20,659 ns    | 20,665 ns (a wash) |
+
+    So it cost a page fault per call to avoid an allocation that costs nothing
+    at realistic block sizes, and its failure mode when the precondition was not
+    met was "6x slower and growing" rather than "no speedup".
+
+    Each call now allocates its outputs from NumPy at `max(max_out(), n)`, the
+    kernel writes straight into them, and the result is returned directly when
+    the kernel filled the allocation exactly (the generator shape's normal
+    case) or as a trimmed view pinned to it otherwise. This deletes
+    `_<name>_buf`, `_<name>_buf_cap`, `_<name>_retired{,_n,_cap}` and
+    `_<name>_view_ref`, the `__init__` allocation, the dealloc loop, the gh-219
+    deferred-free and the gh-437 liveness probe.
+
+    gh-600 had already moved multi-output to this form; both shapes now share
+    one emitter.
+
+    **Trim shrinks in place rather than returning a view.** A view pinned to
+    the full allocation retained all of it for as long as the caller held the
+    result, and that is governed by how tight `max_out()` is rather than by
+    the data — a resampler whose `max_out()` is a fixed 65,536 emitting 512
+    samples retained **128×** what it returned. `PyArray_Resize` on the fresh,
+    unshared array releases the tail instead. Making `max_out()` a per-call
+    bound (gh-607) removes the over-allocation itself.
+
+    **`out=` is unchanged** and remains the explicit zero-allocation contract —
+    and it is the one that can actually promise it, since a caller-owned buffer
+    cannot silently alias a previous result.
+
+    Callers see no API change: results are still ndarrays of the same dtype and
+    length. Anything relying on two results aliasing the same memory was
+    relying on the bug.
+
 ### Fixed
 
 - **Multi-output `variable_output` no longer overflows a fixed-cap heap buffer

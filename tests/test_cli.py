@@ -1144,7 +1144,7 @@ class TestMethodVariableOutputCLI:
         )
         assert r.returncode == 0
 
-    def test_variable_output_has_buf_field_in_ext_c(self, tmp_path):
+    def test_variable_output_allocates_per_call_in_ext_c(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli(
             "method",
@@ -1162,7 +1162,10 @@ class TestMethodVariableOutputCLI:
         ext = (dest / "native/src/dsp/dsp_ext_nco.c").read_text(
             encoding="utf-8"
         )
-        assert "_execute_cf32_buf" in ext and "realloc" in ext
+        # gh-604: NumPy owns each call's array, so the instance buffer
+        # and its realloc-based grow path are gone.
+        assert "_execute_cf32_buf" not in ext and "realloc" not in ext
+        assert "PyArray_SimpleNew(" in ext
 
 
 class TestMethodMultiOutputCLI:

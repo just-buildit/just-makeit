@@ -73,9 +73,9 @@ The flags that matter:
 | `--state total:int32_t:20` | Total samples this source will ever emit.                                                       |
 | `--state pos:int32_t:0`    | How many have been emitted so far.                                                              |
 
-`--variable-output` makes the object a generator: a pre-allocated output buffer
-is sized once at `__init__`, and each `run(n)` returns a **zero-copy view** into
-it. `--streamable` notices the `variable_output` method and picks it as the
+`--variable-output` makes the object a generator: each `run(n)` allocates a
+NumPy-owned array, lets the kernel fill it, and returns it trimmed to the count
+produced. `--streamable` notices the `variable_output` method and picks it as the
 stream producer (it wins over the built-in `steps`), so `stream()` calls `run`
 block by block and stops the moment it returns an empty block.
 
@@ -93,7 +93,7 @@ The bound — one call can at most return the whole remaining source:
 /* Implement in native/src/drainer/drainer_core.c — replace the generated stub.
  *
  * Worst-case output for one call: the whole remaining source. The binding
- * uses this to size the reusable output buffer once, at __init__.
+ * uses this to size the NumPy array it allocates for each call.
  */
 size_t
 drainer_run_max_out (drainer_state_t *state)
@@ -148,10 +148,10 @@ import numpy as np
 from stream_blockwise_demo import Drainer
 
 # stream(8) over total=20 yields blocks of 8, 8, 4, then stops on the empty
-# (drained) block. A variable_output producer returns a zero-copy VIEW into a
-# reused buffer, so copy each block before pulling the next one.
+# (drained) block. Every block is an independent NumPy-owned array, so they
+# can be collected directly -- no copy needed.
 d = Drainer(total=20, pos=0)
-collected = [block.copy() for block in d.stream(8)]
+collected = list(d.stream(8))
 print("drained in blocks:", [b.shape[0] for b in collected])
 assert [b.shape for b in collected] == [(8,), (8,), (4,)]
 assert collected[0].dtype == np.complex64
@@ -192,16 +192,22 @@ What the one `--streamable` flag bought you:
   seam for pacing, back-pressure, or progress.
 - **`__iter__`** — `for blk in drainer:` uses the default block size.
 
-### The zero-copy rule
+### Blocks are independent
 
-A `variable_output` producer returns a **view into a reused buffer**, so two
-blocks pulled from the same object alias the same memory. Consume — or
-`.copy()` — each block before the next iteration:
+A `variable_output` producer allocates a NumPy-owned array per call, so every
+block a stream yields owns its own memory. Collecting them needs no copy:
 
 ```python
-chunks = [b.copy() for b in drainer.stream(8)]   # safe: each copied
-chunks = list(drainer.stream(8))                  # WRONG: all alias the last
+chunks = list(drainer.stream(8))   # safe: each block is independent
+whole = np.concatenate(chunks)
 ```
+
+!!! note "This used to require a copy"
+
+    Earlier versions returned a view into a buffer the object reused, so
+    blocks aliased each other and `list(...)` silently gave you the last block
+    N times. That reuse was removed in gh-604 — see [Array memory
+    ownership](../memory-ownership.md).
 
 This is exactly why `on_block` fires *after* the yield: by then the consumer
 has already used (or copied) the block, so the buffer is free to be refilled on

@@ -43,6 +43,7 @@ nav:
     - Stateful vs pure: pure.md
     - Object-of-objects (capsule & composer): object-of-objects.md
     - Arguments (positional vs keyword): arguments.md
+    - Array memory ownership: memory-ownership.md
     - Artifacts: artifacts.md
   # The tool's API surface is the CLI and the TOML config; both live here so
   # "where are the API docs" has an answer in the nav.

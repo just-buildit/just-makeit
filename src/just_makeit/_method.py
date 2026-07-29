@@ -7,11 +7,9 @@ Adds a named execute method to an existing object:
         --arg-type void --return-type "float _Complex" --variable-output
 
 For --variable-output methods:
-  - Single output: pre-allocates a reuse buffer in the Python Object struct
-    (not in _state_t) and returns a zero-copy NumPy view of it
-  - Multi-output: NumPy owns each call's arrays (gh-600) — no instance buffer,
-    since a shared one cannot be grown per output without reintroducing the
-    aliasing hazards the single-output path needs gh-219/gh-437 to manage
+  - NumPy owns each call's output arrays (gh-600 multi-output, gh-604 single)
+    — no instance buffer, no freelist, no liveness tracking. See
+    docs/memory-ownership.md for the policy and the measurements behind it.
   - Appends <<component>>_<name>_max_out() + <<component>>_<name>() stubs to _core.c
   - Declarations go into _core.h via <<method_decls>> placeholder (regenerated)
 

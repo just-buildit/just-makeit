@@ -18,16 +18,22 @@ What the one `--streamable` flag bought you:
   seam for pacing, back-pressure, or progress.
 - **`__iter__`** — `for blk in drainer:` uses the default block size.
 
-### The zero-copy rule
+### Blocks are independent
 
-A `variable_output` producer returns a **view into a reused buffer**, so two
-blocks pulled from the same object alias the same memory. Consume — or
-`.copy()` — each block before the next iteration:
+A `variable_output` producer allocates a NumPy-owned array per call, so every
+block a stream yields owns its own memory. Collecting them needs no copy:
 
 ```python
-chunks = [b.copy() for b in drainer.stream(8)]   # safe: each copied
-chunks = list(drainer.stream(8))                  # WRONG: all alias the last
+chunks = list(drainer.stream(8))   # safe: each block is independent
+whole = np.concatenate(chunks)
 ```
+
+!!! note "This used to require a copy"
+
+    Earlier versions returned a view into a buffer the object reused, so
+    blocks aliased each other and `list(...)` silently gave you the last block
+    N times. That reuse was removed in gh-604 — see [Array memory
+    ownership](../memory-ownership.md).
 
 This is exactly why `on_block` fires *after* the yield: by then the consumer
 has already used (or copied) the block, so the buffer is free to be refilled on

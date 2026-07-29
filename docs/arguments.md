@@ -177,16 +177,20 @@ Folded in alongside: every built-in `steps()` is now keyword-capable, so
 `steps(x, out=buf)` works as a keyword everywhere — not just when a field is
 controllable.
 
-!!! note "`out=` requires the exact output dtype"
+!!! note "`out=` requires an exact-dtype, C-contiguous buffer"
 
     Passing `out=` means *"write into this array"*, so every generator —
-    object, module function, capsule, and handle — requires a **writable
-    `ndarray` whose dtype already matches the output type**, and raises
-    `TypeError` otherwise. A wrong-dtype buffer is rejected rather than cast,
-    because a cast would fill a throwaway temporary and leave the caller's
-    array untouched while still returning a correct-looking result (gh-581).
-    If you do not have a matching-dtype buffer, drop `out=` and use the
-    returned array.
+    object, module function, capsule, and handle — requires a **writable,
+    C-contiguous `ndarray` whose dtype already matches the output type**, and
+    raises `TypeError` otherwise. Neither a wrong dtype nor a strided buffer is
+    converted, because the conversion would fill a throwaway temporary and
+    leave the caller's array untouched while still returning a correct-looking
+    result (gh-581). A column of a 2-D array, or any `arr[::2]`-style slice, is
+    strided and rejected. If you do not have a suitable buffer, drop `out=` and
+    use the returned array.
+
+    See [Array memory ownership](memory-ownership.md#out-is-validated-not-coerced)
+    for the full contract.
 
 Supported on **every step/steps shape** — scalar→scalar, scalar→void sinks,
 void-arg generators and ticks, array-input `step()`, and blockwise array→array —

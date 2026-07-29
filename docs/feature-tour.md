@@ -137,9 +137,11 @@ just-makeit method fir taps --module signal \
     --arg-type void --return-type "float _Complex" --variable-output
 ```
 
-`--variable-output` means the output length is determined at runtime by a C
-helper `fir_taps_max_out(state)`. The Python binding pre-allocates a buffer
-and returns a zero-copy NumPy view of the live data.
+`--variable-output` means the output length is determined at runtime: the C
+helper `fir_taps_max_out(state)` bounds it, and the kernel reports the actual
+count. The Python binding allocates a NumPy-owned array per call and returns
+it trimmed to that count — each result is independent and safe to keep. See
+[Array memory ownership](memory-ownership.md).
 
 !!! note "String-enum params (TOML-only)"
 

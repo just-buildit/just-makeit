@@ -263,7 +263,10 @@ class TestMethodDoesNotModifyCMake:
 
 
 class TestMethodUpdatesExtC:
-    def test_ext_c_has_buf_field(self, project):
+    # gh-604: no per-instance output buffer exists any more — NumPy owns
+    # each call's array. These assert the absence, and that the sizing hook
+    # the wrapper still needs (max_out) is present.
+    def test_ext_c_has_no_buf_field(self, project):
         method_run(
             project,
             "nco",
@@ -277,9 +280,9 @@ class TestMethodUpdatesExtC:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "_execute_cf32_buf" in ext
+        assert "_execute_cf32_buf" not in ext
 
-    def test_ext_c_has_malloc_alloc(self, project):
+    def test_ext_c_sizes_from_max_out_without_malloc(self, project):
         method_run(
             project,
             "nco",
@@ -294,9 +297,11 @@ class TestMethodUpdatesExtC:
             encoding="utf-8"
         )
         assert "nco_execute_cf32_max_out" in ext
-        assert "malloc(" in ext
+        # gh-604: sized per call from NumPy, not malloc'd into the instance.
+        assert "malloc(" not in ext
+        assert "PyArray_SimpleNew(" in ext
 
-    def test_ext_c_has_free_in_dealloc(self, project):
+    def test_ext_c_has_no_free_in_dealloc(self, project):
         method_run(
             project,
             "nco",
@@ -310,7 +315,7 @@ class TestMethodUpdatesExtC:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "free(self->_execute_cf32_buf)" in ext
+        assert "free(self->_execute_cf32_buf)" not in ext
 
     def test_ext_c_has_zero_copy_wrapper(self, project):
         method_run(
@@ -687,10 +692,18 @@ class TestVariableOutputSingleArrayParam:
 
 
 class TestMethodDeferredFree:
-    """gh-219: the default zero-copy path must be use-after-free safe. On grow
-    the old buffer is retired to a freelist (malloc-new, never
-    realloc-in-place) and freed at dealloc, so any already-returned array
-    aliasing it stays valid."""
+    """gh-219: the default zero-copy path must be use-after-free safe.
+
+    The original hazard: a returned array aliased an instance buffer, so
+    growing that buffer freed memory the caller still held. The fix retired
+    the old buffer to a freelist (malloc-new, never realloc-in-place) and
+    freed it at dealloc.
+
+    gh-604 removed the shared buffer, and with it the freelist — a returned
+    array now owns its memory outright, so there is nothing to retire and
+    nothing that can be freed underneath a caller. These assert the machinery
+    is gone; the *guarantee* (a retained result stays valid across later
+    calls) is exercised at runtime in test_gh437_view_outstanding.py."""
 
     def _ext(self, project):
         method_run(
@@ -707,27 +720,24 @@ class TestMethodDeferredFree:
             encoding="utf-8"
         )
 
-    def test_retired_freelist_fields(self, project):
+    def test_no_retired_freelist_fields(self, project):
         ext = self._ext(project)
-        assert "_execute_cf32_retired" in ext
-        assert "_execute_cf32_retired_n" in ext
-        assert "_execute_cf32_retired_cap" in ext
+        assert "_execute_cf32_retired" not in ext
+        assert "_execute_cf32_retired_n" not in ext
+        assert "_execute_cf32_retired_cap" not in ext
 
-    def test_grow_uses_malloc_not_realloc_of_live_buffer(self, project):
+    def test_no_buffer_to_grow_or_realloc(self, project):
         ext = self._ext(project)
-        # the live output buffer is never realloc'd in place (that was the UAF)
-        assert "realloc(self->_execute_cf32_buf" not in ext
-        # a fresh buffer is malloc'd and the old one retired
-        assert "malloc(_max * sizeof(" in ext
-        assert (
-            "self->_execute_cf32_retired[self->_execute_cf32_retired_n++]"
-            " = self->_execute_cf32_buf" in ext
-        )
+        # The UAF this class was written for needed a shared buffer to
+        # reallocate; there is none.
+        assert "realloc(" not in ext
+        assert "malloc(" not in ext
+        assert "_execute_cf32_buf" not in ext
 
-    def test_dealloc_frees_retired_list(self, project):
+    def test_dealloc_has_no_retired_list(self, project):
         ext = self._ext(project)
-        assert "free(self->_execute_cf32_retired[_i])" in ext
-        assert "free(self->_execute_cf32_retired)" in ext
+        assert "free(self->_execute_cf32_retired[_i])" not in ext
+        assert "free(self->_execute_cf32_retired)" not in ext
 
 
 class TestMethodUpdatesConfig:
@@ -1125,7 +1135,7 @@ class TestModuleInfraRegenOnMethod:
     with the old (pre-method) bodies, silently breaking memory management.
     """
 
-    def test_dealloc_has_free_after_variable_output_method(
+    def test_dealloc_has_no_free_after_variable_output_method(
         self, module_project
     ):
         method_run(
@@ -1138,9 +1148,9 @@ class TestModuleInfraRegenOnMethod:
             True,
             [],
         )
-        assert "free(self->_execute_cf32_buf)" in _nco_frag(module_project)
+        assert "free(self->_execute_cf32_buf)" not in _nco_frag(module_project)
 
-    def test_init_allocs_buf_after_variable_output_method(
+    def test_init_allocs_nothing_after_variable_output_method(
         self, module_project
     ):
         method_run(
@@ -1154,8 +1164,8 @@ class TestModuleInfraRegenOnMethod:
             [],
         )
         frag = _nco_frag(module_project)
-        assert "_execute_cf32_buf" in frag
-        assert "malloc(" in frag
+        assert "_execute_cf32_buf" not in frag
+        assert "malloc(" not in frag
 
     def test_dealloc_frees_nothing_after_multi_output_method(
         self, module_project

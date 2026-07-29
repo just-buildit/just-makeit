@@ -62,7 +62,10 @@ class TestPassCapacity:
 
     def test_ext_call_passes_capacity(self, proj):
         e = (proj / "native/src/ddc/ddc_ext.c").read_text()
-        assert "self->_execute_buf, self->_execute_buf_cap)" in e
+        # gh-604: the capacity forwarded is the per-call allocation (_cap),
+        # not a struct field — the reuse buffer and its _buf_cap are gone.
+        assert "_d0, _cap)" in e
+        assert "if (!_cap || _cap < _need) _cap = _need;" in e
 
     def test_config_round_trips(self, proj):
         from just_makeit._config import load, methods

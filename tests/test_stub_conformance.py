@@ -100,24 +100,31 @@ def _build(root: Path) -> None:
 
 
 def _stubtest(so_dir: Path, leaf: str) -> list[str]:
-    """Isolate <leaf>.so + <leaf>.pyi and return stubtest's error lines."""
+    """Isolate <leaf>.so + <leaf>.pyi and return stubtest's error lines.
+
+    The isolation dir is a context manager, not a bare ``mkdtemp``: stubtest
+    runs with ``cwd`` set here and drops a ``.mypy_cache`` (~13 MB) beside the
+    copied module, so one leaked dir per shape per run adds up fast — 12 GB of
+    ``/tmp`` had accumulated before this was caught.
+    """
     sos = list(so_dir.glob(f"{leaf}.*.so"))
     assert sos, f"no built {leaf}.*.so in {so_dir}"
     pyi = so_dir / f"{leaf}.pyi"
     assert pyi.exists(), f"no {leaf}.pyi in {so_dir}"
 
-    iso = Path(tempfile.mkdtemp())
-    shutil.copy2(sos[0], iso / sos[0].name)
-    shutil.copy2(pyi, iso / pyi.name)
+    with tempfile.TemporaryDirectory() as tmp:
+        iso = Path(tmp)
+        shutil.copy2(sos[0], iso / sos[0].name)
+        shutil.copy2(pyi, iso / pyi.name)
 
-    r = subprocess.run(
-        [sys.executable, "-m", "mypy.stubtest", leaf],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        cwd=str(iso),
-        env={**os.environ, "PYTHONPATH": str(iso), "MYPYPATH": str(iso)},
-    )
+        r = subprocess.run(
+            [sys.executable, "-m", "mypy.stubtest", leaf],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=str(iso),
+            env={**os.environ, "PYTHONPATH": str(iso), "MYPYPATH": str(iso)},
+        )
     # Both stubtest's own `error:` lines and the underlying `<file>: error:`
     # lines it prints when the stub is not even mypy-valid ("not checking stubs
     # due to mypy build errors") count as failures.

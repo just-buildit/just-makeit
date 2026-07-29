@@ -94,11 +94,14 @@ def test_nogil_generates_allow_threads(tmp_path):
         assert "Py_" not in frag[b + len("Py_BEGIN_ALLOW_THREADS") : e]
     # numpy accessors are hoisted BEFORE the default block...
     assert frag.index("_ng0") < default_b
-    # ...and its realloc / error path stays above it (under the GIL).
-    assert frag.index("realloc(") < default_b
-    # the out= branch is genuinely zero-alloc: no realloc between its own
-    # begin/end markers (it validates+writes into the caller's buffer).
-    assert "realloc(" not in frag[out_b:out_e]
+    # ...and so is the allocation, which stays above it (under the GIL).
+    # gh-604 removed the reuse buffer's realloc-based grow path entirely, so
+    # what must precede the block is now the per-call PyArray_SimpleNew.
+    assert frag.index("PyArray_SimpleNew(") < default_b
+    # the out= branch is genuinely zero-alloc: it validates and writes into
+    # the caller's buffer, allocating nothing between its own markers.
+    assert "PyArray_SimpleNew(" not in frag[out_b:out_e]
+    assert "malloc(" not in frag[out_b:out_e]
 
 
 # ── (b) without nogil the binding is unchanged (no regression) ───────────────

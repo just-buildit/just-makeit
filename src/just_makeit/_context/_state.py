@@ -1977,6 +1977,18 @@ def make_state_ctx(
             f"    return arr;\n"
             f"}}"
         )
+        # The returned array borrows the state struct's memory, so it MUST
+        # pin something or it is a dangling pointer the moment the caller
+        # drops the object. It previously pinned nothing at all -- `del obj`
+        # left the view reading freed memory, silently, guarded only by a
+        # docstring. Pinning `self` matches the `buf_field` property
+        # (_context/_methods.py) and is the rule in docs/memory-ownership.md:
+        # a borrowed view pins whatever keeps its memory alive.
+        #
+        # SetBaseObject STEALS the reference, hence the explicit Py_INCREF.
+        # It does not survive an explicit destroy() -- that frees the state
+        # while the base still pins only the wrapper -- which is why the
+        # accessor stays read-only and says so in its docstring.
         view_getter = (
             f"static PyObject *\n"
             f"{Component}_get_{name}_view(\n"
@@ -1990,6 +2002,13 @@ def make_state_ctx(
             f"    if (!arr) return NULL;\n"
             f"    PyArray_CLEARFLAGS("
             f"(PyArrayObject *)arr, NPY_ARRAY_WRITEABLE);\n"
+            f"    Py_INCREF(self);\n"
+            f"    if (PyArray_SetBaseObject(\n"
+            f"            (PyArrayObject *)arr, (PyObject *)self) < 0) {{\n"
+            f"        Py_DECREF(self);\n"
+            f"        Py_DECREF(arr);\n"
+            f"        return NULL;\n"
+            f"    }}\n"
             f"    return arr;\n"
             f"}}"
         )

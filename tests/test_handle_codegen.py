@@ -848,7 +848,7 @@ class TestExecuteShape:
         s = _handle._emit_method(_writer_cfg(), "wfm_writer", m)
         # both arrays parse; input is marshaled, output is validated not cast.
         assert 'PyArg_ParseTuple(args, "OO", &x_obj, &out_obj)' in s
-        assert "must be a writable ndarray of the output dtype" in s
+        assert "must be a writable, C-contiguous" in s
         assert "NPY_ARRAY_WRITEABLE" in s
         # exact call into the caller buffer, under nogil, returning the view.
         assert "ddcr_execute(self->h, in_data, n_in, out_data, max_out)" in s
