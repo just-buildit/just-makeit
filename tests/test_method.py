@@ -397,7 +397,15 @@ class TestMethodUpdatesExtC:
 
 
 class TestMethodMultiOutput:
-    def test_multi_output_buf_fields(self, project):
+    # gh-600 inverted the storage contract here. These used to assert that a
+    # multi-output method declared instance reuse buffers (`_<name>_buf`,
+    # `_<name>_buf_1`), malloc'd them once in __init__ from max_out(), and
+    # freed them in dealloc. That *was* the bug: the buffers were sized once
+    # and written with `n` elements per call with no capacity check, so any
+    # `n` past the cap corrupted the heap. NumPy now owns each call's outputs,
+    # so the correct assertion is the opposite one — no instance buffer at
+    # all. See tests/test_gh600_multi_output_buffers.py for the runtime proof.
+    def test_multi_output_declares_no_instance_buffer(self, project):
         method_run(
             project,
             "nco",
@@ -411,8 +419,11 @@ class TestMethodMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "_execute_iq_buf" in ext
-        assert "_execute_iq_buf_1" in ext
+        assert "_execute_iq_buf" not in ext
+        assert "_execute_iq_buf_1" not in ext
+        # Each output is allocated per call and handed to the kernel.
+        assert "PyArray_SimpleNew(1, &_adim, NPY_COMPLEX64)" in ext
+        assert ext.count("PyArray_DATA((PyArrayObject *)arr") >= 2
 
     def test_multi_output_tuple_pack(self, project):
         method_run(
@@ -1146,24 +1157,11 @@ class TestModuleInfraRegenOnMethod:
         assert "_execute_cf32_buf" in frag
         assert "malloc(" in frag
 
-    def test_dealloc_has_free_after_multi_output_method(self, module_project):
-        method_run(
-            module_project,
-            "nco",
-            "execute_iq",
-            "sig",
-            "void",
-            "float _Complex",
-            True,
-            ["float _Complex"],
-        )
-        frag = _nco_frag(module_project)
-        assert "free(self->_execute_iq_buf)" in frag
-        assert "free(self->_execute_iq_buf_1)" in frag
-
-    def test_init_allocs_secondary_buf_after_multi_output_method(
+    def test_dealloc_frees_nothing_after_multi_output_method(
         self, module_project
     ):
+        # gh-600: nothing to free — NumPy owns each call's outputs, so no
+        # buffer is retained on the instance in the first place.
         method_run(
             module_project,
             "nco",
@@ -1175,8 +1173,30 @@ class TestModuleInfraRegenOnMethod:
             ["float _Complex"],
         )
         frag = _nco_frag(module_project)
-        assert "_execute_iq_buf_1" in frag
-        assert "malloc(_max * sizeof(float complex))" in frag
+        assert "free(self->_execute_iq_buf)" not in frag
+        assert "free(self->_execute_iq_buf_1)" not in frag
+
+    def test_init_allocates_nothing_for_a_multi_output_method(
+        self, module_project
+    ):
+        # gh-600: the __init__ malloc was the bug's origin — it fixed the
+        # capacity at construction from max_out(), and the per-call path then
+        # wrote `n` elements into it unchecked. There is no construction-time
+        # allocation now; capacity is decided per call from max(max_out, n).
+        method_run(
+            module_project,
+            "nco",
+            "execute_iq",
+            "sig",
+            "void",
+            "float _Complex",
+            True,
+            ["float _Complex"],
+        )
+        frag = _nco_frag(module_project)
+        assert "_execute_iq_buf_1" not in frag
+        assert "malloc(_max * sizeof(float complex))" not in frag
+        assert "if (!_cap || _cap < _need) _cap = _need;" in frag
 
 
 class TestMethodWithParams:

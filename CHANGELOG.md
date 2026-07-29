@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-output `variable_output` no longer overflows a fixed-cap heap buffer
+    (gh-600).** Two independent defects in the same generated block, neither
+    affecting the single-output path:
+
+    1. The wrapper signature was emitted without `kwds` while the body parsed
+        with `PyArg_ParseTupleAndKeywords` and the `PyMethodDef` row already
+        said `METH_VARARGS | METH_KEYWORDS` — so a multi-output method with
+        params did not compile (`'kwds' undeclared`).
+    1. The output buffers were `malloc`'d once in `__init__` at `max_out()`,
+        and each call then wrote `n` elements into them with **no capacity
+        check and no grow-on-demand** — `_buf_cap` was stored and never read
+        again. Any `n` past that cap corrupted the heap; `steps_u32_ovf(393216)`
+        against a 65536 cap segfaults the interpreter.
+
+    NumPy now owns every output: each call allocates its arrays at
+    `max(max_out(), n)`, the kernel writes straight into them, and a trimmed
+    view of the filled prefix is returned pinned to the full array. That
+    removes the instance buffer, the `__init__` allocation, the gh-219 retired
+    freelist and the gh-437 live-view weakref **for this shape** — the aliasing
+    hazards those exist to manage cannot arise when no memory is shared between
+    calls. The single-output path is untouched.
+
+    Also fixed alongside: the generated C stub omitted `(void)out1;`, so a
+    freshly scaffolded multi-output project warned about an unused parameter
+    before a line of user code was written; and the `PyMethodDef` entry for a
+    keyword-taking `variable_output` method cast straight to `PyCFunction`
+    rather than laundering through `void *`, an incompatible function-pointer
+    cast.
+
+    doppler had already hit and fixed exactly this by hand (doppler#116); the
+    generator's single-output path had learned the lesson and its multi-output
+    path had not, so adopting the declarative form reintroduced the bug as
+    memory corruption.
+
 ## [0.33.14] — 2026-07-28
 
 ### Fixed

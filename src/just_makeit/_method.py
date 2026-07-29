@@ -7,8 +7,11 @@ Adds a named execute method to an existing object:
         --arg-type void --return-type "float _Complex" --variable-output
 
 For --variable-output methods:
-  - Pre-allocates an output buffer in the Python Object struct (not in _state_t)
-  - Returns a zero-copy NumPy view via PyArray_SimpleNewFromData — no per-call malloc
+  - Single output: pre-allocates a reuse buffer in the Python Object struct
+    (not in _state_t) and returns a zero-copy NumPy view of it
+  - Multi-output: NumPy owns each call's arrays (gh-600) — no instance buffer,
+    since a shared one cannot be grown per output without reintroducing the
+    aliasing hazards the single-output path needs gh-219/gh-437 to manage
   - Appends <<component>>_<name>_max_out() + <<component>>_<name>() stubs to _core.c
   - Declarations go into _core.h via <<method_decls>> placeholder (regenerated)
 
@@ -143,7 +146,12 @@ def _methods_c_stub_variable(
         "{",
         "    (void)state;",
         suppress_in,
-        f"    (void)out;{cap_suppress}",
+        # gh-600: the extra multi_output buffers are parameters too — omitting
+        # them left a freshly scaffolded stub warning about unused `out1`
+        # (an error under -Werror) before a line of user code is written.
+        "    (void)out;"
+        + "".join(f" (void)out{i + 1};" for i in range(len(all_extra)))
+        + cap_suppress,
         "    return 0; /* placeholder */",
         "}",
     ]
