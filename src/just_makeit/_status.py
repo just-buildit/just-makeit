@@ -223,7 +223,16 @@ def run(
         # written) instead of classified ALLOWED, and the gh-426
         # dropped-symbol check would go blind for exactly the files it
         # exists to guard.
-        with contextlib.redirect_stdout(io.StringIO()):
+        # gh-609: also suppress stderr — the same replay triggers
+        # `_patch_step_impls`'s impl-overwrite warning against the *scratch*
+        # copy, which would otherwise leak a misleading "overwriting the
+        # header" message about a throwaway temp path even though `status`
+        # never touches the real project. The resulting STALE entry below
+        # already reports the real divergence.
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             _apply.run(scratch, honor_status_allow=False)
 
         for rel in _walk_managed(scratch):

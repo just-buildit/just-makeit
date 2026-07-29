@@ -137,6 +137,20 @@ Two more keys are honoured on object and method sections:
 `impl` and `impl_file` are mutually exclusive; apply errors before any
 side effects if both are set.
 
+An object's `_step` body is re-injected from `impl`/`impl_file` on **every**
+`jm apply` — the manifest is the source of truth, not the generated header.
+Two consequences (gh-609):
+
+- The injected body always starts with a one-line comment naming which
+    manifest key it came from, so a generated header never *looks* like plain
+    hand-written C when it's actually a build product.
+- If the on-disk body differs from what the manifest currently says, and it
+    isn't the untouched fresh-scaffold `/* TODO: implement */` stub, `apply`
+    prints a warning before overwriting it — whether the divergence came from
+    hand-editing the generated header directly (edit the manifest instead) or
+    from a deliberate change to `impl`/`impl_file` that just hasn't been
+    applied yet.
+
 ### Custom `create()` and `reset()` bodies
 
 When the generated field-assignment code is not enough — parameter
