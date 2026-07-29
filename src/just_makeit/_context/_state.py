@@ -990,50 +990,54 @@ def _build_no_state_init_ctx(
         )
     pyi_param_docs = "\n".join(pyi_doc_sections) or "    (none)"
 
+    # gh-610: keyword construction, not positional. A positional example
+    # call (the bench fixture, the .pyi doctest) rots silently on any
+    # kwlist reorder — jm itself moved string_enum params out of a fixed
+    # front-hoisted position (gh-422), and every scaffold generated under
+    # the old order kept compiling while starting to mean something
+    # different. Keywords are immune to that by construction, and read
+    # better as documentation of the object besides. The constructor
+    # always supports keywords (init_parse_block below is always built
+    # from PyArg_ParseTupleAndKeywords), so this is never a runtime
+    # regression the way it would be for a positional-only C API.
     py_create_parts: list[str] = []
-    for _, dt in _aa:
+    for aname, dt in _aa:
         py_create_parts.append(
-            f"np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})"
+            f"{aname}=np.zeros(1, dtype={_NP_PY_TYPE.get(dt, 'np.float32')})"
         )
     for aname, act, andim, _ in arr_ip:
         dt = _CTYPE_TO_DTYPE.get(act, "float32")
         npt = _NP_PY_TYPE.get(dt, "np.float32")
         py_create_parts.append(
-            f"np.zeros((1, 1), dtype={npt})"
+            f"{aname}=np.zeros((1, 1), dtype={npt})"
             if andim == 2
-            else f"np.zeros(1, dtype={npt})"
+            else f"{aname}=np.zeros(1, dtype={npt})"
         )
-    # Required scalars are positional-before the optional kwargs in the
-    # generated ctor, so the smoke test passes them first; their seed value is
-    # the type's zero (the stub ctor never validates, so the test still
-    # builds green) — gh-266. gh-422: this is a *positional* example call, so
-    # required/optional scalars and string-enums must line up with
-    # required_entries/optional_entries' declared order, not a fixed
-    # type-based sequence — optional arrays stay omitted (keyword-only in
-    # practice), matching the historic behaviour.
+    # Required scalars' seed value is the type's zero (the stub ctor never
+    # validates, so the example still builds green) — gh-266.
     for kind, name in required_entries:
         if kind == "scalar":
             ct, dflt, _dr = _req_scalar_meta[name]
             py_create_parts.append(
-                _py_default(ct, dflt or _CTYPE_META[ct]["zero"])
+                f"{name}={_py_default(ct, dflt or _CTYPE_META[ct]['zero'])}"
             )
         elif kind == "path":
             # gh-515: jm cannot invent a valid filesystem path, so emit the
             # `...` sentinel — _unseedable_required() already marks the whole
             # ctor unseedable, which suppresses the example and skips the
             # generated tests that would otherwise use this string.
-            py_create_parts.append("...")
+            py_create_parts.append(f"{name}=...")
         elif kind == "bytes":
             # gh-565: jm cannot invent a valid opaque blob (an empty buffer is
             # generally rejected by the restore/decode), so emit the same `...`
             # sentinel — _unseedable_required() marks the ctor unseedable.
-            py_create_parts.append("...")
+            py_create_parts.append(f"{name}=...")
     for kind, name in optional_entries:
         if kind == "str_enum":
-            py_create_parts.append(f'"{_str_enum_by_name[name][1]}"')
+            py_create_parts.append(f'{name}="{_str_enum_by_name[name][1]}"')
         elif kind == "scalar":
             ct, dflt, _dr = _opt_scalar_meta[name]
-            py_create_parts.append(_py_default(ct, dflt))
+            py_create_parts.append(f"{name}={_py_default(ct, dflt)}")
     py_create_args = ", ".join(py_create_parts)
 
     c_create_args = ", ".join(c_create_parts_ordered)
@@ -1991,7 +1995,11 @@ def make_state_ctx(
         "uint32": "np.uint32",
         "uint64": "np.uint64",
     }
-    py_arr_args = [f"np.zeros(1, dtype={_NP_PY_TYPE[dt]})" for _, dt in _aa]
+    # gh-610: keyword construction — see the analogous fix in
+    # _build_no_state_init_ctx for the full rationale.
+    py_arr_args = [
+        f"{aname}=np.zeros(1, dtype={_NP_PY_TYPE[dt]})" for aname, dt in _aa
+    ]
 
     # ── EXT_C: getter/setter methods ────────────────────────────────────
 
@@ -2185,7 +2193,11 @@ def make_state_ctx(
     # ── Shared: create args ──────────────────────────────────────────────
 
     py_create_args = ", ".join(
-        py_arr_args + [_py_default(ct, dflt) for _, ct, dflt in ctor_scalars]
+        py_arr_args
+        + [
+            f"{name}={_py_default(ct, dflt)}"
+            for name, ct, dflt in ctor_scalars
+        ]
     )
 
     # ── PYI Examples ────────────────────────────────────────────────────
@@ -2457,14 +2469,14 @@ def make_state_ctx(
                     # rebuild must keep the arity — NULL for C, the `...`
                     # sentinel for Python (the ctor is unseedable anyway).
                     _ip_c.append("NULL")
-                    _ip_py.append("...")
+                    _ip_py.append(f"{n}=...")
                     continue
                 if ct == "bytes":
                     # gh-565: a bytes blob contributes TWO create() args
                     # (const void *, size_t) — keep the arity with "NULL, 0";
                     # the ctor is unseedable, so Python gets the `...` sentinel.
                     _ip_c.append("NULL, 0")
-                    _ip_py.append("...")
+                    _ip_py.append(f"{n}=...")
                     continue
                 if ct not in _CTYPE_META:
                     continue
@@ -2473,11 +2485,13 @@ def make_state_ctx(
                     raw_dflt or _sv_dflt.get(n, "") or _CTYPE_META[ct]["zero"]
                 )
                 _ip_c.append(dflt)
-                _ip_py.append(_py_default(ct, dflt))
+                # gh-610: keyword construction, immune to a kwlist reorder.
+                _ip_py.append(f"{n}={_py_default(ct, dflt)}")
             _aa_c = ["NULL, 0" for _ in array_args]
             _aa_py = [
-                f"np.zeros(1, dtype={_NP_PY_TYPE.get(_CTYPE_TO_DTYPE.get(dt, 'float32'), 'np.float32')})"
-                for _, dt in array_args
+                f"{aname}=np.zeros(1, dtype="
+                f"{_NP_PY_TYPE.get(_CTYPE_TO_DTYPE.get(dt, 'float32'), 'np.float32')})"
+                for aname, dt in array_args
             ]
             _c_args = ", ".join(_aa_c + _ip_c)
             _py_args = ", ".join(_aa_py + _ip_py)

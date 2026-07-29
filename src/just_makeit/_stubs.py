@@ -471,6 +471,11 @@ def _py_default_stub(ctype: str, default: str) -> str:
     """
     if ctype not in _CTYPE_TO_PY or not default.strip():
         return "..."
+    if ctype == "bool":
+        # gh-610: "bool" isn't in kind_map (it falls to the generic "int"
+        # bucket below), so the C/TOML spelling `true`/`false` passed
+        # straight through into generated Python — a NameError.
+        return "True" if default.strip().lower() == "true" else "False"
     kind_map = {
         "float": "float",
         "double": "float",
@@ -894,12 +899,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     py_create_args = (
         # keyword args: order-independent against the binding's parse order, and
-        # self-documenting (string_enums show their chosen string).
+        # self-documenting (string_enums show their chosen string). gh-610:
+        # the state-vars-only shape gets the same treatment for the same
+        # reason — a positional example rots silently on any reorder.
         ", ".join(_ctor_arg(p) for p in ip)
         if ip
         else (
             ", ".join(
-                _py_default_stub(ct, dflt) for _, ct, dflt in scalar_vars
+                f"{n}={_py_default_stub(ct, dflt)}"
+                for n, ct, dflt in scalar_vars
             )
             if (scalar_vars and not no_state)
             else ""

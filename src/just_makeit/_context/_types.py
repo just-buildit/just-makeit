@@ -59,6 +59,15 @@ def _py_default(ctype: str, default: str) -> str:
     stays byte-identical.
     """
     kind = _CTYPE_META[ctype]["kind"]
+    if ctype == "bool":
+        # gh-610: bool's `kind` is "int" (there is no distinct "bool" kind),
+        # so this must dispatch on the concrete ctype — otherwise a bool
+        # default falls through to the generic branch below, which passes
+        # the C/TOML spelling `true`/`false` straight into generated Python,
+        # a NameError (`true` is not a Python name).
+        if not default.strip():
+            return "..."
+        return "True" if default.strip().lower() == "true" else "False"
     if kind == "float":
         s = default.rstrip("fF")
         if "." not in s and "e" not in s.lower():
