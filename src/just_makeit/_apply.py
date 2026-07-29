@@ -585,7 +585,29 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             )
 
 
-def _impl_marker(comp: str) -> str:
+_MARKER_LINE_RE = re.compile(
+    r"[ \t]*/\* jm: body sourced from \[[^\]]*\] impl/impl_file in .*?\*/\n?"
+)
+
+
+def _impl_owner_rel(comp: str, root: Path) -> Path:
+    """The project-relative path of the file that owns ``[comp]``.
+
+    gh-609 review: a split-layout project (`jm split-objects`) moves a
+    component's TOML section into ``objects/<comp>.toml`` — the top-level
+    manifest no longer has the ``impl``/``impl_file`` key at all. `_impl_marker`
+    and the overwrite warning both need to point a reader at whichever file
+    actually holds the key, so both funnel through `C._provenance`, the same
+    owner-tracking `save()` uses to route writes back to the right file."""
+    owners, _module_owners, _includes = C._provenance(root)
+    owner = owners.get(comp, root / C.FILENAME)
+    try:
+        return owner.relative_to(root)
+    except ValueError:
+        return owner
+
+
+def _impl_marker(comp: str, root: Path) -> str:
     """gh-609: one-line provenance comment for a manifest-``impl``-sourced body.
 
     `_patch_step_impls` re-injects this component's ``_step`` body from
@@ -595,10 +617,14 @@ def _impl_marker(comp: str) -> str:
     look like ordinary DSP code worth keeping, right up until `apply` silently
     reverted it. The comment is regenerated fresh from ``impl_body`` on every
     write, so it never drifts out of sync with which manifest key is the
-    actual source."""
+    actual source.
+
+    gh-609 review: naming a hardcoded "the project manifest" was itself the
+    discoverability problem the issue was filed over — see `_impl_owner_rel`."""
+    rel = _impl_owner_rel(comp, root)
     return (
-        f"/* jm: body sourced from [{comp}] impl/impl_file in the project"
-        f" manifest — edit there, not here; `jm apply` overwrites this. */"
+        f"/* jm: body sourced from [{comp}] impl/impl_file in {rel} —"
+        f" edit there, not here; `jm apply` overwrites this. */"
     )
 
 
@@ -614,13 +640,23 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
 
     gh-609: the injected body always carries `_impl_marker()` as its first
     line, so a hand-editor sees at a glance that a "real C" function is
-    actually a build product. And if the ON-DISK body (before this patch)
-    neither matches what the manifest currently says NOR still carries the
-    fresh-scaffold TODO stub (`_remove._STUB_MARKER`), something changed it
-    since the last apply — most likely a hand-edit of the generated header
-    instead of the manifest `impl`. That divergence is about to be silently
-    overwritten, which is exactly what cost the gh-609 reporter an afternoon;
-    a warning at the point of the overwrite is the cheap fix for it."""
+    actually a build product. And if the underlying CODE of the ON-DISK body
+    (before this patch, marker line stripped) neither matches what the
+    manifest currently says NOR still carries the fresh-scaffold TODO stub
+    (`_remove._STUB_MARKER`), something changed it since the last apply —
+    most likely a hand-edit of the generated header instead of the manifest
+    `impl`. That divergence is about to be silently overwritten, which is
+    exactly what cost the gh-609 reporter an afternoon; a warning at the
+    point of the overwrite is the cheap fix for it.
+
+    gh-609 review: the WARN decision is deliberately based on stripped-marker
+    *content*, not on whether the marker-prefixed text changed. Comparing the
+    marked text would fire on every pre-existing `impl` component the first
+    time a project adopts this feature (and again any time `_impl_marker`'s
+    own wording shifts, e.g. after `split-objects` moves the owning file) —
+    the marker line itself is new/changed text, even when the code beneath it
+    never diverged. The write still always happens so the marker gets
+    added/refreshed; only the warning is gated on real content drift."""
     from . import _impl as I
     from ._remove import _STUB_MARKER
 
@@ -644,17 +680,29 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         if not h_path.exists():
             continue
         original = h_path.read_text(encoding="utf-8")
-        marked_body = f"{_impl_marker(comp)}\n{impl_body}"
+        marker = _impl_marker(comp, root)
+        marked_body = f"{marker}\n{impl_body}"
         updated = I.patch_function_body(original, f"{comp}_step", marked_body)
         if updated != original:
-            if _STUB_MARKER not in original:
+            # Strip any existing marker line (whatever it said, however
+            # stale) before comparing, so the warning tracks real code drift
+            # rather than the marker's own (possibly first-time, possibly
+            # reworded) text.
+            original_unmarked = _MARKER_LINE_RE.sub("", original, count=1)
+            updated_unmarked = I.patch_function_body(
+                original_unmarked, f"{comp}_step", impl_body
+            )
+            content_changed = updated_unmarked != original_unmarked
+            if content_changed and _STUB_MARKER not in original:
                 rel = h_path.relative_to(root)
+                owner_rel = _impl_owner_rel(comp, root)
                 print(
                     f"warning: {rel}: {comp}_step body differs from the"
-                    f" [{comp}] impl/impl_file in the manifest; the"
+                    f" [{comp}] impl/impl_file in {owner_rel}; the"
                     " manifest is the source of truth — overwriting"
                     " the header from it. If you meant to change the"
-                    f" body, edit {comp}'s impl/impl_file instead.",
+                    f" body, edit {comp}'s impl/impl_file in {owner_rel}"
+                    " instead.",
                     file=sys.stderr,
                 )
             h_path.write_text(updated, encoding="utf-8")
