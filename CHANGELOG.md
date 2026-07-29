@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.15] — 2026-07-29
+
 ### Added
 
 - **`docs/memory-ownership.md` — the array memory policy (gh-604).** The
@@ -63,7 +65,7 @@
     Each call now allocates its outputs from NumPy at `max(max_out(), n)`, the
     kernel writes straight into them, and the result is returned directly when
     the kernel filled the allocation exactly (the generator shape's normal
-    case) or as a trimmed view pinned to it otherwise. This deletes
+    case) or shrunk in place otherwise. This deletes
     `_<name>_buf`, `_<name>_buf_cap`, `_<name>_retired{,_n,_cap}` and
     `_<name>_view_ref`, the `__init__` allocation, the dealloc loop, the gh-219
     deferred-free and the gh-437 liveness probe.
@@ -104,8 +106,8 @@
         against a 65536 cap segfaults the interpreter.
 
     NumPy now owns every output: each call allocates its arrays at
-    `max(max_out(), n)`, the kernel writes straight into them, and a trimmed
-    view of the filled prefix is returned pinned to the full array. That
+    `max(max_out(), n)`, the kernel writes straight into them, and each array
+    is shrunk in place to the filled prefix. That
     removes the instance buffer, the `__init__` allocation, the gh-219 retired
     freelist and the gh-437 live-view weakref **for this shape** — the aliasing
     hazards those exist to manage cannot arise when no memory is shared between
@@ -122,6 +124,44 @@
     generator's single-output path had learned the lesson and its multi-output
     path had not, so adopting the declarative form reintroduced the bug as
     memory corruption.
+
+- **An `out=` buffer must be C-contiguous, not merely the right dtype
+    (gh-604).** gh-581 made every `out=` path require the exact output dtype,
+    because `PyArray_FROM_OTF` otherwise casts into a temporary, fills that,
+    frees it, and returns a correct-looking result while the caller's array is
+    never touched.
+
+    Dtype was only half of it. The same marshal is asked for
+    `NPY_ARRAY_C_CONTIGUOUS`, so a **strided** same-dtype array took the
+    identical path — it passed the guard, was copied, and the copy is what the
+    kernel filled:
+
+    ```python
+    big = np.zeros((4, 2), np.float32)
+    g.steps(np.arange(4, dtype=np.float32), out=big[:, 0])
+    big[:, 0]        # -> [0. 0. 0. 0.]   never written
+    ```
+
+    A column of a 2-D buffer is writable, correctly typed, and silently
+    discarded — the exact failure gh-581 exists to prevent, reached from the
+    other side. The shared guard now checks contiguity too, so the object,
+    module-function, capsule and handle generators all pick it up at once, and
+    such a buffer raises `TypeError` rather than being quietly copied.
+
+    Alignment is deliberately **not** checked: NumPy's `NPY_ARRAY_ALIGNED` only
+    demands the dtype's natural alignment, which every ndarray already
+    satisfies, so it would reject nothing. SIMD alignment stays a documented
+    performance note (a misaligned `out=` measured ~16% on an FFT of 4096), not
+    an error.
+
+- **`get_<name>_view()` no longer dangles after the object is dropped
+    (gh-604).** An array-state view was built with
+    `PyArray_SimpleNewFromData` over the state struct with **no
+    `PyArray_SetBaseObject` and no `Py_INCREF`** — it held a reference to
+    nothing, so `del obj` left the view pointing into freed memory, guarded
+    only by a docstring. Every other borrowed view in the generator pins its
+    owner. It now pins the object and is marked read-only, matching the
+    `buf_field` view it should always have resembled.
 
 ## [0.33.14] — 2026-07-28
 
