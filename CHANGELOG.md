@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.33.14] — 2026-07-28
+
 ### Fixed
 
 - **`result_fields` no longer builds a record through a cast-less `"i"`
