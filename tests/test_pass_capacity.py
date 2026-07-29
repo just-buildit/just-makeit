@@ -65,7 +65,16 @@ class TestPassCapacity:
         # gh-604: the capacity forwarded is the per-call allocation (_cap),
         # not a struct field — the reuse buffer and its _buf_cap are gone.
         assert "_d0, _cap)" in e
-        assert "if (!_cap || _cap < _need) _cap = _need;" in e
+        # gh-607: pass_capacity means the kernel is told its capacity and
+        # enforces the bound itself, so the alloc is the exact max_out()
+        # answer — no defensive clamp, and _need is explicitly unused.
+        assert (
+            "size_t _cap ="
+            " ddc_execute_max_out(self->handle, (size_t)PyArray_SIZE(x_arr));"
+            in e
+        )
+        assert "if (!_cap || _cap < _need) _cap = _need;" not in e
+        assert "(void)_need;" in e
 
     def test_config_round_trips(self, proj):
         from just_makeit._config import load, methods

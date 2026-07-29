@@ -19,6 +19,44 @@
     with such an array now needs its argument order updated to match the
     (already-correct) kwlist order shown above.
 
+### Changed
+
+- **`<verb>_max_out()` now takes the same count the binding passes to the
+    kernel — a breaking change on both sides of the C ABI (gh-607).**
+    Previously `max_out()` was a fixed internal cap unrelated to any
+    particular call, so it could not answer "how much space does *this* call
+    need." It now mirrors the kernel's own count parameter for the method's
+    shape:
+
+    | Shape                                      | `max_out()` gains                                   |
+    | ------------------------------------------ | --------------------------------------------------- |
+    | array-input method (`arg_type` not `void`) | `n_in`                                              |
+    | single-array-param method                  | `<param>_len`                                       |
+    | pure generator (no arg, no params)         | `n`                                                 |
+    | all-scalar-params method                   | nothing — no kernel count to mirror, stays zero-arg |
+
+    **C side:** `size_t <comp>_<name>_max_out(state)` becomes
+    `size_t <comp>_<name>_max_out(state, <count_param>)` for every shape with a
+    count to mirror.
+
+    **Python side:** the generated `<verb>_max_out()` method goes from
+    `METH_NOARGS` (zero arguments) to `METH_VARARGS` (one argument, the
+    mirrored count). Any code calling the old zero-arg form breaks, including
+    the common workaround of calling `max_out()` and independently
+    `max()`-ing it against the call size, e.g.
+    `max(lo.steps_ctrl_max_out(), len(ctrl))` — that becomes
+    `lo.steps_ctrl_max_out(len(ctrl))`.
+
+    Clamp behavior also changed: without `pass_capacity` declared on the
+    method, the existing safety net — allocation/validation is clamped to at
+    least the call's actual need — is unchanged, so a mechanically migrated
+    `return 0;` body stays safe. With `pass_capacity` declared, the kernel is
+    handed the exact bound and trusted to respect it, so the clamp is dropped
+    on both the internal-allocation path and the caller-supplied `out=`
+    validation path — `out=` now only requires
+    `len(out) >= max_out(state, n)`, matching the trust already extended
+    internally, rather than additionally requiring `>= n` as well.
+
 ## [0.33.15] — 2026-07-29
 
 ### Added
