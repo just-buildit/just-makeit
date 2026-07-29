@@ -968,8 +968,18 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         parts_init: list[str] = []
         for param in ip:
             n, t = param[0], param[1]
+            dflt = param[2] if len(param) > 2 else ""
             optional = param[6] if len(param) > 6 else False
             required = param[8] if len(param) > 8 else False
+            # gh-611 (module peer of _context/_state.py's arr_ip): a 1-D/2-D
+            # array with NO declared default is a required positional in the
+            # C ABI — the generated kwlist hoists it ahead of every defaulted
+            # scalar (`_context/_state.py`'s `required_entries`) regardless of
+            # the `required` flag, which is only ever consulted for scalars.
+            # A defaulted array (`default = "[]"`, gh-611's def_arr_ip) is
+            # genuinely optional and keeps its declared position below — only
+            # the default-less array is hoisted here.
+            is_required_array = t.endswith("[]") and not optional and not dflt
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
             # the other default-less params rather than given a `= ...`.
@@ -977,13 +987,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             if (
                 t == "path"
                 or t == "bytes"
+                or is_required_array
                 or (required and not t.endswith("[]"))
             ):
                 req_parts.append(f"{n}: {_py(t)}")
             elif optional:
                 parts_init.append(f"{n}: {_py(t)} | None = None")
             elif t.startswith("string_enum:"):
-                dflt = param[2] if len(param) > 2 else ""
                 parts_init.append(
                     f'{n}: {_py(t)} = "{dflt}"'
                     if dflt
