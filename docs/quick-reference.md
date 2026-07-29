@@ -306,6 +306,43 @@ jm object comp --no-state \
 <td>
 
 ```python
+# Defaulted (optional) 1-D array
+# empty array when omitted
+def __init__(
+    self,
+    template: NDArray[np.float32]
+             = ...,
+    pfa: float = ...,
+) -> None: ...
+```
+
+</td>
+<td>
+
+```toml
+[[comp.init_params]]
+name    = "template"
+type    = "float[]"
+default = "[]"
+```
+
+</td>
+<td>
+
+*TOML only* — gh-611: takes
+its declared position among
+the other optional params
+instead of being hoisted
+first, unlike a required
+array.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+```python
 # Optional 2-D array
 def __init__(
     self,
