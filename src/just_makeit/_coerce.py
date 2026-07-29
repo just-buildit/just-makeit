@@ -105,13 +105,28 @@ def bytes_call_exprs(name: str) -> str:
 # streaming loop still reads correct return values), which is what makes it worth
 # a hard guard rather than a doc note.
 #
-# So every generator that accepts an `out=` REQUIRES the exact output dtype up
-# front and rejects anything else. `PyArray_FROM_OTF` still runs afterwards, but
-# only to pick up the contiguity flag — with the dtype already proven equal it
-# can no longer cast, so the array it returns is always the caller's own buffer.
+# Dtype is not the only way FROM_OTF can substitute a temporary. It is asked for
+# ``NPY_ARRAY_C_CONTIGUOUS`` too, and a **strided** array satisfies the dtype
+# check while still forcing a contiguous copy — same silent failure, different
+# trigger (gh-604 follow-up). Measured on a generated `steps(x, out=)`:
 #
-# The guard is a strict tightening: code that relied on the cast was, by
-# definition, not getting its buffer written.
+#     big = np.zeros((4, 2), np.float32)
+#     g.steps(np.arange(4, np.float32), out=big[:, 0])
+#     big[:, 0]  ->  [0. 0. 0. 0.]      # never written; the return was a copy
+#
+# So the guard REQUIRES the exact output dtype **and C-contiguity** up front and
+# rejects anything else. `PyArray_FROM_OTF` still runs afterwards to take the
+# reference, but with both properties already proven it can no longer copy, so
+# the array it returns is always the caller's own buffer.
+#
+# Alignment is deliberately NOT checked. NumPy's own `NPY_ARRAY_ALIGNED` only
+# demands the dtype's natural alignment, which every ndarray already satisfies,
+# so it would reject nothing; SIMD alignment is a performance matter, not a
+# correctness one, and lives in `docs/memory-ownership.md` (a misaligned `out=`
+# measured ~16% on FFT(4096)) rather than in a hard error.
+#
+# The guard is a strict tightening: code that relied on the cast or the copy
+# was, by definition, not getting its buffer written.
 
 
 def out_buffer_guard(
@@ -122,7 +137,7 @@ def out_buffer_guard(
     decrefs: str = "",
     indent: str = "    ",
 ) -> str:
-    """Emit the exact-dtype guard for a caller-supplied ``out=`` buffer.
+    """Emit the dtype + contiguity guard for a caller-supplied ``out=`` buffer.
 
     Every generator that lets a caller pass their own output array emits this
     identical check, so it lives here once (see the module note above for why
@@ -158,13 +173,15 @@ def out_buffer_guard(
     Examples
     --------
     >>> print(out_buffer_guard("out_obj", "NPY_COMPLEX64"), end="")
-        /* Require the exact output dtype — no silent cast (a cast writes
-         * into a temp copy instead of the caller's buffer). */
+        /* Require the exact dtype AND C-contiguity — either mismatch makes
+         * the marshal write into a temp copy, not the caller's buffer. */
         if (!PyArray_Check(out_obj) ||
             PyArray_TYPE((PyArrayObject *)out_obj) != NPY_COMPLEX64 ||
+            !PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) ||
             !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {
             PyErr_SetString(PyExc_TypeError,
-                "out must be a writable ndarray of the output dtype");
+                "out must be a writable, C-contiguous"
+                " ndarray of the output dtype");
             return NULL;
         }
 
@@ -173,13 +190,15 @@ def out_buffer_guard(
     >>> print(out_buffer_guard("out_obj", "NPY_FLOAT32",
     ...                        decrefs="Py_DECREF(in_arr);",
     ...                        indent=" " * 8), end="")
-            /* Require the exact output dtype — no silent cast (a cast writes
-             * into a temp copy instead of the caller's buffer). */
+            /* Require the exact dtype AND C-contiguity — either mismatch makes
+             * the marshal write into a temp copy, not the caller's buffer. */
             if (!PyArray_Check(out_obj) ||
                 PyArray_TYPE((PyArrayObject *)out_obj) != NPY_FLOAT32 ||
+                !PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) ||
                 !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {
                 PyErr_SetString(PyExc_TypeError,
-                    "out must be a writable ndarray of the output dtype");
+                    "out must be a writable, C-contiguous"
+                    " ndarray of the output dtype");
                 Py_DECREF(in_arr);
                 return NULL;
             }
@@ -187,15 +206,17 @@ def out_buffer_guard(
     i = indent
     release = f"{i}    {decrefs}\n" if decrefs else ""
     return (
-        f"{i}/* Require the exact output dtype — no silent cast (a cast"
-        f" writes\n"
-        f"{i} * into a temp copy instead of the caller's buffer). */\n"
+        f"{i}/* Require the exact dtype AND C-contiguity — either mismatch"
+        f" makes\n"
+        f"{i} * the marshal write into a temp copy, not the caller's"
+        f" buffer. */\n"
         f"{i}if (!PyArray_Check({obj_var}) ||\n"
         f"{i}    PyArray_TYPE((PyArrayObject *){obj_var}) != {npy_enum} ||\n"
+        f"{i}    !PyArray_IS_C_CONTIGUOUS((PyArrayObject *){obj_var}) ||\n"
         f"{i}    !PyArray_ISWRITEABLE((PyArrayObject *){obj_var})) {{\n"
         f"{i}    PyErr_SetString(PyExc_TypeError,\n"
-        f'{i}        "{label} must be a writable ndarray of the output'
-        f' dtype");\n'
+        f'{i}        "{label} must be a writable, C-contiguous"\n'
+        f'{i}        " ndarray of the output dtype");\n'
         f"{release}"
         f"{i}    return NULL;\n"
         f"{i}}}\n"

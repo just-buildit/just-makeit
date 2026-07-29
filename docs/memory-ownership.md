@@ -209,10 +209,30 @@ So placement freedom is real but not free:
 
 ### `out=` is validated, not coerced
 
-A wrong-dtype `out=` raises `TypeError` rather than being cast, because a cast
-would fill a throwaway temporary and leave your array untouched while still
-returning a correct-looking result (gh-581). An undersized `out=` raises
-`ValueError`; the requirement is `len(out) >= max(max_out(), n_requested)`.
+An `out=` buffer must be a **writable, C-contiguous ndarray of exactly the
+output dtype**; anything else raises `TypeError` rather than being converted.
+Both properties matter for the same reason: the marshal asks NumPy for a
+contiguous array of the output dtype, and if either is missing NumPy hands back
+a *converted temporary*. The kernel then fills the temporary, the temporary is
+freed, and the call returns a correct-looking result while your array is never
+touched.
+
+That failure mode is invisible to anyone who only reads the return value, which
+is why both are hard errors:
+
+```python
+big = np.zeros((4, 2), np.float32)
+g.steps(x, out=big[:, 0])       # TypeError: out must be a writable,
+                                # C-contiguous ndarray of the output dtype
+```
+
+A wrong dtype was the original trigger (gh-581); a strided buffer is the same
+defect reached from the other side. Note the overlap with the alignment note
+above — slicing is the common way to arrive at both problems, except a strided
+slice now raises where a merely misaligned one is quietly slower.
+
+An undersized `out=` raises `ValueError`; the requirement is
+`len(out) >= max(max_out(), n_requested)`.
 
 ## Who owns what, by shape
 
