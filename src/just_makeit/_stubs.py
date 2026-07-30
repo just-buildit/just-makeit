@@ -125,7 +125,15 @@ def _np(ctype: str) -> str:
 
 
 def _title(name: str) -> str:
-    return "".join(w.title() for w in name.split("_"))
+    """The stub's class name for *name* — the same derivation the C side uses.
+
+    gh-628: this used ``str.title()``, which lower-cases everything after each
+    word's first letter, so a manifest id that already carried capitals came
+    out mangled (``HalfbandDecimator`` -> ``Halfbanddecimator``) and the stub
+    named a class the extension does not define. One primitive now, in
+    ``_config``, beside the ``class_name`` override it falls back from.
+    """
+    return C.default_class_name(name)
 
 
 # ── member-level merge / manual_stub splice engine (gh-428) ─────────────────
