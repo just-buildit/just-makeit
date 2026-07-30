@@ -128,7 +128,8 @@ static inline float _Complex
 tone_step(tone_state_t *state)
 {
     uint32_t phase;
-    nco_steps_u32(state->nco, 1, &phase);
+    /* n samples, then the capacity of `out` (doppler >= 0.39) */
+    nco_steps_u32(state->nco, 1, &phase, 1);
     /* phase in [0, 2^32) maps to angle in [0, 2*pi) */
     float angle = (float)phase
         * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
