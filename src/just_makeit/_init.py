@@ -65,6 +65,10 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # otherwise, so a project without enum properties renders unchanged.
         # make_properties_ctx overwrites it on every path that has properties.
         "pyi_property_typing": "",
+        # gh-623: `\nimport os` when a `path` init-param puts `os.PathLike` in
+        # the signature; empty otherwise, so an object without one renders
+        # byte-identical. make_state_ctx overwrites it.
+        "pyi_os_import": "",
         # gh-543: a standalone object's hand-written `<comp>_ext_extra.c`,
         # #included when it exists. Module objects have had this since the
         # aggregator was introduced; a standalone object had no hook at all,

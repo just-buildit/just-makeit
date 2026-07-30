@@ -1516,7 +1516,11 @@ def _pyi_scalar(ctype: str) -> str:
 
 def _pyi_arg_ann(a: dict) -> str:
     """Python annotation for a handle create_arg (path, string, enum, scalar)."""
-    if a.get("type") in ("path", "string"):
+    if a.get("type") == "path":
+        # gh-623: same PyUnicode_FSConverter coercion as every other path
+        # surface (see _coerce), so the same annotation.
+        return _coerce.PATH_PY_TYPE
+    if a.get("type") == "string":
         return "str"
     if a.get("type") == "bytes":
         return "bytes"  # gh-565: opaque blob init-param
@@ -1873,6 +1877,13 @@ def render_pyi(
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
         lines.append(f'    """Construct a {tname} via {f["create_fn"]}."""')
         lines.append("")
+
+    # gh-623: a path annotates `str | os.PathLike`, which needs `import os`.
+    # A handle carries paths on four surfaces (create-arg, method, factory,
+    # alt-ctor), so decide from the rendered text rather than re-deriving which
+    # ones have one — a new path surface then cannot forget to declare itself.
+    if any(_coerce.PATH_PY_TYPE in ln for ln in lines):
+        lines.insert(lines.index("import numpy as np"), "import os")
 
     return "\n".join(lines)
 

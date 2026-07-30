@@ -871,7 +871,10 @@ def _build_no_state_init_ctx(
             pyi_parts.append(f"{name}: npt.ArrayLike")
         elif kind == "path":
             # gh-515: required, hence no `= ...` default.
-            pyi_parts.append(f"{name}: str")
+            # gh-623: `str | os.PathLike` — the same annotation the module
+            # generator and the class docstring already use, from the one
+            # constant beside the coercion that makes it true.
+            pyi_parts.append(f"{name}: {_coerce.PATH_PY_TYPE}")
         elif kind == "bytes":
             # gh-565: an opaque blob; required, hence no `= ...` default.
             pyi_parts.append(f"{name}: bytes")
@@ -1057,6 +1060,12 @@ def _build_no_state_init_ctx(
         "create_line": create_line,
         "create_call_args": create_call_args,
         "init_params_pyi": init_params_pyi,
+        # gh-623: the signature names `os` only when a path init-param
+        # put it there — derived from the rendered parts, so a new path
+        # shape cannot forget the import.
+        "pyi_os_import": (
+            "\nimport os" if _coerce.PATH_PY_TYPE in init_params_pyi else ""
+        ),
         "pyi_param_docs": pyi_param_docs,
         "py_create_args": py_create_args,
         "c_create_args": c_create_args,
@@ -1604,6 +1613,7 @@ def make_state_ctx(
             "getter_setter_methods_c": "",
             "getter_setter_pymethoddef": "",
             "init_params_pyi": "",
+            "pyi_os_import": "",
             "pyi_param_docs": "    (none)",
             "pyi_examples": "",
             "getter_setter_stubs_pyi": "",
@@ -2365,6 +2375,10 @@ def make_state_ctx(
         "getter_setter_methods_c": getter_setter_methods_c,
         "getter_setter_pymethoddef": getter_setter_pymethoddef,
         "init_params_pyi": init_params_pyi,
+        # gh-623: a state-driven ctor takes no path (`path` is an init-param
+        # type only), so the default is empty; the init_params branch below
+        # overrides it via _CTOR_OVERRIDE_KEYS when one is declared.
+        "pyi_os_import": "",
         "pyi_param_docs": pyi_param_docs,
         "pyi_examples": pyi_examples,
         "getter_setter_stubs_pyi": getter_setter_stubs_pyi,
@@ -2519,6 +2533,10 @@ def make_state_ctx(
             "create_line",
             "create_call_args",
             "init_params_pyi",
+            # gh-623: travels with init_params_pyi — the slot exists precisely
+            # because a path init-param put `os.PathLike` in that signature, so
+            # omitting it here would emit the annotation without its import.
+            "pyi_os_import",
             "pyi_param_docs",
             "py_create_args",
             "c_create_args",

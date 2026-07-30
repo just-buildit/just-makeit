@@ -68,7 +68,10 @@ class TestModuleStubBothDeclared:
     def test_signature_lists_init_params_not_state(self, project):
         pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text()
         block = _pyi_class_block(pyi, "Rdr")
-        assert "def __init__(self, filepath: str) -> None: ..." in block
+        assert (
+            "def __init__(self, filepath: str | os.PathLike) -> None: ..."
+            in block
+        )
         # The bug: the state var leaked into the ctor signature.
         assert "def __init__(self, cap:" not in block
 
@@ -76,8 +79,10 @@ class TestModuleStubBothDeclared:
         """The two halves of the same stub must name the same parameter."""
         pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text()
         block = _pyi_class_block(pyi, "Rdr")
-        assert "filepath : str" in block  # docstring Parameters
-        assert "filepath: str" in block.split("def __init__")[1]  # signature
+        assert "filepath : str | os.PathLike" in block  # docstring Parameters
+        assert (  # signature
+            "filepath: str | os.PathLike" in block.split("def __init__")[1]
+        )
 
     def test_signature_matches_runtime_ctor(self, project):
         """The C `Rdr_init` parses init_params and calls
@@ -133,7 +138,10 @@ class TestNoStateInitParamsUnchanged:
         block = _pyi_class_block(
             (project / "src" / "dsp" / "io" / "io.pyi").read_text(), "Rdr"
         )
-        assert "def __init__(self, filepath: str) -> None: ..." in block
+        assert (
+            "def __init__(self, filepath: str | os.PathLike) -> None: ..."
+            in block
+        )
 
 
 class TestStandaloneWasNeverBroken:
