@@ -9,6 +9,20 @@ properties, and free functions — as **runnable doctests**.
 Two header comments feed the class stub: `<obj>_create()` supplies the class
 docstring, and each method/property is documented from its own declaration.
 
+The `gain` snippets below are illustrative. To watch the whole arc run in a
+project you can build yourself, use the accumulator example — it enriches two
+objects' headers and its end-to-end test asserts the docstrings reached the
+`.pyi`, then executes the header-authored doctests against the built `.so`:
+
+```sh
+just-makeit example accumulator
+```
+
+- **Methods on an object** —
+    [Accumulator: document once, in C](../examples/accumulator.md#document-once-in-c-rich-stubs-and-runnable-doctests)
+- **Free and `static inline` functions** —
+    [Module functions: document once, in C](../examples/jm_function.md#5-document-once-in-c-rich-stubs-and-runnable-doctests)
+
 ## The class docstring — from `create()`
 
 Give `gain_create` a real `@brief`:
