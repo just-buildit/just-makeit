@@ -19,7 +19,13 @@ from . import _types as T
 
 
 def _to_title(snake: str) -> str:
-    return "".join(w[0].upper() + w[1:] for w in snake.split("_") if w)
+    """C-side class name for *snake* — see ``_config.default_class_name``.
+
+    Kept as a local alias because the C generators call it in a dozen places;
+    the derivation itself lives in one module (gh-628), shared with the stub
+    generator that used to disagree with it.
+    """
+    return C.default_class_name(snake)
 
 
 def standalone_extra_include(root: Path, component: str) -> str:

@@ -2513,6 +2513,42 @@ def class_name(cfg: dict, component: str) -> str | None:
     return cfg.get(component, {}).get("class_name") or None
 
 
+def default_class_name(component: str) -> str:
+    """Python class name for *component* when no ``class_name`` overrides it.
+
+    The single source of truth for that derivation. Each underscore-separated
+    word gets its first letter upper-cased and **the rest left alone**, so an
+    id that already carries capitals survives intact.
+
+    That last part is the whole point (gh-628). The C generators used this
+    rule while the stub generator used ``str.title()``, which upper-cases the
+    first letter and lower-cases every other one — identical for the
+    all-lowercase ids jm was designed around, and destructive for anything
+    else:
+
+    - ``HalfbandDecimator`` -> ``Halfbanddecimator`` in the stub, while the
+      extension defined ``HalfbandDecimator`` and the package re-exported it.
+      The stub named a class that did not exist and omitted the one that did.
+    - Only an id with a capital after the first character diverged, which is
+      why it went unnoticed: ``fir_filter``, ``nco`` and ``acc_f32`` render
+      identically under both rules.
+
+    Every caller — the C type name, the ``.pyi`` class, the package
+    re-export, ``jm view``'s name-collision check, ``jm remove``'s cleanup —
+    must agree on one answer, so they all route here.
+
+    >>> default_class_name("fir_filter")
+    'FirFilter'
+    >>> default_class_name("acc_f32")
+    'AccF32'
+    >>> default_class_name("HalfbandDecimator")
+    'HalfbandDecimator'
+    >>> default_class_name("my_FFT")
+    'MyFFT'
+    """
+    return "".join(w[0].upper() + w[1:] for w in component.split("_") if w)
+
+
 def object_create_fn(cfg: dict, component: str) -> str | None:
     """Return the object's C constructor override, or None for the default.
 
