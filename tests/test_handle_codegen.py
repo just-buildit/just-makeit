@@ -426,7 +426,9 @@ class TestStatusMethod:
 
     def test_pyi_is_none_return(self):
         pyi = _handle.render_pyi(_dump_cfg(), "ringbuf")
-        assert "def dump(self, path: str) -> None:" in pyi
+        assert "def dump(self, path: str | os.PathLike) -> None:" in pyi
+        # gh-623: the widened annotation names `os`, so the stub binds it.
+        assert "import os" in pyi
 
     def test_unknown_error_category_rejected(self):
         with pytest.raises(ValueError, match="not a recognised exception"):
@@ -498,7 +500,8 @@ class TestFactories:
     def test_factory_pyi_is_module_level_function(self):
         pyi = _handle.render_pyi(_factory_cfg(), "ringbuf")
         assert "def RingFromBlob(blob: bytes) -> Ring:" in pyi
-        assert "def RingFromFile(path: str) -> Ring:" in pyi
+        assert "def RingFromFile(path: str | os.PathLike) -> Ring:" in pyi
+        assert "import os" in pyi  # gh-623
         # module-level (no leading indentation), distinct from the class body.
         assert "\ndef RingFromBlob(" in pyi
 

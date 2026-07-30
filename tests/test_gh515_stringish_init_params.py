@@ -169,15 +169,24 @@ def test_path_init_param_core_h_signature(tmp_path):
 
 
 def test_path_init_param_pyi(tmp_path):
-    """The stub parses and types the path as a required ``str``."""
+    """The stub parses and types the path as a required ``str | os.PathLike``.
+
+    gh-623: the binding coerces with ``PyUnicode_FSConverter``, so a
+    ``pathlib.Path`` is as valid as a ``str`` — annotating bare ``str`` made a
+    working call a type error. The widened annotation drags in ``import os``,
+    which the stub must therefore carry."""
     pyi = _project_with_init_param(tmp_path / "p", "path")
     text = pyi.read_text(encoding="utf-8")
 
     ast.parse(text)
 
     # Required-positional: no `= ...` default, and ahead of the enum kwarg.
-    assert "def __init__(self, path: str, sample_type: str" in text
-    assert "path : str\n" in text
+    assert (
+        "def __init__(self, path: str | os.PathLike, sample_type: str" in text
+    )
+    assert "path : str | os.PathLike\n" in text
+    # The annotation names `os`, so the stub must bind it (gh-623).
+    assert "import os" in text
     # jm cannot invent a real path, so no construction example is emitted.
     assert "Rdr(...)" not in text
 

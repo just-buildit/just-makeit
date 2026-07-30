@@ -27,6 +27,7 @@ import re as _re
 import textwrap
 
 from . import _codec as _codec
+from . import _coerce
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
@@ -103,10 +104,12 @@ def _py(ctype: str) -> str:
         choices = ctype[len("string_enum:") :].split(",")
         return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
     if ctype == "path":
-        # gh-515: a path init-param. `str` (not `str | os.PathLike`) keeps the
-        # object stub free of the `import os` the function stubs need — the
-        # binding accepts any os.fspath-able object either way.
-        return "str"
+        # gh-623: the binding coerces with PyUnicode_FSConverter, so a Path is
+        # as valid as a str and the annotation must admit both. (gh-515 spelled
+        # this `str` to keep `import os` out of object stubs — but _uses_os
+        # emits that import on demand, and a narrow annotation made a working
+        # call a type error, which is the more expensive of the two.)
+        return _coerce.PATH_PY_TYPE
     if ctype == "bytes":
         # gh-565: an opaque-bytes init-param crosses as a plain `bytes`.
         return "bytes"
@@ -1425,11 +1428,10 @@ def _fn_stub(fn: dict, block=None) -> str:
     parts = []
     py_params: list[tuple[str, str]] = []
     for p in params:
-        # gh-353: a path arg accepts str | os.PathLike; an enum arg (type "int"
-        # with an `enum` name) accepts the choice string.
-        if p["type"] == "path":
-            ann = "str | os.PathLike"
-        elif p.get("enum"):
+        # gh-353: a path arg accepts str | os.PathLike (via _py, which now
+        # spells it for every surface — gh-623); an enum arg (type "int" with
+        # an `enum` name) accepts the choice string.
+        if p.get("enum"):
             ann = "str"
         else:
             ann = _py(p["type"])
@@ -1513,14 +1515,20 @@ def _uses_literal(cfg: dict, module: str) -> bool:
 
 
 def _uses_os(cfg: dict, module: str) -> bool:
-    """Return True if any module function has a ``path`` param (gh-353).
+    """Return True if any path surface in this module needs ``os`` (gh-353).
 
-    A path param annotates as ``str | os.PathLike``, so the stub must
-    ``import os``."""
+    A path annotates as ``str | os.PathLike``, so the stub must ``import os``.
+    Both surfaces count: a ``jm function`` param (gh-353) and an object
+    init-param (gh-623 — before that, an init-param annotated bare ``str`` and
+    so needed no import, which is exactly the narrowness gh-623 fixed)."""
     for fn in C.module_functions(cfg, module):
         for p in fn.get("params", []):
             if p["type"] == "path":
                 return True
+    for obj in C.module_objects(cfg, module):
+        # init_params are 10-tuples; [1] is the type (see C.init_params).
+        if any(ip[1] == "path" for ip in C.init_params(cfg, obj)):
+            return True
     return False
 
 

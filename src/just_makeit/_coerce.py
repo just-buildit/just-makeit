@@ -19,6 +19,16 @@ from __future__ import annotations
 # gets a borrowed C string and must copy it before returning (see path_release).
 PATH_C_TYPE = "const char *"
 
+# The Python annotation a path arg presents to a type checker — the other half
+# of the same contract. `PyUnicode_FSConverter` accepts anything os.fspath()
+# accepts, so every path surface (an object init-param, a handle create-arg or
+# method, a `jm function` param) takes `str | os.PathLike` and must SAY so:
+# gh-623 shipped a stub annotating an object init-param `str`, which made the
+# tested, documented `Reader(pathlib.Path(...))` call an error to mypy. It sits
+# beside PATH_C_TYPE so the C and Python faces of a path cannot drift apart.
+# A stub using this must `import os` — see `_stubs._uses_os`.
+PATH_PY_TYPE = "str | os.PathLike"
+
 
 def path_decl(name: str) -> str:
     """Binding local for a path arg — a borrowed ``PyBytes`` (NULL until parsed
