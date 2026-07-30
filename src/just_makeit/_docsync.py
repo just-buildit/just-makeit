@@ -33,6 +33,7 @@ the file is left untouched, so a second ``jm apply`` produces no diff.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from . import _config as C
@@ -399,6 +400,95 @@ def _row_fn_names(
     return names
 
 
+_METH_FLAGS_RE = re.compile(r"METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*")
+_PYARG_FMT_RE = re.compile(r'PyArg_Parse\w*\s*\((?:[^;{}]|\n)*?"([^"]*)"')
+
+
+def _method_signatures(text: str) -> dict:
+    """Map each ``PyMethodDef`` name to its binding's *calling signature*.
+
+    The fingerprint is the pair that decides what Python may pass: the
+    ``METH_*`` flags on the row (``METH_NOARGS`` vs ``METH_VARARGS`` vs
+    ``METH_VARARGS | METH_KEYWORDS``) and the ``PyArg_Parse*`` format string
+    inside the wrapper (its arity and types). Both are jm-generated; the body
+    around them is the user's and is deliberately *not* compared, so a
+    hand-written implementation never reads as drift.
+
+    Scoped to methods: a property getter takes no arguments by construction,
+    so there is no signature for a manifest change to invalidate.
+    """
+    from ._object import _extract_c_function_bodies
+
+    mask = _code_mask(text)
+    m = _METHODS_RE.search(mask)
+    if m is None:
+        return {}
+    open_idx = m.end() - 1
+    close_idx = _match_brace(mask, open_idx)
+    if close_idx == -1:
+        return {}
+    funcs = _extract_c_function_bodies(text)
+    out: dict = {}
+    for s, e in _entry_spans(mask, open_idx + 1, close_idx):
+        name = _entry_name(text, mask, s, e)
+        if name is None:
+            continue
+        flags = _METH_FLAGS_RE.search(_code_mask(text[s : e + 1]))
+        fmt = ""
+        for fn in _row_fn_names(text, mask, (s, e)):
+            body = funcs.get(fn)
+            if body:
+                fmt_m = _PYARG_FMT_RE.search(_code_mask(body))
+                if fmt_m:
+                    # Mask offsets line up with the real text.
+                    fmt = body[fmt_m.start(1) : fmt_m.end(1)]
+                break
+        out[name] = (flags.group(0).replace(" ", "") if flags else "", fmt)
+    return out
+
+
+def warn_signature_drift(rel, existing: str, reference: str) -> list:
+    """Warn when a fragment's binding no longer matches the manifest (gh-622).
+
+    A sacred ``_ext_<obj>.c`` fragment only ever *gains* members on apply — an
+    existing member's binding is never revised. So when a manifest edit or a
+    jm upgrade changes a method's generated signature, the ``.pyi`` moves and
+    the binding does not, and nothing reports it: ``jm status --check``
+    compares manifest-owned files, and both artifacts legitimately match what
+    jm would write. The reporter found 26 such methods across 10 doppler
+    modules only by building them and calling each one.
+
+    Re-rendering is not available here — the bodies are the user's — so this
+    says exactly what diverged and what to do about it, the same trade gh-609
+    made for a hand-edited ``impl`` body. Returns the drifted names (for
+    tests); emits nothing when they agree, which is the overwhelmingly common
+    case.
+    """
+    ex = _method_signatures(existing)
+    ref = _method_signatures(reference)
+    drifted = [n for n, sig in ref.items() if n in ex and ex[n] != sig]
+    if not drifted:
+        return []
+
+    def _show(sig):
+        return (sig[0] or "METH_?") + (f' "{sig[1]}"' if sig[1] else "")
+
+    detail = "; ".join(
+        f"{n}: binding {_show(ex[n])} vs manifest {_show(ref[n])}"
+        for n in drifted
+    )
+    print(
+        f"warning: {rel}: binding signature no longer matches the manifest"
+        f" [{detail}]. A sacred fragment only gains missing members on apply,"
+        " so a changed signature stays as written while the .pyi moves — the"
+        " stub now documents a call the extension will reject. Delete"
+        f" {rel} and re-run `just-makeit apply` to regenerate it (any"
+        " hand-written body in it is lost), or edit the binding to match.",
+        file=sys.stderr,
+    )
+    return drifted
+
+
 def transplant_missing_bindings(existing: str, reference: str) -> str:
     """Additively splice manifest-derived methods/properties missing from
     *existing* in from *reference* (gh-440).
@@ -521,6 +611,16 @@ def refresh_module_fragment_docs(
             # fragment was last generated is missing entirely -- splice it in
             # additively rather than requiring delete-and-recreate.
             updated = transplant_missing_bindings(updated, reference)
+            # gh-622: the splice above is additive by name, so a member whose
+            # *signature* changed keeps its old binding while the .pyi takes
+            # the new one. Nothing can re-render it here (the body is the
+            # user's), so report it — after the splice, so a member that was
+            # just added correctly is not also flagged.
+            warn_signature_drift(
+                frag.relative_to(root) if frag.is_absolute() else frag,
+                updated,
+                reference,
+            )
             # gh-541: the teardown wrappers are manifest-derived, not
             # hand-owned, once [<obj>.destroy] exists. transplant_missing_
             # bindings above is additive by name, so it adds the alias ROW but
