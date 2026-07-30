@@ -1498,23 +1498,57 @@ def _sync_aggregates(
         # The body is left to the user — a clean link error until written, or
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
-        rel = f"native/inc/{comp}/{comp}_core.h"
-        changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
-        # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each
-        # depends_on entry, so opaque fields of a dependency's types compile.
-        from ._init import _inject_includes_into_core_h
+        if _refresh_component_core_h(root, temp_root, cfg, comp):
+            updated.append(root / f"native/inc/{comp}/{comp}_core.h")
 
-        if _inject_includes_into_core_h(
-            root / rel,
-            comp,
-            C.depends_on(cfg, comp),
-            extra=C.param_headers(cfg, comp),
-        ):
-            changed = True
-        if changed:
-            updated.append(root / rel)
+    # gh-627: a module object's `_core.h` is the same hybrid — sacred struct,
+    # glue declarations — but it sat inside the standalone-only loop above, so
+    # a manifest-declared property never got its accessor prototype and the
+    # freshly spliced binding called an undeclared function. The header is
+    # per-object in both layouts; only the *binding* differs (own `_ext.c` vs
+    # a shared module fragment), so this half is layout-independent.
+    for comp in sorted(module_owned):
+        if only_comp is not None and comp != only_comp:
+            continue
+        if comp not in cfg:
+            continue
+        if _refresh_component_core_h(root, temp_root, cfg, comp):
+            updated.append(root / f"native/inc/{comp}/{comp}_core.h")
 
     return updated
+
+
+def _refresh_component_core_h(
+    root: Path, temp_root: Path, cfg: dict, comp: str
+) -> bool:
+    """Bring *comp*'s sacred ``_core.h`` up to date with the manifest.
+
+    ``_core.h`` is a hybrid: the inline ``step()`` body and the state struct
+    are sacred, the function declarations are glue. This injects any
+    TOML-declared prototype the header is missing (so a new method or property
+    reaches the public C API) without ever re-rendering the struct or step.
+    The *body* stays the user's problem — a clean link error until written, or
+    ``jm regenerate`` for a structural change.
+
+    Shared by the standalone and module paths (gh-627): the header is
+    per-object in both layouts, and having only one of them refresh it is what
+    let a module object's new accessor go undeclared while its binding called
+    it. Returns True when the file changed.
+    """
+    rel = f"native/inc/{comp}/{comp}_core.h"
+    changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
+    # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each depends_on
+    # entry, so opaque fields of a dependency's types compile.
+    from ._init import _inject_includes_into_core_h
+
+    if _inject_includes_into_core_h(
+        root / rel,
+        comp,
+        C.depends_on(cfg, comp),
+        extra=C.param_headers(cfg, comp),
+    ):
+        changed = True
+    return changed
 
 
 def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:

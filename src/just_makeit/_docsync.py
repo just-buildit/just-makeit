@@ -46,6 +46,10 @@ _DOC_FIELD = 3
 _METHODS_RE = re.compile(r"static\s+PyMethodDef\s+\w+\s*\[\s*\]\s*=\s*\{")
 _GETSET_RE = re.compile(r"static\s+PyGetSetDef\s+\w+\s*\[\s*\]\s*=\s*\{")
 _TP_DOC_RE = re.compile(r"\.tp_doc\s*=\s*")
+_TYPE_RE = re.compile(r"static\s+PyTypeObject\s+\w+\s*=\s*\{")
+# The PyTypeObject slot each array kind is wired into. A freshly spliced array
+# is inert until the type points at it (gh-627).
+_ARRAY_SLOT = {"PyMethodDef": "tp_methods", "PyGetSetDef": "tp_getset"}
 
 
 def _code_mask(text: str) -> str:
@@ -489,6 +493,80 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     return drifted
 
 
+def _splice_first_array(
+    existing: str,
+    reference: str,
+    ref_mask: str,
+    ref_decl_start: int,
+    ref_close: int,
+    fn_names: list[str],
+    ref_funcs: dict,
+) -> str:
+    """Splice a whole binding array *existing* does not have yet (gh-627).
+
+    The zero-to-one case. :func:`transplant_missing_bindings` adds rows to an
+    array that is already there; when the object had no property at all its
+    fragment has no ``PyGetSetDef`` to add a row to, so the declaration was
+    skipped entirely — silently, which is the damage: the `.pyi` still gained
+    the property, so the stub advertised a member the extension did not define
+    and ``jm status --check`` stayed green (see gh-622).
+
+    Three pieces have to land together, or the result is worse than doing
+    nothing: the wrapper function(s), the array itself, and the
+    ``.tp_getset``/``.tp_methods`` slot pointing the type at it — an array no
+    type references is dead code that compiles and changes nothing.
+
+    Returns *existing* unchanged when the fragment has no ``PyTypeObject`` to
+    wire into (a hand-written shape jm does not recognise), leaving such a
+    fragment to the delete-and-regenerate path rather than half-editing it.
+    """
+    end = ref_close + 1
+    if end < len(reference) and reference[end] == ";":
+        end += 1
+    array_text = reference[ref_decl_start:end] + "\n\n"
+    decl = reference[ref_decl_start : ref_decl_start + 80]
+    kind = "PyGetSetDef" if "PyGetSetDef" in decl else "PyMethodDef"
+    slot = _ARRAY_SLOT[kind]
+    name_m = re.search(r"static\s+\w+\s+(\w+)\s*\[", array_text)
+    if name_m is None:
+        return existing
+    array_name = name_m.group(1)
+
+    ex_mask = _code_mask(existing)
+    type_m = _TYPE_RE.search(ex_mask)
+    if type_m is None:
+        return existing
+    type_open = type_m.end() - 1
+    type_close = _match_brace(ex_mask, type_open)
+    if type_close == -1:
+        return existing
+
+    from ._object import _extract_c_function_bodies
+
+    have = _extract_c_function_bodies(existing)
+    funcs_text = "\n\n".join(
+        ref_funcs[n] for n in fn_names if n in ref_funcs and n not in have
+    )
+    if funcs_text:
+        funcs_text += "\n\n"
+
+    out = existing
+    # Right-to-left: the slot sits inside the type object, which starts after
+    # the insertion point for the array, so editing it first keeps
+    # type_m.start() valid for the second splice.
+    if f".{slot}" not in ex_mask[type_open:type_close]:
+        indent = "    "
+        out = (
+            out[:type_close]
+            + f"{indent}.{slot} = {array_name},\n"
+            + out[type_close:]
+        )
+    out = (
+        out[: type_m.start()] + funcs_text + array_text + out[type_m.start() :]
+    )
+    return out
+
+
 def transplant_missing_bindings(existing: str, reference: str) -> str:
     """Additively splice manifest-derived methods/properties missing from
     *existing* in from *reference* (gh-440).
@@ -501,12 +579,12 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
     present in *existing* (hand-patched or not) is never touched, matching
     :func:`transplant_state_triplet`'s own idempotence.
 
-    v1 = additive only: if *existing* has no array of a given kind at all
-    (e.g. an object's very first property), there is no sentinel/decl to
-    splice against, and that array kind is left alone -- delete-and-adopt
-    is still needed to go from zero properties to one. Every other case
-    (new method or property on an object that already has at least one of
-    that kind) is spliced without touching anything else in the fragment.
+    When *existing* has no array of a given kind at all (an object's very
+    first property), there is no sentinel to splice a row against, so
+    :func:`_splice_first_array` inserts the whole array plus the type-object
+    slot instead (gh-627). v1 skipped that case, which was silent rather than
+    inert: the `.pyi` gained the property while the binding did not, so the
+    stub advertised a member the extension never defined.
     """
     from ._object import _extract_c_function_bodies
 
@@ -537,7 +615,19 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
             continue
         decl_m = array_re.search(ex_mask)
         if decl_m is None:
-            continue  # no array of this kind in *existing* -- v1 skip
+            # gh-627: *existing* has no array of this kind — the object's very
+            # first property. Splice the whole array (v1 skipped this, and the
+            # binding silently never gained the member while the .pyi did).
+            out = _splice_first_array(
+                out,
+                reference,
+                ref_mask,
+                ref_m.start(),
+                ref_close,
+                missing_fn_names,
+                ref_funcs,
+            )
+            continue
         open_idx = decl_m.end() - 1
         close_idx = _match_brace(ex_mask, open_idx)
         if close_idx == -1:
