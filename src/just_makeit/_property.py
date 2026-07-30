@@ -32,6 +32,32 @@ from ._init import (
 )
 
 
+def plain_accessor_decls(
+    object_name: str, prop_name: str, ctype: str, writable: bool
+) -> list[str]:
+    """Prototypes for a plain getter/setter-backed property.
+
+    The declarations a ``[[<obj>.properties]]`` entry adds to the public C API
+    when nothing else backs it — no ``field``, ``expr``, ``buf_field`` or
+    container/codec, each of which is declared differently (or by the user).
+
+    Shared by :func:`run` and ``_apply`` (gh-627): apply has to inject the
+    same prototypes when a property arrives by manifest rather than by CLI, and
+    two copies of a signature rule is how they drift.
+    """
+    disp = T._ctype_display(ctype)
+    decls = [
+        f"{disp} {object_name}_get_{prop_name}"
+        f"(const {object_name}_state_t *state);"
+    ]
+    if writable:
+        decls.append(
+            f"void {object_name}_set_{prop_name}"
+            f"({object_name}_state_t *state, {disp} val);"
+        )
+    return decls
+
+
 def run(
     root: Path,
     object_name: str,
@@ -306,16 +332,7 @@ def run(
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
     elif not buf_field and not expr:
-        disp = T._ctype_display(ctype)
-        decls = [
-            f"{disp} {object_name}_get_{prop_name}"
-            f"(const {object_name}_state_t *state);"
-        ]
-        if writable:
-            decls.append(
-                f"void {object_name}_set_{prop_name}"
-                f"({object_name}_state_t *state, {disp} val);"
-            )
+        decls = plain_accessor_decls(object_name, prop_name, ctype, writable)
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")
 

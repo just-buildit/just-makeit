@@ -1498,23 +1498,115 @@ def _sync_aggregates(
         # The body is left to the user — a clean link error until written, or
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
-        rel = f"native/inc/{comp}/{comp}_core.h"
-        changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
-        # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each
-        # depends_on entry, so opaque fields of a dependency's types compile.
-        from ._init import _inject_includes_into_core_h
+        if _refresh_component_core_h(root, temp_root, cfg, comp):
+            updated.append(root / f"native/inc/{comp}/{comp}_core.h")
 
-        if _inject_includes_into_core_h(
-            root / rel,
-            comp,
-            C.depends_on(cfg, comp),
-            extra=C.param_headers(cfg, comp),
-        ):
-            changed = True
-        if changed:
-            updated.append(root / rel)
+    # gh-627: a module object's header needs the accessor prototype for a
+    # manifest-declared property, or the freshly spliced binding calls an
+    # undeclared function. Deliberately NOT the full `_refresh_core_h_decls`
+    # the standalone loop above runs: that reconciles *every* declaration, and
+    # a module object's header has never been reconciled, so switching it on
+    # would replay years of accumulated drift in one apply — measured on
+    # doppler as 44 sacred headers and 125 changed declarations, including a
+    # `create()` prototype rewritten to disagree with its own definition and
+    # every call site. That is a migration, and it needs to be evaluated as
+    # one; this is the narrow slice gh-627 actually needs.
+    #
+    # Additive only: `skip_names` names every prototype being offered, so an
+    # accessor the header already declares (with any signature) is left
+    # exactly as written and only a genuinely new one is inserted.
+    for comp in sorted(module_owned):
+        if only_comp is not None and comp != only_comp:
+            continue
+        if comp not in cfg:
+            continue
+        core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
+        if not core_h.exists():
+            continue
+        decls = _property_accessor_decls(cfg, comp)
+        if not decls:
+            continue
+        from ._init import _inject_decls_into_core_h
+
+        names = frozenset(
+            re.search(r"(\w+)\s*\(", d).group(1)
+            for d in decls
+            if re.search(r"(\w+)\s*\(", d)
+        )
+        if _inject_decls_into_core_h(core_h, comp, decls, skip_names=names):
+            updated.append(core_h)
 
     return updated
+
+
+def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
+    """Getter/setter prototypes for *comp*'s plainly-backed properties.
+
+    Only properties with no other backing: a ``field`` lives in the struct, an
+    ``expr`` is inline, a ``buf_field`` is a buffer view, and a container /
+    codec property's accessors are the user's to declare (see
+    ``_property.run``). Those shapes declare nothing here, so offering a
+    prototype for them would be wrong rather than merely redundant.
+    """
+    from . import _types as _T
+    from ._property import plain_accessor_decls
+
+    out: list[str] = []
+    for p in C.properties(cfg, comp):
+        if (
+            p.get("field")
+            or p.get("expr")
+            or p.get("buf_field")
+            or p.get("codec")
+            or p.get("value_fn")
+            or p.get("count_fn")
+        ):
+            continue
+        ctype = p.get("type", "")
+        if ctype not in _T._CTYPE_META:
+            continue  # dict/list/tuple and friends are declared by the user
+        out += plain_accessor_decls(
+            comp,
+            p["name"],
+            ctype,
+            str(p.get("writable", "")).lower() in ("true", "1", "yes"),
+        )
+    return out
+
+
+def _refresh_component_core_h(
+    root: Path, temp_root: Path, cfg: dict, comp: str
+) -> bool:
+    """Bring *comp*'s sacred ``_core.h`` up to date with the manifest.
+
+    ``_core.h`` is a hybrid: the inline ``step()`` body and the state struct
+    are sacred, the function declarations are glue. This injects any
+    TOML-declared prototype the header is missing (so a new method or property
+    reaches the public C API) without ever re-rendering the struct or step.
+    The *body* stays the user's problem — a clean link error until written, or
+    ``jm regenerate`` for a structural change.
+
+    **Standalone components only.** A module object's header gets the narrow,
+    additive accessor injection above instead (gh-627): this reconciles every
+    declaration, and a module header has never been reconciled, so running it
+    there would replay years of accumulated drift as a side effect of a
+    property fix. Extending it to module objects is a migration in its own
+    right. Returns True when the file changed.
+    """
+    rel = f"native/inc/{comp}/{comp}_core.h"
+    changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
+    # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each depends_on
+    # entry, so opaque fields of a dependency's types compile.
+    from ._init import _inject_includes_into_core_h
+
+    if _inject_includes_into_core_h(
+        root / rel,
+        comp,
+        C.depends_on(cfg, comp),
+        extra=C.param_headers(cfg, comp),
+    ):
+        changed = True
+    return changed
 
 
 def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
