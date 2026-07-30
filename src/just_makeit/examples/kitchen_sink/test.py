@@ -280,7 +280,9 @@ _TONE_STEP_OLD = (
 )
 _TONE_STEP_NEW = """\
     uint32_t phase;
-    nco_steps_u32(state->nco, 1, &phase);
+    /* n samples, then the capacity of `out` (doppler >= 0.39) — the same
+       call nco_tone's step() makes; keep the two in step. */
+    nco_steps_u32(state->nco, 1, &phase, 1);
     float angle = (float)phase
                   * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
     return cosf(angle) + I * sinf(angle);"""
