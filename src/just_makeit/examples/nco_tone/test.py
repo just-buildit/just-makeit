@@ -37,7 +37,13 @@ from pathlib import Path
 # `doppler::stream` targets) — so anything linking it resolves with `-lm`
 # alone and no C++ stdlib. (0.13.0 introduced the target and moved the
 # install dir lib64/ -> lib/.)
-_DOPPLER_VERSION = "0.15.1"
+#
+# Now also a *floor*, not just a convenience: >= 0.39.0 is required, because
+# that release added the trailing capacity argument to `nco_steps_u32` that
+# the step() body below passes. CI downloads doppler's latest release rather
+# than this pin, so the two paths only agree while this tracks it — a stale
+# pin here means a local run fails against an API the example no longer uses.
+_DOPPLER_VERSION = "0.39.0"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
@@ -242,7 +248,10 @@ _STEP_OLD = (
 )
 _STEP_NEW = """\
     uint32_t phase;
-    nco_steps_u32(state->nco, 1, &phase);
+    /* doppler 0.39 gave nco_steps_u32 a trailing capacity argument: the
+       caller states how many samples `out` can hold, and the return is how
+       many were written. One sample here, so n and capacity are both 1. */
+    nco_steps_u32(state->nco, 1, &phase, 1);
     /* phase ∈ [0, 2^32) → angle ∈ [0, 2π) */
     float angle = (float)phase * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
     return cosf(angle) + I * sinf(angle);"""
