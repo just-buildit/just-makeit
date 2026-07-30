@@ -1501,21 +1501,77 @@ def _sync_aggregates(
         if _refresh_component_core_h(root, temp_root, cfg, comp):
             updated.append(root / f"native/inc/{comp}/{comp}_core.h")
 
-    # gh-627: a module object's `_core.h` is the same hybrid — sacred struct,
-    # glue declarations — but it sat inside the standalone-only loop above, so
-    # a manifest-declared property never got its accessor prototype and the
-    # freshly spliced binding called an undeclared function. The header is
-    # per-object in both layouts; only the *binding* differs (own `_ext.c` vs
-    # a shared module fragment), so this half is layout-independent.
+    # gh-627: a module object's header needs the accessor prototype for a
+    # manifest-declared property, or the freshly spliced binding calls an
+    # undeclared function. Deliberately NOT the full `_refresh_core_h_decls`
+    # the standalone loop above runs: that reconciles *every* declaration, and
+    # a module object's header has never been reconciled, so switching it on
+    # would replay years of accumulated drift in one apply — measured on
+    # doppler as 44 sacred headers and 125 changed declarations, including a
+    # `create()` prototype rewritten to disagree with its own definition and
+    # every call site. That is a migration, and it needs to be evaluated as
+    # one; this is the narrow slice gh-627 actually needs.
+    #
+    # Additive only: `skip_names` names every prototype being offered, so an
+    # accessor the header already declares (with any signature) is left
+    # exactly as written and only a genuinely new one is inserted.
     for comp in sorted(module_owned):
         if only_comp is not None and comp != only_comp:
             continue
         if comp not in cfg:
             continue
-        if _refresh_component_core_h(root, temp_root, cfg, comp):
-            updated.append(root / f"native/inc/{comp}/{comp}_core.h")
+        core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
+        if not core_h.exists():
+            continue
+        decls = _property_accessor_decls(cfg, comp)
+        if not decls:
+            continue
+        from ._init import _inject_decls_into_core_h
+
+        names = frozenset(
+            re.search(r"(\w+)\s*\(", d).group(1)
+            for d in decls
+            if re.search(r"(\w+)\s*\(", d)
+        )
+        if _inject_decls_into_core_h(core_h, comp, decls, skip_names=names):
+            updated.append(core_h)
 
     return updated
+
+
+def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
+    """Getter/setter prototypes for *comp*'s plainly-backed properties.
+
+    Only properties with no other backing: a ``field`` lives in the struct, an
+    ``expr`` is inline, a ``buf_field`` is a buffer view, and a container /
+    codec property's accessors are the user's to declare (see
+    ``_property.run``). Those shapes declare nothing here, so offering a
+    prototype for them would be wrong rather than merely redundant.
+    """
+    from . import _types as _T
+    from ._property import plain_accessor_decls
+
+    out: list[str] = []
+    for p in C.properties(cfg, comp):
+        if (
+            p.get("field")
+            or p.get("expr")
+            or p.get("buf_field")
+            or p.get("codec")
+            or p.get("value_fn")
+            or p.get("count_fn")
+        ):
+            continue
+        ctype = p.get("type", "")
+        if ctype not in _T._CTYPE_META:
+            continue  # dict/list/tuple and friends are declared by the user
+        out += plain_accessor_decls(
+            comp,
+            p["name"],
+            ctype,
+            str(p.get("writable", "")).lower() in ("true", "1", "yes"),
+        )
+    return out
 
 
 def _refresh_component_core_h(
@@ -1530,10 +1586,12 @@ def _refresh_component_core_h(
     The *body* stays the user's problem — a clean link error until written, or
     ``jm regenerate`` for a structural change.
 
-    Shared by the standalone and module paths (gh-627): the header is
-    per-object in both layouts, and having only one of them refresh it is what
-    let a module object's new accessor go undeclared while its binding called
-    it. Returns True when the file changed.
+    **Standalone components only.** A module object's header gets the narrow,
+    additive accessor injection above instead (gh-627): this reconciles every
+    declaration, and a module header has never been reconciled, so running it
+    there would replay years of accumulated drift as a side effect of a
+    property fix. Extending it to module objects is a migration in its own
+    right. Returns True when the file changed.
     """
     rel = f"native/inc/{comp}/{comp}_core.h"
     changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)

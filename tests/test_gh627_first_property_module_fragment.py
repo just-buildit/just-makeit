@@ -149,3 +149,32 @@ class TestNoRegression:
         ext = (root / "native" / "src" / "reader" / "reader_ext.c").read_text()
         assert "Reader_getprop_thing" in ext
         assert "reader_get_thing" in _header(root)
+
+
+class TestHeaderInjectionIsNarrow:
+    """The header half is additive only — a review of the first version
+    measured the blanket `_refresh_core_h_decls` rewriting 125 declarations
+    across 44 sacred doppler headers, including a `create()` prototype that no
+    longer matched its own definition. Only the new accessor is injected, and
+    an existing prototype is never rewritten, whatever its signature."""
+
+    def test_existing_prototype_is_never_rewritten(self, first_property):
+        hdr = first_property / "native" / "inc" / "reader" / "reader_core.h"
+        hand = hdr.read_text().replace(
+            "int reader_get_thing(const reader_state_t *state);",
+            "int reader_get_thing(const reader_state_t *state, size_t n);",
+        )
+        hdr.write_text(hand)
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_run(first_property)
+        after = hdr.read_text()
+        assert "size_t n);" in after, "hand-owned signature was rewritten"
+        assert after.count("reader_get_thing") == 1, "duplicate prototype"
+
+    def test_unrelated_declarations_untouched(self, first_property):
+        """Nothing else in the header moves — that was the +44 regression."""
+        hdr = first_property / "native" / "inc" / "reader" / "reader_core.h"
+        before = hdr.read_text()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_run(first_property)
+        assert hdr.read_text() == before
