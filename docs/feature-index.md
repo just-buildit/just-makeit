@@ -104,6 +104,16 @@ ______________________________________________________________________
 | Async iteration                        | `stream_source_async`                            |
 | Re-framing a stream into fixed chunks  | [Array processing](examples/array_processing.md) |
 
+## Documentation
+
+| Feature                                             | Example / guide                                                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Doxygen `@brief` / `@param` → `.pyi` docstrings     | [Accumulator](examples/accumulator.md#document-once-in-c-rich-stubs-and-runnable-doctests)        |
+| `@code` block → doctest run against the built `.so` | [Accumulator](examples/accumulator.md#document-once-in-c-rich-stubs-and-runnable-doctests)        |
+| Documenting free and `static inline` functions      | [Module functions](examples/jm_function.md#5-document-once-in-c-rich-stubs-and-runnable-doctests) |
+| Which Doxygen tags jm reads, and what they map to   | [Enriching stubs](workflows/enriching-stubs.md)                                                   |
+| Doxygen C site + Zensical Python site (`make docs`) | [Full workflow](examples/full_workflow.md)                                                        |
+
 ## Applications and tooling
 
 | Feature                                           | Example                                    |
