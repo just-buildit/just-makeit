@@ -4,6 +4,15 @@
 
 ### Changed
 
+- **`docs-check` now runs its gates as accumulating pre/post lists.** The
+    strict build and the docs tests used to be separate recipe lines, so the
+    first failure aborted the rest and a broken build hid whatever
+    `test_docs.py` would have said about the same change. `DOCS_CHECK_POST_CMDS`
+    runs after the build and accumulates: every gate runs, every failure is
+    reported, and the target fails at the end if any did. The capability comes
+    from canonical `standard.mk`, added so doppler could retire the workaround
+    that neutered the standard's build line.
+
 - **The drift gate is live (P1).** `standard.mk` is now published at
     <https://just-buildit.github.io/standard.mk> and the vendored copy is
     checked against it on every `make lint`. `STANDARD_URL` defaults to

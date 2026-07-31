@@ -128,8 +128,14 @@ WHEEL_CMD = PYTHONPATH=src $(UV) build --wheel --no-build-isolation
 # ── Docs ─────────────────────────────────────────────────────────────────────
 # The strict build catches broken TOC anchors (which the test suite does NOT),
 # and tests/test_docs.py catches mangled MkDocs tab blocks + other invariants.
-DOCS_PREPARE   = $(PYTHON) scripts/copy_examples.py
-DOCS_CHECK_CMD = $(PYTEST) tests/test_docs.py
+DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
+
+# A post-gate, not DOCS_CHECK_CMD: the docs tests run after the strict build,
+# and the list form accumulates, so a build failure no longer hides whatever
+# test_docs.py would have said about the same change.
+define DOCS_CHECK_POST_CMDS
+$(PYTEST) tests/test_docs.py
+endef
 
 # ── Bench ────────────────────────────────────────────────────────────────────
 BENCH_CMD         = $(PYTEST_B) tests/bench_scaffold.py -v --benchmark-disable-gc
