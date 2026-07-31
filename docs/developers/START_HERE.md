@@ -148,6 +148,11 @@ make setup
 `uv sync` does neither, which leaves you without ruff, mypy or pre-commit and
 with lint failing for the first time in CI.
 
+Then run `make start-here`. It is a signpost rather than a summary: it links to
+whichever source owns each answer, and reports what *this* clone still needs —
+git hook, dev tools, whether `standard.mk` matches canonical. That last part is
+the bit no document can do for you.
+
 Then:
 
 ```sh
