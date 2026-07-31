@@ -29,15 +29,18 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Copy example READMEs into docs/
-        run: python3 scripts/copy_examples.py
-
       - name: Build docs site
-        # --strict aborts on warnings (e.g. a broken internal link) instead
-        # of shipping a site with dead links — docs/examples/*.md in
-        # particular only exist after the copy step above runs, so this is
-        # the backstop against a build that skips it.
-        run: uv run --group dev zensical build --clean --strict
+        # `make docs`, not the two commands it runs. They were spelled out
+        # here and were a second implementation of the docs build: this copy
+        # hardcoded `python3` while the Makefile resolves the project
+        # interpreter through uv, so CI and a developer could copy the example
+        # READMEs with different Pythons and only notice downstream.
+        #
+        # The target keeps the ordering the build depends on — the strict
+        # build aborts on a broken internal link, and docs/examples/*.md only
+        # exist after the copy step — in one place that the drift gate and
+        # `make docs-check` also use.
+        run: make docs
 
       - name: Copy install.sh into site root
         run: cp install.sh site/install.sh
