@@ -141,19 +141,48 @@ ______________________________________________________________________
 ```sh
 git clone https://github.com/just-buildit/just-makeit
 cd just-makeit
-uv sync
+make setup
 ```
 
-Run the tests:
+`make setup` syncs the `dev` dependency group and installs the git hook. Plain
+`uv sync` does neither, which leaves you without ruff, mypy or pre-commit and
+with lint failing for the first time in CI.
+
+Then run `make start-here`. It is a signpost rather than a summary: it links to
+whichever source owns each answer, and reports what *this* clone still needs —
+git hook, dev tools, whether `standard.mk` matches canonical. That last part is
+the bit no document can do for you.
+
+Then:
 
 ```sh
-uv run pytest                          # fast unit + integration tests
-uv run pytest tests/test_examples.py  # slow: cmake build + run (skipped by default)
-uv run pytest --benchmark-only        # scaffold generation benchmarks
+make test           # unit + integration
+make test-examples  # slow: scaffolds, builds with cmake, runs
+make bench          # scaffold generation benchmarks
+make lint           # the gate CI runs — exactly this
+make format         # fix formatting
 ```
 
-The default `pytest.ini_options` in `pyproject.toml` ignores `test_examples.py`
-to keep the normal suite fast.
+**Run these through `make`, not directly.** The targets are not aliases for the
+obvious command: `make test` runs pytest in a deliberately isolated
+`--no-project` environment so the suite exercises the installed-package path,
+which a bare `uv run pytest` does not. The Makefile is the single source of
+truth for *how* every tool runs; `pyproject.toml` owns which versions, and
+`.pre-commit-config.yaml` dispatches back in via `make -s lint-<tool>`. Calling
+a tool directly gets you a different environment than CI, silently.
+
+### Where the targets come from
+
+`make help` is generated from the targets that actually exist — it is the one
+list that cannot go stale, so prefer it over any list written in prose.
+
+The shared ones live in `standard.mk`, vendored from the cross-org standard at
+<https://just-buildit.github.io/standard.mk>; the `Makefile` holds only this
+repo's configuration, and `local.mk` holds targets unique to it. **Do not edit
+`standard.mk`** — it is vendored verbatim and `make lint` fails on any
+difference from canonical. Per-repo variation is a variable in `Makefile`; a
+shared change goes to canonical and comes back by re-vendoring. Usage and the
+full contract are documented beside the file itself.
 
 ______________________________________________________________________
 
