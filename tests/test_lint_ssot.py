@@ -214,6 +214,69 @@ class TestTheStandardStaysTheStandard:
         )
 
 
+class TestTheDocsCannotDriftFromTheMakefile:
+    """Every `make <target>` this repo's own docs name must exist.
+
+    The contributor docs used to tell a newcomer to run ``uv sync`` and ``uv
+    run pytest`` directly. Neither matches what the Makefile does — ``make
+    setup`` also syncs the ``dev`` group and installs the git hook, and ``make
+    test`` runs pytest in a deliberately isolated ``--no-project`` environment
+    so the suite exercises the installed-package path. Following the docs got
+    you a different environment than CI, silently: the exact drift the Makefile
+    standard exists to close, reintroduced through prose.
+
+    Prose cannot be gated, but the target *names* in it can, so a rename can no
+    longer leave the docs quietly wrong.
+    """
+
+    # Only this repo's own contributor docs. The user-facing docs describe
+    # GENERATED projects, whose Makefile is just-makeit's product and has its
+    # own, different target set.
+    OWN_DOCS = ("docs/developers/START_HERE.md", "CLAUDE.md")
+
+    @staticmethod
+    def _referenced(text):
+        """`make <target>` in backticks, or as a command line in a fence.
+
+        Deliberately not a bare-prose match: "make changes" and "standard make
+        targets" are English, not commands, and a checker that flags them gets
+        switched off.
+        """
+        found = set(re.findall(r"`make ([a-z][a-z0-9-]*)[^`]*`", text))
+        for line in text.splitlines():
+            m = re.match(r"^make ([a-z][a-z0-9-]*)", line.strip())
+            if m:
+                found.add(m.group(1))
+        return found
+
+    @pytest.mark.parametrize("doc", OWN_DOCS)
+    def test_every_documented_target_exists(self, doc):
+        db = _make_db()
+        missing = sorted(
+            t
+            for t in self._referenced(_read(ROOT / doc))
+            if not re.search(rf"^{re.escape(t)}:", db, re.M)
+        )
+        assert not missing, (
+            f"{doc} names `make <target>` that does not exist: "
+            f"{', '.join(missing)} — rename in the docs, or the target is gone"
+        )
+
+    def test_setup_is_the_documented_entry_point(self):
+        """Not `uv sync`, which skips the dev group and the git hook."""
+        text = _read(ROOT / "docs/developers/START_HERE.md")
+        assert "make setup" in text, (
+            "START_HERE must point newcomers at `make setup`; plain `uv sync` "
+            "leaves them without the dev tools and without the git hook"
+        )
+        setup_at = text.index("## Development setup")
+        section = text[setup_at : setup_at + 1200]
+        assert not re.search(r"^uv sync\s*$", section, re.M), (
+            "START_HERE's setup section tells contributors to run `uv sync` "
+            "directly, which is not what `make setup` does"
+        )
+
+
 class TestNobodyBypassesTheMakefile:
     def test_no_uvx_linter_in_workflows_or_docs(self):
         """`uvx ruff` is the exact footgun that caused the 15-file churn."""
