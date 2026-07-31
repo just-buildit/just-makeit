@@ -34,6 +34,9 @@ pytest tests/test_templates.py::test_make_state_ctx_no_state
 make format   # auto-fix (ruff + mdformat)
 make lint     # the gate CI runs (all pre-commit hooks, all files)
 
+# What targets exist is answered by make, never by a hand-written list
+make help
+
 # Run a bundled end-to-end example (scaffolds fresh in /tmp, builds, tests)
 just-makeit example fir_filter
 
@@ -223,6 +226,40 @@ correct. The generated `Makefile` still detects `OS=Windows_NT` at make-time
     `release.yml`
 - `.devcontainer/devcontainer.json` — Codespaces config; login shell so
     `docker/motd.sh` fires automatically
+
+### Makefile standard (`standard.mk`)
+
+The shared make targets are **not** written here. `standard.mk` is vendored
+from the cross-org standard (canonical:
+`https://just-buildit.github.io/standard.mk`, published by P1) and the
+repo's `Makefile` is configuration only — feature flags, command variables,
+`include standard.mk`. Plan and success criteria live in the
+just-buildit/.github README under "Makefile standard".
+
+- **Never edit `standard.mk` in place.** It is vendored verbatim; the
+    `standard-check` drift gate fails `make lint` on any difference from
+    canonical. Per-repo variation is a variable in `Makefile`; a shared change
+    goes to canonical and comes back through the vendored copy.
+- `HAS_PYTHON/DOCS/BENCH/RELEASE/EXAMPLES` are on here. `HAS_C` is off — jm
+    generates C but builds none itself, so `build` would have nothing to build;
+    the C toolchain is exercised via `test-examples`.
+- Three gates hang off `lint`, so CI (which runs `make lint` and nothing else)
+    enforces them: `standard-check` (drift), `help-check` (every target
+    documented, every rule listed), `ghost-check` (no `.PHONY` entry without a
+    recipe or prerequisites). `tests/test_lint_ssot.py` guards the wiring.
+- `help` is generated from the `## description` on each rule; a hand-written
+    target list is what let `make wheel` stay advertised in doppler after its
+    rule was gone.
+- `STANDARD_URL` is deliberately empty until P1 publishes canonical — the gate
+    fails on an unreachable reference rather than skipping, so arming it early
+    would break every `make lint`.
+- A genuinely repo-local target goes in `local.mk` and is named in
+    `LOCAL_TARGETS` (so `help` and the gates see it). jm has exactly one:
+    `examples-clean`. It is deliberately NOT in `HAS_EXAMPLES` — doppler has
+    examples too but cleans them from its own `clean`, so a required
+    `EXAMPLES_CLEAN_CMD` would force it to invent a command for a target it
+    does not want. Criterion 10 requires shared targets to be *in* the
+    standard; it does not license the converse.
 
 ### CI / release
 
