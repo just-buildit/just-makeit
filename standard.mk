@@ -53,11 +53,15 @@
 
 # ── Preconditions ────────────────────────────────────────────────────────────
 
-# GNU make only. `.RECIPEPREFIX` exists in GNU make 3.82+ and in no BSD make,
-# so its absence is a precise probe. Checked because the failure otherwise
+# GNU make only, 3.81 or newer. `.FEATURES` arrived in 3.81 and exists in no
+# BSD make, so its absence is the probe. Checked because the failure otherwise
 # surfaces as an inscrutable syntax error hundreds of lines away.
-ifeq ($(origin .RECIPEPREFIX),undefined)
-$(error standard.mk requires GNU make (try gmake))
+#
+# 3.81 specifically, NOT 3.82: that is what macOS still ships as `make`, so a
+# probe for anything newer rejects every macOS CI runner. It cost a red matrix
+# to learn — `.RECIPEPREFIX` (3.82+) was the first probe here.
+ifeq ($(origin .FEATURES),undefined)
+$(error standard.mk requires GNU make 3.81+ (try gmake))
 endif
 
 # POSIX sh, so no recipe may rely on a bashism. Overridable, but only
@@ -469,6 +473,11 @@ endif
 
 STD_TARGETS += standard-check help-check ghost-check
 
+# A temp file, portably: bare `mktemp` is a GNU extension, and the BSD one
+# macOS ships requires a template. The gates parse make's own database, which
+# is far too big to hold in a shell variable comfortably.
+_STD_TMP = mktemp "$${TMPDIR:-/tmp}/std.XXXXXX"
+
 # Resolve one target's help text, for both `help` and `help-check`. Defined
 # once here so the two can never disagree about what counts as documented.
 #
@@ -523,7 +532,7 @@ standard-check: ## Verify the vendored standard.mk matches canonical
 # targets `help` lists actually do anything is ghost-check's job.
 help-check: ## Verify help documents every target, and every target is listed
 	@rc=0; \
-	 db=$$(mktemp); trap 'rm -f "$$db"' EXIT; \
+	 db=$$($(_STD_TMP)); trap 'rm -f "$$db"' EXIT; \
 	 $(MAKE) -rpn --no-print-directory >"$$db" 2>/dev/null; \
 	 for t in $(ALL_TARGETS); do \
 	     $(_STD_DESC); \
@@ -534,9 +543,14 @@ help-check: ## Verify help documents every target, and every target is listed
 	 done; \
 	 withrecipe=$$(awk '/^[a-zA-Z0-9_.-]+:/ { n = $$0; sub(/:.*/, "", n); \
 	                                          b = 1; r = 0; next } \
-	      b && /recipe to execute/ { r = 1 } \
+	      b && / to execute/ { r = 1 } \
 	      b && /^$$/ { if (r) print n; b = 0 } \
 	      END { if (b && r) print n }' "$$db" | sort -u); \
+	 if [ -z "$$withrecipe" ]; then \
+	     echo "ERROR: parsed no rules out of make's database"; \
+	     echo "  This half of the gate did not run, so it has not passed."; \
+	     rc=1; \
+	 fi; \
 	 for t in $$withrecipe; do \
 	     case " $(ALL_TARGETS) " in *" $$t "*) continue;; esac; \
 	     case "$$t" in .*) continue;; esac; \
@@ -558,7 +572,7 @@ help-check: ## Verify help documents every target, and every target is listed
 # `all: test`, `test-all: ...` and `ship: ...` carry no recipe by design and do
 # their work entirely through what they depend on.
 ghost-check: ## Verify every .PHONY target has a recipe
-	@db=$$(mktemp); phony=$$(mktemp); norecipe=$$(mktemp); \
+	@db=$$($(_STD_TMP)); phony=$$($(_STD_TMP)); norecipe=$$($(_STD_TMP)); \
 	 trap 'rm -f "$$db" "$$phony" "$$norecipe"' EXIT; \
 	 $(MAKE) -rpn --no-print-directory >"$$db" 2>/dev/null; \
 	 sed -n 's/^\.PHONY:[ ]*//p' "$$db" | tr ' ' '\n' | sed '/^$$/d' \
@@ -566,9 +580,9 @@ ghost-check: ## Verify every .PHONY target has a recipe
 	 awk '/^[a-zA-Z0-9_.-]+:/ { n = $$0; sub(/:.*/, "", n); \
 	                            p = $$0; sub(/^[^:]*:/, "", p); \
 	                            b = 1; r = 0; next } \
-	      b && /recipe to execute/ { r = 1 } \
-	      b && /^$$/ { if (!r && p !~ /[^ \t]/) print n; b = 0 } \
-	      END { if (b && !r && p !~ /[^ \t]/) print n }' "$$db" \
+	      b && / to execute/ { r = 1 } \
+	      b && /^$$/ { if (!r && p !~ /[^[:space:]]/) print n; b = 0 } \
+	      END { if (b && !r && p !~ /[^[:space:]]/) print n }' "$$db" \
 	     | sort -u >"$$norecipe"; \
 	 ghosts=$$(comm -12 "$$phony" "$$norecipe"); \
 	 if [ -n "$$ghosts" ]; then \
