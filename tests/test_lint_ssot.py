@@ -4,7 +4,9 @@ Three files each own exactly one thing:
 
 - ``pyproject.toml`` (``[dependency-groups] dev``) — WHICH tools, WHAT versions,
   locked by ``uv.lock``.
-- ``Makefile`` — HOW a tool is invoked (binary + flags + paths).
+- ``Makefile`` — HOW a tool is invoked (binary + flags + paths), as
+  configuration consumed by the vendored ``standard.mk``, which owns the
+  targets themselves.
 - ``.pre-commit-config.yaml`` — WHEN a check runs (which paths trigger it).
 
 Every caller routes through a Makefile target, so a human running ``make
@@ -23,7 +25,9 @@ These tests assert the invariants rather than any one command string, so they
 keep holding as targets get added.
 """
 
+import functools
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,6 +35,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 PRECOMMIT = ROOT / ".pre-commit-config.yaml"
 MAKEFILE = ROOT / "Makefile"
+STANDARD = ROOT / "standard.mk"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 # Tools whose version is pinned in pyproject's dev group; they must be invoked
@@ -40,6 +45,24 @@ MANAGED_TOOLS = ("ruff", "mdformat")
 
 def _read(p):
     return p.read_text(encoding="utf-8")
+
+
+@functools.lru_cache(maxsize=1)
+def _make_db():
+    """Every target make knows about, from its own database.
+
+    ``-p`` dumps the parsed database and ``-n`` keeps it from running
+    anything; ``-r`` drops the built-in rules, leaving only what this repo
+    defines. This sees targets that no file spells out literally — the
+    ``lint-<tool>`` rules standard.mk generates with ``$(eval)`` — which is
+    why the tests below ask make instead of grepping the Makefile.
+    """
+    return subprocess.run(
+        ["make", "-rpn", "--no-print-directory"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def _hooks():
@@ -115,9 +138,64 @@ class TestMakefileOwnsInvocation:
         "target", ["format", "lint", "lint-ruff", "lint-mdformat"]
     )
     def test_entry_point_targets_exist(self, target):
-        mk = _read(MAKEFILE)
-        assert re.search(rf"^{re.escape(target)}:", mk, re.M), (
+        # Asked of make rather than grepped out of a file: the shared targets
+        # live in the vendored standard.mk, and the `lint-<tool>` dispatch
+        # rules are stamped out by `$(eval)`, so they appear as literal text
+        # in no file at all. What callers depend on is that `make <target>`
+        # works, which is exactly what the database answers.
+        assert re.search(rf"^{re.escape(target)}:", _make_db(), re.M), (
             f"`make {target}` is referenced by CLAUDE.md, the hooks, or CI"
+        )
+
+
+class TestTheStandardStaysTheStandard:
+    """The cross-org Makefile standard, as invariants rather than as prose.
+
+    Shared targets live in the vendored ``standard.mk`` (canonical:
+    <https://just-buildit.github.io/standard.mk>); per-repo variation is the
+    configuration in ``Makefile``. Plan and success criteria: the
+    just-buildit/.github README, "Makefile standard".
+    """
+
+    def test_standard_mk_is_vendored(self):
+        assert STANDARD.exists(), (
+            "standard.mk is missing — the Makefile includes it, and the "
+            "shared targets live there"
+        )
+
+    def test_makefile_defines_no_shared_targets(self):
+        """Criterion 1: the Makefile is configuration, not implementation.
+
+        A target defined here is a target that has stopped being shared: the
+        drift gate cannot see it, so the next repo to want it copies it, and
+        the two copies start diverging. That is the whole failure mode.
+        """
+        offenders = [
+            f"Makefile:{i}: {line}"
+            for i, line in enumerate(_read(MAKEFILE).splitlines(), 1)
+            if re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*:", line)
+        ]
+        assert not offenders, (
+            "these define targets in the Makefile; shared ones belong in "
+            "standard.mk, and genuinely local ones in local.mk (named in "
+            "LOCAL_TARGETS):\n" + "\n".join(offenders)
+        )
+
+    @pytest.mark.parametrize(
+        "gate", ["standard-check", "help-check", "ghost-check"]
+    )
+    def test_lint_runs_the_gate(self, gate):
+        """The gates must hang off `lint`, which is what CI runs.
+
+        Criteria 2, 3 and 8 are enforced by gates rather than by review
+        precisely because review did not catch the drift that motivated them.
+        A gate nothing invokes is back to being review.
+        """
+        m = re.search(r"^lint:(.*)$", _make_db(), re.M)
+        assert m, "no `lint` target in the make database"
+        assert gate in m.group(1).split(), (
+            f"`make lint` does not run {gate}; CI runs `make lint` and "
+            "nothing else, so a gate outside it never runs on a PR"
         )
 
 

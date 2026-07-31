@@ -1,42 +1,35 @@
 # just-makeit — development control centre
 #
-# Targets:
-#   make                   Run unit tests (default)
-#   make test              Run unit test suite (pytest)
-#   make test-fast         Run tests, stop on first failure
-#   make test-examples     Run end-to-end example builds (requires cmake)
-#   make bench             Run scaffold benchmarks (pytest-benchmark)
-#   make bench-save        Save benchmark baseline (tagged with git describe)
-#   make bench-compare     Compare against last saved baseline
-#   make lint              Run pre-commit hooks on all files (the CI gate)
-#   make format            Auto-fix formatting (ruff + mdformat)
-#   make build             Build wheel into dist/
-#   make docs              Build docs site into site/
-#   make docs-serve        Build and serve docs with live reload
-#   make docs-check        Pre-push docs gate: strict build + docs tests
-#   make install           Install package in editable mode
-#   make setup             One-time per clone: uv sync + pre-commit install
-#   make bump-version VERSION=  Update version in pyproject.toml
-#   make check-version VERSION= Verify version matches
-#   make release-branch VERSION= Create release branch + bump
-#   make tag-release VERSION=   Tag merged main + push
-#   make release-watch VERSION= Watch release.yml + verify artifacts
-#   make ship VERSION=          tag-release then release-watch
-#   make clean             Remove build artifacts
-#   make examples-clean    Remove build artifacts from all examples
-#   make help              Show this message
+# CONFIGURATION ONLY. Every shared target lives in standard.mk, vendored from
+# https://just-buildit.github.io/standard.mk and never edited in place — per-repo
+# variation is the variables below, because a local edit is a fork. See the
+# cross-org plan in the just-buildit/.github README.
+#
+# `make help` is generated from standard.mk; there is no hand-written target
+# list here, because a hand-written list is how a target stays advertised after
+# its rule is gone.
 
-SHELL      = /bin/sh
-PYTHON     ?= $(shell uv run --no-project python -c "import sys; print(sys.executable)" 2>/dev/null || python3)
-UV         = uv
+# ── Feature flags ────────────────────────────────────────────────────────────
+# just-makeit GENERATES C, but does not build any itself — the C toolchain is
+# exercised through the example projects it scaffolds, under test-examples. So
+# no HAS_C: `make build` here would have nothing to build.
+HAS_PYTHON   = 1
+HAS_DOCS     = 1
+HAS_BENCH    = 1
+HAS_RELEASE  = 1
+HAS_EXAMPLES = 1
+
+PYTHON     ?= $(shell uv run --no-project python -c \
+                  "import sys; print(sys.executable)" 2>/dev/null || python3)
+UV          = uv
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
-# ── Tooling ───────────────────────────────────────────────────────────────────
-# This block is the ONLY place a tool binary is named or given flags. Humans,
-# the pre-commit hooks, and CI all reach the tools through the targets below,
-# so changing a flag (or a tool) is a one-line edit here rather than a hunt
-# through the Makefile, .pre-commit-config.yaml, and the workflow files.
-# Versions live in pyproject.toml's `dev` group and are locked by uv.lock.
+# ── Tooling ──────────────────────────────────────────────────────────────────
+# The ONLY place a tool binary is named or given flags. Humans, the pre-commit
+# hooks, and CI all reach the tools through the targets in standard.mk, so
+# changing a flag is a one-line edit here rather than a hunt through the
+# Makefile, .pre-commit-config.yaml, and the workflow files. Versions live in
+# pyproject.toml's `dev` group and are locked by uv.lock.
 #
 # Corollary: do NOT invoke a linter with `uvx` (or a global install). `uvx ruff`
 # resolves to whatever released today, which formats differently from the
@@ -46,6 +39,7 @@ RUFF       = $(DEV_RUN) ruff
 MDFORMAT   = $(DEV_RUN) mdformat
 ZENSICAL   = $(DEV_RUN) zensical
 PRE_COMMIT = $(DEV_RUN) pre-commit
+SYNC_CMD   = $(UV) sync --group dev
 
 # Each formatter runs over the whole tree so `make format` and the pre-commit
 # hook can never disagree about scope. ruff reads its own excludes from
@@ -64,6 +58,32 @@ RUFF_PATHS = .
 # of this regex in .pre-commit-config.yaml.
 MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$$)
 
+# ── lint-<tool> dispatch ─────────────────────────────────────────────────────
+# LINT_TOOLS stamps out one `lint-<tool>` target each; .pre-commit-config.yaml
+# calls `make -s lint-<tool>` so a hook can never run a tool differently from
+# the way `make format` runs it. FORMAT_TOOLS is the subset `format` runs, in
+# order — ruff-format first, since a fix can invalidate a reformat.
+LINT_TOOLS   = ruff ruff-format mdformat
+FORMAT_TOOLS = ruff-format ruff mdformat
+
+LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
+LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
+
+# mdformat needs Python >=3.10 (see pyproject's dev group). On a 3.9 dev env it
+# is simply absent, so skip with a notice rather than failing — the CI lint job
+# runs a modern Python and enforces it there. Same self-skip pattern as the
+# mypy-backed stub-conformance gate.
+define LINT_mdformat
+@if $(MDFORMAT) --version >/dev/null 2>&1; then \
+    git ls-files '*.md' \
+        | grep -Ev '$(MD_EXCLUDE_RE)' \
+        | xargs -r $(MDFORMAT); \
+else \
+    echo "mdformat unavailable (needs Python >=3.10) — skipping"; \
+fi
+endef
+
+# ── Test ─────────────────────────────────────────────────────────────────────
 # just-makeit's OWN runtime dependencies, mirrored from pyproject.toml's
 # `[project] dependencies`. `--no-project` excludes the project *and its
 # dependencies*, but the suite imports just_makeit from `src/` — so without
@@ -92,226 +112,62 @@ PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
 
-.PHONY: all test test-fast test-examples bench bench-save bench-compare \
-        lint format lint-ruff lint-ruff-format lint-mdformat \
-        build docs docs-serve docs-check install setup \
-        bump-version check-version release-branch tag-release \
-        release-watch ship clean examples-clean help
+# `test` is the default suite and, in a Python-only repo, IS the Python suite —
+# named once here rather than defined twice.
+TEST_PYTHON_CMD   = $(PYTEST) -v --ignore=tests/test_examples.py
+TEST_CMD          = $(TEST_PYTHON_CMD)
+TEST_FAST_CMD     = $(PYTEST) -x -q
+TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v
 
-all: test
+TEST_ALL_DEPS = test test-examples
+GATES_DEPS    = lint docs-check test-all
 
-# ── Test ─────────────────────────────────────────────────────────────────────
+# ── Build ────────────────────────────────────────────────────────────────────
+WHEEL_CMD = PYTHONPATH=src $(UV) build --wheel --no-build-isolation
 
-test:
-	$(PYTEST) -v --ignore=tests/test_examples.py
+# ── Docs ─────────────────────────────────────────────────────────────────────
+# The strict build catches broken TOC anchors (which the test suite does NOT),
+# and tests/test_docs.py catches mangled MkDocs tab blocks + other invariants.
+DOCS_PREPARE   = $(PYTHON) scripts/copy_examples.py
+DOCS_CHECK_CMD = $(PYTEST) tests/test_docs.py
 
-test-fast:
-	$(PYTEST) -x -q
+# ── Bench ────────────────────────────────────────────────────────────────────
+BENCH_CMD         = $(PYTEST_B) tests/bench_scaffold.py -v --benchmark-disable-gc
+BENCH_SAVE_CMD    = $(PYTEST_B) tests/bench_scaffold.py \
+                        --benchmark-save=$(BENCH_TAG) --benchmark-disable-gc
+BENCH_COMPARE_CMD = $(PYTEST_B) tests/bench_scaffold.py \
+                        --benchmark-compare --benchmark-disable-gc
 
-test-examples:
-	$(PYTEST_EXAMPLES) tests/test_examples.py -v
+# ── Release ──────────────────────────────────────────────────────────────────
+# jb.toml's version is synced from pyproject.toml by a pre-commit hook, so it is
+# a real second manifest and `version-check` probes both — a desync would
+# otherwise ship silently.
+define VERSION_PROBES
+pyproject.toml|grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'
+jb.toml|grep '^version' jb.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
+endef
 
-# ── Bench ─────────────────────────────────────────────────────────────────────
+BUMP_VERSION_CMD = sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' \
+                       pyproject.toml
+# Autonomously watch release.yml: stream job outcomes, auto-rerun ONE
+# pre-publish flake (safe — publish is gated behind smoke), and verify the real
+# artifacts (PyPI per-version then latest, GitHub Release) at the end.
+RELEASE_WATCH_CMD = REPO=just-buildit/just-makeit scripts/release-watch.sh \
+                        "$(VERSION)"
 
-bench:
-	$(PYTEST_B) tests/bench_scaffold.py -v --benchmark-disable-gc
+# ── Clean ────────────────────────────────────────────────────────────────────
+CLEAN_PATHS = dist/ site/ .pytest_cache/
 
-bench-save:
-	$(PYTEST_B) tests/bench_scaffold.py \
-		--benchmark-save=$(BENCH_TAG) --benchmark-disable-gc
+define CLEAN_CMD
+find src -name "*.pyc" -delete
+find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
+endef
 
-bench-compare:
-	$(PYTEST_B) tests/bench_scaffold.py \
-		--benchmark-compare --benchmark-disable-gc
+define EXAMPLES_CLEAN_CMD
+@for d in examples/*/; do \
+    [ -f "$$d/Makefile" ] && $(MAKE) -C "$$d" clean 2>/dev/null || true; \
+done
+find examples -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
+endef
 
-# ── Lint ──────────────────────────────────────────────────────────────────────
-
-# `lint` is the gate (CI runs exactly this); `format` is the fixer you run
-# locally. Both go through the tool variables above, so neither can drift from
-# what the pre-commit hooks do — the hooks call these same targets.
-# The hook install is a convenience, not the gate — so it must never be able to
-# fail the gate. `git rev-parse --git-path` resolves the real hooks dir (in a
-# worktree `.git` is a FILE, so the old `test -f .git/hooks/...` guard always
-# missed and tried to reinstall), and a `core.hooksPath` that makes pre-commit
-# refuse to install is reported rather than fatal.
-lint:
-	@hook=$$(git rev-parse --git-path hooks/pre-commit 2>/dev/null); \
-	 if [ -n "$$hook" ] && [ ! -f "$$hook" ]; then \
-	     $(PRE_COMMIT) install >/dev/null 2>&1 \
-	         || echo "note: git hook not installed (continuing with lint)"; \
-	 fi
-	$(PRE_COMMIT) run --all-files
-
-format:
-	$(RUFF) format $(RUFF_PATHS)
-	$(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
-	@$(MAKE) -s lint-mdformat
-
-# Individual tool targets. These exist so .pre-commit-config.yaml can invoke a
-# Makefile target instead of repeating the command line — the hooks decide WHEN
-# to run (which paths trigger them); these decide HOW.
-lint-ruff:
-	$(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
-
-lint-ruff-format:
-	$(RUFF) format $(RUFF_PATHS)
-
-# mdformat needs Python >=3.10 (see pyproject's dev group). On a 3.9 dev env it
-# is simply absent, so skip with a notice rather than failing — the CI lint job
-# runs a modern Python and enforces it there. Same self-skip pattern as the
-# mypy-backed stub-conformance gate.
-lint-mdformat:
-	@if $(MDFORMAT) --version >/dev/null 2>&1; then \
-	    git ls-files '*.md' \
-	        | grep -Ev '$(MD_EXCLUDE_RE)' \
-	        | xargs -r $(MDFORMAT); \
-	else \
-	    echo "mdformat unavailable (needs Python >=3.10) — skipping"; \
-	fi
-
-# ── Build ─────────────────────────────────────────────────────────────────────
-
-build:
-	PYTHONPATH=src $(UV) build --wheel --no-build-isolation
-	@echo ""
-	@ls -lh dist/*.whl
-
-# ── Docs ──────────────────────────────────────────────────────────────────────
-
-docs:
-	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL) build --clean --strict
-
-docs-serve:
-	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL) serve
-
-# Pre-push docs gate: the strict build catches broken TOC anchors (which the
-# test suite does NOT — only the CI docs build does), and the docs test catches
-# mangled MkDocs tab blocks + other invariants. Run this before pushing docs.
-docs-check:
-	@echo "Docs gate: strict build (broken anchors) + docs invariants..."
-	$(PYTHON) scripts/copy_examples.py
-	$(ZENSICAL) build --strict
-	$(PYTEST) tests/test_docs.py
-
-# ── Dev install ───────────────────────────────────────────────────────────────
-
-install:
-	$(UV) sync --group dev
-
-setup:
-	$(UV) sync --group dev
-	$(PRE_COMMIT) install
-
-# ── Release ───────────────────────────────────────────────────────────────────
-
-bump-version:
-ifndef VERSION
-	@echo "usage: make bump-version VERSION=<x.y.z>"
-	@exit 1
-endif
-	sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' pyproject.toml
-	@echo "Bumped to $(VERSION) in pyproject.toml"
-	@echo "Next: edit CHANGELOG.md, commit, push PR, merge, then:"
-	@echo "      git checkout main && git pull && make tag-release VERSION=$(VERSION)"
-
-check-version:
-ifndef VERSION
-	@echo "usage: make check-version VERSION=<x.y.z>"
-	@exit 1
-endif
-	@PY=$$(grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'); \
-	 if [ "$$PY" != "$(VERSION)" ]; then \
-	     echo "ERROR: pyproject.toml has $$PY, expected $(VERSION)"; exit 1; \
-	 fi; \
-	 echo "Version OK: $(VERSION)"
-
-release-branch:
-ifndef VERSION
-	@echo "usage: make release-branch VERSION=<x.y.z>"
-	@exit 1
-endif
-	git checkout -b chore/release-$(VERSION) origin/main
-	$(MAKE) bump-version VERSION=$(VERSION)
-	@echo "  - edit CHANGELOG.md ([Unreleased] -> [$(VERSION)] -- YYYY-MM-DD)"
-	@echo "  - git commit -am 'chore: release v$(VERSION)', push PR, merge"
-	@echo "  - then: git checkout main && git pull && make tag-release"
-
-tag-release:
-ifndef VERSION
-	@echo "usage: make tag-release VERSION=<x.y.z>"
-	@exit 1
-endif
-	@git fetch origin main
-	@CURRENT=$$(git rev-parse HEAD); \
-	 ORIGIN=$$(git rev-parse origin/main); \
-	 if [ "$$CURRENT" != "$$ORIGIN" ]; then \
-	     echo "ERROR: not at origin/main — checkout main and pull first"; \
-	     exit 1; \
-	 fi
-	$(MAKE) check-version VERSION=$(VERSION)
-	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
-	git push origin "v$(VERSION)"
-	@echo "Tagged v$(VERSION) — release workflow starting on GitHub"
-	@echo "Watch + verify it with: make release-watch VERSION=$(VERSION)"
-
-# Autonomously watch release.yml for v$(VERSION): stream job outcomes, auto-rerun
-# ONE pre-publish flake (safe — publish is gated behind smoke), and verify the
-# real artifacts (PyPI per-version then latest, GitHub Release) at the end.
-# Collapses the manual tag->watch->rerun->verify babysitting into one command.
-release-watch:
-ifndef VERSION
-	@echo "usage: make release-watch VERSION=<x.y.z>"
-	@exit 1
-endif
-	@REPO=just-buildit/just-makeit scripts/release-watch.sh "$(VERSION)"
-
-# Full release from a green, merged main: tag then watch+verify in one go.
-# Named `ship` (not `release`) to avoid the C-project convention where
-# `make release` is a cmake Release build.
-ship: tag-release release-watch
-
-# ── Clean ─────────────────────────────────────────────────────────────────────
-
-clean:
-	rm -rf dist/ site/ .pytest_cache/
-	find src -name "*.pyc" -delete
-	find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
-
-examples-clean:
-	@for d in examples/*/; do \
-	    [ -f "$$d/Makefile" ] && $(MAKE) -C "$$d" clean 2>/dev/null || true; \
-	done
-	find examples -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
-
-# ── Help ──────────────────────────────────────────────────────────────────────
-
-help:
-	@echo ""
-	@echo "  just-makeit development"
-	@echo ""
-	@echo "  make               run tests"
-	@echo "  make test          run full test suite"
-	@echo "  make test-fast     stop on first failure"
-	@echo "  make test-examples run end-to-end example builds (requires cmake)"
-	@echo "  make bench         run scaffold benchmarks"
-	@echo "  make bench-save    save baseline (git describe tag)"
-	@echo "  make bench-compare compare against last saved baseline"
-	@echo "  make lint          run pre-commit hooks on all files (CI gate)"
-	@echo "  make format        auto-fix formatting (ruff + mdformat)"
-	@echo "  make build         build wheel → dist/"
-	@echo "  make docs          build docs → site/"
-	@echo "  make docs-serve    build and serve with live reload"
-	@echo "  make docs-check    pre-push docs gate (strict build + docs tests)"
-	@echo "  make install       install dev dependencies (uv sync)"
-	@echo "  make setup         one-time: uv sync + pre-commit install"
-	@echo "  make bump-version VERSION=x.y.z  update version in pyproject.toml"
-	@echo "  make check-version VERSION=x.y.z verify version matches"
-	@echo "  make release-branch VERSION=x.y.z create release branch"
-	@echo "  make tag-release VERSION=x.y.z   tag + push to trigger release"
-	@echo "  make release-watch VERSION=x.y.z watch release.yml + verify artifacts"
-	@echo "  make ship VERSION=x.y.z          tag-release then release-watch"
-	@echo "  make clean         remove build artifacts"
-	@echo "  make examples-clean  remove build artifacts from all examples"
-	@echo ""
+include standard.mk

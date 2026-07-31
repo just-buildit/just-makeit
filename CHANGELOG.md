@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The shared make targets moved into a vendored `standard.mk`, leaving the
+    `Makefile` as configuration only (P0 of the cross-org Makefile standard,
+    doppler#555 / just-buildit/.github#3).** Every repo in `just-buildit` and
+    `doppler-dsp` will include the same file, so per-repo variation is a
+    variable rather than a fork — the drift that gave the two repos 50 and 27
+    targets with 18 shared, and `zensical build --strict` implemented three
+    disagreeing ways, was never decided, it accumulated. `make help` is now
+    generated from the `## description` on each rule instead of being
+    hand-maintained.
+- **`make install` folded into `make setup`**, of which it was a strict subset
+    (`uv sync --group dev`), so a fourth deps-ish name never reaches the
+    standard. **`make check-version` is now `make version-check`** (the
+    standard's `<noun>-<qualifier>` naming), and it gained doppler's stronger
+    behavior: it verifies the repo's version manifests agree with *each other*
+    — here `pyproject.toml` against `jb.toml` — in addition to matching
+    `VERSION=` when given. **`make build` is now `make wheel`**, because in a
+    repo with C the noun `build` is the native build, and one standard target
+    may not mean two things. Nothing outside the Makefile referenced any of
+    the three.
+
+### Added
+
+- **Three gates hang off `make lint`, which is what CI runs**: `standard-check`
+    fails on any difference between the vendored `standard.mk` and canonical
+    (and fails, rather than skipping, when it cannot reach it — a gate that
+    cannot reach its reference has not passed); `help-check` fails when a
+    target is undocumented or a rule exists that `help` omits; `ghost-check`
+    fails on a `.PHONY` entry with neither a recipe nor prerequisites — the
+    state `make wheel` shipped in for as long as it did, exiting 0 having done
+    nothing, past a lint gate, CI on every PR, and a `help` entry advertising
+    it. `standard-check` stays inert until the canonical copy is published.
+
 ## [0.33.16] — 2026-07-29
 
 ### Fixed
