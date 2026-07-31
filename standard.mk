@@ -105,7 +105,8 @@ _std_require = $(if $(strip $($(1))),,$(error $(2) is on, but $(1) is empty \
 
 # ── Universal command variables ──────────────────────────────────────────────
 
-ALL_DEPS       ?= test
+# The table's rule: the suite, or the build where there is native code.
+ALL_DEPS       ?= $(if $(filter 1,$(HAS_C)),build,test)
 TEST_CMD       ?=
 TEST_FAST_CMD  ?=
 CLEAN_PATHS    ?=
@@ -282,9 +283,16 @@ DOCS_PREPARE    ?=
 DOCS_BUILD_CMD  ?= $(ZENSICAL) build --clean --strict
 DOCS_SERVE_CMD  ?= $(ZENSICAL) serve
 DOCS_CHECK_CMD  ?=
-# The ONE implementation of the strict build. CI calls `make docs-check`
-# rather than carrying its own copy — that duplication is what put
+# The strict build for `docs-check`, as a variable so CI calls this target
+# instead of carrying its own copy of the command — the duplication that put
 # `zensical build --strict` in three disagreeing places (criterion 5).
+#
+# NOT yet sufficient for doppler: its docs-check runs the build and seven
+# script gates in ONE pass that accumulates failures (and `check_site_links`
+# needs the built site), where these are separate recipe lines, so the first
+# failure aborts the rest. Expressing that needs ordered pre/post lists with
+# accumulate-don't-abort semantics — deferred to P2, where doppler's real
+# gates can validate the design rather than a guess at it.
 DOCS_CHECK_BUILD_CMD ?= $(ZENSICAL) build --strict
 
 docs: ## Build the docs site
@@ -342,14 +350,22 @@ endif
 
 # ── HAS_COVERAGE ─────────────────────────────────────────────────────────────
 ifeq ($(HAS_COVERAGE),1)
-STD_TARGETS += coverage
+STD_TARGETS += coverage coverage-gate
 
-COVERAGE_CMD ?=
+COVERAGE_CMD      ?=
+COVERAGE_GATE_CMD ?=
 
 $(call _std_require,COVERAGE_CMD,HAS_COVERAGE)
+$(call _std_require,COVERAGE_GATE_CMD,HAS_COVERAGE)
 
 coverage: ## Produce a coverage report
 	$(COVERAGE_CMD)
+
+# Separate from `coverage` because a report is not a gate. This one fails when
+# the threshold is missed, so CI can call exactly that rather than "produce a
+# report" and hope someone reads it.
+coverage-gate: ## Fail when coverage falls below the threshold
+	$(COVERAGE_GATE_CMD)
 endif
 
 # ── HAS_RELEASE ──────────────────────────────────────────────────────────────
@@ -452,19 +468,14 @@ endif
 
 # ── HAS_EXAMPLES ─────────────────────────────────────────────────────────────
 ifeq ($(HAS_EXAMPLES),1)
-STD_TARGETS += test-examples examples-clean
+STD_TARGETS += test-examples
 
-TEST_EXAMPLES_CMD   ?=
-EXAMPLES_CLEAN_CMD  ?=
+TEST_EXAMPLES_CMD ?=
 
 $(call _std_require,TEST_EXAMPLES_CMD,HAS_EXAMPLES)
-$(call _std_require,EXAMPLES_CLEAN_CMD,HAS_EXAMPLES)
 
 test-examples: ## Run the end-to-end example builds
 	$(TEST_EXAMPLES_CMD)
-
-examples-clean: ## Remove build artifacts from every example
-	$(EXAMPLES_CLEAN_CMD)
 endif
 
 # ── Gates ────────────────────────────────────────────────────────────────────

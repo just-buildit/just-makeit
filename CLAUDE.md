@@ -254,7 +254,12 @@ just-buildit/.github README under "Makefile standard".
     fails on an unreachable reference rather than skipping, so arming it early
     would break every `make lint`.
 - A genuinely repo-local target goes in `local.mk` and is named in
-    `LOCAL_TARGETS` (so `help` and the gates see it). jm currently has none.
+    `LOCAL_TARGETS` (so `help` and the gates see it). jm has exactly one:
+    `examples-clean`. It is deliberately NOT in `HAS_EXAMPLES` — doppler has
+    examples too but cleans them from its own `clean`, so a required
+    `EXAMPLES_CLEAN_CMD` would force it to invent a command for a target it
+    does not want. Criterion 10 requires shared targets to be *in* the
+    standard; it does not license the converse.
 
 ### CI / release
 

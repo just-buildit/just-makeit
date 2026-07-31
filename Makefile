@@ -163,11 +163,4 @@ find src -name "*.pyc" -delete
 find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
 endef
 
-define EXAMPLES_CLEAN_CMD
-@for d in examples/*/; do \
-    [ -f "$$d/Makefile" ] && $(MAKE) -C "$$d" clean 2>/dev/null || true; \
-done
-find examples -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
-endef
-
 include standard.mk

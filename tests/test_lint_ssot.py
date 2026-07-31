@@ -180,10 +180,15 @@ class TestTheStandardStaysTheStandard:
         drift gate cannot see it, so the next repo to want it copies it, and
         the two copies start diverging. That is the whole failure mode.
         """
+        # `:(?!:?=)` so an assignment written without a space before the
+        # operator is not read as a rule: `FOO:= bar` and `FOO::= bar` are
+        # variables, while `target:` and doppler's `target::` are rules. The
+        # lookahead has to cover the whole operator — `::?(?!=)` backtracks to
+        # one colon, sees the second, and matches `FOO::=` anyway.
         offenders = [
             f"Makefile:{i}: {line}"
             for i, line in enumerate(_read(MAKEFILE).splitlines(), 1)
-            if re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*:", line)
+            if re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*:(?!:?=)", line)
         ]
         assert not offenders, (
             "these define targets in the Makefile; shared ones belong in "

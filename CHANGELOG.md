@@ -35,6 +35,13 @@
     state `make wheel` shipped in for as long as it did, exiting 0 having done
     nothing, past a lint gate, CI on every PR, and a `help` entry advertising
     it. `standard-check` stays inert until the canonical copy is published.
+- **`examples-clean` moved to `local.mk`**, just-makeit's only repo-local
+    target. It is not shared: doppler has examples but cleans them from its own
+    `clean`, so keeping it in `HAS_EXAMPLES` — where a required
+    `EXAMPLES_CLEAN_CMD` now made it fatal — would have forced doppler either
+    to give up `test-examples` or to invent a command for a target it does not
+    want. Criterion 10 requires shared targets to be *in* the standard; it does
+    not license the converse.
 
 ## [0.33.16] — 2026-07-29
 
