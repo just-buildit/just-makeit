@@ -57,12 +57,22 @@ def _make_db():
     ``lint-<tool>`` rules standard.mk generates with ``$(eval)`` — which is
     why the tests below ask make instead of grepping the Makefile.
     """
-    return subprocess.run(
+    proc = subprocess.run(
         ["make", "-rpn", "--no-print-directory"],
         cwd=ROOT,
         capture_output=True,
         text=True,
-    ).stdout
+    )
+    # A makefile that fails to parse yields an empty database, and every test
+    # below then fails with "this target does not exist" — true, but it names
+    # the symptom rather than the cause. That cost a red macOS matrix to read:
+    # the real message was standard.mk rejecting the GNU make 3.81 that macOS
+    # ships, and it was nowhere in the pytest output.
+    assert proc.returncode == 0, (
+        "`make -rpn` failed, so there is no database to check against:\n"
+        + (proc.stderr or "(no stderr)")
+    )
+    return proc.stdout
 
 
 def _hooks():
