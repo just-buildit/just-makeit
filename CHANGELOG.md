@@ -4,6 +4,16 @@
 
 ### Changed
 
+- **The drift gate is live (P1).** `standard.mk` is now published at
+    <https://just-buildit.github.io/standard.mk> and the vendored copy is
+    checked against it on every `make lint`. `STANDARD_URL` defaults to
+    canonical rather than being opted into per repo: opt-in fails open, since a
+    repo that vendors the file and forgets one line has no drift protection and
+    says so only as a notice that reads like a pass. Vendoring the file is what
+    arms it; a deliberate opt-out is `STANDARD_URL =`, a line that exists and so
+    can be found. Verified against live canonical — matching passes, and a
+    one-character edit to the vendored copy fails with the diff.
+
 - **The shared make targets moved into a vendored `standard.mk`, leaving the
     `Makefile` as configuration only (P0 of the cross-org Makefile standard,
     doppler#555 / just-buildit/.github#3).** Every repo in `just-buildit` and
@@ -13,6 +23,7 @@
     disagreeing ways, was never decided, it accumulated. `make help` is now
     generated from the `## description` on each rule instead of being
     hand-maintained.
+
 - **`make install` folded into `make setup`**, of which it was a strict subset
     (`uv sync --group dev`), so a fourth deps-ish name never reaches the
     standard. **`make check-version` is now `make version-check`** (the
