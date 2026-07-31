@@ -250,9 +250,11 @@ just-buildit/.github README under "Makefile standard".
 - `help` is generated from the `## description` on each rule; a hand-written
     target list is what let `make wheel` stay advertised in doppler after its
     rule was gone.
-- `STANDARD_URL` is deliberately empty until P1 publishes canonical — the gate
-    fails on an unreachable reference rather than skipping, so arming it early
-    would break every `make lint`.
+- **The drift gate is live.** `STANDARD_URL` defaults to canonical inside
+    `standard.mk`, so vendoring the file is what arms it — there is no per-repo
+    line to forget. `make lint` therefore needs network; that is deliberate, as
+    a gate that cannot reach its reference has not passed. A deliberate opt-out
+    is `STANDARD_URL =` in the Makefile.
 - A genuinely repo-local target goes in `local.mk` and is named in
     `LOCAL_TARGETS` (so `help` and the gates see it). jm has exactly one:
     `examples-clean`. It is deliberately NOT in `HAS_EXAMPLES` — doppler has
