@@ -30,6 +30,29 @@ class TestStripDoxyInline:
         # @brief/@param are line tags, not inline; @pre is not a single-word ref
         assert _strip_doxy_inline("@pre x > 0") == "@pre x > 0"
 
+    def test_non_word_arguments(self):
+        # gh-641: Doxygen marks the next *token*, which need not be an
+        # identifier. These are all idiomatic and all used to survive raw.
+        assert (
+            _strip_doxy_inline("clamped to @c +/-10^(clip_db/20)")
+            == "clamped to +/-10^(clip_db/20)"
+        )
+        assert (
+            _strip_doxy_inline('BLUE type @c "A" is ASCII')
+            == 'BLUE type "A" is ASCII'
+        )
+        assert _strip_doxy_inline("returns @c -1 on error") == (
+            "returns -1 on error"
+        )
+
+    def test_backslash_prefix(self):
+        # gh-650: \p and @p are the same Doxygen command.
+        assert _strip_doxy_inline(r"length \p code_len") == "length code_len"
+
+    def test_does_not_eat_longer_identifiers(self):
+        # `@pattern` is not `@p` + `attern` — a marker needs whitespace after.
+        assert _strip_doxy_inline("@pattern matched") == "@pattern matched"
+
     def test_parse_strips_param_and_body(self):
         b = parse_doxygen_block(
             "/**\n"
@@ -267,3 +290,152 @@ class TestCodeExamples:
             "First paragraph line one line two of the same paragraph."
         ]
         assert examples == [">>> 1", "1"]
+
+
+class TestBackslashCommands:
+    """gh-650: ``\\brief`` and ``@brief`` are the same Doxygen command."""
+
+    def test_backslash_block_commands_parse(self):
+        raw = (
+            "/**\n"
+            " * \\brief Compute the thing.\n"
+            " *\n"
+            " * \\param gain  Linear gain.\n"
+            " * \\return The result.\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        # Previously: brief kept the literal "\brief" and params/returns were
+        # empty — every parameter description in the header was lost.
+        assert b.brief == "Compute the thing."
+        assert b.params == [("gain", "Linear gain.")]
+        assert b.returns == "The result."
+
+    def test_backslash_code_block(self):
+        raw = "/**\n * \\brief Hi.\n * \\code\n * >>> 1\n * 1\n"
+        raw += " * \\endcode\n */"
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.examples == [">>> 1", "1"]
+
+
+class TestParamDirection:
+    """gh-650: ``@param[out] name  doc`` keeps the doc and the direction."""
+
+    def test_direction_specifiers_are_parsed(self):
+        raw = (
+            "/**\n"
+            " * @brief Compute the thing.\n"
+            " * @param[in]     x   Input sample.\n"
+            " * @param[out]    y   Output sample.\n"
+            " * @param[in,out] st  Running state.\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        # Previously _PARAM_RE rejected the leading '[' and the handler
+        # dropped the line outright — all three descriptions vanished.
+        assert b.params == [
+            ("x", "Input sample."),
+            ("y", "Output sample."),
+            ("st", "Running state."),
+        ]
+        assert b.param_dirs == {"x": "in", "y": "out", "st": "in,out"}
+
+    def test_plain_param_records_no_direction(self):
+        b = parse_doxygen_block("/**\n * @param x  Doc.\n */")
+        assert b is not None
+        assert b.params == [("x", "Doc.")]
+        assert b.param_dirs == {}
+
+
+class TestUnknownTagQuarantine:
+    """gh-641: an unrecognized command is a command, not prose.
+
+    The old parser had no notion of "a tag I don't handle", so such a line
+    extended whichever field was open. The damage therefore depended on
+    position and on whitespace — the same ``@note`` could land in the summary,
+    the body, or the return description.
+    """
+
+    def test_does_not_contaminate_returns(self):
+        raw = (
+            "/**\n"
+            " * @brief Filter one sample.\n"
+            " * @param x  Input sample.\n"
+            " * @return   The filtered sample.\n"
+            " * @note  Not reentrant.\n"
+            " * @warning Overflows above unity.\n"
+            " * @see demo_reset\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.returns == "The filtered sample."
+        assert b.params == [("x", "Input sample.")]
+        assert b.tags == [
+            ("note", "Not reentrant."),
+            ("warning", "Overflows above unity."),
+            ("see", "demo_reset"),
+        ]
+
+    def test_does_not_contaminate_brief(self):
+        raw = "/**\n * @brief Do it.\n * @note Not thread safe.\n */"
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.brief == "Do it."
+        assert b.tags == [("note", "Not thread safe.")]
+
+    def test_does_not_leak_into_body_after_blank_line(self):
+        # The whitespace-dependent variant reported in gh-641.
+        raw = (
+            "/**\n"
+            " * @brief Decimate a block.\n"
+            " *\n"
+            " * @note Input amplitude is bounded. A component beyond\n"
+            " * the range is clipped before filtering.\n"
+            " *\n"
+            " * @param x input block\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.body == []
+        assert b.params == [("x", "input block")]
+        # The continuation line joins the tag, not the body.
+        assert b.tags == [
+            (
+                "note",
+                "Input amplitude is bounded. A component beyond the range"
+                " is clipped before filtering.",
+            )
+        ]
+
+    def test_inline_math_is_not_a_command(self):
+        # `@f$ ... @f$` would read as a command `f` with argument `$ ...`
+        # without the whitespace-or-EOL requirement after the command name.
+        raw = "/**\n * @brief Gain: @f$ 20*log10(g) @f$.\n */"
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.brief == "Gain: @f$ 20*log10(g) @f$."
+        assert b.tags == []
+
+    def test_line_leading_inline_reference_is_prose(self):
+        raw = (
+            "/**\n"
+            " * @brief Filter one sample.\n"
+            " *\n"
+            " * @ref demo_reset is the counterpart.\n"
+            " */"
+        )
+        b = parse_doxygen_block(raw)
+        assert b is not None
+        assert b.body == ["demo_reset is the counterpart."]
+        assert b.tags == []
+
+    def test_tags_alone_are_not_content(self):
+        # Nothing renders a quarantined tag yet, so a block carrying only one
+        # still falls back to the name-based stub. gh-652 flips this.
+        raw = "/**\n * @note Only a note here.\n */"
+        assert parse_doxygen_block(raw) is None

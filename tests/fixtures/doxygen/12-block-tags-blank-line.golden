@@ -3,18 +3,15 @@
 extracted: ['demo_step']
 
 brief:    'Decimate a CF32 block. Each sample is pushed through the integrators.'
-body:     ['@note **Input amplitude is bounded.** A component beyond the range', 'is clipped at the boundary before filtering.']
+body:     []
 params:   [('x', 'input block')]
 dirs:     {}
 returns:  'decimated block'
 examples: []
-tags:     []
+tags:     [('note', '**Input amplitude is bounded.** A component beyond the range is clipped at the boundary before filtering.')]
 
 rendered:
         """Decimate a CF32 block. Each sample is pushed through the integrators.
-
-        @note **Input amplitude is bounded.** A component beyond the range is
-        clipped at the boundary before filtering.
 
         Parameters
         ----------

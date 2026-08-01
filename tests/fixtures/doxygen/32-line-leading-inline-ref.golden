@@ -1,17 +1,19 @@
-# fixture: 20-details
+# fixture: 32-line-leading-inline-ref
 
 extracted: ['demo_step']
 
-brief:    'Short summary.'
-body:     []
+brief:    'Filter one sample.'
+body:     ['demo_reset is the counterpart; x is consumed in place.']
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     [('details', 'A longer explanation here spanning two source lines.')]
+tags:     []
 
 rendered:
-        """Short summary.
+        """Filter one sample.
+
+        demo_reset is the counterpart; x is consumed in place.
 
         Parameters
         ----------

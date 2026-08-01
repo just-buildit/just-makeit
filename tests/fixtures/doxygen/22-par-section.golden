@@ -2,16 +2,16 @@
 
 extracted: ['demo_step']
 
-brief:    'Thing. @par Performance Runs in O(n) with no allocation. @section usage Usage Call it once per block.'
+brief:    'Thing.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('par', 'Performance Runs in O(n) with no allocation.'), ('section', 'usage Usage Call it once per block.')]
 
 rendered:
-        """Thing. @par Performance Runs in O(n) with no allocation. @section usage Usage Call it once per block.
+        """Thing.
 
         Parameters
         ----------
