@@ -419,6 +419,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             varargs=bool(m.get("varargs")),
             manual_stub=bool(m.get("manual_stub")),
             pass_capacity=bool(m.get("pass_capacity")),
+            count_default=m.get("count_default", ""),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             doc=m.get("doc", ""),
