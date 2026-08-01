@@ -1356,7 +1356,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     )
     lines += ["", f'    def __enter__(self) -> "{Component}":']
     lines += _cm["__enter__"].pyi_doc()
-    lines += ["", "    def __exit__(self, *args: object) -> None:"]
+    # Signature from the same param list that drives the documented
+    # Parameters section, so griffe never sees a documented name the
+    # signature lacks.
+    _exit_sig = _cm["__exit__"].pyi_params(defaults=True)
+    lines += ["", f"    def __exit__({_exit_sig}) -> None:"]
     lines += _cm["__exit__"].pyi_doc()
 
     return "\n".join(lines)
