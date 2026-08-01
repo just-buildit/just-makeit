@@ -2222,9 +2222,10 @@ def make_methods_ctx(
             m_var and not m_multi and (not params or _single_array_param)
         )
         # gh-527: a variable_output method with no input to size from is the
-        # generator shape -- the parse block above emits `Py_ssize_t n = 1`
-        # for it and binds it as the leading `count` (kwlist {"count", "out"}
-        # when an out= is offered, a positional "|n" otherwise). The stub
+        # generator shape -- the parse block above seeds a leading `count` for
+        # it (kwlist {"count", "out"} when an out= is offered, a positional
+        # "|n" otherwise). The seed is `_count_init`: `1`, or the method's
+        # `count_default` (gh-657). The stub
         # omitted it entirely, so `obj.run(4)` -- the call that actually works
         # -- failed to type-check while `obj.run(out=...)` passed. `count`
         # precedes `out` to match the kwlist order. The peer generator in

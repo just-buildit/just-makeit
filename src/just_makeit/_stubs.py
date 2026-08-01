@@ -1258,9 +1258,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             m_var and not m_multi and (not m_params or _m_single_array_param)
         )
         # gh-527: a variable_output method with no input to size from is the
-        # generator shape -- make_methods_ctx emits `Py_ssize_t n = 1` for it
-        # and binds it as the leading `count` (kwlist {"count", "out"} when an
-        # out= is offered, a positional "|n" otherwise). The stub omitted it
+        # generator shape -- make_methods_ctx seeds a leading `count` for it
+        # (kwlist {"count", "out"} when an out= is offered, a positional "|n"
+        # otherwise). The seed is `1` unless the method declares
+        # `count_default`, which gh-657 made settable because that default is
+        # the whole behaviour of the zero-arg call. The stub omitted it
         # entirely, so the call that actually works (`obj.run(4)`) failed to
         # type-check while `obj.run(out=...)` passed. `count` precedes `out`
         # to match the kwlist order.
