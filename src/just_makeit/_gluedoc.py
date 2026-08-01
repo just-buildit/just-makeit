@@ -34,7 +34,7 @@ runtime-parity work (gh-642).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ._docstring import DoxyBlock, _wrap, render_numpy_doc
 
@@ -61,10 +61,31 @@ class GlueMethod:
     ret_ann: str = "None"
     block: DoxyBlock = field(default_factory=DoxyBlock)
 
+    def _spaced(self) -> DoxyBlock:
+        """This method's block with its paragraphs blank-line separated.
+
+        ``DoxyBlock.body`` holds *lines*, not paragraphs -- that is what the
+        parser produces, and ``group_paragraphs`` joins each run of consecutive
+        non-blank lines. Authoring one paragraph per list entry here would
+        therefore render them merged into a single blob. The blank entries are
+        inserted at render time so the definitions above stay readable as
+        paragraphs.
+        """
+        body: list[str] = []
+        for para in self.block.body:
+            if body:
+                body.append("")
+            body.append(para)
+        return replace(self.block, body=body)
+
     def pyi_doc(self, indent: int = 8) -> list[str]:
         """Rendered numpy docstring lines for the ``.pyi`` face."""
         return render_numpy_doc(
-            self.block, self.name, self.py_params, self.ret_ann, indent=indent
+            self._spaced(),
+            self.name,
+            self.py_params,
+            self.ret_ann,
+            indent=indent,
         )
 
     def pyi_params(self, defaults: bool = False) -> str:
