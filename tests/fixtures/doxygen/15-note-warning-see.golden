@@ -1,0 +1,28 @@
+# fixture: 15-note-warning-see
+
+extracted: ['demo_step']
+
+brief:    'Do it.'
+body:     ['@note Not thread safe.', '@warning Overflows above 1.0.', '@see demo_other', '@sa demo_another']
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Do it.
+
+        @note Not thread safe. @warning Overflows above 1.0. @see demo_other @sa
+        demo_another
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

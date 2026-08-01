@@ -61,7 +61,10 @@ repos:
     hooks:
       - id: clang-format
         types_or: [c, c++]
-        exclude: ^(\.venv/|src/just_makeit/templates/)
+        # tests/fixtures/doxygen: the byte-exact shape of each header IS the
+        # test input for the derivation corpus (gh-649) — a reformat there
+        # silently changes what the parser is being asked to parse.
+        exclude: ^(\.venv/|src/just_makeit/templates/|tests/fixtures/doxygen/)
 
   - repo: https://github.com/cheshirekow/cmake-format-precommit
     rev: v0.6.13

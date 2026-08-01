@@ -1,0 +1,25 @@
+# fixture: 25-math
+
+extracted: ['demo_gain']
+
+brief:    'Gain in dB: @f$ 20\\log_{10}(g) @f$.'
+body:     []
+params:   [('g', 'Linear gain, @f$ g > 0 @f$.')]
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Gain in dB: @f$ 20\log_{10}(g) @f$.
+
+        Parameters
+        ----------
+        g : float
+            Linear gain, @f$ g > 0 @f$.
+
+        Returns
+        -------
+        float
+            Output.
+        """

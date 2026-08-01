@@ -1,0 +1,25 @@
+# fixture: 16-retval
+
+extracted: ['demo_try']
+
+brief:    'Try it. @retval 0   Success. @retval -1  Failure.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Try it. @retval 0   Success. @retval -1  Failure.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

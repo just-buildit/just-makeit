@@ -1,0 +1,25 @@
+# fixture: 14-param-direction
+
+extracted: ['demo_step']
+
+brief:    'Compute the thing.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Compute the thing.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

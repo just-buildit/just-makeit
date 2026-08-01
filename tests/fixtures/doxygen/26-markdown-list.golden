@@ -1,0 +1,27 @@
+# fixture: 26-markdown-list
+
+extracted: ['demo_step']
+
+brief:    'Available modes.'
+body:     ['- fast: low quality', '- slow: high quality']
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Available modes.
+
+        - fast: low quality - slow: high quality
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

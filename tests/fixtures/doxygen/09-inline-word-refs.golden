@@ -1,0 +1,25 @@
+# fixture: 09-inline-word-refs
+
+extracted: ['demo_step']
+
+brief:    'Scale x by gain.'
+body:     []
+params:   [('x', 'The input sample, see notes and this and that.')]
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Scale x by gain.
+
+        Parameters
+        ----------
+        x : float
+            The input sample, see notes and this and that.
+
+        Returns
+        -------
+        float
+            Output.
+        """

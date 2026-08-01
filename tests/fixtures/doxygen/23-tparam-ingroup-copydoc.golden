@@ -1,0 +1,25 @@
+# fixture: 23-tparam-ingroup-copydoc
+
+extracted: ['demo_step']
+
+brief:    '@ingroup filters Real documentation. @tparam T element type @copydoc demo_other'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """@ingroup filters Real documentation. @tparam T element type @copydoc demo_other
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

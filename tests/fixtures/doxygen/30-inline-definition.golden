@@ -1,0 +1,25 @@
+# fixture: 30-inline-definition
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample, defined inline in the header.'
+body:     []
+params:   [('x', 'Input sample.')]
+dirs:     {}
+returns:  'The filtered sample.'
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample, defined inline in the header.
+
+        Parameters
+        ----------
+        x : float
+            Input sample.
+
+        Returns
+        -------
+        float
+            The filtered sample.
+        """

@@ -1,0 +1,25 @@
+# fixture: 02-brief-params-return
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     []
+params:   [('x', 'Input sample.')]
+dirs:     {}
+returns:  'The filtered sample.'
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        Parameters
+        ----------
+        x : float
+            Input sample.
+
+        Returns
+        -------
+        float
+            The filtered sample.
+        """

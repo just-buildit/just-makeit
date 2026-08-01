@@ -1,0 +1,25 @@
+# fixture: 24-verbatim
+
+extracted: ['demo_step']
+
+brief:    'Buffer layout. @verbatim +---+---+ | I | Q | +---+---+ @endverbatim'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Buffer layout. @verbatim +---+---+ | I | Q | +---+---+ @endverbatim
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

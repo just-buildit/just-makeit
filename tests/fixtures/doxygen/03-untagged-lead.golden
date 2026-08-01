@@ -1,0 +1,27 @@
+# fixture: 03-untagged-lead
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample, with no @brief tag at all.'
+body:     ['The first paragraph becomes the summary.']
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample, with no @brief tag at all.
+
+        The first paragraph becomes the summary.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

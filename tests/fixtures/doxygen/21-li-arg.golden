@@ -1,0 +1,25 @@
+# fixture: 21-li-arg
+
+extracted: ['demo_step']
+
+brief:    'Available modes. @li fast  - low quality @li slow  - high quality @arg auto - pick at runtime'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Available modes. @li fast  - low quality @li slow  - high quality @arg auto - pick at runtime
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """
