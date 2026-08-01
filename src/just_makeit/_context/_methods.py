@@ -21,6 +21,7 @@ from .._types import (
     array_elem_ctype,
     c_param_parts,
 )
+from .._docstring import render_numpy_doc
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
 
@@ -551,19 +552,12 @@ def make_methods_ctx(
         name: str = m["name"]
 
         # Summary precedence: TOML `doc` override > header @brief > name
-        # fallback. Param/return prose comes from the header; doctest examples
-        # are always synthesized below regardless of source.
+        # fallback. This one is still resolved here because the *runtime*
+        # PyMethodDef doc is brief-only (gh-642 is the parity ask); the .pyi's
+        # param/return prose is resolved inside render_numpy_doc.
         _block = (doc_blocks or {}).get(f"{component}_{name}")
         _brief = m.get("doc") or (
             _block.brief if (_block and _block.brief) else ""
-        )
-
-        def _pdesc(pname: str, _b=_block) -> str:
-            d = _b.param_desc(pname) if _b else None
-            return d or "Input."
-
-        _ret_desc_txt = (
-            _block.returns if (_block and _block.returns) else "Output."
         )
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
@@ -2157,20 +2151,28 @@ def make_methods_ctx(
         m_var = variable_output
         m_multi = multi_output
         param_parts: list[str] = []
+        # (name, annotation) for the args that appear in the docstring's
+        # Parameters section — the signature also carries binding-level args
+        # (`count`, `out=`) that are deliberately not documented there.
+        doc_params: list[tuple[str, str]] = []
         if arg_type != "void":
             if arg_type.endswith("[]"):
                 elem = arg_type[:-2]
                 param_parts.append(f"x: {_pyi_ndarray(elem)}")
+                doc_params.append(("x", _pyi_ndarray(elem)))
             else:
                 param_parts.append(f"x: {_pyi_scalar(arg_type)}")
+                doc_params.append(("x", _pyi_scalar(arg_type)))
         for p in params:
             pt = p["type"]
             if pt.endswith("[]"):
                 param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
+                doc_params.append((p["name"], _pyi_ndarray(pt[:-2])))
             elif p.get("capsule"):
                 # gh-432: a capsule-typed param takes the named PyCapsule,
                 # any wrapper exposing `_capsule`, or None (detach).
                 param_parts.append(f"{p['name']}: object | None")
+                doc_params.append((p["name"], "object | None"))
             else:
                 # gh-240: a defaulted scalar renders as an optional kwarg.
                 _suffix = (
@@ -2179,6 +2181,7 @@ def make_methods_ctx(
                     else ""
                 )
                 param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
+                doc_params.append((p["name"], _pyi_scalar(pt)))
         if status_return:
             # gh-432: status returns bind as None (raise on failure).
             ret_ann = "None"
@@ -2239,39 +2242,30 @@ def make_methods_ctx(
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)
-        _pyi_ret_desc = (
-            f"Returns\n        -------\n        {ret_ann}\n"
-            f"            {_ret_desc_txt}\n        "
-            if ret_ann != "None"
-            else ""
-        )
-        _pyi_param_desc = ""
-        for _pp in (["x"] if has_arg else []) + [p["name"] for p in params]:
-            _pyi_param_desc += f"        {_pp}\n            {_pdesc(_pp)}\n"
-        _pyi_params_section = (
-            f"        Parameters\n        ----------\n{_pyi_param_desc}        "
-            if _pyi_param_desc
-            else "        "
-        )
-        # @code ... @endcode from the header becomes a runnable Examples
-        # doctest, mirroring the module-aggregated peer (_stubs._numpy_doc_lines)
-        # so a standalone object's method docstrings are as rich as a module's.
-        _pyi_examples_section = ""
-        if _block and _block.examples:
-            _ex_body = "\n".join(
-                f"        {ex}".rstrip() for ex in _block.examples
-            )
-            _pyi_examples_section = (
-                f"        Examples\n        --------\n{_ex_body}\n\n"
-            )
+        # gh-651: one renderer, shared with the module-aggregated .pyi. This
+        # path used to build the numpy layout by hand and disagreed with its
+        # peer on three things for the same manifest and the same header —
+        # the extended description was dropped entirely, a Parameters entry
+        # was a bare `x` with no `: type` (which numpydoc does not read as a
+        # parameter at all), and the blank line between sections was eight
+        # spaces of trailing whitespace.
+        #
+        # skeleton_fallback keeps this path's own answer to a *different*
+        # question: an undocumented member here has always kept its section
+        # skeleton, where the aggregated .pyi collapses to a one-line stub.
         _pyi_doc = (
-            f'        """{_brief or f"{name}."}\n\n'
-            f"{_pyi_params_section}\n"
-            f"        {_pyi_ret_desc}\n"
-            f"{_pyi_examples_section}"
-            f'        """\n'
-            if (sig or ret_ann != "None")
-            else f'        """{name}."""\n'
+            "\n".join(
+                render_numpy_doc(
+                    _block,
+                    name,
+                    doc_params,
+                    ret_ann,
+                    m.get("doc") or "",
+                    indent=8,
+                    skeleton_fallback=True,
+                )
+            )
+            + "\n"
         )
         stub = (
             f"    def {name}(self, {sig}) -> {ret_ann}:\n{_pyi_doc}"

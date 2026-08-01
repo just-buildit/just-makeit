@@ -10,6 +10,7 @@ from just_makeit._docstring import (  # noqa: E402
     _strip_doxy_inline,
     extract_doc_blocks,
     parse_doxygen_block,
+    render_numpy_doc,
     render_numpy_method_doc,
 )
 
@@ -439,3 +440,68 @@ class TestUnknownTagQuarantine:
         # still falls back to the name-based stub. gh-652 flips this.
         raw = "/**\n * @note Only a note here.\n */"
         assert parse_doxygen_block(raw) is None
+
+
+class TestRenderNumpyDoc:
+    """gh-651: the one member-docstring renderer, and its two fallbacks."""
+
+    def _block(self):
+        return parse_doxygen_block(
+            "/**\n"
+            " * @brief Scale a sample.\n"
+            " *\n"
+            " * Extended description here.\n"
+            " *\n"
+            " * @param x  Sample to scale.\n"
+            " * @return The scaled sample.\n"
+            " */"
+        )
+
+    def test_full_layout(self):
+        out = render_numpy_doc(
+            self._block(), "scale", [("x", "float")], "float"
+        )
+        assert out[0] == '        """Scale a sample.'
+        assert "        Extended description here." in out
+        assert "        x : float" in out
+        assert "            Sample to scale." in out
+        assert "            The scaled sample." in out
+        assert out[-1] == '        """'
+        # No section separator carries trailing whitespace.
+        assert all(ln == ln.rstrip() for ln in out)
+
+    def test_indent_is_honoured(self):
+        out = render_numpy_doc(
+            self._block(), "scale", [("x", "float")], "float", indent=4
+        )
+        assert out[0] == '    """Scale a sample.'
+        assert "    x : float" in out
+
+    def test_undocumented_collapses_by_default(self):
+        # What the module-aggregated .pyi has always done.
+        out = render_numpy_doc(None, "do_thing", [("x", "float")], "float")
+        assert out == ['        """Do thing."""']
+
+    def test_undocumented_keeps_skeleton_when_asked(self):
+        # What a standalone object's .pyi has always done.
+        out = render_numpy_doc(
+            None,
+            "do_thing",
+            [("x", "float")],
+            "float",
+            skeleton_fallback=True,
+        )
+        assert out[0] == '        """do_thing.'
+        assert "        x : float" in out
+        assert "            Input." in out
+        assert "            Output." in out
+
+    def test_override_outranks_brief(self):
+        out = render_numpy_doc(
+            self._block(), "scale", [], "None", override="From the manifest."
+        )
+        assert out[0] == '        """From the manifest.'
+
+    def test_none_return_suppresses_returns_section(self):
+        out = render_numpy_doc(self._block(), "scale", [], "None")
+        assert not any("Returns" in ln for ln in out)

@@ -1801,7 +1801,7 @@ def render_pyi(
         # rest map through _pyi_arg_ann (gh-374).
         m_block = _method_block(doc_blocks, m.get("fn"), name)
         if m_block is not None:
-            from ._stubs import _numpy_doc_lines
+            from ._docstring import render_numpy_doc
 
             py_params = [
                 (
@@ -1813,7 +1813,7 @@ def render_pyi(
                 for a in margs
             ]
             lines.extend(
-                _numpy_doc_lines(m_block, name, py_params, ann, indent=8)
+                render_numpy_doc(m_block, name, py_params, ann, indent=8)
             )
         else:
             lines.append(f'        """{doc_call} -> {ann}."""')

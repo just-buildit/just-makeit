@@ -51,8 +51,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._docstring import (  # noqa: E402
     extract_doc_blocks,
     parse_doxygen_block,
+    render_numpy_doc,
 )
-from just_makeit._stubs import _numpy_doc_lines  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "doxygen"
 UPDATE = os.environ.get("JM_UPDATE_DOXYGEN_GOLDENS") == "1"
@@ -88,7 +88,7 @@ def _render(stem: str) -> str:
         out.append("parsed: None  (no usable content; name fallback applies)")
         out.append("")
         out.append("rendered:")
-        out += _numpy_doc_lines(None, fn, [("x", "float")], "float")
+        out += render_numpy_doc(None, fn, [("x", "float")], "float")
         return "\n".join(out) + "\n"
 
     out.append(f"brief:    {block.brief!r}")
@@ -102,7 +102,7 @@ def _render(stem: str) -> str:
     out.append("rendered:")
 
     py_params = [(n, "float") for n, _ in block.params] or [("x", "float")]
-    out += _numpy_doc_lines(block, fn, py_params, "float")
+    out += render_numpy_doc(block, fn, py_params, "float")
     return "\n".join(out) + "\n"
 
 

@@ -449,6 +449,109 @@ def _wrap(text: str, width: int = 70) -> list[str]:
     return lines
 
 
+def render_numpy_doc(
+    block: DoxyBlock | None,
+    name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
+    *,
+    indent: int = 8,
+    skeleton_fallback: bool = False,
+) -> list[str]:
+    """Return `.pyi` numpy-docstring lines for one method or free function.
+
+    **The** renderer for a member docstring (gh-651). Every generator that
+    turns a :class:`DoxyBlock` into numpy text routes through here — the
+    module-aggregated ``.pyi`` (``_stubs``), a standalone object's methods
+    (``_context/_methods``), free functions, and ``jm handle`` methods — so
+    the layout cannot drift between them. It previously had two hand-written
+    implementations that disagreed on three things at once: whether the
+    extended description appeared at all, whether a ``Parameters`` entry
+    carried its type, and whether the blank line between sections was blank
+    or eight spaces.
+
+    Parameters
+    ----------
+    block : DoxyBlock or None
+        Parsed header comment; ``None`` when the header documents nothing.
+    name : str
+        Member name, used for the summary fallback.
+    py_params : list of tuple(str, str)
+        ``(name, annotation)`` for the Python-facing arguments to document,
+        in order. Only these appear in ``Parameters`` — a binding-level
+        argument such as ``out=`` is deliberately left out by the caller.
+    ret_ann : str
+        Python return annotation; ``"None"`` suppresses the ``Returns``
+        section entirely.
+    override : str, optional
+        Manifest ``doc=``, which outranks the header ``@brief``.
+    indent : int, optional
+        Leading spaces. 8 inside a class, 4 for a module-level function.
+    skeleton_fallback : bool, optional
+        What to emit when there is nothing to derive from — no *block* and no
+        *override*. ``False`` (the default, and what the aggregated ``.pyi``
+        has always done) collapses to the one-line name stub. ``True`` keeps
+        the full section skeleton with ``Input.``/``Output.`` placeholders,
+        which is what a standalone object's ``.pyi`` has always done.
+
+        The two paths genuinely disagree here, and the disagreement is about
+        policy rather than layout, so it stays a caller's choice rather than
+        being silently unified. Worth settling separately.
+
+    Returns
+    -------
+    list of str
+        Complete docstring lines, opening and closing ``\"\"\"`` included.
+    """
+    pad = " " * indent
+    pad2 = " " * (indent + 4)
+    if block is None and not override and not skeleton_fallback:
+        return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
+
+    if block is not None:
+        summary, body, descs, ret, examples = render_numpy_method_doc(
+            block, py_params
+        )
+    else:
+        summary, body, descs, ret, examples = "", [], {}, "", []
+    summary = override or summary
+    if not summary:
+        summary = (
+            f"{name}."
+            if skeleton_fallback
+            else name.replace("_", " ").capitalize() + "."
+        )
+    out = [f'{pad}"""{summary}']
+    # `body` arrives already grouped into paragraphs by
+    # render_numpy_method_doc, so re-group would be a no-op — wrap only.
+    for para in body:
+        out.append("")
+        out += [f"{pad}{w}" for w in _wrap(para, 72)]
+    if py_params:
+        out += ["", f"{pad}Parameters", f"{pad}----------"]
+        for pname, ann in py_params:
+            out.append(f"{pad}{pname} : {ann}")
+            out.append(f"{pad2}{descs.get(pname) or 'Input.'}")
+    if ret_ann != "None":
+        out += [
+            "",
+            f"{pad}Returns",
+            f"{pad}-------",
+            f"{pad}{ret_ann}",
+            f"{pad2}{ret or 'Output.'}",
+        ]
+    if examples:  # @code ... @endcode -> runnable doctest
+        out += ["", f"{pad}Examples", f"{pad}--------"]
+        out += [f"{pad}{ex}".rstrip() for ex in examples]
+        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+        # text file, where expected output runs until a blank line — without
+        # this the closing `"""` is swallowed into the last example's output.
+        out.append("")
+    out.append(f'{pad}"""')
+    return out
+
+
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
