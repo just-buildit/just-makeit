@@ -2,16 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **`@param` / `@return` descriptions now wrap (gh-678).** `render_numpy_doc`
-    soft-wrapped the brief and the extended description, then emitted the two
-    description slots verbatim however long they were — so one generated
-    docstring could carry a wrapped summary directly above a 110-column
-    parameter description. A one-line `@param` is unaffected; authored prose
-    longer than the column budget now wraps at the section's continuation
-    indent. A long unbreakable token (a URL) still overflows rather than being
-    split, since breaking it would make it wrong rather than merely long.
+## [0.36.0] — 2026-08-01
 
 ### Added
 
@@ -27,22 +18,6 @@
     length before the blob reaches the C core, `destroy` is idempotent, and
     `__exit__` returns `None` so it never suppresses an exception.
 
-### Fixed
-
-- **`__enter__` / `__exit__` had no docstring at all (gh-647).** They were the
-    one part of the generated surface carrying `NULL` in the method table and a
-    bare `...` in the stub, so `help()` showed nothing for the context-manager
-    protocol.
-- **`get_state` documented the wrong object (gh-647).** Its docstring read
-    "Serialize the **engine's** mutable state to bytes" on every component,
-    naming a component from a long-gone example.
-- **The teardown method's two faces disagreed (gh-647).** The stub said
-    "Release C resources immediately." while the runtime method table said
-    "Release resources." Both now render from the same definition, which is
-    what prevents the next such drift.
-
-### Added
-
 - **`jm method` scaffolds a Doxygen skeleton above each new declaration
     (gh-666).** The tedious part of documenting a header is structure, not
     prose — the exact `@param` names, remembering `@return` — and jm already
@@ -56,17 +31,6 @@
     Only genuinely new declarations are decorated — a refreshed signature
     replaces the prototype line alone, so replay never stamps a skeleton over
     prose already written.
-
-### Fixed
-
-- **A doc block written above another doc block was ignored (gh-666).** When
-    two `/** */` blocks preceded a declaration, jm bound the **first** to it:
-    the declaration pattern could begin with the newline after `*/` and then
-    swallow the whole second comment, which contains no `;{}` to stop the run.
-    Doxygen binds the nearest preceding block; jm now does too. Latent until
-    the scaffold skeleton made two adjacent blocks a normal occurrence, at
-    which point an author who wrote a new block above the skeleton would have
-    silently lost their prose to it.
 
 ### Changed
 
@@ -88,6 +52,40 @@
     is still not noise. Scaffold-only: `Doxyfile` is written by `jm new` and
     never touched by `jm apply`, so an existing project opts in by editing its
     own copy.
+
+### Fixed
+
+- **`@param` / `@return` descriptions now wrap (gh-678).** `render_numpy_doc`
+    soft-wrapped the brief and the extended description, then emitted the two
+    description slots verbatim however long they were — so one generated
+    docstring could carry a wrapped summary directly above a 110-column
+    parameter description. A one-line `@param` is unaffected; authored prose
+    longer than the column budget now wraps at the section's continuation
+    indent. A long unbreakable token (a URL) still overflows rather than being
+    split, since breaking it would make it wrong rather than merely long.
+
+- **`__enter__` / `__exit__` had no docstring at all (gh-647).** They were the
+    one part of the generated surface carrying `NULL` in the method table and a
+    bare `...` in the stub, so `help()` showed nothing for the context-manager
+    protocol.
+
+- **`get_state` documented the wrong object (gh-647).** Its docstring read
+    "Serialize the **engine's** mutable state to bytes" on every component,
+    naming a component from a long-gone example.
+
+- **The teardown method's two faces disagreed (gh-647).** The stub said
+    "Release C resources immediately." while the runtime method table said
+    "Release resources." Both now render from the same definition, which is
+    what prevents the next such drift.
+
+- **A doc block written above another doc block was ignored (gh-666).** When
+    two `/** */` blocks preceded a declaration, jm bound the **first** to it:
+    the declaration pattern could begin with the newline after `*/` and then
+    swallow the whole second comment, which contains no `;{}` to stop the run.
+    Doxygen binds the nearest preceding block; jm now does too. Latent until
+    the scaffold skeleton made two adjacent blocks a normal occurrence, at
+    which point an author who wrote a new block above the skeleton would have
+    silently lost their prose to it.
 
 ## [0.35.0] — 2026-08-01
 
