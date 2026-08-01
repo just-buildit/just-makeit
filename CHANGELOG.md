@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **A new project's `Doxyfile` sets `WARN_NO_PARAMDOC = YES`.** Doxygen already
+    knows both the signature and the `@param` set, so a function that carries a
+    doc block and leaves a parameter undocumented is free to detect — and it is
+    the doc-rot shape (a parameter added later, the `@param` never updated).
+    `WARN_IF_UNDOCUMENTED` stays `NO`, so an entirely undocumented declaration
+    is still not noise. Scaffold-only: `Doxyfile` is written by `jm new` and
+    never touched by `jm apply`, so an existing project opts in by editing its
+    own copy.
+
 ## [0.35.0] — 2026-08-01
 
 ### Added

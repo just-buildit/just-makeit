@@ -11,6 +11,12 @@ HTML_OUTPUT            = html
 GENERATE_LATEX         = NO
 QUIET                  = YES
 WARN_IF_UNDOCUMENTED   = NO
+# ...but a function that HAS a doc block and leaves a parameter undocumented is
+# a real gap, and the cheapest possible check for it: Doxygen already knows the
+# signature and the @param set. WARN_IF_UNDOCUMENTED stays NO so an entirely
+# undocumented declaration is not noise; this catches the half-documented one,
+# which is the doc-rot shape (a parameter added later, @param never updated).
+WARN_NO_PARAMDOC       = YES
 FILE_PATTERNS          = *.h *.c
 EXCLUDE_PATTERNS       = */pyex_common.h */clib_common.h
 FULL_PATH_NAMES        = NO
