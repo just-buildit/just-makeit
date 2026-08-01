@@ -187,8 +187,10 @@ static PyObject *
 
 <<stream_iter_block>>static PyMethodDef <<ComponentW>>_methods[] = {
 <<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>><<destroy_pymethoddef>>    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,  NULL},
-    {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS, NULL},
+<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>><<destroy_pymethoddef>>    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,
+     <<cm_enter_doc>>},
+    {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS,
+     <<cm_exit_doc>>},
     {NULL}
 };
 

@@ -22,6 +22,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import render_numpy_doc, scaffold_doc_block
+from .._gluedoc import glue_methods
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
 
@@ -403,21 +404,29 @@ def serializable_triplet_parts(
             f"}}"
         ),
     ]
-    pmd = (
-        f'    {{"state_bytes", (PyCFunction){_W}_state_bytes, METH_NOARGS,\n'
-        f'     "Serialized state size in bytes."}},\n'
-        f'    {{"get_state", (PyCFunction){_W}_get_state, METH_NOARGS,\n'
-        f'     "Serialize the engine\'s mutable state to bytes."}},\n'
-        f'    {{"set_state", (PyCFunction){_W}_set_state, METH_O,\n'
-        f'     "Restore mutable state from a get_state() blob."}},\n'
+    # gh-647: one definition of this prose, rendered to both faces. The
+    # literals these replaced had drifted -- get_state named "the engine",
+    # a component from a long-gone example rather than the object it
+    # documents.
+    _glue = glue_methods(_W)
+    _meth_c = {
+        "state_bytes": "METH_NOARGS",
+        "get_state": "METH_NOARGS",
+        "set_state": "METH_O",
+    }
+    pmd = "".join(
+        f'    {{"{n}", (PyCFunction){_W}_{n}, {flags},\n'
+        f"     {_build_ml_doc(_glue[n].c_doc_lines())}}},\n"
+        for n, flags in _meth_c.items()
     )
-    pyi = (
-        "    def state_bytes(self) -> int:\n"
-        '        """Serialized state size in bytes."""\n'
-        "    def get_state(self) -> bytes:\n"
-        '        """Serialize the engine\'s mutable state to bytes."""\n'
-        "    def set_state(self, blob: bytes) -> None:\n"
-        '        """Restore mutable state from a get_state() blob."""'
+    _sigs = {
+        "state_bytes": "self) -> int",
+        "get_state": "self) -> bytes",
+        "set_state": "self, blob: bytes) -> None",
+    }
+    pyi = "\n".join(
+        f"    def {n}({sig}:\n" + "\n".join(_glue[n].pyi_doc())
+        for n, sig in _sigs.items()
     )
     return c_funcs, pmd, pyi
 
