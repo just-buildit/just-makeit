@@ -76,6 +76,14 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # the signature; empty otherwise, so an object without one renders
         # byte-identical. make_state_ctx overwrites it.
         "pyi_os_import": "",
+        # gh-644: the runtime class docstring. Seeded here -- the one place
+        # every component render path passes through -- with the fixed text
+        # this slot replaced, so a path that does not derive (a view, a fresh
+        # scaffold with no header yet) renders byte-identically to before.
+        # _glue.component_ctx overrides it from create()'s @brief.
+        "tp_doc": (
+            f'"{_to_title(component)} component. Wraps {component}_state_t."'
+        ),
         # gh-543: a standalone object's hand-written `<comp>_ext_extra.c`,
         # #included when it exists. Module objects have had this since the
         # aggregator was introduced; a standalone object had no hook at all,
