@@ -45,12 +45,14 @@ PR="${1:?usage: REPO=owner/name pr-watch.sh <pr-number>}"
 REPO="${REPO:?set REPO=owner/name}"
 ADVISORY="${ADVISORY:-codecov/patch}"
 INTERVAL="${INTERVAL:-40}"
-QUIET="${QUIET:-1}"        # 1 = only speak when something CHANGES
+QUIET="${QUIET:-1}"        # 1 = throttle progress; the result always prints
+PROGRESS_EVERY="${PROGRESS_EVERY:-300}"   # seconds between progress lines
 TIMEOUT_MIN="${TIMEOUT_MIN:-60}"
 
 deadline=$(( $(date +%s) + TIMEOUT_MIN * 60 ))
 anchor=""
 last=""
+last_said=0
 
 # Progress goes through here so a watcher can be attached to a notifier
 # without emitting one message per poll. Repeating "30/33 settled" every 40s
