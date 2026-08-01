@@ -1,0 +1,25 @@
+# fixture: 05-multiline-param
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     []
+params:   [('x', 'Input sample, whose description continues onto a second line.')]
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        Parameters
+        ----------
+        x : float
+            Input sample, whose description continues onto a second line.
+
+        Returns
+        -------
+        float
+            Output.
+        """

@@ -1,0 +1,32 @@
+# fixture: 06-code-block
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: ['>>> obj = Demo()', '>>> obj.step(1.0)', '1.0']
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+
+        Examples
+        --------
+        >>> obj = Demo()
+        >>> obj.step(1.0)
+        1.0
+
+        """

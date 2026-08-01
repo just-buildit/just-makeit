@@ -1,0 +1,25 @@
+# fixture: 17-throws
+
+extracted: ['demo_alloc']
+
+brief:    'Allocate the thing. @throws ValueError if n is zero. @exception MemoryError on allocation failure.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Allocate the thing. @throws ValueError if n is zero. @exception MemoryError on allocation failure.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

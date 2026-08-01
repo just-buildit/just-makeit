@@ -1,0 +1,29 @@
+# fixture: 04-body-paragraphs
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     ['The extended description spans', 'two source lines in one paragraph.', '', 'And a second paragraph after a blank line.']
+params:   [('x', 'Input sample.')]
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        The extended description spans two source lines in one paragraph.
+
+        And a second paragraph after a blank line.
+
+        Parameters
+        ----------
+        x : float
+            Input sample.
+
+        Returns
+        -------
+        float
+            Output.
+        """

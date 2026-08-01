@@ -1,0 +1,25 @@
+# fixture: 18-pre-post
+
+extracted: ['demo_step']
+
+brief:    'Advance one sample. @pre  reset() has been called. @post The state has advanced by exactly one sample. @invariant The phase stays within [0, 2pi).'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Advance one sample. @pre  reset() has been called. @post The state has advanced by exactly one sample. @invariant The phase stays within [0, 2pi).
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

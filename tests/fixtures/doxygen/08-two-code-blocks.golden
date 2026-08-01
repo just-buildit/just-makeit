@@ -1,0 +1,33 @@
+# fixture: 08-two-code-blocks
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     ['Prose between the two blocks.']
+params:   []
+dirs:     {}
+returns:  ''
+examples: ['>>> a', '>>> b']
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        Prose between the two blocks.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+
+        Examples
+        --------
+        >>> a
+        >>> b
+
+        """

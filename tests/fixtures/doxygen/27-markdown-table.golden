@@ -1,0 +1,27 @@
+# fixture: 27-markdown-table
+
+extracted: ['demo_step']
+
+brief:    'Cost per mode.'
+body:     ['| mode | cost |', '|------|------|', '| fast | 1    |', '| slow | 8    |']
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Cost per mode.
+
+        | mode | cost | |------|------| | fast | 1 | | slow | 8 |
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

@@ -1,0 +1,25 @@
+# fixture: 22-par-section
+
+extracted: ['demo_step']
+
+brief:    'Thing. @par Performance Runs in O(n) with no allocation. @section usage Usage Call it once per block.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Thing. @par Performance Runs in O(n) with no allocation. @section usage Usage Call it once per block.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

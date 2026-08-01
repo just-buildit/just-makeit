@@ -1,0 +1,25 @@
+# fixture: 20-details
+
+extracted: ['demo_step']
+
+brief:    'Short summary. @details A longer explanation here spanning two source lines.'
+body:     []
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Short summary. @details A longer explanation here spanning two source lines.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """

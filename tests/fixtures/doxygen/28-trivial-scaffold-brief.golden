@@ -1,0 +1,8 @@
+# fixture: 28-trivial-scaffold-brief
+
+extracted: ['demo_step']
+
+parsed: None  (no usable content; name fallback applies)
+
+rendered:
+        """Demo step."""

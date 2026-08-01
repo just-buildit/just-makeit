@@ -1,0 +1,27 @@
+# fixture: 13-backslash-commands
+
+extracted: ['demo_step']
+
+brief:    '\\brief Compute the thing.'
+body:     ['\\param gain  Linear gain.', '\\return The result.']
+params:   []
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """\brief Compute the thing.
+
+        \param gain Linear gain. \return The result.
+
+        Parameters
+        ----------
+        x : float
+            Input.
+
+        Returns
+        -------
+        float
+            Output.
+        """
