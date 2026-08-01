@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`@param` / `@return` descriptions now wrap (gh-678).** `render_numpy_doc`
+    soft-wrapped the brief and the extended description, then emitted the two
+    description slots verbatim however long they were — so one generated
+    docstring could carry a wrapped summary directly above a 110-column
+    parameter description. A one-line `@param` is unaffected; authored prose
+    longer than the column budget now wraps at the section's continuation
+    indent. A long unbreakable token (a URL) still overflows rather than being
+    split, since breaking it would make it wrong rather than merely long.
+
 ### Added
 
 - **jm's own glue methods carry real docstrings, on both faces (gh-647).**

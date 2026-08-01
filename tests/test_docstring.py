@@ -505,3 +505,51 @@ class TestRenderNumpyDoc:
     def test_none_return_suppresses_returns_section(self):
         out = render_numpy_doc(self._block(), "scale", [], "None")
         assert not any("Returns" in ln for ln in out)
+
+
+class TestGh678DescriptionsWrap:
+    """@param / @return descriptions wrap on the same rule as the body.
+
+    They used to be emitted verbatim however long they were, so one docstring
+    could carry a wrapped summary directly above a 110-column parameter
+    description -- in the generated `.pyi`, a file a reader opens and no
+    formatter ever touches.
+    """
+
+    _LONG = (
+        "/**\n"
+        " * @brief X.\n"
+        " * @param q  A genuinely long authored description that comfortably "
+        "exceeds the column budget and ought to wrap somewhere sensible.\n"
+        " * @return Another long authored return description that also runs "
+        "well past the seventy nine column limit used here.\n"
+        " */"
+    )
+
+    def _render(self, raw, params, ret):
+        blk = parse_doxygen_block(raw)
+        return render_numpy_doc(blk, "f", params, ret)
+
+    def test_no_line_exceeds_the_budget(self):
+        for line in self._render(self._LONG, [("q", "float")], "float"):
+            assert len(line) <= 79, line
+
+    def test_description_text_survives_the_wrap(self):
+        out = " ".join(
+            self._render(self._LONG, [("q", "float")], "float")
+        ).split()
+        assert "comfortably" in out and "sensible." in out
+        assert "seventy" in out and "here." in out
+
+    def test_a_long_token_overflows_rather_than_splitting(self):
+        # Breaking a URL mid-token would make it wrong, not merely long.
+        url = "https://example.com/a/" + "x" * 70
+        raw = f"/**\n * @brief X.\n * @param u  See {url}\n */"
+        out = self._render(raw, [("u", "str")], "None")
+        assert any(url in ln for ln in out)
+
+    def test_short_descriptions_are_unchanged(self):
+        # The common case must not gain a wrap or lose its single line.
+        raw = "/**\n * @brief X.\n * @param q  Input sample.\n */"
+        out = self._render(raw, [("q", "float")], "None")
+        assert "            Input sample." in out

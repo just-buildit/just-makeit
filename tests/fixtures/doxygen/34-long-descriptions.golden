@@ -1,0 +1,28 @@
+# fixture: 34-long-descriptions
+
+extracted: ['demo_step']
+
+brief:    'Filter one sample.'
+body:     []
+params:   [('x', 'An authored parameter description long enough that emitting it verbatim on one line would push the generated stub well past the column budget (gh-678).')]
+dirs:     {}
+returns:  'A return description that is likewise longer than one line, so both wrapped slots are pinned by this fixture rather than only the one.'
+examples: []
+tags:     []
+
+rendered:
+        """Filter one sample.
+
+        Parameters
+        ----------
+        x : float
+            An authored parameter description long enough that emitting it
+            verbatim on one line would push the generated stub well past the
+            column budget (gh-678).
+
+        Returns
+        -------
+        float
+            A return description that is likewise longer than one line, so both
+            wrapped slots are pinned by this fixture rather than only the one.
+        """
