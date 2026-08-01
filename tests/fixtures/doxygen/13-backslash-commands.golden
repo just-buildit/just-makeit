@@ -2,26 +2,24 @@
 
 extracted: ['demo_step']
 
-brief:    '\\brief Compute the thing.'
-body:     ['\\param gain  Linear gain.', '\\return The result.']
-params:   []
+brief:    'Compute the thing.'
+body:     []
+params:   [('gain', 'Linear gain.')]
 dirs:     {}
-returns:  ''
+returns:  'The result.'
 examples: []
 tags:     []
 
 rendered:
-        """\brief Compute the thing.
-
-        \param gain Linear gain. \return The result.
+        """Compute the thing.
 
         Parameters
         ----------
-        x : float
-            Input.
+        gain : float
+            Linear gain.
 
         Returns
         -------
         float
-            Output.
+            The result.
         """

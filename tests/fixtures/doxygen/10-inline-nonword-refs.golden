@@ -2,21 +2,21 @@
 
 extracted: ['demo_step']
 
-brief:    'Clamped to @c +/-10^(clip_db/20) on overflow.'
+brief:    'Clamped to +/-10^(clip_db/20) on overflow.'
 body:     []
-params:   [('x', 'BLUE type @c "A" is ASCII; returns @c -1 on error.')]
+params:   [('x', 'BLUE type "A" is ASCII; returns -1 on error.')]
 dirs:     {}
 returns:  ''
 examples: []
 tags:     []
 
 rendered:
-        """Clamped to @c +/-10^(clip_db/20) on overflow.
+        """Clamped to +/-10^(clip_db/20) on overflow.
 
         Parameters
         ----------
         x : float
-            BLUE type @c "A" is ASCII; returns @c -1 on error.
+            BLUE type "A" is ASCII; returns -1 on error.
 
         Returns
         -------

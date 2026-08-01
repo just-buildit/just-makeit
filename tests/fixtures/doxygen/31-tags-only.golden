@@ -1,0 +1,8 @@
+# fixture: 31-tags-only
+
+extracted: ['demo_step']
+
+parsed: None  (no usable content; name fallback applies)
+
+rendered:
+        """Demo step."""

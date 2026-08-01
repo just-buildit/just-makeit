@@ -1,14 +1,14 @@
-# fixture: 11-block-tags-no-blank-line
+# fixture: 33-indented-commands
 
 extracted: ['demo_step']
 
 brief:    'Filter one sample.'
 body:     []
-params:   [('x', 'Input sample.')]
+params:   [('x', 'Input sample, tag indented under the block.')]
 dirs:     {}
 returns:  'The filtered sample.'
 examples: []
-tags:     [('note', 'Not reentrant.'), ('warning', 'Overflows above unity.'), ('see', 'demo_reset')]
+tags:     []
 
 rendered:
         """Filter one sample.
@@ -16,7 +16,7 @@ rendered:
         Parameters
         ----------
         x : float
-            Input sample.
+            Input sample, tag indented under the block.
 
         Returns
         -------

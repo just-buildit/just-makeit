@@ -2,16 +2,16 @@
 
 extracted: ['demo_step']
 
-brief:    '@ingroup filters Real documentation. @tparam T element type @copydoc demo_other'
+brief:    'Real documentation.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('ingroup', 'filters'), ('tparam', 'T element type'), ('copydoc', 'demo_other')]
 
 rendered:
-        """@ingroup filters Real documentation. @tparam T element type @copydoc demo_other
+        """Real documentation.
 
         Parameters
         ----------

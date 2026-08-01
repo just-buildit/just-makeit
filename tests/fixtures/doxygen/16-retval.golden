@@ -2,16 +2,16 @@
 
 extracted: ['demo_try']
 
-brief:    'Try it. @retval 0   Success. @retval -1  Failure.'
+brief:    'Try it.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('retval', '0   Success.'), ('retval', '-1  Failure.')]
 
 rendered:
-        """Try it. @retval 0   Success. @retval -1  Failure.
+        """Try it.
 
         Parameters
         ----------

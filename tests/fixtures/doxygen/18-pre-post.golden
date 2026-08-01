@@ -2,16 +2,16 @@
 
 extracted: ['demo_step']
 
-brief:    'Advance one sample. @pre  reset() has been called. @post The state has advanced by exactly one sample. @invariant The phase stays within [0, 2pi).'
+brief:    'Advance one sample.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('pre', 'reset() has been called.'), ('post', 'The state has advanced by exactly one sample.'), ('invariant', 'The phase stays within [0, 2pi).')]
 
 rendered:
-        """Advance one sample. @pre  reset() has been called. @post The state has advanced by exactly one sample. @invariant The phase stays within [0, 2pi).
+        """Advance one sample.
 
         Parameters
         ----------

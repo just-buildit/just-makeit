@@ -2,16 +2,16 @@
 
 extracted: ['demo_alloc']
 
-brief:    'Allocate the thing. @throws ValueError if n is zero. @exception MemoryError on allocation failure.'
+brief:    'Allocate the thing.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('throws', 'ValueError if n is zero.'), ('exception', 'MemoryError on allocation failure.')]
 
 rendered:
-        """Allocate the thing. @throws ValueError if n is zero. @exception MemoryError on allocation failure.
+        """Allocate the thing.
 
         Parameters
         ----------

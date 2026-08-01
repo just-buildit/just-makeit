@@ -44,23 +44,50 @@ ______________________________________________________________________
 
 ## Supported Doxygen tags
 
-| Tag                          | Maps to in `.pyi`           |
-| ---------------------------- | --------------------------- |
-| `@brief <text>`              | First line of the docstring |
-| Body text (no tag)           | Continuation of summary     |
-| `@param <name> <doc>`        | `Parameters` section entry  |
-| `@return <doc>` / `@returns` | `Returns` section entry     |
-| `@code` … `@endcode`         | `Examples` section doctest  |
+| Tag                                 | Maps to in `.pyi`           |
+| ----------------------------------- | --------------------------- |
+| `@brief <text>`                     | First line of the docstring |
+| Body text (no tag)                  | Continuation of summary     |
+| `@param <name> <doc>`               | `Parameters` section entry  |
+| `@param[in]` / `[out]` / `[in,out]` | same, direction recorded    |
+| `@return <doc>` / `@returns`        | `Returns` section entry     |
+| `@code` … `@endcode`                | `Examples` section doctest  |
 
-Tags not in this table (e.g. `@note`, `@warning`, `@see`) are silently
-dropped — they have no numpy-docstring equivalent.
+**Either command prefix works.** Doxygen treats `@brief` and `\brief` as the
+same command, and so does jm — a header written in backslash style derives
+identically to one written with `@`.
 
-### Inline word-references are reduced to the bare word
+Tags not in this table (e.g. `@note`, `@warning`, `@see`, `@retval`) are
+recognized as tags and then dropped: they have no numpy-docstring equivalent
+*yet*, so nothing they contain reaches the rendered docstring.
 
-Doxygen inline markup that references a single word — `@p name`, `@c name`,
+The distinction between "recognized then dropped" and "not recognized" is the
+whole point. An unrecognized tag is not inert — it is prose, and prose attaches
+to whichever section is currently open, so a `@note` after a `@return` used to
+land inside the return description (gh-641). Recognizing every command, whether
+or not jm has a destination for it, is what keeps that from happening. The
+parsed tags are held on the `DoxyBlock` so a future release can render them
+into numpy `Notes` / `Warnings` / `See Also` / `Raises` sections without
+another trip through the parser.
+
+**A header authored today does not need reworking when that lands.** Write
+`@note` and `@warning` as you would for Doxygen; they are dropped from the
+`.pyi` for now and will start rendering when the mapping ships.
+
+### Inline references are reduced to their argument
+
+Doxygen inline markup that marks the next token — `@p name`, `@c name`,
 `@a name`, `@e name`, `@b name`, and `@ref name` — reads as noise in a Python
-docstring, so `_strip_doxy_inline` collapses each to just the word (`length @p code_len` → `length code_len`). This runs on the brief, body, params, and
-return text, but **not** inside `@code` blocks, which are copied verbatim.
+docstring, so `_strip_doxy_inline` drops the marker and keeps the argument
+(`length @p code_len` → `length code_len`). This runs on the brief, body,
+params, and return text, but **not** inside `@code` blocks, which are copied
+verbatim.
+
+The argument does not have to be an identifier. `@c -1`, `@c "A"` and
+`@c +/-10^(clip_db/20)` are all ordinary Doxygen, and all have the marker
+removed (gh-641).
+
+A line that *begins* with one of these is prose, not a tag — `@ref demo_reset is the counterpart` stays in the body with just the marker stripped.
 
 ### A `@brief` that only restates the name is treated as empty
 

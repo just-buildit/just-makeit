@@ -45,16 +45,28 @@ def extract_doctests(text: str) -> list[str]:
     return out
 
 
+# Inline markup that reduces to its argument. Both Doxygen command prefixes
+# are accepted (``@p`` and ``\p`` are the same command). The trailing
+# whitespace requirement is what keeps ``@parameter`` from being read as
+# ``@p`` + ``arameter``.
+_INLINE_TAG_RE = re.compile(r"[@\\](?:ref|[pcaeb])[ \t]+")
+
+
 def _strip_doxy_inline(text: str) -> str:
-    """Reduce Doxygen inline word-references to the bare word.
+    """Drop Doxygen inline reference markers, keeping their argument.
 
     ``@p name`` / ``@c name`` / ``@a name`` / ``@e name`` / ``@b name`` and
-    ``@ref name`` are parameter/code/emphasis references that read as noise in a
-    Python docstring (``"length @p code_len"`` → ``"length code_len"``).  Only
-    the single-word form is touched; other ``@``-tags are left alone.
+    ``@ref name`` are parameter/code/emphasis references that read as noise in
+    a Python docstring (``"length @p code_len"`` → ``"length code_len"``).
+
+    The marker is removed whatever follows it (gh-641). The previous form
+    matched only a bare ``\\w+`` argument, so every idiomatic non-word usage
+    survived verbatim into the rendered docstring — ``@c -1``, ``@c "A"``
+    (doppler's BLUE-keyword idiom), ``@c +/-10^(clip_db/20)``. Doxygen's own
+    rule is "mark the next *token* as code", which has never been restricted
+    to identifiers.
     """
-    text = re.sub(r"@ref\s+(\w+)", r"\1", text)
-    return re.sub(r"@[pcaeb]\s+(\w+)", r"\1", text)
+    return _INLINE_TAG_RE.sub("", text)
 
 
 @dataclass
@@ -74,6 +86,19 @@ class DoxyBlock:
         been joined from continuation lines.
     returns : str
         ``@return`` / ``@returns`` text (empty if absent).
+    examples : list of str
+        Verbatim interior lines of every ``@code`` / ``@endcode`` block, in
+        order, ready to render as a doctest ``Examples`` section.
+    param_dirs : dict
+        ``{name: direction}`` for any ``@param[in]`` / ``@param[out]`` /
+        ``@param[in,out]`` that carried a direction specifier (gh-650).
+        Absent from the mapping when the ``@param`` had no bracket group.
+    tags : list of tuple(str, str)
+        ``(command, text)`` for every recognised command with no structured
+        destination — ``@note``, ``@warning``, ``@see``, ``@retval``, and the
+        rest. Quarantined here rather than discarded (gh-641): holding them
+        keeps them out of the rendered prose today, and leaves gh-652 a
+        rendering-only change when they gain numpy sections.
     """
 
     brief: str = ""
@@ -81,6 +106,8 @@ class DoxyBlock:
     params: list[tuple[str, str]] = field(default_factory=list)
     returns: str = ""
     examples: list[str] = field(default_factory=list)
+    param_dirs: dict[str, str] = field(default_factory=dict)
+    tags: list[tuple[str, str]] = field(default_factory=list)
 
     def param_desc(self, name: str) -> str | None:
         """Return the description for parameter *name*, or ``None``.
@@ -222,7 +249,29 @@ def _strip_comment(raw: str) -> list[str]:
     return lines
 
 
-_TAG_RE = re.compile(r"^@(brief|param|return|returns)\b\s*(.*)$")
+# Any Doxygen command at the head of a line: either prefix (``@brief`` and
+# ``\brief`` are the same command — gh-650), an identifier, an optional
+# ``[direction]`` group for ``@param[out]``, then whitespace or end-of-line.
+#
+# That trailing requirement is load-bearing. Without it ``@f$ 20\log(g) @f$``
+# reads as a command named ``f`` with the argument ``$ 20\log(g)``, and inline
+# math at the head of a line would be quarantined out of the prose.
+_CMD_RE = re.compile(r"^[@\\]([A-Za-z]+)(?:\[([^\]]*)\])?(?=\s|$)\s*(.*)$")
+
+# Commands with a structured destination on DoxyBlock. Everything else that
+# _CMD_RE recognises is quarantined into `tags`.
+_BLOCK_CMDS = frozenset({"brief", "param", "return", "returns"})
+
+# Inline markup handled by _strip_doxy_inline, never a block command. A line
+# that happens to *start* with one ("@ref demo_reset is the counterpart")
+# is prose, and must not be swallowed as a tag.
+_INLINE_CMDS = frozenset({"p", "c", "a", "e", "b", "ref"})
+
+# @code / @endcode, in either prefix. Kept separate from _CMD_RE because
+# `@code{.py}` puts a brace where _CMD_RE requires whitespace.
+_CODE_OPEN_RE = re.compile(r"^[@\\]code\b")
+_CODE_CLOSE_RE = re.compile(r"^[@\\]endcode\b")
+
 _PARAM_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s+(.*)$")
 
 
@@ -254,9 +303,11 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     brief_parts: list[str] = []
     body_lines: list[str] = []
     params: list[tuple[str, str]] = []
+    param_dirs: dict[str, str] = {}
     return_parts: list[str] = []
     example_lines: list[str] = []
-    # current accumulation target: "brief" | "body" | "param" | "return"
+    tags: list[list[str]] = []
+    # current target: "brief" | "body" | "param" | "return" | "tag"
     target = "brief"
     saw_brief_tag = False
     in_code = False
@@ -267,54 +318,69 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
         # interior lines (the `* ` decoration is already stripped) so they
         # render into a numpy ``Examples`` block / runnable doctest.
         if in_code:
-            if stripped.startswith("@endcode"):
+            if _CODE_CLOSE_RE.match(stripped):
                 in_code = False
                 target = "body"
             else:
                 example_lines.append(ln)
             continue
-        if stripped.startswith("@code"):
+        if _CODE_OPEN_RE.match(stripped):
             in_code = True
             continue
 
-        tag_m = _TAG_RE.match(ln)
-        if tag_m:
-            tag, rest = tag_m.group(1), tag_m.group(2).strip()
-            if tag == "brief":
+        cmd_m = _CMD_RE.match(stripped)
+        cmd = cmd_m.group(1) if cmd_m else ""
+        if cmd_m and cmd not in _INLINE_CMDS:
+            direction, rest = cmd_m.group(2), cmd_m.group(3).strip()
+            if cmd == "brief":
                 target, saw_brief_tag = "brief", True
                 if rest:
                     brief_parts.append(rest)
-            elif tag == "param":
+            elif cmd == "param":
                 pm = _PARAM_RE.match(rest)
                 if pm:
                     params.append([pm.group(1), pm.group(2).strip()])
+                    if direction:
+                        param_dirs[pm.group(1)] = direction.strip()
                     target = "param"
                 else:
                     target = "body"  # malformed @param: ignore tag, keep text
-            else:  # return / returns
+            elif cmd in _BLOCK_CMDS:  # return / returns
                 target = "return"
                 if rest:
                     return_parts.append(rest)
+            else:
+                # gh-641: a command with no structured destination is held
+                # here, NOT appended to whatever field happened to be open.
+                # The old behaviour made the damage depend on position — the
+                # same @note landed in the summary, the body, or the Returns
+                # description depending only on which tag preceded it.
+                tags.append([cmd, rest])
+                target = "tag"
             continue
 
-        if not ln.strip():
+        if not stripped:
             # blank line ends the brief (the summary is a single paragraph,
-            # whether tagged @brief or untagged lead text) and separates body
-            # paragraphs.
+            # whether tagged @brief or untagged lead text), ends a quarantined
+            # tag's paragraph, and separates body paragraphs.
             if target == "brief" and brief_parts:
+                target = "body"
+            if target == "tag":
                 target = "body"
             if target == "body" and body_lines and body_lines[-1] != "":
                 body_lines.append("")
             continue
 
         if target == "brief":
-            brief_parts.append(ln.strip())
+            brief_parts.append(stripped)
         elif target == "param":
-            params[-1][1] = (params[-1][1] + " " + ln.strip()).strip()
+            params[-1][1] = (params[-1][1] + " " + stripped).strip()
         elif target == "return":
-            return_parts.append(ln.strip())
+            return_parts.append(stripped)
+        elif target == "tag":
+            tags[-1][1] = (tags[-1][1] + " " + stripped).strip()
         else:
-            body_lines.append(ln.strip())
+            body_lines.append(stripped)
 
     # If there was no @brief tag, the first body paragraph is the brief.
     if not saw_brief_tag and not brief_parts and body_lines:
@@ -342,8 +408,14 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
         params=[(n, _strip_doxy_inline(d)) for n, d in params],
         returns=_strip_doxy_inline(returns),
         examples=example_lines,
+        param_dirs=param_dirs,
+        tags=[(c, _strip_doxy_inline(t)) for c, t in tags],
     )
 
+    # Quarantined tags deliberately do NOT count as content here: nothing
+    # renders them yet, so a block carrying only an @note still falls back to
+    # the name-based stub, which is the behaviour the contract documents. When
+    # gh-652 gives them numpy sections this test gains `or block.tags`.
     if not (brief or block.body or block.params or returns or example_lines):
         return None
     # Trivial scaffold brief (e.g. "@brief myverb.") with nothing else.

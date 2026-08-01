@@ -2,16 +2,16 @@
 
 extracted: ['demo_old']
 
-brief:    'Old entry point. @deprecated Use demo_step() instead. @since 1.2 @version 3'
+brief:    'Old entry point.'
 body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('deprecated', 'Use demo_step() instead.'), ('since', '1.2'), ('version', '3')]
 
 rendered:
-        """Old entry point. @deprecated Use demo_step() instead. @since 1.2 @version 3
+        """Old entry point.
 
         Parameters
         ----------

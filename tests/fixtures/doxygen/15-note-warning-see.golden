@@ -3,18 +3,15 @@
 extracted: ['demo_step']
 
 brief:    'Do it.'
-body:     ['@note Not thread safe.', '@warning Overflows above 1.0.', '@see demo_other', '@sa demo_another']
+body:     []
 params:   []
 dirs:     {}
 returns:  ''
 examples: []
-tags:     []
+tags:     [('note', 'Not thread safe.'), ('warning', 'Overflows above 1.0.'), ('see', 'demo_other'), ('sa', 'demo_another')]
 
 rendered:
         """Do it.
-
-        @note Not thread safe. @warning Overflows above 1.0. @see demo_other @sa
-        demo_another
 
         Parameters
         ----------

@@ -4,8 +4,8 @@ extracted: ['demo_step']
 
 brief:    'Compute the thing.'
 body:     []
-params:   []
-dirs:     {}
+params:   [('x', 'Input sample.'), ('y', 'Output sample.'), ('st', 'Running state.')]
+dirs:     {'x': 'in', 'y': 'out', 'st': 'in,out'}
 returns:  ''
 examples: []
 tags:     []
@@ -16,7 +16,11 @@ rendered:
         Parameters
         ----------
         x : float
-            Input.
+            Input sample.
+        y : float
+            Output sample.
+        st : float
+            Running state.
 
         Returns
         -------
