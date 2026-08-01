@@ -410,6 +410,7 @@ for the full semantics.
 | `extra_args = [{name, type}]`     | `jm method --extra-arg name:type` (alias for `params`)  | ✅ (0.14.2)  |
 | `variable_output = true`          | `jm method --variable-output`                           | ✅           |
 | `pass_capacity = true`            | `jm method --pass-capacity`                             | ✅ (0.14.4)  |
+| `count_default = "EXPR"`          | `jm method --count-default EXPR`                        | ✅ (0.33.17) |
 | `nogil = true`                    | `jm method --nogil`                                     | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)      | `jm method --max-out N`                                 | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`       | `jm method --multi-output T` (repeatable)               | ✅           |
@@ -567,6 +568,7 @@ One entry per `just-makeit method` call.
 | `params`          | array of `{name, type}` | Named scalar / array parameters                                   |
 | `variable_output` | bool                    | `--variable-output`                                               |
 | `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
+| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)     |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
 | `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
 | `batch`           | bool                    | `--batch`                                                         |

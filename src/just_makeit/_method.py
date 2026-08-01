@@ -98,6 +98,7 @@ def _methods_c_stub_variable(
     out_type: str | None = None,
     max_out: int = 0,
     pass_capacity: bool = False,
+    count_default: str = "",
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -498,6 +499,7 @@ def _build_method_prototype(
     params: list[tuple[str, str]],
     out_type: str | None = None,
     pass_capacity: bool = False,
+    count_default: str = "",
     batch: bool = False,
     result_fields: list[dict] | None = None,
     single: bool = False,
@@ -650,6 +652,7 @@ def run(
     varargs: bool = False,
     manual_stub: bool = False,
     pass_capacity: bool = False,
+    count_default: str = "",
     nogil: bool = False,
     status_return: bool = False,
     doc: str = "",
@@ -948,6 +951,8 @@ def run(
         method_entry["variable_output"] = True
     if pass_capacity:
         method_entry["pass_capacity"] = True
+    if count_default:
+        method_entry["count_default"] = count_default
     if nogil:
         method_entry["nogil"] = True
     if status_return:

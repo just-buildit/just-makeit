@@ -149,6 +149,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))
+    if m.get("count_default"):
+        parts.append(f'--count-default "{m["count_default"]}"')
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
 

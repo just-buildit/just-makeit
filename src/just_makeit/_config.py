@@ -2769,6 +2769,7 @@ _KNOWN_METHOD_KEYS = frozenset(
         "manual_stub",
         "variable_output",
         "pass_capacity",
+        "count_default",
         "nogil",
         "none_on_empty",
         "batch",
@@ -3109,6 +3110,8 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         lines.append("variable_output = true")
     if m.get("pass_capacity"):
         lines.append("pass_capacity = true")
+    if m.get("count_default"):
+        lines.append(_str_assign("count_default", m["count_default"]))
     if m.get("nogil"):
         lines.append("nogil = true")
     if m.get("none_on_empty"):

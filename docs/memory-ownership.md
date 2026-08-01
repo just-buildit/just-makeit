@@ -138,6 +138,35 @@ mirror and its `max_out()` stays zero-arg). A fixed-output kernel takes the
 parameter and ignores it — `(void)n_in;` — uniformly, since jm cannot tell
 from the manifest whether a given block's output is call-independent.
 
+### The `count` default for a void-input method
+
+A `variable_output` method with `arg_type = "void"` has no input to size from,
+so the binding gives it a `count` keyword and seeds it with `1`. For a
+snapshot or drain accessor that default *is* the method's zero-arg behaviour,
+and `1` is almost never the right answer — the right one is the object's
+natural capacity, which lives in the user's C and cannot be derived from the
+manifest.
+
+Declare it (gh-657):
+
+```toml
+[[delay.methods]]
+name = "ptr"
+arg_type = "void"
+return_type = "double _Complex"
+variable_output = true
+pass_capacity = true
+count_default = "state->num_taps"
+```
+
+The value is a C expression, evaluated once before argument parsing, and
+overridden by any `count` the caller passes. An expression mentioning `state`
+gets a local alias for the object's handle. Because it is C rather than a
+Python literal, the `.pyi` and the runtime `__doc__` both render the default
+as `...`.
+
+Without the key the seed stays `1`, exactly as before.
+
 It is **not** a reliable call-independent upper bound even so. A generator's
 `steps(count)` writes exactly `count` samples, which can exceed it. The real
 contract, **without** `pass_capacity`:
