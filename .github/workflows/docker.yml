@@ -9,10 +9,16 @@ on:
       - docker/**
       - src/just_makeit/**
       - pyproject.toml
+  # On a PR, build only when something that can actually break the image
+  # changed: the image definition, or the dependency set it installs.
+  # `src/just_makeit/**` used to be here, which meant every ordinary Python or
+  # test PR built two multi-arch images for no signal. Freshness of the
+  # published images is not a PR concern -- the push-to-main trigger above
+  # keeps them current on the broader path set, and release.yml calls this
+  # workflow on every tag.
   pull_request:
     paths:
       - docker/**
-      - src/just_makeit/**
       - pyproject.toml
 
 permissions:

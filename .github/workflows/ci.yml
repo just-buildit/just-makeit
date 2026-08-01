@@ -30,13 +30,32 @@ jobs:
             exit 0
           fi
           base="${{ github.event.pull_request.base.sha }}"
-          changed=$(git diff --name-only "$base" HEAD 2>/dev/null \
-                    || git diff --name-only HEAD^ HEAD)
-          if echo "$changed" | grep -qvE '^(CHANGELOG\.md|pyproject\.toml)$'; then
-            echo "src=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "src=false" >> "$GITHUB_OUTPUT"
+          git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
+
+          # A release commit necessarily touches four files, not two: the
+          # bump edits pyproject.toml, then the uv-lock and sync-jb-version
+          # hooks regenerate uv.lock and jb.toml. Skipping on only the first
+          # two meant every release PR ran the full matrix for a version
+          # string.
+          changed=$(git diff --name-only "$base" HEAD)
+          if echo "$changed" \
+             | grep -qvE '^(CHANGELOG\.md|pyproject\.toml|jb\.toml|uv\.lock)$'
+          then
+            echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
+
+          # ...but uv.lock also moves for a real dependency change, and
+          # pyproject.toml is already skippable, so the file set alone would
+          # let a dependency bump through untested. Require that the only
+          # pyproject edit is the version line.
+          if git diff -U0 "$base" HEAD -- pyproject.toml \
+             | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
+             | grep -qvE '^[+-]version = '
+          then
+            echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          echo "src=false" >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
