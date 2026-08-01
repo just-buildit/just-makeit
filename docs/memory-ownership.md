@@ -141,13 +141,25 @@ from the manifest whether a given block's output is call-independent.
 ### The `count` default for a void-input method
 
 A `variable_output` method with `arg_type = "void"` has no input to size from,
-so the binding gives it a `count` keyword and seeds it with `1`. For a
-snapshot or drain accessor that default *is* the method's zero-arg behaviour,
-and `1` is almost never the right answer — the right one is the object's
-natural capacity, which lives in the user's C and cannot be derived from the
-manifest.
+so the binding gives it a `count` keyword and seeds it with `1`.
 
-Declare it (gh-657):
+**Whether that matters depends on how the object produces its output, not on
+the method's signature.** Two shapes look alike in the manifest and want
+opposite things:
+
+| Shape                                                                                                               | Does `count_default` apply?                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **No-buffer / count-driven** — the kernel writes `count` samples into the binding's allocation                      | **Yes.** The count *is* the snapshot size, so its default is the method's zero-arg behaviour, and `1` is almost never right. |
+| **Pre-allocated buffer** — the object owns a buffer sized at construction and the accessor hands back what is in it | **No.** The buffer already determines the snapshot; a count default has nothing to do and can only confuse the binding.      |
+
+Signature is the wrong predicate here. A `void`-input `pass_capacity` method
+can be either shape, so check what the object actually allocates before adding
+the key — this is the sweep error to avoid (doppler-dsp/doppler#568, where
+`delay`'s pre-allocated `_ptr_buf` meant its accessors never needed it).
+
+For the first shape the right default is the object's natural capacity, which
+lives in the user's C and cannot be derived from the manifest. Declare it
+(gh-657):
 
 ```toml
 [[delay.methods]]
