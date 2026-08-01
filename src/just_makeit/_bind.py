@@ -39,6 +39,8 @@ from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
+from ._context._parse import _build_ml_doc
+from ._docstring import authored_class_brief
 from ._init import _make_component_ctx
 
 
@@ -468,10 +470,17 @@ def _build_ctx(
             state_vars,
             no_state=is_opaque,
             init_params=init_params,
+            # gh-676/gh-644: bind reflects the header, so the built-ins'
+            # documentation is exactly what it should be reading -- and it
+            # writes the same _ext.c apply does, so anything it does not
+            # derive shows up as a round-trip divergence.
+            doc_blocks=doc_blocks,
         )
     )
     ctx.update(Ctx.make_perf_ctx(False))
-    ctx.update(Ctx.make_step_ctx(ctx, arg_type, return_type))
+    ctx.update(
+        Ctx.make_step_ctx(ctx, arg_type, return_type, doc_blocks=doc_blocks)
+    )
     ctx.update(
         Ctx.make_methods_ctx(
             ctx["component"],
@@ -557,6 +566,14 @@ def _build_ctx(
         doc_blocks=doc_blocks,
         custom_reset=bool(init_params),
     )
+    # gh-676/gh-644: the runtime class docstring, on the same precedence
+    # every other regeneration path uses. bind reads the header alone, so
+    # without this it rendered the seeded default while `jm apply` rendered
+    # the author's create() @brief -- and the two write the SAME file, so the
+    # example's bind round-trip caught them disagreeing.
+    _tp = authored_class_brief(doc_blocks, f"{comp}_create")
+    if _tp:
+        ctx["tp_doc"] = _build_ml_doc([_tp])
     return ctx
 
 

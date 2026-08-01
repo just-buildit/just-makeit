@@ -35,6 +35,7 @@ from ._init import (
 from ._docstring import (
     extract_doc_blocks,
     header_default,
+    authored_class_brief,
     is_scaffold_doc,
     parse_doxygen_block,
 )
@@ -1085,11 +1086,12 @@ def build_component_ctxs(
         # `acq_create_continuous`) is actually constructed by that function,
         # not the derived `<obj>_create` — its Doxygen is what tp_init
         # actually calls, so the transplant must key off it too.
-        _cfn = C.object_create_fn(cfg, obj) or f"{obj}_create"
-        _cblk = _doc_blocks.get(_cfn)
         _cdoc = (
-            cfg.get(obj, {}).get("doc")
-            or (_cblk.brief if (_cblk and _cblk.brief) else "")
+            authored_class_brief(
+                _doc_blocks,
+                C.object_create_fn(cfg, obj) or f"{obj}_create",
+                cfg.get(obj, {}).get("doc", ""),
+            )
             or f"{ctx['Component']} type."
         )
         ctx["tp_doc"] = _build_ml_doc([_cdoc])

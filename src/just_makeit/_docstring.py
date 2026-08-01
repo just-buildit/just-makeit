@@ -291,6 +291,23 @@ def _norm_brief(text: str) -> str:
     return text.strip().rstrip(".").replace("_", " ").strip().lower()
 
 
+def _fold(text: str) -> str:
+    """Reduce a brief to letters and digits, for template comparison.
+
+    jm's own scaffolds do not agree with themselves about how to spell the
+    object: ``create``/``destroy`` interpolate the component id
+    (``Create a my_filter instance.``) while ``reset`` interpolates the class
+    name (``Reset MyFilter to its post-create state.``). Comparing on
+    :func:`_norm_brief` alone therefore matched one and missed the other --
+    ``my_filter`` folds to ``my filter``, ``MyFilter`` folds to ``myfilter``.
+
+    Dropping the separators makes the comparison indifferent to that, which is
+    the right call: both spellings are jm writing about the same object, and a
+    human writing either one verbatim is writing jm's boilerplate.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 # jm's own scaffold @brief for the built-in step()/steps() methods, by I/O
 # shape. Normalized by _norm_brief.
 _STEP_SCAFFOLD_BRIEFS = frozenset(
@@ -431,9 +448,9 @@ def is_scaffold_doc(
     brief = _norm_brief(block.brief)
     if not brief or not member:
         return False
-    if brief in scaffold_briefs(member, owner):
+    if _fold(brief) in {_fold(s) for s in scaffold_briefs(member, owner)}:
         return True
-    if brief != _norm_brief(member):
+    if _fold(brief) != _fold(member):
         return False
     # Generic ``@brief <member>.`` — only an untouched skeleton counts.
     return not block.returns.strip() and not any(
@@ -549,6 +566,57 @@ def scaffold_doc_block(decl: str, member: str, indent: str = "") -> str:
         lines.append(f"{indent} * @return")
     lines.append(f"{indent} */")
     return "\n".join(lines)
+
+
+def authored_class_brief(
+    doc_blocks: "dict | None",
+    create_fn: str,
+    manifest_doc: str = "",
+) -> str:
+    """The authored summary for a wrapped type, or ``""`` if there is none.
+
+    One definition of the precedence every regeneration path uses for the
+    runtime class docstring (``tp_doc``): manifest ``doc=`` outranks the
+    header's ``@brief`` on the constructor, and jm's own scaffold boilerplate
+    counts as neither (``_object._load_doc_blocks`` has already filtered it).
+
+    Returning ``""`` rather than a fallback is deliberate. The fallback differs
+    by caller -- a standalone object's template seeds "``<C>`` component. Wraps
+    ``<c>_state_t``." while the module aggregator uses "``<C>`` type." -- and a
+    caller that overwrote its own seeded default unconditionally would make a
+    freshly scaffolded project report STALE against itself, because
+    ``jm object`` renders the binding without doc blocks and ``jm apply``
+    renders it with them.
+
+    Parameters
+    ----------
+    doc_blocks : dict or None
+        ``{c_function_name: DoxyBlock}`` from ``_object._load_doc_blocks``.
+    create_fn : str
+        The constructor's C name -- ``<obj>_create``, or the ``create_fn``
+        override, which is what ``tp_init`` actually calls (gh-602).
+    manifest_doc : str, optional
+        The object's manifest ``doc=``, which outranks the header.
+
+    Returns
+    -------
+    str
+        The authored summary, or ``""`` when nothing was authored.
+
+    Examples
+    --------
+    >>> blk = parse_doxygen_block("@brief Log-domain AGC.")
+    >>> authored_class_brief({"agc_create": blk}, "agc_create")
+    'Log-domain AGC.'
+    >>> authored_class_brief({"agc_create": blk}, "agc_create", "From TOML.")
+    'From TOML.'
+    >>> authored_class_brief({}, "agc_create")
+    ''
+    """
+    if manifest_doc:
+        return manifest_doc
+    blk = (doc_blocks or {}).get(create_fn)
+    return blk.brief if (blk and blk.brief) else ""
 
 
 def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
