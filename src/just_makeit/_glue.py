@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import _config as C
 from ._context._parse import _build_ml_doc
+from ._docstring import authored_class_brief
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
@@ -235,10 +236,10 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
     # Wraps <c>_state_t." however the author documented create() -- while the
     # .pyi class docstring beside it showed the real thing. Same precedence as
     # the module path: manifest doc= > header @brief > a generic fallback.
-    _cfn = C.object_create_fn(cfg, object_name) or f"{object_name}_create"
-    _cblk = cfg.get(object_name, {}).get("_doc_blocks", {}).get(_cfn)
-    _tp = cfg.get(object_name, {}).get("doc") or (
-        _cblk.brief if (_cblk and _cblk.brief) else ""
+    _tp = authored_class_brief(
+        cfg.get(object_name, {}).get("_doc_blocks", {}),
+        C.object_create_fn(cfg, object_name) or f"{object_name}_create",
+        cfg.get(object_name, {}).get("doc", ""),
     )
     # Only override when there is something authored to override WITH. An
     # unconditional fallback here would rewrite the seeded default, and

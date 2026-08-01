@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The built-in `create` / `reset` / `step` / `steps` now derive their
+    documentation from the header on every face and every object kind
+    (gh-676, gh-644).** Four built-ins x two object kinds x two faces is
+    sixteen cells, and **eight** were hard-coded literals: a standalone
+    object's stub ignored the header for `reset`/`step`/`steps`, its runtime
+    `__doc__` ignored it for all four (including `tp_doc`, so `help(Obj)`
+    showed "`<C>` component. Wraps `<c>_state_t`." however the author
+    documented `create()`), and a module object's runtime `reset` ignored it
+    too. That shape is why gh-676 and gh-644 read as contradicting each other:
+    each described a different column, and both were right. Four separate
+    missing lookups, not one — `_glue`, `_apply`, the standalone `_ext.c`
+    template, and `_object` — plus `jm bind`, which writes the same file
+    `apply` does and so surfaced the last of them as a round-trip divergence.
+- **A scaffold `@brief` naming the object by its class name was not
+    recognised as scaffold boilerplate (gh-676).** jm's own templates disagree
+    about how to spell the object — `create`/`destroy` interpolate the
+    component id (`Create a my_filter instance.`) while `reset` interpolates
+    the class name (`Reset MyFilter to its post-create state.`) — and the
+    sentinel compared on a form that folded `my_filter` to `my filter` but
+    `MyFilter` to `myfilter`. Harmless while `reset` derived nothing; the
+    moment it did, a freshly scaffolded project reported STALE against itself.
+
 ## [0.36.0] — 2026-08-01
 
 ### Added
