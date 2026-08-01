@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`count_default` reached the `jm method` CLI but not `jm apply` (gh-663).**
+    A manifest that declared the gh-657 key produced the un-seeded
+    `Py_ssize_t n = 1;` whenever the binding was regenerated from the manifest
+    — which is the only flow a project driving `jm apply` / `jm status --check`
+    ever uses, so the fix did not reach the projects it was written for. The
+    gh-657 tests all drove `_method.run` directly and passed throughout.
+    `_apply._replay_method` forwards the key now, and a new gate compares every
+    manifest method key against the keys the replay actually reads, so the next
+    one cannot be dropped silently.
+
 ## [0.34.0] — 2026-08-01
 
 ### Added
