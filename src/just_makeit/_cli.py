@@ -42,6 +42,9 @@ Commands:
     --extra-include-dirs DIR    CMake include path; repeatable (e.g. ${DOPPLER_INCLUDE_DIR}).
     --extra-link-libs TARGET    CMake link target; repeatable (e.g. PkgConfig::DOPPLER).
     --extra-types NAME          Hand-written Python type to register in PyInit_; repeatable.
+    --doc TEXT                  Module documentation (`[module.X] doc`). Reaches both
+                                faces: the extension's m_doc and a real module
+                                docstring on the re-export __init__.py.
     --functions-in-core         Keep this module's functions in <module>_core.c (one TU,
                                 shared static helpers) instead of one .c per function.
 
@@ -554,6 +557,7 @@ def main() -> None:
         mod_extra_libs: list[str] = []
         mod_extra_types: list[str] = []
         mod_functions_in_core = False
+        mod_doc = ""
         rest = args[2:]
         j = 0
         while j < len(rest):
@@ -591,6 +595,16 @@ def main() -> None:
             elif tok == "--functions-in-core":
                 mod_functions_in_core = True
                 j += 1
+            elif tok == "--doc":
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --doc requires a documentation string",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_doc = rest[j]
+                j += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -601,6 +615,7 @@ def main() -> None:
             extra_link_libs=mod_extra_libs or None,
             extra_types=mod_extra_types or None,
             functions_in_core=mod_functions_in_core,
+            doc=mod_doc,
         )
 
     elif cmd == "object":

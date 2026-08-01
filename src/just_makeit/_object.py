@@ -933,7 +933,14 @@ def _make_view_ctx(
     )
     _vdoc = view.get("doc") or f"{ctx['Component']} type."
     ctx["tp_doc"] = _build_ml_doc([_vdoc])
-    ctx.update(Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module)))
+    ctx.update(
+        Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package(cfg, module),
+            C.module_doc(cfg, module),
+        )
+    )
     ctx["frag_id"] = _view_frag_id(view)
     return ctx
 
@@ -1099,7 +1106,12 @@ def build_component_ctxs(
         # file is <cname>_ext_<comp>.c) and supply `module_tp` for the dotted
         # tp_name. For a flat module these equal today's values (zero churn).
         ctx.update(
-            Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module))
+            Ctx.make_module_ctx(
+                module,
+                pkg,
+                C.module_package(cfg, module),
+                C.module_doc(cfg, module),
+            )
         )
         # gh-504: a real object's fragment id is its component name (today's
         # behaviour); a view (below) overrides it so its fragment file differs.
@@ -1201,6 +1213,14 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         extra_types=C.extra_types(cfg, module),
         # gh-353: a module function's enum param needs the SSOT enum tables.
         enums=C.enums(cfg),
+        # gh-645: `[module.X] doc` -> m_doc, the same string the re-export
+        # __init__.py docstring gets.
+        module_doc_c=Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package(cfg, module),
+            C.module_doc(cfg, module),
+        )["module_doc_c"],
     )
     _write(ext_c_path, aggregator, "update")
 
@@ -1294,7 +1314,12 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         # flat modules collapse these to today's values. gh-523: `package`
         # overrides module_pypath so LIBRARY_OUTPUT_DIRECTORY points at the
         # sibling package the .so is meant to land in.
-        **Ctx.make_module_ctx(module, pkg, C.module_package(cfg, module)),
+        **Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package(cfg, module),
+            C.module_doc(cfg, module),
+        ),
         "Module": Module,
         "object_list": object_list,
         "module_comment": module_comment,
@@ -1427,7 +1452,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             R.MODULE_INIT_PY,
             {
                 **Ctx.make_module_ctx(
-                    module, pkg, C.module_package(cfg, module)
+                    module,
+                    pkg,
+                    C.module_package(cfg, module),
+                    C.module_doc(cfg, module),
                 ),
                 "Module": Module,
                 "object_imports": ", ".join(all_exports),

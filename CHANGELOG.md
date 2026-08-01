@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`[module.X] doc` documents a module, on both faces (gh-645).** A module is
+    the one public surface with no header to derive from: its extension
+    `m_doc` and its re-export `__init__.py` are wholly jm-generated, so unlike
+    an object there was nowhere to say what it is for. `m_doc` was a fixed
+    `"<Module> module."` literal and the shim carried a `#` comment, which is
+    not a docstring and which griffe does not read. One manifest string now
+    feeds both — `help(pkg.mod)` and the module's docs page. Set it with
+    `jm module <name> --doc "..."`, or by hand in the manifest. Undeclared,
+    both faces render exactly as before.
+
 ### Fixed
 
 - **The built-in `create` / `reset` / `step` / `steps` now derive their

@@ -249,7 +249,17 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-523: `package` must reach the temp scaffold *at module-creation
         # time* — it decides where every Python artifact is written, so the
         # later metadata copy-down (extra_link_libs & co.) would be too late.
-        _module.run(temp_root, mod, package=C.module_package(cfg, mod))
+        # gh-645: `doc` is read at module-creation time (it renders the
+        # re-export __init__.py's docstring), so it has to be forwarded
+        # here for the same reason `package` is -- the later metadata
+        # copy-down would be too late. This is the gh-663 shape: a new
+        # manifest key silently dropped by the replay.
+        _module.run(
+            temp_root,
+            mod,
+            package=C.module_package(cfg, mod),
+            doc=C.module_doc(cfg, mod),
+        )
 
     # After module scaffolding, copy module-level metadata (e.g.
     # extra_link_libs) from the real project TOML into the temp TOML so
