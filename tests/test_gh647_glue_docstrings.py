@@ -159,6 +159,22 @@ class TestRenderedShape:
             doc = "\n".join(gm.pyi_doc())
             assert ">>>" not in doc, f"{name} would feed the doctest gate"
 
+    def test_documented_params_all_appear_in_the_signature(self):
+        # griffe reports "documented parameter not in the signature" for this
+        # mismatch, and __exit__ had it: a `*args: object` signature over
+        # three documented names. Both now come from py_params.
+        for name, gm in glue_methods("Widget").items():
+            sig = gm.pyi_params(defaults=True)
+            for pname, _desc in gm.block.params:
+                assert f"{pname}: " in sig, (
+                    f"{name} documents {pname!r}, absent from `{sig}`"
+                )
+
+    def test_exit_signature_is_named_not_varargs(self, project):
+        pyi = _pyi(project)
+        assert "def __exit__(self, *args: object)" not in pyi
+        assert "def __exit__(self, exc_type: object | None = ..." in pyi
+
     def test_enter_return_type_is_not_quoted_in_the_doc(self):
         # The forward-reference quoting belongs to the emitted signature, not
         # to the numpy Returns type column.

@@ -67,6 +67,33 @@ class GlueMethod:
             self.block, self.name, self.py_params, self.ret_ann, indent=indent
         )
 
+    def pyi_params(self, defaults: bool = False) -> str:
+        """The stub signature's parameter list, ``self`` included.
+
+        Built from :attr:`py_params` — the same list that drives the rendered
+        ``Parameters`` section — so a documented parameter cannot go missing
+        from the signature. griffe reports that mismatch as "documented
+        parameter not in the signature", and ``__exit__`` had it: a
+        ``*args: object`` signature over three documented names.
+
+        Parameters
+        ----------
+        defaults : bool, optional
+            Append ``= ...`` to each parameter. Wanted for ``__exit__``, whose
+            C binding is ``METH_VARARGS`` and so tolerates any arity.
+
+        Examples
+        --------
+        >>> glue_methods("Fir")["set_state"].pyi_params()
+        'self, blob: bytes'
+        >>> glue_methods("Fir")["state_bytes"].pyi_params()
+        'self'
+        """
+        tail = " = ..." if defaults else ""
+        return ", ".join(
+            ["self"] + [f"{n}: {a}{tail}" for n, a in self.py_params]
+        )
+
     def c_doc_lines(self) -> list[str]:
         """Logical doc lines for the runtime ``PyMethodDef`` entry.
 

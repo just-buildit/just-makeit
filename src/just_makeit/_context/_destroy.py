@@ -351,11 +351,17 @@ def make_destroy_ctx(
     # reader-shaped object calls it `close`, not `destroy`.
     _cm = glue_methods(Component, close_name=names[0])
 
+    # The `__exit__` signature is built from the same param list that drives
+    # its documented Parameters section, so the two cannot disagree. Defaults
+    # keep it as permissive as the METH_VARARGS binding actually is.
+    _exit_sig = _cm["__exit__"].pyi_params(defaults=True)
+
     return {
         "cm_enter_doc": _build_ml_doc(_cm["__enter__"].c_doc_lines()),
         "cm_exit_doc": _build_ml_doc(_cm["__exit__"].c_doc_lines()),
         "pyi_enter_doc": "\n".join(_cm["__enter__"].pyi_doc()),
         "pyi_exit_doc": "\n".join(_cm["__exit__"].pyi_doc()),
+        "pyi_exit_sig": _exit_sig,
         "destroy_dealloc_call": dealloc,
         "destroy_method_body": body,
         "destroy_exit_body": body,
