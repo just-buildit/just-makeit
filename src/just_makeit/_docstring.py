@@ -799,19 +799,21 @@ def render_numpy_doc(
     for para in body:
         out.append("")
         out += [f"{pad}{w}" for w in _wrap(para, 72)]
+    # gh-678: descriptions wrap on the same rule as the body. They used to be
+    # emitted verbatim however long they were, so one docstring could carry a
+    # wrapped summary directly above a 110-column parameter description. The
+    # continuation indent is four deeper than the section, so the budget is
+    # four narrower; `_wrap` still never splits a token, so a lone URL or long
+    # identifier overflows rather than being broken.
     if py_params:
         out += ["", f"{pad}Parameters", f"{pad}----------"]
         for pname, ann in py_params:
             out.append(f"{pad}{pname} : {ann}")
-            out.append(f"{pad2}{descs.get(pname) or 'Input.'}")
+            desc = descs.get(pname) or "Input."
+            out += [f"{pad2}{w}" for w in _wrap(desc, 68)]
     if ret_ann != "None":
-        out += [
-            "",
-            f"{pad}Returns",
-            f"{pad}-------",
-            f"{pad}{ret_ann}",
-            f"{pad2}{ret or 'Output.'}",
-        ]
+        out += ["", f"{pad}Returns", f"{pad}-------", f"{pad}{ret_ann}"]
+        out += [f"{pad2}{w}" for w in _wrap(ret or "Output.", 68)]
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", f"{pad}Examples", f"{pad}--------"]
         out += [f"{pad}{ex}".rstrip() for ex in examples]
