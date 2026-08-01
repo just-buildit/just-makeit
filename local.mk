@@ -8,7 +8,7 @@
 # EXAMPLES_CLEAN_CMD would force it either to give up `test-examples` or to
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
-LOCAL_TARGETS = start-here examples-clean
+LOCAL_TARGETS = start-here examples-clean pr-watch
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -59,3 +59,14 @@ examples-clean: ## Remove build artifacts from every example
 	    [ -f "$$d/Makefile" ] && $(MAKE) -C "$$d" clean 2>/dev/null || true; \
 	done
 	find examples -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
+
+# Report a PR's check outcome. It is NOT the merge gate — `gh pr merge --auto`
+# is, and it evaluates the required set server-side where it cannot be got
+# wrong. This only answers "did it land, or is it actually stuck", so a failure
+# gets noticed instead of waited on. See scripts/pr-watch.sh for the three ways
+# a hand-rolled version of this poll silently reports green.
+pr-watch: ## Report whether PR=<n> landed or is genuinely failing
+ifndef PR
+	@echo "usage: make pr-watch PR=<number>"; exit 1
+endif
+	@REPO=just-buildit/just-makeit scripts/pr-watch.sh $(PR)
