@@ -2,17 +2,54 @@
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-08-01
+
+### Added
+
+- **Doxygen forms jm could not previously read.** A header written with
+    backslash commands (`\brief`, `\param`, `\return`) derived **nothing** —
+    the marker landed inside the summary text and every parameter description
+    was lost. `@param[in]` / `[out]` / `[in,out]` direction specifiers were
+    discarded outright by the parameter matcher. Both are read now, and the
+    direction is kept on the parsed block (gh-650).
+
+### Changed
+
+- **A standalone object's method docstrings now match a module object's for
+    the same header (gh-651).** There were two hand-written implementations of
+    the numpy layout and they disagreed on three things at once: the extended
+    description was dropped entirely on the standalone path, a `Parameters`
+    entry was a bare `x` with no `: type` (which numpydoc does not read as a
+    parameter at all), and the separator between sections was eight spaces of
+    trailing whitespace. One renderer now serves both.
+
+    **This changes generated `.pyi` content**, so the manifest-drift gate will
+    report a project as stale until `jm apply` is re-run and the stubs
+    committed. A module object's stubs are unaffected.
+
 ### Fixed
 
+- **Unrecognized Doxygen commands were absorbed, not ignored (gh-641).** The
+    parser knew four tags; any other `@`-tag line extended whichever field was
+    open, so `@note` after `@return` landed *inside* the return description and
+    the same tag before `@param` corrupted the summary instead. Whether it
+    reached the body or the summary depended on a blank line. Every command is
+    now recognized as a command and the ones with no numpy destination are held
+    and rendered nowhere — which is what `docs/developers/docstring-derivation.md`
+    has always claimed.
+- **Inline `@c` / `@p` / `@a` / `@e` / `@b` / `@ref` markers only stripped a
+    bare-word argument (gh-641).** Idiomatic non-word usage survived verbatim
+    into the rendered docstring: `@c -1`, `@c "A"`, `@c +/-10^(clip_db/20)`.
 - **`count_default` reached the `jm method` CLI but not `jm apply` (gh-663).**
-    A manifest that declared the gh-657 key produced the un-seeded
-    `Py_ssize_t n = 1;` whenever the binding was regenerated from the manifest
-    — which is the only flow a project driving `jm apply` / `jm status --check`
-    ever uses, so the fix did not reach the projects it was written for. The
-    gh-657 tests all drove `_method.run` directly and passed throughout.
-    `_apply._replay_method` forwards the key now, and a new gate compares every
-    manifest method key against the keys the replay actually reads, so the next
-    one cannot be dropped silently.
+    A manifest that declared the gh-657 key regenerated as the un-seeded
+    `Py_ssize_t n = 1;` — and apply is the only flow a project driving
+    `jm status --check` uses, so the fix did not reach the projects it was
+    written for. The gh-657 tests all drove `_method.run` directly and passed
+    throughout. A new gate compares every manifest method key against the keys
+    apply's replay actually reads, so the next one cannot be dropped silently.
+- **A void-input `variable_output` method's runtime `__doc__` named a
+    parameter that does not exist.** It advertised `ptr(n=1)` while the kwlist
+    has always bound `count`.
 
 ## [0.34.0] — 2026-08-01
 
