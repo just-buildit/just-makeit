@@ -2,27 +2,36 @@
 
 ## [Unreleased]
 
-### Fixed
+## [0.34.0] — 2026-08-01
 
-- **A void-input `variable_output` method's `count` can declare its default
-    (gh-657).** `obj.ptr()` on a snapshot/drain accessor silently changed
-    meaning in 0.33.16 — from "return everything buffered" to "return one
-    sample" — with no error and no changelog note. The signature did not
-    change: `count` has defaulted to `1` for the whole life of the feature.
-    What changed is that gh-607 started feeding that count to `*_max_out()`
-    and, under `pass_capacity`, dropped the clamp (`_min_cap = max(_omax, n)`)
-    that had been quietly rescuing it. jm cannot derive the right default —
-    the object's natural capacity lives in the user's C — so it is now
-    declarable: `count_default = "state->num_taps"`, or
-    `jm method --count-default`. The value is a C expression evaluated before
-    argument parsing and overridden by any count the caller passes; both faces
-    render the default as `...`, since it is not a Python literal. Projects
-    that do not set it are unaffected.
+### Added
 
-- **A void-input `variable_output` method's runtime `__doc__` named the wrong
-    parameter.** The doc advertised `ptr(n=1)` while the kwlist has always
-    bound `count`, so `help()` documented a keyword that did not exist. This
-    is what led gh-657 to be reported as a rename. Now `ptr(count=1)`.
+- **A void-input `variable_output` method can declare its `count` default
+    (gh-657).** `count_default = "state->num_taps"` on the method, or
+    `jm method --count-default EXPR`. The value is a C expression, evaluated
+    once before argument parsing and overridden by any `count` the caller
+    passes; an expression mentioning `state` gets a local alias for the
+    object's handle. Because it is C and not a Python literal, the `.pyi` and
+    the runtime `__doc__` both render the default as `...`. Projects that do
+    not set the key generate byte-identical output.
+
+- **Three gates hang off `make lint`, which is what CI runs**: `standard-check`
+    fails on any difference between the vendored `standard.mk` and canonical
+    (and fails, rather than skipping, when it cannot reach it — a gate that
+    cannot reach its reference has not passed); `help-check` fails when a
+    target is undocumented or a rule exists that `help` omits; `ghost-check`
+    fails on a `.PHONY` entry with neither a recipe nor prerequisites — the
+    state `make wheel` shipped in for as long as it did, exiting 0 having done
+    nothing, past a lint gate, CI on every PR, and a `help` entry advertising
+    it. `standard-check` stays inert until the canonical copy is published.
+
+- **`examples-clean` moved to `local.mk`**, just-makeit's only repo-local
+    target. It is not shared: doppler has examples but cleans them from its own
+    `clean`, so keeping it in `HAS_EXAMPLES` — where a required
+    `EXAMPLES_CLEAN_CMD` now made it fatal — would have forced doppler either
+    to give up `test-examples` or to invent a command for a target it does not
+    want. Criterion 10 requires shared targets to be *in* the standard; it does
+    not license the converse.
 
 ### Changed
 
@@ -66,24 +75,23 @@
     may not mean two things. Nothing outside the Makefile referenced any of
     the three.
 
-### Added
+### Fixed
 
-- **Three gates hang off `make lint`, which is what CI runs**: `standard-check`
-    fails on any difference between the vendored `standard.mk` and canonical
-    (and fails, rather than skipping, when it cannot reach it — a gate that
-    cannot reach its reference has not passed); `help-check` fails when a
-    target is undocumented or a rule exists that `help` omits; `ghost-check`
-    fails on a `.PHONY` entry with neither a recipe nor prerequisites — the
-    state `make wheel` shipped in for as long as it did, exiting 0 having done
-    nothing, past a lint gate, CI on every PR, and a `help` entry advertising
-    it. `standard-check` stays inert until the canonical copy is published.
-- **`examples-clean` moved to `local.mk`**, just-makeit's only repo-local
-    target. It is not shared: doppler has examples but cleans them from its own
-    `clean`, so keeping it in `HAS_EXAMPLES` — where a required
-    `EXAMPLES_CLEAN_CMD` now made it fatal — would have forced doppler either
-    to give up `test-examples` or to invent a command for a target it does not
-    want. Criterion 10 requires shared targets to be *in* the standard; it does
-    not license the converse.
+- **A void-input `variable_output` method's zero-arg call returned one sample
+    (gh-657).** `obj.ptr()` on a snapshot/drain accessor silently changed
+    meaning in 0.33.16 — from "return everything buffered" to "return one
+    sample" — with no error and no changelog note. The signature did not
+    change: `count` has defaulted to `1` for the whole life of the feature.
+    What changed is that gh-607 started feeding that count to `*_max_out()`
+    and, under `pass_capacity`, dropped the clamp (`_min_cap = max(_omax, n)`)
+    that had been quietly rescuing it — so the `1` went from inert to
+    load-bearing. jm cannot derive the right default (the object's natural
+    capacity lives in the user's C), so it is now declarable — see Added.
+
+- **A void-input `variable_output` method's runtime `__doc__` named the wrong
+    parameter.** The doc advertised `ptr(n=1)` while the kwlist has always
+    bound `count`, so `help()` documented a keyword that did not exist. This
+    is what led gh-657 to be reported as a rename. Now `ptr(count=1)`.
 
 ## [0.33.16] — 2026-07-29
 

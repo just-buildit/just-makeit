@@ -410,7 +410,7 @@ for the full semantics.
 | `extra_args = [{name, type}]`     | `jm method --extra-arg name:type` (alias for `params`)  | ✅ (0.14.2)  |
 | `variable_output = true`          | `jm method --variable-output`                           | ✅           |
 | `pass_capacity = true`            | `jm method --pass-capacity`                             | ✅ (0.14.4)  |
-| `count_default = "EXPR"`          | `jm method --count-default EXPR`                        | ✅ (0.33.17) |
+| `count_default = "EXPR"`          | `jm method --count-default EXPR`                        | ✅ (0.34.0)  |
 | `nogil = true`                    | `jm method --nogil`                                     | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)      | `jm method --max-out N`                                 | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`       | `jm method --multi-output T` (repeatable)               | ✅           |
