@@ -7,6 +7,7 @@ rendering dict.
 from __future__ import annotations
 
 from .. import _coerce
+from .._docstring import render_numpy_doc
 from .._types import (
     _CTYPE_META,
     _ARRAY_DTYPE,
@@ -1539,6 +1540,29 @@ def _state_struct_def(component: str, fields: str, opaque: bool) -> str:
     return f"\nstruct {component}_state {{\n{fields}}};\n"
 
 
+def _reset_docs(
+    component: str, doc_blocks: "dict | None"
+) -> "tuple[str, str]":
+    """``(runtime_text, pyi_body)`` for the built-in ``reset()`` (gh-676/644).
+
+    The header is the single source of truth for documentation, and ``reset``
+    was one of the built-ins that never consulted it: a hand-written ``@brief``
+    on ``<comp>_reset`` reached the module ``.pyi`` and nothing else, so the
+    same header documented the method on one face and not the other.
+
+    Both return values come from the one parsed block, so they cannot drift.
+    An absent or scaffold-template block (filtered upstream by
+    ``_object._load_doc_blocks``) yields the canned text, which is what keeps a
+    fresh scaffold idempotent.
+    """
+    blk = (doc_blocks or {}).get(f"{component}_reset")
+    canned = "Reset state to post-create defaults."
+    if blk is None or not blk.brief:
+        return canned, f'        """{canned}"""\n'
+    pyi = "\n".join(render_numpy_doc(blk, "reset", [], "None")) + "\n"
+    return blk.brief, pyi
+
+
 def make_state_ctx(
     component: str,
     Component: str,
@@ -1553,6 +1577,7 @@ def make_state_ctx(
     create_fn: "str | None" = None,
     no_reset: bool = False,
     opaque_state: bool = False,
+    doc_blocks: dict | None = None,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -1589,6 +1614,8 @@ def make_state_ctx(
     method makes the absence explicit instead.
     """
     _create = create_fn or f"{component}_create"
+    # gh-676/gh-644: one lookup, both faces, both branches below.
+    _reset_rt, _reset_pyi = _reset_docs(component, doc_blocks)
     if no_state:
         _ns_reset_fn = f"{Component}Obj_reset"
         base = {
@@ -1666,7 +1693,7 @@ def make_state_ctx(
             "builtin_reset_pmd": (
                 f'    {{"reset",    (PyCFunction){_ns_reset_fn},'
                 f"    METH_NOARGS,\n"
-                f'     "Reset state to post-create defaults."}},\n'
+                f'     "{_reset_rt}"}},\n'
             ),
             "builtin_reset_decl": (
                 f"/**\n"
@@ -1676,9 +1703,7 @@ def make_state_ctx(
                 f"void {component}_reset({component}_state_t *state);"
             ),
             "builtin_reset_pyi": (
-                "\n"
-                "    def reset(self) -> None:\n"
-                '        """Reset state to post-create defaults."""\n'
+                "\n    def reset(self) -> None:\n" + _reset_pyi
             ),
         }
         if init_params or array_args:
@@ -2436,7 +2461,7 @@ def make_state_ctx(
         "builtin_reset_pmd": (
             f'    {{"reset",    (PyCFunction){Component}_reset,'
             f"    METH_NOARGS,\n"
-            f'     "Reset state to post-create defaults."}},\n'
+            f'     "{_reset_rt}"}},\n'
         ),
         "builtin_reset_decl": (
             f"/**\n"
@@ -2445,11 +2470,7 @@ def make_state_ctx(
             f" */\n"
             f"void {component}_reset({component}_state_t *state);"
         ),
-        "builtin_reset_pyi": (
-            "\n"
-            "    def reset(self) -> None:\n"
-            '        """Reset state to post-create defaults."""\n'
-        ),
+        "builtin_reset_pyi": ("\n    def reset(self) -> None:\n" + _reset_pyi),
     }
     # gh-69: when init_params are present, they replace state-field-driven
     # ctor signature and Python __init__ parsing. The state struct, getters,

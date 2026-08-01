@@ -227,6 +227,10 @@ def _make_object_ctx(
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
             no_reset=no_reset,
+            # gh-644: reset() was the one built-in whose runtime __doc__ never
+            # consulted the header on this path either -- step/steps derived,
+            # reset kept the canned literal, from the same parsed blocks.
+            doc_blocks=doc_blocks,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))

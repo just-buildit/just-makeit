@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from ._context._parse import _build_ml_doc
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
@@ -81,6 +82,11 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             # gh-542: the glue render is exactly the pass that used to
             # silently reinstate a hand-removed reset() binding.
             no_reset=C.is_no_reset(cfg, object_name),
+            # gh-676/gh-644: the built-ins derive from the header too. Without
+            # this the standalone generators never saw doc_blocks at all, so a
+            # hand-written @brief on <obj>_reset/_step/_steps reached the
+            # module .pyi and nothing else.
+            doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         )
     )
     ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
@@ -90,6 +96,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             arg_type_,
             return_type_,
             no_step=C.is_no_step(cfg, object_name),
+            doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         )
     )
     ctx.update(
@@ -222,6 +229,24 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
         custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
         create_fn=C.object_create_fn(cfg, object_name),
     )
+    # gh-644/gh-676: the runtime class docstring. The module aggregator has
+    # derived this from create()'s @brief since gh-602; the standalone template
+    # carried a fixed literal, so `help(Obj)` showed "<Component> component.
+    # Wraps <c>_state_t." however the author documented create() -- while the
+    # .pyi class docstring beside it showed the real thing. Same precedence as
+    # the module path: manifest doc= > header @brief > a generic fallback.
+    _cfn = C.object_create_fn(cfg, object_name) or f"{object_name}_create"
+    _cblk = cfg.get(object_name, {}).get("_doc_blocks", {}).get(_cfn)
+    _tp = cfg.get(object_name, {}).get("doc") or (
+        _cblk.brief if (_cblk and _cblk.brief) else ""
+    )
+    # Only override when there is something authored to override WITH. An
+    # unconditional fallback here would rewrite the seeded default, and
+    # `jm object` renders this file without doc_blocks while `jm apply`
+    # renders it with them -- so a freshly scaffolded project would report
+    # STALE against itself the moment it was created.
+    if _tp:
+        ctx["tp_doc"] = _build_ml_doc([_tp])
     return ctx
 
 

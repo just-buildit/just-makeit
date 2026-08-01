@@ -1468,14 +1468,21 @@ def _sync_aggregates(
             from . import _render as _R
 
             cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
-            _temp_pyi = temp_root / "src" / pkg / f"{comp}.pyi"
-            if _temp_pyi.exists():
-                _temp_pyi.write_text(
-                    _R.render(
-                        _R.COMPONENT_PYI, _glue.component_ctx(cfg, comp, pkg)
-                    ),
-                    encoding="utf-8",
-                )
+            # gh-676/gh-644: BOTH faces, from the one enriched context. Only
+            # the .pyi was re-rendered here, so a standalone object's runtime
+            # __doc__ kept the temp scaffold's trivial-header text -- which is
+            # why its tp_doc read "<Component> component. Wraps <c>_state_t."
+            # however the author documented create(), while the .pyi beside it
+            # showed the real brief.
+            _ctx = _glue.component_ctx(cfg, comp, pkg)
+            _ctx["extra_include"] = _glue.standalone_extra_include(root, comp)
+            for _rel, _tmpl in (
+                (f"src/{pkg}/{comp}.pyi", _R.COMPONENT_PYI),
+                (f"native/src/{comp}/{comp}_ext.c", _R.COMPONENT_EXT_C),
+            ):
+                _dst = temp_root / _rel
+                if _dst.exists():
+                    _dst.write_text(_R.render(_tmpl, _ctx), encoding="utf-8")
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.

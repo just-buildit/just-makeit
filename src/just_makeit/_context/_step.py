@@ -25,6 +25,40 @@ def make_perf_ctx(perf: bool) -> dict[str, str]:
     }
 
 
+def _swap_pyi_summary(doc: str, brief: str) -> str:
+    """Replace a generated ``.pyi`` docstring's summary line with *brief*.
+
+    The step()/steps() stub docstrings are hand-built per I/O shape, because
+    each shape carries its own parameter and return annotations. Only the
+    summary sentence is the header's to own, so it is substituted rather than
+    the whole block re-rendered -- that keeps the shape-specific Parameters and
+    Returns sections exactly as they were (gh-676).
+
+    Examples
+    --------
+    >>> q = chr(34) * 3
+    >>> _swap_pyi_summary(f"    {q}Old.{q}", "New.") == f"    {q}New.{q}"
+    True
+    >>> nl = chr(10)
+    >>> multi = f"    {q}Old.{nl}{nl}    P{nl}    {q}"
+    >>> _swap_pyi_summary(multi, "New.").splitlines()[0] == f"    {q}New."
+    True
+    """
+    marker = chr(34) * 3
+    i = doc.find(marker)
+    if i < 0:
+        return doc
+    start = i + len(marker)
+    # A one-line docstring ends at the closing marker; a multi-line one ends
+    # its summary at the first newline.
+    nl = doc.find("\n", start)
+    close = doc.find(marker, start)
+    end = close if (close != -1 and (nl == -1 or close < nl)) else nl
+    if end < 0:
+        return doc
+    return doc[:start] + brief + doc[end:]
+
+
 def make_step_ctx(
     ctx: dict,
     arg_type: str,
@@ -1448,6 +1482,14 @@ def make_step_ctx(
         _pyi_step_self = (
             f"self, x: {in_py_hint}{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
         )
+    # gh-676: the header's @brief owns the summary on this face too. It
+    # already drove the runtime text above; without this the same header
+    # documented step() at runtime and not in the stub beside it.
+    if _sblk and _sblk.brief:
+        _pyi_step_doc = _swap_pyi_summary(_pyi_step_doc, _sblk.brief)
+    _ssb = _db.get(f"{component}_steps")
+    if _ssb and _ssb.brief and pyi_steps:
+        pyi_steps = _swap_pyi_summary(pyi_steps, _ssb.brief)
     pyi_step_methods = (
         f"\n    def step({_pyi_step_self}) -> {out_py_hint}:\n"
         f"{_pyi_step_doc}" + pyi_steps
