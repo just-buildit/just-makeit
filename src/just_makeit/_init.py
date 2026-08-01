@@ -16,6 +16,7 @@ from . import _config as C
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
+from ._docstring import scaffold_doc_block
 
 
 def _to_title(snake: str) -> str:
@@ -314,11 +315,26 @@ def _normalize_decl(decl: str) -> str:
     return re.sub(r"\s+", "", _DECL_QUALIFIER_RE.sub("", decl))
 
 
+def _with_scaffold_doc(decl: str, doc_members: "dict[str, str]") -> str:
+    """Prefix *decl* with jm's doc skeleton when it names a known member.
+
+    A decl jm cannot describe faithfully (see
+    :func:`_docstring.scaffold_doc_block`) is returned unchanged rather than
+    given an approximate comment.
+    """
+    m = re.search(r"(\w+)\s*\(", decl)
+    if m is None or m.group(1) not in doc_members:
+        return decl
+    doc = scaffold_doc_block(decl, doc_members[m.group(1)])
+    return f"{doc}\n{decl}" if doc else decl
+
+
 def _inject_decls_into_core_h(
     path: Path,
     comp: str,
     decls: "list[str]",
     skip_names: "frozenset[str] | None" = None,
+    doc_members: "dict[str, str] | None" = None,
 ) -> bool:
     """Surgically refresh C declarations in an object's ``<comp>_core.h``.
 
@@ -334,6 +350,13 @@ def _inject_decls_into_core_h(
     declaration with that name already exists.  When the header already
     declares a name in skip_names (with any signature), the incoming decl is
     silently dropped so the user's existing declaration is preserved.
+
+    doc_members — ``{c_function_name: bare_member_name}``.  A decl being
+    inserted for the first time gets jm's prose-free Doxygen skeleton above it
+    (gh-666) so the author fills prose rather than structure.  Only *new*
+    insertions are decorated: a refreshed signature replaces the prototype
+    line alone, leaving whatever documentation is already above it untouched,
+    so re-running a command never re-stamps a skeleton over authored prose.
 
     Returns True if the header changed."""
     if not path.exists():
@@ -405,6 +428,15 @@ def _inject_decls_into_core_h(
                     continue
         to_insert.append(d)
     if to_insert:
+        if doc_members:
+            # Blank line *between* batched decls only -- a comment block butted
+            # against the preceding declaration reads as documenting it. The
+            # first entry needs none: the insertion point already follows the
+            # template's own spacing.
+            to_insert = [
+                (("\n" if i else "") + _with_scaffold_doc(d, doc_members))
+                for i, d in enumerate(to_insert)
+            ]
         block = "\n".join(to_insert) + "\n"
         cpp_end = "#ifdef __cplusplus\n}\n#endif"
         if cpp_end in text:

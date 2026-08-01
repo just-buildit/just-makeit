@@ -21,7 +21,7 @@ from .._types import (
     array_elem_ctype,
     c_param_parts,
 )
-from .._docstring import render_numpy_doc
+from .._docstring import render_numpy_doc, scaffold_doc_block
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
 
@@ -720,21 +720,6 @@ def make_methods_ctx(
             arg_meta = _CTYPE_META[_arg_elem]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
-        _param_docs = " * @param state  Must be non-NULL.\n"
-        if has_arg:
-            _param_docs += (
-                f" * @param x      Input ({_ctype_display(arg_type)}).\n"
-            )
-        for _p in params:
-            _pdisp = _ctype_display(_p["type"])
-            _param_docs += f" * @param {_p['name']}  {_pdisp} parameter.\n"
-        _doc_ret_disp = _vo_out_disp if variable_output else ret_disp
-        _ret_doc = (
-            f" * @return Result ({_doc_ret_disp}).\n"
-            if return_type != "void"
-            else ""
-        )
-        _method_doc = f"/**\n * @brief {name}.\n *\n{_param_docs}{_ret_doc} */"
         _ndecl = len(decl_lines)
 
         if not has_arg:
@@ -927,7 +912,9 @@ def make_methods_ctx(
                 f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
             )
             for _j in range(_ndecl, len(decl_lines)):
-                decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
+                _doc = scaffold_doc_block(decl_lines[_j], name)
+                if _doc:
+                    decl_lines[_j] = _doc + "\n" + decl_lines[_j]
             continue
 
         # ── declarations for _core.h ─────────────────────────────────────
@@ -1050,7 +1037,9 @@ def make_methods_ctx(
                 )
 
         for _j in range(_ndecl, len(decl_lines)):
-            decl_lines[_j] = _method_doc + "\n" + decl_lines[_j]
+            _doc = scaffold_doc_block(decl_lines[_j], name)
+            if _doc:
+                decl_lines[_j] = _doc + "\n" + decl_lines[_j]
 
         # ── output storage ───────────────────────────────────────────────
         # gh-604: nothing to declare. Every variable_output shape now lets

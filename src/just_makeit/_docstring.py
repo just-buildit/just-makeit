@@ -179,9 +179,20 @@ _DECL_NAME_RE = re.compile(
 # trailing `[;{]` matches a prototype's `;` or an inline body's opening `{`
 # (gh-385); the `(…)` requirement before it keeps `typedef struct { … }` and
 # other brace blocks without a parameter list from matching.
+#
+# The decl body excludes `/` so the run cannot cross into a *following*
+# comment, and its first character excludes whitespace so it starts on a real
+# token. Without both, two adjacent blocks bound the FIRST one to the
+# declaration: the decl could begin with the newline after `*/` and then
+# swallow the whole second comment, which contains no `;{}` to stop it. That
+# made a hand-written block placed above jm's scaffold skeleton silently lose
+# to the skeleton (gh-666) — the exact authored-prose-dropped failure the
+# derivation contract exists to prevent. Doxygen binds the NEAREST preceding
+# block; so does this now. `*` must stay allowed — every pointer parameter
+# has one.
 _BLOCK_THEN_DECL_RE = re.compile(
     r"/\*\*(?P<block>(?:(?!\*/)[\s\S])*?)\*/\s*"
-    r"(?P<decl>[^;{}/*][^;{}]*?\([^;{}]*\)\s*[;{])",
+    r"(?P<decl>[^;{}/*\s][^;{}/]*?\([^;{}/]*\)\s*[;{])",
     re.DOTALL,
 )
 
@@ -428,6 +439,116 @@ def is_scaffold_doc(
     return not block.returns.strip() and not any(
         desc.strip() for _n, desc in block.params
     )
+
+
+# One parameter of a C prototype, reduced to its declared name: the last
+# identifier before an optional `[]` / bit-width. `void` alone and a lone
+# ellipsis have no name and yield nothing.
+_PARAM_NAME_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*$")
+
+
+def _decl_signature(decl: str) -> tuple[str, list[str], bool] | None:
+    """Split a generated C prototype into ``(fn, param_names, returns_value)``.
+
+    Reads the declaration jm is about to write rather than re-deriving the
+    signature from the manifest, so the skeleton cannot describe a parameter
+    the prototype does not have — a mismatched ``@param`` is precisely what
+    Doxygen's ``WARN_NO_PARAMDOC`` companion warning reports.
+
+    Returns ``None`` for anything that is not a plain prototype (a function
+    pointer parameter, a macro, a multi-declarator line), so an unusual shape
+    gets no skeleton rather than a wrong one.
+    """
+    body = decl.strip().rstrip(";").strip()
+    open_paren = body.find("(")
+    if open_paren < 0 or not body.endswith(")"):
+        return None
+    head, args = body[:open_paren], body[open_paren + 1 : -1]
+    # A nested paren means a function-pointer or attribute shape; skip it.
+    if "(" in args or ")" in args:
+        return None
+    m = _PARAM_NAME_RE.search(head.replace("*", " "))
+    if m is None:
+        return None
+    fn = m.group(1)
+    ret = head[: head.rfind(fn)].strip()
+    returns_value = ret.replace("*", " ").split() != ["void"]
+
+    names: list[str] = []
+    for raw_arg in args.split(","):
+        arg = raw_arg.strip()
+        if not arg or arg == "void" or arg == "...":
+            continue
+        pm = _PARAM_NAME_RE.search(arg)
+        if pm is None:
+            return None
+        names.append(pm.group(1))
+    return fn, names, returns_value
+
+
+def scaffold_doc_block(decl: str, member: str, indent: str = "") -> str:
+    """Return jm's prose-free Doxygen skeleton for the prototype *decl*.
+
+    The counterpart of :func:`is_scaffold_doc`, kept beside it deliberately:
+    what jm emits and what jm refuses to derive have to stay the same thing,
+    and they drifted apart once already (gh-666).
+
+    The skeleton supplies **structure only** — the ``@brief`` sentinel and one
+    ``@param`` per parameter, in signature order, with a ``@return`` when the
+    function returns a value. It deliberately writes **no descriptions**:
+
+    * an invented description (``@param hz  double parameter.``) is not
+      documentation, and once it is in a header jm can no longer tell it from
+      prose a human wrote, so the block starts deriving into the ``.pyi`` as
+      if authored;
+    * a bare ``@param hz`` still satisfies Doxygen's ``WARN_NO_PARAMDOC``
+      (verified against Doxygen 1.15), so a fresh scaffold is not noisy under
+      the flag a project may have on, while *omitting* a parameter still
+      warns — the signal that flag exists for is untouched;
+    * no ``@code`` block, because a placeholder example would be executed by
+      the generated project's doctest gate.
+
+    Parameters
+    ----------
+    decl : str
+        The C prototype the comment will sit above.
+    member : str
+        Bare member name, used for the ``@brief`` sentinel.
+    indent : str, optional
+        Prefix for every emitted line.
+
+    Returns
+    -------
+    str
+        The comment block with no trailing newline, or ``""`` when *decl* is
+        not a shape the skeleton can describe faithfully.
+
+    Examples
+    --------
+    >>> print(scaffold_doc_block("double fir_tune(fir_state_t *s, double hz);",
+    ...                          "tune"))
+    /**
+     * @brief tune.
+     *
+     * @param s
+     * @param hz
+     * @return
+     */
+    >>> scaffold_doc_block("void (*cb)(int);", "cb")
+    ''
+    """
+    sig = _decl_signature(decl)
+    if sig is None:
+        return ""
+    _fn, names, returns_value = sig
+    lines = [f"{indent}/**", f"{indent} * @brief {member}."]
+    if names or returns_value:
+        lines.append(f"{indent} *")
+    lines += [f"{indent} * @param {n}" for n in names]
+    if returns_value:
+        lines.append(f"{indent} * @return")
+    lines.append(f"{indent} */")
+    return "\n".join(lines)
 
 
 def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:

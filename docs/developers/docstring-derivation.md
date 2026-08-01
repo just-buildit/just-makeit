@@ -91,12 +91,59 @@ A line that *begins* with one of these is prose, not a tag — `@ref demo_reset 
 
 ### A `@brief` that only restates the name is treated as empty
 
-`parse_doxygen_block` is given the C function name, and if the only content in
-the block is a brief that matches that name (ignoring `_`/spaces and case —
-jm's own `@brief gain_create.` scaffold shape), it returns `None`. The
-generators then keep their name-based fallback stub. This is why a freshly
-scaffolded header shows the generic docstring until a human writes real docs:
-a brief has to say something beyond the identifier before it "takes."
+`_docstring.is_scaffold_doc` is the single definition of "this is jm's own
+boilerplate, not documentation", and the generators keep their name-based
+fallback stub whenever it says yes. This is why a freshly scaffolded header
+shows the generic docstring until a human writes real docs: a brief has to say
+something beyond the identifier before it "takes."
+
+The sentinel has two strengths, because the evidence differs:
+
+| Brief                     | Example                    | Counts as scaffold when                |
+| ------------------------- | -------------------------- | -------------------------------------- |
+| one of jm's own templates | `@brief Get current gain.` | always — jm wrote that string          |
+| just the member's name    | `@brief tune.`             | nothing else in the block is filled in |
+
+The second is deliberately weaker: `@brief tune.` is equally what a terse
+author writes. So if the brief is still the sentinel but a `@param` or
+`@return` has a description, the block is kept and that prose is derived —
+a half-filled skeleton never discards what someone actually wrote. Body prose
+and a `@code` example override both strengths, since no jm scaffold emits
+either.
+
+### The scaffold skeleton
+
+`jm method` writes a prose-free Doxygen skeleton above each new declaration
+(`_docstring.scaffold_doc_block`), so the author supplies prose and never
+structure:
+
+```c
+/**
+ * @brief tune.
+ *
+ * @param state
+ * @param x
+ * @param hz
+ */
+void fir_tune(fir_state_t *state, double x, double hz);
+```
+
+Three properties are load-bearing:
+
+- **No invented descriptions.** A generated `@param hz  double parameter.` is
+    not documentation, and once it is in the header nothing can distinguish it
+    from prose a human typed — so it would derive into the `.pyi` as if
+    authored.
+- **No `@code` block.** A placeholder example would be executed by the
+    generated project's doctest gate.
+- **Bare `@param` still satisfies `WARN_NO_PARAMDOC`** (verified against
+    Doxygen 1.15), so a fresh scaffold is not noisy under that flag, while
+    *omitting* a parameter still warns.
+
+Only a genuinely new declaration is decorated. A refreshed signature replaces
+the prototype line alone, so re-running a command never stamps a skeleton over
+prose already written. Doxygen binds the **nearest** preceding block, and so
+does jm — a hand-written block placed above the skeleton wins.
 
 ### Before and after: a concrete example
 

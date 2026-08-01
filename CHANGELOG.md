@@ -2,7 +2,44 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm method` scaffolds a Doxygen skeleton above each new declaration
+    (gh-666).** The tedious part of documenting a header is structure, not
+    prose — the exact `@param` names, remembering `@return` — and jm already
+    knows all of it from the signature it injects. It now writes that skeleton
+    so the author only fills prose, and no parameter is undocumented by
+    omission. The skeleton is deliberately **prose-free**: an invented
+    `@param hz  double parameter.` is not documentation, and once in the header
+    nothing can tell it from prose a human wrote, so it would derive into the
+    `.pyi` as if authored. A bare `@param hz` still satisfies Doxygen's
+    `WARN_NO_PARAMDOC`, so a fresh scaffold is not noisy under that flag.
+    Only genuinely new declarations are decorated — a refreshed signature
+    replaces the prototype line alone, so replay never stamps a skeleton over
+    prose already written.
+
+### Fixed
+
+- **A doc block written above another doc block was ignored (gh-666).** When
+    two `/** */` blocks preceded a declaration, jm bound the **first** to it:
+    the declaration pattern could begin with the newline after `*/` and then
+    swallow the whole second comment, which contains no `;{}` to stop the run.
+    Doxygen binds the nearest preceding block; jm now does too. Latent until
+    the scaffold skeleton made two adjacent blocks a normal occurrence, at
+    which point an author who wrote a new block above the skeleton would have
+    silently lost their prose to it.
+
 ### Changed
+
+- **One definition of what jm's own scaffold Doxygen looks like (gh-666).**
+    Two peer implementations existed and disagreed: `parse_doxygen_block`
+    recognised `@brief <member>.` only for a block carrying nothing else,
+    while `_object._is_scaffold_brief` held a second copy of the template set
+    and ignored the rest of the block. `_docstring.is_scaffold_doc` is now the
+    single definition. The sentinel has two strengths — one of jm's specific
+    templates (`Get current gain.`) is conclusive alone, while the generic
+    `@brief <member>.` counts only when nothing else was filled in, so a
+    half-filled skeleton keeps the prose its author did write.
 
 - **A new project's `Doxyfile` sets `WARN_NO_PARAMDOC = YES`.** Doxygen already
     knows both the signature and the `@param` set, so a function that carries a

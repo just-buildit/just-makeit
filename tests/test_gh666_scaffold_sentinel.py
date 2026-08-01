@@ -27,11 +27,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._docstring import (  # noqa: E402
+    extract_doc_blocks,
     is_scaffold_doc,
     parse_doxygen_block,
     scaffold_briefs,
+    scaffold_doc_block,
 )
+from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import _is_scaffold_brief, _load_doc_blocks  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
@@ -130,6 +134,140 @@ class TestOnePredicate:
         assert parse_doxygen_block(raw, name="tune") is None
         # ...and the predicate agrees, so neither path can derive it.
         assert is_scaffold_doc(parse_doxygen_block(raw), "tune")
+
+
+class TestSkeletonEmitter:
+    """What jm writes must be what jm refuses to derive."""
+
+    def test_skeleton_round_trips_to_undocumented(self):
+        decl = "size_t fir_run(fir_state_t *s, const float *x, size_t n);"
+        doc = scaffold_doc_block(decl, "run")
+        assert parse_doxygen_block(doc, name="run") is None
+
+    def test_skeleton_lists_every_parameter_in_order(self):
+        decl = "void fir_tune(fir_state_t *state, double x, double hz);"
+        doc = scaffold_doc_block(decl, "tune")
+        assert [ln for ln in doc.splitlines() if "@param" in ln] == [
+            " * @param state",
+            " * @param x",
+            " * @param hz",
+        ]
+
+    def test_no_invented_descriptions(self):
+        # An invented description is not documentation, and once written jm
+        # can no longer tell it from prose a human typed.
+        decl = "void fir_tune(fir_state_t *state, double hz);"
+        doc = scaffold_doc_block(decl, "tune")
+        assert "parameter." not in doc
+        assert "Must be non-NULL" not in doc
+
+    def test_return_only_when_a_value_is_returned(self):
+        assert "@return" in scaffold_doc_block("int f_go(void *s);", "go")
+        assert "@return" not in scaffold_doc_block("void f_go(void *s);", "go")
+        # A pointer return is still a value.
+        assert "@return" in scaffold_doc_block("char *f_go(void *s);", "go")
+
+    def test_no_code_block(self):
+        # A placeholder example would be executed by the generated project's
+        # doctest gate.
+        assert "@code" not in scaffold_doc_block("int f_go(void *s);", "go")
+
+    def test_undescribable_decl_gets_no_skeleton(self):
+        # Better no comment than one that names a parameter the signature does
+        # not have -- that is what Doxygen's paramdoc warning reports.
+        assert scaffold_doc_block("void f(void (*cb)(int));", "f") == ""
+        assert scaffold_doc_block("#define FOO 1", "foo") == ""
+
+    def test_void_param_list_yields_no_params(self):
+        doc = scaffold_doc_block("int f_go(void);", "go")
+        assert "@param" not in doc
+
+
+class TestNearestBlockWins:
+    """gh-666: a hand-written block above the skeleton must not be ignored."""
+
+    def test_second_of_two_adjacent_blocks_binds(self):
+        # The decl group could previously begin with the newline after `*/`
+        # and swallow the whole second comment (no `;{}` inside it to stop
+        # the run), binding the FIRST block -- so an author who wrote a new
+        # block above jm's skeleton silently lost to the skeleton.
+        text = (
+            "/**\n * @brief scale.\n * @param x\n */\n"
+            "/**\n * @brief Scale a sample.\n */\n"
+            "float gain_scale(gain_state_t *state, float x);\n"
+        )
+        assert "Scale a sample." in extract_doc_blocks(text)["gain_scale"]
+
+    def test_pointer_parameters_still_match(self):
+        # `*` must stay legal in a decl -- excluding it to stop the run from
+        # crossing a comment would drop every pointer signature.
+        text = "/**\n * @brief go.\n */\nint f_go(const float *x, void *s);\n"
+        assert "f_go" in extract_doc_blocks(text)
+
+
+class TestMethodScaffoldEndToEnd:
+    """`jm method` writes the skeleton, and replay never re-stamps it."""
+
+    @staticmethod
+    def _project(tmp_path):
+        root = tmp_path / "dsp"
+        new_run("dsp", root)
+        object_run(
+            root,
+            "fir",
+            None,
+            state_vars=[("g", "float", "1.0f")],
+            arg_type="float _Complex",
+            return_type="float _Complex",
+        )
+        method_run(
+            root,
+            "fir",
+            "tune",
+            None,
+            "double",
+            "void",
+            False,
+            [],
+            params=[("hz", "double")],
+        )
+        return root, root / "native" / "inc" / "fir" / "fir_core.h"
+
+    def test_method_gets_a_skeleton(self, tmp_path):
+        _root, header = self._project(tmp_path)
+        text = header.read_text(encoding="utf-8")
+        assert "@brief tune." in text
+        assert " * @param hz\n" in text
+
+    def test_skeleton_is_not_derived(self, tmp_path):
+        # The whole point: a scaffolded method reads as undocumented, so the
+        # .pyi matches a manifest-only rebuild that never saw the header.
+        root, _header = self._project(tmp_path)
+        assert "fir_tune" not in _load_doc_blocks(root, "fir")
+
+    def test_apply_does_not_restamp(self, tmp_path):
+        root, header = self._project(tmp_path)
+        before = header.read_text(encoding="utf-8")
+        apply_run(root)
+        after = header.read_text(encoding="utf-8")
+        assert after == before
+        assert after.count("@brief tune.") == 1
+
+    def test_authored_prose_survives_and_derives(self, tmp_path):
+        root, header = self._project(tmp_path)
+        filled = (
+            header.read_text(encoding="utf-8")
+            .replace(" * @brief tune.", " * @brief Retune the filter.")
+            .replace(
+                " * @param hz", " * @param hz  New centre frequency in Hz."
+            )
+        )
+        header.write_text(filled, encoding="utf-8")
+        apply_run(root)
+        assert header.read_text(encoding="utf-8") == filled
+        blk = _load_doc_blocks(root, "fir")["fir_tune"]
+        assert blk.brief == "Retune the filter."
+        assert blk.param_desc("hz") == "New centre frequency in Hz."
 
 
 class TestScaffoldedHeaderDerivesNothing:

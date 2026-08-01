@@ -888,6 +888,12 @@ def run(
             result_fields=result_fields,
             single=single,
         ).split("\n")
+
+    # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
+    # the author writes prose and never structure. The sibling `_max_out`
+    # declaration a variable_output method emits is jm's own bookkeeping, not
+    # a surface anyone documents, so only the method itself is mapped.
+    _doc_members = {f"{object_name}_{method_name}": method_name}
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
@@ -1009,7 +1015,11 @@ def run(
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )
         if _inject_decls_into_core_h(
-            core_h_, object_name, proto_lines, skip_names=_vo_skip
+            core_h_,
+            object_name,
+            proto_lines,
+            skip_names=_vo_skip,
+            doc_members=_doc_members,
         ):
             print(f"  update  {core_h_}")
     else:
@@ -1056,7 +1066,11 @@ def run(
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         if _inject_decls_into_core_h(
-            core_h, object_name, proto_lines, skip_names=_vo_skip
+            core_h,
+            object_name,
+            proto_lines,
+            skip_names=_vo_skip,
+            doc_members=_doc_members,
         ):
             print(f"  update  {core_h}")
         if ext_c.exists():
