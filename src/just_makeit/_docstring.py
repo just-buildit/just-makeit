@@ -275,6 +275,161 @@ _CODE_CLOSE_RE = re.compile(r"^[@\\]endcode\b")
 _PARAM_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s+(.*)$")
 
 
+def _norm_brief(text: str) -> str:
+    """Fold a brief to the form the scaffold templates are compared in."""
+    return text.strip().rstrip(".").replace("_", " ").strip().lower()
+
+
+# jm's own scaffold @brief for the built-in step()/steps() methods, by I/O
+# shape. Normalized by _norm_brief.
+_STEP_SCAFFOLD_BRIEFS = frozenset(
+    {
+        "advance state by one tick (no i/o)",
+        "consume one input sample (sink; no output)",
+        "generate a block of output samples",
+        "generate one output sample from internal state",
+        "process a block of input samples (no output)",
+        "process a block of samples",
+        "process n iterations (no scalar output)",
+        "process one input buffer and return a result",
+        "process one input buffer (no scalar output)",
+        "process one input sample",
+    }
+)
+
+
+def scaffold_briefs(member: str, owner: str = "") -> set[str]:
+    """Normalized briefs jm itself scaffolds for *member* of *owner*.
+
+    These are jm's **specific** template strings — ``Get current gain.``,
+    ``Reset fir to its post-create state.`` — not the generic ``<member>.``
+    sentinel, which :func:`is_scaffold_doc` handles separately because it is
+    much weaker evidence (see there).
+
+    *member* is the bare verb (``execute``, ``get_gain``, ``create``), not the
+    ``<owner>_``-prefixed C name. *owner* is the component or module; the
+    lifecycle templates interpolate it, so omitting it simply drops those
+    entries rather than matching the wrong thing.
+
+    Parameters
+    ----------
+    member : str
+        Bare member name, as it appears after the ``<owner>_`` prefix.
+    owner : str, optional
+        Component/module name. Required for the lifecycle templates.
+
+    Returns
+    -------
+    set of str
+        Every brief jm's own scaffolds could have written here, normalized by
+        :func:`_norm_brief` so a caller compares like with like.
+
+    Examples
+    --------
+    >>> sorted(scaffold_briefs("set_gain"))
+    ['set gain', 'set gain from src']
+    >>> "create a fir instance" in scaffold_briefs("create", "fir")
+    True
+    >>> scaffold_briefs("tune")
+    set()
+    """
+    out: set[str] = set()
+    if owner:
+        out |= {
+            _norm_brief(f"Create a {owner} instance"),
+            _norm_brief(f"Destroy a {owner} instance and release all memory"),
+            _norm_brief(f"Reset {owner} to its post-create state"),
+        }
+    if member.startswith("get_"):
+        field = member[4:]
+        out |= {
+            _norm_brief(f"Get current {field}"),
+            _norm_brief(f"Get a read-only pointer to {field}"),
+            _norm_brief(f"Return a read-only pointer to {field}"),
+        }
+    if member.startswith("set_"):
+        field = member[4:]
+        out |= {
+            _norm_brief(f"Set {field}"),
+            _norm_brief(f"Set {field} from src"),
+        }
+    if member in ("step", "steps"):
+        out |= _STEP_SCAFFOLD_BRIEFS
+    return out
+
+
+def is_scaffold_doc(
+    block: DoxyBlock, member: str = "", owner: str = ""
+) -> bool:
+    """True when *block* is jm's own scaffold boilerplate, not authored doc.
+
+    **The** scaffold-sentinel test (gh-666). Deriving Python docs from jm's
+    own template output would (a) be no richer than the name-based fallback
+    and (b) break idempotence — a manifest-only rebuild has no header to read,
+    so it must produce what a fresh scaffold produces.
+
+    The signal is the **brief**, in two strengths.
+
+    A brief matching one of jm's specific templates (:func:`scaffold_briefs` —
+    ``Get current gain.``) is conclusive on its own. Those scaffolds emit
+    boilerplate ``@param``/``@return`` alongside the brief (``@param state
+    Must be non-NULL.``), so matching the brief means the whole block is
+    boilerplate; trying to also match the generated ``@param`` prose would be a
+    second, fragile copy of the templates that turns every wording tweak into a
+    silent behaviour change.
+
+    A brief that is merely the member's own name (``@brief tune.``) is much
+    weaker — it is equally what a terse author writes — so it counts only when
+    nothing else in the block was filled in. That way a half-filled skeleton
+    (``@brief tune.`` left alone, ``@param hz  Tuning frequency in Hz.``
+    written) keeps the prose the author did write instead of discarding it.
+
+    Body prose and ``@code`` examples are the escape hatch in both strengths:
+    no jm scaffold emits either (the skeleton deliberately carries no runnable
+    example — a placeholder ``>>> TODO`` would be executed by the generated
+    project's doctest gate), so their presence proves an author has been here.
+
+    Parameters
+    ----------
+    block : DoxyBlock
+        The parsed block to classify.
+    member : str, optional
+        Bare member name. Without it nothing can match.
+    owner : str, optional
+        Component/module name, for the lifecycle templates.
+
+    Returns
+    -------
+    bool
+        True when the block carries nothing an author wrote.
+
+    Examples
+    --------
+    >>> bare = parse_doxygen_block("@brief tune.")
+    >>> is_scaffold_doc(bare, "tune")
+    True
+    >>> half = parse_doxygen_block("@brief tune.\\n@param hz  In Hz.")
+    >>> is_scaffold_doc(half, "tune")
+    False
+    >>> tmpl = parse_doxygen_block("@brief Get current g.\\n@param state  X.")
+    >>> is_scaffold_doc(tmpl, "get_g")
+    True
+    """
+    if block.body or block.examples:
+        return False
+    brief = _norm_brief(block.brief)
+    if not brief or not member:
+        return False
+    if brief in scaffold_briefs(member, owner):
+        return True
+    if brief != _norm_brief(member):
+        return False
+    # Generic ``@brief <member>.`` — only an untouched skeleton counts.
+    return not block.returns.strip() and not any(
+        desc.strip() for _n, desc in block.params
+    )
+
+
 def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     """Parse one raw ``/** ... */`` block into a :class:`DoxyBlock`.
 
@@ -418,17 +573,12 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     # gh-652 gives them numpy sections this test gains `or block.tags`.
     if not (brief or block.body or block.params or returns or example_lines):
         return None
-    # Trivial scaffold brief (e.g. "@brief myverb.") with nothing else.
-    if (
-        name
-        and not block.body
-        and not block.params
-        and not returns
-        and not example_lines
-    ):
-        norm = brief.rstrip(".").replace("_", " ").strip().lower()
-        if norm == name.replace("_", " ").strip().lower():
-            return None
+    # jm's own scaffold output (e.g. "@brief myverb." over generated @params)
+    # reads as empty, so the name-based fallback stands until an author writes
+    # something. `name` is the bare member; the owner-dependent lifecycle
+    # templates are matched by the caller that knows the owner (_object).
+    if name and is_scaffold_doc(block, name):
+        return None
     return block
 
 

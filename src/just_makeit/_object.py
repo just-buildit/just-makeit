@@ -32,7 +32,12 @@ from ._init import (
     _write_compile_commands,
     ensure_parent_packages,
 )
-from ._docstring import extract_doc_blocks, header_default, parse_doxygen_block
+from ._docstring import (
+    extract_doc_blocks,
+    header_default,
+    is_scaffold_doc,
+    parse_doxygen_block,
+)
 from ._context._parse import _build_ml_doc
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
@@ -136,49 +141,15 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
 def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
-    Deriving docs from jm's boilerplate (``Create a <obj> instance.``,
-    ``Get current <field>.``, ``Set <field>.``) would (a) be no richer than
-    the name fallback and (b) break idempotence: a manifest-only rebuild has
-    no header to read, so it must produce the same output as a fresh scaffold.
-    Only a non-template brief is derived. jm's lifecycle/accessor scaffolds
-    also emit boilerplate @param/@return, so the brief alone is the signal —
-    matching it means the whole block is boilerplate.
+    Thin owner-aware wrapper over :func:`_docstring.is_scaffold_doc`, which is
+    the single definition of what jm's own boilerplate looks like (gh-666).
+    This once carried its own copy of the template set; the copy predated the
+    equivalent check inside ``parse_doxygen_block``, and the two disagreed —
+    the parser recognised ``@brief <verb>.`` only for a block with no
+    ``@param`` at all, so the method skeleton, which does carry generated
+    ``@param`` lines, was derived into the ``.pyi`` as if authored.
     """
-    brief = block.brief.strip().rstrip(".").lower()
-    if not brief:
-        return False
-    templates = {
-        f"create a {obj} instance",
-        f"destroy a {obj} instance and release all memory",
-        f"reset {obj} to its post-create state",
-    }
-    if verb.startswith("get_"):
-        templates.add(f"get current {verb[4:]}")
-        templates.add(f"get a read-only pointer to {verb[4:]}")
-        templates.add(f"return a read-only pointer to {verb[4:]}")
-    if verb.startswith("set_"):
-        templates.add(f"set {verb[4:]}")
-        templates.add(f"set {verb[4:]} from src")
-    if verb in ("step", "steps"):
-        # jm's own scaffold @brief for the built-in step()/steps() methods, by
-        # I/O shape. Filtering these keeps a fresh-scaffold header from enriching
-        # the .pyi differently than a manifest-only rebuild; a hand-written
-        # @brief (anything not in this set) is still derived.
-        templates.update(
-            {
-                "advance state by one tick (no i/o)",
-                "consume one input sample (sink; no output)",
-                "generate a block of output samples",
-                "generate one output sample from internal state",
-                "process a block of input samples (no output)",
-                "process a block of samples",
-                "process n iterations (no scalar output)",
-                "process one input buffer and return a result",
-                "process one input buffer (no scalar output)",
-                "process one input sample",
-            }
-        )
-    return brief in templates
+    return is_scaffold_doc(block, verb, obj)
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
