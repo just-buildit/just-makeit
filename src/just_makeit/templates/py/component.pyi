@@ -8,6 +8,7 @@ class <<Component>>:
 
     def __init__(self, <<init_params_pyi>>) -> None: ...
 <<builtin_reset_pyi>><<pyi_step_methods>><<pyi_extra_methods>><<pyi_stream_methods>><<getter_setter_stubs_pyi>><<property_stubs_pyi>><<pyi_destroy_methods>>
-    def __enter__(self) -> "<<Component>>": ...
-
-    def __exit__(self, *args: object) -> None: ...
+    def __enter__(self) -> "<<Component>>":
+<<pyi_enter_doc>>
+    def __exit__(self, *args: object) -> None:
+<<pyi_exit_doc>>

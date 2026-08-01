@@ -314,15 +314,18 @@ class TestStubs:
         assert "def close(self) -> None:" in pyi
         assert "def destroy(self) -> None:" in pyi
 
-    def test_undeclared_stub_keeps_the_historical_text(self, project):
+    def test_undeclared_stub_keeps_the_default_shape(self, project):
+        # gh-647 replaced the one-line literal with the shared _gluedoc prose,
+        # so the text this once pinned is gone by design. What gh-541 actually
+        # guards is the *shape* an undeclared table renders: the method is
+        # named `destroy`, takes no arguments, returns None, and no alias
+        # appears. That is asserted here; the prose is _gluedoc's to own.
         apply_run(project)
         pyi = (project / "src" / "cap" / "wfm_writer.pyi").read_text(
             encoding="utf-8"
         )
-        assert (
-            "    def destroy(self) -> None:\n"
-            '        """Release C resources immediately."""\n'
-        ) in pyi
+        assert "    def destroy(self) -> None:\n" in pyi
+        assert "Release the underlying C resources immediately." in pyi
         assert "def close" not in pyi
 
 
@@ -415,12 +418,20 @@ class TestByteIdenticalWhenUndeclared:
             "    Py_RETURN_NONE;\n"
             "}\n"
         ) in ext
+        # The method-table entry: name, dispatch and flags are what gh-541
+        # must not disturb. The doc string that followed them moved to
+        # _gluedoc in gh-647 (and gained the full numpy body on this face),
+        # so it is no longer pinned here -- only that the entry still leads
+        # straight into __enter__, i.e. nothing was inserted or dropped.
         assert (
-            '    {"destroy",  (PyCFunction)WfmWriter_destroy,  '
-            "METH_NOARGS,\n"
-            '     "Release resources."},\n'
-            '    {"__enter__",'
+            '    {"destroy",  (PyCFunction)WfmWriter_destroy,  METH_NOARGS,\n'
         ) in ext
+        assert "Release the underlying C resources immediately." in ext, (
+            "teardown entry lost its docstring"
+        )
+        _tail = ext.split('{"destroy",  (PyCFunction)WfmWriter_destroy,')[1]
+        assert _tail.lstrip().startswith("METH_NOARGS,")
+        assert '{"__enter__",' in _tail.split("},")[1]
 
     def test_core_files_stay_void(self, project):
         apply_run(project)

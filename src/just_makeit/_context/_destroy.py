@@ -63,7 +63,10 @@ from __future__ import annotations
 
 import re
 
+from .. import _config as C
+from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
+from ._parse import _build_ml_doc
 
 # A method name is interpolated straight into a C string literal *and* into
 # Python stub source, so it is held to the Python identifier grammar.
@@ -263,11 +266,16 @@ def make_destroy_ctx(
     ('void', '')
     >>> ctx = make_destroy_ctx("w", "WObj", {"name": "close",
     ...                                      "aliases": ["destroy"]})
-    >>> print(ctx["destroy_pymethoddef"], end="")
-        {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,
-         "Release resources."},
-        {"destroy",  (PyCFunction)WObj_destroy,  METH_NOARGS,
-         "Release resources."},
+    >>> [ln for ln in ctx["destroy_pymethoddef"].splitlines()
+    ...  if "PyCFunction" in ln]
+    ['    {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,', \
+'    {"destroy",  (PyCFunction)WObj_destroy,  METH_NOARGS,']
+
+    Each entry carries the full glue docstring from :mod:`_gluedoc`, and names
+    the teardown the way this object spells it:
+
+    >>> "Equivalent to calling `close()`." in ctx["cm_exit_doc"]
+    True
     """
     spec = dict(spec or {})
     validate_destroy_spec(component, spec)
@@ -295,31 +303,59 @@ def make_destroy_ctx(
     body = _teardown_body(component, spec)
 
     names = destroy_py_names(spec)
-    pmd = "".join(
-        f'    {{"{n}",  (PyCFunction){ComponentW}_destroy,  METH_NOARGS,\n'
-        '     "Release resources."},\n'
-        for n in names
-    )
-
+    # gh-647: one definition of the teardown prose, rendered to both faces.
+    # These two had drifted into disagreement -- the runtime table said
+    # "Release resources." while the stub said "Release C resources
+    # immediately." -- which is exactly what a shared definition prevents.
+    Component = C.default_class_name(component)
+    _raises: list[str] = []
     if fallible:
         category = spec.get("error") or _DEFAULT_CATEGORY
-        doc = (
-            '        """Release C resources immediately.\n'
-            "\n"
-            "        Raises\n"
-            "        ------\n"
-            f"        {category}\n"
-            "            If the C destructor reports failure. Raised from\n"
-            "            an explicit call and from ``__exit__`` alike, so a\n"
-            "            failing teardown propagates out of a ``with``\n"
-            "            block (gh-541).\n"
-            '        """\n'
+        _raises = [
+            "Raises",
+            "------",
+            f"{category}",
+            "    If the C destructor reports failure. Raised from an "
+            "explicit call and from ``__exit__`` alike, so a failing "
+            "teardown propagates out of a ``with`` block (gh-541).",
+        ]
+
+    def _doc_for(n: str) -> tuple[str, str]:
+        """``(pyi_docstring, c_string_literal)`` for teardown name *n*."""
+        gm = glue_methods(Component, close_name=n)[n]
+        c_lines = gm.c_doc_lines()
+        pyi_lines = gm.pyi_doc()
+        if _raises:
+            c_lines += [""] + _raises
+            # Splice the Raises section in above the closing `"""`.
+            pyi_lines = (
+                pyi_lines[:-1]
+                + [""]
+                + [(" " * 8) + ln if ln else "" for ln in _raises]
+                + pyi_lines[-1:]
+            )
+        return "\n".join(pyi_lines) + "\n", _build_ml_doc(c_lines)
+
+    pmd = ""
+    pyi = ""
+    for n in names:
+        _pyi_doc, _c_doc = _doc_for(n)
+        pmd += (
+            f'    {{"{n}",  (PyCFunction){ComponentW}_destroy,  METH_NOARGS,\n'
+            f"     {_c_doc}}},\n"
         )
-    else:
-        doc = '        """Release C resources immediately."""\n'
-    pyi = "".join(f"\n    def {n}(self) -> None:\n{doc}" for n in names)
+        pyi += f"\n    def {n}(self) -> None:\n{_pyi_doc}"
+
+    # gh-647: the context-manager pair. Built here because this is where the
+    # teardown's Python name is settled -- __exit__'s prose names it, and a
+    # reader-shaped object calls it `close`, not `destroy`.
+    _cm = glue_methods(Component, close_name=names[0])
 
     return {
+        "cm_enter_doc": _build_ml_doc(_cm["__enter__"].c_doc_lines()),
+        "cm_exit_doc": _build_ml_doc(_cm["__exit__"].c_doc_lines()),
+        "pyi_enter_doc": "\n".join(_cm["__enter__"].pyi_doc()),
+        "pyi_exit_doc": "\n".join(_cm["__exit__"].pyi_doc()),
         "destroy_dealloc_call": dealloc,
         "destroy_method_body": body,
         "destroy_exit_body": body,

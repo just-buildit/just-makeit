@@ -4,6 +4,34 @@
 
 ### Added
 
+- **jm's own glue methods carry real docstrings, on both faces (gh-647).**
+    `state_bytes` / `get_state` / `set_state`, `destroy`/`close` and the
+    context-manager pair are 100% jm-generated, so a downstream project cannot
+    document them by writing C Doxygen — there is no hand-written declaration to
+    attach a comment to. They now get a full numpy docstring, parametrised by
+    the wrapped type, in the `.pyi` **and** the runtime method table, from one
+    definition in the new `_gluedoc` module. The prose describes what the
+    generated C actually does, checked against it: every accessor raises
+    `RuntimeError` once the object is destroyed, `set_state` validates type and
+    length before the blob reaches the C core, `destroy` is idempotent, and
+    `__exit__` returns `None` so it never suppresses an exception.
+
+### Fixed
+
+- **`__enter__` / `__exit__` had no docstring at all (gh-647).** They were the
+    one part of the generated surface carrying `NULL` in the method table and a
+    bare `...` in the stub, so `help()` showed nothing for the context-manager
+    protocol.
+- **`get_state` documented the wrong object (gh-647).** Its docstring read
+    "Serialize the **engine's** mutable state to bytes" on every component,
+    naming a component from a long-gone example.
+- **The teardown method's two faces disagreed (gh-647).** The stub said
+    "Release C resources immediately." while the runtime method table said
+    "Release resources." Both now render from the same definition, which is
+    what prevents the next such drift.
+
+### Added
+
 - **`jm method` scaffolds a Doxygen skeleton above each new declaration
     (gh-666).** The tedious part of documenting a header is structure, not
     prose — the exact `@param` names, remembering `@return` — and jm already

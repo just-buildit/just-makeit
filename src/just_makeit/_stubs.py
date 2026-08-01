@@ -31,6 +31,7 @@ from . import _coerce
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
+from ._gluedoc import glue_methods
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -1270,15 +1271,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # pyi_extra_methods (which drives the standalone COMPONENT_PYI), so the
     # triplet must be emitted in both paths to keep the type stub complete.
     if C.is_serializable(cfg, obj):
-        lines += [
-            "",
-            "    def state_bytes(self) -> int:",
-            '        """Serialized state size in bytes."""',
-            "    def get_state(self) -> bytes:",
-            '        """Serialize the engine\'s mutable state to bytes."""',
-            "    def set_state(self, blob: bytes) -> None:",
-            '        """Restore mutable state from a get_state() blob."""',
-        ]
+        # gh-647: same prose as the standalone path and the runtime method
+        # table, from the one definition in _gluedoc.
+        _glue = glue_methods(Component)
+        for _n, _sig in (
+            ("state_bytes", "self) -> int"),
+            ("get_state", "self) -> bytes"),
+            ("set_state", "self, blob: bytes) -> None"),
+        ):
+            lines += ["", f"    def {_n}({_sig}:"]
+            lines += _glue[_n].pyi_doc()
 
     # State get_/set_ accessors. The module runtime emits these for every
     # non-opaque state var (via make_state_ctx, the same builder that generates
@@ -1345,11 +1347,17 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         Component,
         C.destroy_spec(cfg, obj),
     )["pyi_destroy_methods"].split("\n")
-    lines += [
-        '    def __enter__(self) -> "' + Component + '": ...',
-        "",
-        "    def __exit__(self, *args: object) -> None: ...",
-    ]
+    # gh-647: the context-manager protocol used to be the one part of the
+    # generated surface with no docstring on either face, so `help()` showed
+    # nothing at all for it.
+    _cm = glue_methods(
+        Component,
+        close_name=Ctx.destroy_py_names(C.destroy_spec(cfg, obj))[0],
+    )
+    lines += ["", f'    def __enter__(self) -> "{Component}":']
+    lines += _cm["__enter__"].pyi_doc()
+    lines += ["", "    def __exit__(self, *args: object) -> None:"]
+    lines += _cm["__exit__"].pyi_doc()
 
     return "\n".join(lines)
 
