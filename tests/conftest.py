@@ -26,10 +26,30 @@ a pile of unrelated failures rather than "you are missing a dependency":
 
 The Makefile passes both. This check exists for everyone who runs ``pytest``
 directly, and turns the confusing pile into one actionable line.
+
+**Virtualenv check.** The end-to-end example tests build a scaffolded project
+in a temp directory by shelling out to ``uv pip install -e .``. uv finds the
+environment to install into from ``VIRTUAL_ENV``, or by walking up from the
+working directory for a ``.venv`` — and the working directory there is a temp
+project that has neither. So the variable has to be set in the *parent*
+process.
+
+Both documented ways of running the suite set it: ``source .venv/bin/activate``
+exports it, and ``uv run pytest`` (what CI uses) sets it for the child.
+Invoking ``.venv/bin/pytest`` directly does **not** — the interpreter still
+resolves ``sys.prefix`` to the venv via ``pyvenv.cfg``, so imports work and
+everything looks normal, but the variable is absent and every one of those
+tests errors in fixture setup with "No virtual environment found".
+
+That reads like a broken machine rather than a wrong invocation, and it is
+worth a fail-fast: it cost a session's worth of misattribution, with 34 errors
+written off as "no C toolchain on this box" when the toolchain was fine and the
+tests had simply never run.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -66,9 +86,39 @@ def _missing_runtime_deps() -> list[str]:
     return missing
 
 
+# The fixture that runs `uv pip install -e .` in a scaffolded temp project.
+# Keying on the fixture rather than on module names keeps this tied to the
+# actual dependency: a new e2e test file is covered the moment it requests it.
+_UV_INSTALL_FIXTURE = "installed"
+
+
+def _uses_uv_install(items) -> bool:
+    """True when the collected set includes a test that shells out to uv."""
+    return any(
+        _UV_INSTALL_FIXTURE in getattr(it, "fixturenames", ()) for it in items
+    )
+
+
 def pytest_collection_modifyitems(session, config, items):
     """Fail the whole run early, with an explanation, rather than let a missing
     dependency masquerade as ~8 unrelated TOML round-trip failures."""
+    if not os.environ.get("VIRTUAL_ENV") and _uses_uv_install(items):
+        raise pytest.UsageError(
+            "VIRTUAL_ENV is not set, and this run collects end-to-end example "
+            "tests that shell out to `uv pip install -e .` in a temp "
+            "project.\n"
+            "uv resolves the target environment from VIRTUAL_ENV or a .venv "
+            "beside the working directory; a scaffolded temp project has "
+            "neither, so every one of those tests would error in fixture "
+            "setup with 'No virtual environment found' — which reads as a "
+            "broken machine rather than a wrong invocation.\n"
+            "Running `.venv/bin/pytest` directly is what does this: the "
+            "interpreter resolves sys.prefix to the venv via pyvenv.cfg, so "
+            "imports work, but the variable is never exported.\n"
+            "Fix: `source .venv/bin/activate` (then `pytest`), or `uv run "
+            "pytest` — both set it. Selecting only unit tests avoids the "
+            "check entirely."
+        )
     missing = _missing_runtime_deps()
     if not missing:
         return
