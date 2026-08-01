@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A void-input `variable_output` method's `count` can declare its default
+    (gh-657).** `obj.ptr()` on a snapshot/drain accessor silently changed
+    meaning in 0.33.16 — from "return everything buffered" to "return one
+    sample" — with no error and no changelog note. The signature did not
+    change: `count` has defaulted to `1` for the whole life of the feature.
+    What changed is that gh-607 started feeding that count to `*_max_out()`
+    and, under `pass_capacity`, dropped the clamp (`_min_cap = max(_omax, n)`)
+    that had been quietly rescuing it. jm cannot derive the right default —
+    the object's natural capacity lives in the user's C — so it is now
+    declarable: `count_default = "state->num_taps"`, or
+    `jm method --count-default`. The value is a C expression evaluated before
+    argument parsing and overridden by any count the caller passes; both faces
+    render the default as `...`, since it is not a Python literal. Projects
+    that do not set it are unaffected.
+
+- **A void-input `variable_output` method's runtime `__doc__` named the wrong
+    parameter.** The doc advertised `ptr(n=1)` while the kwlist has always
+    bound `count`, so `help()` documented a keyword that did not exist. This
+    is what led gh-657 to be reported as a rename. Now `ptr(count=1)`.
+
 ### Changed
 
 - **`docs-check` now runs its gates as accumulating pre/post lists.** The

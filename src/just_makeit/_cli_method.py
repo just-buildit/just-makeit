@@ -23,6 +23,7 @@ def run(args: list[str]) -> None:
     return_type = "float _Complex"
     variable_output = False
     pass_capacity = False
+    count_default = ""
     nogil = False
     varargs = False
     manual_stub = False
@@ -64,6 +65,18 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--pass-capacity":
             pass_capacity = True
+            i += 1
+        elif tok == "--count-default":
+            # gh-657: C expression seeding a void-input variable_output
+            # method's `count` kwarg, e.g. --count-default "state->num_taps".
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --count-default requires a C expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            count_default = remaining[i]
             i += 1
         elif tok == "--nogil":
             nogil = True
@@ -405,6 +418,7 @@ def run(args: list[str]) -> None:
         varargs=varargs,
         manual_stub=manual_stub,
         pass_capacity=pass_capacity,
+        count_default=count_default,
         nogil=nogil,
         doc=doc,
         view=view,

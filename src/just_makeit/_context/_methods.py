@@ -421,6 +421,52 @@ def serializable_triplet_parts(
     return c_funcs, pmd, pyi
 
 
+def _count_default_parts(expr: str, component: str) -> tuple[str, str]:
+    r"""Return ``(initialiser, state_alias_line)`` for a ``count_default``.
+
+    gh-657. A void-input ``variable_output`` method binds its capacity as the
+    ``count`` keyword, and jm has always initialised it to ``1``. That default
+    is the method's entire zero-arg behaviour, and ``1`` is almost never the
+    right snapshot size — but the right size (the object's ring length, its
+    buffered depth) lives in the user's C, not in the manifest, so it has to
+    be declared rather than derived.
+
+    *expr* is C, evaluated once before ``PyArg_ParseTupleAndKeywords`` and
+    overridden by any count the caller actually passes. An expression that
+    mentions ``state`` gets a local alias for ``self->handle`` so the natural
+    ``state->num_taps`` reads correctly; one that does not (a plain integer,
+    say) gets no alias, which keeps ``-Wunused-variable`` quiet.
+
+    Parameters
+    ----------
+    expr : str
+        The manifest's ``count_default``. Empty restores the historical ``1``.
+    component : str
+        Component name, used to spell the state type for the alias.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The initialiser expression, and either an empty string or a complete
+        declaration line (newline included) to emit before it.
+
+    Examples
+    --------
+    >>> _count_default_parts("", "delay")
+    ('1', '')
+    >>> _count_default_parts("64", "delay")
+    ('(Py_ssize_t)(64)', '')
+    >>> _count_default_parts("state->num_taps", "delay")
+    ('(Py_ssize_t)(state->num_taps)', '    delay_state_t *state = self->handle;\n')
+    """
+    if not expr:
+        return "1", ""
+    alias = ""
+    if re.search(r"\bstate\b", expr):
+        alias = f"    {component}_state_t *state = self->handle;\n"
+    return f"(Py_ssize_t)({expr})", alias
+
+
 def _max_out_count_param_ctx(
     has_arg: bool, has_params: bool, params: "list[dict]"
 ) -> "tuple[str, str | None]":
@@ -608,6 +654,17 @@ def make_methods_ctx(
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
         pass_capacity: bool = m.get("pass_capacity", False)
+        # gh-657: a void-input variable_output method's `count` is the whole
+        # user-facing knob — its default IS the method's zero-arg behaviour.
+        # jm's own `1` was inert until gh-607 started feeding that count to
+        # max_out() and dropped the clamp that had been rescuing it, at which
+        # point `obj.ptr()` silently went from "snapshot everything" to "give
+        # me one sample". jm cannot derive the natural capacity (it lives in
+        # the user's C), so the manifest declares it.
+        _count_default: str = str(m.get("count_default", "") or "").strip()
+        _count_init, _count_alias = _count_default_parts(
+            _count_default, component
+        )
         _cap_param = ", size_t max_out" if pass_capacity else ""
         # Placeholder that the three `call_data` builders below drop into the
         # output-argument slot; each emit site then substitutes whatever it
@@ -802,7 +859,8 @@ def make_methods_ctx(
                     f"{{\n"
                     f"{guard}"
                     f'    static char *_kwlist[] = {{"count", "out", NULL}};\n'
-                    f"    Py_ssize_t n = 1;\n"
+                    f"{_count_alias}"
+                    f"    Py_ssize_t n = {_count_init};\n"
                     f"    PyObject *out_obj = NULL;\n"
                     f"    if (!PyArg_ParseTupleAndKeywords("
                     f'args, kwds, "|nO",\n'
@@ -1189,7 +1247,8 @@ def make_methods_ctx(
                     parse_block = (
                         "    static char *_kwlist[] ="
                         ' {"count", "out", NULL};\n'
-                        "    Py_ssize_t n = 1;\n"
+                        f"{_count_alias}"
+                        f"    Py_ssize_t n = {_count_init};\n"
                         "    PyObject *out_obj = NULL;\n"
                         "    if (!PyArg_ParseTupleAndKeywords("
                         'args, kwds, "|nO",\n'
@@ -1198,7 +1257,8 @@ def make_methods_ctx(
                     )
                 else:
                     parse_block = (
-                        "    Py_ssize_t n = 1;\n"
+                        f"{_count_alias}"
+                        f"    Py_ssize_t n = {_count_init};\n"
                         '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
                         "        return NULL;\n"
                     )
@@ -1519,7 +1579,12 @@ def make_methods_ctx(
                 _vo_sig_arg = _first_ap["name"] if _first_ap else "n=1"
                 _vo_call_example = f"obj.{name}(np.zeros(4))"
             else:
-                _vo_sig_arg = "n=1"
+                # gh-657: the kwlist binds this as `count`; the doc said
+                # `n`, which is what sent the reporter looking for a rename
+                # that never happened.
+                # A declared default is C, not a Python literal, so the
+                # Python-facing signature shows `...` rather than leaking it.
+                _vo_sig_arg = f"count={'...' if _count_default else 1}"
                 _vo_call_example = f"obj.{name}(4)"
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
@@ -2166,7 +2231,10 @@ def make_methods_ctx(
         # _stubs.py (the module-aggregated .pyi) carries the same rule.
         _stub_count_arg = m_var and arg_type == "void" and not params
         if _stub_count_arg:
-            param_parts.append("count: int = 1")
+            # A declared default is a C expression, not a Python literal.
+            param_parts.append(
+                f"count: int = {'...' if _count_default else '1'}"
+            )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
         sig = ", ".join(param_parts)
