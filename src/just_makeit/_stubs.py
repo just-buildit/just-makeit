@@ -752,67 +752,6 @@ def class_docstring_block(
     )
 
 
-def _numpy_doc_lines(
-    block,
-    name: str,
-    py_params: list[tuple[str, str]],
-    ret_ann: str,
-    override: str = "",
-    *,
-    indent: int = 8,
-) -> list[str]:
-    """Return `.pyi` numpy-docstring lines, indented by *indent* spaces.
-
-    Shared by object methods (``indent=8``, inside a class) and module-level
-    free functions (``indent=4``, top level). Summary precedence: *override*
-    (TOML ``doc``) > the Doxygen *block*'s ``@brief`` > name fallback. With an
-    override or a block, emit a numpy-style docstring (summary + Parameters +
-    Returns + a runnable ``Examples`` doctest from ``@code``); otherwise fall
-    back to the historical one-line name-based stub.
-    """
-    pad = " " * indent
-    pad2 = " " * (indent + 4)
-    if block is None and not override:
-        return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
-    from ._docstring import _wrap, render_numpy_method_doc
-
-    if block is not None:
-        summary, body, descs, ret, examples = render_numpy_method_doc(
-            block, py_params
-        )
-    else:
-        summary, body, descs, ret, examples = "", [], {}, "", []
-    summary = override or summary
-    if not summary:
-        summary = name.replace("_", " ").capitalize() + "."
-    out = [f'{pad}"""{summary}']
-    for para in body:  # extended description — flowing, wrapped paragraphs
-        out.append("")
-        out += [f"{pad}{w}" for w in _wrap(para, 72)]
-    if py_params:
-        out += ["", f"{pad}Parameters", f"{pad}----------"]
-        for pname, ann in py_params:
-            out.append(f"{pad}{pname} : {ann}")
-            out.append(f"{pad2}{descs.get(pname) or 'Input.'}")
-    if ret_ann != "None":
-        out += [
-            "",
-            f"{pad}Returns",
-            f"{pad}-------",
-            f"{pad}{ret_ann}",
-            f"{pad2}{ret or 'Output.'}",
-        ]
-    if examples:  # @code ... @endcode -> runnable doctest
-        out += ["", f"{pad}Examples", f"{pad}--------"]
-        out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
-        out.append("")
-    out.append(f'{pad}"""')
-    return out
-
-
 def _method_doc_lines(
     block,
     m_name: str,
@@ -821,7 +760,9 @@ def _method_doc_lines(
     override: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method."""
-    return _numpy_doc_lines(
+    from ._docstring import render_numpy_doc
+
+    return render_numpy_doc(
         block, m_name, py_params, ret_ann, override, indent=8
     )
 
@@ -1459,7 +1400,9 @@ def _fn_stub(fn: dict, block=None) -> str:
     # doctest from @code), same as object methods. With no block, keep the
     # historical one-line stub so a manifest-only/scaffold rebuild is unchanged.
     if block is not None:
-        doc_lines = _numpy_doc_lines(
+        from ._docstring import render_numpy_doc
+
+        doc_lines = render_numpy_doc(
             block, name, py_params, ret, override=doc, indent=4
         )
         return f"{sig}\n" + "\n".join(doc_lines)
