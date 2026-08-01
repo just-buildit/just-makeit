@@ -121,6 +121,7 @@ class TestModuleDispatch:
                 extra_link_libs=None,
                 extra_types=None,
                 functions_in_core=False,
+                doc="",
             )
 
     def test_module_functions_in_core_flag_dispatches(

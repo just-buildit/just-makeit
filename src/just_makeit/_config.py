@@ -858,6 +858,27 @@ def module_init_params(cfg: dict, module: str) -> list[tuple]:
     ]
 
 
+def module_doc(cfg: dict, module: str) -> str:
+    """Return the module's declared documentation, or ``""``.
+
+    Canonical reader for ``[module.X] doc`` (gh-645). A module is the one
+    surface with no header to derive from -- its ``m_doc`` and its re-export
+    ``__init__.py`` are both wholly jm-generated -- so the manifest is the only
+    place an author can say what the module is for. The same string feeds both
+    faces: the extension's ``m_doc`` (what ``help(pkg.mod)`` prints) and a real
+    module docstring on the shim (what griffe/mkdocstrings reads for the
+    module's page).
+
+    Examples
+    --------
+    >>> module_doc({"module": {"agc": {"doc": "Gain control."}}}, "agc")
+    'Gain control.'
+    >>> module_doc({"module": {"agc": {}}}, "agc")
+    ''
+    """
+    return str(cfg.get("module", {}).get(module, {}).get("doc", "") or "")
+
+
 def module_package(cfg: dict, module: str) -> str:
     """Return the package directory a module's Python artifacts land in.
 
@@ -3305,6 +3326,10 @@ def _dump(cfg: dict) -> str:
         if data.get("kind") not in ("capsule", "composer", "handle"):
             if data.get("package"):
                 lines.append(f'package = "{data["package"]}"')
+        # gh-645: applies to every module kind -- a capsule's free functions
+        # need documenting as much as an object group's.
+        if data.get("doc"):
+            lines.append(_str_assign("doc", str(data["doc"])))
         extra_t = data.get("extra_types", [])
         if extra_t:
             types_str = ", ".join(f'"{t}"' for t in extra_t)

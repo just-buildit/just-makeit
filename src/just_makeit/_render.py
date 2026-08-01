@@ -231,7 +231,7 @@ MODULE_EXT_C_FOOTER = """\
 <<module_methods_def>>static PyModuleDef <<module>>_moduledef = {
     PyModuleDef_HEAD_INIT,
     .m_name    = "<<module_leaf>>",
-    .m_doc     = "<<Module>> module.",
+    .m_doc     = <<module_doc_c>>,
     .m_size    = -1,
     .m_methods = <<module_m_methods>>,
 };
@@ -1084,6 +1084,7 @@ def render_module_ext_c(
     comp_ctxs: list[dict],
     functions: list[dict] = (),
     enums: "dict[str, list[str]] | None" = None,
+    module_doc_c: str = "",
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
@@ -1160,6 +1161,10 @@ def render_module_ext_c(
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
+        # gh-645: m_doc. Defaulted here so no render path can leak a literal
+        # <<module_doc_c>> into generated C; the caller passes the manifest
+        # string when the module declares one.
+        "module_doc_c": module_doc_c or f'"{Module} module."',
         **fn_ctx,
     }
     parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
@@ -1202,6 +1207,7 @@ def render_module_ext_aggregator(
     extra_files: "set[str] | frozenset[str]" = frozenset(),
     extra_types: "list[str] | None" = None,
     enums: "dict[str, list[str]] | None" = None,
+    module_doc_c: str = "",
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -1312,6 +1318,10 @@ def render_module_ext_aggregator(
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
+        # gh-645: m_doc. Defaulted here so no render path can leak a literal
+        # <<module_doc_c>> into generated C; the caller passes the manifest
+        # string when the module declares one.
+        "module_doc_c": module_doc_c or f'"{Module} module."',
         **fn_ctx,
     }
     parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))

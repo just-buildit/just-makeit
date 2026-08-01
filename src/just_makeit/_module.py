@@ -37,6 +37,7 @@ def run(
     extra_types: list[str] | None = None,
     functions_in_core: bool = False,
     package: str = "",
+    doc: str = "",
 ) -> None:
     """Scaffold module *module* under *root*.
 
@@ -105,7 +106,11 @@ def run(
     # gh-523: `package` redirects the Python-side artifacts into a sibling
     # package; unset it resolves to the module's own pypath (zero churn).
     out_pkg = C.module_package(cfg, module) or mp.pypath
-    mod_slots = Ctx.make_module_ctx(module, pkg, out_pkg)
+    # `doc` is the freshly-passed value; the manifest is written further down,
+    # so reading it back from cfg here would always see "".
+    mod_slots = Ctx.make_module_ctx(
+        module, pkg, out_pkg, doc or C.module_doc(cfg, module)
+    )
 
     # C header and implementation for module-level functions
     _write(
@@ -118,7 +123,9 @@ def run(
     )
 
     # Empty module ext.c (no types yet — populated by `just-makeit object`)
-    ext_c = T.render_module_ext_c(module, [])
+    ext_c = T.render_module_ext_c(
+        module, [], module_doc_c=mod_slots["module_doc_c"]
+    )
     _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
 
     # CMakeLists for the module (no object libs yet)
@@ -184,6 +191,11 @@ def run(
     C.scaffold_module(cfg, module)
     if package:
         cfg["module"][module]["package"] = package
+    # gh-645: a module has no header to derive from, so the manifest is the
+    # only place its documentation can live. Set before mod_slots is built,
+    # since both generated faces read it from there.
+    if doc:
+        cfg["module"][module]["doc"] = doc
     # Optional Phase-2 metadata persisted into the [module.X] section so
     # jm apply's renderer picks them up. The renderer + dump already
     # handle these keys (gh-66 / v0.13.22 for include_dirs and link_libs;
