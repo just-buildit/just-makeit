@@ -58,8 +58,15 @@ last_said=0
 # without emitting one message per poll. Repeating "30/33 settled" every 40s
 # is noise that trains you to ignore the channel the real result arrives on.
 say() {
-  [ "$QUIET" = "1" ] && [ "$1" = "$last" ] && return 0
-  last="$1"; echo "  $1"
+  local now
+  now=$(date +%s)
+  if [ "$QUIET" = "1" ]; then
+    [ "$1" = "$last" ] && return 0
+    if [ $(( now - last_said )) -lt "$PROGRESS_EVERY" ]; then
+      last="$1"; return 0
+    fi
+  fi
+  last="$1"; last_said="$now"; echo "  $1"
 }
 
 command -v gh >/dev/null || { echo "::error:: gh not on PATH"; exit 2; }
