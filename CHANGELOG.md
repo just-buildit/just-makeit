@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated glue methods pick up their real docstrings at runtime
+    (gh-707).** `state_bytes`, `get_state`, `set_state`, `destroy`,
+    `__enter__` and `__exit__` kept their pre-gh-647 one-liners — or, for
+    `__enter__`, nothing at all — in any fragment written by an older jm.
+    doppler measured **394 such slots**, 57% of everything still
+    runtime-incomplete after adopting gh-703.
+
+    The cause is structural rather than the "no version-stable anchor" gh-703
+    assumed: for a glue slot the derived and fallback renders are *identical*,
+    because `_gluedoc` never consults `doc_blocks`. That defeats every reclaim
+    branch, including the empty-slot rule — which requires `nder != nfb` as
+    proof the content is real, a test for *header*-derived content that
+    jm-authored prose can never pass.
+
+    Glue methods have no authoring path — a downstream cannot document
+    `state_bytes` with Doxygen, since there is no declaration to attach a
+    comment to — so identical renders mean jm owns the text outright. Such a
+    slot is now reclaimed when it is empty or a single logical line, which
+    covers every pre-gh-647 form while leaving a rich hand-written glue
+    docstring alone.
+
 ## [0.38.2] — 2026-08-02
 
 ### Fixed

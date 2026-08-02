@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _gluedoc
 from . import _render as R
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
@@ -313,7 +314,43 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
 
 
-def _refresh_slot(cur: str, der: str | None, fb: str | None) -> str | None:
+def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
+    """True when *name* is jm-owned glue whose slot still holds jm's old text.
+
+    gh-707. For a glue slot the derived and fallback renders are **identical**
+    by construction — ``_gluedoc`` never consults ``doc_blocks``, so rendering
+    the fragment with the header and without it produces the same text. That
+    defeats every other branch of :func:`_refresh_slot`: it is not "already
+    current", not equal to the scaffold form, carries no synopsis for
+    :func:`_is_jm_shaped`, and cannot satisfy the empty-slot rule because that
+    one requires ``nder != nfb`` — a test for *header*-derived content, which
+    jm-authored prose can never pass. So a glue slot could never be refreshed
+    at all, and doppler measured 394 of them still carrying pre-gh-647
+    one-liners (or, for ``__enter__``, nothing).
+
+    The licence to be more permissive here is that these methods have **no
+    authoring path**: a downstream cannot document ``state_bytes`` with
+    Doxygen, because there is no declaration to attach a comment to. `der ==
+    fb` on a glue slot therefore means "jm owns this text outright", not
+    "there is nothing to say".
+
+    Still not unconditional. The reclaim is limited to a slot that is empty or
+    a **single logical line**, because every pre-gh-647 glue doc was a
+    one-liner and every gh-647 one is multi-paragraph. That covers the whole
+    reported population while bounding the worst case to "somebody hand-wrote
+    a *one-line* glue docstring" — the least valuable thing to preserve. A
+    rich hand-written glue doc has more than one line and is left alone.
+    """
+    if name not in _gluedoc.glue_method_names() or not der:
+        return False
+    body = "".join(_STR_LIT_RE.findall(cur))
+    lines = [ln for ln in body.split("\\n") if ln.strip()]
+    return len(lines) <= 1
+
+
+def _refresh_slot(
+    cur: str, der: str | None, fb: str | None, name: str = ""
+) -> str | None:
     """Decide a slot's new doc text, or ``None`` to leave it untouched.
 
     *cur* / *der* / *fb* are the existing, header-derived, and scaffold-form
@@ -333,6 +370,8 @@ def _refresh_slot(cur: str, der: str | None, fb: str | None) -> str | None:
         return der  # stale scaffold text -> refresh to derived
     if _is_jm_shaped(cur, der, fb):
         return der  # jm's own output from some earlier release -> refresh
+    if _is_reclaimable_glue(name, cur, der):
+        return der  # jm-owned glue still holding jm's old one-liner
     if ncur == "" and nfb is not None and nder != nfb:
         return der  # empty slot -> fill, but only with real Doxygen content
     return None  # hand-written -> preserve
@@ -362,7 +401,7 @@ def transplant_docs(existing: str, reference: str, fallback: str) -> str:
             ref = ref_slots.get(name)
             fb = fb_slots.get(name)
             new_text = _refresh_slot(
-                cur, ref[2] if ref else None, fb[2] if fb else None
+                cur, ref[2] if ref else None, fb[2] if fb else None, name
             )
             if new_text is not None:
                 edits.append((fs, fe, new_text))
