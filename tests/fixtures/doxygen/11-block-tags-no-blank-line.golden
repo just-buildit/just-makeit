@@ -22,4 +22,16 @@ rendered:
         -------
         float
             The filtered sample.
+
+        See Also
+        --------
+        demo_reset
+
+        Notes
+        -----
+        Not reentrant.
+
+        Warnings
+        --------
+        Overflows above unity.
         """

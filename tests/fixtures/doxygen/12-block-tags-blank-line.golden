@@ -22,4 +22,9 @@ rendered:
         -------
         float
             decimated block
+
+        Notes
+        -----
+        **Input amplitude is bounded.** A component beyond the range is clipped
+        at the boundary before filtering.
         """
