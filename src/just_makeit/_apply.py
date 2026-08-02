@@ -996,7 +996,11 @@ def _merge_module_init_file(
     re-exported names regenerate cleanly instead of being hand-edited glue.
     *siblings* (gh-523) are the leaf names of other modules sharing this
     package — their exports are protected from the ``__all__`` rewrite."""
-    from ._object import _merge_module_init
+    from ._object import (
+        _leading_docstring,
+        _merge_module_docstring,
+        _merge_module_init,
+    )
 
     temp_text = temp_path.read_text(encoding="utf-8")
     m = re.search(
@@ -1016,6 +1020,13 @@ def _merge_module_init_file(
     merged = _merge_module_init(
         existing, module, exports, reexports, siblings=siblings
     )
+    # gh-695: carry the module docstring across too. `[module.X] doc` reached
+    # this file only via the template, which apply renders into *temp* and
+    # then never copies — so a module that gained a `doc` after scaffolding
+    # kept a docstring-less shim while the same string did reach the C
+    # extension's m_doc. Taken from the temp render rather than re-derived, so
+    # there is one place that turns the manifest string into Python source.
+    merged = _merge_module_docstring(merged, _leading_docstring(temp_text))
     if merged != existing:
         real_path.write_text(merged, encoding="utf-8")
         return True
