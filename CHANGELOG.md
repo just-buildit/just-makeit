@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A markdown list or table in a Doxygen body keeps its structure
+    (gh-653).** `group_paragraphs` joined every run of consecutive non-blank
+    lines with spaces, so `- fast: low quality` / `- slow: high quality`
+    rendered as one run-on line that reads as neither prose nor a list, and a
+    pipe table collapsed into a row of pipes. The parse was always faithful;
+    the paragraph pass destroyed it.
+
+    Bullet, numbered, pipe-table and `@li`/`@arg` lines are now kept one per
+    line and emitted verbatim rather than re-wrapped; surrounding prose still
+    flows. doppler measured **28** headers with bullet lists and **5** with
+    tables, the lists typically enumerating modes or flags for an enum-valued
+    parameter — exactly where a reader most needs the structure. Both faces
+    get it from the one section builder.
+
+- **A view's own `doc=` reaches its `.pyi` class docstring (gh-648).** Every
+    other view overlay key was set and this one was not, so a view whose
+    class-level semantics genuinely differ from its parent's described itself
+    correctly at runtime (`tp_doc` reads the view `doc=`) and inherited the
+    parent's text in the stub beside it. A view that declares no `doc=` still
+    inherits, so nothing else changes.
+
 ### Added
 
 - **Doxygen block tags render as numpy sections (gh-652).** `@note`,

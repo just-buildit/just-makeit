@@ -1801,6 +1801,18 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
                 **_view_doc_blocks(cfg, obj, synth),
                 **(cfg.get(obj, {}).get("_doc_blocks", {}) or {}),
             }
+            # gh-648: the view's own `doc=` owns its class docstring. Every
+            # other overlay key was set and this one was not, so a view whose
+            # class-level semantics genuinely differ from its parent's --
+            # doppler's Acquisition / BurstAcquisition, MatchedDDC /
+            # MatchedDdcr: two front doors over one core -- described itself
+            # correctly at runtime (`tp_doc` reads the view `doc=`) and
+            # inherited the parent's text in the stub beside it.
+            #
+            # Absent, the parent's `doc` stays in the overlay, so a view that
+            # declares nothing is unchanged.
+            if view.get("doc"):
+                overlay["doc"] = view["doc"]
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")
