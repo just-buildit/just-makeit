@@ -359,7 +359,10 @@ class TestExtCFooter:
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '"Initialize FFT."' in ext
+        # gh-643: doc literals go through `_build_ml_doc` now (escaped,
+        # one C string per logical line), so the entry carries a trailing
+        # newline like every other generated docstring.
+        assert '"Initialize FFT.\\n"' in ext
 
     def test_bind_wrapper_present_in_ext_c(self, fft_module):
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
@@ -414,13 +417,15 @@ class TestTwoFunctions:
         ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '"Execute 1-D FFT."' in ext
+        assert '"Execute 1-D FFT.\\n"' in ext
 
     def test_default_doc_when_no_doc(self, two_functions):
         ext = (two_functions / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '"fft_global_setup."' in ext
+        # A function with no header block keeps the one-liner fallback --
+        # the .pyi collapses to a one-liner there too (gh-643).
+        assert '"fft_global_setup.\\n"' in ext
 
 
 class TestConfig:

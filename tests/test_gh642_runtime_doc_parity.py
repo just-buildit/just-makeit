@@ -40,7 +40,9 @@ from just_makeit._docstring import (  # noqa: E402
     render_numpy_doc,
     render_runtime_doc,
 )
+from just_makeit._function import run as function_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
+from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
@@ -153,6 +155,17 @@ _AUTHORED = """ * @brief Filter one block of samples through the FIR.
  * 1
  * @endcode"""
 
+_FREE_FN_DOC = """/**
+ * @brief Build a Kaiser window of the requested length.
+ *
+ * The shape parameter trades main-lobe width against side-lobe level.
+ *
+ * @param n Number of samples in the window.
+ * @param beta Shape parameter. Larger is more tapered.
+ * @return The window, `n` samples long.
+ */
+"""
+
 _C_DOC_LINE = re.compile(r'^\s*"(.*)"[,}\s]*$')
 
 
@@ -259,6 +272,75 @@ class TestGeneratedProject:
         assert ">>> out = obj.run(x, 1.0)" in runtime
         assert runtime.count("Examples") == 1
         assert ">>> from demo import Fir" not in runtime
+
+    def test_module_free_function_matches_its_stub(self, tmp_path):
+        """gh-643: the module-level twin.
+
+        A `[module.X]` free function got a full `.pyi` docstring from the
+        module header (gh-384) while its runtime doc was
+        `fn["doc"] or "{name}."` -- so `help(kaiser_window)` never saw the C
+        `@brief`, let alone params or returns. Same invariant, same renderer.
+        """
+        root = tmp_path / "demo"
+        new_run("demo", root)
+        module_run(root, "win")
+        function_run(
+            root,
+            "kaiser_window",
+            "win",
+            params=[("n", "size_t"), ("beta", "double")],
+            out_type="double",
+        )
+        hdr = root / "native" / "inc" / "win" / "win_core.h"
+        text = hdr.read_text(encoding="utf-8")
+        decl = re.search(r"^[^\n]*kaiser_window[^\n]*$", text, re.M)
+        assert decl, "no kaiser_window declaration in the module header"
+        hdr.write_text(
+            text[: decl.start()] + _FREE_FN_DOC + text[decl.start() :],
+            encoding="utf-8",
+        )
+        apply_run(root)
+
+        ext_c = (root / "native/src/win/win_ext.c").read_text()
+        pyi = (root / "src/demo/win/win.pyi").read_text()
+        runtime = _runtime_doc(ext_c, "kaiser_window")
+        m = re.search(
+            r'def kaiser_window\([^\n]*\n    """(.*?)\n    """', pyi, re.S
+        )
+        assert m, "no stub docstring for kaiser_window"
+        body = m.group(1).split("\n")
+        stub = [body[0]] + [
+            ln[4:] if ln.startswith("    ") else ln for ln in body[1:]
+        ]
+        assert [ln for ln in runtime if ln.strip()] == [
+            ln for ln in stub if ln.strip()
+        ]
+        assert "Number of samples in the window." in "\n".join(runtime)
+
+    def test_free_function_doc_is_escaped_into_the_c_literal(self, tmp_path):
+        """A quote in a manifest `doc` must not break the build.
+
+        The entry was interpolated bare into `"{doc}"`, so a `"` or a newline
+        produced a module that did not compile -- gh-633's class, on the one
+        surface it had not reached. It now goes through `_build_ml_doc` like
+        every other doc literal.
+        """
+        root = tmp_path / "demo"
+        new_run("demo", root)
+        module_run(root, "win")
+        function_run(
+            root,
+            "hann",
+            "win",
+            doc='Apply the "raised cosine" taper.',
+            params=[("n", "size_t")],
+            out_type="double",
+        )
+        ext_c = (root / "native/src/win/win_ext.c").read_text()
+        assert r"\"raised cosine\"" in ext_c, (
+            "the manifest doc reached the C literal unescaped; a bare quote "
+            "closes the string and the module does not compile"
+        )
 
     def test_undocumented_method_keeps_the_synthesised_demo(self, tmp_path):
         """The fallback still fires when the header says nothing."""

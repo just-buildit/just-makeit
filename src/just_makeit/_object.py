@@ -1239,6 +1239,10 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
             C.module_package(cfg, module),
             C.module_doc(cfg, module),
         )["module_doc_c"],
+        # gh-643: the module header's Doxygen for its free functions — the
+        # same blocks the .pyi derives from (gh-384), so `help(fn)` and the
+        # stub carry the same text.
+        fn_doc_blocks=_load_module_doc_blocks(root, module),
     )
     _write(ext_c_path, aggregator, "update")
 

@@ -4,6 +4,16 @@
 
 ### Added
 
+- **A module free function's runtime `__doc__` derives from the module header
+    (gh-643).** A `[module.X]` free function has had a full `.pyi` docstring
+    from the header since gh-384, but its runtime doc was
+    `fn["doc"] or "<name>."` — so `help(kaiser_window)` never saw the C
+    `@brief`, let alone its parameters or return. It now goes through the same
+    renderer as everything else, so the runtime text is the stub text. The
+    module-level twin of gh-642, and the last runtime surface that was
+    deriving nothing. A function whose header carries no block keeps its
+    one-liner, which is what the stub does there too.
+
 - **The runtime `__doc__` carries the whole numpy block, not just the
     `@brief` (gh-642).** jm rendered summary, extended description,
     `Parameters`, `Returns` and `Examples` into the `.pyi`, but the
@@ -26,6 +36,12 @@
     synthesised demo is unchanged.
 
 ### Fixed
+
+- **A module free function's doc reaches the C literal escaped.** The
+    `PyMethodDef` entry interpolated it bare into `"{doc}"`, so a manifest
+    `doc` containing a quote or a newline emitted a module that did not
+    compile. That is gh-633's class of bug, on the one doc surface it had not
+    reached.
 
 - **A method's runtime signature line lists every declared parameter.** The
     `variable_output` shape hard-coded `x` and dropped declared `--param`s, so

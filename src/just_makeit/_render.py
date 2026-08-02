@@ -995,6 +995,7 @@ def make_functions_ctx(
     Module: str,
     functions: list[dict],
     enums: "dict[str, list[str]] | None" = None,
+    doc_blocks: "dict | None" = None,
 ) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
@@ -1022,13 +1023,40 @@ def make_functions_ctx(
             "function_enum_tables": "",
             "function_uses_enum": False,
         }
+    # gh-643: the runtime doc derives from the same module-header block the
+    # .pyi derives from, through the same renderer. Local imports: _stubs and
+    # _docstring are leaves relative to this module, but importing _stubs at
+    # module scope would put _render into the _object/_stubs import cycle.
+    from ._context._parse import _build_ml_doc
+    from ._docstring import render_runtime_doc
+    from ._stubs import fn_py_surface
+
     wrappers: list[str] = []
     entries: list[str] = []
     for fn in functions:
         name = fn["name"]
         params = list(fn.get("params", []))
         return_type = fn.get("return_type", "void")
-        doc = fn.get("doc", f"{name}.")
+        # gh-643: was `fn.get("doc", f"{name}.")` — the manifest override or a
+        # name stub, so `help(kaiser_window)` never saw the C @brief, let alone
+        # params/returns/examples, while the .pyi beside it carried all of it
+        # (gh-384). The manifest `doc` stays the summary override; it is passed
+        # to the renderer rather than replacing it.
+        _blk = (doc_blocks or {}).get(name)
+        if _blk is None:
+            # No header block: keep the historical one-liner. `_fn_stub`
+            # collapses to a one-liner here too, so rendering the section
+            # skeleton would *introduce* a divergence rather than close one —
+            # the runtime would carry `Parameters`/`Input.` placeholders the
+            # stub beside it does not. Undocumented functions are unchanged.
+            doc = _build_ml_doc([fn.get("doc", "") or f"{name}."])
+        else:
+            _ret_ann, _py_params, _ = fn_py_surface(fn)
+            doc = _build_ml_doc(
+                render_runtime_doc(
+                    _blk, name, _py_params, _ret_ann, fn.get("doc", "")
+                )
+            )
         # gh-238: a function with params is positional-or-keyword
         # (METH_VARARGS | METH_KEYWORDS); a no-param function stays METH_NOARGS.
         # The kw-capable binding has the 3-arg PyCFunctionWithKeywords signature,
@@ -1054,7 +1082,11 @@ def make_functions_ctx(
                 check_return=bool(fn.get("check_return")),
             )
         )
-        entries.append(f'    {{"{name}", {fn_ref}, {flags}, "{doc}"}},')
+        # `doc` is already a C string literal (escaped, possibly multi-line) —
+        # it used to be interpolated bare into `"{doc}"`, so a quote or a
+        # newline in a manifest `doc` produced a module that did not compile.
+        # That is gh-633's class of bug, on the one surface it had not reached.
+        entries.append(f'    {{"{name}", {fn_ref}, {flags},\n     {doc}}},')
     entries.append("    {NULL, NULL, 0, NULL}")
     array_body = "\n".join(entries)
     methods_def = (
@@ -1085,6 +1117,7 @@ def render_module_ext_c(
     functions: list[dict] = (),
     enums: "dict[str, list[str]] | None" = None,
     module_doc_c: str = "",
+    fn_doc_blocks: "dict | None" = None,
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
@@ -1105,7 +1138,9 @@ def render_module_ext_c(
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
-    fn_ctx = make_functions_ctx(module, Module, list(functions), enums)
+    fn_ctx = make_functions_ctx(
+        module, Module, list(functions), enums, fn_doc_blocks
+    )
     # Only include the module-level core header when there are module functions
     # that use it.  Objects have their own per-component includes in
     # COMPONENT_TYPE_SECTION; the module_core.h is only needed when module-
@@ -1208,6 +1243,7 @@ def render_module_ext_aggregator(
     extra_types: "list[str] | None" = None,
     enums: "dict[str, list[str]] | None" = None,
     module_doc_c: str = "",
+    fn_doc_blocks: "dict | None" = None,
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -1235,7 +1271,9 @@ def render_module_ext_aggregator(
     module = mp.cname
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
-    fn_ctx = make_functions_ctx(module, Module, list(functions), enums)
+    fn_ctx = make_functions_ctx(
+        module, Module, list(functions), enums, fn_doc_blocks
+    )
     has_module_fns = bool(functions)
     module_core_include = (
         f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
