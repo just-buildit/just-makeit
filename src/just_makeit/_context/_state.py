@@ -7,7 +7,7 @@ rendering dict.
 from __future__ import annotations
 
 from .. import _coerce
-from .._docstring import render_numpy_doc
+from .._docstring import render_numpy_doc, render_runtime_doc
 from ._parse import _build_ml_doc
 from .._types import (
     _CTYPE_META,
@@ -1578,14 +1578,26 @@ def _state_struct_def(component: str, fields: str, opaque: bool) -> str:
 def _reset_docs(
     component: str, doc_blocks: "dict | None"
 ) -> "tuple[str, str]":
-    """``(runtime_text, pyi_body)`` for the built-in ``reset()`` (gh-676/644).
+    """``(runtime_c_literal, pyi_body)`` for the built-in ``reset()``.
 
     The header is the single source of truth for documentation, and ``reset``
     was one of the built-ins that never consulted it: a hand-written ``@brief``
     on ``<comp>_reset`` reached the module ``.pyi`` and nothing else, so the
-    same header documented the method on one face and not the other.
+    same header documented the method on one face and not the other (gh-676/
+    gh-644).
 
-    Both return values come from the one parsed block, so they cannot drift.
+    gh-700: the runtime half then stopped at the ``@brief`` while the stub got
+    the whole block, so an authored extended description or ``@code`` showed up
+    in the stub and not in ``help()``. Both now render from the one parsed
+    block through the shared builders, so they differ only by indent and
+    delimiters.
+
+    The first element is a **finished C string literal**, escaped by
+    ``_build_ml_doc`` — it used to be raw text interpolated into ``"{...}"`` by
+    both call sites, so a ``@brief`` containing a quote emitted a module that
+    did not compile (gh-633's class, the same one gh-643 found on module free
+    functions).
+
     An absent or scaffold-template block (filtered upstream by
     ``_object._load_doc_blocks``) yields the canned text, which is what keeps a
     fresh scaffold idempotent.
@@ -1593,9 +1605,10 @@ def _reset_docs(
     blk = (doc_blocks or {}).get(f"{component}_reset")
     canned = "Reset state to post-create defaults."
     if blk is None or not blk.brief:
-        return canned, f'        """{canned}"""\n'
+        return _build_ml_doc([canned]), f'        """{canned}"""\n'
     pyi = "\n".join(render_numpy_doc(blk, "reset", [], "None")) + "\n"
-    return blk.brief, pyi
+    rt = _build_ml_doc(render_runtime_doc(blk, "reset", [], "None"))
+    return rt, pyi
 
 
 def make_state_ctx(
@@ -1728,7 +1741,7 @@ def make_state_ctx(
             "builtin_reset_pmd": (
                 f'    {{"reset",    (PyCFunction){_ns_reset_fn},'
                 f"    METH_NOARGS,\n"
-                f'     "{_reset_rt}"}},\n'
+                f"     {_reset_rt}}},\n"
             ),
             "builtin_reset_decl": (
                 f"/**\n"
@@ -2503,7 +2516,7 @@ def make_state_ctx(
         "builtin_reset_pmd": (
             f'    {{"reset",    (PyCFunction){Component}_reset,'
             f"    METH_NOARGS,\n"
-            f'     "{_reset_rt}"}},\n'
+            f"     {_reset_rt}}},\n"
         ),
         "builtin_reset_decl": (
             f"/**\n"

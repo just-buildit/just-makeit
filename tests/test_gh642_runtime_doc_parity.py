@@ -362,3 +362,132 @@ class TestGeneratedProject:
         runtime = "\n".join(_runtime_doc(ext_c, "run"))
         assert ">>> from demo import Fir" in runtime
         assert "Examples" not in runtime
+
+
+# ── built-ins (gh-700) ──────────────────────────────────────────────────────
+#
+# gh-642 gave the *authored* methods their full block and left the built-ins
+# -- step()/steps()/reset() -- emitting a signature line, the @brief and a
+# synthesised demo. Every object has a step, so that was the bulk of the
+# runtime surface doppler measured, and why their runtime-incomplete count
+# barely moved (914 -> 861) on 0.38.0.
+#
+# The built-ins are the one place jm supplies real prose of its own, so the
+# rule differs from an authored method: the block is rendered only when the
+# header says more than a @brief. A bare-@brief component must stay
+# byte-identical, or every existing project's generated files churn to say
+# the same thing at greater length.
+
+_BUILTIN_DOC = """/**
+ * @brief Run a block of looks through the detector.
+ *
+ * The detector integrates over the whole block, so consecutive calls are
+ * equivalent to one call over the concatenation.
+ *
+ * @param in Input looks, any length.
+ * @return The lock metric for this block.
+ *
+ * @code
+ * >>> obj.step(np.zeros(4, dtype=np.float64))
+ * 0.0
+ * @endcode
+ */
+"""
+
+_BRIEF_ONLY = """/**
+ * @brief Run a block of looks through the detector.
+ */
+"""
+
+
+def _detector(tmp_path: Path, block: str | None) -> Path:
+    """A standalone object whose built-in step() carries *block*."""
+    root = tmp_path / "demo"
+    new_run("demo", root)
+    object_run(
+        root,
+        "det",
+        None,
+        state_vars=[("thresh", "double", "1.0")],
+        arg_type="double[]",
+        return_type="double",
+    )
+    if block is not None:
+        hdr = root / "native" / "inc" / "det" / "det_core.h"
+        text = hdr.read_text(encoding="utf-8")
+        m = re.search(
+            r"/\*\*\n(?: \*[^\n]*\n)+ \*/\n(?=[^\n]*\ndet_step\s*\(|det_step\s*\()",
+            text,
+        )
+        assert m, "the scaffold no longer emits a block above det_step"
+        hdr.write_text(
+            text[: m.start()] + block + text[m.end() :], encoding="utf-8"
+        )
+    apply_run(root)
+    return root
+
+
+class TestBuiltinStep:
+    """The built-in step() must obey the same parity rule as a method."""
+
+    def test_authored_header_reaches_both_faces(self, tmp_path):
+        root = _detector(tmp_path, _BUILTIN_DOC)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        pyi = (root / "src/demo/det.pyi").read_text()
+        runtime = _runtime_doc(ext_c, "step")
+        stub = _stub_doc(pyi, "step")
+        # The runtime leads with a signature line the stub does not need.
+        assert runtime[0].startswith("step(")
+        assert [ln for ln in runtime[2:] if ln.strip()] == [
+            ln for ln in stub if ln.strip()
+        ]
+
+    def test_authored_prose_reaches_the_runtime(self, tmp_path):
+        """The regression: @param/@return/body text in the .so, not just the
+        stub."""
+        root = _detector(tmp_path, _BUILTIN_DOC)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        rt = "\n".join(_runtime_doc(ext_c, "step"))
+        assert "Parameters" in rt
+        assert "Input looks, any length." in rt
+        assert "The lock metric for this block." in rt
+        assert "integrates over the whole block" in rt
+
+    def test_authored_example_replaces_the_synthesised_demo(self, tmp_path):
+        root = _detector(tmp_path, _BUILTIN_DOC)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        rt = "\n".join(_runtime_doc(ext_c, "step"))
+        assert rt.count("Examples") == 1
+        assert ">>> from demo import Det" not in rt
+
+    def test_bare_brief_does_not_grow_a_parameters_section(self, tmp_path):
+        """The zero-churn rule -- jm's own canned prose is not 'authored'.
+
+        Rendering the block for a bare @brief would rewrite every existing
+        project's generated files to say the same thing at greater length,
+        and trip the manifest-drift gate on components nobody documented.
+        """
+        root = _detector(tmp_path, _BRIEF_ONLY)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        rt = "\n".join(_runtime_doc(ext_c, "step"))
+        assert "Run a block of looks through the detector." in rt
+        assert "Parameters" not in rt
+        assert ">>> from demo import Det" in rt, "lost the synthesised demo"
+
+    def test_undocumented_keeps_the_canned_text(self, tmp_path):
+        root = _detector(tmp_path, None)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        rt = "\n".join(_runtime_doc(ext_c, "step"))
+        assert "Process an input buffer and return a result." in rt
+        assert "Parameters" not in rt
+
+
+class TestBuiltinReset:
+    """reset()'s stub already rendered the block; its runtime stopped at the
+    brief."""
+
+    def test_reset_runtime_is_escaped(self, tmp_path):
+        """It was interpolated bare into `"{...}"` -- gh-633's class."""
+        root = _detector(tmp_path, None)
+        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        assert '"Reset state to post-create defaults.\\n"' in ext_c

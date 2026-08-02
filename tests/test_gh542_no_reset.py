@@ -187,7 +187,10 @@ class TestByteIdenticalWhenUnset:
         ) in ext
         assert (
             '    {"reset",    (PyCFunction)Keeper_reset,    METH_NOARGS,\n'
-            '     "Reset state to post-create defaults."},\n'
+            # gh-700: reset's runtime literal goes through `_build_ml_doc`
+            # now (escaped, one C string per logical line), so it carries the
+            # trailing newline every other generated doc literal has.
+            '     "Reset state to post-create defaults.\\n"},\n'
         ) in ext
 
     def test_pyi_stub(self, plain):
