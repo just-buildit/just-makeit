@@ -21,7 +21,11 @@ from .._types import (
     array_elem_ctype,
     c_param_parts,
 )
-from .._docstring import render_numpy_doc, scaffold_doc_block
+from .._docstring import (
+    render_numpy_doc,
+    render_runtime_doc,
+    scaffold_doc_block,
+)
 from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
@@ -43,6 +47,77 @@ def _pyi_ndarray(ctype: str) -> str:
     elem = ctype[:-2] if ctype.endswith("[]") else ctype
     meta = _CTYPE_META.get(elem)
     return f"NDArray[{meta['py_type']}]" if meta else "NDArray[Any]"
+
+
+def _stub_params(
+    arg_type: str, params: list[dict]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """The Python-facing arguments of one method, for signature and prose.
+
+    Returns both renderings of the same list so they cannot disagree
+    (gh-642). The runtime ``PyMethodDef`` doc and the ``.pyi`` stub must
+    document the identical arguments in the identical order; before this was
+    hoisted, the stub built its list several hundred lines below the point
+    where each method shape emitted its runtime literal, so the runtime face
+    had nothing to share and carried the ``@brief`` alone.
+
+    Binding-level arguments (``count``, ``out=``) are deliberately absent:
+    they belong to the signature, which appends them, and not to the
+    ``Parameters`` section, which documents what the algorithm takes.
+
+    Parameters
+    ----------
+    arg_type : str
+        The method's primary input type, or ``"void"``. A non-void one is
+        always Python-visible as ``x``.
+    params : list of dict
+        Declared extra parameters, in manifest order.
+
+    Returns
+    -------
+    tuple
+        ``(signature_parts, doc_params)``. ``signature_parts`` are
+        ``"name: annotation"`` strings carrying any default; ``doc_params``
+        are ``(name, annotation)`` pairs with the default stripped, which is
+        the form both docstring renderers take.
+
+    Examples
+    --------
+    >>> _stub_params("float", [])
+    (['x: float'], [('x', 'float')])
+    >>> _stub_params("void", [{"name": "mu", "type": "double",
+    ...                        "default": "0.5"}])
+    (['mu: float = 0.5'], [('mu', 'float')])
+    """
+    # (name, annotation, signature-only default suffix)
+    fields: list[tuple[str, str, str]] = []
+    if arg_type != "void":
+        ann = (
+            _pyi_ndarray(arg_type[:-2])
+            if arg_type.endswith("[]")
+            else _pyi_scalar(arg_type)
+        )
+        fields.append(("x", ann, ""))
+    for p in params:
+        pt = p["type"]
+        if pt.endswith("[]"):
+            fields.append((p["name"], _pyi_ndarray(pt[:-2]), ""))
+        elif p.get("capsule"):
+            # gh-432: a capsule-typed param takes the named PyCapsule, any
+            # wrapper exposing `_capsule`, or None (detach).
+            fields.append((p["name"], "object | None", ""))
+        else:
+            # gh-240: a defaulted scalar renders as an optional kwarg.
+            suffix = (
+                f" = {p['default']}"
+                if p.get("default") not in (None, "")
+                else ""
+            )
+            fields.append((p["name"], _pyi_scalar(pt), suffix))
+    return (
+        [f"{n}: {a}{s}" for n, a, s in fields],
+        [(n, a) for n, a, _ in fields],
+    )
 
 
 # A cast-prefixed numpy buffer accessor inside a kernel call argument, e.g.
@@ -722,6 +797,85 @@ def make_methods_ctx(
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
+        # gh-642: the Python-facing argument list, resolved once here so the
+        # runtime PyMethodDef literal each shape branch emits below and the
+        # .pyi stub built at the end of this loop document the same arguments
+        # with the same annotations. It used to be built only at the stub, so
+        # the runtime face had nothing to share and carried the @brief alone.
+        _sig_parts, _doc_params = _stub_params(arg_type, params)
+        # ...and the return annotation with it, for the same reason: it is the
+        # type line of the `Returns` section on both faces.
+        if status_return:
+            # gh-432: status returns bind as None (raise on failure).
+            _ret_ann = "None"
+        elif result_fields and single_record:
+            # gh-244: one named record — a PyStructSequence (a tuple subclass).
+            # Type it as a tuple of the field types: unpacking type-checks and
+            # named attribute access works at runtime. (A full NamedTuple stub
+            # is a possible refinement.)
+            _ret_ann = (
+                "tuple["
+                + ", ".join(_pyi_scalar(f["type"]) for f in result_fields)
+                + "]"
+            )
+        elif result_fields:
+            _ret_ann = "list[tuple]"
+        elif variable_output:
+            _all_rts = [return_type] + list(multi_output)
+            _ndarrays = [_pyi_ndarray(rt) for rt in _all_rts]
+            _ret_ann = (
+                f"tuple[{', '.join(_ndarrays)}]"
+                if len(_ndarrays) > 1
+                else _ndarrays[0]
+            )
+        elif out_type:
+            # gh-529: `out_type` on a method allocates a fresh output array
+            # per call and returns it -- the C wrapper (the `elif out_type`
+            # branch below) does exactly what a function's out_type does, and
+            # the PyMethodDef docstring already says `-> ndarray`. Only this
+            # annotation lagged, reporting the scalar `return_type` and so
+            # contradicting both. `_stubs._obj_stub` carries the peer of this
+            # branch for the module-aggregated stub; the two must move
+            # together (see tests/test_gh529_method_out_type_pyi.py).
+            _ret_ann = _pyi_ndarray(out_type)
+        else:
+            _ret_ann = _pyi_scalar(return_type)
+
+        # The Python-facing argument names, for the signature line each shape
+        # puts at the top of its runtime doc. Derived from the same list as
+        # the Parameters section so the two cannot contradict each other —
+        # which they did: the variable_output shape hard-coded `x` and
+        # dropped every declared param, so a documented `run(x, gain)`
+        # advertised `run(x)` directly above a Parameters block listing
+        # `gain`. Same shape as the gh-657 report, where help() advertised
+        # `ptr(n=1)` against a kwlist that bound `count`.
+        _doc_names = [n for n, _ in _doc_params]
+        _has_header_examples = bool(_block and _block.examples)
+
+        def _demo(lines: list[str]) -> list[str]:
+            """The synthesized doctest, dropped when the header wrote one.
+
+            gh-642 renders the header's ``@code`` as a real ``Examples``
+            section at runtime, so emitting jm's placeholder demo underneath
+            it would put two example blocks in one docstring — the second one
+            constructing the object a different way than the author just
+            showed. The author's wins; jm's is the fallback it always was.
+            """
+            return [] if _has_header_examples else lines
+
+        def _runtime_doc(default_summary: str) -> list[str]:
+            """This method's runtime numpy block, summary resolved.
+
+            Closes over the loop's per-method state so each shape branch below
+            passes only what differs: the sentence to use when neither the
+            manifest nor the header supplies one. Precedence is unchanged —
+            TOML ``doc`` > header ``@brief`` > *default_summary* — because
+            ``_brief`` already resolved the first two.
+            """
+            return render_runtime_doc(
+                _block, name, _doc_params, _ret_ann, _brief or default_summary
+            )
+
         # gh-219 follow-up: a method's primary array input is sometimes
         # declared as the sole entry in `params` (arg_type="void" +
         # params=[{array}]) rather than via `arg_type` directly -- doppler's
@@ -907,30 +1061,36 @@ def make_methods_ctx(
                 "np.", ""
             )
             _batch_sig = (
-                f"{name}({'x' if has_arg else 'n'}, out=None) -> ndarray"
+                f"{name}({', '.join(_doc_names) if _doc_names else 'n'},"
+                f" out=None) -> ndarray"
             )
-            _batch_doc_lines = [
-                _batch_sig,
-                "",
-                _brief
-                or f"1:1-rate batch transform. Returns an ndarray of dtype {_ret_np_str}.",
+            _batch_demo = [
                 "",
                 "    >>> import numpy as np",
                 *_from_line,
                 _obj_line,
             ]
             if has_arg:
-                _batch_doc_lines += [
+                _batch_demo += [
                     f"    >>> x = np.zeros(4, dtype={_in_dtype_str})",
                     f"    >>> y = obj.{name}(x)",
                 ]
             else:
-                _batch_doc_lines.append(f"    >>> y = obj.{name}(4)")
-            _batch_doc_lines += [
+                _batch_demo.append(f"    >>> y = obj.{name}(4)")
+            _batch_demo += [
                 "    >>> y.shape",
                 "    (4,)",
                 "    >>> y.dtype",
                 f"    dtype('{_ret_np_str}')",
+            ]
+            _batch_doc_lines = [
+                _batch_sig,
+                "",
+                *_runtime_doc(
+                    f"1:1-rate batch transform. Returns an ndarray of dtype"
+                    f" {_ret_np_str}."
+                ),
+                *_demo(_batch_demo),
             ]
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
@@ -1578,14 +1738,12 @@ def make_methods_ctx(
                 else "ndarray"
             )
             if has_arg:
-                _vo_sig_arg = "x"
+                _vo_sig_arg = ", ".join(_doc_names)
                 _vo_call_example = f"obj.{name}({_in_example})"
             elif has_params:
-                _first_ap = next(
-                    (p for p in params if is_array_param_type(p["type"])),
-                    None,
-                )
-                _vo_sig_arg = _first_ap["name"] if _first_ap else "n=1"
+                # Every declared param, not just the first array one: the
+                # signature line has to match what the binding accepts.
+                _vo_sig_arg = ", ".join(_doc_names) if _doc_names else "n=1"
                 _vo_call_example = f"obj.{name}(np.zeros(4))"
             else:
                 # gh-657: the kwlist binds this as `count`; the doc said
@@ -1604,19 +1762,23 @@ def make_methods_ctx(
                 # ("zero-copy view into an internally managed buffer … a
                 # still-referenced buffer is retired, never reused in place")
                 # and was wrong on both clauses once that buffer was deleted.
-                _brief
-                or "Returns a new NumPy-owned array each call — independent"
-                " of every other result, and safe to keep. Pass out= to"
-                " write into your own buffer instead.",
-                "",
-                "    >>> import numpy as np",
-                *_from_line,
-                _obj_line,
-            ]
-            _vo_doc_lines.append(f"    >>> y = {_vo_call_example}")
-            _vo_doc_lines += [
-                f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}.dtype",
-                f"    dtype('{_dtype_strs_vo[0]}')",
+                *_runtime_doc(
+                    "Returns a new NumPy-owned array each call — independent"
+                    " of every other result, and safe to keep. Pass out= to"
+                    " write into your own buffer instead."
+                ),
+                *_demo(
+                    [
+                        "",
+                        "    >>> import numpy as np",
+                        *_from_line,
+                        _obj_line,
+                        f"    >>> y = {_vo_call_example}",
+                        f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}"
+                        f".dtype",
+                        f"    dtype('{_dtype_strs_vo[0]}')",
+                    ]
+                ),
             ]
             _vo_flags = (
                 "METH_VARARGS | METH_KEYWORDS"
@@ -1927,16 +2089,24 @@ def make_methods_ctx(
                 f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
             )
             _rf_doc_lines = [
-                f"{name}({'x' if has_arg else ''}) -> list[tuple]",
+                f"{name}({', '.join(_doc_names)}) -> list[tuple]",
                 "",
-                f"Returns list of ({_rf_field_names},) tuples.",
-                "",
-                "    >>> import numpy as np",
-                *_from_line,
-                _obj_line,
-                f"    >>> results = obj.{name}({_rf_call_arg})",
-                "    >>> isinstance(results, list)",
-                "    True",
+                # gh-642: this shape used to hard-code its summary, so a
+                # documented record method's @brief reached the .pyi and not
+                # help() — the only one of the four that ignored the header
+                # outright rather than merely stopping at the brief.
+                *_runtime_doc(f"Returns list of ({_rf_field_names},) tuples."),
+                *_demo(
+                    [
+                        "",
+                        "    >>> import numpy as np",
+                        *_from_line,
+                        _obj_line,
+                        f"    >>> results = obj.{name}({_rf_call_arg})",
+                        "    >>> isinstance(results, list)",
+                        "    True",
+                    ]
+                ),
             ]
             pmd_lines.append(
                 f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
@@ -2109,26 +2279,17 @@ def make_methods_ctx(
                 f"{ret_body}"
                 f"}}"
             )
-            _fix_sig_in = (
-                f"{'x' if has_arg else ''}"
-                + (", " if has_arg and has_params else "")
-                + ", ".join(p["name"] for p in params)
-            )
             _fix_ret_hint = (
                 "ndarray"
                 if out_type or multi_output
                 else _pyi_scalar(return_type)
             )
-            _fix_doc_lines = [
-                f"{name}({_fix_sig_in}) -> {_fix_ret_hint}".rstrip(),
-                "",
-                _brief or f"{name}.",
-            ]
+            _fix_demo: list[str] = []
             if has_arg or has_params:
-                _fix_doc_lines += ["", "    >>> import numpy as np"]
+                _fix_demo += ["", "    >>> import numpy as np"]
             else:
-                _fix_doc_lines.append("")
-            _fix_doc_lines += [*_from_line, _obj_line]
+                _fix_demo.append("")
+            _fix_demo += [*_from_line, _obj_line]
             _call_parts: list[str] = []
             if has_arg:
                 _call_parts.append(_in_example if _in_example else "x")
@@ -2148,15 +2309,21 @@ def make_methods_ctx(
                     _call_parts.append("0")
             _call_str = ", ".join(_call_parts)
             if out_type or multi_output:
-                _fix_doc_lines.append(f"    >>> y = obj.{name}({_call_str})")
-                _fix_doc_lines.append("    >>> y.ndim")
-                _fix_doc_lines.append("    1")
+                _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
+                _fix_demo.append("    >>> y.ndim")
+                _fix_demo.append("    1")
             elif return_type != "void" and return_type in _CTYPE_META:
                 _py_z = _CTYPE_META[return_type].get("py_zero", "0")
-                _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
-                _fix_doc_lines.append(f"    {_py_z}")
+                _fix_demo.append(f"    >>> obj.{name}({_call_str})")
+                _fix_demo.append(f"    {_py_z}")
             else:
-                _fix_doc_lines.append(f"    >>> obj.{name}({_call_str})")
+                _fix_demo.append(f"    >>> obj.{name}({_call_str})")
+            _fix_doc_lines = [
+                f"{name}({', '.join(_doc_names)}) -> {_fix_ret_hint}".rstrip(),
+                "",
+                *_runtime_doc(f"{name}."),
+                *_demo(_fix_demo),
+            ]
             # A METH_KEYWORDS wrapper has the 3-arg PyCFunctionWithKeywords
             # signature; cast through `(void *)` to silence -Wcast-function-type.
             _cast = (
@@ -2175,73 +2342,12 @@ def make_methods_ctx(
         # pyi stub for this method
         m_var = variable_output
         m_multi = multi_output
-        param_parts: list[str] = []
-        # (name, annotation) for the args that appear in the docstring's
-        # Parameters section — the signature also carries binding-level args
-        # (`count`, `out=`) that are deliberately not documented there.
-        doc_params: list[tuple[str, str]] = []
-        if arg_type != "void":
-            if arg_type.endswith("[]"):
-                elem = arg_type[:-2]
-                param_parts.append(f"x: {_pyi_ndarray(elem)}")
-                doc_params.append(("x", _pyi_ndarray(elem)))
-            else:
-                param_parts.append(f"x: {_pyi_scalar(arg_type)}")
-                doc_params.append(("x", _pyi_scalar(arg_type)))
-        for p in params:
-            pt = p["type"]
-            if pt.endswith("[]"):
-                param_parts.append(f"{p['name']}: {_pyi_ndarray(pt[:-2])}")
-                doc_params.append((p["name"], _pyi_ndarray(pt[:-2])))
-            elif p.get("capsule"):
-                # gh-432: a capsule-typed param takes the named PyCapsule,
-                # any wrapper exposing `_capsule`, or None (detach).
-                param_parts.append(f"{p['name']}: object | None")
-                doc_params.append((p["name"], "object | None"))
-            else:
-                # gh-240: a defaulted scalar renders as an optional kwarg.
-                _suffix = (
-                    f" = {p['default']}"
-                    if p.get("default") not in (None, "")
-                    else ""
-                )
-                param_parts.append(f"{p['name']}: {_pyi_scalar(pt)}{_suffix}")
-                doc_params.append((p["name"], _pyi_scalar(pt)))
-        if status_return:
-            # gh-432: status returns bind as None (raise on failure).
-            ret_ann = "None"
-        elif result_fields and single_record:
-            # gh-244: one named record — a PyStructSequence (a tuple subclass).
-            # Type it as a tuple of the field types: unpacking type-checks and
-            # named attribute access works at runtime. (A full NamedTuple stub
-            # is a possible refinement.)
-            ret_ann = (
-                "tuple["
-                + ", ".join(_pyi_scalar(f["type"]) for f in result_fields)
-                + "]"
-            )
-        elif result_fields:
-            ret_ann = "list[tuple]"
-        elif m_var:
-            all_rts = [return_type] + list(m_multi)
-            ndarrays = [_pyi_ndarray(rt) for rt in all_rts]
-            ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]"
-                if len(ndarrays) > 1
-                else ndarrays[0]
-            )
-        elif out_type:
-            # gh-529: `out_type` on a method allocates a fresh output array
-            # per call and returns it -- the C wrapper (the `elif out_type`
-            # branch above) does exactly what a function's out_type does, and
-            # the PyMethodDef docstring already says `-> ndarray`. Only this
-            # annotation lagged, reporting the scalar `return_type` and so
-            # contradicting both. `_stubs._obj_stub` carries the peer of this
-            # branch for the module-aggregated stub; the two must move
-            # together (see tests/test_gh529_method_out_type_pyi.py).
-            ret_ann = _pyi_ndarray(out_type)
-        else:
-            ret_ann = _pyi_scalar(return_type)
+        # gh-642: built once, at the top of the loop, and read by both faces.
+        # `doc_params` is the args the docstring's Parameters section
+        # documents — the signature also carries binding-level args (`count`,
+        # `out=`) that are deliberately not documented there.
+        param_parts = list(_sig_parts)
+        ret_ann = _ret_ann
         # gh-219: single-output variable_output methods take an optional
         # `out=` buffer and expose a <verb>_max_out() sibling. A
         # single-array-param method (params=[{array}], no other params) is
@@ -2283,7 +2389,7 @@ def make_methods_ctx(
                 render_numpy_doc(
                     _block,
                     name,
-                    doc_params,
+                    _doc_params,
                     ret_ann,
                     m.get("doc") or "",
                     indent=8,

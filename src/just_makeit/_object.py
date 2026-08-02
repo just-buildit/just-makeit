@@ -1093,15 +1093,33 @@ def build_component_ctxs(
         # `acq_create_continuous`) is actually constructed by that function,
         # not the derived `<obj>_create` — its Doxygen is what tp_init
         # actually calls, so the transplant must key off it too.
-        _cdoc = (
-            authored_class_brief(
-                _doc_blocks,
-                C.object_create_fn(cfg, obj) or f"{obj}_create",
-                cfg.get(obj, {}).get("doc", ""),
-            )
-            or f"{ctx['Component']} type."
+        _cdoc = authored_class_brief(
+            _doc_blocks,
+            C.object_create_fn(cfg, obj) or f"{obj}_create",
+            cfg.get(obj, {}).get("doc", ""),
         )
-        ctx["tp_doc"] = _build_ml_doc([_cdoc])
+        # gh-642: when the header documents create(), tp_doc carries the whole
+        # class block the .pyi carries — same builder, so they cannot disagree.
+        # With nothing authored there is no block to build and the generic
+        # one-liner stands, exactly as before.
+        ctx["tp_doc"] = _build_ml_doc(
+            S.class_runtime_doc(
+                obj,
+                ctx["Component"],
+                state_vars,
+                C.is_no_state(cfg, obj),
+                C.init_params(cfg, obj),
+                f"from {pkg} import {ctx['Component']}",
+                ctx.get("py_create_args", ""),
+                doc_blocks=_doc_blocks,
+                manifest_doc=cfg.get(obj, {}).get("doc", ""),
+                custom_reset=bool(C.init_params(cfg, obj))
+                or C.is_no_reset(cfg, obj),
+                create_fn=C.object_create_fn(cfg, obj),
+            )
+            if _cdoc
+            else [f"{ctx['Component']} type."]
+        )
         # Nested-module slots: override `module` to the cname (the fragment
         # file is <cname>_ext_<comp>.c) and supply `module_tp` for the dotted
         # tp_name. For a flat module these equal today's values (zero churn).

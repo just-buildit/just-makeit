@@ -778,6 +778,61 @@ def class_docstring_block(
     )
 
 
+def class_runtime_doc(
+    obj: str,
+    Component: str,
+    state_vars: list,
+    no_state: bool,
+    init_params: list,
+    import_line: str,
+    py_create_args: str,
+    *,
+    doc_blocks: dict | None = None,
+    manifest_doc: str = "",
+    custom_reset: bool = False,
+    create_fn: str | None = None,
+) -> list[str]:
+    """The class docstring as runtime ``tp_doc`` lines (gh-642).
+
+    Takes exactly the arguments :func:`class_docstring_block` takes and
+    returns its text with the stub-only parts removed: the 4-space class
+    indent and the ``\"\"\"`` delimiters. It is *derived from* that function
+    rather than rebuilt beside it, which is the whole point — a class summary
+    and ``Parameters`` block that agree between ``help(Obj)`` and ``Obj.pyi``
+    by construction cannot drift the way the two ``.pyi`` generators once did
+    (gh-446).
+
+    The dedent is safe because the block's shape is fixed by its producer:
+    line 0 is ``    \"\"\"<summary>``, the last line is ``    \"\"\"``, and every
+    other non-blank line carries at least the class indent.
+
+    Returns
+    -------
+    list of str
+        Docstring lines with no indent and no delimiters, trailing blanks
+        trimmed — ready for ``_build_ml_doc``.
+    """
+    lines = class_docstring_block(
+        obj,
+        Component,
+        state_vars,
+        no_state,
+        init_params,
+        import_line,
+        py_create_args,
+        doc_blocks=doc_blocks,
+        manifest_doc=manifest_doc,
+        custom_reset=custom_reset,
+        create_fn=create_fn,
+    ).split("\n")
+    out = [lines[0].lstrip()[3:]] + [
+        ln[4:] if ln.startswith("    ") else ln for ln in lines[1:-1]
+    ]
+    while out and not out[-1].strip():
+        out.pop()
+    return out
+
+
 def _method_doc_lines(
     block,
     m_name: str,

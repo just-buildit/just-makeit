@@ -9,8 +9,11 @@ come from jm, and this module is where it lives (gh-647).
 One definition, both faces. Each method is described once as a
 :class:`_docstring.DoxyBlock` and rendered twice: through
 :func:`_docstring.render_numpy_doc` for the ``.pyi``, and through
-``_context._parse._build_ml_doc`` for the runtime ``PyMethodDef``. That is
-deliberate — the previous literals had already drifted:
+:func:`_docstring.render_runtime_doc` for the runtime ``PyMethodDef`` (which
+``_context._parse._build_ml_doc`` then escapes into a C literal). Since
+gh-642 those two share one section builder, so the faces differ only in
+indent, delimiters and the ``Examples`` block. That is deliberate — the
+previous literals had already drifted:
 
 - ``get_state`` said "Serialize the **engine's** mutable state", naming a
   component from some long-gone example rather than the object it documents;
@@ -25,18 +28,19 @@ has run, ``set_state`` validates type *and* length before handing the blob to
 the C API, ``destroy`` is idempotent, and ``__exit__`` returns ``None`` so it
 never suppresses an exception.
 
-No ``Examples`` section is emitted. The generated ``.pyi`` docstrings are
-harvested and executed by the doctest gate, so an example here would have to
-construct a real object of an arbitrary component — and a placeholder would
-fail the gate outright. Examples were also explicitly out of scope for the
-runtime-parity work (gh-642).
+No ``Examples`` section is emitted, on either face. The generated ``.pyi``
+docstrings are harvested and executed by the doctest gate, so an example here
+would have to construct a real object of an arbitrary component — and a
+placeholder would fail the gate outright. (This is a property of *these*
+blocks carrying no ``@code``, not a rule of the runtime face: gh-642 renders
+``Examples`` at runtime wherever a header supplies one.)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ._docstring import DoxyBlock, _wrap, render_numpy_doc
+from ._docstring import DoxyBlock, render_numpy_doc, render_runtime_doc
 
 
 @dataclass
@@ -118,25 +122,22 @@ class GlueMethod:
     def c_doc_lines(self) -> list[str]:
         """Logical doc lines for the runtime ``PyMethodDef`` entry.
 
-        The same prose as :meth:`pyi_doc`, minus the Python type annotations:
-        ``help()`` already prints the signature, so the numpy type column would
-        only repeat it.
+        The same prose as :meth:`pyi_doc` with the stub-only parts removed —
+        no indent, no ``\"\"\"`` delimiters. It used to be a second
+        hand-written copy of that layout, and had already drifted from it in
+        two ways a reader would notice: a parameter was emitted as a bare
+        ``blob`` rather than ``blob : bytes`` (numpydoc does not read the
+        former as a parameter at all), and ``Returns`` carried a description
+        with no type line above it. Routing through the shared renderer
+        (gh-642) is what stops a third difference appearing.
 
-        Wrapped here rather than emitted as one long line, because each entry
-        becomes a C string literal in generated source that a human reads and
-        clang-format will not reflow.
+        Emitted as wrapped lines rather than one long string because each
+        entry becomes a C string literal in generated source that a human
+        reads and clang-format will not reflow.
         """
-        out = _wrap(self.block.brief)
-        for para in self.block.body:
-            out += [""] + _wrap(para)
-        if self.block.params:
-            out += ["", "Parameters", "----------"]
-            for pname, desc in self.block.params:
-                out += [pname] + [f"    {ln}" for ln in _wrap(desc, 66)]
-        if self.block.returns:
-            out += ["", "Returns", "-------"]
-            out += [f"    {ln}" for ln in _wrap(self.block.returns, 66)]
-        return out
+        return render_runtime_doc(
+            self._spaced(), self.name, self.py_params, self.ret_ann
+        )
 
 
 def _serialization(Component: str) -> list[GlueMethod]:

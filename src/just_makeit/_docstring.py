@@ -844,10 +844,58 @@ def render_numpy_doc(
         Complete docstring lines, opening and closing ``\"\"\"`` included.
     """
     pad = " " * indent
-    pad2 = " " * (indent + 4)
     if block is None and not override and not skeleton_fallback:
         return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
 
+    lines, examples = _numpy_sections(
+        block,
+        name,
+        py_params,
+        ret_ann,
+        override,
+        skeleton_fallback=skeleton_fallback,
+    )
+    out = [f'{pad}"""{lines[0]}']
+    # Blank separators must stay genuinely blank: `pad` on an empty line is
+    # trailing whitespace, which is what one of the two pre-gh-651 renderers
+    # used to emit (eight spaces) and the other did not.
+    out += [f"{pad}{ln}".rstrip() for ln in lines[1:]]
+    if examples:  # @code ... @endcode -> runnable doctest
+        out += ["", f"{pad}Examples", f"{pad}--------"]
+        out += [f"{pad}{ex}".rstrip() for ex in examples]
+        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+        # text file, where expected output runs until a blank line — without
+        # this the closing `"""` is swallowed into the last example's output.
+        out.append("")
+    out.append(f'{pad}"""')
+    return out
+
+
+def _numpy_sections(
+    block: DoxyBlock | None,
+    name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
+    *,
+    skeleton_fallback: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Unindented numpy section lines, with ``Examples`` kept separate.
+
+    The shared core of both faces (gh-642). The ``.pyi`` face
+    (:func:`render_numpy_doc`) indents these, wraps them in ``\"\"\"`` and
+    appends the ``Examples`` block; the runtime face
+    (:func:`render_runtime_doc`) takes them as-is and drops ``Examples``.
+    Keeping ``Examples`` out of the returned lines is what lets the runtime
+    face discard it without having to recognise where the section starts.
+
+    Returns
+    -------
+    tuple
+        ``(section_lines, example_lines)``. ``section_lines[0]`` is the
+        summary, never blank — the caller splices it onto its own opening
+        delimiter.
+    """
     if block is not None:
         summary, body, descs, ret, examples = render_numpy_method_doc(
             block, py_params
@@ -861,12 +909,12 @@ def render_numpy_doc(
             if skeleton_fallback
             else name.replace("_", " ").capitalize() + "."
         )
-    out = [f'{pad}"""{summary}']
+    out = [summary]
     # `body` arrives already grouped into paragraphs by
     # render_numpy_method_doc, so re-group would be a no-op — wrap only.
     for para in body:
         out.append("")
-        out += [f"{pad}{w}" for w in _wrap(para, 72)]
+        out += _wrap(para, 72)
     # gh-678: descriptions wrap on the same rule as the body. They used to be
     # emitted verbatim however long they were, so one docstring could carry a
     # wrapped summary directly above a 110-column parameter description. The
@@ -874,23 +922,92 @@ def render_numpy_doc(
     # four narrower; `_wrap` still never splits a token, so a lone URL or long
     # identifier overflows rather than being broken.
     if py_params:
-        out += ["", f"{pad}Parameters", f"{pad}----------"]
+        out += ["", "Parameters", "----------"]
         for pname, ann in py_params:
-            out.append(f"{pad}{pname} : {ann}")
+            out.append(f"{pname} : {ann}")
             desc = descs.get(pname) or "Input."
-            out += [f"{pad2}{w}" for w in _wrap(desc, 68)]
+            out += [f"    {w}" for w in _wrap(desc, 68)]
     if ret_ann != "None":
-        out += ["", f"{pad}Returns", f"{pad}-------", f"{pad}{ret_ann}"]
-        out += [f"{pad2}{w}" for w in _wrap(ret or "Output.", 68)]
+        out += ["", "Returns", "-------", ret_ann]
+        out += [f"    {w}" for w in _wrap(ret or "Output.", 68)]
+    return out, examples
+
+
+def render_runtime_doc(
+    block: DoxyBlock | None,
+    name: str,
+    py_params: list[tuple[str, str]],
+    ret_ann: str,
+    override: str = "",
+) -> list[str]:
+    """Return runtime ``__doc__`` lines for one method, class or property.
+
+    The numpy block the ``.pyi`` already builds, minus only the parts that
+    mean nothing outside a stub file: no indentation and no ``\"\"\"``
+    delimiters (gh-642). Callers splice the result into a C string literal via
+    ``_context._parse._build_ml_doc``, between their signature line and the
+    synthesized doctest they already emit.
+
+    Because this shares :func:`_numpy_sections` with the stub face, the
+    returned text *is* the stub's text with the indent and delimiters removed.
+    That is the invariant, and it is what makes the two faces unable to drift;
+    see ``tests/test_gh642_runtime_doc_parity.py``.
+
+    **On ``Examples``.** doppler's answer in doppler-dsp/doppler#568 was to
+    leave them out of the runtime face: their coverage meter scores a callable
+    runtime-FULL once *an* example is present, the synthesized doctest each
+    caller appends already satisfies that, and ``Examples`` is the bulkiest
+    section — so on their metric it is pure ``.so`` weight. They are rendered
+    anyway, because that metric is not the reason the section exists.
+    ``help(obj.method)`` at a REPL is where someone asks "how do I actually
+    use this?", and answering it with less than a stub file they will never
+    open is the exact complaint gh-642 was filed about. A rule with no
+    exceptions is also worth more than the bytes: "the runtime block is the
+    stub block" needs no caveat re-derived by every future reader.
+
+    A member whose header carries no ``@code`` is unaffected — the section is
+    only emitted when there is something real to put in it, and the
+    synthesized doctest stays below this block either way.
+
+    Parameters
+    ----------
+    block : DoxyBlock or None
+        Parsed header comment; ``None`` when the header documents nothing.
+    name : str
+        Member name, used only for the summary fallback.
+    py_params : list of tuple(str, str)
+        ``(name, annotation)`` for the documented arguments, in order. Must be
+        the *same* list handed to :func:`render_numpy_doc` for this member —
+        passing a different one is precisely the drift this exists to prevent.
+    ret_ann : str
+        Python return annotation; ``"None"`` suppresses ``Returns``.
+    override : str, optional
+        Summary that outranks the header ``@brief`` — the manifest ``doc=``,
+        or the caller's own shape-specific default sentence.
+
+    Returns
+    -------
+    list of str
+        Section lines, summary first, with no trailing blank line.
+
+    Examples
+    --------
+    >>> blk = DoxyBlock(brief="Filter a block.", returns="Filtered output.")
+    >>> render_runtime_doc(blk, "run", [("x", "ndarray")], "ndarray")
+    ['Filter a block.', '', 'Parameters', '----------', 'x : ndarray', \
+'    Input.', '', 'Returns', '-------', 'ndarray', '    Filtered output.']
+    """
+    lines, examples = _numpy_sections(
+        block,
+        name,
+        py_params,
+        ret_ann,
+        override,
+        skeleton_fallback=True,
+    )
     if examples:  # @code ... @endcode -> runnable doctest
-        out += ["", f"{pad}Examples", f"{pad}--------"]
-        out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
-        out.append("")
-    out.append(f'{pad}"""')
-    return out
+        lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
+    return lines
 
 
 def render_numpy_method_doc(
