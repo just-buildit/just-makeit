@@ -37,6 +37,20 @@
 
 ### Fixed
 
+- **`[module.X] doc` reaches the package users import, not only the inner C
+    extension (gh-695).** gh-645 wired the doc to two faces, but the
+    `__init__.py` half fired only through the template — and the template is
+    rendered only when that file does not yet exist. Every module in an
+    existing project therefore kept a docstring-less shim while the same
+    string did reach the extension's `m_doc`, so `pkg.mod.__doc__` (what users
+    import, and what griffe and coverage tooling read) was `None` while
+    `pkg.mod.mod.__doc__` was set. The docstring is now spliced into the shim
+    on every `apply`, both in the direct write path and in `apply`'s own merge
+    — which is the copy that actually served existing projects. An undeclared
+    `doc` leaves a hand-written docstring alone; a declared one replaces the
+    leading docstring rather than stacking a second, so `apply` stays
+    idempotent.
+
 - **A module free function's doc reaches the C literal escaped.** The
     `PyMethodDef` entry interpolated it bare into `"{doc}"`, so a manifest
     `doc` containing a quote or a newline emitted a module that did not

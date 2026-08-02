@@ -14,6 +14,7 @@ Adds a Python type to an existing project:
 
 from __future__ import annotations
 
+import ast as _ast
 import copy
 import re
 import sys
@@ -433,6 +434,112 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
         and (C.module_package(cfg, other) or C.module_paths(other).pypath)
         == out_pkg
     ]
+
+
+def _leading_docstring(text: str) -> str:
+    """The module docstring at the top of *text*, trailing blank lines included.
+
+    The inverse of :func:`_merge_module_docstring`'s input: it reads back what
+    that function (or the ``MODULE_INIT_PY`` template) wrote, so ``apply`` can
+    carry a freshly rendered docstring onto the real file without re-deriving
+    it from the manifest. Empty when there is none.
+
+    >>> _leading_docstring('\"\"\"Filters.\"\"\"\\n\\nimport os\\n')
+    '\"\"\"Filters.\"\"\"\\n\\n'
+    >>> _leading_docstring('import os\\n')
+    ''
+    """
+    try:
+        tree = _ast.parse(text)
+    except SyntaxError:
+        return ""
+    body = tree.body
+    if not (
+        body
+        and isinstance(body[0], _ast.Expr)
+        and isinstance(body[0].value, _ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return ""
+    lines = text.splitlines(keepends=True)
+    end = body[0].end_lineno or body[0].lineno
+    while end < len(lines) and not lines[end].strip():
+        end += 1
+    return "".join(lines[:end])
+
+
+def _merge_module_docstring(existing: str, docstring_py: str) -> str:
+    """Put the manifest's module docstring at the top of an ``__init__.py``.
+
+    gh-695. ``[module.X] doc`` reached this file only through the template,
+    and the template is rendered **only when the file does not yet exist** —
+    so a module that gained a ``doc`` after it was scaffolded kept its
+    docstring-less shim forever, while the same string did reach the C
+    extension's ``m_doc``. The result was the worst of both: `help()` on the
+    inner ``pkg.mod.mod`` was documented and the public ``pkg.mod`` that
+    everyone actually imports was not.
+
+    Overwriting the file is not an option — it is a merge target that holds
+    user-written wrapper classes — so the docstring is spliced in place.
+
+    Two rules, both load-bearing:
+
+    - **An empty *docstring_py* changes nothing.** Undeclared, this must not
+      strip a docstring somebody wrote by hand; jm owns the string only when
+      the manifest declares one.
+    - **A declared doc replaces the existing leading docstring**, because the
+      manifest is the source of truth for it (the same precedence ``m_doc``
+      uses). Editing the prose in the manifest therefore updates the file on
+      the next ``apply``, which is the whole point.
+
+    Parsing is by :mod:`ast` rather than by regex so a docstring containing
+    ``#``, quotes, or a blank line is located exactly. A file that does not
+    parse (mid-edit, or hand-broken) is left alone rather than mangled.
+
+    >>> src = '# m/__init__.py\\nfrom .m import A  # noqa: E402\\n'
+    >>> print(_merge_module_docstring(src, '\"\"\"Filters.\"\"\"\\n\\n'))
+    \"\"\"Filters.\"\"\"
+    <BLANKLINE>
+    # m/__init__.py
+    from .m import A  # noqa: E402
+    <BLANKLINE>
+
+    An existing docstring is replaced, not duplicated -- so this is
+    idempotent, which the manifest-drift gate requires:
+
+    >>> once = _merge_module_docstring(src, '\"\"\"Filters.\"\"\"\\n\\n')
+    >>> once == _merge_module_docstring(once, '\"\"\"Filters.\"\"\"\\n\\n')
+    True
+
+    With nothing declared, a hand-written docstring survives untouched:
+
+    >>> hand = '\"\"\"Mine.\"\"\"\\n\\nfrom .m import A\\n'
+    >>> _merge_module_docstring(hand, '') == hand
+    True
+    """
+    if not docstring_py:
+        return existing
+    try:
+        tree = _ast.parse(existing)
+    except SyntaxError:
+        return existing
+    lines = existing.splitlines(keepends=True)
+    body = tree.body
+    if (
+        body
+        and isinstance(body[0], _ast.Expr)
+        and isinstance(body[0].value, _ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        # Drop the old docstring and any blank lines padding it, so replacing
+        # it does not accumulate a blank line per apply.
+        end = body[0].end_lineno or body[0].lineno
+        while end < len(lines) and not lines[end].strip():
+            end += 1
+        rest = "".join(lines[end:])
+    else:
+        rest = existing
+    return docstring_py + rest
 
 
 def _merge_module_init(
@@ -1492,6 +1599,18 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
         all_exports,
         reexports,
         siblings=package_siblings(cfg, module),
+    )
+    # gh-695: and the module docstring, which the template above only supplies
+    # on the create path — so a module that gained a `doc` after scaffolding
+    # never got one on the surface users import.
+    merged = _merge_module_docstring(
+        merged,
+        Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package(cfg, module),
+            C.module_doc(cfg, module),
+        )["module_docstring_py"],
     )
     _write(init_path, merged, "update" if existed else "create")
 
