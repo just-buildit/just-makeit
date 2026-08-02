@@ -1,7 +1,7 @@
 # Docstring derivation: C headers → Python `.pyi` stubs
 
 `jm` generates Python type stubs (`.pyi` files) with docstrings derived
-directly from the Doxygen-style `/** ... */` comments in your project's
+directly from the Doxygen comments in your project's
 `<component>_core.h` headers. This page explains how that pipeline works,
 what Doxygen tags are supported, and how CI keeps the stubs in sync.
 
@@ -34,8 +34,12 @@ src/<pkg>/<obj>.pyi   ← committed glue file; owned by the manifest-drift gate
 ```
 
 **jm does not run Doxygen.** It parses the raw C header text with a
-regular expression that finds `/** ... */` blocks immediately preceding
-a C function declaration. The Doxygen XML pipeline (`doxygen Doxyfile`
+regular expression that finds a doc comment immediately preceding a C
+function declaration. All four of Doxygen's equivalent spellings are
+recognised — the `/** ... */` and `/*! ... */` block forms, and a run of
+`///` or `//!` lines (gh-654) — as are the trailing `///<` / `/**<`
+member docs on a struct field or enum value (gh-671). When more than one
+comment could bind, the **nearest** one wins, as in Doxygen. The Doxygen XML pipeline (`doxygen Doxyfile`
 → `xml/` output) exists independently — CI uses it to validate zero
 warnings and mkdoxy uses it to generate HTML C API docs. Neither touches
 `.pyi` generation.

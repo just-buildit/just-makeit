@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Every Doxygen comment form derives, not just `/** … */` (gh-654).**
+    Doxygen treats four spellings as the same construct. jm recognised one, and
+    the other three produced **no error and no documentation** — a member
+    documented in C and undocumented in Python, with nothing anywhere saying
+    why. `/*! … */` blocks and runs of `///` or `//!` lines now derive
+    identically to the block form, including multi-paragraph bodies, `@param`
+    and `@return`. Where more than one comment could bind, the **nearest** one
+    still wins, as in Doxygen.
+
+    A run of nothing but slashes is treated as a ruler rather than as prose, so
+    the common `////////` house style above a declaration no longer gives that
+    function a brief made of punctuation — and a doc line wrapped in rulers
+    comes out clean.
+
+### Fixed
+
+- **A trailing `/**<` member doc is no longer read as the next declaration's
+    documentation (gh-654).** The extraction opener matched `/**<`, so a member
+    doc separated from a following declaration by whitespace alone was
+    extracted as that function's block — giving it the brief
+    `< Number of filter taps.`, stray angle bracket and all, on both faces.
+- **`/*!` no longer leaks its opener into the brief (gh-654).**
+    `_strip_comment` stripped `/**` and `/*` but not `/*!`, so a `/*!` block
+    parsed as `! @brief …`. Latent until the extraction above could reach it.
+
 ## [0.41.0] — 2026-08-02
 
 ### Added
