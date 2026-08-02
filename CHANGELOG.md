@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.37.1] — 2026-08-02
+
 ### Fixed
 
 - **A class `Examples` block from an authored `@code` no longer breaks
