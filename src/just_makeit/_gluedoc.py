@@ -267,6 +267,32 @@ def _lifecycle(
     ]
 
 
+def glue_method_names() -> frozenset[str]:
+    """Every Python name jm generates glue documentation for (gh-707).
+
+    Used by ``_docsync`` to recognise a doc slot that jm owns outright. Both
+    spellings of the explicit-release method are included: an object is either
+    ``destroy``-shaped or ``close``-shaped, and the transplant sees only a name
+    in a fragment, not which shape produced it.
+
+    The membership is what licenses the more permissive reclaim rule there —
+    these methods have **no authoring path**. A downstream cannot document
+    ``state_bytes`` with Doxygen, because there is no declaration to attach a
+    comment to; that is why this module exists (gh-647).
+    """
+    return frozenset(
+        {
+            "state_bytes",
+            "get_state",
+            "set_state",
+            "destroy",
+            "close",
+            "__enter__",
+            "__exit__",
+        }
+    )
+
+
 def glue_methods(
     Component: str, *, close_name: str = "destroy"
 ) -> dict[str, GlueMethod]:

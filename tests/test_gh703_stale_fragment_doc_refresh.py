@@ -247,3 +247,73 @@ def _configure_entry(frag: Path) -> str:
     t = frag.read_text(encoding="utf-8")
     start = t.index('{"configure"')
     return t[start : t.index("},", start) + 2]
+
+
+# ── glue slots (gh-707) ─────────────────────────────────────────────────────
+#
+# For a glue slot the derived and fallback renders are IDENTICAL: `_gluedoc`
+# never consults `doc_blocks`, so rendering the fragment with the header and
+# without it produces the same text. That defeats every branch above — not
+# "already current", not equal to the scaffold form, no synopsis for
+# `_is_jm_shaped`, and the empty-slot rule requires `nder != nfb`, which is a
+# test for *header*-derived content that jm-authored prose can never pass.
+#
+# So a glue slot could never be refreshed at all. doppler measured 394 of them
+# still carrying pre-gh-647 one-liners after adopting gh-703, which was 57% of
+# their entire remaining runtime-incomplete count.
+
+GLUE_DER = (
+    '"Size in bytes of this object\'s serialized state.\\n"\n'
+    '     "\\n"\n'
+    '     "The exact length get_state returns.\\n"'
+)
+GLUE_LEGACY = '"Serialized state size in bytes.\\n"'
+GLUE_RICH_HAND = (
+    '"Mine, by hand.\\n"\n'
+    '     "\\n"\n'
+    '     "With a second paragraph, so not a one-liner.\\n"'
+)
+
+
+class TestGlueSlotReclaim:
+    """jm owns glue prose outright — there is no header to author against."""
+
+    def test_legacy_one_liner_is_reclaimed(self):
+        """The 394-slot case. Note der == fb, as it always is for glue."""
+        assert (
+            _refresh_slot(GLUE_LEGACY, GLUE_DER, GLUE_DER, "state_bytes")
+            == GLUE_DER
+        )
+
+    def test_empty_slot_is_filled(self):
+        """`__enter__` was `NULL` — the same defect, not a separate one.
+
+        The pre-existing empty-slot rule cannot fire here because it requires
+        `nder != nfb` to prove the content is "real Doxygen", and glue content
+        is jm-authored rather than header-derived.
+        """
+        assert _refresh_slot("NULL", GLUE_DER, GLUE_DER, "__enter__")
+
+    def test_a_rich_hand_written_glue_doc_is_preserved(self):
+        """The bound on the permissive rule: more than one line stays."""
+        assert (
+            _refresh_slot(GLUE_RICH_HAND, GLUE_DER, GLUE_DER, "get_state")
+            is None
+        )
+
+    def test_a_non_glue_name_is_unaffected(self):
+        """Scoped to the closed glue set — no other slot kind changes."""
+        assert (
+            _refresh_slot(GLUE_LEGACY, GLUE_DER, GLUE_DER, "execute") is None
+        )
+
+    def test_both_close_spellings_are_glue(self):
+        from just_makeit._gluedoc import glue_method_names
+
+        names = glue_method_names()
+        assert {"destroy", "close"} <= names, (
+            "an object is either destroy- or close-shaped and the transplant "
+            "sees only the name, so both spellings must be recognised"
+        )
+        assert {"state_bytes", "get_state", "set_state"} <= names
+        assert {"__enter__", "__exit__"} <= names
