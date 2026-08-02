@@ -651,6 +651,22 @@ def _build_class_docstring(
     # example. (This suppression was previously only in the standalone
     # pyi_examples path; folding it here fixes the module path's latent copy
     # of the same gh-273 bug too.)
+    # gh-624: a @code block on create() IS the class's example. jm's
+    # synthesised "Create with defaults" demo is a fallback for a header that
+    # says nothing, not something an author should have to override -- and it
+    # can only ever demonstrate construction, never what the type is *for*.
+    #
+    # Checked before the suppression below on purpose: an object whose ctor jm
+    # cannot fabricate a call for (an array arg, or a required init-param with
+    # no default -- gh-273) previously got no Examples section at all, which is
+    # exactly the object whose author most needs to show a real one.
+    _authored = list(getattr(create_blk, "examples", None) or [])
+    if _authored:
+        lines += ["    Examples", "    --------"]
+        lines += [f"    {ln}".rstrip() for ln in _authored]
+        lines.append('    """')
+        return lines
+
     if "..." in py_create_args or Ctx._unseedable_required(init_params):
         lines.append('    """')
         return lines

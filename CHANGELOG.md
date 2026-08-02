@@ -4,6 +4,19 @@
 
 ### Added
 
+- **A `@code` block on `create()` becomes the class's `Examples` section
+    (gh-624).** The header is already the documentation source for a method's
+    doctest, but a class's `Examples` was *always* jm's synthesised "Create
+    with defaults" demo — so the first example a reader sees could only ever
+    show construction, never what the type is for. An authored block now wins;
+    with none, the synthesised demo is unchanged. It is also honoured for a
+    constructor jm cannot seed (an array arg, a required init-param with no
+    default, a `path` — gh-273/gh-515), which previously got **no** `Examples`
+    section at all: jm will not fabricate a call it cannot seed, but an
+    author's own working call has no such problem.
+
+### Added
+
 - **`[module.X] doc` documents a module, on both faces (gh-645).** A module is
     the one public surface with no header to derive from: its extension
     `m_doc` and its re-export `__init__.py` are wholly jm-generated, so unlike
