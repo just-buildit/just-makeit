@@ -1989,7 +1989,20 @@ def run(
         # The generators print progress for the throwaway temp tree; that
         # output names temp paths and would only confuse the user.
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
+            # gh-698: the replay runs one mutating command per method, and each
+            # rewrites the whole manifest through tomlkit's comment-preserving
+            # path — O(methods x manifest size), which is why doppler's 67 KB
+            # manifest never finished. The temp tree has no authored comments
+            # to preserve (the replay just dumped it) and its manifest is never
+            # copied back (`_SKIP_FILES`), so the plain dumper is correct here.
+            # ...and the second quadratic term: every mutating command
+            # regenerates its whole module, so replaying N methods regenerated
+            # all M objects N times. Coalesced to one flush per module.
+            with (
+                C.scratch_writes(),
+                _obj_mod.deferred_module_regen(),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 _replay(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:
             print(f"error: {e}", file=sys.stderr)

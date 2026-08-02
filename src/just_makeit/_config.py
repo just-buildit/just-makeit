@@ -26,8 +26,9 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 from . import _types as _T
 
@@ -251,6 +252,42 @@ def _sync(tbl, new_data: dict, _tk) -> None:
             del tbl[k]
 
 
+_SCRATCH_WRITES = False
+
+
+@contextmanager
+def scratch_writes() -> "Iterator[None]":
+    """Write manifests with the plain dumper for the duration (gh-698).
+
+    ``_write_doc`` round-trips an existing file through tomlkit so a user's
+    comments, key order and array layout survive a mutating command. That is
+    the right default and gh-491 exists because it once wasn't — but it is
+    ``O(file_size)`` on every save, and ``apply``'s replay calls one mutating
+    command **per method**, each of which reloads and rewrites the *whole*
+    manifest. The product is quadratic: doppler's 67 KB manifest never
+    finished, and a synthetic 48-method project spends a third of its apply
+    inside tomlkit.
+
+    Inside a replay that work buys nothing. The tree being written is a
+    throwaway scratch root that the replay itself just synthesized from
+    ``cfg``, so every "comment" tomlkit is carefully preserving was emitted by
+    ``_dump()`` moments earlier. ``_apply`` never copies the scratch manifest
+    back either — it is in ``_SKIP_FILES`` — so the formatting difference
+    cannot reach the user's tree.
+
+    Scoped as a context manager rather than a parameter because ``save`` is
+    called from deep inside each command module; the flag's honest scope is
+    "we are materializing a scratch tree", which is exactly one call site.
+    """
+    global _SCRATCH_WRITES
+    prev = _SCRATCH_WRITES
+    _SCRATCH_WRITES = True
+    try:
+        yield
+    finally:
+        _SCRATCH_WRITES = prev
+
+
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     """Write cfg to path, preserving what the user wrote (gh-491).
 
@@ -276,7 +313,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     there is nothing to preserve, and the whole test suite pins that text.
     """
 
-    if not path.exists():
+    if _SCRATCH_WRITES or not path.exists():
         text = _dump(cfg)
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
