@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The built-in `step()`/`steps()`/`reset()` carry the full numpy block too
+    (gh-700).** gh-642 gave the *authored* methods (`[[object.methods]]`)
+    their whole block at runtime and left the built-ins emitting a signature
+    line, the `@brief` and a synthesised demo — no extended description, no
+    `Parameters`/`Returns`, and not the author's own `@code`. Since every
+    object has a `step`, that was the bulk of the runtime surface: doppler's
+    runtime-incomplete count moved only 914 → 861 on 0.38.0. Both faces of
+    all three now render from the one parsed block, so `help(Obj.step)`
+    matches `Obj.pyi`.
+
+    These were a `DoxyBlock` consumer gh-651 did not unify — it collapsed the
+    *member* docstring renderers and left the built-ins as hand-written
+    literals with only the summary swapped in, so an authored extended
+    description, `@param` text or `@code` reached **neither** face.
+
+    The block is rendered only when the header says more than a `@brief`.
+    The built-ins are the one place jm supplies real prose of its own, so
+    rendering unconditionally would rewrite every existing project's generated
+    files to say the same thing at greater length. A component with a bare
+    `@brief`, or none, is byte-identical — except `reset`'s runtime literal,
+    which gains the trailing newline every other doc literal has now that it
+    goes through `_build_ml_doc` rather than being interpolated bare into
+    `"{...}"` (a `@brief` containing a quote used to emit a module that would
+    not compile — gh-633's class again).
+
 ## [0.38.0] — 2026-08-02
 
 ### Added

@@ -8,6 +8,7 @@ from .._types import (
     _KIND_PY_ISINSTANCE,
     _ctype_display,
 )
+from .._docstring import render_numpy_doc, render_runtime_doc
 from ._parse import _build_ml_doc, _step_parse_block
 
 
@@ -57,6 +58,66 @@ def _swap_pyi_summary(doc: str, brief: str) -> str:
     if end < 0:
         return doc
     return doc[:start] + brief + doc[end:]
+
+
+def _is_authored(blk) -> bool:
+    """True when the header says more about a built-in than its ``@brief``.
+
+    The built-ins (``step``/``steps``/``reset``) are the one place jm supplies
+    real prose of its own — the canned "Process one input sample." lines and
+    their ``Input sample.``/``Output sample.`` placeholders. Rendering the full
+    numpy block unconditionally would therefore rewrite every existing
+    project's generated files to say the same thing in a longer form, and trip
+    the manifest-drift gate on components nobody has documented.
+
+    So the block is only rendered when there is something in the header a
+    reader could not already see: an extended description, a ``@param``
+    description, a ``@return``, or a ``@code``. A bare ``@brief`` keeps
+    today's exact output, which is what makes this change invisible until an
+    author writes something.
+    """
+    return bool(
+        blk and (blk.body or blk.params or blk.returns or blk.examples)
+    )
+
+
+def _builtin_runtime_doc(
+    blk, name: str, py_params: list, ret_ann: str, canned: str
+) -> list[str]:
+    """Runtime ``__doc__`` lines for a built-in, header-derived when authored.
+
+    gh-700: gh-642 gave the *authored* methods (``[[object.methods]]``) their
+    full numpy block at runtime but left the built-ins emitting a signature
+    line, the ``@brief``, and a synthesised demo — no extended description, no
+    ``Parameters``/``Returns``, and not the author's own ``@code``. Since every
+    object has a ``step``/``steps``, that was the bulk of the runtime surface
+    doppler measured, and why their runtime-incomplete count barely moved.
+
+    The fallbacks are the canned wording the stub has always used, so a
+    component that documents only *some* of its surface does not end up with
+    two spellings of the same placeholder.
+    """
+    if not _is_authored(blk):
+        return [canned]
+    return render_runtime_doc(
+        blk,
+        name,
+        py_params,
+        ret_ann,
+        canned,
+        param_fallback="Input sample.",
+        return_fallback="Output sample.",
+    )
+
+
+def _demo_unless_authored(blk, lines: list[str]) -> list[str]:
+    """jm's synthesised doctest, dropped when the header wrote a real one.
+
+    Same rule the authored methods follow (gh-642): an author's ``@code``
+    replaces the placeholder demo rather than sitting above it, so one
+    docstring never shows two different ways to construct the object.
+    """
+    return [] if (blk and blk.examples) else lines
 
 
 def make_step_ctx(
@@ -1339,17 +1400,47 @@ def make_step_ctx(
     if _sblk and _sblk.brief:
         _step_desc = _sblk.brief
 
-    _step_doc_lines: list[str] = [_step_sig, "", _step_desc, ""]
+    # gh-700: the Python-facing surface of the built-in step()/steps(), read by
+    # BOTH faces below. These used to be resolved a hundred lines further down,
+    # at the stub — so the runtime literal had nothing to build a `Parameters`
+    # section from and stopped at the @brief, which is precisely what gh-642
+    # missed here. The control overrides are deliberately absent: they are
+    # positional-only per-call overrides and neither face documents them in
+    # `Parameters` today.
+    _in_hint = ctx.get("in_py_hint", "float")
+    _out_hint = ctx.get("out_py_hint", "float")
+    _step_params: list[tuple[str, str]] = (
+        [] if _is_void_arg else [("x", _in_hint)]
+    )
+    _step_ret = "None" if is_void_return else _out_hint
+
+    _step_doc_lines: list[str] = [
+        _step_sig,
+        "",
+        *_builtin_runtime_doc(
+            _sblk, "step", _step_params, _step_ret, _step_desc
+        ),
+        "",
+    ]
+    _step_demo: list[str] = []
     if _is_arr_arg:
-        _step_doc_lines.append("    >>> import numpy as np")
-    _step_doc_lines += [*_from_pkg, _obj_create]
+        _step_demo.append("    >>> import numpy as np")
+    _step_demo += [*_from_pkg, _obj_create]
     _step_call = "obj.step()" if _is_void_arg else f"obj.step({_in_val})"
-    _step_doc_lines.append(f"    >>> {_step_call}")
+    _step_demo.append(f"    >>> {_step_call}")
     if not is_void_return and return_type in _CTYPE_META:
-        _step_doc_lines.append(
+        _step_demo.append(
             f"    {_CTYPE_META[return_type].get('py_zero', '0')}"
         )
+    _step_doc_lines += _demo_unless_authored(_sblk, _step_demo)
 
+    # Seeded before the branch: the stub section below reads these whether or
+    # not a steps() binding was generated (`pyi_steps_stub` arrives via ctx).
+    _steps_params: list[tuple[str, str]] = (
+        [] if _is_void_arg else [("x", f"NDArray[{_in_np_str}]")]
+    )
+    _steps_ret = "None" if is_void_return else f"NDArray[np.{_out_np_str}]"
+    _steps_desc = "Process a block of samples in batch."
     if steps_ext_fn:
         _ctrl_kw_doc = "".join(f", {n}=..." for n, _, _ in _ctrl)
         if _is_void_arg:
@@ -1373,20 +1464,31 @@ def make_step_ctx(
         _ssblk = _db.get(f"{component}_steps")
         if _ssblk and _ssblk.brief:
             _steps_desc = _ssblk.brief
-        _steps_doc_lines: list[str] = [_steps_sig, "", _steps_desc, ""]
+        # steps() takes the block form: an ndarray in, an ndarray out (or a
+        # count for the generator shape). `out=` is a binding-level buffer and
+        # is not documented in Parameters, matching every other shape.
+        _steps_doc_lines: list[str] = [
+            _steps_sig,
+            "",
+            *_builtin_runtime_doc(
+                _ssblk, "steps", _steps_params, _steps_ret, _steps_desc
+            ),
+            "",
+        ]
         for n, _, _ in _ctrl:
             _steps_doc_lines.append(
                 f"{n} — optional per-call override of the current {n} state."
             )
-        _steps_doc_lines.append("    >>> import numpy as np")
-        _steps_doc_lines += [*_from_pkg, _obj_create, _steps_call]
+        _steps_demo: list[str] = ["    >>> import numpy as np"]
+        _steps_demo += [*_from_pkg, _obj_create, _steps_call]
         if not is_void_return:
-            _steps_doc_lines += [
+            _steps_demo += [
                 "    >>> y.shape",
                 "    (4,)",
                 "    >>> y.dtype",
                 f"    dtype('{_out_np_str}')",
             ]
+        _steps_doc_lines += _demo_unless_authored(_ssblk, _steps_demo)
         # A keyword-capable steps() (out= shapes, or any controllable shape)
         # gets METH_KEYWORDS + the void* cast; a positional one stays plain
         # METH_VARARGS (non-controllable generators/sinks — byte-identical).
@@ -1485,10 +1587,54 @@ def make_step_ctx(
     # gh-676: the header's @brief owns the summary on this face too. It
     # already drove the runtime text above; without this the same header
     # documented step() at runtime and not in the stub beside it.
-    if _sblk and _sblk.brief:
+    #
+    # gh-700: and when the header says more than a @brief, the whole block is
+    # rendered rather than the summary swapped into a canned literal. These
+    # literals were a DoxyBlock consumer gh-651 did not unify — it collapsed
+    # the *member* docstring renderers and left the built-ins hand-written —
+    # so an authored extended description, @param text or @code reached
+    # neither face here. `_swap_pyi_summary` remains the path for a bare
+    # @brief, which keeps an undocumented component byte-identical.
+    if _is_authored(_sblk):
+        _pyi_step_doc = (
+            "\n".join(
+                render_numpy_doc(
+                    _sblk,
+                    "step",
+                    _step_params,
+                    _step_ret,
+                    _step_desc,
+                    indent=8,
+                    skeleton_fallback=True,
+                    param_fallback="Input sample.",
+                    return_fallback="Output sample.",
+                )
+            )
+            + "\n"
+        )
+    elif _sblk and _sblk.brief:
         _pyi_step_doc = _swap_pyi_summary(_pyi_step_doc, _sblk.brief)
     _ssb = _db.get(f"{component}_steps")
-    if _ssb and _ssb.brief and pyi_steps:
+    if _is_authored(_ssb) and pyi_steps:
+        _pyi_steps_sig = pyi_steps.split('"""')[0].rstrip("\n ")
+        pyi_steps = (
+            f"{_pyi_steps_sig}\n"
+            + "\n".join(
+                render_numpy_doc(
+                    _ssb,
+                    "steps",
+                    _steps_params,
+                    _steps_ret,
+                    _steps_desc,
+                    indent=8,
+                    skeleton_fallback=True,
+                    param_fallback="Input sample.",
+                    return_fallback="Output sample.",
+                )
+            )
+            + "\n"
+        )
+    elif _ssb and _ssb.brief and pyi_steps:
         pyi_steps = _swap_pyi_summary(pyi_steps, _ssb.brief)
     pyi_step_methods = (
         f"\n    def step({_pyi_step_self}) -> {out_py_hint}:\n"

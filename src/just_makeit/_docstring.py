@@ -797,6 +797,8 @@ def render_numpy_doc(
     *,
     indent: int = 8,
     skeleton_fallback: bool = False,
+    param_fallback: str = "Input.",
+    return_fallback: str = "Output.",
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -854,6 +856,8 @@ def render_numpy_doc(
         ret_ann,
         override,
         skeleton_fallback=skeleton_fallback,
+        param_fallback=param_fallback,
+        return_fallback=return_fallback,
     )
     out = [f'{pad}"""{lines[0]}']
     # Blank separators must stay genuinely blank: `pad` on an empty line is
@@ -879,6 +883,8 @@ def _numpy_sections(
     override: str = "",
     *,
     skeleton_fallback: bool = False,
+    param_fallback: str = "Input.",
+    return_fallback: str = "Output.",
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -925,11 +931,11 @@ def _numpy_sections(
         out += ["", "Parameters", "----------"]
         for pname, ann in py_params:
             out.append(f"{pname} : {ann}")
-            desc = descs.get(pname) or "Input."
+            desc = descs.get(pname) or param_fallback
             out += [f"    {w}" for w in _wrap(desc, 68)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or "Output.", 68)]
+        out += [f"    {w}" for w in _wrap(ret or return_fallback, 68)]
     return out, examples
 
 
@@ -939,6 +945,9 @@ def render_runtime_doc(
     py_params: list[tuple[str, str]],
     ret_ann: str,
     override: str = "",
+    *,
+    param_fallback: str = "Input.",
+    return_fallback: str = "Output.",
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -1004,6 +1013,8 @@ def render_runtime_doc(
         ret_ann,
         override,
         skeleton_fallback=True,
+        param_fallback=param_fallback,
+        return_fallback=return_fallback,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
