@@ -13,7 +13,8 @@ tags:     []
 rendered:
         """Available modes.
 
-        - fast: low quality - slow: high quality
+        - fast: low quality
+        - slow: high quality
 
         Parameters
         ----------

@@ -141,24 +141,84 @@ def header_default(desc: str | None) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def group_paragraphs(lines: list[str]) -> list[str]:
-    """Join a list of body *lines* into paragraphs.
+# A body line whose line break carries meaning: a markdown bullet or numbered
+# list item, a table row, or a `@li`/`@arg` list entry. Joining these into a
+# flowing paragraph destroys the structure the author wrote (gh-653).
+_STRUCTURED_RE = re.compile(
+    r"^(?:[-*+]\s+"  # - bullet   * bullet   + bullet
+    r"|\d+[.)]\s+"  # 1. numbered   2) numbered
+    r"|\|"  # | table | row |
+    r"|[@\\](?:li|arg)\b)"  # @li / @arg list entry
+)
 
-    Consecutive non-blank lines become one space-joined paragraph; blank lines
-    separate paragraphs. Used so multi-line Doxygen prose renders as flowing
-    paragraphs instead of one short line per source line (which the renderers
-    would otherwise blank-line-separate into a double-spaced block).
+
+def is_structured_line(line: str) -> bool:
+    """True when *line*'s break is load-bearing and must not be re-flowed.
+
+    >>> [is_structured_line(s) for s in ("- a", "1. b", "| c |", "prose")]
+    [True, True, True, False]
+    """
+    return bool(_STRUCTURED_RE.match(line.strip()))
+
+
+def group_paragraphs(lines: list[str]) -> list[str]:
+    """Join a list of body *lines* into paragraphs, preserving structure.
+
+    Consecutive non-blank prose lines become one space-joined paragraph; blank
+    lines separate paragraphs. That is what makes multi-line Doxygen prose
+    render as flowing text rather than one short line per source line.
+
+    **Structured lines are exempt** (gh-653). A markdown bullet list, a
+    numbered list, a pipe table or a ``@li``/``@arg`` entry carries meaning in
+    its line breaks, and joining them produced
+    ``"- fast: low quality - slow: high quality"`` — one run-on line that reads
+    as neither prose nor a list. doppler measured **28** headers with bullet
+    lists and **5** with tables, the lists typically enumerating modes or flags
+    for an enum-valued parameter, which is exactly where a reader most needs
+    the structure.
+
+    A structured run is returned as a single paragraph with its newlines
+    intact; the renderers emit any paragraph containing a newline verbatim
+    rather than re-wrapping it, so the two halves cannot disagree about what
+    counts as structure.
+
+    Examples
+    --------
+    >>> group_paragraphs(["one", "two"])
+    ['one two']
+    >>> group_paragraphs(["- fast: low", "- slow: high"])
+    ['- fast: low\\n- slow: high']
+    >>> group_paragraphs(["Modes:", "- fast", "- slow"])
+    ['Modes:', '- fast\\n- slow']
     """
     paras: list[str] = []
-    cur: list[str] = []
+    prose: list[str] = []
+    block: list[str] = []
+
+    def _flush() -> None:
+        if prose:
+            paras.append(" ".join(prose))
+            prose.clear()
+        if block:
+            paras.append("\n".join(block))
+            block.clear()
+
     for ln in lines:
-        if ln.strip():
-            cur.append(ln.strip())
-        elif cur:
-            paras.append(" ".join(cur))
-            cur = []
-    if cur:
-        paras.append(" ".join(cur))
+        stripped = ln.strip()
+        if not stripped:
+            _flush()
+            continue
+        if is_structured_line(stripped):
+            if prose:  # prose then a list: separate paragraphs
+                paras.append(" ".join(prose))
+                prose.clear()
+            block.append(stripped)
+        else:
+            if block:  # list then prose: the list ends here
+                paras.append("\n".join(block))
+                block.clear()
+            prose.append(stripped)
+    _flush()
     return paras
 
 
@@ -1151,7 +1211,13 @@ def _numpy_sections(
     # render_numpy_method_doc, so re-group would be a no-op — wrap only.
     for para in body:
         out.append("")
-        out += _wrap(para, 72)
+        # gh-653: a paragraph carrying newlines is a preserved structure — a
+        # bullet list or a table — and re-wrapping it would undo exactly what
+        # `group_paragraphs` kept. Prose still wraps.
+        if "\n" in para:
+            out += para.split("\n")
+        else:
+            out += _wrap(para, 72)
     # gh-678: descriptions wrap on the same rule as the body. They used to be
     # emitted verbatim however long they were, so one docstring could carry a
     # wrapped summary directly above a 110-column parameter description. The
