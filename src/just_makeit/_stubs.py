@@ -809,6 +809,28 @@ def _obj_stream_pyi(cfg: dict, obj: str) -> str:
     )["pyi_stream_methods"]
 
 
+def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
+    """The parent's header blocks, re-keyed under a view's synthetic name.
+
+    gh-685. A view shares its parent's ``_core.c`` and calls the same C
+    functions, so ``ddc_execute_ctrl``'s Doxygen documents
+    ``MatchedDDC.execute_ctrl`` exactly as it documents ``DDC.execute_ctrl``.
+    The stub builder keys its lookups on the component it is rendering, which
+    for a view is a synthetic id, so without this every inherited member missed
+    and fell back to its name-based stub.
+
+    Only the ``<obj>_`` prefix is rewritten; anything else (a module-level
+    name, a view's own ``create_fn``) is left alone for the caller to merge.
+    """
+    blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
+    pre = f"{obj}_"
+    return {
+        f"{synth}_{k[len(pre) :]}": v
+        for k, v in blocks.items()
+        if k.startswith(pre)
+    }
+
+
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     Component = C.class_name(cfg, obj) or _title(obj)
     state_vars = C.state_vars(cfg, obj)
@@ -1684,6 +1706,19 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
                 if m["name"] not in excl_m
                 and m["name"] not in own_method_names
             ] + own_methods
+            # gh-685: a view's methods call the PARENT's C functions, so the
+            # parent's header blocks are theirs. _obj_stub looks blocks up as
+            # `<component>_<member>` and the component here is a synthetic
+            # name, so every lookup missed and every inherited method fell
+            # back to the name-based stub -- while the identical method on the
+            # parent, from the identical block, derived fully.
+            #
+            # Alias rather than replace: a view with its own `create_fn` has a
+            # block under that real name, looked up directly.
+            overlay["_doc_blocks"] = {
+                **_view_doc_blocks(cfg, obj, synth),
+                **(cfg.get(obj, {}).get("_doc_blocks", {}) or {}),
+            }
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")
