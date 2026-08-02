@@ -22,6 +22,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    member_doc,
     render_numpy_doc,
     render_runtime_doc,
     scaffold_doc_block,
@@ -3112,12 +3113,22 @@ def make_properties_ctx(
             )
             getter_parts.append(setter)
 
-        # Property __doc__ precedence: TOML `doc` > getter @brief > name.
-        # PyGetSetDef's 4th field is the doc.
+        # Property __doc__ precedence: TOML `doc` > getter @brief > the
+        # field's own trailing `/**<` > name. PyGetSetDef's 4th field is the
+        # doc.
+        #
+        # gh-671: the trailing member doc slots in *below* both authored
+        # sources deliberately, so nothing already documented changes — it
+        # only fills what was falling through to the name stub. For a
+        # field-backed property that trailing comment is the most plausible
+        # place the documentation already exists: doppler had ~518 documented
+        # struct fields against 369 properties documented the redundant way,
+        # the same sentence maintained twice and drifting independently.
         _pblk = (doc_blocks or {}).get(f"{component}_get_{pname}")
         _pdoc = (
             p.get("doc")
             or (_pblk.brief if (_pblk and _pblk.brief) else "")
+            or member_doc(doc_blocks, pname)
             or f"{pname.replace('_', ' ').capitalize()}."
         )
         getset_entries.append(

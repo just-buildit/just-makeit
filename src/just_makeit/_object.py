@@ -36,7 +36,10 @@ from ._init import (
     ensure_parent_packages,
 )
 from ._docstring import (
+    DoxyBlock,
     extract_doc_blocks,
+    extract_member_docs,
+    member_doc_key,
     header_default,
     authored_class_brief,
     is_scaffold_doc,
@@ -63,8 +66,15 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     header = doc_root / "native" / "inc" / obj / f"{obj}_core.h"
     if not header.exists():
         return {}
-    raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
+    text = header.read_text(encoding="utf-8")
+    raw = extract_doc_blocks(text)
     out: dict = {}
+    # gh-671: trailing `///<` / `/**<` member docs ride in the same map under a
+    # reserved key. They are not declaration blocks, so the scaffold-brief
+    # filter below does not apply to them — jm never scaffolds a member doc, so
+    # anything found here was written by a human.
+    for _mname, _mdoc in extract_member_docs(text).items():
+        out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for cname, block_text in raw.items():
         # strip the comp_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).
