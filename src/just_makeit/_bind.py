@@ -573,7 +573,21 @@ def _build_ctx(
     # example's bind round-trip caught them disagreeing.
     _tp = authored_class_brief(doc_blocks, f"{comp}_create")
     if _tp:
-        ctx["tp_doc"] = _build_ml_doc([_tp])
+        # gh-642: the whole class block, from the same builder that produced
+        # `class_docstring` above, so the two faces of this file agree.
+        ctx["tp_doc"] = _build_ml_doc(
+            S.class_runtime_doc(
+                comp,
+                ctx["Component"],
+                state_vars,
+                is_opaque,
+                init_params,
+                f"from {pkg} import {ctx['Component']}",
+                ctx.get("py_create_args", ""),
+                doc_blocks=doc_blocks,
+                custom_reset=bool(init_params),
+            )
+        )
     return ctx
 
 

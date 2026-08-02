@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The runtime `__doc__` carries the whole numpy block, not just the
+    `@brief` (gh-642).** jm rendered summary, extended description,
+    `Parameters`, `Returns` and `Examples` into the `.pyi`, but the
+    `PyMethodDef` doc and `tp_doc` literals got the brief alone — so
+    `help(obj.method)` at a REPL, which is where someone actually asks "how do
+    I use this?", showed far less than a stub file they never open. doppler
+    measured the gap at 789 stub-incomplete against 988 runtime-incomplete of
+    1384 public surfaces. Both faces now render through one section builder,
+    so the runtime text **is** the stub text with the indent and the `"""`
+    removed; a section added to one appears on the other for free. Headers
+    need no rework — this is derivation, not new syntax.
+
+    `Examples` is included, which is broader than doppler's own answer in
+    doppler-dsp/doppler#568 (they asked for Params/Returns/Notes/Warnings and
+    no Examples, since their coverage meter is already satisfied by the
+    synthesised doctest). A worked example is the most useful thing `help()`
+    can show, and a rule with no exceptions beats one every future reader has
+    to re-derive. Where a header supplies `@code`, it now replaces jm's
+    synthesised demo rather than appearing beside it; where it does not, the
+    synthesised demo is unchanged.
+
+### Fixed
+
+- **A method's runtime signature line lists every declared parameter.** The
+    `variable_output` shape hard-coded `x` and dropped declared `--param`s, so
+    a `run(x, gain)` binding advertised `run(x)`. Harmless while the docstring
+    said nothing else; actively contradictory once `Parameters` documents
+    `gain` right beneath it. Same shape as the gh-657 report, where `help()`
+    advertised `ptr(n=1)` against a kwlist that bound `count`.
+
+- **A record-returning method's `@brief` reaches `help()`.** The
+    `--result-field` shape hard-coded `"Returns list of (…) tuples."` as its
+    runtime summary, ignoring the header outright — the only one of the four
+    method shapes that discarded an authored brief rather than merely stopping
+    at it.
+
+- **Glue-method runtime docs are valid numpydoc.** `state_bytes`, `get_state`,
+    `set_state`, `destroy`, `__enter__` and `__exit__` emitted a bare `blob`
+    where the stub emitted `blob : bytes` (numpydoc does not read the former as
+    a parameter at all), and a `Returns` description with no type line above
+    it. They were a second hand-written copy of the stub's layout and had
+    already drifted from it; they now share the one renderer.
+
 ## [0.37.1] — 2026-08-02
 
 ### Fixed

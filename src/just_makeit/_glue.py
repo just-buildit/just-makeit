@@ -247,7 +247,26 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
     # renders it with them -- so a freshly scaffolded project would report
     # STALE against itself the moment it was created.
     if _tp:
-        ctx["tp_doc"] = _build_ml_doc([_tp])
+        # gh-642: the whole class block, not just the brief — the same text
+        # the .pyi beside it carries. Still gated on there being an authored
+        # brief, for the reason above: with no header to derive from, this
+        # must leave the seeded default alone.
+        ctx["tp_doc"] = _build_ml_doc(
+            _S.class_runtime_doc(
+                object_name,
+                Component,
+                state_vars_list,
+                C.is_no_state(cfg, object_name),
+                init_params,
+                f"from {pkg} import {Component}",
+                ctx.get("py_create_args", ""),
+                doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
+                manifest_doc=cfg.get(object_name, {}).get("doc", ""),
+                custom_reset=bool(init_params)
+                or C.is_no_reset(cfg, object_name),
+                create_fn=C.object_create_fn(cfg, object_name),
+            )
+        )
     return ctx
 
 
