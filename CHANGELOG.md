@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` can refresh a doc slot written by an older jm (gh-703).**
+    `_docsync._refresh_slot` decided whether a sacred fragment's doc slot was
+    jm's to overwrite by asking whether it was byte-for-byte the text *today's*
+    jm would scaffold — version-sensitive by construction. A fragment written
+    by any earlier release matched neither the current derived form nor the
+    current fallback, so it was classified hand-written and its docs froze
+    permanently.
+
+    The consequence was larger than any one doc fix: **every doc improvement
+    shipped after sacred fragments existed was invisible to every existing
+    project**, because the only way to pick one up was to delete the fragment
+    and lose the hand-written C it exists to protect. doppler measured it as
+    zero `Parameters` in their fragments against 22 in the matching `.pyi`, on
+    a jm that generates the tables correctly for a *new* fragment.
+
+    A slot is now reclaimed when its synopsis line *and* summary are still ones
+    jm would produce. The summary check is load-bearing: a downstream that
+    hand-writes a richer summary typically keeps jm's synopsis line above it,
+    so matching on the synopsis alone would clobber that prose. Prose-only
+    slots — `reset`, the glue methods, `tp_doc`, getset entries — keep the
+    strict rule, having no version-stable anchor.
+
 ## [0.38.1] — 2026-08-02
 
 ### Fixed
