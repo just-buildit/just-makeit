@@ -20,6 +20,14 @@
     header always wins. When `max_out = N` *is* declared, jm knows the answer
     and says it ("Always 4 — the declared worst case") rather than a generic
     sentence.
+- **A view method now derives from the header block its parent derives from
+    (gh-685).** A view shares its parent's `_core.c` and calls the same C
+    functions, so `<obj>_<method>`'s Doxygen documents both — but the stub
+    builder keys its lookups on the component it is rendering, and for a view
+    that is a synthetic id, so every inherited member missed and fell back to
+    its name-based stub while the identical method on the parent, from the
+    identical block, derived fully. Stub face only: the runtime face was
+    already correct.
 
 ### Added
 
