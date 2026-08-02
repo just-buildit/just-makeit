@@ -250,11 +250,40 @@ _DECL_NAME_RE = re.compile(
 # derivation contract exists to prevent. Doxygen binds the NEAREST preceding
 # block; so does this now. `*` must stay allowed — every pointer parameter
 # has one.
+#
+# gh-654: the opener accepts `/*!` as well as `/**`. Doxygen treats the two as
+# the same construct, and a header written with `/*!` derived NOTHING — no
+# error, no warning, just a member documented in C and undocumented in Python.
+#
+# `(?!<)` is a fix, not a widening: `/**<` is a *trailing member doc* (gh-671),
+# and the opener matched it. A member doc separated from a following
+# declaration by whitespace alone was therefore extracted as that function's
+# block, so `int taps; /**< Number of filter taps. */` above a declaration gave
+# it the brief `< Number of filter taps.` — the stray `<` reaching both faces.
+_DECL_TAIL = r"(?P<decl>[^;{}/*\s][^;{}/]*?\([^;{}/]*\)\s*[;{])"
 _BLOCK_THEN_DECL_RE = re.compile(
-    r"/\*\*(?P<block>(?:(?!\*/)[\s\S])*?)\*/\s*"
-    r"(?P<decl>[^;{}/*\s][^;{}/]*?\([^;{}/]*\)\s*[;{])",
+    r"(?P<raw>/\*[*!](?!<)(?:(?!\*/)[\s\S])*?\*/)\s*" + _DECL_TAIL,
     re.DOTALL,
 )
+
+# The line-comment spelling of the same thing: a run of `///` or `//!` lines
+# immediately above a declaration. `(?!<)` again excludes the trailing
+# member-doc forms, which belong to whatever is declared on their own line and
+# must not be read as a block for the NEXT one.
+#
+# A run is consecutive lines with no blank between them, matching how Doxygen
+# reads them; the run then binds to the declaration the same way a block does.
+_LINE_RUN_THEN_DECL_RE = re.compile(
+    r"(?P<raw>(?:^[ \t]*//[/!](?!<)[^\n]*\n)+)\s*" + _DECL_TAIL,
+    re.MULTILINE | re.DOTALL,
+)
+
+# A run of nothing but slashes is a section ruler, not documentation. The
+# block forms cannot produce this shape, so it arrives only with the line
+# forms -- and `////////` sitting above a declaration is a common enough C
+# house style that taking it literally would give that function a brief made
+# of punctuation.
+_RULER_ONLY_RE = re.compile(r"^[/\s]*$")
 
 
 def _decl_name(decl: str) -> str | None:
@@ -283,10 +312,16 @@ def extract_doc_blocks(header_text: str) -> dict[str, str]:
         ``{c_function_name: raw_block_including_delimiters}``.
     """
     out: dict[str, str] = {}
-    for m in _BLOCK_THEN_DECL_RE.finditer(header_text):
-        name = _decl_name(m.group("decl"))
-        if name:
-            out[name] = "/**" + m.group("block") + "*/"
+    for pattern in (_BLOCK_THEN_DECL_RE, _LINE_RUN_THEN_DECL_RE):
+        for m in pattern.finditer(header_text):
+            if _RULER_ONLY_RE.match(m.group("raw")):
+                continue
+            name = _decl_name(m.group("decl"))
+            # A declaration can be preceded by only one comment, so the two
+            # patterns cannot disagree about the same name -- but keep the
+            # block form authoritative if a header ever manages both.
+            if name and name not in out:
+                out[name] = m.group("raw")
     return out
 
 
@@ -380,19 +415,52 @@ def member_doc(doc_blocks: "dict | None", name: str) -> str:
 
 
 def _strip_comment(raw: str) -> list[str]:
-    """Strip ``/** */`` delimiters and per-line ``*`` prefixes.
+    """Strip a doc comment's delimiters and per-line decoration.
 
-    Returns the interior lines with leading decoration removed but otherwise
-    preserving relative content (blank lines kept for paragraph splitting).
+    Handles every spelling :func:`extract_doc_blocks` can hand back: the
+    ``/** … */`` and ``/*! … */`` block forms, and a run of ``///`` or ``//!``
+    lines. Returns the interior lines with leading decoration removed but
+    otherwise preserving relative content (blank lines kept for paragraph
+    splitting).
+
+    gh-654: the ``/*!`` opener used to fall through to the two-character
+    ``/*`` branch, leaving a literal ``!`` at the front of the brief.
+
+    Examples
+    --------
+    >>> _strip_comment("/** @brief One. */")
+    ['@brief One.']
+    >>> _strip_comment("/*! @brief One. */")
+    ['@brief One.']
+    >>> _strip_comment("/// @brief One.\\n/// More.")
+    ['@brief One.', 'More.']
+    >>> _strip_comment("//! @brief One.\\n//!\\n//! Second paragraph.")
+    ['@brief One.', '', 'Second paragraph.']
+    >>> _strip_comment("////////\\n/// @brief One.\\n////////")
+    ['@brief One.']
     """
     body = raw.strip()
-    if body.startswith("/**"):
+    if body.startswith("///") or body.startswith("//!"):
+        # A line-comment run: the marker is the whole decoration, and a bare
+        # `///` is a blank line, which is what separates paragraphs. A line of
+        # nothing but slashes is a ruler and reads as the same blank -- taking
+        # it literally would put punctuation in the middle of a brief.
+        lines: list[str] = []
+        for ln in body.splitlines():
+            s = ln.strip()[3:]
+            if _RULER_ONLY_RE.match(s):
+                s = ""
+            elif s.startswith(" "):
+                s = s[1:]
+            lines.append(s.rstrip())
+        return _trim_blank_ends(lines)
+    if body.startswith("/**") or body.startswith("/*!"):
         body = body[3:]
     elif body.startswith("/*"):
         body = body[2:]
     if body.endswith("*/"):
         body = body[:-2]
-    lines: list[str] = []
+    lines = []
     for ln in body.splitlines():
         s = ln.strip()
         if s.startswith("*"):
@@ -401,7 +469,11 @@ def _strip_comment(raw: str) -> list[str]:
         if s.startswith(" "):
             s = s[1:]
         lines.append(s.rstrip())
-    # trim leading/trailing blank lines
+    return _trim_blank_ends(lines)
+
+
+def _trim_blank_ends(lines: list[str]) -> list[str]:
+    """Drop leading and trailing blank lines, keeping interior ones."""
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():

@@ -1,7 +1,7 @@
 # Enriching stubs from your C header
 
 The stubs above are the *name-based fallback*. The `.pyi` docstrings are
-derived directly from the Doxygen `/** ... */` comments in your
+derived directly from the Doxygen comments in your
 `native/inc/<obj>/<obj>_core.h`, so what you write in C surfaces in your
 editor's tooltips, in the rendered Python API docs, and — for methods,
 properties, and free functions — as **runnable doctests**.
