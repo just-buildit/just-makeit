@@ -21,6 +21,13 @@ name: nco_tone example
 on:
   push:
     branches: ["main"]
+    # A release bump moves only these four files and cannot affect the
+    # end-to-end example, so it should not trigger one.
+    paths-ignore:
+      - CHANGELOG.md
+      - pyproject.toml
+      - jb.toml
+      - uv.lock
   pull_request:
     paths:
       - "src/just_makeit/**"

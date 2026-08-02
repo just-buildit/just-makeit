@@ -18,6 +18,11 @@ HAS_DOCS     = 1
 HAS_BENCH    = 1
 HAS_RELEASE  = 1
 HAS_EXAMPLES = 1
+# The coverage invocation used to exist only inside ci.yml, so the one command
+# gating every merge was the one command a developer could not reproduce —
+# exactly the drift this file exists to prevent (gh-716). The standard already
+# owns the `coverage` / `coverage-gate` rules; only the commands belong here.
+HAS_COVERAGE = 1
 
 PYTHON     ?= $(shell uv run --no-project python -c \
                   "import sys; print(sys.executable)" 2>/dev/null || python3)
@@ -121,6 +126,24 @@ TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v
 
 TEST_ALL_DEPS = test test-examples
 GATES_DEPS    = lint docs-check test-all
+
+# ── Coverage ─────────────────────────────────────────────────────────────────
+# Two commands because a report is not a gate — the standard splits them so CI
+# can call the one that fails, rather than producing a report and hoping
+# somebody reads it. That was the real state before gh-716: `-q` kept the
+# percentage out of every CI log, so the only gate was remembering to open
+# Codecov.
+#
+# COVERAGE_MIN sits ~1 point under the measured 87.96% (Codecov, 2026-08-02):
+# tight enough to catch a real regression, loose enough that ordinary churn
+# does not flap the build. Raise it when the number moves up and holds; a
+# threshold that only ever ratchets down is not a gate either.
+COVERAGE_MIN     ?= 87
+COVERAGE_REPORTS  = --cov=just_makeit --cov-report=xml --cov-report=term \
+                    --junitxml=junit.xml -o junit_family=legacy
+COVERAGE_CMD      = $(DEV_RUN) pytest $(COVERAGE_REPORTS)
+COVERAGE_GATE_CMD = $(DEV_RUN) pytest $(COVERAGE_REPORTS) \
+                    --cov-fail-under=$(COVERAGE_MIN)
 
 # ── Build ────────────────────────────────────────────────────────────────────
 WHEEL_CMD = PYTHONPATH=src $(UV) build --wheel --no-build-isolation
