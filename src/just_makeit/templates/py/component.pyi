@@ -1,7 +1,7 @@
 from typing import Any, final<<pyi_stream_typing>><<pyi_property_typing>><<pyi_os_import>>
 import numpy as np
 from numpy.typing import NDArray
-
+<<pyi_records>>
 @final
 class <<Component>>:
 <<class_docstring>>

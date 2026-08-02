@@ -14,6 +14,7 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
     from . import _method
+    from . import _record
     from . import _types as T
 
     object_name = args[0]
@@ -32,6 +33,7 @@ def run(args: list[str]) -> None:
     single = False
     record_name = ""
     record_module = ""
+    record_doc = ""
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -114,6 +116,15 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             record_module = remaining[i]
+            i += 1
+        elif tok == "--record-doc":
+            # gh-646: the record type's own documentation — what
+            # `help(ToneMetrics)` shows, and the record class's .pyi docstring.
+            i += 1
+            if i >= len(remaining):
+                print("error: --record-doc requires text", file=sys.stderr)
+                sys.exit(1)
+            record_doc = remaining[i]
             i += 1
         elif tok == "--doc":
             i += 1
@@ -259,22 +270,11 @@ def run(args: list[str]) -> None:
                     "error: --result-field requires name:type", file=sys.stderr
                 )
                 sys.exit(1)
-            val = remaining[i]
-            if ":" not in val:
-                print(
-                    f"error: --result-field '{val}' must be name:type",
-                    file=sys.stderr,
-                )
+            try:
+                result_fields.append(_record.parse_result_field(remaining[i]))
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
                 sys.exit(1)
-            rf_name, rf_type = val.split(":", 1)
-            if rf_type not in T._CTYPE_META:
-                print(
-                    f"error: --result-field type '{rf_type}' is not a scalar.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            result_fields.append({"name": rf_name, "type": rf_type})
             i += 1
         elif tok in ("--arg-type", "--return-type"):
             i += 1
@@ -370,6 +370,19 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-646: a per-field doc lands on the PyStructSequence field and the
+    # record class in the .pyi — both of which only exist for --single. A
+    # list-of-records result has no named field surface to carry it, so
+    # accepting the text there would render nowhere and say nothing.
+    if not single and (record_doc or any(f.get("doc") for f in result_fields)):
+        print(
+            "error: --record-doc and --result-field docs require --single.\n"
+            "Without it the method returns a list of plain tuples, which has "
+            "no named record type to document.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -415,6 +428,7 @@ def run(args: list[str]) -> None:
         single=single,
         record_name=record_name,
         record_module=record_module,
+        record_doc=record_doc,
         varargs=varargs,
         manual_stub=manual_stub,
         pass_capacity=pass_capacity,

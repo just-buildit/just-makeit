@@ -30,6 +30,7 @@ def run(args: list[str]) -> None:
         print("error: 'function' requires a function name.", file=sys.stderr)
         sys.exit(1)
     from . import _function
+    from . import _record
     from . import _types as T
 
     fn_name = args[0]
@@ -222,22 +223,16 @@ def run(args: list[str]) -> None:
                     "error: --result-field requires name:type", file=sys.stderr
                 )
                 sys.exit(1)
-            val = remaining[i]
-            if ":" not in val:
-                print(
-                    f"error: --result-field '{val}' must be name:type",
-                    file=sys.stderr,
+            # gh-646: one parser, shared with `jm method` — the two copies of
+            # this split-and-validate would each have needed the optional
+            # `:doc` component, and only one of them would have got it.
+            try:
+                fn_result_fields.append(
+                    _record.parse_result_field(remaining[i])
                 )
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
                 sys.exit(1)
-            rf_name, rf_type = val.split(":", 1)
-            if rf_type not in T._CTYPE_META:
-                print(
-                    f"error: --result-field type '{rf_type}' is not a scalar.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            fn_result_fields.append({"name": rf_name, "type": rf_type})
             i += 1
         elif tok == "--impl":
             i += 1
@@ -265,6 +260,18 @@ def run(args: list[str]) -> None:
     if module is None:
         print(
             "error: 'function' requires --module (functions must belong to a module).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # gh-646: a per-field doc renders on the PyStructSequence a `--single`
+    # method builds. A free function has no single-record shape at all, so the
+    # text would be accepted, round-tripped, and never seen — say so instead.
+    if any(f.get("doc") for f in fn_result_fields):
+        print(
+            "error: a --result-field doc requires the single-record shape, "
+            "which free functions do not have.\n"
+            "Declare it as a method with --single, or drop the doc.",
             file=sys.stderr,
         )
         sys.exit(1)

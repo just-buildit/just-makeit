@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A single-record result is a documented, named type (gh-646).** A method
+    declared `single = true` with `result_fields` returns one record, built as
+    a `PyStructSequence`. The descriptor passed `NULL` for the type doc and
+    `NULL` for every field doc, so `help(ToneMetrics)` was empty and
+    `ToneMetrics.enob` carried no text; the `.pyi` annotated the return as a
+    bare `tuple[float, float]`, which types unpacking but leaves `r.enob`
+    unknown to the type checker.
+
+    Two new manifest keys supply the text — `doc` on a `result_fields` entry
+    (`jm method --result-field enob:double:"Effective number of bits."`) and
+    `record_doc` on the method (`--record-doc "Tone measurement results."`) —
+    and the `.pyi` now declares the record class itself:
+
+    ```python
+    @final
+    class ToneMetrics(tuple[float, float]):
+        """Tone measurement results.
+
+        Attributes
+        ----------
+        enob : float
+            Effective number of bits.
+        """
+
+        @property
+        def enob(self) -> float:
+            """Effective number of bits."""
+
+    ...
+        def measure(self, x: NDArray[np.float32]) -> ToneMetrics: ...
+    ```
+
+    Subclassing the fixed-length tuple keeps everything the bare annotation
+    gave — unpacking and indexing still type-check — and adds what it could
+    not express.
+
+    Neither key is required. A field with no `doc` falls back to its trailing
+    `///<` / `/**<` member doc in the sacred header (gh-671), which is where a
+    C author has usually already written it, and then to nothing rather than to
+    prose synthesised from the field's own name. A record with no `record_doc`
+    falls back to the CPython-style synopsis `ToneMetrics(enob, sfdr_dbc)` —
+    derived, not invented, and never empty.
+
+    The three writers that describe a record — the C descriptor and both `.pyi`
+    generators — now share one builder (`_record`), and `jm method` and
+    `jm function` share one `--result-field` parser. A per-field doc outside
+    the `--single` shape is rejected rather than accepted and silently rendered
+    nowhere.
+
 ## [0.40.0] — 2026-08-02
 
 ### Added

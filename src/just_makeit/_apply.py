@@ -424,6 +424,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             single=bool(m.get("single")),
             record_name=m.get("record_name", ""),
             record_module=m.get("record_module", ""),
+            record_doc=m.get("record_doc", ""),
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
             varargs=bool(m.get("varargs")),
