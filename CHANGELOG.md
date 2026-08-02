@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-08-02
+
 ### Added
 
 - **A struct field's trailing `///<` / `/**<` documents its property and state
