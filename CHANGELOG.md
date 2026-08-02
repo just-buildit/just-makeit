@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.38.2] — 2026-08-02
+
 ### Fixed
 
 - **`jm apply` no longer does O(methods x project) redundant work (gh-698).**
@@ -21,8 +23,6 @@
     Measured on a 6-object / 48-method project: 1.13s → 0.21s, with the growth
     curve flattened from quadratic to linear. Generated output is
     byte-identical.
-
-### Fixed
 
 - **`jm apply` can refresh a doc slot written by an older jm (gh-703).**
     `_docsync._refresh_slot` decided whether a sacred fragment's doc slot was
