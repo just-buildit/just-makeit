@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A class `Examples` block from an authored `@code` no longer breaks
+    text-mode `.pyi` doctests (gh-691).** The closing `"""` was emitted with
+    no blank line before it, so under `pytest --doctest-glob='*.pyi'` the last
+    example's expected output swallowed the terminator and the following
+    declaration, and could never match. `render_numpy_doc` has emitted that
+    blank line for authored *method* `@code` all along; the class path added in
+    0.37.0 (gh-624) did not follow it. Regression in 0.37.0 only.
+
 ## [0.37.0] — 2026-08-01
 
 ### Added

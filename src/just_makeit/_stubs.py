@@ -666,7 +666,14 @@ def _build_class_docstring(
     if _authored:
         lines += ["    Examples", "    --------"]
         lines += [f"    {ln}".rstrip() for ln in _authored]
-        lines.append('    """')
+        # gh-691: the blank line is load-bearing, not cosmetic. Under a
+        # text-mode `.pyi` doctest run (pytest --doctest-glob='*.pyi', which
+        # griffe-style consumers use) a doctest's expected output runs to the
+        # next blank line -- so without one the last example swallows the
+        # closing quotes AND the following declaration, and can never match.
+        # The synthesised demo below has always emitted it; the authored path
+        # added in gh-624 did not.
+        lines += ["", '    """']
         return lines
 
     if "..." in py_create_args or Ctx._unseedable_required(init_params):
