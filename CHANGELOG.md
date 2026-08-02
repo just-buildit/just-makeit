@@ -2,40 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **A multi-line property `doc` no longer breaks the build (gh-633).** It was
-    emitted into `PyGetSetDef`'s doc field with its newlines unescaped,
-    producing an unterminated C string literal — the module did not compile.
-    Quotes and backslashes were escaped on the very same path, so the escaping
-    step existed and simply did not cover `\n`. Fixed in `_build_ml_doc`, the
-    shared emitter every generated C docstring goes through, so a caller that
-    hands over prose cannot reintroduce it; callers already passing a list of
-    lines are unaffected.
-- **Generated declarations that live in the header now derive from it
-    (gh-684).** `*_max_out` and the state `get_`/`set_` accessors are
-    generated, but jm declares them in the sacred `<obj>_core.h` — so an
-    author could document them there and nothing read it. Both printed a
-    canned string the header could not override, and on both surfaces the two
-    faces disagreed with each other (`"Return current gain."` in the stub vs
-    `"Get gain."` at runtime; only the runtime `max_out` carried its
-    "size the `out=` buffer" sentence). A header block now wins on both faces.
-    jm's own prose is the fallback and still reads as scaffold, so a fresh
-    project stays idempotent.
-- **`*_max_out` gets a real docstring instead of a one-liner (gh-684).**
-    Its value is object-specific and, unless the manifest declared the
-    constant, its C body is an `IMPLEMENT` stub the author writes — so the
-    header always wins. When `max_out = N` *is* declared, jm knows the answer
-    and says it ("Always 4 — the declared worst case") rather than a generic
-    sentence.
-- **A view method now derives from the header block its parent derives from
-    (gh-685).** A view shares its parent's `_core.c` and calls the same C
-    functions, so `<obj>_<method>`'s Doxygen documents both — but the stub
-    builder keys its lookups on the component it is rendering, and for a view
-    that is a synthetic id, so every inherited member missed and fell back to
-    its name-based stub while the identical method on the parent, from the
-    identical block, derived fully. Stub face only: the runtime face was
-    already correct.
+## [0.37.0] — 2026-08-01
 
 ### Added
 
@@ -50,8 +17,6 @@
     section at all: jm will not fabricate a call it cannot seed, but an
     author's own working call has no such problem.
 
-### Added
-
 - **`[module.X] doc` documents a module, on both faces (gh-645).** A module is
     the one public surface with no header to derive from: its extension
     `m_doc` and its re-export `__init__.py` are wholly jm-generated, so unlike
@@ -63,6 +28,42 @@
     both faces render exactly as before.
 
 ### Fixed
+
+- **A multi-line property `doc` no longer breaks the build (gh-633).** It was
+    emitted into `PyGetSetDef`'s doc field with its newlines unescaped,
+    producing an unterminated C string literal — the module did not compile.
+    Quotes and backslashes were escaped on the very same path, so the escaping
+    step existed and simply did not cover `\n`. Fixed in `_build_ml_doc`, the
+    shared emitter every generated C docstring goes through, so a caller that
+    hands over prose cannot reintroduce it; callers already passing a list of
+    lines are unaffected.
+
+- **Generated declarations that live in the header now derive from it
+    (gh-684).** `*_max_out` and the state `get_`/`set_` accessors are
+    generated, but jm declares them in the sacred `<obj>_core.h` — so an
+    author could document them there and nothing read it. Both printed a
+    canned string the header could not override, and on both surfaces the two
+    faces disagreed with each other (`"Return current gain."` in the stub vs
+    `"Get gain."` at runtime; only the runtime `max_out` carried its
+    "size the `out=` buffer" sentence). A header block now wins on both faces.
+    jm's own prose is the fallback and still reads as scaffold, so a fresh
+    project stays idempotent.
+
+- **`*_max_out` gets a real docstring instead of a one-liner (gh-684).**
+    Its value is object-specific and, unless the manifest declared the
+    constant, its C body is an `IMPLEMENT` stub the author writes — so the
+    header always wins. When `max_out = N` *is* declared, jm knows the answer
+    and says it ("Always 4 — the declared worst case") rather than a generic
+    sentence.
+
+- **A view method now derives from the header block its parent derives from
+    (gh-685).** A view shares its parent's `_core.c` and calls the same C
+    functions, so `<obj>_<method>`'s Doxygen documents both — but the stub
+    builder keys its lookups on the component it is rendering, and for a view
+    that is a synthetic id, so every inherited member missed and fell back to
+    its name-based stub while the identical method on the parent, from the
+    identical block, derived fully. Stub face only: the runtime face was
+    already correct.
 
 - **The built-in `create` / `reset` / `step` / `steps` now derive their
     documentation from the header on every face and every object kind
@@ -77,6 +78,7 @@
     missing lookups, not one — `_glue`, `_apply`, the standalone `_ext.c`
     template, and `_object` — plus `jm bind`, which writes the same file
     `apply` does and so surfaced the last of them as a round-trip divergence.
+
 - **A scaffold `@brief` naming the object by its class name was not
     recognised as scaffold boilerplate (gh-676).** jm's own templates disagree
     about how to spell the object — `create`/`destroy` interpolate the
