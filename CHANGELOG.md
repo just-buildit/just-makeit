@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.38.3] — 2026-08-02
+
 ### Fixed
 
 - **Generated glue methods pick up their real docstrings at runtime
