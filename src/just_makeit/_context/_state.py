@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .. import _coerce
 from .._docstring import render_numpy_doc
+from ._parse import _build_ml_doc
 from .._types import (
     _CTYPE_META,
     _ARRAY_DTYPE,
@@ -32,9 +33,28 @@ from ._types import (
 )
 
 
+def accessor_block(component: str, fn: str, doc_blocks: "dict | None"):
+    """The authored :class:`DoxyBlock` for accessor *fn*, or ``None``.
+
+    gh-684. A state accessor is generated, but jm declares it in the sacred
+    header, so an author can document it there like any other function -- and
+    until now nothing read it: both faces printed a canned string the header
+    could not override, and they did not even agree with each other (the stub
+    said "Return current gain.", the method table said "Get gain.").
+
+    ``_object._load_doc_blocks`` has already dropped jm's own accessor
+    templates (``Get current gain.``, ``Set gain.``), so an un-authored header
+    yields ``None`` here and both faces keep their canned text -- which is what
+    keeps a freshly scaffolded project idempotent.
+    """
+    return (doc_blocks or {}).get(f"{component}_{fn}")
+
+
 def state_accessor_stubs(
     scalar_vars: list[tuple[str, str, str]],
     array_info: list[tuple[str, str, int]],
+    component: str = "",
+    doc_blocks: "dict | None" = None,
 ) -> str:
     """`.pyi` method stubs for a component's state get_/set_ accessors.
 
@@ -50,6 +70,14 @@ def state_accessor_stubs(
     block (leading/trailing newline) ready to splice, or ``""`` when there is
     nothing to expose.
     """
+
+    def _doc(fn: str, py_params, ret_ann: str, canned: str) -> list[str]:
+        """Docstring lines for one accessor: header when authored, else canned."""
+        blk = accessor_block(component, fn, doc_blocks)
+        if blk is None:
+            return [f'        """{canned}"""']
+        return render_numpy_doc(blk, fn, py_params, ret_ann, indent=8)
+
     stub_groups: list[str] = []
     for name, ct, _ in scalar_vars:
         py_type = scalar_py_annotation(ct)
@@ -57,10 +85,17 @@ def state_accessor_stubs(
             "\n".join(
                 [
                     f"    def get_{name}(self) -> {py_type}:",
-                    f'        """Return current {name}."""',
+                    *_doc(
+                        f"get_{name}", [], py_type, f"Return current {name}."
+                    ),
                     "",
                     f"    def set_{name}(self, value: {py_type}) -> None:",
-                    f'        """Set {name}."""',
+                    *_doc(
+                        f"set_{name}",
+                        [("value", py_type)],
+                        "None",
+                        f"Set {name}.",
+                    ),
                 ]
             )
         )
@@ -2176,15 +2211,20 @@ def make_state_ctx(
 
     # ── EXT_C: PyMethodDef ───────────────────────────────────────────────
 
+    def _rt(fn: str, canned: str) -> str:
+        """The runtime doc for one accessor -- header brief when authored."""
+        blk = accessor_block(component, fn, doc_blocks)
+        return _build_ml_doc([blk.brief] if (blk and blk.brief) else [canned])
+
     pmd_lines = []
     for name, _, __ in scalar_vars:
         pmd_lines += [
             f'    {{"get_{name}",',
             f"     (PyCFunction){Component}_get_{name}, METH_NOARGS,",
-            f'     "Get {name}."}},',
+            f"     {_rt(f'get_{name}', f'Get {name}.')}}},",
             f'    {{"set_{name}",',
             f"     (PyCFunction){Component}_set_{name}, METH_VARARGS,",
-            f'     "Set {name}."}},',
+            f"     {_rt(f'set_{name}', f'Set {name}.')}}},",
         ]
     for name, elem_ct, size in array_info:
         py_type = _CTYPE_META[elem_ct]["py_type"]
@@ -2223,7 +2263,9 @@ def make_state_ctx(
         for name, ct, dflt in ctor_scalars
     )
 
-    getter_setter_stubs_pyi = state_accessor_stubs(scalar_vars, array_info)
+    getter_setter_stubs_pyi = state_accessor_stubs(
+        scalar_vars, array_info, component, doc_blocks
+    )
 
     # ── Shared: create args ──────────────────────────────────────────────
 

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated declarations that live in the header now derive from it
+    (gh-684).** `*_max_out` and the state `get_`/`set_` accessors are
+    generated, but jm declares them in the sacred `<obj>_core.h` — so an
+    author could document them there and nothing read it. Both printed a
+    canned string the header could not override, and on both surfaces the two
+    faces disagreed with each other (`"Return current gain."` in the stub vs
+    `"Get gain."` at runtime; only the runtime `max_out` carried its
+    "size the `out=` buffer" sentence). A header block now wins on both faces.
+    jm's own prose is the fallback and still reads as scaffold, so a fresh
+    project stays idempotent.
+- **`*_max_out` gets a real docstring instead of a one-liner (gh-684).**
+    Its value is object-specific and, unless the manifest declared the
+    constant, its C body is an `IMPLEMENT` stub the author writes — so the
+    header always wins. When `max_out = N` *is* declared, jm knows the answer
+    and says it ("Always 4 — the declared worst case") rather than a generic
+    sentence.
+
 ### Added
 
 - **A `@code` block on `create()` becomes the class's `Examples` section

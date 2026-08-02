@@ -298,3 +298,76 @@ def glue_methods(
     for gm in _serialization(Component) + _lifecycle(Component, close_name):
         out[gm.name] = gm
     return out
+
+
+def max_out_method(
+    name: str, count_param: str = "", max_out_const: int = 0
+) -> GlueMethod:
+    """jm's fallback documentation for a ``<name>_max_out`` accessor (gh-684).
+
+    A **fallback**, not the answer. Unlike the glue above -- where jm owns the
+    semantics outright and ``state_bytes()`` means the identical thing on every
+    object -- ``max_out`` is uniform in *shape* and object-specific in *value*,
+    and unless the manifest declared the constant its C body is an ``IMPLEMENT``
+    stub the author writes. ``n`` for a FIR, ``ceil(n/R)`` for a decimator,
+    ``n*L + taps - 1`` for an interpolator: that relationship is the most useful
+    thing this docstring can carry and jm cannot know it. So a header block on
+    the declaration always wins; this is what gets used when there is none.
+
+    When ``max_out_const`` **is** declared, jm does know the answer and says it
+    rather than a generic sentence.
+
+    Parameters
+    ----------
+    name : str
+        The owning method's name, e.g. ``execute``.
+    count_param : str, optional
+        The input-count parameter, when this shape takes one.
+    max_out_const : int, optional
+        The manifest's declared ``max_out``, when there is one.
+
+    Examples
+    --------
+    >>> max_out_method("execute", "n_in").block.brief
+    'Largest number of samples execute() can return for n_in inputs.'
+    >>> max_out_method("execute", "n_in", 4).block.returns
+    'Always 4 -- the declared worst case.'
+    """
+    if count_param:
+        brief = (
+            f"Largest number of samples {name}() can return for "
+            f"{count_param} inputs."
+        )
+        params = [
+            (count_param, f"Number of input samples {name}() will be given.")
+        ]
+    else:
+        brief = (
+            f"Largest number of samples {name}() can return in the "
+            f"current state."
+        )
+        params = []
+    if max_out_const:
+        returns = f"Always {max_out_const} -- the declared worst case."
+    else:
+        returns = (
+            "Upper bound on the output length; the actual call may return "
+            "fewer."
+        )
+    return GlueMethod(
+        name=f"{name}_max_out",
+        py_params=[(count_param, "int")] if count_param else [],
+        ret_ann="int",
+        block=DoxyBlock(
+            brief=brief,
+            body=[
+                f"Size an `out=` buffer with this before calling {name}(), "
+                f"or use it to allocate one up front. The bound is this "
+                f"object's own: "
+                f"what it depends on is a property of the algorithm, so a "
+                f"header block on {name}_max_out() replaces this text."
+            ],
+            params=params,
+            returns=returns,
+        ),
+    )
