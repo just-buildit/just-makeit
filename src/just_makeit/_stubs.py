@@ -31,7 +31,9 @@ from . import _coerce
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
-from ._gluedoc import glue_methods
+from dataclasses import replace as _replace
+
+from ._gluedoc import glue_methods, max_out_method as _max_out_method
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -1266,21 +1268,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                         break
             else:
                 _stub_moc_name = "n"
-            if _stub_moc_name:
-                lines += [
-                    "",
-                    f"    def {m_name}_max_out"
-                    f"(self, {_stub_moc_name}: int) -> int:",
-                    f'        """Max output length {m_name}() can produce'
-                    f' for {_stub_moc_name}."""',
-                ]
-            else:
-                lines += [
-                    "",
-                    f"    def {m_name}_max_out(self) -> int:",
-                    f'        """Max output length {m_name}() can produce'
-                    f' for the current state."""',
-                ]
+            # gh-684: header block wins; _gluedoc is the fallback. Same
+            # lookup the standalone path uses, so the faces cannot drift.
+            _mo_blk = doc_blocks.get(f"{obj}_{m_name}_max_out")
+            _mo_gm = _max_out_method(
+                m_name, _stub_moc_name or "", int(m.get("max_out", 0) or 0)
+            )
+            if _mo_blk is not None:
+                _mo_gm = _replace(_mo_gm, block=_mo_blk)
+            _mo_sig = (
+                f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
+            )
+            lines += ["", f"    def {m_name}_max_out({_mo_sig}) -> int:"]
+            lines += _mo_gm.pyi_doc()
 
     # serializable (gh-400): state-blob triplet, sibling to reset. The module
     # .pyi is assembled here independently of make_methods_ctx's
@@ -1314,7 +1314,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         _parsed = T.parse_array_type(ct)
         if _parsed:
             _acc_arrays.append((n, _parsed[0], _parsed[1]))
-    _acc_pyi = Ctx.state_accessor_stubs(_acc_scalars, _acc_arrays)
+    # gh-684: the module-aggregated stub derives accessors too, from the
+    # same blocks the standalone path uses.
+    _acc_pyi = Ctx.state_accessor_stubs(
+        _acc_scalars, _acc_arrays, obj, doc_blocks
+    )
     if _acc_pyi:
         lines += _acc_pyi.rstrip("\n").lstrip("\n").split("\n")
 

@@ -22,7 +22,9 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import render_numpy_doc, scaffold_doc_block
-from .._gluedoc import glue_methods
+from dataclasses import replace
+
+from .._gluedoc import glue_methods, max_out_method
 from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
 
 
@@ -429,6 +431,21 @@ def serializable_triplet_parts(
         for n, sig in _sigs.items()
     )
     return c_funcs, pmd, pyi
+
+
+def _max_out_doc(component, name, count_param, max_out_const, block_of):
+    """The doc for ``<name>_max_out``: header block if authored, else jm's.
+
+    gh-684. Unlike the glue in :mod:`_gluedoc`, ``max_out``'s *value* is
+    object-specific and its C body is an ``IMPLEMENT`` stub the author writes
+    unless the manifest declared the constant -- so the header always wins and
+    jm's prose is only the fallback.
+    """
+    blk = block_of(f"{component}_{name}_max_out")
+    gm = max_out_method(name, count_param or "", int(max_out_const or 0))
+    if blk is not None:
+        gm = replace(gm, block=blk)
+    return gm
 
 
 def _count_default_parts(expr: str, component: str) -> tuple[str, str]:
@@ -1632,10 +1649,15 @@ def make_methods_ctx(
                     has_arg, has_params, params
                 )
                 if _pymo_name:
-                    _mo_doc = (
-                        f"{name}_max_out({_pymo_name}) -> int\\n\\n"
-                        f"Max output length {name}() can produce for"
-                        f" {_pymo_name}.\\nUse to size the ``out=`` buffer."
+                    _mo_doc = _build_ml_doc(
+                        [f"{name}_max_out({_pymo_name}) -> int", ""]
+                        + _max_out_doc(
+                            component,
+                            name,
+                            _pymo_name,
+                            m.get("max_out", 0),
+                            lambda k: (doc_blocks or {}).get(k),
+                        ).c_doc_lines()
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
@@ -1655,13 +1677,18 @@ def make_methods_ctx(
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
                         f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
-                        f'     METH_VARARGS, "{_mo_doc}"}},\n'
+                        f"     METH_VARARGS, {_mo_doc}}},\n"
                     )
                 else:
-                    _mo_doc = (
-                        f"{name}_max_out() -> int\\n\\n"
-                        f"Max output length {name}() can produce for the"
-                        f" current state.\\nUse to size the ``out=`` buffer."
+                    _mo_doc = _build_ml_doc(
+                        [f"{name}_max_out() -> int", ""]
+                        + _max_out_doc(
+                            component,
+                            name,
+                            "",
+                            m.get("max_out", 0),
+                            lambda k: (doc_blocks or {}).get(k),
+                        ).c_doc_lines()
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
@@ -1677,7 +1704,7 @@ def make_methods_ctx(
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
                         f" (PyCFunction){wrapper_prefix}_{name}_max_out,\n"
-                        f'     METH_NOARGS, "{_mo_doc}"}},\n'
+                        f"     METH_NOARGS, {_mo_doc}}},\n"
                     )
         elif result_fields and single_record:
             # gh-244: return ONE named record as a PyStructSequence (named,
@@ -2276,19 +2303,22 @@ def make_methods_ctx(
             _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
                 has_arg, has_params, params
             )
-            if _stub_moc_name:
-                pyi_lines.append(
-                    f"    def {name}_max_out"
-                    f"(self, {_stub_moc_name}: int) -> int:\n"
-                    f'        """Max output length {name}() can produce'
-                    f' for {_stub_moc_name}."""\n'
-                )
-            else:
-                pyi_lines.append(
-                    f"    def {name}_max_out(self) -> int:\n"
-                    f'        """Max output length {name}() can produce'
-                    f' for the current state."""\n'
-                )
+            # gh-684: the header wins; _gluedoc supplies the fallback.
+            _mo_doc_lines = _max_out_doc(
+                component,
+                name,
+                _stub_moc_name,
+                m.get("max_out", 0),
+                lambda k: (doc_blocks or {}).get(k),
+            ).pyi_doc()
+            _mo_sig = (
+                f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
+            )
+            pyi_lines.append(
+                f"    def {name}_max_out({_mo_sig}) -> int:\n"
+                + "\n".join(_mo_doc_lines)
+                + "\n"
+            )
 
     # ── serializable: generate the state-blob binding (gh-400) ──────────────
     # Calls the hand-written C triplet (size_t <c>_state_bytes(const T*); void
