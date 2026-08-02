@@ -26,8 +26,9 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 from . import _types as _T
 
@@ -251,6 +252,60 @@ def _sync(tbl, new_data: dict, _tk) -> None:
             del tbl[k]
 
 
+_SCRATCH_WRITES = False
+
+
+@contextmanager
+def scratch_writes() -> "Iterator[None]":
+    """Write manifests with the plain dumper for the duration (gh-698).
+
+    ``_write_doc`` round-trips an existing file through tomlkit so a user's
+    comments, key order and array layout survive a mutating command. That is
+    the right default and gh-491 exists because it once wasn't — but it is
+    ``O(file_size)`` on every save, and ``apply``'s replay calls one mutating
+    command **per method**, each of which reloads and rewrites the *whole*
+    manifest. The product is quadratic: doppler's 67 KB manifest never
+    finished, and a synthetic 48-method project spends a third of its apply
+    inside tomlkit.
+
+    Inside a replay that work buys nothing. The tree being written is a
+    throwaway scratch root that the replay itself just synthesized from
+    ``cfg``, so every "comment" tomlkit is carefully preserving was emitted by
+    ``_dump()`` moments earlier. ``_apply`` never copies the scratch manifest
+    back either — it is in ``_SKIP_FILES`` — so the formatting difference
+    cannot reach the user's tree.
+
+    Scoped as a context manager rather than a parameter because ``save`` is
+    called from deep inside each command module; the flag's honest scope is
+    "we are materializing a scratch tree", which is exactly one call site.
+    """
+    global _SCRATCH_WRITES
+    prev = _SCRATCH_WRITES
+    _SCRATCH_WRITES = True
+    try:
+        yield
+    finally:
+        _SCRATCH_WRITES = prev
+
+
+def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
+    """True when *text* parses back to exactly the config it was dumped from.
+
+    The guard for the ``scratch_writes`` fast path (gh-698). Comparing the
+    reparsed document against *cfg* catches any section kind ``_dump`` does not
+    know how to render — the way it silently dropped ``[codec.X]`` — instead of
+    trusting a hand-written serializer to be total.
+    """
+    try:
+        got = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    want = dict(cfg)
+    if include_list:
+        want["include"] = list(include_list)
+    return got == want
+
+
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     """Write cfg to path, preserving what the user wrote (gh-491).
 
@@ -283,6 +338,23 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         path.write_text(text, encoding="utf-8")
         return
 
+    if _SCRATCH_WRITES:
+        # gh-698: `_dump` is ~5x cheaper than building and dumping a tomlkit
+        # document, but it is hand-written per section kind and is NOT known to
+        # be total — it silently omits `[codec.X]`, and nothing guarantees that
+        # is the only gap. So use it only when it demonstrably round-trips.
+        #
+        # The check is cheap (tomllib is the C parser) and turns "is `_dump`
+        # faithful for this cfg?" from an assumption into a fact, per write.
+        # When it is not, we fall through to the tomlkit path below and are
+        # merely as slow as before rather than silently lossy.
+        text = _dump(cfg)
+        if include_list:
+            text = f"include = {_toml_string_array(include_list)}\n\n" + text
+        if _round_trips(text, cfg, include_list):
+            path.write_text(text, encoding="utf-8")
+            return
+
     try:
         import tomlkit as _tk
     except ModuleNotFoundError:
@@ -293,7 +365,21 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         path.write_text(text, encoding="utf-8")
         return
 
-    doc = _tk.loads(path.read_text(encoding="utf-8"))
+    # gh-698: parsing the existing file is the expensive half of a save, and
+    # under `scratch_writes` there is nothing in it worth preserving. Syncing
+    # into an EMPTY document runs the identical section logic below — which is
+    # generic over every top-level key — so the result is faithful; it simply
+    # carries no comments, which a scratch tree never had.
+    #
+    # Note this is *not* the same as taking the `_dump` fast path above: that
+    # dumper is hand-written per section kind and silently omits `[codec.X]`,
+    # so using it here dropped codecs from the replayed manifest and every
+    # later step lost them.
+    doc = (
+        _tk.document()
+        if _SCRATCH_WRITES
+        else _tk.loads(path.read_text(encoding="utf-8"))
+    )
 
     # -- include list ---------------------------------------------------------
     if include_list is not None:

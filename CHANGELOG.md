@@ -4,6 +4,26 @@
 
 ### Fixed
 
+- **`jm apply` no longer does O(methods x project) redundant work (gh-698).**
+    doppler reported apply hanging — >10 min, zero stdout, no files written —
+    on their composing modules. Not a deadlock and not `depends_on` depth:
+    apply *replays* one mutating command per method, and each command both
+    rewrote the whole manifest through tomlkit's comment-preserving path and
+    regenerated its entire module. Two quadratic terms, so a large project
+    stopped finishing rather than merely being slow.
+
+    Both are now done once. The replay writes into a throwaway tree it just
+    synthesized, so there are no authored comments to preserve — it takes a
+    plain dump, but **only when that dump verifiably round-trips**, because
+    `_dump` is written per section kind and silently omitted `[codec.X]`. And
+    the per-command module regeneration is coalesced to one flush per module.
+
+    Measured on a 6-object / 48-method project: 1.13s → 0.21s, with the growth
+    curve flattened from quadratic to linear. Generated output is
+    byte-identical.
+
+### Fixed
+
 - **`jm apply` can refresh a doc slot written by an older jm (gh-703).**
     `_docsync._refresh_slot` decided whether a sacred fragment's doc slot was
     jm's to overwrite by asking whether it was byte-for-byte the text *today's*

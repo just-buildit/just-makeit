@@ -18,7 +18,9 @@ import ast as _ast
 import copy
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from . import _color as Color
 from . import _config as C
@@ -1254,7 +1256,65 @@ def build_component_ctxs(
     return comp_ctxs
 
 
+_DEFERRED_REGEN: "dict[tuple[str, str], tuple] | None" = None
+
+
+@contextmanager
+def deferred_module_regen() -> "Iterator[None]":
+    """Coalesce ``_regenerate_module`` calls to one per module (gh-698).
+
+    Every mutating command finishes by regenerating its whole module —
+    aggregator, CMakeLists, every per-object fragment, the module ``.pyi``.
+    That is right for a single command, and quadratic for ``apply``, which
+    replays one command **per method**: a module with M objects and N methods
+    regenerates all M objects N times, and only the last pass survives.
+
+    Measured on a synthetic 6-object / 48-method project, this was 1.4 s of a
+    1.6 s replay — the dominant cost once the manifest rewrites (see
+    ``_config.scratch_writes``) were removed, and between them the reason
+    doppler's apply never finished rather than merely being slow.
+
+    Deferring is sound because the calls are idempotent and the arguments
+    accumulate: each records the *live* ``cfg`` dict, which the replay keeps
+    mutating, so the single flush at exit renders the final state — exactly
+    what the last call would have produced. Intermediate renders were only
+    ever overwritten.
+
+    Only ``apply``'s replay uses this. An ordinary ``jm method`` still
+    regenerates immediately, because its caller expects the files on disk when
+    the command returns.
+    """
+    global _DEFERRED_REGEN
+    prev = _DEFERRED_REGEN
+    _DEFERRED_REGEN = {}
+    try:
+        yield
+    finally:
+        pending, _DEFERRED_REGEN = _DEFERRED_REGEN, prev
+        for root, module, pkg in (pending or {}).values():
+            # Re-read rather than replay a stored cfg. Each command does its
+            # own `C.load(root)`, so a captured cfg is a *snapshot* of the
+            # manifest partway through the replay — and rendering the last
+            # snapshot is not the same as rendering the final state. A method
+            # whose `[codec.X]` is declared by a later step is present in that
+            # snapshot while its codec is not, which the immediate path never
+            # saw because it rendered before the method existed at all.
+            _regenerate_module_now(root, C.load(root), module, pkg)
+
+
 def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
+    """Regenerate a module's generated files, or defer under a replay."""
+    if _DEFERRED_REGEN is not None:
+        # Keyed by (root, module) so repeated calls collapse; the value is
+        # replaced each time so the flush uses the newest pkg for that module.
+        _DEFERRED_REGEN[(str(root), module)] = (root, module, pkg)
+        return
+    _regenerate_module_now(root, cfg, module, pkg)
+
+
+def _regenerate_module_now(
+    root: Path, cfg: dict, module: str, pkg: str
+) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
     # cname drives the flat native dir / file prefixes; leaf is the .so basename
