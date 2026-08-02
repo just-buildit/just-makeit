@@ -30,13 +30,36 @@ def _build_ml_doc(lines: list[str]) -> str:
         )
 
     Special characters (backslashes, double-quotes) inside *lines* are
-    escaped for the C string literal automatically.
+    escaped for the C string literal automatically, and an item that is itself
+    multi-line is split first (gh-633).
+
+    That last part is not a convenience. An item carrying a raw ``\\n`` used to
+    be emitted verbatim into the literal, producing an **unterminated C string**
+    and a module that does not compile — quotes and backslashes were escaped on
+    the very same path, so the escaping step existed and simply did not cover
+    the newline. Splitting here rather than at each call site means a caller
+    that hands over prose (a manifest ``doc =`` triple-quoted string, say)
+    cannot reintroduce it; callers that already split see no change.
+
+    Examples
+    --------
+    >>> print(_build_ml_doc(["one", "two"]))
+    "one\\n"
+         "two\\n"
+    >>> print(_build_ml_doc(["one" + chr(10) + "two"]))
+    "one\\n"
+         "two\\n"
+    >>> _build_ml_doc(['say "hi"'])
+    '"say \\\\"hi\\\\"\\\\n"'
     """
 
     def _esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
-    return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in lines)
+    flat: list[str] = []
+    for item in lines:
+        flat.extend(item.split("\n") if "\n" in item else [item])
+    return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in flat)
 
 
 def _build_params_parse(
