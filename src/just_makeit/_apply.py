@@ -1998,10 +1998,15 @@ def run(
             # ...and the second quadratic term: every mutating command
             # regenerates its whole module, so replaying N methods regenerated
             # all M objects N times. Coalesced to one flush per module.
+            # Order matters: `deferred_module_regen` flushes on exit, and a
+            # `with` unwinds in reverse — so it must be entered *after* the
+            # redirect, or the flush's progress output (naming temp paths)
+            # escapes to the user's terminal, which is exactly what the
+            # redirect above exists to prevent.
             with (
                 C.scratch_writes(),
-                _obj_mod.deferred_module_regen(),
                 contextlib.redirect_stdout(io.StringIO()),
+                _obj_mod.deferred_module_regen(),
             ):
                 _replay(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:

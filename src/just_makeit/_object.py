@@ -1291,8 +1291,15 @@ def deferred_module_regen() -> "Iterator[None]":
         yield
     finally:
         pending, _DEFERRED_REGEN = _DEFERRED_REGEN, prev
-        for root, cfg, module, pkg in (pending or {}).values():
-            _regenerate_module_now(root, cfg, module, pkg)
+        for root, module, pkg in (pending or {}).values():
+            # Re-read rather than replay a stored cfg. Each command does its
+            # own `C.load(root)`, so a captured cfg is a *snapshot* of the
+            # manifest partway through the replay — and rendering the last
+            # snapshot is not the same as rendering the final state. A method
+            # whose `[codec.X]` is declared by a later step is present in that
+            # snapshot while its codec is not, which the immediate path never
+            # saw because it rendered before the method existed at all.
+            _regenerate_module_now(root, C.load(root), module, pkg)
 
 
 def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
@@ -1300,7 +1307,7 @@ def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
     if _DEFERRED_REGEN is not None:
         # Keyed by (root, module) so repeated calls collapse; the value is
         # replaced each time so the flush uses the newest pkg for that module.
-        _DEFERRED_REGEN[(str(root), module)] = (root, cfg, module, pkg)
+        _DEFERRED_REGEN[(str(root), module)] = (root, module, pkg)
         return
     _regenerate_module_now(root, cfg, module, pkg)
 

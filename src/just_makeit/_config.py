@@ -288,6 +288,24 @@ def scratch_writes() -> "Iterator[None]":
         _SCRATCH_WRITES = prev
 
 
+def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
+    """True when *text* parses back to exactly the config it was dumped from.
+
+    The guard for the ``scratch_writes`` fast path (gh-698). Comparing the
+    reparsed document against *cfg* catches any section kind ``_dump`` does not
+    know how to render — the way it silently dropped ``[codec.X]`` — instead of
+    trusting a hand-written serializer to be total.
+    """
+    try:
+        got = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    want = dict(cfg)
+    if include_list:
+        want["include"] = list(include_list)
+    return got == want
+
+
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     """Write cfg to path, preserving what the user wrote (gh-491).
 
@@ -313,12 +331,29 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     there is nothing to preserve, and the whole test suite pins that text.
     """
 
-    if _SCRATCH_WRITES or not path.exists():
+    if not path.exists():
         text = _dump(cfg)
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
         path.write_text(text, encoding="utf-8")
         return
+
+    if _SCRATCH_WRITES:
+        # gh-698: `_dump` is ~5x cheaper than building and dumping a tomlkit
+        # document, but it is hand-written per section kind and is NOT known to
+        # be total — it silently omits `[codec.X]`, and nothing guarantees that
+        # is the only gap. So use it only when it demonstrably round-trips.
+        #
+        # The check is cheap (tomllib is the C parser) and turns "is `_dump`
+        # faithful for this cfg?" from an assumption into a fact, per write.
+        # When it is not, we fall through to the tomlkit path below and are
+        # merely as slow as before rather than silently lossy.
+        text = _dump(cfg)
+        if include_list:
+            text = f"include = {_toml_string_array(include_list)}\n\n" + text
+        if _round_trips(text, cfg, include_list):
+            path.write_text(text, encoding="utf-8")
+            return
 
     try:
         import tomlkit as _tk
@@ -330,7 +365,21 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         path.write_text(text, encoding="utf-8")
         return
 
-    doc = _tk.loads(path.read_text(encoding="utf-8"))
+    # gh-698: parsing the existing file is the expensive half of a save, and
+    # under `scratch_writes` there is nothing in it worth preserving. Syncing
+    # into an EMPTY document runs the identical section logic below — which is
+    # generic over every top-level key — so the result is faithful; it simply
+    # carries no comments, which a scratch tree never had.
+    #
+    # Note this is *not* the same as taking the `_dump` fast path above: that
+    # dumper is hand-written per section kind and silently omits `[codec.X]`,
+    # so using it here dropped codecs from the replayed manifest and every
+    # later step lost them.
+    doc = (
+        _tk.document()
+        if _SCRATCH_WRITES
+        else _tk.loads(path.read_text(encoding="utf-8"))
+    )
 
     # -- include list ---------------------------------------------------------
     if include_list is not None:
