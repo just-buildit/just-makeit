@@ -2094,12 +2094,16 @@ class TestMethodSingleRecord:
         assert "tm_analyze(tm_state_t *state, const float complex *in," in core
         assert "return _r;" in core
 
-    def test_pyi_is_tuple_of_field_types(self, tmp_path):
+    def test_pyi_returns_the_named_record(self, tmp_path):
+        # gh-646: the return is the record's own class, not a bare tuple. The
+        # class still subclasses the tuple of field types, so unpacking and
+        # indexing type-check exactly as they did before.
         pyi = (self._scaffold(tmp_path) / "src/p/tm.pyi").read_text("utf-8")
         assert (
             "def analyze(self, x: NDArray[np.complex64])"
-            " -> tuple[float, float, int]:" in pyi
+            " -> ToneMetrics:" in pyi
         )
+        assert "class ToneMetrics(tuple[float, float, int]):" in pyi
 
     # gh-257: a single-record method WITH scalar params, one defaulted — the
     # doppler NPRMeasure.analyze(x, lo, hi, ..., guard_hz=0.0) shape that hit
@@ -2175,8 +2179,9 @@ class TestMethodSingleRecord:
         ).read_text("utf-8")
         assert (
             "def analyze(self, x: NDArray[np.complex64], lo: float,"
-            " hi: float, guard_hz: float = 0.0) -> tuple[float, float]:" in pyi
+            " hi: float, guard_hz: float = 0.0) -> ToneMetrics:" in pyi
         )
+        assert "class ToneMetrics(tuple[float, float]):" in pyi
 
     def test_record_name_overrides_derived_structseq_name(self, tmp_path):
         # gh-257: a chosen public record name (ToneMetrics), independent of the

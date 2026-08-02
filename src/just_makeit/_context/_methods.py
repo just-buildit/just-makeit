@@ -9,6 +9,7 @@ import re
 
 from .. import _codec as _codec
 from .. import _coerce
+from .. import _record
 from .. import _types as T
 from .._types import (
     _CTYPE_META,
@@ -42,6 +43,17 @@ def _pyi_scalar(ctype: str) -> str:
     # Thin alias for the canonical scalar→Python-builtin mapping in _types, so
     # the method-return and state-accessor annotations cannot drift.
     return T.scalar_py_annotation(ctype)
+
+
+def _pyi_records(methods: list[dict], doc_blocks: dict | None) -> str:
+    """The `.pyi` record-class block for a component's methods (gh-646).
+
+    Rendered above the component class, since the class annotates a return with
+    a record's name. `_stubs.make_module_pyi` emits the same block from the
+    same builder for the module-aggregated stub.
+    """
+    body = _record.pyi_classes(methods, doc_blocks)
+    return f"\n{body}\n" if body else ""
 
 
 def _pyi_ndarray(ctype: str) -> str:
@@ -625,6 +637,7 @@ def make_methods_ctx(
         "extra_methods_c": "",
         "extra_methods_pymethoddef": "",
         "pyi_extra_methods": "",
+        "pyi_records": "",
         "bench_methods_timing_block": "",
         "varargs_binding_files": [],
     }
@@ -729,14 +742,10 @@ def make_methods_ctx(
         # gh-244: return ONE named record (PyStructSequence) rather than a
         # list[tuple]. The C kernel returns the record struct by value.
         single_record: bool = m.get("single", False)
-        # gh-257: optional chosen public name for the single-record structseq,
-        # overriding the C-return-type derivation below.
-        record_name: str = m.get("record_name", "")
-        # gh-261: optional module qualifier for the structseq's __module__ —
-        # by default Python derives it from the C component name; a project can
-        # set this to its import path (e.g. "doppler.measure") so a record's
-        # type(r).__module__ / repr matches where it is imported from.
-        record_module: str = m.get("record_module", "")
+        # gh-257 (`record_name`, the chosen public name) and gh-261
+        # (`record_module`, the qualifier for the structseq's __module__) are
+        # both read straight off `m` by `_record`, which the .pyi writers share
+        # — see the descriptor emit below.
         none_on_empty: bool = m.get("none_on_empty", False)
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
@@ -810,15 +819,12 @@ def make_methods_ctx(
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
         elif result_fields and single_record:
-            # gh-244: one named record — a PyStructSequence (a tuple subclass).
-            # Type it as a tuple of the field types: unpacking type-checks and
-            # named attribute access works at runtime. (A full NamedTuple stub
-            # is a possible refinement.)
-            _ret_ann = (
-                "tuple["
-                + ", ".join(_pyi_scalar(f["type"]) for f in result_fields)
-                + "]"
-            )
+            # gh-244/gh-646: one named record — a PyStructSequence (a tuple
+            # subclass). This used to annotate as a bare tuple of the field
+            # types, which types unpacking but leaves `r.enob` unknown to the
+            # checker and undocumented to the reader. The stub now declares the
+            # record class itself (see `pyi_records` below) and names it here.
+            _ret_ann = _record.public_name(m)
         elif result_fields:
             _ret_ann = "list[tuple]"
         elif variable_output:
@@ -1876,28 +1882,17 @@ def make_methods_ctx(
             # cached in this translation unit, so module-init/aggregator wiring
             # is untouched.
             _sid = f"{wrapper_prefix}_{name}"
-            _rec_base = (
-                return_type[:-2] if return_type.endswith("_t") else return_type
-            )
-            # gh-257: a manifest `record_name` picks the public structseq name
-            # independent of the C return type; else derive from return_type.
-            _rec_name = record_name or (
-                "".join(w.capitalize() for w in _rec_base.split("_") if w)
-                or "Record"
-            )
-            _seq_fields_c = "".join(
-                f'    {{"{_f["name"]}", NULL}},\n' for _f in result_fields
-            )
-            _descriptor = (
-                f"static PyStructSequence_Field {_sid}_fields[] = {{\n"
-                f"{_seq_fields_c}"
-                f"    {{NULL, NULL}},\n"
-                f"}};\n"
-                f"static PyStructSequence_Desc {_sid}_desc = {{\n"
-                f'    "{record_module or component}.{_rec_name}", NULL,'
-                f" {_sid}_fields, {len(result_fields)}\n"
-                f"}};\n"
-                f"static PyTypeObject *{_sid}_type = NULL;\n\n"
+            # gh-257/gh-261/gh-646: the record's public name, its qualified
+            # name, and its documented fields all come from _record, which the
+            # two .pyi writers read too -- the descriptor emitted here and the
+            # class they emit describe one type, so they derive it once.
+            _rec_name = _record.public_name(m)
+            _rec_fields = _record.fields(m, doc_blocks)
+            _descriptor = _record.descriptor_c(
+                _sid,
+                _record.qualified_name(m, component),
+                _record.type_doc(m, _rec_fields),
+                _rec_fields,
             )
             # gh-594: method params go through the SAME builder every other
             # method shape uses (`_build_params_parse`), rather than the
@@ -2454,6 +2449,10 @@ def make_methods_ctx(
         "pyi_extra_methods": (
             "\n" + "\n\n".join(pyi_lines) + "\n" if pyi_lines else ""
         ),
+        # gh-646: the record classes a single-record method returns, declared
+        # at module level above the component class that returns them. Empty
+        # for every project without one, so the slot costs nothing.
+        "pyi_records": _pyi_records(methods, doc_blocks),
         "bench_methods_timing_block": bench_methods_timing_block,
         "varargs_binding_files": varargs_binding_files,
         **(

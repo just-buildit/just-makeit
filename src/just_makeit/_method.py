@@ -647,6 +647,7 @@ def run(
     single: bool = False,
     record_name: str = "",
     record_module: str = "",
+    record_doc: str = "",
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -990,6 +991,12 @@ def run(
         # gh-261: module qualifier for the structseq's __module__, so a record's
         # repr matches the project's import path rather than the C component.
         method_entry["record_module"] = record_module
+    if record_doc:
+        # gh-646: the record type's own documentation — reaches PyStructSequence
+        # _Desc.doc (so `help(ToneMetrics)` is not empty) and the record class's
+        # .pyi docstring. Without it both faces fall back to the CPython-style
+        # `ToneMetrics(enob, sfdr)` synopsis, never to nothing.
+        method_entry["record_doc"] = record_doc
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:

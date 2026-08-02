@@ -2914,6 +2914,35 @@ def _inline_field(f: dict) -> str:
     return "{ " + ", ".join(parts) + " }"
 
 
+def _inline_result_field(f: dict) -> str:
+    """One ``result_fields`` entry as a TOML inline table.
+
+    Shared by the method dump and the free-function dump. gh-646 added a ``doc``
+    key to this table, and those are two separate emit sites — the exact shape
+    that lets a manifest key be honoured on one path and silently dropped on
+    the other, which is the class `tests/test_manifest_wiring_gate.py` exists
+    to catch. One writer, so there is nothing to keep in step.
+
+    Examples
+    --------
+    >>> _inline_result_field({"name": "enob", "type": "double"})
+    '{name = "enob", type = "double"}'
+    >>> _inline_result_field({"name": "n", "type": "int", "doc": 'say "hi"'})
+    '{name = "n", type = "int", doc = "say \\\\"hi\\\\""}'
+    """
+    parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
+    if f.get("doc"):
+        body = (
+            str(f["doc"])
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            # An inline table is one line; a wrapped doc rides as an escape.
+            .replace("\n", "\\n")
+        )
+        parts.append(f'doc = "{body}"')
+    return "{" + ", ".join(parts) + "}"
+
+
 def _inline_dict(d: dict) -> str:
     """Serialize a flat dict (scalar values only) as a TOML inline table.
 
@@ -3268,8 +3297,7 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         lines.append(f"max_results = {m['max_results']}")
     if m.get("result_fields"):
         rf_parts = ", ".join(
-            f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
-            for f in m["result_fields"]
+            _inline_result_field(f) for f in m["result_fields"]
         )
         lines.append(f"result_fields = [{rf_parts}]")
     if m.get("single"):
@@ -3455,8 +3483,7 @@ def _dump(cfg: dict) -> str:
                 )
             if fn.get("result_fields"):
                 rf_parts = ", ".join(
-                    f'{{name = "{f["name"]}", type = "{f["type"]}"}}'
-                    for f in fn["result_fields"]
+                    _inline_result_field(f) for f in fn["result_fields"]
                 )
                 lines.append(f"result_fields = [{rf_parts}]")
             if fn.get("params"):

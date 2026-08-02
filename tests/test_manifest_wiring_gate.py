@@ -135,12 +135,50 @@ def _view(tmp_path: Path) -> Path:
     return root
 
 
+def _record(tmp_path: Path) -> Path:
+    """Exercises result_fields `doc` + `record_doc` (gh-646).
+
+    Both are new manifest keys on the single-record shape, and both are read by
+    three writers (the C descriptor and the two .pyi generators). A key the
+    scaffold honours and `_dump` drops makes the replay disagree with the
+    scaffold, which is what the idempotence half below detects.
+    """
+    root = _base(tmp_path)
+    object_run(
+        root,
+        "meas",
+        None,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    method_run(
+        root,
+        "meas",
+        "measure",
+        None,
+        "float[]",
+        "tone_metrics_t",
+        False,
+        [],
+        result_fields=[
+            {"name": "enob", "type": "double", "doc": "Effective bits."},
+            {"name": "sfdr_dbc", "type": "double", "doc": "SFDR, dBc."},
+        ],
+        single=True,
+        record_name="ToneMetrics",
+        record_doc="Tone measurement results.",
+    )
+    return root
+
+
 SHAPES = {
     "standalone": _standalone,
     "module": _module,
     "serializable": _serializable,
     "variable_output": _variable_output,
     "view": _view,
+    "record": _record,
 }
 
 
@@ -280,6 +318,22 @@ def _shape_property_doc(tmp_path):
     return root
 
 
+def _shape_record_field_doc(tmp_path):
+    root = _record(tmp_path)
+    cfg = C.load(root)
+    cfg["meas"]["methods"][0]["result_fields"][0]["doc"] = "SENTINEL6."
+    C.save(root, cfg)
+    return root
+
+
+def _shape_record_doc(tmp_path):
+    root = _record(tmp_path)
+    cfg = C.load(root)
+    cfg["meas"]["methods"][0]["record_doc"] = "SENTINEL7."
+    C.save(root, cfg)
+    return root
+
+
 DOC_SURFACES = {
     "create_brief": (_shape_create, "SENTINEL0."),
     "reset_brief": (_shape_reset, "SENTINEL1"),
@@ -287,6 +341,10 @@ DOC_SURFACES = {
     "accessor_brief": (_shape_accessor, "SENTINEL3."),
     "module_doc": (_shape_module_doc, "SENTINEL4."),
     "property_doc": (_shape_property_doc, "SENTINEL5."),
+    # gh-646: a record's field docs and the record type's own doc must reach
+    # PyStructSequence_Field / _Desc *and* the declared .pyi record class.
+    "record_field_doc": (_shape_record_field_doc, "SENTINEL6."),
+    "record_doc": (_shape_record_doc, "SENTINEL7."),
 }
 
 

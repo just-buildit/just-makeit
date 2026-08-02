@@ -29,6 +29,7 @@ import textwrap
 from . import _codec as _codec
 from . import _coerce
 from . import _config as C
+from . import _record
 from . import _context as Ctx
 from . import _types as T
 from dataclasses import replace as _replace
@@ -1263,10 +1264,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-432: status returns bind as None (raise on failure).
             ret_ann = "None"
         elif m_result_fields:
-            field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             # gh-244: a `single` method returns ONE record, not a list of them.
+            # gh-646: and that record is a declared class, not a bare tuple —
+            # `make_module_pyi` emits it from the same `_record` builder the
+            # standalone stub and the C descriptor use.
+            field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             ret_ann = (
-                f"tuple[{field_types}]"
+                _record.public_name(m)
                 if m.get("single")
                 else f"list[tuple[{field_types}]]"
             )
@@ -1746,6 +1750,28 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
 
     if objects:
         parts.append("")
+    # gh-646: a single-record method annotates its return with the record's own
+    # class, so every such class is declared here, above the object classes
+    # that reference it. Deduplicated across the whole module: two objects
+    # returning the same record declare it once.
+    _rec_block = _record.pyi_classes(
+        [
+            m
+            for obj in objects
+            # A view's own method is stubbed on the view class below and can
+            # return a record the parent never does; leaving it out would emit
+            # a `-> ToneMetrics` annotation with no ToneMetrics declared.
+            for m in C.methods(cfg, obj)
+            + [n for v in C.views(cfg, obj) for n in C.view_methods(v)]
+        ],
+        {
+            k: v
+            for obj in objects
+            for k, v in (cfg.get(obj, {}).get("_doc_blocks", {}) or {}).items()
+        },
+    )
+    if _rec_block:
+        parts.append(_rec_block)
     for obj in objects:
         parts.append(_obj_stub(cfg, obj, pkg=pkg, module=module))
         parts.append("")
