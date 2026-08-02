@@ -230,6 +230,95 @@ def extract_doc_blocks(header_text: str) -> dict[str, str]:
     return out
 
 
+# A trailing member doc: the declaration, then `///<` or `/**< ... */` on the
+# SAME line. Doxygen calls these "after the member" comments and they are where
+# a C author naturally documents a struct field or an enum value. Both opener
+# spellings are accepted, as are the `//!<` / `/*!<` variants.
+_MEMBER_DOC_RE = re.compile(
+    r"^[^/\n]*?\b(?P<name>[A-Za-z_]\w*)\s*"  # the declared name...
+    r"(?:\[[^\]]*\])?\s*"  # ...an optional array bound
+    r"(?:=[^,;/]*)?\s*"  # ...an optional initialiser (enum values)
+    r"[,;]?[ \t]*"  # ...its terminator
+    r"(?://[/!]<[ \t]*(?P<line>[^\n]*)"  # `///<` to end of line
+    r"|/\*[*!]<[ \t]*(?P<block>.*?)\*/)",  # or `/**< ... */`
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def extract_member_docs(header_text: str) -> dict[str, str]:
+    """Map each ``///<`` / ``/**<`` trailing member doc to its declared name.
+
+    gh-671. These are "after the member" comments — the form a C author reaches
+    for when documenting a struct field or an enum value:
+
+        double phase;      /**< Current phase, radians. */
+        int    taps;       ///< Number of filter taps.
+
+    jm turns struct fields into Python properties, so this text is the most
+    plausible place a property's documentation already exists. It was invisible
+    to derivation, which meant the same sentence had to be re-stated in a
+    manifest ``doc=`` or on a getter ``@brief`` and then maintained twice.
+    doppler measured 700 of these, ~518 on struct fields, against 369
+    properties documented the redundant way.
+
+    Deliberately shallow: the key is the identifier immediately preceding the
+    comment on that line, so it works for a field, an enum value, or anything
+    else declared one-per-line, without needing to know which construct it sits
+    in. Ambiguity is resolved by the caller, which knows whether it is asking
+    about a field or an enumerator.
+
+    Returns
+    -------
+    dict
+        ``{name: description}``. A name documented more than once keeps the
+        first occurrence, matching the "first declaration wins" reading a
+        human would apply.
+
+    Examples
+    --------
+    >>> extract_member_docs("    double phase;  /**< Phase in radians. */")
+    {'phase': 'Phase in radians.'}
+    >>> extract_member_docs("    int taps;  ///< Tap count.")
+    {'taps': 'Tap count.'}
+    >>> extract_member_docs("    FIR_LOW = 0,  ///< Lowpass.")
+    {'FIR_LOW': 'Lowpass.'}
+    >>> extract_member_docs("    double gain;  /* not a member doc */")
+    {}
+    """
+    out: dict[str, str] = {}
+    for m in _MEMBER_DOC_RE.finditer(header_text):
+        raw = m.group("line")
+        if raw is None:
+            raw = m.group("block")
+        # A block form may wrap; join it the way the block parser joins prose.
+        text = " ".join(
+            ln.strip().lstrip("*").strip() for ln in (raw or "").splitlines()
+        )
+        text = _strip_doxy_inline(text).strip()
+        if text:
+            out.setdefault(m.group("name"), text)
+    return out
+
+
+# Member docs ride in the same `{name: DoxyBlock}` map the doc-block loaders
+# already thread through every generator, under a key a C identifier cannot
+# produce. Seven call sites build that map and it reaches the property path
+# through several layers; a parallel dict would have to be threaded through all
+# of them, and the two are always loaded from the same header at the same time.
+_MEMBER_KEY_PREFIX = "<member>"
+
+
+def member_doc_key(name: str) -> str:
+    """The reserved key a struct field's or enum value's doc rides under."""
+    return f"{_MEMBER_KEY_PREFIX}{name}"
+
+
+def member_doc(doc_blocks: "dict | None", name: str) -> str:
+    """The trailing ``///<`` / ``/**<`` doc for *name*, or ``""`` (gh-671)."""
+    blk = (doc_blocks or {}).get(member_doc_key(name))
+    return blk.brief if blk is not None else ""
+
+
 def _strip_comment(raw: str) -> list[str]:
     """Strip ``/** */`` delimiters and per-line ``*`` prefixes.
 

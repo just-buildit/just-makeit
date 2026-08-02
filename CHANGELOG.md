@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A struct field's trailing `///<` / `/**<` documents its property and state
+    accessors (gh-671).** `double gain;  /**< Linear output gain. */` is where
+    a C author naturally documents a field, and jm turns fields into Python
+    properties and `get_`/`set_` accessors — but that text was invisible to
+    derivation, so the same sentence had to be re-stated in a manifest `doc=`
+    or on a getter `@brief` and then maintained twice, drifting independently.
+    doppler measured **700** such comments, ~518 on struct fields, against
+    **369** properties documented the redundant way.
+
+    All four Doxygen "after the member" spellings are recognised (`///<`,
+    `//!<`, `/**<`, `/*!<`), array bounds and enum initialisers included. The
+    text reaches every face a field surfaces on: the property getset doc, the
+    property stub, and both state-accessor faces.
+
+    It sits **below** every authored source — manifest `doc=`, then getter
+    `@brief` — so nothing already documented changes; it only replaces the name
+    stub. A field with no trailing comment is byte-identical.
+
+    The enum-value half of gh-671 is split out as gh-710: a `string_enum`'s
+    choices come from the manifest rather than a C `enum`, so the mapping from
+    enumerator to choice string has to be declared rather than guessed.
+
 ## [0.38.3] — 2026-08-02
 
 ### Fixed

@@ -7,7 +7,11 @@ rendering dict.
 from __future__ import annotations
 
 from .. import _coerce
-from .._docstring import render_numpy_doc, render_runtime_doc
+from .._docstring import (
+    member_doc,
+    render_numpy_doc,
+    render_runtime_doc,
+)
 from ._parse import _build_ml_doc
 from .._types import (
     _CTYPE_META,
@@ -50,6 +54,22 @@ def accessor_block(component: str, fn: str, doc_blocks: "dict | None"):
     return (doc_blocks or {}).get(f"{component}_{fn}")
 
 
+def accessor_canned(fn: str, canned: str, doc_blocks: "dict | None") -> str:
+    """The fallback text for accessor *fn* when its header says nothing.
+
+    gh-671: prefer the backing field's own trailing ``/**<`` over jm's canned
+    string. A state accessor exists to read one struct field, and that field is
+    where a C author most naturally documents it — so ``double gain; /**<
+    Linear output gain. */`` should reach ``help(obj.get_gain)`` rather than
+    "Get gain.".
+
+    Below an authored accessor ``@brief`` (the caller checks that first), so
+    nothing already documented changes; this only replaces the name stub.
+    """
+    field = fn.split("_", 1)[1] if "_" in fn else fn
+    return member_doc(doc_blocks, field) or canned
+
+
 def state_accessor_stubs(
     scalar_vars: list[tuple[str, str, str]],
     array_info: list[tuple[str, str, int]],
@@ -75,7 +95,7 @@ def state_accessor_stubs(
         """Docstring lines for one accessor: header when authored, else canned."""
         blk = accessor_block(component, fn, doc_blocks)
         if blk is None:
-            return [f'        """{canned}"""']
+            return [f'        """{accessor_canned(fn, canned, doc_blocks)}"""']
         return render_numpy_doc(blk, fn, py_params, ret_ann, indent=8)
 
     stub_groups: list[str] = []
@@ -2227,7 +2247,9 @@ def make_state_ctx(
     def _rt(fn: str, canned: str) -> str:
         """The runtime doc for one accessor -- header brief when authored."""
         blk = accessor_block(component, fn, doc_blocks)
-        return _build_ml_doc([blk.brief] if (blk and blk.brief) else [canned])
+        if blk and blk.brief:
+            return _build_ml_doc([blk.brief])
+        return _build_ml_doc([accessor_canned(fn, canned, doc_blocks)])
 
     pmd_lines = []
     for name, _, __ in scalar_vars:
