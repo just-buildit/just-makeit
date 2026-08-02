@@ -3,8 +3,21 @@ name: Docs
 on:
   push:
     branches: [main]
+  # On a PR, build only when something that can actually change the site
+  # changed. Deliberately asymmetric with the push trigger above, which stays
+  # unfiltered: freshness of the deployed site is not a PR concern, and a path
+  # list that misses a case would silently serve a stale site. Same reasoning
+  # docker.yml already applies to its images.
   pull_request:
     branches: [main]
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - zensical.toml
+      - README.md
+      - src/just_makeit/**
+      - pyproject.toml
+      - .github/workflows/docs.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

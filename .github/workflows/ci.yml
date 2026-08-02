@@ -7,12 +7,34 @@ on:
   merge_group:
   workflow_dispatch:
 
+# A force-push used to leave the superseded run burning all 18 matrix legs to
+# completion, which wastes minutes and leaves confusing check state on the PR.
+# Cancel only PR runs: a main or merge_group result is something else depends
+# on (release.yml's verify-ci polls for "CI passed" on the merged SHA), so
+# those must always run to completion.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # Detect whether the commit touches anything beyond CHANGELOG.md /
-  # pyproject.toml.  Pure version-bump commits skip the full matrix so a
-  # release branch doesn't burn ~60 min of CI for a two-line diff.
-  # On push to main we always run — release.yml's verify-ci polls for "CI
-  # passed" on the exact merged SHA, so that check must always fire on main.
+  # Detect whether the commit touches anything beyond the four files a version
+  # bump necessarily moves. Pure version-bump commits skip the full matrix so a
+  # release doesn't burn ~15 min of CI for a two-line diff.
+  #
+  # This applies to `push` as well as `pull_request` (gh-716). It used to
+  # short-circuit to src=true for every non-PR event, on the grounds that
+  # release.yml's verify-ci polls for "CI passed" on the merged SHA "so that
+  # check must always fire on main". That conflated *the check firing* with
+  # *the matrix running*: `ci-passed` has `if: always()` and already exits 0
+  # when src=false, so it goes green either way. Measured cost of the
+  # conflation: a release bump took 15m13s on main having just taken 2m22s as
+  # a PR, for byte-identical content, on every release.
+  #
+  # Nothing goes untested. The bump's parent is the code merge, which got the
+  # full matrix; the bump itself adds a version string; and release.yml
+  # independently builds the wheel and runs the scaffold->cmake->test smoke on
+  # the tagged commit. merge_group and workflow_dispatch still always run —
+  # those are integration events where testing the combined tree is the point.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -24,13 +46,24 @@ jobs:
 
       - id: check
         run: |
-          # Non-PR events (push, merge_group, workflow_dispatch) always run.
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-            echo "src=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          # Integration events always run the full matrix.
+          case "${{ github.event_name }}" in
+            merge_group|workflow_dispatch)
+              echo "src=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
+          else
+            # push: diff the whole pushed range. Fail SAFE -- if the previous
+            # tip is not reachable in this shallow clone we cannot prove the
+            # push is bump-only, so run everything.
+            base="${{ github.event.before }}"
+            if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
           fi
-          base="${{ github.event.pull_request.base.sha }}"
-          git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
 
           # A release commit necessarily touches four files, not two: the
           # bump edits pyproject.toml, then the uv-lock and sync-jb-version
@@ -84,8 +117,32 @@ jobs:
           done
           echo "::error::uv tool install failed after 3 attempts"
           exit 1
+      # Deliberately NOT `make test`, and the one exception to the
+      # Makefile-is-SSOT rule in this file: `jm-install-deps` / `jm-run-tests`
+      # are entry points jm SHIPS, so running them here is testing the product
+      # on each OS/Python, not reaching for a dev tool. (`install-deps-smoke`
+      # below exists for the same reason.) Everything that is dev tooling —
+      # lint, coverage, the example suite — goes through `make`.
       - run: jm-install-deps ${{ runner.temp }}/jm-venv
       - run: jm-run-tests
+        # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
+        # log ending at 99% and NO pytest summary, so there was no way to tell
+        # which test died -- only that the job exited 1. PYTEST_ADDOPTS reaches
+        # pytest however `jm-run-tests` invokes it, so the report survives a
+        # crash or a truncated log. Retrying the step instead would have hidden
+        # a real failure just as effectively as it hides a flake.
+        env:
+          PYTEST_ADDOPTS: >-
+            --junitxml=${{ runner.temp }}/pytest-report.xml
+            -o junit_family=legacy
+
+      - name: Upload the test report when the suite fails
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: pytest-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: ${{ runner.temp }}/pytest-report.xml
+          if-no-files-found: ignore
 
   examples:
     name: Examples (${{ matrix.os }})
@@ -202,16 +259,19 @@ jobs:
           uv pip install -e .
           uv run jm-install-deps ${{ runner.temp }}/jm-venv
 
+      # `make coverage-gate`, not a bespoke pytest line: the Makefile is the
+      # SSOT for how a tool runs, and this invocation was the only one in the
+      # repo that CI alone knew — so the command gating every merge was the
+      # command nobody could run locally. `make lint` and `make test-examples`
+      # already followed this; coverage was the outlier.
+      #
+      # The *gate*, not the report: `-q` used to keep the percentage out of
+      # every log, so "coverage" was enforced by remembering to open Codecov.
+      # This fails the job when it drops below COVERAGE_MIN.
       - name: Run full test suite with coverage
         env:
           COVERAGE_PROCESS_START: pyproject.toml
-        run: |
-          uv run pytest \
-            --cov=just_makeit \
-            --cov-report=xml \
-            --junitxml=junit.xml \
-            -o junit_family=legacy \
-            -q
+        run: make coverage-gate
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
