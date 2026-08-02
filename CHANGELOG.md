@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **A multi-line property `doc` no longer breaks the build (gh-633).** It was
+    emitted into `PyGetSetDef`'s doc field with its newlines unescaped,
+    producing an unterminated C string literal — the module did not compile.
+    Quotes and backslashes were escaped on the very same path, so the escaping
+    step existed and simply did not cover `\n`. Fixed in `_build_ml_doc`, the
+    shared emitter every generated C docstring goes through, so a caller that
+    hands over prose cannot reintroduce it; callers already passing a list of
+    lines are unaffected.
 - **Generated declarations that live in the header now derive from it
     (gh-684).** `*_max_out` and the state `get_`/`set_` accessors are
     generated, but jm declares them in the sacred `<obj>_core.h` — so an
