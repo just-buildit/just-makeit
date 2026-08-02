@@ -25,9 +25,29 @@
     doc separated from a following declaration by whitespace alone was
     extracted as that function's block — giving it the brief
     `< Number of filter taps.`, stray angle bracket and all, on both faces.
+
 - **`/*!` no longer leaks its opener into the brief (gh-654).**
     `_strip_comment` stripped `/**` and `/*` but not `/*!`, so a `/*!` block
     parsed as `! @brief …`. Latent until the extraction above could reach it.
+
+- **A `///<` on a struct in an *included* header now reaches derivation
+    (gh-724).** `_load_doc_blocks` read exactly one file, so the member-doc
+    fallback gh-671 gave properties could not see a struct declared in a shared
+    header — doppler's `tonemeas_core.h` includes `measure/measure_core.h`,
+    where `tone_meas_t` and its per-field comments actually live. The same
+    sentence therefore had to be restated as a manifest `doc=`, ~62 times.
+
+    Derivation now follows the sacred header's own project-local `#include`s,
+    transitively and **for member docs only**: declaration blocks stay owned by
+    the component's own header, since following includes for those would let
+    one component's `@brief` land on another's method of the same name. A name
+    the component declares itself still wins. Quoted includes only, resolved
+    under `native/inc`; a cycle terminates, and a missing include is skipped.
+
+    Not record-specific — any surface gh-671 feeds, properties included, can
+    now be documented on a struct in a shared header. Parsed member docs are
+    memoized per header (keyed on path, mtime and size), since `jm apply`
+    re-derives per object and a shared header is included by many of them.
 
 ## [0.41.0] — 2026-08-02
 

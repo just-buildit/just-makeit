@@ -54,6 +54,75 @@ from ._context._parse import _build_ml_doc
 _DOC_ROOT_OVERRIDE: Path | None = None
 
 
+# A project-local include: `#include "psd/psd_core.h"`. Angle-bracket includes
+# are system or third-party headers and are never followed.
+_LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+
+# Parsed member docs per header file. `jm apply` re-derives for every object,
+# and a shared header (doppler's `measure/measure_core.h`) is included by many
+# of them, so without this the same file is read and regex-scanned once per
+# object — the shape of the quadratic that made apply hang in gh-698.
+#
+# Keyed on identity AND stat, because a test (or a user mid-session) can
+# rewrite a header between two applies in one process; a path-only key would
+# serve the pre-edit text and the edit would look like it did nothing.
+_MEMBER_DOC_CACHE: dict[tuple[Path, int, int], tuple[dict, str]] = {}
+
+
+def _header_member_docs(path: Path) -> tuple[dict[str, str], str]:
+    """``(member_docs, text)`` for one header, memoized on path+mtime+size."""
+    st = path.stat()
+    key = (path, st.st_mtime_ns, st.st_size)
+    hit = _MEMBER_DOC_CACHE.get(key)
+    if hit is None:
+        body = path.read_text(encoding="utf-8", errors="replace")
+        hit = (extract_member_docs(body), body)
+        _MEMBER_DOC_CACHE[key] = hit
+    return hit
+
+
+def _included_member_docs(inc_root: Path, text: str) -> dict[str, str]:
+    """Member docs from the project headers *text* includes (gh-724).
+
+    A struct a component returns is often declared in a *shared* header that
+    the component's own header includes — doppler's `tonemeas_core.h` includes
+    `measure/measure_core.h`, where `tone_meas_t` and its per-field comments
+    actually live. Reading only the sacred header meant the `///<` fallback
+    that gh-671 gave properties could never reach a result record's fields,
+    so the same sentence had to be restated as a manifest ``doc=``.
+
+    Deliberately narrow, and each limit is load-bearing:
+
+    - **Member docs only.** Declaration blocks stay owned by the component's
+      own header. Following includes for those would let one component's
+      `@brief` land on another's method of the same name.
+    - **Quoted, project-local includes only**, resolved under ``native/inc``.
+      A system header cannot document this project's fields.
+    - **Transitive, with a visited set**, because a shared header may itself
+      include the one holding the struct. Cycles are the normal case in C
+      (every header has an include guard), so the set is required, not a
+      precaution.
+
+    The caller merges these *under* the sacred header's own, so a name declared
+    in both keeps the component's own text — the same "nearest wins" rule the
+    rest of derivation follows.
+    """
+    out: dict[str, str] = {}
+    seen: set[Path] = set()
+    pending = [text]
+    while pending:
+        for rel in _LOCAL_INCLUDE_RE.findall(pending.pop()):
+            path = (inc_root / rel).resolve()
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            docs, body = _header_member_docs(path)
+            pending.append(body)
+            for name, doc in docs.items():
+                out.setdefault(name, doc)
+    return out
+
+
 def _load_doc_blocks(root: Path, obj: str) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
@@ -63,7 +132,8 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     Python docs from these blocks and fall back to name-based stubs otherwise.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
-    header = doc_root / "native" / "inc" / obj / f"{obj}_core.h"
+    inc_root = doc_root / "native" / "inc"
+    header = inc_root / obj / f"{obj}_core.h"
     if not header.exists():
         return {}
     text = header.read_text(encoding="utf-8")
@@ -73,6 +143,11 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     # reserved key. They are not declaration blocks, so the scaffold-brief
     # filter below does not apply to them — jm never scaffolds a member doc, so
     # anything found here was written by a human.
+    #
+    # gh-724: included project headers first, so the component's own header
+    # overwrites them below and wins any name it declares itself.
+    for _mname, _mdoc in _included_member_docs(inc_root, text).items():
+        out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for cname, block_text in raw.items():
