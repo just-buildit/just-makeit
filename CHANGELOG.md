@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.38.1] — 2026-08-02
+
 ### Fixed
 
 - **The built-in `step()`/`steps()`/`reset()` carry the full numpy block too
