@@ -1473,8 +1473,23 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 # ── module-level function stub ────────────────────────────────────────────────
 
 
-def _fn_stub(fn: dict, block=None) -> str:
-    name = fn["name"]
+def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
+    """The Python-facing surface of one module free function.
+
+    Returns the three things both faces need, derived once (gh-643). The
+    ``.pyi`` stub below uses all three; ``_render.make_functions_ctx`` takes
+    the first two to render the runtime ``PyMethodDef`` doc from the same
+    header block, so ``help(fn)`` and ``fn`` in the stub cannot document
+    different arguments or a different return type.
+
+    Returns
+    -------
+    tuple
+        ``(ret_ann, py_params, signature_parts)`` — the return annotation,
+        the ``(name, annotation)`` pairs the ``Parameters`` section
+        documents, and the ``"name: ann = default"`` strings the stub
+        signature needs (defaults belong to the signature alone).
+    """
     out_type = fn.get("out_type")
     if fn.get("check_return"):
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
@@ -1488,13 +1503,11 @@ def _fn_stub(fn: dict, block=None) -> str:
         ret = _py(f"{_ot_ctype}[]")
     else:
         ret = _py(fn.get("return_type", "void"))
-    params = fn.get("params", [])
-    doc = fn.get("doc", "")
     # gh-240: a param with a `default` is optional — surface it in the stub
     # (`name: type = <default>`) so type-checkers and readers see the default.
-    parts = []
+    parts: list[str] = []
     py_params: list[tuple[str, str]] = []
-    for p in params:
+    for p in fn.get("params", []):
         # gh-353: a path arg accepts str | os.PathLike (via _py, which now
         # spells it for every surface — gh-623); an enum arg (type "int" with
         # an `enum` name) accepts the choice string.
@@ -1510,6 +1523,13 @@ def _fn_stub(fn: dict, block=None) -> str:
             dflt = repr(p["default"]) if p.get("enum") else p["default"]
             part += f" = {dflt}"
         parts.append(part)
+    return ret, py_params, parts
+
+
+def _fn_stub(fn: dict, block=None) -> str:
+    name = fn["name"]
+    doc = fn.get("doc", "")
+    ret, py_params, parts = fn_py_surface(fn)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     # gh-384: when the module header carries Doxygen for this free function,
     # synthesize the full numpy docstring (brief + params + a runnable Examples
