@@ -13,6 +13,9 @@ tags:     [('deprecated', 'Use demo_step() instead.'), ('since', '1.2'), ('versi
 rendered:
         """Old entry point.
 
+        .. deprecated::
+           Use demo_step() instead.
+
         Parameters
         ----------
         x : float

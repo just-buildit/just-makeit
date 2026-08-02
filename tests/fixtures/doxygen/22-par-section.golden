@@ -22,4 +22,8 @@ rendered:
         -------
         float
             Output.
+
+        Notes
+        -----
+        Performance Runs in O(n) with no allocation.
         """

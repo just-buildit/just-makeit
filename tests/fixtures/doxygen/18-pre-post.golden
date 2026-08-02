@@ -22,4 +22,12 @@ rendered:
         -------
         float
             Output.
+
+        Notes
+        -----
+        reset() has been called.
+
+        The state has advanced by exactly one sample.
+
+        The phase stays within [0, 2pi).
         """

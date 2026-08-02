@@ -22,4 +22,8 @@ rendered:
         -------
         float
             Output.
+        0
+            Success.
+        -1
+            Failure.
         """

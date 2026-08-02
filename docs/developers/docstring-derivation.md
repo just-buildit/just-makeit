@@ -57,22 +57,57 @@ ______________________________________________________________________
 same command, and so does jm — a header written in backslash style derives
 identically to one written with `@`.
 
-Tags not in this table (e.g. `@note`, `@warning`, `@see`, `@retval`) are
-recognized as tags and then dropped: they have no numpy-docstring equivalent
-*yet*, so nothing they contain reaches the rendered docstring.
+### Block tags map onto numpy sections
+
+Every other recognized command has a numpy destination (gh-652). numpy's
+docstring standard already has a section for nearly all of them, so this is a
+mapping table rather than a design:
+
+| Doxygen                                                            | numpy destination             |
+| ------------------------------------------------------------------ | ----------------------------- |
+| `@note` `@attention` `@remark` `@pre` `@post` `@invariant` `@par`  | `Notes`                       |
+| `@warning`                                                         | `Warnings`                    |
+| `@see` `@sa`                                                       | `See Also`                    |
+| `@throws` `@exception`                                             | `Raises`                      |
+| `@retval <v> <doc>`                                                | additional `Returns` entries  |
+| `@deprecated <doc>`                                                | a `.. deprecated::` directive |
+| `@f$ … @f$`                                                        | `:math:` role                 |
+| `@todo` `@bug` `@since` `@version` `@ingroup` `@tparam` `@copydoc` | dropped — C-side metadata     |
+
+Sections are emitted in numpydoc's order — `Parameters`, `Returns`, `Raises`,
+`See Also`, `Notes`, `Warnings`, `Examples` — because tooling that parses by
+section (griffe, numpydoc's validator) mis-associates prose otherwise.
+
+Two calls worth stating outright:
+
+- **`@pre`/`@post` land in `Notes`, not a section of their own.** numpydoc has
+    no precondition section, and inventing one puts non-standard headings into
+    every downstream docs build.
+- **`@retval` merges into `Returns`.** A C function returning `0`/`-1` becomes
+    a Python method that raises or returns a value; the per-value rows read
+    correctly there and have nowhere else to go.
+
+The tags in the final row are dropped *deliberately* — they describe the C
+side and have no Python meaning. They are listed here so "dropped" is an
+auditable decision rather than an omission.
+
+### Why every command is recognized, even the dropped ones
 
 The distinction between "recognized then dropped" and "not recognized" is the
 whole point. An unrecognized tag is not inert — it is prose, and prose attaches
 to whichever section is currently open, so a `@note` after a `@return` used to
 land inside the return description (gh-641). Recognizing every command, whether
-or not jm has a destination for it, is what keeps that from happening. The
-parsed tags are held on the `DoxyBlock` so a future release can render them
-into numpy `Notes` / `Warnings` / `See Also` / `Raises` sections without
-another trip through the parser.
+or not jm has a destination for it, is what keeps that from happening.
 
-**A header authored today does not need reworking when that lands.** Write
-`@note` and `@warning` as you would for Doxygen; they are dropped from the
-`.pyi` for now and will start rendering when the mapping ships.
+### Math markup and raw strings
+
+`@f$ … @f$` becomes a `:math:` role, which means a backslash reaches the
+generated `.pyi`. In a plain triple-quoted string `\l` is an invalid escape
+sequence — a `SyntaxWarning` on 3.12+ **in the generated project**. jm
+therefore emits the stub docstring as a raw string (`r"""`) whenever the
+rendered text contains a backslash, which preserves the markup for a docs build
+where escaping it (`\\log`) would not. Docstrings with no backslash are
+unaffected.
 
 ### Inline references are reduced to their argument
 

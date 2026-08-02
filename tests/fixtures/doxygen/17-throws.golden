@@ -22,4 +22,11 @@ rendered:
         -------
         float
             Output.
+
+        Raises
+        ------
+        ValueError
+            if n is zero.
+        MemoryError
+            on allocation failure.
         """

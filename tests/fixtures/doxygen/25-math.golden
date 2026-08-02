@@ -2,21 +2,21 @@
 
 extracted: ['demo_gain']
 
-brief:    'Gain in dB: @f$ 20\\log_{10}(g) @f$.'
+brief:    'Gain in dB: :math:`20\\log_{10}(g)`.'
 body:     []
-params:   [('g', 'Linear gain, @f$ g > 0 @f$.')]
+params:   [('g', 'Linear gain, :math:`g > 0`.')]
 dirs:     {}
 returns:  ''
 examples: []
 tags:     []
 
 rendered:
-        """Gain in dB: @f$ 20\log_{10}(g) @f$.
+        r"""Gain in dB: :math:`20\log_{10}(g)`.
 
         Parameters
         ----------
         g : float
-            Linear gain, @f$ g > 0 @f$.
+            Linear gain, :math:`g > 0`.
 
         Returns
         -------

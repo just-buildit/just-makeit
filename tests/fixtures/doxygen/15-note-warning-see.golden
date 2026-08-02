@@ -22,4 +22,17 @@ rendered:
         -------
         float
             Output.
+
+        See Also
+        --------
+        demo_other
+        demo_another
+
+        Notes
+        -----
+        Not thread safe.
+
+        Warnings
+        --------
+        Overflows above 1.0.
         """

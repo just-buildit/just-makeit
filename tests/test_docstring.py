@@ -416,11 +416,15 @@ class TestUnknownTagQuarantine:
     def test_inline_math_is_not_a_command(self):
         # `@f$ ... @f$` would read as a command `f` with argument `$ ...`
         # without the whitespace-or-EOL requirement after the command name.
+        # That invariant is `tags == []`; the text itself is now mapped to the
+        # reST `:math:` role (gh-652), which is a rendering decision and not a
+        # parse one. Asserting the mapped text here would re-pin the proxy, so
+        # the command check is asserted directly instead.
         raw = "/**\n * @brief Gain: @f$ 20*log10(g) @f$.\n */"
         b = parse_doxygen_block(raw)
         assert b is not None
-        assert b.brief == "Gain: @f$ 20*log10(g) @f$."
         assert b.tags == []
+        assert b.brief == "Gain: :math:`20*log10(g)`."
 
     def test_line_leading_inline_reference_is_prose(self):
         raw = (

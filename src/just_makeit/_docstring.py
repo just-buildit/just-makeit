@@ -836,13 +836,17 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     # so the synthesized Python docstrings read cleanly. Examples are left as-is
     # (they are verbatim @code blocks).
     block = DoxyBlock(
-        brief=_strip_doxy_inline(brief),
-        body=[_strip_doxy_inline(b) for b in body_lines],
-        params=[(n, _strip_doxy_inline(d)) for n, d in params],
-        returns=_strip_doxy_inline(returns),
+        # gh-652: `@f$ ... @f$` -> `:math:` alongside the inline-marker strip,
+        # so every consumer of a parsed block gets it — the tag sections are
+        # not the only place an author writes math (a `@param` description is
+        # the commonest).
+        brief=_clean(brief),
+        body=[_clean(b) for b in body_lines],
+        params=[(n, _clean(d)) for n, d in params],
+        returns=_clean(returns),
         examples=example_lines,
         param_dirs=param_dirs,
-        tags=[(c, _strip_doxy_inline(t)) for c, t in tags],
+        tags=[(c, _clean(t)) for c, t in tags],
     )
 
     # Quarantined tags deliberately do NOT count as content here: nothing
@@ -948,7 +952,14 @@ def render_numpy_doc(
         param_fallback=param_fallback,
         return_fallback=return_fallback,
     )
-    out = [f'{pad}"""{lines[0]}']
+    # gh-652: a backslash in a plain triple-quoted string is an invalid escape
+    # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
+    # that is a SyntaxWarning on 3.12+ *in the generated project*. Emitting the
+    # docstring raw fixes it while preserving the markup for a docs build;
+    # escaping would render `\\log`. Only docstrings containing a backslash
+    # change, so this is invisible everywhere else.
+    quote = 'r"""' if needs_raw_string(lines + examples) else '"""'
+    out = [f"{pad}{quote}{lines[0]}"]
     # Blank separators must stay genuinely blank: `pad` on an empty line is
     # trailing whitespace, which is what one of the two pre-gh-651 renderers
     # used to emit (eight spaces) and the other did not.
@@ -962,6 +973,129 @@ def render_numpy_doc(
         out.append("")
     out.append(f'{pad}"""')
     return out
+
+
+# gh-652: where each quarantined Doxygen block tag lands in numpy's standard.
+# Largely a mapping table rather than a design problem — numpydoc already has a
+# section for nearly every one. Two calls are worth stating outright:
+#
+# * ``@pre``/``@post``/``@invariant`` go to ``Notes``, not a section of their
+#   own. numpydoc has no precondition section, and inventing one puts
+#   non-standard headings into every downstream docs build.
+# * ``@retval`` merges into ``Returns`` (handled separately below), because a
+#   C function returning 0/-1 becomes a Python method that raises or returns —
+#   the per-value rows still read correctly there and have no other home.
+_TAG_SECTION = {
+    "note": "Notes",
+    "attention": "Notes",
+    "remark": "Notes",
+    "remarks": "Notes",
+    "pre": "Notes",
+    "post": "Notes",
+    "invariant": "Notes",
+    "par": "Notes",
+    "warning": "Warnings",
+    "see": "See Also",
+    "sa": "See Also",
+    "throws": "Raises",
+    "exception": "Raises",
+}
+
+# C-side metadata with no Python meaning. Dropped deliberately, and named here
+# so "dropped" is a decision a reader can audit rather than an omission.
+_TAG_DROPPED = frozenset(
+    {
+        "todo",
+        "bug",
+        "since",
+        "version",
+        "ingroup",
+        "tparam",
+        "copydoc",
+        "copybrief",
+        "file",
+        "author",
+    }
+)
+
+# numpydoc's section order. Anything jm emits must follow it, or tooling that
+# parses by section (griffe, numpydoc's own validator) mis-associates the body.
+_SECTION_ORDER = ("Raises", "See Also", "Notes", "Warnings")
+
+# ``@f$ ... @f$`` is Doxygen's inline math. Mapped to reST ``:math:`` so a docs
+# build renders it — and, just as importantly, so the backslashes inside it are
+# handled deliberately rather than landing in a plain Python string literal
+# (see `_needs_raw_string`).
+_MATH_RE = re.compile(r"[@\\]f\$(.+?)[@\\]f\$", re.DOTALL)
+
+
+def _map_math(text: str) -> str:
+    """Rewrite Doxygen inline math to reST ``:math:`` (gh-652).
+
+    >>> _map_math("Gain in dB: @f$ 20\\\\log_{10}(g) @f$.")
+    'Gain in dB: :math:`20\\\\log_{10}(g)`.'
+    """
+    return _MATH_RE.sub(lambda m: f":math:`{m.group(1).strip()}`", text)
+
+
+def _clean(text: str) -> str:
+    """Inline-marker strip plus math mapping, applied to every parsed field."""
+    return _map_math(_strip_doxy_inline(text))
+
+
+def needs_raw_string(lines: list[str]) -> bool:
+    """True when a rendered docstring must be emitted as ``r\"\"\"``.
+
+    A backslash reaching a ``.pyi``'s plain triple-quoted string is an invalid
+    escape sequence — ``\\l`` in ``:math:`20\\log_{10}(g)``` is the common case
+    once ``@f$`` maps through. That is a ``SyntaxWarning`` on 3.12+ **in the
+    generated project**, not in jm, and jm supports 3.9 through 3.14, so it
+    would be visible to downstream users long before it became an error.
+
+    Emitting the stub docstring raw is the fix that also preserves the markup
+    for a docs build; escaping the backslash would render ``\\\\log``. Only
+    docstrings that actually contain a backslash change, so this is invisible
+    everywhere else.
+
+    A raw string cannot end in a backslash, so a trailing one disqualifies —
+    the caller escapes instead, which is correct because a docstring ending in
+    a lone backslash has no markup meaning to preserve.
+    """
+    if not any("\\" in ln for ln in lines):
+        return False
+    return not lines[-1].rstrip().endswith("\\")
+
+
+def _tag_sections(block: DoxyBlock) -> tuple[dict[str, list[str]], list[str]]:
+    """Group a block's quarantined tags into numpy sections (gh-652).
+
+    Returns
+    -------
+    tuple
+        ``(sections, retvals)`` — ``sections`` maps a numpy heading to its
+        entry lines, ``retvals`` are the ``@retval`` rows the caller folds
+        into ``Returns``.
+    """
+    sections: dict[str, list[str]] = {}
+    retvals: list[str] = []
+    for cmd, raw in block.tags:
+        text = raw.strip()  # already cleaned at parse time
+        if not text or cmd in _TAG_DROPPED:
+            continue
+        if cmd == "retval":
+            retvals.append(text)
+            continue
+        if cmd == "deprecated":
+            # reST directive rather than a section: numpydoc renders it as an
+            # admonition wherever it appears, and it reads as part of the
+            # description rather than as trailing metadata.
+            sections.setdefault("__deprecated__", []).append(text)
+            continue
+        dest = _TAG_SECTION.get(cmd)
+        if dest is None:
+            continue  # unrecognised -> still quarantined, still dropped
+        sections.setdefault(dest, []).append(text)
+    return sections, retvals
 
 
 def _numpy_sections(
@@ -1004,7 +1138,15 @@ def _numpy_sections(
             if skeleton_fallback
             else name.replace("_", " ").capitalize() + "."
         )
+    # gh-652: quarantined block tags become real numpy sections. Rendered here
+    # rather than in either face, so both get them from the one builder.
+    tag_secs, retvals = _tag_sections(block) if block is not None else ({}, [])
     out = [summary]
+    if "__deprecated__" in tag_secs:
+        for note in tag_secs.pop("__deprecated__"):
+            out += ["", ".. deprecated::"] + [
+                f"   {w}" for w in _wrap(note, 69)
+            ]
     # `body` arrives already grouped into paragraphs by
     # render_numpy_method_doc, so re-group would be a no-op — wrap only.
     for para in body:
@@ -1025,6 +1167,38 @@ def _numpy_sections(
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
         out += [f"    {w}" for w in _wrap(ret or return_fallback, 68)]
+        # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
+        # A C function returning 0/-1 becomes a Python method that raises or
+        # returns a value, and numpy has no other home for the per-value rows.
+        for rv in retvals:
+            head, _, rest = rv.partition(" ")
+            out.append(head)
+            out += [
+                f"    {w}" for w in _wrap(rest.strip() or "Return value.", 68)
+            ]
+    for heading in _SECTION_ORDER:
+        entries = tag_secs.get(heading)
+        if not entries:
+            continue
+        out += ["", heading, "-" * len(heading)]
+        for i, entry in enumerate(entries):
+            if heading == "Raises":
+                # numpydoc wants `ExceptionType` then an indented description,
+                # not one run-on line. `@throws ValueError if n < 0` carries
+                # the type as its first token, which is the convention Doxygen
+                # users already follow.
+                exc, _, rest = entry.partition(" ")
+                out.append(exc)
+                out += [
+                    f"    {w}" for w in _wrap(rest.strip() or "Raised.", 68)
+                ]
+                continue
+            # Notes and Warnings are free prose, so consecutive entries must be
+            # blank-line separated — otherwise two `@note`s render as one
+            # run-on paragraph, which is what the reader would blame on jm.
+            if i and heading in ("Notes", "Warnings"):
+                out.append("")
+            out += _wrap(entry, 72)
     return out, examples
 
 

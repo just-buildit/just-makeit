@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Doxygen block tags render as numpy sections (gh-652).** `@note`,
+    `@warning`, `@see`, `@throws`, `@retval`, `@pre`/`@post`, `@deprecated`
+    and `@f$ … @f$` were recognised and then dropped, held on the parsed block
+    with nowhere to go. They now render:
+
+    | Doxygen                                                            | numpy destination             |
+    | ------------------------------------------------------------------ | ----------------------------- |
+    | `@note` `@attention` `@remark` `@pre` `@post` `@invariant` `@par`  | `Notes`                       |
+    | `@warning`                                                         | `Warnings`                    |
+    | `@see` `@sa`                                                       | `See Also`                    |
+    | `@throws` `@exception`                                             | `Raises`                      |
+    | `@retval <v> <doc>`                                                | additional `Returns` entries  |
+    | `@deprecated`                                                      | a `.. deprecated::` directive |
+    | `@f$ … @f$`                                                        | `:math:` role                 |
+    | `@todo` `@bug` `@since` `@version` `@ingroup` `@tparam` `@copydoc` | dropped — C-side metadata     |
+
+    Sections follow numpydoc's order, because tooling that parses by section
+    mis-associates prose otherwise. `@pre`/`@post` land in `Notes` rather than
+    a section of their own — numpydoc has none, and inventing one puts
+    non-standard headings into every downstream docs build.
+
+    **No header rework is required**, which is the promise the quarantine was
+    built to keep: text authored while these were being dropped starts
+    rendering now, untouched. Both faces get it — the `.pyi` and the runtime
+    `__doc__` share one section builder since gh-642.
+
+### Fixed
+
+- **A `.pyi` docstring containing a backslash is emitted as a raw string.**
+    `@f$ … @f$` maps to `:math:`, so `\l` in `:math:`20\\log\_{10}(g)\`\` would
+    reach a plain triple-quoted string — an invalid escape sequence, and a
+    `SyntaxWarning` on 3.12+ **in the generated project**. Emitting `r"""`
+    preserves the markup for a docs build where escaping it would not.
+    Docstrings with no backslash are unchanged.
+
 ## [0.39.0] — 2026-08-02
 
 ### Added
