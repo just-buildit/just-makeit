@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-08-02
+
 ### Added
 
 - **A single-record result is a documented, named type (gh-646).** A method
