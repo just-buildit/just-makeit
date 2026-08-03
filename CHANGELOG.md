@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.43.1] — 2026-08-03
+
 ### Fixed
 
 - **`just-makeit script` now reconstructs four manifest shapes it was silently
