@@ -7,6 +7,13 @@
 # left alone, and unpinned mdformat `additional_dependencies` drifted the
 # plugin set out from under a config that still claimed otherwise).
 #
+# That now includes the two local scripts below. They carried
+# `entry: python3 scripts/<x>.py`, which is the same drift wearing a different
+# hat: bare `python3` is whatever is on PATH rather than the locked dev env,
+# and with the command living only here there was no way to run by hand what
+# the hook runs. Both go through `make -s lint-<tool>` like every other one,
+# so the hook, `make lint`, and the CI lint job are one invocation.
+#
 # clang-format and cmake-format stay on their upstream mirrors: they are not
 # Python project dependencies, so pinning them in pyproject would be a lie.
 repos:
@@ -14,7 +21,7 @@ repos:
     hooks:
       - id: sync-jb-version
         name: sync jb.toml version from pyproject.toml
-        entry: python3 scripts/sync_version.py
+        entry: make -s lint-sync-version
         language: system
         files: ^(pyproject\.toml|jb\.toml)$
         pass_filenames: false
@@ -82,10 +89,17 @@ repos:
   # this has to observe the rewrites ruff-format/clang-format just made rather
   # than race them. Otherwise a reformatted step script leaves the README
   # quoting pre-format text and only CI notices (assemble.py --check).
+  #
+  # `pass_filenames: false` now, so it re-assembles every example rather than
+  # only the ones a commit touched. A staged-scope hook can pass while the
+  # whole-tree CI check fails on the same commit — the split this dispatch
+  # exists to close, and the reason every other hook here is whole-tree.
+  # Measured cost of all 13 instead of one: 0.27s.
   - repo: local
     hooks:
       - id: assemble-examples
         name: re-assemble example READMEs from .steps/
-        entry: python3 scripts/assemble_examples.py
+        entry: make -s lint-assemble-examples
         language: system
+        pass_filenames: false
         files: ^src/just_makeit/examples/[^/]+/\.steps/
