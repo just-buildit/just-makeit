@@ -91,6 +91,35 @@ def _module(tmp_path: Path) -> Path:
     return root
 
 
+def _module_extras(tmp_path: Path) -> Path:
+    """The `[module.X]` keys beyond `doc` (gh-720).
+
+    `jm script` emitted the module command bare, so every one of these was
+    lost on replay. They are cheap to declare and no other shape reaches them,
+    which is exactly why they went unnoticed -- an emitter branch no shape
+    exercises is one nothing proves correct.
+    """
+    root = _base(tmp_path)
+    module_run(
+        root,
+        "filt",
+        extra_include_dirs=["${DOPPLER_INCLUDE_DIR}"],
+        extra_link_libs=["PkgConfig::DOPPLER"],
+        extra_types=["HalfbandDecimatorDp"],
+        functions_in_core=True,
+        doc="Filter bank.",
+    )
+    object_run(
+        root,
+        "widget",
+        "filt",
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    return root
+
+
 def _serializable(tmp_path: Path) -> Path:
     root = _base(tmp_path)
     object_run(
@@ -180,6 +209,7 @@ def _record(tmp_path: Path) -> Path:
 SHAPES = {
     "standalone": _standalone,
     "module": _module,
+    "module_extras": _module_extras,
     "serializable": _serializable,
     "variable_output": _variable_output,
     "view": _view,
