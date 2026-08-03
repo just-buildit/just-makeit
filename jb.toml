@@ -9,23 +9,26 @@ groups = ["dev"]
 # System build deps required to compile generated C extensions in examples/CI.
 
 [dev.apt]
-packages = ["build-essential", "cmake", "pkg-config", "python3-dev"]
+packages = ["build-essential", "cmake", "pkg-config", "python3-dev", "python3-numpy"]
 
 [dev.brew]
 packages = ["cmake", "pkg-config"]
 
 [dev.pacman]
-packages = ["base-devel", "cmake", "pkgconf", "python"]
+packages = ["base-devel", "cmake", "pkgconf", "python", "python-numpy"]
 
 [dev.dnf]
-packages = ["gcc", "make", "cmake", "pkgconf-pkg-config", "python3-devel"]
+packages = ["gcc", "make", "cmake", "pkgconf-pkg-config", "python3-devel", "python3-numpy"]
 
 [dev.zypper]
-packages = ["gcc", "make", "cmake", "pkg-config", "python3-devel"]
+packages = ["gcc", "make", "cmake", "pkg-config", "python3-devel", "python3-numpy"]
 
 [dev.msys2]
 packages = [
     "mingw-w64-ucrt-x86_64-gcc",
     "mingw-w64-ucrt-x86_64-cmake",
+    "mingw-w64-ucrt-x86_64-python",
+    "mingw-w64-ucrt-x86_64-python-numpy",
     "make",
+    "pkg-config",
 ]

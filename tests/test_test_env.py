@@ -108,3 +108,67 @@ class TestDepsActuallyPresent:
             "which means tomlkit is missing from this environment"
         )
         assert 'return_type = "float"' in text
+
+
+class TestSystemDepsCoverWhatTheSuiteCompiles:
+    """jm's own `jb.toml` must provide what the projects it builds need.
+
+    The suite scaffolds projects and compiles them, and a generated
+    `CMakeLists.txt` does `find_package(Python … NumPy)` — so numpy's C headers
+    have to be installed, not just importable. `jb.toml` is the manifest for
+    that, and `make install-deps` is what reads it.
+
+    This drifted and CI did not notice for a while: jm SHIPS a `jb.toml`
+    template listing `python3-numpy` (and the per-platform equivalents) on
+    every platform, while jm's OWN `jb.toml` listed none. The matrix used to
+    run `jm-install-deps`, which provisions numpy into a venv and so papered
+    over it; when that step became `make install-deps` the provisioning went
+    with it, and generated builds started failing on
+
+        fatal error: numpy/arrayobject.h: No such file or directory
+
+    intermittently, depending on which interpreter CMake happened to pick.
+
+    Asserted against the shipped template rather than a hard-coded list, so it
+    keeps holding as platforms are added: wherever the template provides numpy,
+    jm's own manifest must too. The converse is deliberately not asserted --
+    the template carries `gcc-c++` for user projects that jm itself has no use
+    for, and forcing equality would be asserting a coincidence.
+    """
+
+    TEMPLATE = ROOT / "src/just_makeit/templates/toml/jb.toml"
+    OWN = ROOT / "jb.toml"
+
+    @staticmethod
+    def _groups(path: Path) -> dict[str, list[str]]:
+        """`{platform: [package, …]}` for each `[dev.<platform>]` table."""
+        text = path.read_text(encoding="utf-8")
+        out: dict[str, list[str]] = {}
+        for m in re.finditer(
+            r"^\[dev\.(\w+)\]\s*\npackages\s*=\s*\[(.*?)\]",
+            text,
+            re.M | re.S,
+        ):
+            out[m.group(1)] = re.findall(r'"([^"]+)"', m.group(2))
+        return out
+
+    def test_parses_both_manifests(self):
+        """A regex that matches nothing would make the check below vacuous."""
+        assert self._groups(self.TEMPLATE), "parsed no [dev.*] from template"
+        assert self._groups(self.OWN), "parsed no [dev.*] from jb.toml"
+
+    def test_numpy_wherever_the_shipped_template_has_it(self):
+        template, own = self._groups(self.TEMPLATE), self._groups(self.OWN)
+        missing = []
+        for platform, pkgs in template.items():
+            if not any("numpy" in p for p in pkgs):
+                continue
+            if not any("numpy" in p for p in own.get(platform, [])):
+                missing.append(platform)
+        assert not missing, (
+            f"jb.toml's {missing} group(s) provide no numpy, but the template "
+            "jm ships does. The suite compiles generated projects and their "
+            "CMake does find_package(Python … NumPy), so `make install-deps` "
+            "must install numpy's headers or the build fails on "
+            "numpy/arrayobject.h."
+        )
