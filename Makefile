@@ -195,7 +195,13 @@ COVERAGE_CMD      = $(COVERAGE_BASE)
 COVERAGE_GATE_CMD = $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN)
 
 # ── Build ────────────────────────────────────────────────────────────────────
-WHEEL_CMD = PYTHONPATH=src $(UV) build --wheel --no-build-isolation
+# No WHEEL_CMD override: standard.mk's default is `uv build --wheel`, which is
+# what release.yml publishes with. There used to be one here
+# (`PYTHONPATH=src ... --no-build-isolation`), so `make wheel` and the release
+# built the wheel two different ways and nobody could have noticed — it carried
+# no justification back to the commit that added it, and the two forms produce
+# a byte-identical artifact (sha256 9699cd5c…). Deleting it is what lets
+# release.yml call the target instead of repeating the command.
 
 # ── Docs ─────────────────────────────────────────────────────────────────────
 # The strict build catches broken TOC anchors (which the test suite does NOT),

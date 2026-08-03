@@ -60,7 +60,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: uv build --wheel
+      # `make wheel`, not the command it runs. The published artifact was the
+      # last build command CI knew and a developer could not reproduce: the
+      # Makefile overrode WHEEL_CMD with `PYTHONPATH=src uv build --wheel
+      # --no-build-isolation`, so `make wheel` and the release built the wheel
+      # two different ways. Verified byte-identical (sha256 9699cd5c…), and the
+      # override carried no justification back to the commit that introduced
+      # it, so it is gone rather than propagated here — `--no-build-isolation`
+      # would need the backend pre-installed on this bare runner anyway.
+      - run: make wheel
 
       - uses: actions/upload-artifact@v7.0.1
         with:
