@@ -255,6 +255,29 @@ def _collect_c(root: Path, build_dir: Path, comps: list[str]) -> dict | None:
 # ── run: Python ────────────────────────────────────────────────────────────────
 
 
+def child_pytest_env() -> dict:
+    """The environment for a pytest we spawn, with xdist's markers removed.
+
+    An xdist worker exports ``PYTEST_XDIST_WORKER`` and friends, and a
+    subprocess inherits them. pytest-benchmark reads that as "I am running
+    parallelised", auto-applies ``--benchmark-disable``, and then refuses the
+    ``--benchmark-only`` we passed:
+
+        ERROR: Can't have both --benchmark-only and --benchmark-disable
+
+    So `jm bench` fails for no reason other than *who called it* — running it
+    from a test suite that happens to be parallel is enough. The inner pytest
+    is a separate run over a different project; the outer run's worker identity
+    is not information about it. `PYTEST_ADDOPTS` goes too, for the same
+    reason: flags meant for jm's suite should not reach a user's.
+    """
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("PYTEST_XDIST_") or key == "PYTEST_ADDOPTS":
+            del env[key]
+    return env
+
+
 def _has_pytest_benchmark(python: str) -> bool:
     return (
         subprocess.run(
@@ -290,7 +313,7 @@ def _run_python(root: Path, python: str) -> dict | None:
             "-q",
         ]
         print("  run        pytest --benchmark-only", flush=True)
-        subprocess.run(cmd, cwd=str(root), timeout=600)
+        subprocess.run(cmd, cwd=str(root), timeout=600, env=child_pytest_env())
         # No JSON => no pytest-benchmark plugin, or no benchmarks collected.
         if not report.exists():
             return None

@@ -110,18 +110,38 @@ JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
 #                   these need `just-makeit` itself importable from the project
 #                   env (just-buildit arrives transitively as its build dep), so
 #                   its runtime deps arrive with it.
-PYTEST_DEPS     = --with pytest --with numpy
+PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy
 PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
                   --with just-buildit
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
 
+# pytest-xdist. Measured on an 8-core box, 2026-08-02: the unit suite went
+# 299s -> 134s and coverage 419s -> 136s, so instrumentation is nearly free
+# once the work is spread. `auto` sizes to the runner instead of hard-coding a
+# core count. `--dist load` beat `--dist loadscope` (120s vs 146s): the
+# class-scoped fixtures here are not expensive enough to pay for the coarser
+# balancing loadscope buys.
+#
+# NOT applied to BENCH_* below. pytest-benchmark refuses to run under xdist at
+# all ("Can't have both --benchmark-only and --benchmark-disable"), which is
+# also why `jm bench` scrubs PYTEST_XDIST_WORKER from the pytest it spawns.
+PYTEST_PARALLEL = -n auto --dist load
+
+# tests/test_examples.py scaffolds and builds every bundled example end to end.
+# It is a regression check that the examples still work, not a source of
+# coverage — so `test` and `coverage` both skip it, through one variable so
+# the two cannot come to disagree about what "the examples" are. Measured
+# cost of including it: 70 statements, with the reported percentage unchanged
+# at 90% either way.
+EXAMPLES_IGNORE = --ignore=tests/test_examples.py
+
 # `test` is the default suite and, in a Python-only repo, IS the Python suite —
 # named once here rather than defined twice.
-TEST_PYTHON_CMD   = $(PYTEST) -v --ignore=tests/test_examples.py
+TEST_PYTHON_CMD   = $(PYTEST) $(PYTEST_PARALLEL) -v $(EXAMPLES_IGNORE)
 TEST_CMD          = $(TEST_PYTHON_CMD)
-TEST_FAST_CMD     = $(PYTEST) -x -q
+TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
 TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v
 
 TEST_ALL_DEPS = test test-examples
@@ -138,12 +158,18 @@ GATES_DEPS    = lint docs-check test-all
 # tight enough to catch a real regression, loose enough that ordinary churn
 # does not flap the build. Raise it when the number moves up and holds; a
 # threshold that only ever ratchets down is not a gate either.
+#
+# Left at 87 deliberately while the run configuration changes underneath it:
+# parallelising and dropping the examples moved the measured number to 90%, but
+# changing the speed and the threshold in one step means a red build tells you
+# nothing about which did it. Raise it once CI has reported 90% a few times.
 COVERAGE_MIN     ?= 87
 COVERAGE_REPORTS  = --cov=just_makeit --cov-report=xml --cov-report=term \
                     --junitxml=junit.xml -o junit_family=legacy
-COVERAGE_CMD      = $(DEV_RUN) pytest $(COVERAGE_REPORTS)
-COVERAGE_GATE_CMD = $(DEV_RUN) pytest $(COVERAGE_REPORTS) \
-                    --cov-fail-under=$(COVERAGE_MIN)
+COVERAGE_BASE     = $(DEV_RUN) pytest $(PYTEST_PARALLEL) $(EXAMPLES_IGNORE) \
+                    $(COVERAGE_REPORTS)
+COVERAGE_CMD      = $(COVERAGE_BASE)
+COVERAGE_GATE_CMD = $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN)
 
 # ── Build ────────────────────────────────────────────────────────────────────
 WHEEL_CMD = PYTHONPATH=src $(UV) build --wheel --no-build-isolation
