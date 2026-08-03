@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-08-02
+
 ### Added
 
 - **Every Doxygen comment form derives, not just `/** … */` (gh-654).**
