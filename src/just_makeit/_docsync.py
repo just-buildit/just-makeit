@@ -38,6 +38,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _gluedoc
+from . import _record
 from . import _render as R
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
@@ -746,10 +747,25 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         # redefinition error, so only genuinely new wrappers are inserted;
         # the row itself is still added.
         _existing_funcs = _extract_c_function_bodies(out)
-        funcs_text = "\n\n".join(
-            ref_funcs[n]
+        _new_fns = [
+            n
             for n in missing_fn_names
             if n in ref_funcs and n not in _existing_funcs
+        ]
+        # gh-729: a wrapper can depend on file-scope statics, which are not
+        # functions and so are invisible to the name-based extraction above. A
+        # single-record method is the case in practice: its body references
+        # `<fn>_type` / `<fn>_desc`, which a full render prepends to the
+        # function and this path dropped — the fragment gained a body that
+        # referenced three undeclared symbols and would not compile.
+        _preludes = [
+            d
+            for n in _new_fns
+            for d in (_record.find_descriptor(reference, n),)
+            if d and d not in out
+        ]
+        funcs_text = "\n\n".join(
+            [*_preludes, *(ref_funcs[n] for n in _new_fns)]
         )
         if funcs_text:
             funcs_text += "\n\n"
