@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adding a `single = true` record method to an existing fragment no longer
+    produces a file that will not compile (gh-729).** A sacred `_ext_<obj>.c`
+    only ever *gains* members on apply, and the splice adds two things: the
+    `PyMethodDef` row, and the wrapper function located by name. A record
+    method needs a third — the file-scope `PyStructSequence_Field` / `_Desc` /
+    `PyTypeObject *` statics its body references. A full render prepends those
+    to the wrapper so they always travel together; the incremental path
+    dropped them, and the fragment gained a body referencing three undeclared
+    symbols.
+
+    The locator lives beside the emitter in `_record`, so whatever
+    `descriptor_c` writes is what the splice looks for. Compile-checked before
+    and after: `'Capture_summary_type' undeclared` /
+    `'Capture_summary_desc' undeclared` before, neither after.
+
+    Reproducing it requires editing the **manifest** and running `jm apply` —
+    `jm method` re-renders the fragment wholesale, emits the descriptor, and
+    hides the bug entirely.
+
+### Changed
+
+- **The test suite runs under `pytest-xdist`, and the examples are out of the
+    coverage run.** `make test` 299s → 106s, `make coverage-gate` 419s → 133s,
+    and the shipped `jm-run-tests` (what CI's matrix legs actually call)
+    300s → 124s. `tests/test_examples.py` is a regression check that the
+    bundled examples still build, not a source of coverage — it contributes 70
+    statements and leaves the reported percentage unchanged at 90%.
+
+- **`jm bench` no longer fails because of who called it.** It spawns
+    `pytest --benchmark-only`, and pytest-benchmark auto-disables benchmarks
+    when it sees an inherited `PYTEST_XDIST_WORKER` — the two flags then
+    conflict and the command dies. jm now scrubs `PYTEST_XDIST_*` and
+    `PYTEST_ADDOPTS` from any pytest it spawns.
+
+- **`jm-run-tests` no longer caps the suite at 600s.** That was 1.3× the
+    measured runtime of the slowest CI leg, and exceeding it raised
+    `TimeoutExpired` mid-run — a traceback with no pytest summary and no
+    indication of which test was executing, indistinguishable from a flake. A
+    CI job bounds its own wall-clock; a test runner capping the tests is a
+    truncation dressed up as a failure. `pytest-xdist` is now available in its
+    environment so a caller can pass `-n auto`, but it stays serial by default:
+    a user's suite may not be parallel-safe and jm cannot know.
+
 ## [0.42.0] — 2026-08-02
 
 ### Added

@@ -28,6 +28,7 @@ Doc sources, in precedence order, for both the record and each field:
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 from . import _types as T
@@ -180,6 +181,30 @@ def descriptor_c(
         f"}};\n"
         f"static PyTypeObject *{sid}_type = NULL;\n\n"
     )
+
+
+def find_descriptor(text: str, sid: str) -> str:
+    """The file-scope structseq statics for wrapper *sid* in *text*, or ``""``.
+
+    gh-729. :func:`descriptor_c` emits three file-scope declarations that the
+    wrapper function then references. A **full** render prepends them to the
+    function, so they always travel together — but the incremental path that
+    adds a member to a sacred ``_ext_<obj>.c`` fragment splices *functions*
+    (located by name) and *PyMethodDef rows*, and a static is neither. The
+    fragment gained a body referencing ``<sid>_type`` with nothing declaring
+    it, and did not compile.
+
+    Kept next to the emitter on purpose: whatever ``descriptor_c`` writes is
+    what this has to find, and a copy of that shape living in the splicer is a
+    copy that goes stale the first time the descriptor changes.
+    """
+    m = re.search(
+        rf"static PyStructSequence_Field {re.escape(sid)}_fields\[\]"
+        rf".*?static PyTypeObject \*{re.escape(sid)}_type = NULL;\n",
+        text,
+        re.DOTALL,
+    )
+    return m.group(0) if m else ""
 
 
 # ── the Python face ─────────────────────────────────────────────────────────
