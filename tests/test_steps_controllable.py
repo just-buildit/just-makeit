@@ -484,8 +484,23 @@ def test_step_controllable_perf_before_after(tmp_path, capsys):
     noise): a controllable step()'s OMIT path should be ~indistinguishable from
     a non-controllable twin's step(), while passing the override adds only the
     extra-arg cost. Two objects in one project so both import side by side.
-    Reports before/after ns/call; asserts only a loose bound so CI noise can't
-    flake it."""
+
+    The assertion is on the omit/base RATIO measured *within* a round, not on
+    two independently-taken bests (gh-735). The suite runs under
+    ``-n auto --dist load``, so this subprocess times itself while other xdist
+    workers compile C on the same runner. Timing base to completion and only
+    then timing omit means the two see different load, which is exactly how it
+    failed: base held steady at 86.0/86.4 ns across two different runners while
+    omit swung 233.6 -> 306.7, giving a 3.5x "regression" that does not exist
+    (serially, omit is within 0.4-2.8 ns of base). Uniform slowness would have
+    moved both.
+
+    Interleaving makes the comparison contention-invariant: each round times
+    all three back to back, so a load spike inflates the whole round rather
+    than one term of the comparison. Taking the best ratio across rounds then
+    needs only ONE round where the runner was evenly loaded -- while a genuine
+    regression, being present in every round, survives the minimum.
+    """
     if _SKIP:
         pytest.skip(_SKIP)
     root = tmp_path / "proj"
@@ -513,17 +528,31 @@ def test_step_controllable_perf_before_after(tmp_path, capsys):
         "from proj import Base, Ctrl\n"
         "b = Base(gain=2.0); c = Ctrl(gain=2.0)\n"
         "N = 300000\n"
-        "def t(fn):\n"
-        "    best = float('inf')\n"
-        "    for _ in range(7):\n"  # best-of-7 rejects scheduler noise
-        "        s = time.perf_counter()\n"
-        "        for _ in range(N): fn()\n"
-        "        best = min(best, time.perf_counter() - s)\n"
-        "    return best / N * 1e9\n"
-        "base = t(lambda: b.step(1.0))\n"
-        "omit = t(lambda: c.step(1.0))\n"
-        "pas  = t(lambda: c.step(1.0, 3.0))\n"
-        "print(f'{base:.1f} {omit:.1f} {pas:.1f}')\n"
+        "fns = (lambda: b.step(1.0),\n"
+        "       lambda: c.step(1.0),\n"
+        "       lambda: c.step(1.0, 3.0))\n"
+        "def once(fn):\n"
+        "    s = time.perf_counter()\n"
+        "    for _ in range(N): fn()\n"
+        "    return (time.perf_counter() - s) / N * 1e9\n"
+        "best = [float('inf')] * 3\n"
+        "rounds = []\n"
+        # All three timed back to back, so a load spike inflates the whole
+        # round rather than one term of the comparison.
+        "for _ in range(7):\n"
+        "    r = [once(f) for f in fns]\n"
+        "    best = [min(x, y) for x, y in zip(best, r)]\n"
+        "    rounds.append((r[1] / r[0], r[2] / r[0]))\n"
+        # MEDIAN, not min. The minimum ratio is the round where base happened
+        # to take the biggest spike, so it is biased toward passing -- it read
+        # 0.73x locally, i.e. "omit is faster than base", which is not a
+        # measurement anyone should gate on. The median of 7 tolerates three
+        # bad rounds in either direction without inventing headroom.
+        "mid = len(rounds) // 2\n"
+        "omit_r = sorted(x for x, _ in rounds)[mid]\n"
+        "pas_r = sorted(y for _, y in rounds)[mid]\n"
+        "print(f'{best[0]:.1f} {best[1]:.1f} {best[2]:.1f} "
+        "{omit_r:.3f} {pas_r:.3f}')\n"
     )
     out = subprocess.run(
         [sys.executable, "-c", measure],
@@ -533,18 +562,27 @@ def test_step_controllable_perf_before_after(tmp_path, capsys):
         timeout=600,
     )
     assert out.returncode == 0, out.stderr
-    base, omit, pas = (float(v) for v in out.stdout.split())
+    base, omit, pas, omit_ratio, pas_ratio = (
+        float(v) for v in out.stdout.split()
+    )
     with capsys.disabled():
         print(
             f"\n[step() perf] non-controllable step(x):    {base:6.1f} ns/call"
             f"\n[step() perf] controllable   step(x):    {omit:6.1f} ns/call "
-            f"({omit - base:+.1f} vs base — omit path)"
+            f"({omit - base:+.1f} vs base — omit path, median ratio "
+            f"{omit_ratio:.2f}x)"
             f"\n[step() perf] controllable   step(x, g): {pas:6.1f} ns/call "
-            f"({pas - base:+.1f} vs base — pass path)"
+            f"({pas - base:+.1f} vs base — pass path, median ratio "
+            f"{pas_ratio:.2f}x)"
         )
-    # Loose sanity: the omit path must not be pathologically slower than base
-    # (catches e.g. an accidental persistent setter call). Tolerant of noise.
-    assert omit < base * 2 + 40, (base, omit, pas)
+    # The omit path must not be pathologically slower than base -- catches e.g.
+    # an accidental persistent setter call, which would cost far more than 2x.
+    # Asserting the within-round median ratio rather than `omit < base * 2 + 40`
+    # is what makes this survive a contended runner (gh-735): the old form
+    # compared two bests taken minutes apart under different load. Serially the
+    # ratio sits near 1.0, so 2.0 leaves room for noise without leaving room
+    # for a regression.
+    assert omit_ratio < 2.0, (base, omit, pas, omit_ratio, pas_ratio)
 
 
 # ── PR-1b: generators, sinks, array-input ─────────────────────────────────────
