@@ -123,4 +123,5 @@ dev = [
     # Docs tooling; zensical requires >=3.10, so gate it to keep dev deps
     # resolvable on the 3.9 floor.
     "zensical>=0.0.29; python_version >= '3.10'",
+    "pytest-xdist>=3.8.0",
 ]

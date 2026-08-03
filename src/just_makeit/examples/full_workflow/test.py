@@ -21,13 +21,14 @@ Also runnable directly: python3 examples/full_workflow/test.py
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from just_makeit._bench import child_pytest_env
 
 HERE = Path(__file__).parent
 
@@ -63,6 +64,11 @@ def _enrich_headers(proj: Path) -> None:
 
 
 def _cmd(args, cwd, **kw):
+    # Every command here runs against the *scaffolded* project, so none of them
+    # should inherit the outer suite's pytest state. The same helper `jm bench`
+    # uses -- see its docstring for why an inherited PYTEST_XDIST_WORKER makes
+    # `pytest --benchmark-only` fail outright.
+    kw.setdefault("env", child_pytest_env())
     r = subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, timeout=600, **kw
     )
@@ -378,7 +384,9 @@ p.write_text(src)
         _cmd([str(b)], cwd=proj)
 
     # 10. timeit-style Python benchmarks (gain — standalone runnable)
-    bench_env = {**os.environ, "PYTHONPATH": str(proj / "src")}
+    # child_pytest_env(), not os.environ: this dict is passed explicitly, so it
+    # would otherwise re-import the very PYTEST_XDIST_WORKER that _cmd strips.
+    bench_env = {**child_pytest_env(), "PYTHONPATH": str(proj / "src")}
     gain_bench_path = proj / "src" / "my_dsp" / "benchmarks" / "bench_gain.py"
     if gain_bench_path.exists():
         _cmd([sys.executable, str(gain_bench_path)], cwd=proj, env=bench_env)
