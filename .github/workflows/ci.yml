@@ -117,34 +117,41 @@ jobs:
           done
           echo "::error::uv tool install failed after 3 attempts"
           exit 1
-      # Deliberately NOT `make test`, and the one exception to the
-      # Makefile-is-SSOT rule in this file: `jm-install-deps` / `jm-run-tests`
-      # are entry points jm SHIPS, so running them here is testing the product
-      # on each OS/Python, not reaching for a dev tool. (`install-deps-smoke`
-      # below exists for the same reason.) Everything that is dev tooling —
-      # lint, coverage, the example suite — goes through `make`.
+      # `jm-install-deps` stays: it is an entry point jm SHIPS, so running it
+      # on each OS/Python is testing the product, not reaching for a dev tool.
+      # It also installs the toolchain the suite needs to cmake-build the
+      # projects it scaffolds.
       - run: jm-install-deps ${{ runner.temp }}/jm-venv
-      # `-n auto` is passed here rather than baked into `jm-run-tests`: that is
-      # a shipped entry point, and a user's suite may not be parallel-safe.
-      # jm's own is (every chdir goes through monkeypatch.chdir), and this is
-      # the leg that set CI's wall-clock -- 464s on macOS/3.9 against a ~250s
-      # median, all of it serial.
-      - run: jm-run-tests -n auto --dist load
+
+      # `make test`, not `jm-run-tests -n auto --dist load`. That looked like
+      # the same carve-out as the line above, and it was not: `jm-run-tests` is
+      # a second hardcoded copy of the Makefile's PYTEST_ISOLATED invocation,
+      # so running jm's OWN unit suite through it put the command outside the
+      # SSOT — and it had already drifted two ways. It omits the tomli backport
+      # that pyproject requires below 3.11, and it carries no EXAMPLES_IGNORE,
+      # so the matrix re-ran the end-to-end example builds that the `examples`
+      # job already owns. The `-n auto --dist load` literal here was the third
+      # copy: the parallelism setting for the suite lived in a workflow file
+      # rather than beside every other pytest flag.
+      #
+      # The shipped runner keeps its own coverage in `install-deps-smoke`.
+      - run: make test
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.
         #
         # That was called a flake at the time on the evidence that a re-run
-        # passed. The likelier mechanism: `jm-run-tests` capped the suite at
-        # `timeout=600` while this leg took 464s, so a slow runner raised
-        # TimeoutExpired mid-suite -- which produces exactly that signature,
-        # and which a re-run "fixes" just as convincingly as a flake. The cap
-        # is gone; the job's own `timeout-minutes` is the right bound.
+        # passed. The likelier mechanism: `jm-run-tests`, which this step used
+        # to call, capped the suite at `timeout=600` while this leg took 464s,
+        # so a slow runner raised TimeoutExpired mid-suite -- which produces
+        # exactly that signature, and which a re-run "fixes" just as
+        # convincingly as a flake. The cap is gone; the job's own
+        # `timeout-minutes` is the right bound.
         #
-        # PYTEST_ADDOPTS reaches pytest however `jm-run-tests` invokes it, so
-        # the report survives a crash or a truncated log. Retrying the step
-        # instead would have hidden a real failure just as effectively as it
-        # hides a flake.
+        # PYTEST_ADDOPTS is read by pytest itself, so it survives make -> uv ->
+        # pytest and the report is written however the suite is invoked.
+        # Retrying the step instead would have hidden a real failure just as
+        # effectively as it hides a flake.
         env:
           PYTEST_ADDOPTS: >-
             --junitxml=${{ runner.temp }}/pytest-report.xml
@@ -253,6 +260,17 @@ jobs:
         run: |
           command -v gcc || command -v clang || command -v cl \
             || { echo "No C compiler found"; exit 1; }
+
+      # The `test` matrix used to run jm's whole unit suite through
+      # `jm-run-tests`, which meant the shipped runner got exercised as a side
+      # effect of testing something else. That suite now goes through
+      # `make test` (the SSOT), so the runner needs coverage of its own or it
+      # would have none at all. A small selection is enough: what is being
+      # checked is that the entry point resolves its isolated environment and
+      # hands argv through to pytest, not that the tests pass — the matrix
+      # already answers that.
+      - name: Smoke-test the shipped jm-run-tests entry point
+        run: jm-run-tests tests/test_types.py -q
 
   coverage:
     name: Coverage
