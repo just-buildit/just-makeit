@@ -288,7 +288,7 @@ jobs:
       # hands argv through to pytest, not that the tests pass — the matrix
       # already answers that.
       - name: Smoke-test the shipped jm-run-tests entry point
-        run: jm-run-tests tests/test_types.py -q
+        run: jm-run-tests tests/test_lint_ssot.py -q
 
   coverage:
     name: Coverage
