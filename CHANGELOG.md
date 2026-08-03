@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-08-03
+
 ### Fixed
 
 - **Adding a `single = true` record method to an existing fragment no longer
