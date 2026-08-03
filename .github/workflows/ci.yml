@@ -107,7 +107,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install just-makeit as a tool
+      # Nothing below consumes the installed tool any more — `make install-deps`
+      # and `make test` both work from the checkout. This is kept deliberately,
+      # as the ONLY check that the package installs on every OS x Python in the
+      # matrix; install-deps-smoke covers 3.12 alone. Dropping it because it is
+      # no longer a prerequisite would quietly narrow that from 18 combinations
+      # to 3.
+      - name: Smoke-test that the package installs
         run: |
           # Retry a transient network flake before failing the job.
           for attempt in 1 2 3; do
@@ -117,11 +123,23 @@ jobs:
           done
           echo "::error::uv tool install failed after 3 attempts"
           exit 1
-      # `jm-install-deps` stays: it is an entry point jm SHIPS, so running it
-      # on each OS/Python is testing the product, not reaching for a dev tool.
-      # It also installs the toolchain the suite needs to cmake-build the
-      # projects it scaffolds.
-      - run: jm-install-deps ${{ runner.temp }}/jm-venv
+
+      # `make install-deps` — the standard target whose whole job is this, and
+      # which `make help` already advertises as "Install system build
+      # dependencies (jb.toml)". It hooks jb.toml's `dev` group
+      # (build-essential, cmake, pkg-config, python3-dev), which is exactly
+      # what the suite needs to cmake-build the projects it scaffolds.
+      #
+      # This step used to be `jm-install-deps <venv>`, kept on the grounds that
+      # it is a shipped entry point doing something no target does. It does do
+      # more — it also provisions a venv with numpy and just-makeit — but
+      # nothing here consumes that venv: `make test` brings its own numpy and
+      # the suite imports just_makeit from src/. So the extra was not
+      # load-bearing, and a target that exists was being bypassed.
+      #
+      # `jm-install-deps` is still exercised on every OS by install-deps-smoke,
+      # which is where testing the product belongs.
+      - run: make install-deps
 
       # `make test`, not `jm-run-tests -n auto --dist load`. That looked like
       # the same carve-out as the line above, and it was not: `jm-run-tests` is
