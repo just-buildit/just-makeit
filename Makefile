@@ -168,7 +168,24 @@ TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
 TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v
 
 TEST_ALL_DEPS = test test-examples
-GATES_DEPS    = lint docs-check test-all
+
+# `gates` answers "will this pass" before you push, so it has to BE the set CI
+# requires. It was not: it read `lint docs-check test-all`, which omitted
+# `coverage-gate` — the one gate that blocks a merge on a number — while
+# including `docs-check`, which no CI job runs under that name. Wrong in both
+# directions, and nothing invoked it (not CI, not scripts, not docs), so the
+# drift was free to happen. A target advertised as the merge gate that is not
+# one is worse than no target, because someone trusts it.
+#
+# The members are named directly rather than via `test-all`, so this list can
+# be compared to ci.yml's `ci-passed` needs mechanically — which
+# tests/test_lint_ssot.py now does, so it cannot drift back.
+#
+# `docs-check` stays, and is the one entry here that is NOT a required check:
+# docs.yml runs the same strict build, but only `CI passed` is required, so a
+# broken docs build cannot block a merge. Running it locally is the only place
+# that gets caught.
+GATES_DEPS    = lint test test-examples coverage-gate bench docs-check
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
 # Two commands because a report is not a gate — the standard splits them so CI
@@ -242,9 +259,14 @@ RELEASE_WATCH_CMD = REPO=just-buildit/just-makeit scripts/release-watch.sh \
 # ── Clean ────────────────────────────────────────────────────────────────────
 CLEAN_PATHS = dist/ site/ .pytest_cache/
 
+# `clean` used to leave every example's build artifacts behind, so a full clean
+# was two commands and you had to know the second one existed. `examples-clean`
+# stays a target in its own right (local.mk explains why it is local rather
+# than standard) — calling it from here just means `make clean` is complete.
 define CLEAN_CMD
 find src -name "*.pyc" -delete
 find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
+$(MAKE) -s examples-clean
 endef
 
 include standard.mk

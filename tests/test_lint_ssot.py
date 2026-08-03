@@ -322,6 +322,56 @@ class TestCIActuallyGates:
             "branch ruleset will merge PRs that fail lint"
         )
 
+    def test_gates_covers_every_make_gate_ci_runs(self):
+        """`make gates` must BE the set CI requires, or it is a lie.
+
+        It read `lint docs-check test-all`, which omitted `coverage-gate` --
+        the one gate that blocks a merge on a number -- while including
+        `docs-check`, which no CI job runs under that name. Wrong in both
+        directions, and nothing invoked it, so nothing could notice.
+
+        Asserted mechanically rather than as a literal list, so it keeps
+        holding as jobs are added: every make target a CI step runs must be
+        reachable from `gates`. Provisioning steps are excluded by name, not
+        by pattern, so adding one is a deliberate edit here.
+
+        The converse is deliberately NOT asserted -- `gates` may be a strict
+        superset. `docs-check` is the standing example: docs.yml runs the same
+        strict build, but only `CI passed` is a required check, so a broken
+        docs build cannot block a merge and running it locally is the only
+        place it gets caught.
+        """
+        provisioning = {"install-deps"}
+        ci_targets = {
+            m.group(1)
+            for m in re.finditer(
+                r"^\s*(?:- )?run: make (\S+)\s*$", _read(CI), re.M
+            )
+        } - provisioning
+        assert ci_targets, "no `run: make <target>` steps found in ci.yml"
+
+        db = _make_db()
+
+        def prereqs(name):
+            m = re.search(rf"^{re.escape(name)}:(.*)$", db, re.M)
+            return m.group(1).split() if m else []
+
+        # Transitive, so reintroducing an aggregate (`test-all`) still counts.
+        closure, stack = set(), ["gates"]
+        while stack:
+            for p in prereqs(stack.pop()):
+                if p not in closure:
+                    closure.add(p)
+                    stack.append(p)
+
+        missing = sorted(ci_targets - closure)
+        assert not missing, (
+            f"`make gates` does not run {missing}, which CI does. Its help "
+            "says it runs every gate that guards a merge, so a developer who "
+            "trusts it before pushing gets a false green. Add them to "
+            "GATES_DEPS in the Makefile."
+        )
+
     def test_lint_job_uses_python_that_can_install_mdformat(self):
         """`make lint-mdformat` self-skips below 3.10 — CI must not skip."""
         ci = _read(CI)
