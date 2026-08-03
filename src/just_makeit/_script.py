@@ -53,6 +53,35 @@ def _bool_flag(name: str) -> str:
     return f"    {name} \\\n"
 
 
+def _module_flags(cfg: dict, mod: str) -> list[str]:
+    """CLI flags reconstructing a ``[module.X]`` table.
+
+    The module command used to be emitted bare, so every key `jm module`
+    accepts was lost on replay — including ``doc``, which gh-645 had just
+    finished wiring through the other two writers. ``objects`` is not a flag
+    (each object names its own ``--module``) and ``package`` has no flag at
+    all; the caller emits a NOTE for that one.
+    """
+    parts: list[str] = []
+
+    for d in C.extra_include_dirs(cfg, mod):
+        parts.append(_flag("--extra-include-dirs", d))
+
+    for lib in C.extra_link_libs(cfg, mod):
+        parts.append(_flag("--extra-link-libs", lib))
+
+    for t in C.extra_types(cfg, mod):
+        parts.append(_flag("--extra-types", t))
+
+    if C.functions_in_core(cfg, mod):
+        parts.append(_bool_flag("--functions-in-core"))
+
+    if C.module_doc(cfg, mod):
+        parts.append(_flag("--doc", C.module_doc(cfg, mod)))
+
+    return parts
+
+
 def _object_flags(
     cfg: dict, comp: str, module: str | None = None
 ) -> list[str]:
@@ -99,6 +128,9 @@ def _object_flags(
     if C.is_no_reset(cfg, comp):
         parts.append(_bool_flag("--no-reset"))
 
+    if C.is_serializable(cfg, comp):
+        parts.append(_bool_flag("--serializable"))
+
     if C.step_delegates(cfg, comp):
         parts.append(_bool_flag("--step-delegates-to-steps"))
 
@@ -119,6 +151,52 @@ def _object_flags(
     cf = C.object_create_fn(cfg, comp)
     if cf:
         parts.append(_flag("--create-fn", cf))
+
+    return parts
+
+
+def _record_flags(entry: dict) -> list[str]:
+    """CLI flags reconstructing the record keys of a method or function.
+
+    `jm method` and `jm function` both accept ``--result-field``, so the
+    emitter is shared rather than copied — a second copy is what let
+    ``result_fields`` be dropped from one writer while the other kept it.
+    Only ``jm method`` accepts the ``--single`` shape and its three
+    modifiers, so those are emitted only when the manifest declares them
+    (a function never records ``single``).
+
+    Dropping these was gh-720: the replayed script rebuilt a method that
+    returned a bare scalar instead of a record — the gh-490 silent-divergence
+    trap, one shape further on.
+
+    >>> _record_flags({"result_fields": [{"name": "enob", "type": "double"}]})
+    ['    --result-field enob:double \\\\\\n']
+    >>> _record_flags({"result_fields": [{"name": "n", "type": "int",
+    ...                                   "doc": "Peak count."}],
+    ...                "single": True, "record_name": "Peaks"})
+    ['    --result-field "n:int:Peak count." \\\\\\n', '    --single \\\\\\n', \
+'    --record-name Peaks \\\\\\n']
+    """
+    parts: list[str] = []
+
+    for f in entry.get("result_fields", []) or []:
+        spec = f"{f['name']}:{f['type']}"
+        if f.get("doc"):
+            spec += f":{f['doc']}"
+        parts.append(_flag("--result-field", spec))
+
+    if entry.get("single"):
+        parts.append(_bool_flag("--single"))
+
+    # gh-257 / gh-261 / gh-646. Each only means anything under --single, and
+    # the CLI rejects them without it, so they ride behind the same guard.
+    for key, flagname in (
+        ("record_name", "--record-name"),
+        ("record_module", "--record-module"),
+        ("record_doc", "--record-doc"),
+    ):
+        if entry.get(key):
+            parts.append(_flag(flagname, str(entry[key])))
 
     return parts
 
@@ -153,6 +231,10 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(f'--count-default "{m["count_default"]}"')
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
+    # gh-684: the worst-case output count. Dropping it replayed the method
+    # with jm's derived default instead of the declared bound.
+    if m.get("max_out"):
+        parts.append(_flag("--max-out", str(m["max_out"])))
 
     for mo in m.get("multi_output", []):
         parts.append(_flag("--multi-output", mo))
@@ -162,6 +244,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     if m.get("out_divisor") and m["out_divisor"] != 1:
         parts.append(_flag("--out-divisor", str(m["out_divisor"])))
+
+    parts += _record_flags(m)
 
     return parts
 
@@ -355,6 +439,8 @@ def _function_flags(fn: dict, module: str) -> list[str]:
     if fn.get("check_return"):
         parts.append(_bool_flag("--check-return"))
 
+    parts += _record_flags(fn)
+
     if fn.get("doc"):
         parts.append(_flag("--doc", fn["doc"]))
 
@@ -423,7 +509,11 @@ def run(root: Path) -> None:
                 f"# CLI flag — re-add it to just-makeit.toml and run"
                 f" `just-makeit apply`.\n"
             )
-        lines.append(_render_cmd(["just-makeit", "module", mod], []))
+        lines.append(
+            _render_cmd(
+                ["just-makeit", "module", mod], _module_flags(cfg, mod)
+            )
+        )
 
     if mods:
         lines.append("\n")

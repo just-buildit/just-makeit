@@ -32,7 +32,10 @@ idempotence half to protect you, which is the point.
 from __future__ import annotations
 
 import hashlib
+import io
+import shlex
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
@@ -41,6 +44,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
+from just_makeit._cli import main as cli_main  # noqa: E402
+from just_makeit._script import run as script_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
@@ -227,6 +232,80 @@ class TestScaffoldAndReplayAgree:
         apply_run(root)
         assert _tree_digest(root) == digest
         assert status_run(root) == 0
+
+
+# ── the third writer ────────────────────────────────────────────────────────
+# `jm script` reconstructs the CLI history from the manifest, which makes it a
+# third writer over the same keys — and the two arms above cannot see it, since
+# neither the scaffold nor `jm apply` ever reads its output. gh-720: it emitted
+# no record flags at all, so a replayed `--single` method came back returning a
+# bare scalar. Like the idempotence arm, this needs **no per-key registration**:
+# a key dropped from the emitted script shows up as a manifest that differs
+# after the round trip, whoever added it.
+
+
+def _commands(script: str) -> list[list[str]]:
+    """Split an emitted script into argv lists, honouring `\\` continuations.
+
+    `_render_cmd` is the only thing that writes these, so the grammar is
+    exactly: comments, blank lines, one `cd`, and `just-makeit` commands whose
+    flags are continued with a trailing backslash and quoted by `_script._q`.
+    `shlex` undoes that quoting the same way `sh` would.
+    """
+    out: list[list[str]] = []
+    buf = ""
+    for line in script.splitlines():
+        s = line.strip()
+        if not buf and (not s or s.startswith("#")):
+            continue
+        if s.endswith("\\"):
+            buf += s[:-1] + " "
+            continue
+        out.append(shlex.split(buf + s))
+        buf = ""
+    assert not buf, "the emitted script ends mid-continuation"
+    return out
+
+
+def _replay(script: str, dest: Path, monkeypatch) -> Path:
+    """Run an emitted script in-process, returning the rebuilt project root."""
+    dest.mkdir(parents=True, exist_ok=True)
+    cwd = dest
+    for argv in _commands(script):
+        if argv[0] == "cd":
+            cwd = cwd / argv[1]
+            continue
+        assert argv[0] == "just-makeit", f"unexpected command: {argv}"
+        monkeypatch.chdir(cwd)
+        monkeypatch.setattr(sys, "argv", argv)
+        with redirect_stdout(io.StringIO()):
+            try:
+                cli_main()
+            except SystemExit as exc:
+                assert not exc.code, (
+                    f"the emitted script does not run: `{shlex.join(argv)}` "
+                    f"exited {exc.code}."
+                )
+    return cwd
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES), ids=sorted(SHAPES))
+def test_script_round_trips_the_manifest(tmp_path, shape, monkeypatch):
+    root = SHAPES[shape](tmp_path)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        script_run(root)
+
+    rebuilt = _replay(buf.getvalue(), tmp_path / "replay", monkeypatch)
+
+    before, after = C.load(root), C.load(rebuilt)
+    assert after == before, (
+        f"`jm script` does not round-trip a {shape} project. The emitted "
+        "script rebuilds a DIFFERENT manifest, which is worse than failing "
+        "loudly — usually a key `jm method`/`jm object` accepts that "
+        "`_script.py` never learned to emit.\n"
+        f"emitted script:\n{buf.getvalue()}"
+    )
 
 
 # ── both faces ──────────────────────────────────────────────────────────────

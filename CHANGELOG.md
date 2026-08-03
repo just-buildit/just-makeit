@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`just-makeit script` now reconstructs four manifest shapes it was silently
+    dropping (gh-720).** `jm script` rebuilds the CLI history from
+    `just-makeit.toml`, which makes it a *third* writer over the same keys that
+    `jm <cmd>` and `jm apply` write — and one the existing wiring gate could
+    not see, because neither of those ever reads its output. It emitted:
+
+    - no record flags at all, so a replayed `--single` method came back
+        returning a bare scalar instead of a named record: `--result-field`
+        (with its optional `:doc`), `--single`, `--record-name`,
+        `--record-module` and `--record-doc`. Pre-existing since gh-244;
+    - no `--serializable`, so `state_bytes()` / `get_state()` / `set_state()`
+        vanished from the replayed object;
+    - no `--max-out`, so a variable-output method was replayed with jm's
+        derived default instead of the declared bound (gh-684);
+    - a bare `just-makeit module <name>`, losing every flag `jm module`
+        accepts — including `doc`, which gh-645 had just finished wiring
+        through the other two writers.
+
+    A reconstruction that quietly differs from the original is worse than one
+    that fails loudly (the gh-490 lesson), so all four are now emitted, and
+    `--result-field` is emitted from one shared builder used by both
+    `jm method` and `jm function`.
+
+### Added
+
+- **The manifest wiring gate now replays the emitted script and compares
+    manifests (gh-720).** A third arm alongside the scaffold/apply idempotence
+    checks, covering the third writer. Like the idempotence half it needs **no
+    per-key registration** — a key dropped from the emitted script surfaces as
+    a manifest that differs after the round trip, whoever added it. It found
+    three of the four bugs above on its first run.
+
 ## [0.43.0] — 2026-08-03
 
 ### Fixed
