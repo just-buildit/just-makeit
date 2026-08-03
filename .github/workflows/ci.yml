@@ -371,11 +371,36 @@ jobs:
         if: failure()
         run: git --no-pager diff
 
+  # `make bench` ran nowhere — not CI, not release — so nothing could tell you
+  # that tests/bench_scaffold.py had stopped working. Not hypothetical: the
+  # *product* `jm bench` broke under xdist on 2026-08-03 and was found only
+  # because someone happened to run it.
+  #
+  # This asserts the benchmarks EXECUTE. It deliberately does not assert
+  # timings: a shared runner cannot measure them (gh-735), and `make bench`
+  # only reports — `bench-compare` is the one that would compare, and it stays
+  # out of CI. Costs ~3.5s plus setup, and needs no toolchain, since these
+  # benchmark scaffold generation rather than anything compiled.
+  bench:
+    name: Benchmarks run
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - run: make bench
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, examples, install-deps-smoke, coverage, lint]
+    needs: [changes, test, examples, install-deps-smoke, coverage, lint, bench]
     if: always()
     steps:
       - run: |
