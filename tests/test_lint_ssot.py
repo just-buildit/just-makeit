@@ -23,6 +23,16 @@ contract had already broken in practice:
 
 These tests assert the invariants rather than any one command string, so they
 keep holding as targets get added.
+
+Not here: **whether `gates` covers every make target CI runs**. This file
+briefly carried a Python implementation of that check (gh-741), and canonical
+``standard.mk`` then grew ``gates-check``, which does the same job in the same
+place as the other drift gates and runs as part of ``make lint``. Two peer
+implementations of one primitive drift — a fix to either silently leaves the
+other wrong — so the local copy is gone and the canonical gate is the only one.
+Verified equivalent before deleting: canonical catches a `coverage-gate`
+dropped from ``GATES_DEPS``, and sees a target invoked with trailing args, in a
+``run: |`` block, and after ``&&``, while ignoring one named in a comment.
 """
 
 import functools
@@ -73,58 +83,6 @@ def _make_db():
         + (proc.stderr or "(no stderr)")
     )
     return proc.stdout
-
-
-_RUN_STEP = re.compile(r"^(?P<indent>\s*)(?:- )?run:(?P<rest>.*)$")
-_BLOCK_SCALARS = {"|", "|-", "|+", ">", ">-", ">+"}
-# `make` at a COMMAND position — line start, or after &&, ||, ; — then the
-# first token that is not a flag. Deliberately not anchored to end-of-line, so
-# `make coverage-gate COV_BASE=…` is seen.
-_MAKE_CALL = re.compile(r"(?:^|&&|\|\||;)\s*make\s+(?:-\S+\s+)*([a-z][\w-]*)")
-
-
-def _make_calls_in(line):
-    s = line.strip()
-    return set() if s.startswith("#") else set(_MAKE_CALL.findall(s))
-
-
-def ci_make_targets(text):
-    """Every make target a CI step runs, across both `run:` spellings.
-
-    The first cut of this matched ``^\\s*(?:- )?run: make (\\S+)\\s*$``, which
-    anchors the target to end-of-line and requires the command on the `run:`
-    line itself. It therefore saw ``- run: make test`` and silently skipped
-    ``make coverage-gate COV_BASE=…`` (trailing args), anything inside a
-    ``run: |`` block, and ``make build && make test`` — so a gate invoked any
-    of those ways was not required to be in `gates`, which is the exact
-    false-green the check exists to prevent (gh-741).
-
-    It matters because this check is being adopted by sibling repos, and
-    doppler's CI runs `make test-python PYTEST_ARGS=…` — ported as-is it would
-    have gone green while checking neither of that repo's two real gates.
-
-    A `#` line is skipped: this repo's ci.yml has comments that name targets
-    in prose (``# `make install-deps` — the standard target …``).
-    """
-    found, block_indent = set(), None
-    for line in text.splitlines():
-        if block_indent is not None:
-            if (
-                line.strip()
-                and (len(line) - len(line.lstrip())) <= block_indent
-            ):
-                block_indent = None  # dedented out of the block scalar
-            else:
-                found |= _make_calls_in(line)
-                continue
-        m = _RUN_STEP.match(line)
-        if m:
-            rest = m.group("rest").strip()
-            if rest in _BLOCK_SCALARS:
-                block_indent = len(m.group("indent"))
-            else:
-                found |= _make_calls_in(rest)
-    return found
 
 
 def _hooks():
@@ -357,69 +315,6 @@ class TestNobodyBypassesTheMakefile:
         )
 
 
-class TestCIInvocationsAreAllSeen:
-    """The extractor behind the gates check, pinned per form (gh-741).
-
-    A drift detector that silently stops seeing an invocation form is worse
-    than none, because it keeps reporting green. These pin each spelling that
-    reaches a gate, so narrowing the parser fails here rather than going
-    quietly unnoticed in whichever repo adopts it next.
-    """
-
-    @pytest.mark.parametrize(
-        "form,expected",
-        [
-            ("      - run: make test\n", {"test"}),
-            # trailing args -- doppler's CI does exactly this
-            (
-                "      - run: make coverage-gate COV_BASE=origin/main\n",
-                {"coverage-gate"},
-            ),
-            # block scalar
-            (
-                "      - name: x\n        run: |\n"
-                "          make docs-check\n          make bench\n",
-                {"docs-check", "bench"},
-            ),
-            # chained
-            ("      - run: make build && make test\n", {"build", "test"}),
-            # flags before the target
-            ("      - run: make -s lint-ruff\n", {"lint-ruff"}),
-            # a comment naming a target in prose is NOT an invocation
-            ("      # run: make notathing\n", set()),
-            # ...and neither is prose about a target
-            ("      # `make wheel`, not the command it runs\n", set()),
-        ],
-        ids=[
-            "single-line",
-            "trailing-args",
-            "block-scalar",
-            "chained",
-            "flags",
-            "comment",
-            "prose",
-        ],
-    )
-    def test_form_is_seen(self, form, expected):
-        assert ci_make_targets(form) == expected
-
-    def test_block_scalar_ends_at_dedent(self):
-        """A later step's `make` must not be swallowed into the block."""
-        text = (
-            "      - run: |\n"
-            "          make docs-check\n"
-            "      - name: unrelated\n"
-            "        run: echo hi\n"
-        )
-        assert ci_make_targets(text) == {"docs-check"}
-
-    def test_the_real_ci_yml_yields_its_known_targets(self):
-        found = ci_make_targets(_read(CI))
-        assert {"lint", "test", "test-examples", "coverage-gate"} <= found, (
-            f"the extractor stopped seeing known CI gates; found {found}"
-        )
-
-
 class TestCIActuallyGates:
     """A lint job that the merge gate ignores is decoration."""
 
@@ -435,51 +330,6 @@ class TestCIActuallyGates:
         assert "lint" in [n.strip() for n in m.group(1).split(",")], (
             "`lint` must be in the CI-passed aggregator's needs, or the "
             "branch ruleset will merge PRs that fail lint"
-        )
-
-    def test_gates_covers_every_make_gate_ci_runs(self):
-        """`make gates` must BE the set CI requires, or it is a lie.
-
-        It read `lint docs-check test-all`, which omitted `coverage-gate` --
-        the one gate that blocks a merge on a number -- while including
-        `docs-check`, which no CI job runs under that name. Wrong in both
-        directions, and nothing invoked it, so nothing could notice.
-
-        Asserted mechanically rather than as a literal list, so it keeps
-        holding as jobs are added: every make target a CI step runs must be
-        reachable from `gates`. Provisioning steps are excluded by name, not
-        by pattern, so adding one is a deliberate edit here.
-
-        The converse is deliberately NOT asserted -- `gates` may be a strict
-        superset. `docs-check` is the standing example: docs.yml runs the same
-        strict build, but only `CI passed` is a required check, so a broken
-        docs build cannot block a merge and running it locally is the only
-        place it gets caught.
-        """
-        provisioning = {"install-deps"}
-        ci_targets = ci_make_targets(_read(CI)) - provisioning
-        assert ci_targets, "no `run: make <target>` steps found in ci.yml"
-
-        db = _make_db()
-
-        def prereqs(name):
-            m = re.search(rf"^{re.escape(name)}:(.*)$", db, re.M)
-            return m.group(1).split() if m else []
-
-        # Transitive, so reintroducing an aggregate (`test-all`) still counts.
-        closure, stack = set(), ["gates"]
-        while stack:
-            for p in prereqs(stack.pop()):
-                if p not in closure:
-                    closure.add(p)
-                    stack.append(p)
-
-        missing = sorted(ci_targets - closure)
-        assert not missing, (
-            f"`make gates` does not run {missing}, which CI does. Its help "
-            "says it runs every gate that guards a merge, so a developer who "
-            "trusts it before pushing gets a false green. Add them to "
-            "GATES_DEPS in the Makefile."
         )
 
     def test_lint_job_uses_python_that_can_install_mdformat(self):
