@@ -68,11 +68,34 @@ MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/
 # calls `make -s lint-<tool>` so a hook can never run a tool differently from
 # the way `make format` runs it. FORMAT_TOOLS is the subset `format` runs, in
 # order — ruff-format first, since a fix can invalidate a reformat.
-LINT_TOOLS   = ruff ruff-format mdformat
-FORMAT_TOOLS = ruff-format ruff mdformat
+#
+# EVERY hook that runs a Python tool dispatches here, including the two local
+# scripts: they used to carry `entry: python3 scripts/<x>.py` in the hook
+# config, which is the same drift one layer over. Bare `python3` is whatever
+# is on PATH rather than the locked dev env (sync_version.py needs tomllib, so
+# on a 3.9/3.10 PATH python it did not run at all), and with the command living
+# only in the hook there was no way to run by hand what pre-commit runs.
+LINT_TOOLS   = ruff ruff-format mdformat sync-version assemble-examples
+# `format` is the auto-fixer, so sync-version is deliberately NOT here: it
+# exits 1 when it rewrites jb.toml (pre-commit's "re-stage me" convention),
+# and a fixer that fails because it fixed something is a trap. assemble-examples
+# returns 0 either way, and must stay LAST for the same reason it is last in
+# the hook config -- it inlines scripts ruff-format may have just rewrapped.
+FORMAT_TOOLS = ruff-format ruff mdformat assemble-examples
 
 LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
 LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
+LINT_sync-version = $(DEV_RUN) python scripts/sync_version.py
+
+# Whole-tree, like every other tool here. The hook used to pass pre-commit's
+# staged paths, so it re-assembled only the examples a commit touched -- which
+# can pass while the whole-tree CI check (`assemble.py --check`) fails on the
+# same commit, the exact split this dispatch exists to close. Measured cost of
+# assembling all of them instead: 0.27s.
+define LINT_assemble-examples
+@git ls-files 'src/just_makeit/examples/*/.steps/*' \
+    | xargs -r $(DEV_RUN) python scripts/assemble_examples.py
+endef
 
 # mdformat needs Python >=3.10 (see pyproject's dev group). On a 3.9 dev env it
 # is simply absent, so skip with a notice rather than failing — the CI lint job
