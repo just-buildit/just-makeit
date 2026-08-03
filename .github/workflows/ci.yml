@@ -124,13 +124,27 @@ jobs:
       # below exists for the same reason.) Everything that is dev tooling —
       # lint, coverage, the example suite — goes through `make`.
       - run: jm-install-deps ${{ runner.temp }}/jm-venv
-      - run: jm-run-tests
+      # `-n auto` is passed here rather than baked into `jm-run-tests`: that is
+      # a shipped entry point, and a user's suite may not be parallel-safe.
+      # jm's own is (every chdir goes through monkeypatch.chdir), and this is
+      # the leg that set CI's wall-clock -- 464s on macOS/3.9 against a ~250s
+      # median, all of it serial.
+      - run: jm-run-tests -n auto --dist load
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
-        # which test died -- only that the job exited 1. PYTEST_ADDOPTS reaches
-        # pytest however `jm-run-tests` invokes it, so the report survives a
-        # crash or a truncated log. Retrying the step instead would have hidden
-        # a real failure just as effectively as it hides a flake.
+        # which test died -- only that the job exited 1.
+        #
+        # That was called a flake at the time on the evidence that a re-run
+        # passed. The likelier mechanism: `jm-run-tests` capped the suite at
+        # `timeout=600` while this leg took 464s, so a slow runner raised
+        # TimeoutExpired mid-suite -- which produces exactly that signature,
+        # and which a re-run "fixes" just as convincingly as a flake. The cap
+        # is gone; the job's own `timeout-minutes` is the right bound.
+        #
+        # PYTEST_ADDOPTS reaches pytest however `jm-run-tests` invokes it, so
+        # the report survives a crash or a truncated log. Retrying the step
+        # instead would have hidden a real failure just as effectively as it
+        # hides a flake.
         env:
           PYTEST_ADDOPTS: >-
             --junitxml=${{ runner.temp }}/pytest-report.xml
