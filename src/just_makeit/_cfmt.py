@@ -14,6 +14,18 @@ makes jm reformat the binding to the project's ``.clang-format`` as it emits
 it, so the regenerated file already matches what is committed and status stays
 clean.
 
+**Which binary does it is the project's to pin** (gh-745)::
+
+    [project]
+    c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+
+Default ``["clang-format"]`` — a bare PATH lookup, which is what jm did
+unconditionally before. That default is fine on one machine and wrong across
+two: doppler resolves 21.1.8 locally and 22.1.8 in CI, so the same input
+produces different bytes and ``jm status --check`` flips red on a project that
+has not changed. Formatting reproducibly requires naming the formatter, and
+only the project knows how it pins one.
+
 Scope: only the wholesale-regenerated ``*_ext.c`` glue is reformatted. Sacred
 sources (``*_core.c`` and the splice-patched ``native/inc/**`` headers) are
 left to the project's own formatter — reformatting them broke ``jm apply``
@@ -76,19 +88,30 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     ``--fallback-style`` when the project ships none) decides the layout.
     Idempotent: already-conformant files are left byte-identical.
 
-    A missing ``clang-format`` binary is a soft failure — a one-line warning to
-    stderr, and the command that triggered this still succeeds; jm's own output
-    is valid C either way, it just keeps its native indentation.
+    **Which** binary runs is ``[project] c_format_command`` (gh-745), default
+    ``["clang-format"]``. That indirection is what makes the output
+    reproducible: resolved on PATH, the version differs per machine, and a
+    ``c_style`` project's drift gate then flips red between local and CI on
+    identical input.
+
+    A missing binary is a soft failure — a one-line warning to stderr, and the
+    command that triggered this still succeeds; jm's own output is valid C
+    either way, it just keeps its native indentation.
     """
     if C.c_style(cfg) != "clang-format":
         return
 
-    binary = shutil.which("clang-format")
-    if binary is None:
+    command = C.c_format_command(cfg)
+    # Only argv[0] is resolved; the rest are that program's own arguments.
+    # A command routed through a runner (`uv run … clang-format`) therefore
+    # resolves `uv`, which is correct — `clang-format` may well not be on PATH
+    # at all in exactly the setup this key exists to support.
+    if shutil.which(command[0]) is None:
         print(
-            'WARNING: [project] c_style = "clang-format" but clang-format was '
-            "not found on PATH;\n  generated C keeps jm's default style. "
-            "Install clang-format or unset c_style.",
+            'WARNING: [project] c_style = "clang-format" but the formatter '
+            f"command {command[0]!r} was not found on PATH;\n  generated C "
+            "keeps jm's default style. Install it, fix [project] "
+            "c_format_command, or unset c_style.",
             file=sys.stderr,
         )
         return
@@ -101,7 +124,7 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     # covers projects that opted in without shipping one.
     proc = subprocess.run(
         [
-            binary,
+            *command,
             "-i",
             "--style=file",
             "--fallback-style=LLVM",
@@ -113,8 +136,8 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     )
     if proc.returncode != 0:
         print(
-            f"WARNING: clang-format failed; generated C left unformatted.\n"
-            f"  {proc.stderr.strip()}",
+            f"WARNING: {' '.join(command)} failed; generated C left "
+            f"unformatted.\n  {proc.stderr.strip()}",
             file=sys.stderr,
         )
         return
@@ -122,3 +145,32 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     if not quiet:
         n = len(files)
         print(f"  format  {n} C file{'s' if n != 1 else ''} (clang-format)")
+
+
+def format_version(cfg: dict) -> str:
+    """The formatter's own ``--version`` output, or ``""`` if unavailable.
+
+    gh-745. The point of pinning the command is that two machines produce the
+    same bytes, and the only way to *see* that is to ask the binary which
+    version it is. Used by ``jm status`` to report the formatter alongside the
+    drift result, so "stale on CI, clean locally" names its own cause instead
+    of being rediscovered.
+
+    Never raises: a missing or failing binary reports ``""`` exactly as it
+    does for formatting itself.
+    """
+    if C.c_style(cfg) != "clang-format":
+        return ""
+    command = C.c_format_command(cfg)
+    if shutil.which(command[0]) is None:
+        return ""
+    try:
+        proc = subprocess.run(
+            [*command, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""

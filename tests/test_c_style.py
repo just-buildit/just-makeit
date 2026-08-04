@@ -132,7 +132,12 @@ class TestFormatProject:
         monkeypatch.setattr(_cfmt.shutil, "which", lambda _name: None)
         _cfmt.format_project(tmp_path / "p", cfg)  # must not raise
         err = capsys.readouterr().err
-        assert "clang-format was not found" in err
+        # gh-745: the warning names the *configured* command rather than the
+        # literal "clang-format", since the two are no longer the same thing
+        # — a project routing through `uv run` needs to see which argv[0]
+        # was actually looked up.
+        assert "'clang-format' was not found on PATH" in err
+        assert "c_format_command" in err
 
     def test_no_native_src_yields_no_files(self, tmp_path):
         # A project without a native/src tree (nothing scaffolded yet) has no
