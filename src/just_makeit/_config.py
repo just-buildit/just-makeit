@@ -2520,7 +2520,13 @@ def c_format_command(cfg: dict) -> list[str]:
 
         [project]
         c_style = "clang-format"
-        c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+        c_format_command = ["uvx", "clang-format==22.1.8"]
+
+    The command must resolve the **same binary from any working directory**
+    (gh-758) — jm formats its temp scaffold from outside the project, so
+    ``["uv", "run", "--group", "dev", ...]``, which no-ops outside a project
+    and falls back to ``PATH``, formats the two compared sides with two
+    different formatters. ``jm status`` reports it when it happens.
 
     jm appends ``-i --style=file --fallback-style=LLVM`` and the file list, so
     the committed ``.clang-format`` still decides the layout — this changes

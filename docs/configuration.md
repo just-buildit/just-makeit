@@ -369,7 +369,7 @@ style otherwise sees permanent drift: jm regenerates the `*_ext.c` binding in
 ```toml
 [project]
 c_style = "clang-format"
-c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+c_format_command = ["uvx", "clang-format==22.1.8"]
 ```
 
 `c_style` decides **whether** to format; `c_format_command` decides **which
@@ -378,8 +378,23 @@ unset it defaults to `["clang-format"]` — a bare `PATH` lookup, which is fine
 on one machine and wrong across two: clang-format 21 and 22 format the same
 input differently, so a project whose developers and CI resolve different
 versions gets a drift gate that flips red on a tree nobody touched. Point it
-at whatever already pins the version (`uv run`, a pre-commit mirror, an
-absolute path) and the committed bytes stop depending on the machine.
+at whatever already pins the version (a `uvx` version specifier, a pre-commit
+mirror, an absolute path) and the committed bytes stop depending on the
+machine.
+
+!!! warning "The command must not depend on the working directory"
+
+    jm formats its **temp scaffold** — the tree `jm status` compares against
+    — from outside your project. A command that resolves a different binary
+    depending on where it runs therefore formats the two compared sides with
+    two different formatters, and no number of `jm apply` runs clears the
+    resulting drift.
+
+    `["uv", "run", "--group", "dev", "clang-format"]` is exactly this trap.
+    Outside a project `uv` prints `warning: --group dev has no effect when used outside of a project` and falls back to whatever is on `PATH`.
+
+    Prefer `uvx clang-format==<version>` or an absolute path. `jm status`
+    checks for this and names it when there is drift to explain.
 
 It is an **argv list, never a shell string** — splitting a string would have to
 guess about quoting, and the first thing that goes here is a path that may

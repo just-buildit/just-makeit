@@ -17,7 +17,15 @@ clean.
 **Which binary does it is the project's to pin** (gh-745)::
 
     [project]
-    c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+    c_format_command = ["uvx", "clang-format==22.1.8"]
+
+**It must resolve the same binary from any directory** (gh-758): jm formats
+its temp scaffold from *outside* the project, so a CWD-dependent command
+formats the two compared sides with two different formatters and the drift
+gate can never go green. ``["uv", "run", "--group", "dev", "clang-format"]``
+is the trap — outside a project ``uv`` warns ``--group dev has no effect``
+and silently falls back to ``PATH``. ``jm status`` detects this directly (see
+`cwd_dependent_version`) rather than leaving it to be rediscovered.
 
 Default ``["clang-format"]`` — a bare PATH lookup, which is what jm did
 unconditionally before. That default is fine on one machine and wrong across
@@ -40,6 +48,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import _config as C
@@ -79,6 +88,13 @@ def _generated_c_files(root: Path) -> list[Path]:
     return sorted(src.rglob("*_ext.c"))
 
 
+# Upper bound on convergence passes (gh-758). Two is the observed worst case
+# for clang-format 22 on jm's output; the extra headroom distinguishes "needs
+# a few passes" from "oscillates forever", which is a formatter bug worth a
+# warning rather than an infinite loop.
+_MAX_PASSES = 5
+
+
 def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     """Reformat the project's generated C to its house style, if opted in.
 
@@ -97,6 +113,20 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     A missing binary is a soft failure — a one-line warning to stderr, and the
     command that triggered this still succeeds; jm's own output is valid C
     either way, it just keeps its native indentation.
+
+    gh-758: the formatter is re-run until the bytes stop changing, because
+    ``clang-format`` is **not** idempotent on every construct jm emits. A
+    ``.m_doc`` string long enough to be split inside the aligned
+    ``PyModuleDef`` initializer is the known case: pass 1 breaks the literal,
+    which drops ``.m_doc`` out of the ``AlignConsecutiveAssignments`` group,
+    which re-indents the continuation by one column on pass 2. That mattered
+    because jm's paths do not agree on how many passes they run — ``apply``
+    formats the temp scaffold and the CLI post-command hook formats the real
+    tree (two), while ``jm status``'s replay calls `_apply.run` directly and
+    gets one. One pass versus two left every affected file permanently STALE,
+    unclearable by any number of ``apply`` runs. Converging here makes the
+    output canonical, so pass count stops being something a caller can get
+    wrong.
     """
     if C.c_style(cfg) != "clang-format":
         return
@@ -120,34 +150,54 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     if not files:
         return
 
-    # --style=file honours the project's committed .clang-format; the fallback
-    # covers projects that opted in without shipping one.
-    proc = subprocess.run(
-        [
-            *command,
-            "-i",
-            "--style=file",
-            "--fallback-style=LLVM",
-            *(str(f) for f in files),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if proc.returncode != 0:
+    # Each pass re-runs only the files the previous one changed, so reaching
+    # the fixed point costs one extra invocation over the handful that are
+    # actually unstable rather than a second sweep of the whole tree.
+    pending = list(files)
+    for _ in range(_MAX_PASSES):
+        before = {f: f.read_bytes() for f in pending}
+        # --style=file honours the project's committed .clang-format; the
+        # fallback covers projects that opted in without shipping one.
+        proc = subprocess.run(
+            [
+                *command,
+                "-i",
+                "--style=file",
+                "--fallback-style=LLVM",
+                *(str(f) for f in pending),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if proc.returncode != 0:
+            print(
+                f"WARNING: {' '.join(command)} failed; generated C left "
+                f"unformatted.\n  {proc.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return
+        pending = [f for f in pending if f.read_bytes() != before[f]]
+        if not pending:
+            break
+    else:
+        # A formatter that oscillates instead of converging cannot be made
+        # canonical here. Say so loudly and name the files: silently stopping
+        # mid-cycle is what a drift gate then reports as unexplained STALE.
+        names = ", ".join(sorted(f.name for f in pending))
         print(
-            f"WARNING: {' '.join(command)} failed; generated C left "
-            f"unformatted.\n  {proc.stderr.strip()}",
+            f"WARNING: {' '.join(command)} did not converge after "
+            f"{_MAX_PASSES} passes; these files still change on every run "
+            f"and will read as stale to `jm status`:\n  {names}",
             file=sys.stderr,
         )
-        return
 
     if not quiet:
         n = len(files)
         print(f"  format  {n} C file{'s' if n != 1 else ''} (clang-format)")
 
 
-def format_version(cfg: dict) -> str:
+def format_version(cfg: dict, cwd: "Path | None" = None) -> str:
     """The formatter's own ``--version`` output, or ``""`` if unavailable.
 
     gh-745. The point of pinning the command is that two machines produce the
@@ -155,6 +205,10 @@ def format_version(cfg: dict) -> str:
     version it is. Used by ``jm status`` to report the formatter alongside the
     drift result, so "stale on CI, clean locally" names its own cause instead
     of being rediscovered.
+
+    *cwd* (gh-758) asks the question from a specific directory, which is how
+    `cwd_dependent_version` detects a command that resolves differently
+    depending on where it runs.
 
     Never raises: a missing or failing binary reports ``""`` exactly as it
     does for formatting itself.
@@ -170,7 +224,39 @@ def format_version(cfg: dict) -> str:
             capture_output=True,
             text=True,
             timeout=60,
+            cwd=None if cwd is None else str(cwd),
         )
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def cwd_dependent_version(root: Path, cfg: dict) -> "tuple[str, str] | None":
+    """``(from_project, from_elsewhere)`` if the command is CWD-dependent.
+
+    gh-758. ``c_format_command`` is run from more than one directory —
+    `_apply.run` formats a **temp scaffold** outside the project, the CLI hook
+    formats the real tree from the project root. A command that resolves a
+    different binary depending on where it runs therefore formats the two
+    sides with two formatters, and the drift gate goes red on input nobody
+    touched.
+
+    ``["uv", "run", "--group", "dev", "clang-format"]`` — the natural way to
+    pin a version, and what this feature's own docs suggested — is exactly
+    that trap: outside a project ``uv`` prints ``--group dev has no effect
+    when used outside of a project`` and silently falls through to whatever
+    is on ``PATH``. doppler lost a day to it (21.1.8 on the scaffold, 22.1.8
+    on the real tree) before the cause was named.
+
+    Returns ``None`` when the command is stable across directories (or when
+    the version cannot be read at all, which `format_version` already reports
+    as ``""`` and is not this check's business to escalate).
+    """
+    here = format_version(cfg, cwd=root)
+    if not here:
+        return None
+    with tempfile.TemporaryDirectory(prefix="jm-cfmt-") as tmp:
+        there = format_version(cfg, cwd=Path(tmp))
+    if not there or there == here:
+        return None
+    return here, there
