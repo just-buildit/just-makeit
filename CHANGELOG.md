@@ -33,6 +33,23 @@
     Measuring makes a false positive structurally impossible and covers every
     stub producer, including the ones gh-747 tracks.
 
+- **`[project] py_format_command` — generated stubs in the project's own
+    pinned style (gh-746).** The Python twin of `c_format_command`. Declaring
+    the command is the opt-in; unset, output is byte-identical to before.
+
+    jm runs it rather than the project's own hook because a `.pyi` is
+    drift-gated: a formatter run outside jm *creates* drift — the hook formats
+    the file, jm regenerates it unformatted, and no number of `apply` runs
+    converges. That is gh-635, one language over. jm runs the command on
+    **both** the real tree and the throwaway scaffold `apply` compares
+    against, so the two sides are formatted identically and compare equal —
+    verified by removing the second call and watching `status --check` go
+    permanently stale.
+
+    Scope is `.pyi` only. A package `__init__.py` is excluded: `apply` merges
+    those, so they carry hand-written Python, and gh-746's own constraint is
+    that no hand-owned Python is touched.
+
 - **`[project] c_format_command` — pin the clang-format binary (gh-745).**
     `c_style = "clang-format"` decides *whether* generated C is reformatted;
     this decides *which binary does it*, and that is what makes the output

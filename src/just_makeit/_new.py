@@ -230,3 +230,9 @@ def run(
         from . import _cfmt
 
         _cfmt.format_project(root, cfg)
+    # gh-746: same for generated Python — `new` creates its own subdir, so the
+    # CLI's post-command hook does not reach it. No-op unless the manifest
+    # declares py_format_command.
+    from . import _pyfmt
+
+    _pyfmt.format_project(root, cfg)

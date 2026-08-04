@@ -2566,6 +2566,55 @@ def c_format_command(cfg: dict) -> list[str]:
     return [str(a) for a in raw]
 
 
+def py_format_command(cfg: dict) -> list[str]:
+    """The generated-Python formatter invocation, or ``[]`` when unset (gh-746).
+
+    The Python twin of :func:`c_format_command`, with one deliberate shape
+    difference: there is no separate ``py_style`` on/off key. jm has no
+    house-style opinion to toggle for Python — it emits its own layout and
+    the project either wants its own formatter run over the result or does
+    not — so *declaring the command is the opt-in*::
+
+        [project]
+        py_format_command = ["uv", "run", "--group", "dev", "ruff", "format"]
+
+    Routing through the project's own pinned invocation is the whole point,
+    exactly as in gh-745: a bare ``ruff`` resolves to whatever is on PATH,
+    and two ruff versions format the same input differently.
+
+    Unset returns ``[]`` and nothing runs, so an existing project's output is
+    byte-identical to before.
+
+    Raises
+    ------
+    ValueError
+        If the value is not a non-empty list of strings — the same contract
+        as ``c_format_command``, for the same reason: a silently-ignored
+        formatter command is indistinguishable from a working one until two
+        machines disagree.
+    """
+    raw = cfg.get("project", {}).get("py_format_command")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raise ValueError(
+            "[project] py_format_command must be a list of arguments, not a "
+            f'string — write ["uv", "run", "ruff", "format"], not "{raw}". '
+            "A string would have to be split, and jm will not guess where."
+        )
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise ValueError(
+            "[project] py_format_command must be a non-empty list of "
+            f"arguments; got {raw!r}."
+        )
+    if not all(isinstance(a, str) for a in raw):
+        raise ValueError(
+            "[project] py_format_command must contain only strings; got "
+            f"{raw!r}."
+        )
+    return [str(a) for a in raw]
+
+
 def is_perf(cfg: dict) -> bool:
     return _truthy(cfg.get("project", {}).get("perf"))
 

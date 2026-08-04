@@ -395,6 +395,8 @@ succeeds with generated C in jm's default style. When `jm status` reports
 drift on a `c_style` project it also prints the formatter's version, so
 "stale in CI, clean locally" names its own cause.
 
+\<<\<<\<<< HEAD
+
 ### Authored `@code` examples — the 79-column budget
 
 An `@code` block in a sacred header becomes the `Examples` section of the
@@ -429,8 +431,45 @@ to bring one back under budget, none of which changes what the example does:
     `>>>` code, then its output, then a blank line, then prose again — and the
     prose wraps freely, so a long aside reads better there anyway.
 
-`jm status` prints the outstanding count, so a project sweeping them has a
-burn-down number.
+# `jm status` prints the outstanding count, so a project sweeping them has a burn-down number.
+
+### Generated Python style — `py_format_command`
+
+The Python twin of `c_format_command`. jm emits its own layout for the
+generated `.pyi` stubs; a project that wants them in its own pinned style
+hands jm the command:
+
+```toml
+[project]
+py_format_command = ["uv", "run", "--group", "dev", "ruff", "format"]
+```
+
+Unset, nothing runs and output is byte-identical to before. There is no
+separate on/off key — declaring the command *is* the opt-in.
+
+**Why jm runs it rather than your pre-commit hook.** A `.pyi` is drift-gated:
+`jm status --check` regenerates and compares byte-for-byte. A formatter run
+outside jm therefore *creates* drift — your hook formats the file, jm
+regenerates it unformatted, and no number of `apply` runs converges. Once jm
+runs the formatter itself, it runs it on both the real tree and the throwaway
+scaffold `apply` compares against, so the two sides are formatted by the same
+command and compare equal.
+
+That symmetry is also why jm's own emission does not need to match your
+formatter: the *formatted* output is the fixed point, because formatters are
+idempotent.
+
+**Scope: `.pyi` stubs only.** A package `__init__.py` is deliberately excluded
+— `apply` *merges* those, so they carry hand-written Python alongside the
+generated re-exports, and reformatting a hybrid file rewrites your code. The
+same reasoning keeps `c_style` off `native/inc/**`.
+
+As with `c_format_command`: an argv list, never a shell string; only `argv[0]`
+is resolved on `PATH`, so `uv run …` works when the formatter itself is not on
+`PATH`; and a missing binary is a soft failure — one warning, the command
+still succeeds, and *neither* tree is formatted, so they still compare equal.
+
+> > > > > > > d19e3ae (feat: run the project's pinned Python formatter over generated stubs (gh-746))
 
 ### `[<component>]` keys
 

@@ -1382,10 +1382,16 @@ def main() -> None:
     if cmd in _C_EMITTING_COMMANDS:
         from . import _cfmt
         from . import _config as C
+        from . import _pyfmt
 
         root = Path.cwd()
         if (root / C.FILENAME).exists():
-            _cfmt.format_project(root, C.load(root))
+            _cfg = C.load(root)
+            _cfmt.format_project(root, _cfg)
+            # gh-746: every command that regenerates the binding also
+            # regenerates the stub beside it, so the two passes share a
+            # trigger set rather than drifting apart.
+            _pyfmt.format_project(root, _cfg)
 
 
 # Commands that write or regenerate native C/H and should trigger the optional

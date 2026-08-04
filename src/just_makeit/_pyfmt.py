@@ -41,7 +41,12 @@ What is deliberately *not* touched
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
+from . import _config as C
 from ._docstring import (
     STUB_TARGET_WIDTH,
     summary_docstring,
@@ -342,3 +347,89 @@ def flatten_signatures(pyi: str) -> str:
             buf = []
     out.extend(buf)
     return "\n".join(out)
+
+
+def generated_py_files(root: Path) -> list[Path]:
+    """The Python files jm owns outright — the only ones safe to reformat.
+
+    Only ``.pyi`` stubs. They are jm's alone, full-stop: unlike ``_core.c``
+    there is no sacred-fragment mechanism, and ``_status`` treats a symbol
+    that vanishes from one as content loss precisely because nothing
+    hand-written is supposed to live there.
+
+    **A package ``__init__.py`` is deliberately excluded**, even though
+    gh-746 asks for the re-export shims. ``apply`` *merges* those files
+    rather than overwriting them — ``_merge_module_init`` keeps whatever the
+    author added alongside the generated re-exports — so they are hybrid, and
+    reformatting a hybrid file rewrites hand-written Python. That is the
+    constraint gh-746 itself sets ("never hand-owned Python"), and it is the
+    same reasoning that keeps ``_cfmt`` off ``native/inc/**``.
+
+    Sorted for a stable invocation order.
+    """
+    src = root / "src"
+    if not src.is_dir():
+        return []
+    return sorted(src.rglob("*.pyi"))
+
+
+def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
+    """Run the project's own Python formatter over the generated stubs.
+
+    gh-746. No-op unless ``[project] py_format_command`` is declared. The
+    command is appended with the stub paths and run; the project's own
+    configuration (``pyproject.toml``'s ``[tool.ruff]``, or whatever the
+    command resolves to) decides the layout.
+
+    **Why this is jm's to run rather than the project's.** A ``.pyi`` is
+    drift-gated: ``jm status --check`` re-renders and compares byte-for-byte.
+    A formatter run *outside* jm therefore reads as permanent drift — the
+    project formats the file, jm regenerates it unformatted, and no number of
+    ``apply`` runs converges. That is gh-635 exactly, one language over. Once
+    jm runs the formatter itself, on **both** the real tree and the throwaway
+    scaffold ``apply`` compares against, the two sides are formatted by the
+    same command and compare equal.
+
+    That symmetry is the whole design, and it is why jm's own emission does
+    not need to be a fixed point of the formatter: the *formatted* output is,
+    because formatters are idempotent. A missing binary is a soft failure for
+    the same reason — neither side gets formatted, so both stay jm-style and
+    still compare equal.
+    """
+    command = C.py_format_command(cfg)
+    if not command:
+        return
+
+    # Only argv[0] is resolved; the rest are that program's own arguments —
+    # `uv run … ruff format` must resolve `uv`, since `ruff` may well not be
+    # on PATH at all in the pinned setup this exists to support.
+    if shutil.which(command[0]) is None:
+        print(
+            f"WARNING: [project] py_format_command names {command[0]!r}, "
+            "which was not found on PATH;\n  generated Python keeps jm's "
+            "default layout. Install it or fix the command.",
+            file=sys.stderr,
+        )
+        return
+
+    files = generated_py_files(root)
+    if not files:
+        return
+
+    proc = subprocess.run(
+        [*command, *(str(f) for f in files)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        print(
+            f"WARNING: {' '.join(command)} failed; generated Python left "
+            f"unformatted.\n  {proc.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return
+
+    if not quiet:
+        n = len(files)
+        print(f"  format  {n} stub{'s' if n != 1 else ''} (py_format_command)")
