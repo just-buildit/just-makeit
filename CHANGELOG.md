@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-08-04
+
 ### Added
 
 - **`jm apply` reports authored `@code` lines too wide for their stub, per
