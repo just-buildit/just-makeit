@@ -2041,6 +2041,12 @@ def run(
         if C.c_style(cfg) == "clang-format" and real_cf.is_file():
             shutil.copy2(real_cf, temp_root / ".clang-format")
         _cfmt.format_project(temp_root, cfg, quiet=True)
+        # gh-746: the same symmetry for generated Python. Formatting the real
+        # tree but not the tree it is compared against is what makes a drift
+        # gate unclearable (gh-635); both sides run the same command.
+        from . import _pyfmt as _pyfmt_mod
+
+        _pyfmt_mod.format_project(temp_root, cfg, quiet=True)
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
         # gh-541: promote an already-scaffolded component's sacred destructor
