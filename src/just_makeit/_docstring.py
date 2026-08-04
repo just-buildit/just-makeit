@@ -1178,6 +1178,55 @@ def wrap_summary(text: str, width: int = DOC_WIDTH) -> list[str]:
     return [head[0]] + _wrap(" ".join(head[1:]), width)
 
 
+def _leave_room_for_the_closer(lines: list[str], budget: int) -> list[str]:
+    """Re-wrap so a formatter can pull the closing ``\"\"\"`` up safely.
+
+    gh-746. jm emits a compliant block whose closing delimiter sits alone::
+
+        \"\"\"Bonferroni per-cell false-alarm probability over the cells.
+        \"\"\"
+
+    `ruff format` joins those two lines. It enforces ``line-length`` on code,
+    not on string *content*, so it does not check what the joined line
+    measures — and at 79 columns exactly, the join lands on 82. The result is
+    that pointing a formatter at the stubs (which is what gh-746 asks for)
+    silently undoes gh-744 in a six-column window.
+
+    jm cannot stop ruff joining, so it stops producing the shape ruff wants
+    to join badly: the final content line is kept three columns short, so
+    pulling the delimiter up stays within the target whether or not anything
+    ever does it. The output is compliant either way; this only makes it a
+    *fixed point* of the formatter rather than merely correct today.
+
+    Moving the last word down is enough — and is the smallest edit that
+    restores the invariant — because the width lost is one word, not one
+    line.
+
+    Examples
+    --------
+    >>> _leave_room_for_the_closer(["aaa bbb"], 8)
+    ['aaa', 'bbb']
+    >>> _leave_room_for_the_closer(["aa", "bb"], 8)
+    ['aa', 'bb']
+    """
+
+    def _emitted(seq: list[str]) -> int:
+        """Columns the final line will actually occupy once rendered.
+
+        Line 0 carries the opening delimiter as well, which is exactly the
+        case the first version of this missed: a summary short enough to be
+        the *only* content line is still three columns longer than it looks.
+        """
+        return len(seq[-1]) + (3 if len(seq) == 1 else 0)
+
+    while lines and _emitted(lines) > budget - 3:
+        words = lines[-1].split()
+        if len(words) < 2:
+            break  # a single unsplittable token: leave it rather than lie
+        lines = lines[:-1] + [" ".join(words[:-1]), words[-1]]
+    return lines
+
+
 def summary_docstring(
     text: str, indent: int = 8, width: int = STUB_TARGET_WIDTH
 ) -> list[str]:
@@ -1225,7 +1274,7 @@ def summary_docstring(
     text = text.strip()
     if len(text) <= budget - 6:  # room for both delimiters on the one line
         return [f'{pad}"""{text}"""']
-    lines = wrap_summary(text, budget)
+    lines = _leave_room_for_the_closer(wrap_summary(text, budget), budget)
     return (
         [f'{pad}"""{lines[0]}']
         + [f"{pad}{ln}" for ln in lines[1:]]

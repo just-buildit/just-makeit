@@ -4,6 +4,28 @@
 
 ### Fixed
 
+- **A generated docstring survives a formatter pulling its closing `"""` up
+    (gh-746 precondition).** jm emitted a compliant block whose closing
+    delimiter sat alone on the next line; `ruff format` joins those two lines
+    without checking the result, because it enforces `line-length` on code and
+    not on string content. At exactly 79 columns the join lands on 82, so
+    pointing a formatter at the stubs — which is what gh-746 asks for — raised
+    doppler's over-79 count from 49 to 51.
+
+    jm cannot stop ruff joining, so it no longer produces the shape ruff joins
+    badly: the final content line is kept three columns short, and pulling the
+    delimiter up is safe whether or not anything ever does it. Compliant
+    either way; now a *fixed point* rather than merely correct today.
+
+    The window was six columns wide, so the tests sweep every summary length
+    from 40 to 110 at both indents rather than pinning the one measured case —
+    an off-by-one in the budget passes a single example and fails three
+    characters either side of it. Verified end-to-end against `ruff format` on
+    doppler's regenerated stubs: 196 over-79 lines before, 196 after, and 309
+    files reported unchanged.
+
+### Fixed
+
 - **A wrapped list item no longer tears, and a wrapped sentence no longer
     fakes a numbered list (gh-717).** Both shapes are produced by the 79-column
     wrapping a C header requires, so they recur in any header long enough to
