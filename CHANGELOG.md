@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated C is formatted to a fixed point, so `apply` and `status` can no
+    longer disagree on pass count (gh-758).** A `c_style` project could carry
+    `*_ext.c` files that were permanently `STALE`: `jm apply` wrote them,
+    `jm status` expected one column less of continuation indent, and
+    re-running `apply` never cleared it.
+
+    Two facts multiplied. **clang-format is not idempotent** on the aligned
+    `PyModuleDef` initializer: splitting a long `.m_doc` literal drops it out
+    of the `AlignConsecutiveAssignments` group, so the *next* pass realigns
+    `.m_size`/`.m_methods` and shifts the string continuation by one column.
+    Pass 2 is the fixed point, not pass 1. And **jm's paths did not agree on
+    how many passes they run** — a real command formats twice (`_apply.run`
+    formats its temp scaffold, then the CLI post-command hook formats the real
+    tree), while `jm status` calls `_apply.run` on its scratch copy directly
+    and got one.
+
+    `_cfmt.format_project` now re-runs the formatter until the bytes stop
+    changing, re-formatting only the files the previous pass touched. That
+    makes the output canonical rather than merely making two call sites match:
+    formatting an already-formatted tree is a genuine no-op, so any number of
+    passes lands in the same place. A formatter that oscillates instead of
+    converging warns and names the files rather than looping.
+
+### Added
+
+- **`jm status` detects a `c_format_command` that resolves a different binary
+    per directory (gh-758).** jm formats its temp scaffold from *outside* the
+    project, so a CWD-dependent command formats the two compared sides with
+    two different formatters and the drift gate can never go green.
+
+    `["uv", "run", "--group", "dev", "clang-format"]` — which jm's own docs
+    suggested — is exactly that trap: outside a project `uv` prints
+    `warning: --group dev has no effect when used outside of a project` and
+    silently falls back to `PATH`. doppler hit it with 21.1.8 on the scaffold
+    against 22.1.8 on the real tree. `jm status` now asks the command its
+    version from two directories and reports the mismatch alongside the drift
+    it explains. The documented example is now `["uvx",   "clang-format==22.1.8"]`.
+
 ## [0.44.0] — 2026-08-04
 
 ### Added

@@ -423,6 +423,27 @@ def run(
                 f"\n  ([project] c_format_command — pin it if this differs "
                 f"between machines.)"
             )
+        # gh-758: and the same failure one level meaner — not two machines,
+        # two *directories* on one machine. `apply` formats its temp scaffold
+        # from outside the project, so a CWD-dependent command formats the
+        # two compared sides with two binaries and no amount of `apply`
+        # clears the drift. Reported only alongside drift, like the version.
+        _cwd_dep = _cfmt.cwd_dependent_version(root, cfg)
+        if _cwd_dep:
+            _here, _there = _cwd_dep
+            print(
+                f"\nWARNING: [project] c_format_command resolves a different "
+                f"formatter depending on\n  the working directory, which is "
+                f"very likely this drift:\n"
+                f"    in {root}: {_here.splitlines()[0]}\n"
+                f"    outside a project:  {_there.splitlines()[0]}\n"
+                f"  `apply` formats a temp scaffold outside the project, so "
+                f"the two sides being\n  compared were formatted by different "
+                f"binaries. `uv run --group <g> <tool>` is\n  the usual cause "
+                f"— it no-ops outside a project and falls back to PATH. Use a "
+                f"\n  CWD-independent command (`uvx <tool>==<version>` or an "
+                f"absolute path)."
+            )
 
     if _wide:
         print(
