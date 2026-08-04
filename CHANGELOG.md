@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wrapped list item no longer tears, and a wrapped sentence no longer
+    fakes a numbered list (gh-717).** Both shapes are produced by the 79-column
+    wrapping a C header requires, so they recur in any header long enough to
+    need it:
+
+    - a continuation line carries no marker, so it read as a new paragraph and
+        split one bullet into a bullet plus an orphan sentence. A line more
+        indented than its item is now folded back into it (commonmark's lazy
+        continuation). Body lines keep their indentation through parsing for
+        this — it is the only thing distinguishing a continuation from a new
+        paragraph, and it used to be stripped before anything could look;
+    - `0)` closing a parenthetical lands at line-start and matched the
+        numbered-list detector, splitting the sentence in half. A numbered
+        marker now starts a list only where one could begin: at the start of
+        the body, after a blank line, after a lead-in ending in `:`, or
+        continuing a run already open. Bullets, tables and `@li` are
+        unaffected — they never occur mid-sentence.
+
+    Folding a continuation back makes the item longer than the 79 columns
+    gh-744 holds everything else to (doppler's `nearest:` bullet returns at
+    118), so an item that overflows is now re-wrapped within itself with a
+    hanging indent. An item that already fits is returned byte-identical:
+    re-flowing one that did not need it would collapse the author's own
+    intra-item alignment, which is exactly what gh-653 exists to protect. A
+    table row is never wrapped — its columns are its meaning.
+
 ### Added
 
 - **`[project] c_format_command` — pin the clang-format binary (gh-745).**
