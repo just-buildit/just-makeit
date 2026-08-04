@@ -33,64 +33,6 @@
     Measuring makes a false positive structurally impossible and covers every
     stub producer, including the ones gh-747 tracks.
 
-### Docs
-
-- The `@code` column budget, and three ways to bring a line back under it
-    without changing what the example does, are documented in
-    `docs/configuration.md`.
-
-### Fixed
-
-- **A generated docstring survives a formatter pulling its closing `"""` up
-    (gh-746 precondition).** jm emitted a compliant block whose closing
-    delimiter sat alone on the next line; `ruff format` joins those two lines
-    without checking the result, because it enforces `line-length` on code and
-    not on string content. At exactly 79 columns the join lands on 82, so
-    pointing a formatter at the stubs — which is what gh-746 asks for — raised
-    doppler's over-79 count from 49 to 51.
-
-    jm cannot stop ruff joining, so it no longer produces the shape ruff joins
-    badly: the final content line is kept three columns short, and pulling the
-    delimiter up is safe whether or not anything ever does it. Compliant
-    either way; now a *fixed point* rather than merely correct today.
-
-    The window was six columns wide, so the tests sweep every summary length
-    from 40 to 110 at both indents rather than pinning the one measured case —
-    an off-by-one in the budget passes a single example and fails three
-    characters either side of it. Verified end-to-end against `ruff format` on
-    doppler's regenerated stubs: 196 over-79 lines before, 196 after, and 309
-    files reported unchanged.
-
-### Fixed
-
-- **A wrapped list item no longer tears, and a wrapped sentence no longer
-    fakes a numbered list (gh-717).** Both shapes are produced by the 79-column
-    wrapping a C header requires, so they recur in any header long enough to
-    need it:
-
-    - a continuation line carries no marker, so it read as a new paragraph and
-        split one bullet into a bullet plus an orphan sentence. A line more
-        indented than its item is now folded back into it (commonmark's lazy
-        continuation). Body lines keep their indentation through parsing for
-        this — it is the only thing distinguishing a continuation from a new
-        paragraph, and it used to be stripped before anything could look;
-    - `0)` closing a parenthetical lands at line-start and matched the
-        numbered-list detector, splitting the sentence in half. A numbered
-        marker now starts a list only where one could begin: at the start of
-        the body, after a blank line, after a lead-in ending in `:`, or
-        continuing a run already open. Bullets, tables and `@li` are
-        unaffected — they never occur mid-sentence.
-
-    Folding a continuation back makes the item longer than the 79 columns
-    gh-744 holds everything else to (doppler's `nearest:` bullet returns at
-    118), so an item that overflows is now re-wrapped within itself with a
-    hanging indent. An item that already fits is returned byte-identical:
-    re-flowing one that did not need it would collapse the author's own
-    intra-item alignment, which is exactly what gh-653 exists to protect. A
-    table row is never wrapped — its columns are its meaning.
-
-### Added
-
 - **`[project] c_format_command` — pin the clang-format binary (gh-745).**
     `c_style = "clang-format"` decides *whether* generated C is reformatted;
     this decides *which binary does it*, and that is what makes the output
@@ -125,7 +67,59 @@
     locally" on identical input; printing the version turns that into a
     one-line diagnosis.
 
+### Fixed
+
+- **A generated docstring survives a formatter pulling its closing `"""` up
+    (gh-746 precondition).** jm emitted a compliant block whose closing
+    delimiter sat alone on the next line; `ruff format` joins those two lines
+    without checking the result, because it enforces `line-length` on code and
+    not on string content. At exactly 79 columns the join lands on 82, so
+    pointing a formatter at the stubs — which is what gh-746 asks for — raised
+    doppler's over-79 count from 49 to 51.
+
+    jm cannot stop ruff joining, so it no longer produces the shape ruff joins
+    badly: the final content line is kept three columns short, and pulling the
+    delimiter up is safe whether or not anything ever does it. Compliant
+    either way; now a *fixed point* rather than merely correct today.
+
+    The window was six columns wide, so the tests sweep every summary length
+    from 40 to 110 at both indents rather than pinning the one measured case —
+    an off-by-one in the budget passes a single example and fails three
+    characters either side of it. Verified end-to-end against `ruff format` on
+    doppler's regenerated stubs: 196 over-79 lines before, 196 after, and 309
+    files reported unchanged.
+
+- **A wrapped list item no longer tears, and a wrapped sentence no longer
+    fakes a numbered list (gh-717).** Both shapes are produced by the 79-column
+    wrapping a C header requires, so they recur in any header long enough to
+    need it:
+
+    - a continuation line carries no marker, so it read as a new paragraph and
+        split one bullet into a bullet plus an orphan sentence. A line more
+        indented than its item is now folded back into it (commonmark's lazy
+        continuation). Body lines keep their indentation through parsing for
+        this — it is the only thing distinguishing a continuation from a new
+        paragraph, and it used to be stripped before anything could look;
+    - `0)` closing a parenthetical lands at line-start and matched the
+        numbered-list detector, splitting the sentence in half. A numbered
+        marker now starts a list only where one could begin: at the start of
+        the body, after a blank line, after a lead-in ending in `:`, or
+        continuing a run already open. Bullets, tables and `@li` are
+        unaffected — they never occur mid-sentence.
+
+    Folding a continuation back makes the item longer than the 79 columns
+    gh-744 holds everything else to (doppler's `nearest:` bullet returns at
+    118), so an item that overflows is now re-wrapped within itself with a
+    hanging indent. An item that already fits is returned byte-identical:
+    re-flowing one that did not need it would collapse the author's own
+    intra-item alignment, which is exactly what gh-653 exists to protect. A
+    table row is never wrapped — its columns are its meaning.
+
 ### Docs
+
+- The `@code` column budget, and three ways to bring a line back under it
+    without changing what the example does, are documented in
+    `docs/configuration.md`.
 
 - `c_style` and `c_format_command` are documented in `docs/configuration.md`.
     `c_style` had shipped in 0.36.0 undocumented, which left its scope and its
