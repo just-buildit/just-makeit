@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated `.pyi` stubs are held to 79 columns (gh-744).** doppler measured
+    1471 overlong lines across 34 stubs, the worst at 1396 columns. The stubs
+    are jm-owned and drift-gated, so a downstream project cannot fix this
+    locally — hand-wrapping one, or running a formatter over it, is drift.
+    Six renderers were at fault:
+
+    - `_docstring._numpy_sections` spliced the summary in unwrapped, and its
+        widths (72/68/69) were chosen without the caller's 8-space indent in
+        the budget, so even "wrapped" prose landed on column 80. Widths now
+        derive from a single `STUB_TARGET_WIDTH`;
+    - `_stubs._build_class_docstring` — a separate renderer — wrapped nothing
+        at all, which is where the 1222-column `@param` description came from;
+    - `_context/_methods` emitted a property docstring on one line always;
+    - `_composer.render_pyi`, a third stub producer, was likewise unwrapped;
+    - `_context/_destroy` emitted a 173-column `Raises` description;
+    - jm's own `>>> obj = Component(...)` demo reached 257 columns. It now
+        wraps across `...` continuations. An author's `@code` block is still
+        preserved byte-for-byte, comment alignment and all — that text is not
+        jm's to reflow.
+
+    Signatures are emitted from 63 f-strings across eight modules, so they are
+    reflowed by a post-pass (the new `_pyfmt`) rather than at each site: one
+    implementation, and the 64th emitter is covered the day it is written. The
+    same pass handles overlong one-line docstrings and the summary lines
+    spliced by `_swap_pyi_summary`, which no single renderer owns.
+
+    `_render.render_component_pyi` is now the only door to `COMPONENT_PYI`,
+    with a test that greps for direct callers — reflowing on the write path
+    but not the compare path is the gh-635 failure, and it would leave every
+    project permanently stale.
+
 ## [0.43.1] — 2026-08-03
 
 ### Fixed
