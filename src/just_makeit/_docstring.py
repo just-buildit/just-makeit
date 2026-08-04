@@ -152,13 +152,79 @@ _STRUCTURED_RE = re.compile(
 )
 
 
+# A numbered marker specifically. Bullets, tables and `@li` can only ever be
+# markers; `N.` / `N)` at line-start is ambiguous, because 79-col wrapping in
+# a C header lands one there whenever a sentence closes a parenthetical
+# (gh-717): "…the carrier phase restart at\n0) and clears…".
+_NUMBERED_RE = re.compile(r"^\d+[.)]\s")
+
+
 def is_structured_line(line: str) -> bool:
     """True when *line*'s break is load-bearing and must not be re-flowed.
+
+    Shape only — whether a *numbered* marker really starts a list also
+    depends on what precedes it, which is :func:`starts_list_item`'s job.
 
     >>> [is_structured_line(s) for s in ("- a", "1. b", "| c |", "prose")]
     [True, True, True, False]
     """
     return bool(_STRUCTURED_RE.match(line.strip()))
+
+
+def starts_list_item(stripped: str, prose: list[str], in_block: bool) -> bool:
+    """True when *stripped* opens a list item here, given what came before.
+
+    gh-717. ``is_structured_line`` answers "does this look like a marker?".
+    That is enough for a bullet, a table row or a ``@li``, none of which
+    occurs mid-sentence. It is *not* enough for ``N.`` / ``N)``: a C header
+    wrapped to 79 columns puts a numbered marker at line-start every time a
+    sentence closes a parenthetical, and jm was splitting the sentence in
+    half around it --
+
+        Zeroes both sample clocks (so `elapsed_s` and the carrier phase
+        restart at
+        0) and clears the resampler's delay line and fractional accumulator.
+
+    So a numbered marker counts only where a list could actually begin: at
+    the start of the body, after a blank line, immediately after a lead-in
+    line ending in ``:``, or continuing a numbered run already open. Prose
+    that merely happens to wrap onto a digit does none of those.
+
+    The ``:`` lead-in clause is what keeps the common authored shape working
+    without demanding a blank line the author never wrote::
+
+        Modes:
+        1. fast
+        2. slow
+
+    Parameters
+    ----------
+    stripped : str
+        The candidate line, already stripped.
+    prose : list of str
+        Prose lines accumulated since the last break; empty means the
+        candidate is at a paragraph boundary.
+    in_block : bool
+        Whether a structured block is already open.
+
+    Examples
+    --------
+    >>> starts_list_item("- fast", ["Modes are:"], False)
+    True
+    >>> starts_list_item("1. fast", [], False)
+    True
+    >>> starts_list_item("1. fast", ["Modes:"], False)
+    True
+    >>> starts_list_item("0) and clears the delay line.", ["restart at"], False)
+    False
+    """
+    if not is_structured_line(stripped):
+        return False
+    if not _NUMBERED_RE.match(stripped):
+        return True  # a bullet/table/@li marker is never mid-sentence
+    if in_block or not prose:
+        return True
+    return prose[-1].rstrip().endswith(":")
 
 
 def group_paragraphs(lines: list[str]) -> list[str]:
@@ -194,29 +260,42 @@ def group_paragraphs(lines: list[str]) -> list[str]:
     paras: list[str] = []
     prose: list[str] = []
     block: list[str] = []
+    item_indent: int | None = None  # indent of the open list item, if any
 
     def _flush() -> None:
+        nonlocal item_indent
         if prose:
             paras.append(" ".join(prose))
             prose.clear()
         if block:
             paras.append("\n".join(block))
             block.clear()
+        item_indent = None
 
     for ln in lines:
         stripped = ln.strip()
+        indent = len(ln) - len(ln.lstrip())
         if not stripped:
             _flush()
             continue
-        if is_structured_line(stripped):
+        if starts_list_item(stripped, prose, bool(block)):
             if prose:  # prose then a list: separate paragraphs
                 paras.append(" ".join(prose))
                 prose.clear()
             block.append(stripped)
+            item_indent = indent
+        elif block and item_indent is not None and indent > item_indent:
+            # gh-717: a more-indented, marker-less line is the previous
+            # item's own wrapped text (commonmark calls this a lazy
+            # continuation). Emitting it as a standalone paragraph tore one
+            # bullet into a bullet plus an orphan, which is what a 79-col
+            # header guarantees for any item longer than a line.
+            block[-1] = f"{block[-1]} {stripped}"
         else:
             if block:  # list then prose: the list ends here
                 paras.append("\n".join(block))
                 block.clear()
+                item_indent = None
             prose.append(stripped)
     _flush()
     return paras
@@ -945,13 +1024,21 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
         elif target == "tag":
             tags[-1][1] = (tags[-1][1] + " " + stripped).strip()
         else:
-            body_lines.append(stripped)
+            # gh-717: body lines keep their own indentation. A wrapped
+            # list-item continuation is distinguishable from a new paragraph
+            # *only* by being more indented than its item, and
+            # `group_paragraphs` cannot recover that once it is stripped.
+            # Every other target still stores the stripped form — they are
+            # single logical values, not layout.
+            body_lines.append(ln.rstrip())
 
     # If there was no @brief tag, the first body paragraph is the brief.
     if not saw_brief_tag and not brief_parts and body_lines:
         first: list[str] = []
         while body_lines and body_lines[0].strip():
-            first.append(body_lines.pop(0))
+            # The brief is one sentence, not layout — strip the indentation
+            # gh-717 now preserves, or a wrapped line embeds it mid-sentence.
+            first.append(body_lines.pop(0).strip())
         brief_parts = first
         while body_lines and not body_lines[0].strip():
             body_lines.pop(0)
@@ -1144,6 +1231,63 @@ def summary_docstring(
         + [f"{pad}{ln}" for ln in lines[1:]]
         + [f'{pad}"""']
     )
+
+
+def wrap_structured_line(line: str, width: int = DOC_WIDTH) -> list[str]:
+    """Wrap one list item, hanging-indenting its continuations.
+
+    gh-653 emits a structured paragraph verbatim, on the principle that its
+    line breaks are the author's. gh-717 then folds a wrapped continuation
+    back into its item — which is correct, and which makes the item longer
+    than the line it has to fit: doppler's ``nearest:`` bullet comes back at
+    118 columns, undoing gh-744 for exactly the shape gh-653 exists to
+    protect.
+
+    Both rules survive if the item is re-wrapped *within itself*::
+
+        - nearest: the floor or the next index, whichever `point` is
+          closer to (an exact 0.5 tie selects the floor index)
+
+    The break moves, the structure does not, and the reader sees a list. The
+    hanging indent is the marker's own width, so continuations line up under
+    the item text the way every markdown renderer draws them.
+
+    **A table row is returned untouched.** Its columns *are* its meaning, and
+    a wrapped ``| a | b |`` is not a narrower table — it is a broken one. A
+    table wider than the target stays wide, and the gh-744 gate reports it,
+    which is the honest outcome for something jm cannot fix without
+    destroying it.
+
+    Examples
+    --------
+    >>> for ln in wrap_structured_line("- alpha beta gamma delta", 16):
+    ...     print(repr(ln))
+    '- alpha beta'
+    '  gamma delta'
+    >>> wrap_structured_line("| a | b |", 4)
+    ['| a | b |']
+    """
+    stripped = line.strip()
+    if len(stripped) <= width:
+        # Already fits: return it byte-identical. Re-flowing a line that did
+        # not need it would collapse the author's own intra-item alignment —
+        # `- floor:   nearest index…` lines its descriptions into a column,
+        # and `_wrap` splits on whitespace, so it cannot preserve that. Only
+        # an item that overflows pays the cost, which keeps gh-653's promise
+        # intact for every list short enough to keep it.
+        return [line]
+    if stripped.startswith("|"):
+        return [line]
+    m = _STRUCTURED_RE.match(stripped)
+    if not m:
+        return _wrap(stripped, width) or [line]
+    hang = " " * len(m.group(0))
+    head, *rest = _wrap(stripped, width) or [stripped]
+    if not rest:
+        return [head]
+    return [head] + [
+        hang + w for w in _wrap(" ".join(rest), width - len(hang))
+    ]
 
 
 def render_numpy_doc(
@@ -1419,10 +1563,15 @@ def _numpy_sections(
     for para in body:
         out.append("")
         # gh-653: a paragraph carrying newlines is a preserved structure — a
-        # bullet list or a table — and re-wrapping it would undo exactly what
-        # `group_paragraphs` kept. Prose still wraps.
+        # bullet list or a table — so its line breaks are the author's and
+        # `group_paragraphs`'s, not this function's to re-flow. gh-717/gh-744:
+        # each *item* is still wrapped within itself, because folding a
+        # wrapped continuation back into its bullet makes the bullet longer
+        # than the 79 columns everything else is held to. A table row is the
+        # one thing left verbatim — see `wrap_structured_line`.
         if "\n" in para:
-            out += para.split("\n")
+            for sline in para.split("\n"):
+                out += wrap_structured_line(sline, DOC_WIDTH)
         else:
             out += _wrap(para, DOC_WIDTH)
     # gh-678: descriptions wrap on the same rule as the body. They used to be

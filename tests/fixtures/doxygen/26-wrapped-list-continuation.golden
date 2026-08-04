@@ -1,0 +1,32 @@
+# fixture: 26-wrapped-list-continuation
+
+extracted: ['demo_set_mode']
+
+brief:    'Select the interpolation mode.'
+body:     ['The mode decides how a fractional index is resolved:', '', '  - nearest: the floor or the next index, whichever `point` is', '             closer to (an exact 0.5 tie selects the floor index)', '  - linear:  linear interpolation between the floor index and the', '             next one, at the fractional position between them']
+params:   [('mode', 'interpolation mode')]
+dirs:     {}
+returns:  ''
+examples: []
+tags:     []
+
+rendered:
+        """Select the interpolation mode.
+
+        The mode decides how a fractional index is resolved:
+
+        - nearest: the floor or the next index, whichever `point` is closer to
+          (an exact 0.5 tie selects the floor index)
+        - linear: linear interpolation between the floor index and the next
+          one, at the fractional position between them
+
+        Parameters
+        ----------
+        mode : float
+            interpolation mode
+
+        Returns
+        -------
+        float
+            Output.
+        """
