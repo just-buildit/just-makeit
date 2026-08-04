@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from just_makeit._pyfmt import flatten_prose
 
 
 def _cmd(args, cwd):
@@ -149,7 +150,8 @@ def run(root: Path) -> None:
     jm_apply(proj)
 
     pyi = (proj / "src" / "demo" / "agc.pyi").read_text(encoding="utf-8")
-    assert _DOXY_SUMMARY in pyi, (
+    # gh-744: the summary wraps when it does not fit on one line.
+    assert _DOXY_SUMMARY in flatten_prose(pyi), (
         "enriched class summary missing from .pyi:\n" + pyi[:400]
     )
     assert "Agc component." not in pyi, (

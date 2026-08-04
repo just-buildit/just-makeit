@@ -996,7 +996,44 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
     return block
 
 
-def _wrap(text: str, width: int = 70) -> list[str]:
+# gh-744: every generated docstring line has to fit the same 79-column rule as
+# every other file in a jm project, so the widths below are *derived* from that
+# target rather than guessed. They used to be three unrelated literals (72, 69,
+# 68) chosen without the caller's indent in the budget, which is why "wrapped"
+# prose still landed on column 80.
+STUB_TARGET_WIDTH = 79
+
+# The deepest indent a docstring is emitted at: 8 for a class member, 4 for a
+# module-level function. Both faces of a member share `_numpy_sections`, and
+# the runtime face (`render_runtime_doc`) carries no indent at all, so a width
+# derived from the caller's `indent` would have to be threaded onto the runtime
+# API as well -- and any call site that got it wrong would make the two faces
+# wrap differently, which is exactly the drift `test_gh642_runtime_doc_parity`
+# exists to forbid. Budgeting for the deepest case keeps one width for both
+# faces. The cost is that a module-level function wraps four columns narrower
+# than it strictly must, which reads as a consistent prose width across the
+# file rather than as a defect.
+_MEMBER_INDENT = 8
+
+# Body prose sits at the section indent; a numpy description is indented four
+# further; the summary shares its line with the opening `"""`; a
+# `.. deprecated::` note is indented three, as reST requires.
+DOC_WIDTH = STUB_TARGET_WIDTH - _MEMBER_INDENT
+DESC_WIDTH = DOC_WIDTH - 4
+SUMMARY_HEAD_WIDTH = DOC_WIDTH - 3
+_DEPRECATED_WIDTH = DOC_WIDTH - 3
+
+
+# A *class* docstring sits one level shallower than a member's: 4 spaces, with
+# its numpy descriptions at 8. Two producers emit one -- `_stubs` for a
+# component and `_composer` for the composer's OO types -- so the budgets live
+# here with the rest rather than being re-derived in each.
+CLASS_INDENT = 4
+CLASS_DOC_WIDTH = STUB_TARGET_WIDTH - CLASS_INDENT
+CLASS_DESC_WIDTH = CLASS_DOC_WIDTH - 4
+
+
+def _wrap(text: str, width: int = DOC_WIDTH) -> list[str]:
     """Soft-wrap *text* to *width* columns; never splits a long token."""
     words = text.split()
     if not words:
@@ -1011,6 +1048,102 @@ def _wrap(text: str, width: int = 70) -> list[str]:
             cur = w
     lines.append(cur)
     return lines
+
+
+def wrap_summary(text: str, width: int = DOC_WIDTH) -> list[str]:
+    """Soft-wrap a docstring summary, paying for the opening ``\"\"\"``.
+
+    gh-744. The summary was the one section spliced in unwrapped, so a long
+    ``@brief`` became a single enormous line -- 1396 columns at the worst
+    measured case. It cannot simply go through :func:`_wrap`, because its
+    first line is three columns shorter than the rest: the caller
+    concatenates it onto the opening delimiter, and only that line pays for
+    it.
+
+    Parameters
+    ----------
+    text : str
+        The summary sentence, already resolved from ``@brief``/``doc=``.
+    width : int, optional
+        Budget for the continuation lines. The first line gets ``width - 3``.
+
+    Returns
+    -------
+    list of str
+        One entry per line, unindented. Never empty for non-empty *text*, so
+        the caller can keep splicing ``result[0]`` onto its delimiter.
+
+    Examples
+    --------
+    >>> wrap_summary("Short.")
+    ['Short.']
+    >>> lines = wrap_summary("word " * 30)
+    >>> len(lines[0]) <= DOC_WIDTH - 3
+    True
+    >>> max(len(x) for x in lines[1:]) <= DOC_WIDTH
+    True
+    """
+    head = _wrap(text, width - 3)
+    if len(head) <= 1:
+        return head
+    # Only line 0 is short; re-flow everything after it at the full width so
+    # the delimiter does not narrow the whole paragraph.
+    return [head[0]] + _wrap(" ".join(head[1:]), width)
+
+
+def summary_docstring(
+    text: str, indent: int = 8, width: int = STUB_TARGET_WIDTH
+) -> list[str]:
+    """Render a summary-only docstring block, wrapped to the column target.
+
+    gh-744. A property's ``.pyi`` docstring is a bare summary with no numpy
+    sections, so it does not go through :func:`render_numpy_doc` -- it had its
+    own one-line emitter in ``_context/_methods``, which meant a long
+    ``@brief`` came out at whatever length it was written (358 columns in the
+    measured case). This is that emitter, with the wrap the rest of the module
+    already applies.
+
+    A summary that fits stays on one line, ``\"\"\"like this.\"\"\"``, because
+    that is what every existing stub looks like and reflowing the short ones
+    would churn every project's diff for nothing. The one-line budget has to
+    pay for *both* delimiters, which is why it is six narrower rather than
+    three.
+
+    Parameters
+    ----------
+    text : str
+        The summary sentence.
+    indent : int, optional
+        Leading spaces. 8 for a property inside a class.
+    width : int, optional
+        Column target; defaults to the project-wide 79.
+
+    Returns
+    -------
+    list of str
+        Complete docstring lines, delimiters included.
+
+    Examples
+    --------
+    >>> summary_docstring("Sample rate in Hz.", indent=4)
+    ['    \"\"\"Sample rate in Hz.\"\"\"']
+    >>> block = summary_docstring("Sample rate in hertz. " * 5, indent=4)
+    >>> len(block), max(len(ln) for ln in block) <= STUB_TARGET_WIDTH
+    (3, True)
+    >>> block[-1]
+    '    \"\"\"'
+    """
+    pad = " " * indent
+    budget = width - indent
+    text = text.strip()
+    if len(text) <= budget - 6:  # room for both delimiters on the one line
+        return [f'{pad}"""{text}"""']
+    lines = wrap_summary(text, budget)
+    return (
+        [f'{pad}"""{lines[0]}']
+        + [f"{pad}{ln}" for ln in lines[1:]]
+        + [f'{pad}"""']
+    )
 
 
 def render_numpy_doc(
@@ -1273,11 +1406,13 @@ def _numpy_sections(
     # gh-652: quarantined block tags become real numpy sections. Rendered here
     # rather than in either face, so both get them from the one builder.
     tag_secs, retvals = _tag_sections(block) if block is not None else ({}, [])
-    out = [summary]
+    # gh-744: the summary wraps like every other section. It used to be the
+    # single exception, spliced in at whatever length the header wrote it.
+    out = wrap_summary(summary)
     if "__deprecated__" in tag_secs:
         for note in tag_secs.pop("__deprecated__"):
             out += ["", ".. deprecated::"] + [
-                f"   {w}" for w in _wrap(note, 69)
+                f"   {w}" for w in _wrap(note, _DEPRECATED_WIDTH)
             ]
     # `body` arrives already grouped into paragraphs by
     # render_numpy_method_doc, so re-group would be a no-op — wrap only.
@@ -1289,7 +1424,7 @@ def _numpy_sections(
         if "\n" in para:
             out += para.split("\n")
         else:
-            out += _wrap(para, 72)
+            out += _wrap(para, DOC_WIDTH)
     # gh-678: descriptions wrap on the same rule as the body. They used to be
     # emitted verbatim however long they were, so one docstring could carry a
     # wrapped summary directly above a 110-column parameter description. The
@@ -1301,10 +1436,10 @@ def _numpy_sections(
         for pname, ann in py_params:
             out.append(f"{pname} : {ann}")
             desc = descs.get(pname) or param_fallback
-            out += [f"    {w}" for w in _wrap(desc, 68)]
+            out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or return_fallback, 68)]
+        out += [f"    {w}" for w in _wrap(ret or return_fallback, DESC_WIDTH)]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -1312,7 +1447,8 @@ def _numpy_sections(
             head, _, rest = rv.partition(" ")
             out.append(head)
             out += [
-                f"    {w}" for w in _wrap(rest.strip() or "Return value.", 68)
+                f"    {w}"
+                for w in _wrap(rest.strip() or "Return value.", DESC_WIDTH)
             ]
     for heading in _SECTION_ORDER:
         entries = tag_secs.get(heading)
@@ -1328,7 +1464,8 @@ def _numpy_sections(
                 exc, _, rest = entry.partition(" ")
                 out.append(exc)
                 out += [
-                    f"    {w}" for w in _wrap(rest.strip() or "Raised.", 68)
+                    f"    {w}"
+                    for w in _wrap(rest.strip() or "Raised.", DESC_WIDTH)
                 ]
                 continue
             # Notes and Warnings are free prose, so consecutive entries must be
@@ -1336,7 +1473,7 @@ def _numpy_sections(
             # run-on paragraph, which is what the reader would blame on jm.
             if i and heading in ("Notes", "Warnings"):
                 out.append("")
-            out += _wrap(entry, 72)
+            out += _wrap(entry, DOC_WIDTH)
     return out, examples
 
 

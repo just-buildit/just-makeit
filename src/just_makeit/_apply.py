@@ -1498,13 +1498,21 @@ def _sync_aggregates(
             # showed the real brief.
             _ctx = _glue.component_ctx(cfg, comp, pkg)
             _ctx["extra_include"] = _glue.standalone_extra_include(root, comp)
-            for _rel, _tmpl in (
-                (f"src/{pkg}/{comp}.pyi", _R.COMPONENT_PYI),
-                (f"native/src/{comp}/{comp}_ext.c", _R.COMPONENT_EXT_C),
+            # gh-744: the `.pyi` renders through `render_component_pyi` (which
+            # reflows to 79 cols) on this path too. `status --check` compares
+            # against what this writes, so rendering it raw here would report
+            # every project permanently stale — the gh-635 failure, one file
+            # over.
+            for _rel, _render in (
+                (f"src/{pkg}/{comp}.pyi", _R.render_component_pyi),
+                (
+                    f"native/src/{comp}/{comp}_ext.c",
+                    lambda c: _R.render(_R.COMPONENT_EXT_C, c),
+                ),
             ):
                 _dst = temp_root / _rel
                 if _dst.exists():
-                    _dst.write_text(_R.render(_tmpl, _ctx), encoding="utf-8")
+                    _dst.write_text(_render(_ctx), encoding="utf-8")
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.

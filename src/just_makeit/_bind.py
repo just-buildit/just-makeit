@@ -643,7 +643,7 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
 
         pyi = root / "src" / pkg / f"{component}.pyi"
         if pyi.exists() or (root / "src" / pkg).is_dir():
-            pyi_text = R.render(R.COMPONENT_PYI, ctx)
+            pyi_text = R.render_component_pyi(ctx)
             # gh-428: bind derives its output purely from the header and
             # otherwise never consults just-makeit.toml, but a manual_stub
             # method's hand-written .pyi text has no header declaration for

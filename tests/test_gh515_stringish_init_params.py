@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._apply import run as apply_run
 from just_makeit._context._types import _py_default
@@ -176,7 +177,7 @@ def test_path_init_param_pyi(tmp_path):
     working call a type error. The widened annotation drags in ``import os``,
     which the stub must therefore carry."""
     pyi = _project_with_init_param(tmp_path / "p", "path")
-    text = pyi.read_text(encoding="utf-8")
+    text = flatten_signatures(pyi.read_text(encoding="utf-8"))
 
     ast.parse(text)
 

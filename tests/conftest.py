@@ -134,3 +134,9 @@ def pytest_collection_modifyitems(session, config, items):
         f"Fix: run `make test` (which supplies them), or `make setup` / "
         f"`uv sync --group dev` for a plain `pytest` run."
     )
+
+
+# gh-744: re-exported, not reimplemented. The examples' own `test.py` files
+# assert on signatures too and cannot import from `tests/`, so the one
+# implementation lives in the package beside the reflow it inverts.
+from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401

@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from just_makeit._pyfmt import flatten_prose
 
 
 def _cmd(args, cwd):
@@ -106,7 +107,10 @@ def run(root: Path) -> None:
     # The enriched summary reached the regenerated stub (not the fallback).
     pyi = (proj / "src" / "gaintool" / "gain.pyi").read_text()
     assert "class Gain:" in pyi
-    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    # gh-744: the summary wraps when it does not fit on one line.
+    assert class_summary in flatten_prose(pyi), (
+        "enriched class summary missing from .pyi"
+    )
     assert "Gain component." not in pyi, (
         "generic fallback summary still present"
     )

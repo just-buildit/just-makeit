@@ -11,7 +11,8 @@ examples: []
 tags:     [('note', '**Input amplitude is bounded.** A component beyond the range is clipped at the boundary before filtering.')]
 
 rendered:
-        """Decimate a CF32 block. Each sample is pushed through the integrators.
+        """Decimate a CF32 block. Each sample is pushed through the
+        integrators.
 
         Parameters
         ----------

@@ -114,6 +114,24 @@ def render(template: str, ctx: dict) -> str:
     return result
 
 
+def render_component_pyi(ctx: dict) -> str:
+    """Render a standalone component's ``.pyi``, reflowed to 79 columns.
+
+    gh-744. **The** way to render ``COMPONENT_PYI`` — every caller goes
+    through here rather than ``render(COMPONENT_PYI, ctx)``, so the reflow
+    cannot be applied on the write path and skipped on the compare path.
+    That asymmetry is not hypothetical: it is exactly the bug gh-635 records
+    for the C side, where ``apply`` formats the aggregator and
+    ``status --check`` compares against the unformatted text, leaving a
+    project permanently stale. ``tests/test_gh744_stub_width.py`` greps for
+    direct ``render(COMPONENT_PYI, …)`` calls so a seventh call site added
+    later cannot quietly reintroduce it.
+    """
+    from ._pyfmt import reflow_pyi
+
+    return reflow_pyi(render(COMPONENT_PYI, ctx))
+
+
 # ── Multi-object module support ──────────────────────────────────────────────
 #
 # A "module" is a single .so that hosts multiple Python types ("objects").

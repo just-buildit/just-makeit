@@ -24,6 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from ._docstring import CLASS_DESC_WIDTH, _wrap
+from ._pyfmt import reflow_pyi
 
 # ── C type / format helpers ──────────────────────────────────────────────────
 
@@ -2699,13 +2701,19 @@ def _pyi_doc_lines(
         out.append(type_line)
         # Optional per-field description (manifest ``doc =``), then — for an
         # enum field — its choice list.
+        # gh-744: a manifest `doc =` is free prose and was emitted at
+        # whatever length it was written -- 695 columns in doppler's
+        # `background` field. Same budget as every other numpy description.
         if f.get("doc"):
-            out.append(f"        {f['doc']}")
+            out += [f"        {w}" for w in _wrap(f["doc"], CLASS_DESC_WIDTH)]
         if f.get("enum"):
             choices = enum_reg.get(f["enum"], [])
             if choices:
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
-                out.append(f"        One of {choice_str}.")
+                out += [
+                    f"        {w}"
+                    for w in _wrap(f"One of {choice_str}.", CLASS_DESC_WIDTH)
+                ]
     out.append('    """')
     return out
 
@@ -2898,7 +2906,9 @@ def render_pyi(cfg: dict, module: str) -> str:
             f'    """Return a {src_t} configured as a *{fac}* source."""',
         ]
     lines.append("")
-    return "\n".join(lines)
+    # gh-744: the third stub producer, reflowed like the other two
+    # (`_render.render_component_pyi`, `_stubs.make_module_pyi`).
+    return reflow_pyi("\n".join(lines))
 
 
 def materialize(cfg: dict, root: Path, module: str) -> None:

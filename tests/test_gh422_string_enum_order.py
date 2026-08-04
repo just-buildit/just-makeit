@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -81,7 +82,9 @@ class TestStringEnumPreservesDeclOrder:
                 ("lfsr", "string_enum:galois,fibonacci", "galois"),
             ],
         )
-        pyi = (root / "src" / "wfm" / "pn.pyi").read_text(encoding="utf-8")
+        pyi = flatten_signatures(
+            (root / "src" / "wfm" / "pn.pyi").read_text(encoding="utf-8")
+        )
         assert (
             "def __init__(self, poly: int = 96,"
             " seed: int = 1, length: int = 7,"

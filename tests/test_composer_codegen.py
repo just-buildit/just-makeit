@@ -988,16 +988,29 @@ class TestSegmentFlatAccessors:
         nxt = rest.find("\nclass ", 1)
         return rest if nxt < 0 else rest[:nxt]
 
+    @staticmethod
+    def _attrs(block: str) -> list[str]:
+        """The block's lines, so an attribute is matched as a whole line.
+
+        gh-744: a wrapped ``__init__`` signature puts ``freq: float = ...,``
+        on its own 8-space line, which *contains* the 4-space attribute
+        declaration as a substring. A substring test therefore reported the
+        flat accessor present on a Segment that has none.
+        """
+        return block.splitlines()
+
     def test_pyi_declares_flat_attributes(self):
-        seg = self._segment_block(
-            _composer.render_pyi(_flat_cfg(), "wfm_compose")
+        seg = self._attrs(
+            self._segment_block(
+                _composer.render_pyi(_flat_cfg(), "wfm_compose")
+            )
         )
         assert "    freq: float" in seg
         assert "    type: str" in seg  # enum field → str
         assert "    bits: bytes | None" in seg
         # absent from Segment without the table
-        plain = self._segment_block(
-            _composer.render_pyi(_cfg(), "wfm_compose")
+        plain = self._attrs(
+            self._segment_block(_composer.render_pyi(_cfg(), "wfm_compose"))
         )
         assert "    freq: float" not in plain
         assert "    bits: bytes | None" not in plain
@@ -1338,7 +1351,9 @@ class TestDelegatedSerializers:
         assert s.count('#include "wfm/wfm_writer.h"') == 1
 
     def test_pyi_exposes_serializer(self):
-        pyi = _composer.render_pyi(self._cfg(), "wfm_compose")
+        pyi = flatten_signatures(
+            _composer.render_pyi(self._cfg(), "wfm_compose")
+        )
         assert (
             "def to_sigmf(self, kind: str = ..., fs: float = ..., "
             "fc: float = ...) -> str:" in pyi
@@ -1430,6 +1445,7 @@ import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
 import pytest  # noqa: E402
+from just_makeit._pyfmt import flatten_signatures
 
 _CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 

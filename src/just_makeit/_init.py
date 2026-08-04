@@ -1043,7 +1043,6 @@ def run(
     ext_c_tmpl = R.COMPONENT_EXT_C
     test_c_tmpl = R.COMPONENT_TEST_C
     bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
-    pyi_tmpl = R.COMPONENT_PYI
     pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (
         R.COMPONENT_BENCH_PYTEST_BM
@@ -1104,7 +1103,7 @@ def run(
     else:
         _splice_init_py(init_py, comp, ctx["Component"])
 
-    _write(root / "src" / pkg / f"{comp}.pyi", r(pyi_tmpl))
+    _write(root / "src" / pkg / f"{comp}.pyi", R.render_component_pyi(ctx))
     _write(root / "src" / pkg / "tests" / "__init__.py", R.TESTS_INIT_PY)
     _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(pytest_tmpl))
 

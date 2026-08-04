@@ -36,10 +36,15 @@ from just_makeit._config import load, methods
 from just_makeit import _status
 
 
+# gh-744: the placeholder docstring is 120 columns as one line, so it is now
+# emitted wrapped. The exact on-disk text is what this test substitutes for,
+# hence the literal rather than the logical sentence.
 _PLACEHOLDER = (
     "    def execute_ci16(self, *args: Any, **kwargs: Any) -> Any:\n"
     '        """<<MANUAL_STUB>> hand-write this signature/docstring in the'
-    ' .pyi — jm preserves it verbatim on future regens."""\n'
+    " .pyi — jm\n"
+    "        preserves it verbatim on future regens.\n"
+    '        """\n'
 )
 _HAND_WRITTEN = (
     "    def execute_ci16(self, x: NDArray[np.int16]) -> None:\n"

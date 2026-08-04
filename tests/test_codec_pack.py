@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit import _codec as K
 from just_makeit import _config as C
@@ -136,7 +137,9 @@ class TestApplyCodegen:
         assert "switch (_type)" in ext
         assert "gizmo_add_kw(self->handle" in ext
         assert '"add_kw"' in ext
-        pyi = (d / "src/proj/widget/widget.pyi").read_text()
+        pyi = flatten_signatures(
+            (d / "src/proj/widget/widget.pyi").read_text()
+        )
         assert (
             "def add_kw(self, tag: str, type: str, value: "
             "str | int | float | Sequence[int] | Sequence[float]) -> None:"

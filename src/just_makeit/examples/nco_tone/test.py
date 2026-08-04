@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from just_makeit._pyfmt import flatten_prose
 
 # Pinned doppler version for the auto-download path. Bump when doppler
 # cuts a new release; eventually replace with a GitHub API lookup of the
@@ -375,7 +376,8 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     pyi = (proj / "src" / "nco_tone_demo" / "tone.pyi").read_text(
         encoding="utf-8"
     )
-    assert _CLASS_SUMMARY in pyi, (
+    # gh-744: the summary wraps when it does not fit on one line.
+    assert _CLASS_SUMMARY in flatten_prose(pyi), (
         "enriched class summary missing from tone.pyi:\n" + pyi
     )
     assert "Tone component." not in pyi, (

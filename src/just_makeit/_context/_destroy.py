@@ -64,6 +64,7 @@ from __future__ import annotations
 import re
 
 from .. import _config as C
+from .._docstring import DESC_WIDTH, _wrap
 from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
@@ -311,13 +312,22 @@ def make_destroy_ctx(
     _raises: list[str] = []
     if fallible:
         category = spec.get("error") or _DEFAULT_CATEGORY
+        # gh-744: the description wraps like every other numpy description.
+        # It landed at 173 columns as one line -- the section is indented 4
+        # inside a docstring already indented 8, so the budget is DESC_WIDTH.
         _raises = [
             "Raises",
             "------",
             f"{category}",
-            "    If the C destructor reports failure. Raised from an "
-            "explicit call and from ``__exit__`` alike, so a failing "
-            "teardown propagates out of a ``with`` block (gh-541).",
+            *(
+                f"    {w}"
+                for w in _wrap(
+                    "If the C destructor reports failure. Raised from an "
+                    "explicit call and from ``__exit__`` alike, so a failing "
+                    "teardown propagates out of a ``with`` block (gh-541).",
+                    DESC_WIDTH,
+                )
+            ),
         ]
 
     def _doc_for(n: str) -> tuple[str, str]:

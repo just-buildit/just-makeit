@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._new import run as new_run
 from just_makeit._module import run as module_run
@@ -179,7 +180,9 @@ class TestHeaderAndPrototype:
 class TestPyiStubs:
     def test_standalone_pyi(self, tmp_path):
         dest = _scaffold_standalone(tmp_path)
-        pyi = (dest / "src" / "dsp" / "agc.pyi").read_text(encoding="utf-8")
+        pyi = flatten_signatures(
+            (dest / "src" / "dsp" / "agc.pyi").read_text(encoding="utf-8")
+        )
         assert (
             "def set_telemetry(self, tlm: object | None, prefix: str,"
             " decim: int = 1) -> None:" in pyi
@@ -194,8 +197,10 @@ class TestPyiStubs:
         # right — assert the full signature, not just the capsule param,
         # so a missing scalar-type mapping can't hide again.
         dest = _scaffold_module(tmp_path)
-        pyi = (dest / "src" / "dsp" / "track" / "track.pyi").read_text(
-            encoding="utf-8"
+        pyi = flatten_signatures(
+            (dest / "src" / "dsp" / "track" / "track.pyi").read_text(
+                encoding="utf-8"
+            )
         )
         assert (
             "def set_telemetry(self, tlm: object | None, prefix: str,"

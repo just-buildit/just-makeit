@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._function import run as function_run
 from just_makeit._method import run as method_run
@@ -19,8 +20,15 @@ from just_makeit._property import run as property_run
 
 
 def _pyi(root: Path, module: str, pkg: str) -> str:
-    return (root / "src" / pkg / module / f"{module}.pyi").read_text(
-        encoding="utf-8"
+    """The module stub, with wrapped signatures rejoined (gh-744).
+
+    Every assertion in this file matches a signature by substring, so it is
+    the parameters that are under test, not where the line happens to break.
+    """
+    return flatten_signatures(
+        (root / "src" / pkg / module / f"{module}.pyi").read_text(
+            encoding="utf-8"
+        )
     )
 
 

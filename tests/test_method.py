@@ -9,6 +9,7 @@ import pytest
 _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._new import run as new_run
 from just_makeit._module import run as module_run
@@ -2174,9 +2175,11 @@ class TestMethodSingleRecord:
         assert "PyList_New" not in ext
 
     def test_single_with_params_pyi(self, tmp_path):
-        pyi = (
-            self._scaffold_with_params(tmp_path) / "src/p/tm.pyi"
-        ).read_text("utf-8")
+        pyi = flatten_signatures(
+            (self._scaffold_with_params(tmp_path) / "src/p/tm.pyi").read_text(
+                "utf-8"
+            )
+        )
         assert (
             "def analyze(self, x: NDArray[np.complex64], lo: float,"
             " hi: float, guard_hz: float = 0.0) -> ToneMetrics:" in pyi

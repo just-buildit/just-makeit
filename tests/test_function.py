@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -1232,7 +1233,9 @@ class TestVariableOutputArraySignature:
             variable_output=True,
             multi_output=[],
         )
-        pyi = (root / "src/blk/dsp/dsp.pyi").read_text(encoding="utf-8")
+        pyi = flatten_signatures(
+            (root / "src/blk/dsp/dsp.pyi").read_text(encoding="utf-8")
+        )
         # gh-423: this shape (bare arg_type, variable_output, no params, no
         # multi_output) is also `out=`-eligible (gh-219), so the module
         # aggregator's stub carries the optional `out=` buffer param.
