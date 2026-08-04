@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`[project] c_format_command` — pin the clang-format binary (gh-745).**
+    `c_style = "clang-format"` decides *whether* generated C is reformatted;
+    this decides *which binary does it*, and that is what makes the output
+    reproducible. jm resolved the formatter with a bare
+    `shutil.which("clang-format")`, so the committed bytes depended on the
+    machine — doppler gets 21.1.8 locally and 22.1.8 in CI, which is identical
+    input, different output, and a `jm status --check` that flips red across
+    machines on a project nobody touched. Point the key at whatever already
+    pins the version:
+
+    ```toml
+    [project]
+    c_style = "clang-format"
+    c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+    ```
+
+    An argv list, never a shell string — splitting one would have to guess
+    about quoting, and the first thing that goes here is a path. Only `argv[0]`
+    is resolved on `PATH`, so routing through a runner works even when
+    `clang-format` itself is not on `PATH` at all. jm still appends
+    `-i --style=file --fallback-style=LLVM`, so the committed `.clang-format`
+    decides the layout. Unset, the default `["clang-format"]` reproduces the
+    previous behaviour exactly.
+
+    The command reaches the throwaway scaffold `apply` compares against, not
+    only the real tree — formatting the two sides with different binaries is
+    how gh-635 happened, and there is now a test that fails if it recurs.
+
+- **`jm status` names the formatter when it reports drift on a `c_style`
+    project (gh-745).** Only on the drift path, so the clean summary is
+    unchanged. The most confusing `c_style` failure is "stale in CI, clean
+    locally" on identical input; printing the version turns that into a
+    one-line diagnosis.
+
+### Docs
+
+- `c_style` and `c_format_command` are documented in `docs/configuration.md`.
+    `c_style` had shipped in 0.36.0 undocumented, which left its scope and its
+    convergence behaviour to be discovered empirically downstream.
+
 ## [0.43.2] — 2026-08-03
 
 ### Fixed

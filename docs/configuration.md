@@ -356,6 +356,44 @@ Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 | `pkg_modules`      | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`.    |
 | `c_deps`           | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper). |
 | `schema`           | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.         |
+| `c_style`          | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.      |
+| `c_format_command` | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.    |
+
+### Generated-C house style — `c_style` and `c_format_command`
+
+jm emits its own canonical 4-space C. A project with a different committed
+style otherwise sees permanent drift: jm regenerates the `*_ext.c` binding in
+4-space, the project's formatter rewrites it to house style, and
+`jm status --check` calls it stale forever.
+
+```toml
+[project]
+c_style = "clang-format"
+c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+```
+
+`c_style` decides **whether** to format; `c_format_command` decides **which
+binary does it**, and the second is what makes the result reproducible. Left
+unset it defaults to `["clang-format"]` — a bare `PATH` lookup, which is fine
+on one machine and wrong across two: clang-format 21 and 22 format the same
+input differently, so a project whose developers and CI resolve different
+versions gets a drift gate that flips red on a tree nobody touched. Point it
+at whatever already pins the version (`uv run`, a pre-commit mirror, an
+absolute path) and the committed bytes stop depending on the machine.
+
+It is an **argv list, never a shell string** — splitting a string would have to
+guess about quoting, and the first thing that goes here is a path that may
+contain spaces. jm appends `-i --style=file --fallback-style=LLVM` and the file
+list, so the committed `.clang-format` still decides the layout.
+
+Scope: only the wholesale-regenerated `*_ext.c` glue is reformatted. `*_core.c`
+and the splice-patched `native/inc/**` headers are left to the project's own
+formatter — reformatting those breaks `jm apply` convergence.
+
+A missing binary is a soft failure: one warning, and the command still
+succeeds with generated C in jm's default style. When `jm status` reports
+drift on a `c_style` project it also prints the formatter's version, so
+"stale in CI, clean locally" names its own cause.
 
 ### `[<component>]` keys
 

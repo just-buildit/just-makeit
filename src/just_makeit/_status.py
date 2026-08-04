@@ -47,6 +47,7 @@ import tempfile
 from pathlib import Path
 
 from . import _apply
+from . import _cfmt
 from . import _config as C
 from ._apply import _SKIP_DIRS, _SKIP_FILES, _SKIP_SUFFIXES
 
@@ -401,5 +402,17 @@ def run(
             "Your `_core.c` is sacred — apply never changes it; use "
             "`jm regenerate <component>` to rebuild one from the manifest."
         )
+        # gh-745: name the formatter *when there is drift to explain*. A
+        # `c_style` project's most confusing failure is "stale in CI, clean
+        # locally" on identical input, whose cause is two clang-format
+        # versions — invisible unless something prints it. Only on the drift
+        # path, so the clean summary keeps its exact wording.
+        _fmt_note = _cfmt.format_version(cfg)
+        if _fmt_note:
+            print(
+                f"\nGenerated C was formatted by: {_fmt_note.splitlines()[0]}"
+                f"\n  ([project] c_format_command — pin it if this differs "
+                f"between machines.)"
+            )
 
     return drift_count

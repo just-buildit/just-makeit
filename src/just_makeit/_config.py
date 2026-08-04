@@ -2501,6 +2501,71 @@ def c_style(cfg: dict) -> str:
     return str(cfg.get("project", {}).get("c_style", ""))
 
 
+# The formatter invocation when none is declared. A bare name, resolved on
+# PATH — which is what jm did unconditionally before gh-745.
+DEFAULT_C_FORMAT_COMMAND = ["clang-format"]
+
+
+def c_format_command(cfg: dict) -> list[str]:
+    """The ``clang-format`` invocation, as an argv list (gh-745).
+
+    ``c_style`` decides *whether* to format; this decides **which binary
+    does it**, and that is the difference between a reproducible project and
+    one whose committed bytes depend on the machine. jm used to resolve the
+    formatter with a bare ``shutil.which("clang-format")``, so doppler got
+    21.1.8 locally and 22.1.8 in CI — same input, different output, and
+    ``jm status --check`` flips red across machines the moment ``c_style`` is
+    on. A project that pins its formatter (via ``uv.lock``, a pre-commit
+    mirror, or an absolute path) had no way to say so::
+
+        [project]
+        c_style = "clang-format"
+        c_format_command = ["uv", "run", "--group", "dev", "clang-format"]
+
+    jm appends ``-i --style=file --fallback-style=LLVM`` and the file list, so
+    the committed ``.clang-format`` still decides the layout — this changes
+    only which executable reads it.
+
+    An **argv list, never a shell string**: splitting a string would have to
+    guess about quoting, and the first thing anyone puts here is a path that
+    may contain spaces.
+
+    Returns
+    -------
+    list of str
+        The declared command, or ``["clang-format"]`` when unset — which
+        reproduces jm's pre-gh-745 behaviour exactly.
+
+    Raises
+    ------
+    ValueError
+        If the value is not a non-empty list of strings. Failing loudly
+        matters more than usual here: a silently-ignored formatter command
+        looks identical to a working one until two machines disagree, which
+        is the very failure this key exists to remove.
+    """
+    raw = cfg.get("project", {}).get("c_format_command")
+    if raw is None:
+        return list(DEFAULT_C_FORMAT_COMMAND)
+    if isinstance(raw, str):
+        raise ValueError(
+            "[project] c_format_command must be a list of arguments, not a "
+            f'string — write ["uv", "run", "clang-format"], not "{raw}". '
+            "A string would have to be split, and jm will not guess where."
+        )
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise ValueError(
+            "[project] c_format_command must be a non-empty list of "
+            f"arguments; got {raw!r}."
+        )
+    if not all(isinstance(a, str) for a in raw):
+        raise ValueError(
+            "[project] c_format_command must contain only strings; got "
+            f"{raw!r}."
+        )
+    return [str(a) for a in raw]
+
+
 def is_perf(cfg: dict) -> bool:
     return _truthy(cfg.get("project", {}).get("perf"))
 
