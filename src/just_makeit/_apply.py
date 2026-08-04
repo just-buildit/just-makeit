@@ -2109,6 +2109,13 @@ def run(
     else:
         print(f"Done!  Project already matches {C.FILENAME} — nothing to do.")
 
+    # gh-752: the stubs have just been written, so this measures them rather
+    # than predicting. Reported after the summary because it is a note about
+    # the *author's* text, not a result of the apply.
+    from . import _codecheck
+
+    _codecheck.report(root, cfg)
+
     if C.app_config(cfg):
         from . import _app
 

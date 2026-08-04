@@ -1282,6 +1282,71 @@ def summary_docstring(
     )
 
 
+def example_budget(indent: int, width: int = STUB_TARGET_WIDTH) -> int:
+    """Content columns an authored ``@code`` line may use at *indent*.
+
+    gh-752. An author writes ``@code`` inside a C comment, where the visible
+    margin is the header's own 79 columns minus the ``` * ``` decoration. jm
+    strips that decoration and re-indents the line to sit inside a docstring,
+    so the budget the author must actually hit is ``79 - indent`` — 71 for a
+    class member, 75 for a module-level function.
+
+    Neither number is visible from the header, and which applies depends on
+    where the documented function ends up in the generated stub. That is why
+    this lives in jm: a downstream gate can see the overflow but cannot
+    compute the budget, so it cannot tell the author what to aim for.
+    """
+    return width - indent
+
+
+def example_overflows(
+    examples: list[str],
+    indent: int,
+    width: int = STUB_TARGET_WIDTH,
+) -> list[tuple[str, int]]:
+    """``(line, emitted_columns)`` for each ``@code`` line too wide to fit.
+
+    Reports rather than repairs, deliberately. These lines are the author's:
+    they are doctests, so re-wrapping a ``>>>`` changes what runs, and the
+    overflow is overwhelmingly a trailing aligned comment whose column is a
+    deliberate choice. jm's job is to say which line, by how much, and what
+    the target is — the edit belongs in the header.
+
+    Parameters
+    ----------
+    examples : list of str
+        Verbatim ``@code`` interior lines, as parsed.
+    indent : int
+        Leading spaces the renderer will add. 8 inside a class, 4 for a
+        module-level function.
+    width : int, optional
+        Column target; defaults to the project-wide 79.
+
+    Returns
+    -------
+    list of tuple(str, int)
+        One entry per overflowing line, in order, with the column count it
+        will actually occupy.
+
+    Examples
+    --------
+    >>> example_overflows([">>> x = 1"], 8)
+    []
+    >>> line = ">>> obj.step(1.0)" + " " * 4 + "# " + "a" * 60
+    >>> example_overflows([line], 8)[0][1]
+    91
+    """
+    out: list[tuple[str, int]] = []
+    for ex in examples:
+        text = ex.rstrip()
+        if not text:
+            continue
+        cols = indent + len(text)
+        if cols > width:
+            out.append((text, cols))
+    return out
+
+
 def wrap_structured_line(line: str, width: int = DOC_WIDTH) -> list[str]:
     """Wrap one list item, hanging-indenting its continuations.
 

@@ -381,6 +381,15 @@ def run(
 
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
+    # gh-752: a burn-down number for authored @code too wide for its stub.
+    # Reported on both the clean and the drifting path, because it is not
+    # drift — the project can be perfectly in sync and still carry examples
+    # that no downstream 79-col gate can pass. A count only; `jm apply` prints
+    # the sites.
+    from . import _codecheck
+
+    _wide = len(_codecheck.scan(root, cfg))
+
     if not drift and not dropped_entries and not drift_entries:
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         print(
@@ -414,5 +423,12 @@ def run(
                 f"\n  ([project] c_format_command — pin it if this differs "
                 f"between machines.)"
             )
+
+    if _wide:
+        print(
+            f"\n{_wide} authored @code line(s) exceed 79 columns in the "
+            f"generated stubs.\n  Not drift — `jm apply` lists the sites and "
+            f"the per-line budget."
+        )
 
     return drift_count

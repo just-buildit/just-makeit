@@ -395,6 +395,43 @@ succeeds with generated C in jm's default style. When `jm status` reports
 drift on a `c_style` project it also prints the formatter's version, so
 "stale in CI, clean locally" names its own cause.
 
+### Authored `@code` examples — the 79-column budget
+
+An `@code` block in a sacred header becomes the `Examples` section of the
+generated docstring. jm strips the `*` comment decoration and re-indents the
+line to sit inside the docstring, so **the line gets shorter than it looks**:
+
+| where the docstring lands    | stub indent | your `@code` line may be |
+| ---------------------------- | ----------- | ------------------------ |
+| a method or property         | 8           | **71** columns           |
+| a class docstring (`create`) | 4           | **75** columns           |
+| a module-level function      | 4           | **75** columns           |
+
+A line wrapped to the header's own 79 columns is 74 columns of content once
+`*` is counted — which fits the header and *overflows the stub by 3*. That
+is why `jm apply` reports the concrete figure per site rather than a rule:
+
+```
+native/inc/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in the
+  stub; wrap at <= 71.
+    >>> c.step(2.0)                    # beyond +1.0 -> saturates to int16 max
+```
+
+**jm never rewrites the line.** A `>>>` is executable, and the overflow is
+usually a trailing comment whose column you aligned deliberately. Three ways
+to bring one back under budget, none of which changes what the example does:
+
+1. **Trim the comment text**, keeping the `#` column. Most overflows are a few
+    words of comment.
+1. **Continue the statement** across a `...` continuation line — a doctest is one logical
+    statement, so this is behaviour-preserving.
+1. **Move the note above the example.** A doctest block runs prose, then the
+    `>>>` code, then its output, then a blank line, then prose again — and the
+    prose wraps freely, so a long aside reads better there anyway.
+
+`jm status` prints the outstanding count, so a project sweeping them has a
+burn-down number.
+
 ### `[<component>]` keys
 
 | TOML key             | CLI flag                                          | Status       | Notes                                                                                   |

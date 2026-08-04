@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm apply` reports authored `@code` lines too wide for their stub, per
+    site (gh-752).** An author wraps an example to the header's 79 columns —
+    what their C style enforces — and jm then strips the `*` decoration and
+    re-indents the line into a docstring, so a line that is 77 columns and
+    *correct* in the header arrives at 82 in the stub. 160 of doppler's 164
+    remaining over-79 lines were exactly this. The rule the author can see is
+    8 columns looser than the one the output must satisfy, and the budget they
+    need (71 inside a class, 75 at module level) is not visible from the
+    header at all — so jm states the concrete figure:
+
+    ```
+    native/inc/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in
+      the stub; wrap at <= 71.
+    ```
+
+    **jm never rewrites the line.** A `>>>` is executable, and the overflow is
+    usually a trailing comment whose column the author aligned deliberately.
+    `jm status` prints the outstanding count so a project sweeping them has a
+    burn-down number, and reports it as *not* drift — a project can be
+    perfectly in sync and still carry these.
+
+    The check measures the emitted `.pyi` rather than predicting from the
+    header. Predicting meant guessing which blocks surface and at what indent,
+    and the guess was wrong three ways on doppler — a `create` block renders
+    into the *class* docstring at indent 4, a `manual_stub` member renders no
+    docstring at all, and a module free function lives in a different header.
+    Measuring makes a false positive structurally impossible and covers every
+    stub producer, including the ones gh-747 tracks.
+
+### Docs
+
+- The `@code` column budget, and three ways to bring a line back under it
+    without changing what the example does, are documented in
+    `docs/configuration.md`.
+
 ### Fixed
 
 - **A generated docstring survives a formatter pulling its closing `"""` up
