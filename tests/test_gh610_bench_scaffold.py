@@ -136,9 +136,16 @@ class TestPyiConstructorSignatureIsValid:
     def test_doctest_example_is_keyword_and_matches_values(self, tmp_path):
         root = _scaffold(tmp_path)
         pyi = _pyi(root)
-        example = next(
-            ln for ln in pyi.splitlines() if ">>> obj = CarrierAcq(" in ln
+        # gh-744: the demo wraps across `...` continuation lines when the
+        # keyword list does not fit 79 cols, so gather the whole statement.
+        lines = pyi.splitlines()
+        i = next(
+            n for n, ln in enumerate(lines) if ">>> obj = CarrierAcq(" in ln
         )
+        example = lines[i]
+        while lines[i].rstrip().endswith(("(", ",")):
+            i += 1
+            example += " " + lines[i].strip().removeprefix("... ")
         assert "sequential=True" in example
         assert "window=" in example
 
@@ -163,9 +170,16 @@ class TestModuleAggregatedPyiUnaffectedRegression:
         pyi = (root / "src" / "dsp" / "mod" / "mod.pyi").read_text(
             encoding="utf-8"
         )
-        example = next(
-            ln for ln in pyi.splitlines() if ">>> obj = CarrierAcq(" in ln
+        # gh-744: the demo wraps across `...` continuation lines when the
+        # keyword list does not fit 79 cols, so gather the whole statement.
+        lines = pyi.splitlines()
+        i = next(
+            n for n, ln in enumerate(lines) if ">>> obj = CarrierAcq(" in ln
         )
+        example = lines[i]
+        while lines[i].rstrip().endswith(("(", ",")):
+            i += 1
+            example += " " + lines[i].strip().removeprefix("... ")
         assert "sequential=True" in example
         assert "true" not in example
         ast.parse(pyi)

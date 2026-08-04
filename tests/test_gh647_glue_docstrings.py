@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._gluedoc import glue_methods  # noqa: E402
@@ -171,7 +172,7 @@ class TestRenderedShape:
                 )
 
     def test_exit_signature_is_named_not_varargs(self, project):
-        pyi = _pyi(project)
+        pyi = flatten_signatures(_pyi(project))
         assert "def __exit__(self, *args: object)" not in pyi
         assert "def __exit__(self, exc_type: object | None = ..." in pyi
 

@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit import _config as C
 from just_makeit._context import (
@@ -385,7 +386,7 @@ class TestScalarSignature:
         )
 
     def test_pyi_step_positional_only_steps_keyword(self, scalar):
-        pyi = (scalar / "src/proj/amp.pyi").read_text()
+        pyi = flatten_signatures((scalar / "src/proj/amp.pyi").read_text())
         assert (
             "def step(self, x: float, gain: float = ..., /) -> float:" in pyi
         )

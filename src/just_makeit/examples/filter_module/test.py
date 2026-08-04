@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from just_makeit._pyfmt import flatten_signatures
 
 
 HERE = Path(__file__).parent
@@ -219,7 +220,12 @@ print("filter_module: all checks passed")
     print(result.stdout.strip())
 
     # Verify module-level type stub (named filter.pyi, not __init__.pyi)
-    pyi = (dest / "src" / "my_filters" / "filter" / "filter.pyi").read_text()
+    # gh-744: signatures are wrapped to 79 cols when they do not fit,
+    # so rejoin them before matching -- the assertion is about the
+    # parameters, not where the line happens to break.
+    pyi = flatten_signatures(
+        (dest / "src" / "my_filters" / "filter" / "filter.pyi").read_text()
+    )
     assert pyi.startswith("# filter/filter.pyi")
     assert "class Fir:" in pyi
     assert "class Biquad:" in pyi

@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from just_makeit._pyfmt import flatten_signatures
 
 
 def _make_env():
@@ -147,7 +148,12 @@ print("ok")
     assert "ok" in r.stdout
 
     # Verify type stub: complex arg -> float return, steps() present
-    pyi = (dest / "src" / "my_power" / "power_est.pyi").read_text()
+    # gh-744: signatures are wrapped to 79 cols when they do not fit,
+    # so rejoin them before matching -- the assertion is about the
+    # parameters, not where the line happens to break.
+    pyi = flatten_signatures(
+        (dest / "src" / "my_power" / "power_est.pyi").read_text()
+    )
     assert "class PowerEst:" in pyi
     assert "def step(self, x: complex) -> float:" in pyi
     assert "def steps(self, x: NDArray[np.complex64]" in pyi

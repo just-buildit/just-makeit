@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from just_makeit._pyfmt import flatten_signatures
 
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
@@ -224,7 +225,12 @@ def run(root: Path) -> None:
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_buf)
 
     # Type stub: step takes NDArray, returns int; no steps() line
-    pyi = (proj_buf / "src" / "my_buf" / "buf_proc.pyi").read_text()
+    # gh-744: signatures are wrapped to 79 cols when they do not fit,
+    # so rejoin them before matching -- the assertion is about the
+    # parameters, not where the line happens to break.
+    pyi = flatten_signatures(
+        (proj_buf / "src" / "my_buf" / "buf_proc.pyi").read_text()
+    )
     assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi, (
         f"array-arg step stub missing or wrong:\n{pyi}"
     )
@@ -233,7 +239,12 @@ def run(root: Path) -> None:
     )
 
     # Also verify ema's pyi from pattern 1
-    ema_pyi = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+    # gh-744: signatures are wrapped to 79 cols when they do not fit,
+    # so rejoin them before matching -- the assertion is about the
+    # parameters, not where the line happens to break.
+    ema_pyi = flatten_signatures(
+        (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+    )
     assert "class Ema:" in ema_pyi
     assert "def step(self, x: float) -> float:" in ema_pyi
     assert "def steps(self, x: NDArray[np.float32]" in ema_pyi

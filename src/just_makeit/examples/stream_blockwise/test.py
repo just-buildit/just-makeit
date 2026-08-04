@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from just_makeit._pyfmt import flatten_prose
 
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
@@ -155,7 +156,10 @@ def run(root: Path) -> None:
     # The enriched summary reached the regenerated stub (not the fallback).
     pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text()
     assert "class Drainer:" in pyi
-    assert class_summary in pyi, "enriched class summary missing from .pyi"
+    # gh-744: the summary wraps when it does not fit on one line.
+    assert class_summary in flatten_prose(pyi), (
+        "enriched class summary missing from .pyi"
+    )
     assert "Drainer component." not in pyi, (
         "generic fallback summary still present"
     )

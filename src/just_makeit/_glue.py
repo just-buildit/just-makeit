@@ -303,7 +303,7 @@ def regenerate_standalone(
     pyi_path = root / "src" / pkg / f"{object_name}.pyi"
     if pyi_path.exists():
         old_pyi = pyi_path.read_text(encoding="utf-8")
-        new_pyi = R.render(R.COMPONENT_PYI, ctx)
+        new_pyi = R.render_component_pyi(ctx)
         # gh-428: preserve any manual_stub method's hand-written text across
         # the otherwise-blind regen above.
         pyi_path.write_text(

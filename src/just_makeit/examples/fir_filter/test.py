@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from just_makeit._pyfmt import flatten_signatures
 
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
@@ -196,7 +197,12 @@ def run(root: Path) -> None:
     apply_run(proj)
 
     # 6. Verify type stub
-    pyi = (proj / "src" / "my_fir" / "fir_filter.pyi").read_text()
+    # gh-744: signatures are wrapped to 79 cols when they do not fit,
+    # so rejoin them before matching -- the assertion is about the
+    # parameters, not where the line happens to break.
+    pyi = flatten_signatures(
+        (proj / "src" / "my_fir" / "fir_filter.pyi").read_text()
+    )
     assert "class FirFilter:" in pyi
     assert "def step(self, x: complex) -> complex:" in pyi
     assert "def steps(self, x: NDArray[np.complex64]" in pyi

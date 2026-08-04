@@ -27,6 +27,7 @@ from .._docstring import (
     render_numpy_doc,
     render_runtime_doc,
     scaffold_doc_block,
+    summary_docstring,
 )
 from dataclasses import replace
 
@@ -3157,11 +3158,15 @@ def make_properties_ctx(
             py_t = _pyi_ndarray(ctype)
         else:
             py_t = _pyi_scalar(ctype)
+        # gh-744: a property's docstring is a bare summary, so it never went
+        # through `render_numpy_doc` and was emitted on one line whatever its
+        # length. `summary_docstring` keeps the one-line shape when it fits,
+        # so only the overlong ones change.
         pyi_block = [
             "",
             "    @property",
             f"    def {pname}(self) -> {py_t}:",
-            f'        """{_pdoc}"""',
+            *summary_docstring(_pdoc, indent=8),
         ]
         if writable:
             pyi_block += [

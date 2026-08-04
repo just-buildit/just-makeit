@@ -35,6 +35,13 @@ from . import _types as T
 from dataclasses import replace as _replace
 
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
+from ._docstring import (
+    CLASS_DESC_WIDTH as _CLASS_DESC_WIDTH,
+    CLASS_DOC_WIDTH as _CLASS_DOC_WIDTH,
+    STUB_TARGET_WIDTH,
+    _wrap,
+    wrap_summary as _wrap_summary,
+)
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -543,6 +550,53 @@ def _doctest_out(ctype: str, default: str) -> str | None:
     return None
 
 
+def _ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:
+    """The ``>>> obj = Component(...)`` demo, wrapped if it does not fit.
+
+    gh-744. A component with many init-params produced a 257-column example
+    line (doppler's ``MpskReceiver``). Unlike an author's ``@code`` block --
+    which jm preserves byte-for-byte, trailing comment alignment and all --
+    this line is jm's own, so jm owns its width.
+
+    A doctest continues with ``...``, so the wrapped form is still a runnable
+    example and still one statement. Shown here with the prompts spelled out
+    rather than as a live block, since this illustrates the *output* and is
+    not itself an example to run::
+
+        [PS1] obj = Thing(
+        [PS2]     alpha=1,
+        [PS2]     beta=2,
+        [PS2] )
+
+    where ``[PS1]`` is ``>>>`` and ``[PS2]`` is ``...``.
+
+    Parameters
+    ----------
+    Component : str
+        Class name to construct.
+    py_create_args : str
+        Rendered keyword arguments, comma-separated.
+
+    Returns
+    -------
+    list of str
+        Doctest lines at the class docstring's 4-space indent.
+    """
+    from ._pyfmt import _split_top_level
+
+    flat = f"    >>> obj = {Component}({py_create_args})"
+    if len(flat) <= STUB_TARGET_WIDTH:
+        return [flat]
+    parts = _split_top_level(py_create_args)
+    if not parts:  # a single unsplittable argument -- leave it readable
+        return [flat]
+    return (
+        [f"    >>> obj = {Component}("]
+        + [f"    ...     {p}," for p in parts]
+        + ["    ... )"]
+    )
+
+
 def _build_class_docstring(
     Component: str,
     state_vars: list,
@@ -565,7 +619,17 @@ def _build_class_docstring(
     override, then the create ``@param``, then a generic stub.
     """
     summary = brief or f"{Component} component."
-    lines: list[str] = [f'    """{summary}', ""]
+    # gh-744: this renderer is not `_docstring._numpy_sections` -- it is the
+    # class docstring's own builder, and it wrapped nothing at all, which is
+    # where the longest measured overflow came from (a 1222-column `@param`
+    # description). Widths derive from the 4-space class indent: the summary
+    # pays three more for the opening delimiter, a description four more for
+    # its numpy hanging indent. `class_runtime_doc` is derived from this
+    # function's output rather than rebuilt beside it, so both faces wrap once.
+    _sum = _wrap_summary(summary, _CLASS_DOC_WIDTH)
+    lines: list[str] = [f'    """{_sum[0]}']
+    lines += [f"    {ln}" for ln in _sum[1:]]
+    lines += [""]
 
     def _pdesc(name: str, manifest_doc: str, required: bool) -> str:
         stub = (
@@ -575,6 +639,13 @@ def _build_class_docstring(
         )
         hdr = create_blk.param_desc(name) if create_blk else None
         return manifest_doc or hdr or stub
+
+    def _pdesc_lines(
+        name: str, manifest_doc: str, required: bool
+    ) -> list[str]:
+        """`_pdesc`, wrapped and indented to its numpy hanging indent."""
+        text = _pdesc(name, manifest_doc, required)
+        return [f"        {w}" for w in _wrap(text, _CLASS_DESC_WIDTH)]
 
     # Parameters section. init_params win when present (they are what create()
     # actually takes — the #69 contract); state vars are documented only for a
@@ -599,7 +670,7 @@ def _build_class_docstring(
                 # gh-266: no default — document it as a required parameter.
                 param_lines += [
                     f"    {name} : {py_t}",
-                    f"        {_pdesc(name, manifest_doc, True)}",
+                    *_pdesc_lines(name, manifest_doc, True),
                 ]
                 continue
             if ctype.startswith("string_enum:"):
@@ -613,7 +684,7 @@ def _build_class_docstring(
             param_lines += [
                 f"    {name} : {py_t}"
                 + (f", default {py_d}" if dflt.strip() else ""),
-                f"        {_pdesc(name, manifest_doc, False)}",
+                *_pdesc_lines(name, manifest_doc, False),
             ]
     elif state_vars and not no_state:
         for name, ctype, dflt in state_vars:
@@ -687,7 +758,7 @@ def _build_class_docstring(
         "    Create with defaults:",
         "",
         f"    >>> {import_line}",
-        f"    >>> obj = {Component}({py_create_args})",
+        *_ctor_demo_lines(Component, py_create_args),
     ]
     for name, out in scalar_getters[:3]:
         ex += [f"    >>> obj.get_{name}()", f"    {out}"]
@@ -1851,4 +1922,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     while parts and parts[-1] == "":
         parts.pop()
 
-    return "\n".join(parts) + "\n"
+    # gh-744: the module aggregator's own exit, matching
+    # `_render.render_component_pyi` for the standalone stub. Both stub
+    # producers reflow, so neither face of the drift gate sees raw text.
+    from ._pyfmt import reflow_pyi
+
+    return reflow_pyi("\n".join(parts)) + "\n"

@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import flatten_signatures  # noqa: E402
 
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -37,7 +38,9 @@ def _core_h(root, obj):
 
 
 def _pyi(root, pkg, obj):
-    return (root / "src" / pkg / f"{obj}.pyi").read_text(encoding="utf-8")
+    return flatten_signatures(
+        (root / "src" / pkg / f"{obj}.pyi").read_text(encoding="utf-8")
+    )
 
 
 _PSD_PARAMS = [
@@ -165,8 +168,10 @@ class TestRequiredArrayModulePyiOrder:
         )
         assert 'kwlist[] = {"taps", "gain", NULL}' in ext
 
-        pyi = (root / "src" / "pkg" / "dsp" / "dsp.pyi").read_text(
-            encoding="utf-8"
+        pyi = flatten_signatures(
+            (root / "src" / "pkg" / "dsp" / "dsp.pyi").read_text(
+                encoding="utf-8"
+            )
         )
         assert (
             "def __init__(self, taps: NDArray[np.float32],"
