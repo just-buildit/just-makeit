@@ -140,6 +140,12 @@ class TestInvocation:
         the configuration the issue asks for.
         """
         root = self._project(tmp_path)
+        # `new_run(c_style=...)` formats its own scaffold, so on a machine
+        # without clang-format it has already written a warning to stderr.
+        # Drain it, or this asserts on someone else's output — which is what
+        # made this pass on Linux (clang-format present, nothing emitted) and
+        # fail on macOS.
+        capsys.readouterr()
         looked_up = []
 
         def fake_which(name):
