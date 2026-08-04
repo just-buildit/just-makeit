@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.43.2] — 2026-08-03
+
 ### Fixed
 
 - **Generated `.pyi` stubs are held to 79 columns (gh-744).** doppler measured
