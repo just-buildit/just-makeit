@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- **`jm status --check` now fails on a member that is simply absent from a
+    binding fragment (gh-777).** gh-767 gave these fragments their own
+    `unreconciled` class, explicitly not counted as drift, because the
+    difference there is a wrapper **body** — the author's, reformatted or
+    hand-tuned, and not something any jm command clears. Right for that case,
+    and wrong for one it swallowed by accident: a deleted
+    `PyMethodDef`/`PyGetSetDef` row.
+
+    A missing row is not an edit jm should defer to. It is generated wiring
+    that has gone, `transplant_missing_bindings` already knows how to restore
+    it, and `jm apply` does. Tolerating it let a project carry a member its
+    `.pyi` advertises and its extension does not define, indefinitely, with CI
+    green — the shape gh-622 and gh-767 exist to end.
+
+    The bucket now answers two questions: a declared member **absent** is
+    reconcilable and counts as drift; a **body** that differs is tolerated as
+    before. Compared by row name only — comparing anything about the bodies
+    would drag the tolerated case back in. Measured on a 72-fragment
+    downstream: no change to the clean result, and a deleted member takes the
+    gate from green to `1 stale`.
+
 - **An incrementally added member brings its file-scope declarations with it
     (gh-779).** The path that splices a member into an existing sacred
     `_ext_<obj>.c` carries two things — functions, located by name, and
