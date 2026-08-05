@@ -353,3 +353,86 @@ class TestItCompiles:
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "called" in proc.stdout
+
+
+class TestAnUnparseableFragmentIsRefused:
+    """doppler raised this on the PR, and it is the difference between
+    closing an instance and closing the class.
+
+    Tolerating `name (` fixes the spelling that caused gh-770. It does not fix
+    the mechanism: `_extract_c_function_bodies` returns `{}` both for "nothing
+    here" and for "could not read this", and every caller reads the second as
+    the first. A downstream tracking `pre-commit autoupdate` has no fixed
+    input style, so a future release that wraps a long signature across the
+    `(` puts extraction back to `{}` and the silent overwrite returns.
+
+    So an empty extraction from a file that plainly binds functions is now a
+    refusal, not a licence.
+    """
+
+    def test_a_fragment_jm_cannot_parse_is_not_rewritten(self, project):
+        root, frag = project
+        _plant_added(frag, False)
+        # A style neither the old parser nor the new one anticipates: the
+        # signature wrapped across the paren.
+        import re as _re
+
+        mangled = _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
+        frag.write_text(mangled)
+        before = frag.read_bytes()
+
+        _regen(root)
+
+        assert frag.read_bytes() == before, (
+            "an unparseable fragment must be left alone, not overwritten"
+        )
+
+    def test_it_says_so_rather_than_failing_silently(self, project, capsys):
+        root, frag = project
+        import re as _re
+
+        frag.write_text(
+            _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
+        )
+        _regen(root)
+        err = capsys.readouterr().err
+        assert "cannot parse" in err
+        assert "NOT" in err  # the member was not added — say so plainly
+
+    def test_an_empty_file_is_not_mistaken_for_a_parse_failure(self):
+        """The distinction the whole check rests on."""
+        assert not D.extraction_failed("")
+        assert not D.extraction_failed("/* nothing but a comment */\n")
+
+    def test_the_second_opinion_does_not_share_the_first_one_s_parser(
+        self, project
+    ):
+        """`binds_functions` reads the binding arrays, not the `<type>\\n<name>(`
+        header regex — so the style change that defeats one leaves the other
+        answering."""
+        root, frag = project
+        import re as _re
+
+        mangled = _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
+        assert O._extract_c_function_bodies(mangled) == {}
+        assert D.binds_functions(mangled)
+
+    def test_a_parseable_fragment_is_still_rewritten(self, project):
+        """Guard: the refusal must not fire on the normal path, or it would
+        quietly stop every regeneration."""
+        root, frag = project
+        before = frag.read_bytes()
+        from just_makeit._method import run as method_run
+
+        method_run(
+            root,
+            "fir",
+            "tune",
+            "filter",
+            "float _Complex[]",
+            "size_t",
+            True,
+            [],
+        )
+        assert frag.read_bytes() != before
+        assert '"tune"' in frag.read_text()

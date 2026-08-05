@@ -1504,6 +1504,24 @@ def _regenerate_module_now(
         )
         if existing_frag is not None:
             preserved = _extract_c_function_bodies(existing_frag)
+            # gh-770: an empty extraction is not the same fact as an empty
+            # file, and conflating them is what destroyed hand-written C for
+            # every project whose formatter puts a space before the paren.
+            # Refuse rather than overwrite: the fragment does not gain this
+            # command's member, which is visible and recoverable, instead of
+            # losing bodies that exist nowhere else, which is neither.
+            from . import _docsync as _ds
+
+            if not preserved and _ds.extraction_failed(existing_frag):
+                print(
+                    f"warning: {frag_path}: jm cannot parse the function\n"
+                    "  definitions in this fragment, so it will not rewrite "
+                    "it — anything\n  hand-written in it would be lost. The "
+                    "binding for this change was NOT\n  added. Please report "
+                    "the file's formatting (jm-770).",
+                    file=sys.stderr,
+                )
+                continue
         else:
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)

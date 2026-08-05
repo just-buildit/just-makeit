@@ -967,6 +967,52 @@ def _leading_comment_start(text: str, start: int) -> int:
     return line_start if not text[line_start:open_at].strip() else open_at
 
 
+def binds_functions(text: str) -> bool:
+    """True when *text* clearly defines functions, judged without the parser.
+
+    The independent second opinion for :func:`extraction_failed`. Derived from
+    the binding arrays — brace-matching over a comment/string-masked copy —
+    which shares no code with `_extract_c_function_bodies`'s
+    ``<type>\\n<name>(`` header regex. A style change that defeats one is
+    unlikely to defeat the other in the same way, which is the entire point of
+    asking twice.
+
+    A row in ``PyMethodDef``/``PyGetSetDef`` names a function pointer, so a
+    file with rows has functions by construction.
+    """
+    mask = _code_mask(text)
+    for array_re in (_METHODS_RE, _GETSET_RE):
+        for span in _array_names(text, mask, array_re).values():
+            if _row_fn_names(text, mask, span):
+                return True
+    return False
+
+
+def extraction_failed(text: str) -> bool:
+    """True when the body parser found nothing in a fragment that plainly has
+    functions — i.e. the parse failed rather than the file being empty.
+
+    doppler raised this on gh-770's PR, and it is the difference between
+    closing an instance and closing the class. `_extract_c_function_bodies`
+    returns ``{}`` both for "there is nothing here" and for "I could not read
+    this", and every caller reads the second as the first — which is the whole
+    mechanism of gh-770: GNU style writes ``name (``, extraction returned
+    ``{}``, and the caller took that as licence to overwrite the file.
+
+    Tolerating one more spelling does not fix that. The gap between the
+    styles jm anticipates and the styles a formatter will produce is open by
+    construction: a downstream tracking ``pre-commit autoupdate`` has no fixed
+    input style at all, so a future release that wraps a long signature across
+    the ``(`` puts extraction back to ``{}`` and the same silent overwrite
+    returns.
+
+    "I found no functions in a file that obviously contains functions" is
+    information, and it is the one signal that survives a style nobody has
+    thought of yet — including the ones nobody can enumerate now.
+    """
+    return bool(text.strip()) and binds_functions(text)
+
+
 def transplant_hand_written(
     existing: str, reference: str, drop_members: "frozenset[str]" = frozenset()
 ) -> str:
