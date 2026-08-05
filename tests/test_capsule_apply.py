@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _capsule
+from just_makeit._pyfmt import flatten_signatures
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
 from just_makeit._new import run as new_run
@@ -102,7 +103,10 @@ class TestRenderPyi:
             "project": {"name": "proj", "version": "0.1.0"},
             "module": {"ddc_fn": _capsule_module()},
         }
-        s = _capsule.render_pyi(cfg, "ddc_fn")
+        # gh-747: capsule stubs are reflowed now, so a long signature may span
+        # lines. Flatten first — this test is about the parameters, not the
+        # line breaks.
+        s = flatten_signatures(_capsule.render_pyi(cfg, "ddc_fn"))
         # The opaque handle is annotated `Any` inline — a named module-level
         # alias (`DDCRState = Any`) would read to stubtest as a runtime constant
         # the C extension never defines (slice-4 conformance fix).

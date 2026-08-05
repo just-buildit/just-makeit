@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _handle
+from just_makeit._pyfmt import flatten_signatures
 
 
 # ── the wfm-like Writer archetype ────────────────────────────────────────────
@@ -637,7 +638,12 @@ class TestCMake:
 
 class TestPyi:
     def test_class_stub(self):
-        pyi = _handle.render_pyi(_writer_cfg(), "wfm_writer")
+        # gh-747: the handle stub is reflowed now, so a long signature may be
+        # emitted across several lines. Flatten before asserting, so this
+        # tests which parameters appear rather than where the line breaks.
+        pyi = flatten_signatures(
+            _handle.render_pyi(_writer_cfg(), "wfm_writer")
+        )
         assert "class Writer:" in pyi
         assert "def __init__(self, path: str" in pyi
         # Methods, properties and RAII now have docstrings (gh-374).

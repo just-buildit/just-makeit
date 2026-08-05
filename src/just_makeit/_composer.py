@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
-from ._docstring import CLASS_DESC_WIDTH, _wrap
+from ._docstring import ClassParam, class_docstring
 from ._pyfmt import reflow_pyi
 
 # ── C type / format helpers ──────────────────────────────────────────────────
@@ -2680,14 +2680,15 @@ def _pyi_doc_lines(
     fields: list[dict],
     enum_reg: dict[str, list[str]],
 ) -> list[str]:
-    """4-space-indented numpy-style class docstring from a field list (gh-375)."""
-    if not fields:
-        return [f'    """{type_name}."""']
-    out: list[str] = [f'    """{type_name}.', ""]
-    out += ["    Parameters", "    ----------"]
+    """4-space-indented numpy-style class docstring from a field list (gh-375).
+
+    gh-747: layout, wrapping and delimiters are `_docstring.class_docstring`'s;
+    this function's job is deriving each field's type line and notes.
+    """
+    params: list[ClassParam] = []
     for f in fields:
         ann = _pyi_field_type(f)
-        type_line = f"    {f['name']} : {ann}"
+        type_line = f"{f['name']} : {ann}"
         if "default" in f:
             dv = f["default"]
             # A numeric field (incl. a ranged ``float | tuple[float, float]``)
@@ -2698,24 +2699,20 @@ def _pyi_doc_lines(
                 type_line += f', default ``"{dv}"``'
         elif f.get("bytes") or f.get("complex"):
             type_line += ", default None"
-        out.append(type_line)
         # Optional per-field description (manifest ``doc =``), then — for an
-        # enum field — its choice list.
-        # gh-744: a manifest `doc =` is free prose and was emitted at
-        # whatever length it was written -- 695 columns in doppler's
-        # `background` field. Same budget as every other numpy description.
+        # enum field — its choice list. Both are wrapped by the shared builder
+        # at CLASS_DESC_WIDTH; gh-744's measured case was a 695-column
+        # manifest `doc =` on doppler's `background` field.
+        notes: list[str] = []
         if f.get("doc"):
-            out += [f"        {w}" for w in _wrap(f["doc"], CLASS_DESC_WIDTH)]
+            notes.append(f["doc"])
         if f.get("enum"):
             choices = enum_reg.get(f["enum"], [])
             if choices:
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
-                out += [
-                    f"        {w}"
-                    for w in _wrap(f"One of {choice_str}.", CLASS_DESC_WIDTH)
-                ]
-    out.append('    """')
-    return out
+                notes.append(f"One of {choice_str}.")
+        params.append(ClassParam(type_line, tuple(notes)))
+    return class_docstring(f"{type_name}.", params=params)
 
 
 def render_pyi(cfg: dict, module: str) -> str:
@@ -2833,21 +2830,34 @@ def render_pyi(cfg: dict, module: str) -> str:
         if tl_t
         else (f"{seg_t} | list[{seg_t}] | None")
     )
+    # gh-747: the composer's own class docstring was a fourth hand-written
+    # copy of this layout. Its strings are short, but `seg_or_tl` interpolates
+    # the project's type names — long ones overflow the `segments :` line, and
+    # `reflow_pyi` reflows signatures, not docstring type lines.
     lines += [
         "",
         "@disjoint_base",
         f"class {cname}:",
-        f'    """{cname}.',
-        "",
-        "    Parameters",
-        "    ----------",
-        f"    segments : {seg_or_tl}, default None",
-        "        Initial segment list.",
-        "    repeat : bool, default False",
-        "        Loop the sequence after the last segment.",
-        "    continuous : bool, default False",
-        "        Never finish; execute always returns the requested count.",
-        '    """',
+        *class_docstring(
+            f"{cname}.",
+            params=[
+                ClassParam(
+                    f"segments : {seg_or_tl}, default None",
+                    ("Initial segment list.",),
+                ),
+                ClassParam(
+                    "repeat : bool, default False",
+                    ("Loop the sequence after the last segment.",),
+                ),
+                ClassParam(
+                    "continuous : bool, default False",
+                    (
+                        "Never finish; execute always returns the "
+                        "requested count.",
+                    ),
+                ),
+            ],
+        ),
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",

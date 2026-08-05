@@ -464,7 +464,12 @@ def render_pyi(cfg: dict, module: str) -> str:
                 f"value: {_pyi_scalar(pt)}) -> None: ..."
             )
     lines.append("")
-    return "\n".join(lines)
+    # gh-747: same door as every other `.pyi` producer. No capsule module in
+    # doppler overflows today, so this is prevention rather than a fix —
+    # which is exactly why it was the half most likely to be left out.
+    from ._pyfmt import reflow_pyi
+
+    return reflow_pyi("\n".join(lines))
 
 
 # ── materialization (driven by jm apply's _replay) ───────────────────────────
