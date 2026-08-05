@@ -150,14 +150,23 @@ def run(
     # linux/macos (gh-213).
     if platforms:
         cfg.setdefault("project", {})["platforms"] = list(platforms)
-    # gh-265: record the C-output style and seed a .clang-format so the
-    # post-command formatting pass has a house style to format to.
+    # gh-265: seed a .clang-format so the post-command formatting pass has a
+    # house style to format to. gh-773: the manifest records
+    # `c_format_command`, not `c_style` — declaring the command is the opt-in
+    # (as it already is for py_format_command), and it is also the only one of
+    # the two that says *which* binary, which is what makes the output the
+    # same on two machines. A new project should not be scaffolded into the
+    # spelling that leaves that to PATH.
     if c_style:
-        cfg.setdefault("project", {})["c_style"] = c_style
         if c_style == "clang-format":
+            cfg.setdefault("project", {})["c_format_command"] = list(
+                C.DEFAULT_C_FORMAT_COMMAND
+            )
             cf = root / ".clang-format"
             if not cf.exists():
                 _write(cf, T.CLANG_FORMAT)
+        else:
+            cfg.setdefault("project", {})["c_style"] = c_style
     C.save(root, cfg)
     # Opt into the per-component fragment layout up front: with the include
     # globs already in the manifest, every object/module scaffolded below

@@ -5,19 +5,27 @@ jm emits its own canonical 4-space C. Projects with a different committed style
 (doppler, jm's poster-child, uses GNU 2-space) otherwise see spurious drift:
 jm regenerates the ``*_ext.c`` binding in 4-space, the project's formatter
 rewrites it to house style, and ``jm status --check`` then reports it stale
-forever. Opting in with::
+forever. Opting in::
 
     [project]
-    c_style = "clang-format"
+    c_format_command = ["uvx", "clang-format==22.1.8"]
 
 makes jm reformat the binding to the project's ``.clang-format`` as it emits
 it, so the regenerated file already matches what is committed and status stays
 clean.
 
-**Which binary does it is the project's to pin** (gh-745)::
+**Declaring the command is the opt-in** (gh-773), the same way ``_pyfmt``
+reads ``py_format_command`` and has no ``py_style`` beside it. Naming the
+binary is not a second, optional decision — it is what makes the output
+reproducible across machines (gh-745), and a project that has not named one is
+relying on whatever ``PATH`` happens to hold.
 
-    [project]
-    c_format_command = ["uvx", "clang-format==22.1.8"]
+``c_style = "clang-format"`` still works and means exactly "format, using
+PATH's ``clang-format``". It is the original spelling (gh-265) and predates
+the command key; it carries no information the command does not, and the only
+state the split ever produced on its own was a silent no-op — command set
+correctly, ``c_style`` unset, nothing formatted, no warning, because the
+missing-binary check only fires the other way round (doppler#616).
 
 **It must resolve the same binary from any directory** (gh-758): jm formats
 its temp scaffold from *outside* the project, so a CWD-dependent command
@@ -39,7 +47,7 @@ sources (``*_core.c`` and the splice-patched ``native/inc/**`` headers) are
 left to the project's own formatter — reformatting them broke ``jm apply``
 convergence (gh-493). See `_generated_c_files`.
 
-Off by default (``c_style`` unset) → output is byte-identical to before, so
+Off by default (neither key declared) → output is byte-identical to before, so
 existing projects are unaffected.
 """
 
@@ -98,7 +106,8 @@ _MAX_PASSES = 5
 def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     """Reformat the project's generated C to its house style, if opted in.
 
-    No-op unless ``[project] c_style == "clang-format"``. Runs
+    No-op unless the project opts in — see :func:`_config.c_formatting_on`,
+    for which declaring ``[project] c_format_command`` is enough. Runs
     ``clang-format -i --style=file`` over the wholesale-regenerated ``*_ext.c``
     glue (see `_generated_c_files`), so the committed ``.clang-format`` (or
     ``--fallback-style`` when the project ships none) decides the layout.
@@ -128,7 +137,7 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     output canonical, so pass count stops being something a caller can get
     wrong.
     """
-    if C.c_style(cfg) != "clang-format":
+    if not C.c_formatting_on(cfg):
         return
 
     command = C.c_format_command(cfg)
@@ -138,10 +147,10 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     # at all in exactly the setup this key exists to support.
     if shutil.which(command[0]) is None:
         print(
-            'WARNING: [project] c_style = "clang-format" but the formatter '
-            f"command {command[0]!r} was not found on PATH;\n  generated C "
-            "keeps jm's default style. Install it, fix [project] "
-            "c_format_command, or unset c_style.",
+            "WARNING: this project formats its generated C, but the "
+            f"formatter command {command[0]!r} was not\n  found on PATH; "
+            "generated C keeps jm's default style. Install it, fix "
+            "[project]\n  c_format_command, or unset both it and c_style.",
             file=sys.stderr,
         )
         return
@@ -213,7 +222,7 @@ def format_version(cfg: dict, cwd: "Path | None" = None) -> str:
     Never raises: a missing or failing binary reports ``""`` exactly as it
     does for formatting itself.
     """
-    if C.c_style(cfg) != "clang-format":
+    if not C.c_formatting_on(cfg):
         return ""
     command = C.c_format_command(cfg)
     if shutil.which(command[0]) is None:

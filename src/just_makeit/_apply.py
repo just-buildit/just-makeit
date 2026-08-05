@@ -2057,7 +2057,7 @@ def run(
         from . import _cfmt
 
         real_cf = root / ".clang-format"
-        if C.c_style(cfg) == "clang-format" and real_cf.is_file():
+        if C.c_formatting_on(cfg) and real_cf.is_file():
             shutil.copy2(real_cf, temp_root / ".clang-format")
         _cfmt.format_project(temp_root, cfg, quiet=True)
         # gh-746: the same symmetry for generated Python. Formatting the real

@@ -271,12 +271,28 @@ class TestCwdDependentFormatter:
 
         assert _cfmt.cwd_dependent_version(root, cfg) is None
 
-    def test_stays_silent_when_c_style_is_off(self, tmp_path):
+    def test_stays_silent_when_formatting_is_off(self, tmp_path):
+        """gh-773 moved what "off" means: declaring `c_format_command` is
+        itself the opt-in, so this fixture has to drop the command as well as
+        the style. Setting `c_style = "none"` beside a declared command used
+        to silence the check — which is precisely the silent no-op the
+        one-predicate change removes."""
         root = tmp_path / "proj"
         cfg = self._cfg_with(root, _CWD_SENSITIVE)
         cfg["project"]["c_style"] = "none"
+        cfg["project"].pop("c_format_command", None)
 
         assert _cfmt.cwd_dependent_version(root, cfg) is None
+
+    def test_a_declared_command_is_checked_without_c_style(self, tmp_path):
+        """The other half: the CWD-dependence warning now reaches a project
+        that declared the command and never set `c_style` — the shape
+        doppler#616 reported as getting nothing, silently."""
+        root = tmp_path / "proj"
+        cfg = self._cfg_with(root, _CWD_SENSITIVE)
+        cfg["project"].pop("c_style", None)
+
+        assert _cfmt.cwd_dependent_version(root, cfg) is not None
 
     def test_stays_silent_when_the_binary_is_missing(self, tmp_path):
         root = tmp_path / "proj"

@@ -52,13 +52,47 @@ class TestConfigGetter:
         assert C.c_style(cfg) == "clang-format"
 
     def test_round_trips_through_dump(self, tmp_path):
-        # [project] scalar keys round-trip generically; assert c_style survives
-        # a save -> load cycle so the post-command hook keeps firing.
+        """gh-773: `--c-style` scaffolds the *command*, and it survives a
+        save -> load cycle as a TOML array so the hook keeps firing.
+
+        It used to write `c_style`. The command is the spelling that says
+        which binary, which is the whole of what makes the output the same on
+        two machines — a new project should not be scaffolded into the one
+        that leaves it to PATH.
+        """
         new_run("p", tmp_path / "p", c_style="clang-format")
         cfg = C.load(tmp_path / "p")
-        assert C.c_style(cfg) == "clang-format"
+        assert C.c_formatting_on(cfg)
+        assert C.c_format_command(cfg) == ["clang-format"]
         text = (tmp_path / "p" / C.FILENAME).read_text()
-        assert 'c_style = "clang-format"' in text
+        assert 'c_format_command = ["clang-format"]' in text
+
+    def test_the_command_alone_turns_formatting_on(self):
+        """The state that used to be a silent no-op (doppler#616): command
+        declared, `c_style` unset, nothing formatted and no warning."""
+        assert C.c_formatting_on(
+            {"project": {"c_format_command": ["clang-format"]}}
+        )
+
+    def test_the_legacy_key_alone_still_works(self):
+        """`c_style = "clang-format"` predates the command key and means
+        "format, using PATH's clang-format". An existing manifest keeps
+        working untouched."""
+        cfg = {"project": {"c_style": "clang-format"}}
+        assert C.c_formatting_on(cfg)
+        assert C.c_format_command(cfg) == list(C.DEFAULT_C_FORMAT_COMMAND)
+
+    def test_neither_key_is_off(self):
+        assert not C.c_formatting_on({"project": {"name": "p"}})
+
+    def test_a_list_valued_project_key_is_not_stringified(self, tmp_path):
+        """gh-763, and what broke first when `new` started writing a list:
+        `_dump`'s array branch keyed off a hand-maintained name list, so any
+        other list-valued key was written as `"['clang-format']"` and
+        reloaded as a string."""
+        new_run("p", tmp_path / "p", c_style="clang-format")
+        text = (tmp_path / "p" / C.FILENAME).read_text()
+        assert "\"['clang-format']\"" not in text
 
 
 class TestNewScaffold:
@@ -136,7 +170,7 @@ class TestFormatProject:
         # literal "clang-format", since the two are no longer the same thing
         # — a project routing through `uv run` needs to see which argv[0]
         # was actually looked up.
-        assert "'clang-format' was not found on PATH" in err
+        assert "'clang-format' was not" in err and "found on PATH" in err
         assert "c_format_command" in err
 
     def test_no_native_src_yields_no_files(self, tmp_path):
