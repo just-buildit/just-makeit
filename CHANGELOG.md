@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A formatted view fragment no longer fails `jm status --check` (gh-775).**
+    A 0.46.0 regression, and the failure was backwards from what "missed by
+    the candidate set" sounds like. `_unreconciled_glue` enumerated
+    `module_objects` only, so a **view**'s fragment stayed in the *compared*
+    set while its object siblings were excluded — and a project that formats
+    its generated C to a house style, which is the normal case and the whole
+    reason the unreconciled class exists, was left with the views, and only
+    the views, failing the gate. doppler's gate went green -> 1 stale on bytes
+    that had not changed between releases.
+
+    A view's fragment id is its lowercased `class_name`, not the parent
+    component it shares (gh-504). `_object._view_frag_id` owns that
+    derivation and this now calls it, rather than enumerating fragments under
+    a different rule than the one naming them — which is how the gap opened.
+
 ## [0.46.0] — 2026-08-05
 
 ### Fixed

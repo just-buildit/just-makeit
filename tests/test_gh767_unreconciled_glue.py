@@ -197,3 +197,82 @@ class TestTheCandidateSet:
         apply_run(root)
 
         assert _status._unreconciled_glue(root, C.load(root)) == set()
+
+
+class TestAViewOwnsAFragmentToo:
+    """gh-775, a 0.46.0 regression, and the failure was backwards from what
+    "missing from the candidate set" sounds like.
+
+    Views were not merely unreported. A view fragment stayed in the *compared*
+    set while its object siblings were excluded, so a project that formats its
+    generated C to a house style — which is the normal case, and the whole
+    reason the unreconciled class exists — left the views, and only the views,
+    failing `--check`. doppler's gate went green -> 1 stale on bytes that had
+    not changed between releases.
+
+    A view's fragment id is its lowercased `class_name`, not the parent
+    component it shares (gh-504), and `_object._view_frag_id` owns that
+    derivation. Enumerating fragments here under a *different* rule than the
+    one naming them is how the gap opened, so this asks that function.
+    """
+
+    def _project_with_a_view(self, root: Path) -> Path:
+        from just_makeit._view import run as view_run
+
+        new_run("proj", root, fragments=True)
+        module_run(root, "dsp")
+        object_run(root, "ddcr", "dsp", state_vars=[("gain", "double", "1.0")])
+        view_run(
+            root, "ddcr", "MatchedDdcr", "dsp", create_fn="ddcr_create_matched"
+        )
+        apply_run(root)
+        return root / "native" / "src" / "dsp" / "dsp_ext_matchedddcr.c"
+
+    def test_the_view_fragment_is_a_candidate(self, tmp_path, capsys):
+        root = tmp_path / "proj"
+        frag = self._project_with_a_view(root)
+        capsys.readouterr()
+        assert frag.is_file(), "fixture must actually produce a view fragment"
+
+        found = _status._unreconciled_glue(root, C.load(root))
+        assert "native/src/dsp/dsp_ext_matchedddcr.c" in found
+        # The object beside it was already covered; both, or the set is
+        # inconsistent in a way that shows up as exactly this bug.
+        assert "native/src/dsp/dsp_ext_ddcr.c" in found
+
+    def test_it_uses_the_owner_of_the_frag_id_derivation(self):
+        """A second `.lower()` here would drift from `_view_frag_id` the next
+        time the naming changes — which is the shape of the original gap."""
+        from just_makeit._object import _view_frag_id
+
+        assert _view_frag_id({"class_name": "MatchedDdcr"}) == "matchedddcr"
+
+    def test_the_view_is_classified_unreconciled_not_stale(
+        self, tmp_path, capsys
+    ):
+        """The classification is the whole fix, and it is what a minimal
+        project can actually show.
+
+        An end-to-end "format it and watch --check stay green" test was
+        written here first and **passed with the fix reverted**, so it is
+        gone rather than kept for looking thorough. In a small project the
+        sabotaged path is green for the *old* reason (gh-767's blind spot:
+        neither side is rewritten, so identical stale bytes compare equal) —
+        the two sides only diverge on a tree where apply has doc slots to
+        refresh, which is doppler's case and not a fixture's. Asserting the
+        set membership tests the thing that changed; asserting the gate
+        tested a coincidence.
+        """
+        root = tmp_path / "proj"
+        frag = self._project_with_a_view(root)
+        capsys.readouterr()
+
+        _, out = _report(root)
+        rel = "native/src/dsp/dsp_ext_matchedddcr.c"
+        assert rel in _status._unreconciled_glue(root, C.load(root))
+        assert frag.is_file()
+        # And it must not be reported as drift under either name.
+        assert (
+            "STALE" not in out.split("UNRECONCILED")[0]
+            or rel not in out.split("UNRECONCILED")[0]
+        )
