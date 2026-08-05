@@ -1196,7 +1196,19 @@ def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
         # Nothing to merge into — _sync_missing copies the temp header.
         return False
     decls = _core_h_decl_lines(temp.read_text(encoding="utf-8"))
-    return _inject_decls_into_core_h(real, comp, decls)
+    # gh-761: the author owns every `*_max_out` signature they have already
+    # declared. Its arity is a real contract — whether the bound depends on
+    # the caller's block or only on the state — and jm now *reads* it to
+    # decide the binding and the stub. Re-declaring the count-bearing form
+    # over a state-only one would revert that contract and, worse, make the
+    # fix unstable: the next apply would read back jm's own rewrite and flip
+    # both faces to match it.
+    # Only names the header actually declares are protected; a brand-new
+    # accessor still gets jm's default, so a fresh project is unchanged.
+    from ._docstring import declared_max_outs
+
+    skip = declared_max_outs(real.read_text(encoding="utf-8"))
+    return _inject_decls_into_core_h(real, comp, decls, skip_names=skip)
 
 
 def _add_cmake_block_for(

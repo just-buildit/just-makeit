@@ -39,6 +39,8 @@ from ._docstring import (
     STUB_TARGET_WIDTH,
     ClassParam,
     class_docstring,
+    max_out_arity_key,
+    max_out_is_state_only,
 )
 
 # ── annotation maps ──────────────────────────────────────────────────────────
@@ -968,11 +970,24 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
     """
     blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
     pre = f"{obj}_"
-    return {
+    out = {
         f"{synth}_{k[len(pre) :]}": v
         for k, v in blocks.items()
         if k.startswith(pre)
     }
+    # gh-761: the `_max_out` arity set rides this map under a reserved key, so
+    # the prefix filter above drops it — and its entries are full C names
+    # (`ddcr_execute_max_out`) that the view looks up under its synthetic id.
+    # Re-key both. Without this a view of a state-only parent renders the
+    # count-bearing stub while its parent renders the correct one, which is
+    # the same stub/binding disagreement one level down.
+    state_only = blocks.get(max_out_arity_key())
+    if state_only:
+        out[max_out_arity_key()] = frozenset(
+            f"{synth}_{n[len(pre) :]}" if n.startswith(pre) else n
+            for n in state_only
+        )
+    return out
 
 
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
@@ -1437,6 +1452,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                         break
             else:
                 _stub_moc_name = "n"
+            # gh-761: the header's prototype overrides all of the above, the
+            # same way it does for the binding — a state-only
+            # `<obj>_<m>_max_out(<obj>_state_t *)` takes no count, and this
+            # module-aggregated stub must say so too. Rendering it from the
+            # method's own params is what let the stub and the binding
+            # disagree on 48 of doppler's surfaces.
+            if max_out_is_state_only(doc_blocks, f"{obj}_{m_name}_max_out"):
+                _stub_moc_name = None
             # gh-684: header block wins; _gluedoc is the fallback. Same
             # lookup the standalone path uses, so the faces cannot drift.
             _mo_blk = doc_blocks.get(f"{obj}_{m_name}_max_out")
@@ -1904,10 +1927,20 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             #
             # Alias rather than replace: a view with its own `create_fn` has a
             # block under that real name, looked up directly.
-            overlay["_doc_blocks"] = {
-                **_view_doc_blocks(cfg, obj, synth),
-                **(cfg.get(obj, {}).get("_doc_blocks", {}) or {}),
-            }
+            _parent_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
+            _view_blocks = _view_doc_blocks(cfg, obj, synth)
+            overlay["_doc_blocks"] = {**_view_blocks, **_parent_blocks}
+            # gh-761: the reserved `_max_out` arity key is a *set*, not a
+            # block, so the parent-wins merge above would drop the
+            # synthetic-id entries `_view_doc_blocks` just re-keyed. Union
+            # both spellings instead: the view looks itself up under `synth`,
+            # while a view with its own `create_fn` still resolves the real
+            # name.
+            _arity = frozenset(
+                _view_blocks.get(max_out_arity_key()) or ()
+            ) | frozenset(_parent_blocks.get(max_out_arity_key()) or ())
+            if _arity:
+                overlay["_doc_blocks"][max_out_arity_key()] = _arity
             # gh-648: the view's own `doc=` owns its class docstring. Every
             # other overlay key was set and this one was not, so a view whose
             # class-level semantics genuinely differ from its parent's --

@@ -43,7 +43,9 @@ from ._docstring import (
     header_default,
     authored_class_brief,
     is_scaffold_doc,
+    max_out_arity_key,
     parse_doxygen_block,
+    scan_max_out_arity,
 )
 from ._context._parse import _build_ml_doc
 
@@ -160,6 +162,17 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         if _is_scaffold_brief(obj, verb, parsed):
             continue
         out[cname] = parsed
+    # gh-761: the `_max_out` prototypes' arity, from the same header read.
+    # Not a doc block, but it rides the same map for the same reason the
+    # member docs above do — see `_docstring.max_out_arity_key`.
+    #
+    # Only when non-empty: a freshly scaffolded header derives nothing, and
+    # callers (and gh-666's test) read an empty map as "this header says
+    # nothing yet". A key whose value is an empty set would make that false
+    # while meaning exactly the same thing.
+    _arity = scan_max_out_arity(text)
+    if _arity:
+        out[max_out_arity_key()] = _arity
     return out
 
 

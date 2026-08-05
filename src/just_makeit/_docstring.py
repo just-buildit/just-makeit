@@ -494,6 +494,77 @@ def member_doc(doc_blocks: "dict | None", name: str) -> str:
     return blk.brief if blk is not None else ""
 
 
+# gh-761: the arity of each `*_max_out` prototype, riding the same map for the
+# same reason the member docs above do — it is loaded from the same header at
+# the same moment, and the alternative is threading a parallel dict through
+# the seven `make_methods_ctx` call sites and the module stub path.
+_MAX_OUT_KEY = "<max_out_state_only>"
+
+# `size_t <comp>_<verb>_max_out ( <params> );` — the declaration jm emits and
+# the user then implements. Deliberately tolerant of the formatting a project's
+# own clang-format may have applied to it.
+_MAX_OUT_ARITY_RE = re.compile(
+    r"\bsize_t\s+(\w+_max_out)\s*\(([^)]*)\)\s*;", re.MULTILINE
+)
+
+
+def scan_max_out_arity(header_text: str) -> "frozenset[str]":
+    """C function names whose ``_max_out`` takes **only** the state pointer.
+
+    gh-761. jm assumed every ``*_max_out`` takes a trailing count (gh-607),
+    but for most kernels the bound is a property of the state, not of the
+    block about to be passed: the generated binding requires
+    ``capacity >= max(max_out(state), L)``, so when a method cannot emit more
+    than it is given, ``0`` is the exact and complete bound and there is
+    nothing about the block for the function to know. doppler has 65 of these
+    and they split 26 state-only / 39 length-bearing along exactly that line.
+
+    The header is the source of truth because it is where the contract is
+    actually written — the manifest records the *method's* shape, which says
+    nothing about what its ``_max_out`` sibling needs.
+
+    Returns the full C names (``ddcr_execute_max_out``), so a caller looks up
+    ``f"{component}_{name}_max_out"`` without re-deriving the spelling.
+    """
+    out: set[str] = set()
+    for m in _MAX_OUT_ARITY_RE.finditer(header_text):
+        params = m.group(2)
+        # One parameter and no comma → state only. A `void` parameter list
+        # cannot occur here (every `_max_out` takes at least the state).
+        if "," not in params:
+            out.add(m.group(1))
+    return frozenset(out)
+
+
+def declared_max_outs(header_text: str) -> "frozenset[str]":
+    """Every ``*_max_out`` the header declares, whatever its arity (gh-761).
+
+    `_apply._refresh_core_h_decls` protects these from being re-declared: the
+    author owns the signature, and jm now *reads* it to decide both the
+    binding and the stub. Overwriting it would revert the contract and make
+    the derivation unstable — the next apply would read jm's own rewrite back
+    and flip both faces to match it.
+    """
+    return frozenset(
+        m.group(1) for m in _MAX_OUT_ARITY_RE.finditer(header_text)
+    )
+
+
+def max_out_arity_key() -> str:
+    """The reserved key `scan_max_out_arity`'s result rides under."""
+    return _MAX_OUT_KEY
+
+
+def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
+    """True when *c_name*'s declaration takes only the state (gh-761).
+
+    False when the header declares a count parameter **and** when there is no
+    declaration at all — a method jm is scaffolding for the first time has no
+    prototype to read, and keeps gh-607's count-bearing default.
+    """
+    return c_name in ((doc_blocks or {}).get(_MAX_OUT_KEY) or frozenset())
+
+
 def _strip_comment(raw: str) -> list[str]:
     """Strip a doc comment's delimiters and per-line decoration.
 
