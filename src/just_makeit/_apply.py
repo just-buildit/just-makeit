@@ -2012,9 +2012,16 @@ def run(
             # redirect, or the flush's progress output (naming temp paths)
             # escapes to the user's terminal, which is exactly what the
             # redirect above exists to prevent.
+            # gh-764: `deferred_save` sits *outside* `deferred_module_regen`
+            # so it exits later — the module-regen flush itself saves, and
+            # those writes must fold into the one deferred flush rather than
+            # escaping it. It stays inside `scratch_writes` and the redirect
+            # for the same reason `deferred_module_regen` does: its flush
+            # writes a manifest and must use the cheap dumper and stay quiet.
             with (
                 C.scratch_writes(),
                 contextlib.redirect_stdout(io.StringIO()),
+                C.deferred_save(),
                 _obj_mod.deferred_module_regen(),
             ):
                 _replay(cfg, temp_root, root)
