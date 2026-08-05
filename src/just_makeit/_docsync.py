@@ -816,9 +816,22 @@ def _splice_first_array(
     from ._object import _extract_c_function_bodies
 
     have = _extract_c_function_bodies(existing)
-    funcs_text = "\n\n".join(
-        ref_funcs[n] for n in fn_names if n in ref_funcs and n not in have
-    )
+    _new = [n for n in fn_names if n in ref_funcs and n not in have]
+    # gh-779: the same file-scope carry the row-splicing path does. There are
+    # two splice paths, and fixing only the one the reporter's tree happened
+    # to take is how this class of bug keeps returning — doppler's fragment
+    # already had a `PyGetSetDef` so it went through the other branch, while
+    # an object gaining its *first* property comes through here. The
+    # declaration a wrapper references has to travel on both, or "it compiles
+    # for me" is a fact about which branch ran.
+    _deps: list[str] = []
+    _seen = ""
+    for _n in _new:
+        for _decl in _referenced_file_scope_decls(reference, ref_funcs[_n]):
+            if _decl not in existing and _decl not in _seen:
+                _deps.append(_decl)
+                _seen += _decl
+    funcs_text = "\n\n".join([*_deps, *(ref_funcs[n] for n in _new)])
     if funcs_text:
         funcs_text += "\n\n"
 
@@ -837,6 +850,56 @@ def _splice_first_array(
         out[: type_m.start()] + funcs_text + array_text + out[type_m.start() :]
     )
     return out
+
+
+_IDENT_RE = re.compile(r"\b[A-Za-z_]\w*\b")
+# A file-scope initialised static: `static const char *const NAME[] = {…};`,
+# `static PyTypeObject *NAME = NULL;`. Anchored at column 0 so a static local
+# inside a function body (always indented in generated C) is not claimed.
+_FILE_SCOPE_RE = re.compile(
+    r"^static\s+[^\n;=]*?\b(\w+)\s*(?:\[[^\]]*\])?\s*=", re.M
+)
+
+
+def _file_scope_decls(text: str) -> "dict[str, str]":
+    """``{name: full declaration text}`` for each file-scope static in *text*.
+
+    The declaration runs to its terminating ``;``, counting braces so an
+    initialiser list is captured whole. Comment- and string-masked first, so a
+    ``static`` inside a doc literal is not mistaken for a declaration.
+    """
+    mask = _code_mask(text)
+    out: dict[str, str] = {}
+    for m in _FILE_SCOPE_RE.finditer(mask):
+        i, depth = m.end(), 0
+        while i < len(mask):
+            c = mask[i]
+            if c in "{[(":
+                depth += 1
+            elif c in "}])":
+                depth -= 1
+            elif c == ";" and depth == 0:
+                break
+            i += 1
+        if i < len(mask):
+            out.setdefault(m.group(1), text[m.start() : i + 1])
+    return out
+
+
+def _referenced_file_scope_decls(reference: str, body: str) -> "list[str]":
+    """Declarations *reference* makes at file scope that *body* references.
+
+    The registration-free half of the gh-779 fix: rather than asking "is this
+    one of the referent types jm knows about?", ask which identifiers the
+    wrapper actually names and whether the reference render declares any of
+    them. A new kind of file-scope dependency is then carried the first time
+    it exists, instead of the first time somebody notices it does not compile.
+    """
+    decls = _file_scope_decls(reference)
+    if not decls:
+        return []
+    names = set(_IDENT_RE.findall(_code_mask(body)))
+    return [d for n, d in decls.items() if n in names]
 
 
 def transplant_missing_bindings(existing: str, reference: str) -> str:
@@ -919,18 +982,39 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
             for n in missing_fn_names
             if n in ref_funcs and n not in _existing_funcs
         ]
-        # gh-729: a wrapper can depend on file-scope statics, which are not
-        # functions and so are invisible to the name-based extraction above. A
-        # single-record method is the case in practice: its body references
-        # `<fn>_type` / `<fn>_desc`, which a full render prepends to the
-        # function and this path dropped — the fragment gained a body that
-        # referenced three undeclared symbols and would not compile.
+        # gh-729/gh-779: a wrapper can depend on file-scope statics, which are
+        # not functions and so are invisible to the name-based extraction
+        # above. A full render prepends them to the function; this path
+        # dropped them, and the fragment gained a body referencing symbols
+        # nothing declared — it does not compile.
+        #
+        # gh-729 fixed the one referent type it had (a record's
+        # `<fn>_type`/`<fn>_desc`) with a finder that knows that shape by
+        # name. gh-779 is the second type — an `enum =` property's
+        # `_enum_<Class>_<prop>[]` table — arriving by the identical route,
+        # and the reporter's read is the right one: *the per-type split is
+        # the bug*, not either instance of it. A third referent would fail
+        # the same way and nobody would know until it did not compile.
+        #
+        # So ask what the body actually references and carry whatever
+        # `reference` declares at file scope for it. The record finder stays
+        # because its three declarations must travel as one block, but it is
+        # no longer the only thing standing between a spliced wrapper and a
+        # missing symbol.
         _preludes = [
             d
             for n in _new_fns
             for d in (_record.find_descriptor(reference, n),)
             if d and d not in out
         ]
+        _carried = "".join(_preludes)
+        for _n in _new_fns:
+            for _decl in _referenced_file_scope_decls(
+                reference, ref_funcs[_n]
+            ):
+                if _decl not in out and _decl not in _carried:
+                    _preludes.append(_decl)
+                    _carried += _decl
         funcs_text = "\n\n".join(
             [*_preludes, *(ref_funcs[n] for n in _new_fns)]
         )
