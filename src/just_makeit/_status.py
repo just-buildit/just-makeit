@@ -98,14 +98,35 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
     Derived from the manifest rather than globbed, so a module or object added
     later is covered without editing this. ``*_ext_*_extra.c`` is deliberately
     *not* here — that file is hand-written by contract (gh-543).
+
+    gh-775: a **view** owns a fragment too, and enumerating only
+    ``module_objects`` missed every one of them. The consequence was not that
+    views went unreported — it was worse and backwards: a view fragment stayed
+    in the compared set while its object siblings were excluded, so formatting
+    the whole directory to the project's house style left the views, and only
+    the views, failing ``--check``. doppler's gate went green -> 1 stale on
+    bytes that had not changed.
+
+    A view's fragment id is its lowercased ``class_name``, not the parent
+    component it shares (gh-504). That derivation has one owner,
+    ``_object._view_frag_id``, and this calls it rather than repeating
+    ``.lower()`` — the two would drift, and this function existing to enumerate
+    fragments while a *different* rule decided their names is how the gap
+    opened.
     """
+    from ._object import _view_frag_id
+
     out: set[str] = set()
     for mod in C.modules(cfg):
         cname = C.module_paths(mod).cname
         for obj in C.module_objects(cfg, mod):
-            rel = Path("native") / "src" / cname / f"{cname}_ext_{obj}.c"
-            if (root / rel).is_file():
-                out.add(rel.as_posix())
+            frag_ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
+            for frag_id in frag_ids:
+                rel = (
+                    Path("native") / "src" / cname / f"{cname}_ext_{frag_id}.c"
+                )
+                if (root / rel).is_file():
+                    out.add(rel.as_posix())
     return out
 
 
