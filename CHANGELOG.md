@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **An incrementally added member brings its file-scope declarations with it
+    (gh-779).** The path that splices a member into an existing sacred
+    `_ext_<obj>.c` carries two things — functions, located by name, and
+    `PyMethodDef`/`PyGetSetDef` rows. A file-scope `static` is neither, so a
+    wrapper referencing one gained a body naming a symbol nothing declared,
+    and the module did not compile. A full render prepends the declaration, so
+    the two only come apart incrementally.
+
+    gh-729 hit this with a record's `<fn>_type`/`<fn>_desc` and fixed it with
+    a finder that knew *that* shape by name. An `enum =` property's
+    `_enum_<Class>_<prop>[]` table then arrived by the identical route. The
+    reporter's read is the one taken here: **the per-referent-type split is
+    the bug**, not either instance — a third kind would fail the same way, and
+    nobody would find out until it failed to compile. The carry now asks which
+    identifiers the spliced body names and whether the reference render
+    declares any of them, so a new kind of dependency travels the first time
+    it exists rather than the first time it breaks a build.
+
+    Applied to **both** splice paths. An object gaining its *first* property
+    takes `_splice_first_array`; one that already has a binding array takes
+    the row path. Fixing only the branch the report happened to exercise is
+    how a class of bug returns.
+
 ## [0.46.1] — 2026-08-05
 
 ### Fixed
