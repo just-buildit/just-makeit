@@ -1051,6 +1051,36 @@ def _leading_comment_start(text: str, start: int) -> int:
     return line_start if not text[line_start:open_at].strip() else open_at
 
 
+def absent_members(existing: str, reference: str) -> "list[str]":
+    """Members *reference* binds that *existing* does not (gh-777).
+
+    The reconcilable half of a fragment difference, and the half the
+    ``unreconciled`` bucket should never have swallowed. That bucket exists
+    for a wrapper **body** that differs — reformatted, or hand-tuned — which
+    is the author's and which no jm command clears, so tolerating it is
+    right. A missing ``PyMethodDef``/``PyGetSetDef`` row is categorically
+    different: it is generated wiring that has gone, and
+    :func:`transplant_missing_bindings` already knows how to put it back.
+
+    Tolerating it meant a project could carry a member its ``.pyi``
+    advertises and its extension does not define, indefinitely, with CI
+    green — which is the exact shape gh-622 and gh-767 were filed to end, and
+    how doppler accumulated 58 arity mismatches without a red build.
+
+    Row *names* only, deliberately. Comparing anything about the bodies would
+    drag the tolerated case back in, and the question here is solely "is
+    something jm generates simply not there?".
+    """
+    ex_mask, ref_mask = _code_mask(existing), _code_mask(reference)
+    out: list[str] = []
+    for array_re in (_METHODS_RE, _GETSET_RE):
+        have = set(_array_names(existing, ex_mask, array_re))
+        for name in _array_names(reference, ref_mask, array_re):
+            if name not in have:
+                out.append(name)
+    return out
+
+
 def binds_functions(text: str) -> bool:
     """True when *text* clearly defines functions, judged without the parser.
 

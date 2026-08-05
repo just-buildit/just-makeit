@@ -49,6 +49,7 @@ from pathlib import Path
 from . import _apply
 from . import _cfmt
 from . import _config as C
+from . import _docsync
 from ._apply import _SKIP_DIRS, _SKIP_FILES, _SKIP_SUFFIXES
 
 # Directories/files never copied into the scratch tree (build artefacts,
@@ -324,6 +325,18 @@ def run(
                 state = (
                     "unreconciled" if rel_posix in unreconciled else "stale"
                 )
+                # gh-777: except when the difference is a member jm generates
+                # that is simply absent. `apply` *does* put that back
+                # (`transplant_missing_bindings`), so it is reconcilable and
+                # belongs in the drift count — the bucket is for a body that
+                # differs, which is the author's. Without this split a project
+                # could carry a member its `.pyi` advertises and its extension
+                # does not define, indefinitely, with CI green.
+                if state == "unreconciled" and _docsync.absent_members(
+                    before.decode("utf-8", "replace"),
+                    after.decode("utf-8", "replace"),
+                ):
+                    state = "stale"
                 diff = (
                     _unified_diff(before, after, rel_posix)
                     if show_diff
