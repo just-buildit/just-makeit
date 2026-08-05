@@ -839,12 +839,24 @@ def _extract_c_function_bodies(
     signatures — the generated dispatch loops (``*_steps``) and macro
     invocations — never match, so pure boilerplate is naturally excluded
     without an explicit deny-list.
+
+    gh-770: the gap between the name and ``(`` is optional whitespace, not
+    nothing. GNU style — which is what ``BasedOnStyle: GNU`` gives, and what
+    every downstream that runs clang-format over jm's C ends up with — sets
+    ``SpaceBeforeParens: Always`` and writes ``name (args)``. Anchoring on
+    ``name(`` made this function return ``{}`` for such a file, and an empty
+    extraction is not inert: :func:`_restore_c_function_bodies` then has
+    nothing to restore and the caller writes the fresh render over every
+    hand-patched body in the fragment. Silent, total, and only visible once
+    the code is already gone.
     """
-    # Match "[static ]<return-type>\n<name>(" for any return type.
+    # Match "[static ]<return-type>\n<name>[ ](" for any return type.
     # [^\n]+ stops at the newline so struct/array definitions (which have
-    # no "(" immediately after the identifier) are not captured.
+    # no "(" after the identifier) are not captured. Only spaces and tabs
+    # are allowed before the "(" — a newline there would let the scan walk
+    # into an unrelated construct.
     prefix = r"static " if require_static else r"(?:static )?"
-    header_pat = re.compile(prefix + r"[^\n]+\n(\w+)\(")
+    header_pat = re.compile(prefix + r"[^\n]+\n(\w+)[ \t]*\(")
     result: dict[str, str] = {}
     for hm in header_pat.finditer(source):
         fn_name = hm.group(1)
@@ -941,7 +953,7 @@ def _restore_c_function_bodies(
         # approach (handles Py_UNUSED and other nested-paren params).
         prefix = r"static " if require_static else r"(?:static )?"
         header_pat = re.compile(
-            prefix + r"[^\n]+\n" + re.escape(fn_name) + r"\("
+            prefix + r"[^\n]+\n" + re.escape(fn_name) + r"[ \t]*\("
         )
         hm = header_pat.search(new_source)
         if not hm:
@@ -968,9 +980,18 @@ def _restore_c_function_bodies(
         # worse than just keeping the freshly regenerated body. Only reached
         # when require_static=False; ext.c wrapper signatures are fixed
         # CPython boilerplate that never varies across a regeneration.
-        old_sig = _NORMALIZE_WS_RE.sub(" ", old_body[: old_body.index("{")])
-        new_sig = _NORMALIZE_WS_RE.sub(" ", new_source[start:i])
-        if old_sig.strip() != new_sig.strip():
+        # gh-770: compared with ALL whitespace removed, not collapsed to
+        # single spaces. The two sides routinely differ only in layout — the
+        # fragment on disk has been through the project's formatter, the
+        # fresh render has not — and `PyObject *\nFir_step (FirObject *self)`
+        # vs `PyObject *\nFir_step(FirObject *self)` is the same signature
+        # written twice. Collapsing to " " kept that space and read as a
+        # changed signature, so the restore was skipped and the hand-written
+        # body dropped. Removing whitespace outright can only conflate
+        # spellings that are not both valid C.
+        old_sig = _NORMALIZE_WS_RE.sub("", old_body[: old_body.index("{")])
+        new_sig = _NORMALIZE_WS_RE.sub("", new_source[start:i])
+        if old_sig != new_sig:
             continue
         depth = 0
         end = i
@@ -1456,10 +1477,13 @@ def _regenerate_module_now(
         frag_path = ext_dir / f"{cname}_ext_{comp}.c"
         # Prefer bodies from the existing fragment; fall back to the monolith
         # during migration (only matching function names will be spliced in).
-        if frag_path.exists():
-            preserved = _extract_c_function_bodies(
-                frag_path.read_text(encoding="utf-8")
-            )
+        existing_frag = (
+            frag_path.read_text(encoding="utf-8")
+            if frag_path.exists()
+            else None
+        )
+        if existing_frag is not None:
+            preserved = _extract_c_function_bodies(existing_frag)
         else:
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
@@ -1475,6 +1499,15 @@ def _regenerate_module_now(
             frag = _restore_c_function_bodies(
                 frag, preserved, force_regen=_force
             )
+        if existing_frag is not None:
+            # gh-770: _restore_c_function_bodies only ever *replaces* a body
+            # whose name the fresh render also has, so a hand-ADDED binding —
+            # one the manifest cannot express, which is the whole reason these
+            # fragments are sacred — was written away here. Carry it, and its
+            # PyMethodDef/PyGetSetDef row, into the render.
+            from . import _docsync
+
+            frag = _docsync.transplant_hand_written(existing_frag, frag)
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
     # Discover *_extra.c files — jm never creates or modifies them, but
