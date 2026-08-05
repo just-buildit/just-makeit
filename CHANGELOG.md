@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports generated glue that `jm apply` will never rewrite
+    (gh-767).** `apply` copies a rendered file back only when the real tree
+    *lacks* it; everything else is reconciled by a hand-enumerated list — root
+    CMakeLists, umbrella header, package `__init__.py`, and each module's
+    `__init__.py` / `ext.c` / `CMakeLists` / `.pyi`. The per-object binding
+    fragments (`<mod>_ext_<obj>.c`) were never added to it.
+
+    That made them invisible twice over: `apply` left them frozen at whatever
+    jm emitted when they were first created, and `status` could not see it
+    either — it copies the real tree into its scratch, `apply` rewrites
+    neither side, and identical stale bytes compare equal. **The comparison
+    was working correctly on two inputs that were both wrong.**
+
+    They now appear in their own `UNRECONCILED` section, worded for what they
+    are: `jm apply` will *not* fix them, so promising it would send the reader
+    to a command that changes nothing. **Not counted as drift** — failing
+    `--check` would turn every existing project's CI red for something no jm
+    command clears (the gh-752 precedent). The candidate set is derived from
+    the manifest, so a module or object added later is covered without editing
+    jm; `<mod>_ext_<obj>_extra.c` is excluded, being the author's by contract
+    (gh-543).
+
+    On doppler this surfaces **69 fragments**, every one carrying real content
+    the generator has since changed — the regenerated `agc` binding adds a
+    `PyArray_IS_C_CONTIGUOUS` check the committed one lacks. It had already
+    shown up there twice without being recognised: as 58 bindings whose
+    Python-level arity no longer matched the generator (gh-761), and as 45
+    doctest lines divergent from the `.pyi` beside them.
+
 ### Fixed
 
 - **`*_max_out()`'s arity now comes from the C prototype, not the method's
