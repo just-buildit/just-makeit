@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-08-05
+
 ### Added
 
 - **`jm status` reports generated glue that `jm apply` will never rewrite
@@ -33,31 +35,18 @@
     Python-level arity no longer matched the generator (gh-761), and as 45
     doctest lines divergent from the `.pyi` beside them.
 
-### Fixed
+- **`jm status` detects a `c_format_command` that resolves a different binary
+    per directory (gh-758).** jm formats its temp scaffold from *outside* the
+    project, so a CWD-dependent command formats the two compared sides with
+    two different formatters and the drift gate can never go green.
 
-- **`*_max_out()`'s arity now comes from the C prototype, not the method's
-    parameters (gh-761).** gh-607 gave every `*_max_out` accessor a trailing
-    count. For most kernels that is wrong: the binding requires
-    `capacity >= max(max_out(state), L)`, so `max_out()` answers only "can
-    this emit more than it is given?" — and when it cannot, `0` is the exact
-    and complete bound, with nothing about the caller's block for the function
-    to know. doppler has 65 implementations splitting cleanly 26 state-only /
-    39 length-bearing, no exceptions either way.
-
-    The manifest records the *method's* shape, which says nothing about what
-    its `_max_out` sibling needs. jm now reads the header, and one source
-    drives all three faces: the spliced header declaration, the binding's
-    `METH_NOARGS`/`METH_VARARGS`, and the `.pyi` signature. A method with no
-    declaration yet keeps gh-607's default, so new projects are unchanged.
-
-    `_refresh_core_h_decls` also stops re-declaring these over the author's
-    own signature — that reverted the contract and made the derivation
-    unstable, since the next `apply` read jm's rewrite back and flipped both
-    faces to match it.
-
-    On doppler: 71 prototypes, 61 stub accessors, **0 disagreeing with their
-    prototype** — down from 48 surfaces that raised `TypeError` at runtime
-    (`obj.steps_max_out(len(x))` on a state-only kernel).
+    `["uv", "run", "--group", "dev", "clang-format"]` — which jm's own docs
+    suggested — is exactly that trap: outside a project `uv` prints
+    `warning: --group dev has no effect when used outside of a project` and
+    silently falls back to `PATH`. doppler hit it with 21.1.8 on the scaffold
+    against 22.1.8 on the real tree. `jm status` now asks the command its
+    version from two directories and reports the mismatch alongside the drift
+    it explains. The documented example is now `["uvx",   "clang-format==22.1.8"]`.
 
 ### Changed
 
@@ -108,6 +97,30 @@
         raised `FileExistsError` from `copytree`.
 
 ### Fixed
+
+- **`*_max_out()`'s arity now comes from the C prototype, not the method's
+    parameters (gh-761).** gh-607 gave every `*_max_out` accessor a trailing
+    count. For most kernels that is wrong: the binding requires
+    `capacity >= max(max_out(state), L)`, so `max_out()` answers only "can
+    this emit more than it is given?" — and when it cannot, `0` is the exact
+    and complete bound, with nothing about the caller's block for the function
+    to know. doppler has 65 implementations splitting cleanly 26 state-only /
+    39 length-bearing, no exceptions either way.
+
+    The manifest records the *method's* shape, which says nothing about what
+    its `_max_out` sibling needs. jm now reads the header, and one source
+    drives all three faces: the spliced header declaration, the binding's
+    `METH_NOARGS`/`METH_VARARGS`, and the `.pyi` signature. A method with no
+    declaration yet keeps gh-607's default, so new projects are unchanged.
+
+    `_refresh_core_h_decls` also stops re-declaring these over the author's
+    own signature — that reverted the contract and made the derivation
+    unstable, since the next `apply` read jm's rewrite back and flipped both
+    faces to match it.
+
+    On doppler: 71 prototypes, 61 stub accessors, **0 disagreeing with their
+    prototype** — down from 48 surfaces that raised `TypeError` at runtime
+    (`obj.steps_max_out(len(x))` on a state-only kernel).
 
 - **All five `.pyi` producers now reflow, and the class docstring has one
     builder instead of four (gh-747).** `_handle.render_pyi` and
@@ -162,21 +175,6 @@
     formatting an already-formatted tree is a genuine no-op, so any number of
     passes lands in the same place. A formatter that oscillates instead of
     converging warns and names the files rather than looping.
-
-### Added
-
-- **`jm status` detects a `c_format_command` that resolves a different binary
-    per directory (gh-758).** jm formats its temp scaffold from *outside* the
-    project, so a CWD-dependent command formats the two compared sides with
-    two different formatters and the drift gate can never go green.
-
-    `["uv", "run", "--group", "dev", "clang-format"]` — which jm's own docs
-    suggested — is exactly that trap: outside a project `uv` prints
-    `warning: --group dev has no effect when used outside of a project` and
-    silently falls back to `PATH`. doppler hit it with 21.1.8 on the scaffold
-    against 22.1.8 on the real tree. `jm status` now asks the command its
-    version from two directories and reports the mismatch alongside the drift
-    it explains. The documented example is now `["uvx",   "clang-format==22.1.8"]`.
 
 ## [0.44.0] — 2026-08-04
 
