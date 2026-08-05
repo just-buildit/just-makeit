@@ -4099,4 +4099,81 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"flags = [{parts}]")
             lines.append("")
 
-    return "\n".join(lines)
+    text = "\n".join(lines)
+
+    # gh-763: everything above renders a section kind `_dump` was taught about,
+    # one branch at a time. A kind nobody taught it — `[codec.X]` is the one
+    # doppler has — is not rendered, and the omission is silent.
+    #
+    # `_round_trips` was meant to contain that, but it only guards the *update*
+    # paths. `save` calls `_dump` unguarded when the file does not exist yet,
+    # and again when tomlkit is unavailable — which is a real environment, not
+    # a hypothetical: just-buildit does not propagate `[project].dependencies`
+    # to the wheel, so a tool-installed jm may have no tomlkit at all. In that
+    # environment every root-writing command silently deleted the whole codec
+    # table.
+    #
+    # So `_dump` closes its own gap instead of trusting a caller to notice:
+    # parse what was just written, and anything from *cfg* that did not survive
+    # is appended generically. Asking the output what is missing needs no list
+    # of known kinds, and cannot be forgotten for the kind added next — the
+    # same reason the array branch above tests the value instead of its name.
+    try:
+        survived = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return text
+    missing = [k for k in cfg if k not in survived]
+    if missing:
+        text = text.rstrip("\n") + "\n\n"
+        text += "\n".join(_dump_generic(k, cfg[k]) for k in missing)
+    return text
+
+
+def _toml_scalar(v: object) -> str:
+    """*v* as a TOML scalar literal."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return '"{}"'.format(str(v).replace("\\", "\\\\").replace('"', '\\"'))
+
+
+def _toml_value(v: object) -> str:
+    """*v* as a TOML value — scalar, array, or inline table.
+
+    Covers what a manifest section actually holds: scalars, arrays of
+    scalars, and arrays of inline tables (``[codec.X] entries``). Nesting
+    deeper than this has never appeared in a manifest, and if it ever does
+    the round-trip check in :func:`_dump` is what will say so rather than
+    the file quietly losing it.
+    """
+    if isinstance(v, dict):
+        inner = ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items())
+        return "{ " + inner + " }"
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    return _toml_scalar(v)
+
+
+def _dump_generic(name: str, value: object) -> str:
+    """A top-level key rendered without knowing what kind of section it is."""
+    if isinstance(value, list):
+        return "\n".join(
+            f"[[{name}]]\n"
+            + "\n".join(f"{k} = {_toml_value(x)}" for k, x in item.items())
+            + "\n"
+            for item in value
+            if isinstance(item, dict)
+        )
+    if not isinstance(value, dict):
+        return f"{name} = {_toml_value(value)}\n"
+    # A table of tables (`[codec.blue_keyword]`) versus a plain table.
+    if value and all(isinstance(x, dict) for x in value.values()):
+        return "\n".join(
+            f"[{name}.{sub}]\n"
+            + "\n".join(f"{k} = {_toml_value(x)}" for k, x in body.items())
+            + "\n"
+            for sub, body in value.items()
+        )
+    body = "\n".join(f"{k} = {_toml_value(x)}" for k, x in value.items())
+    return f"[{name}]\n{body}\n"
