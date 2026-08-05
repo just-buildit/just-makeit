@@ -193,6 +193,83 @@ class TestTheCarry:
         assert once.count('"hand_added"') == twice.count('"hand_added"')
 
 
+class TestRemovalStillRemoves:
+    """The mirror-image failure, and CI is what caught it.
+
+    Carrying a binding the fresh render lacks is right for a hand-written
+    member and wrong for one `jm remove` just deleted — the two look
+    identical from inside the transplant. I reasoned this was acceptable
+    ("remove already leaves the `_core.c` body for you to delete by hand")
+    and shipped it; the `jm_remove` example went red on three platforms.
+    The member name now travels with the regeneration.
+    """
+
+    def test_a_removed_method_does_not_come_back(self, project):
+        root, frag = project
+        from just_makeit._method import run as method_run
+        from just_makeit._remove import run as remove_run
+
+        method_run(
+            root,
+            "fir",
+            "tune",
+            "filter",
+            "float _Complex[]",
+            "size_t",
+            True,
+            [],
+        )
+        assert '"tune"' in frag.read_text()
+
+        remove_run(root, "method", "tune", object_name="fir", force=True)
+        text = frag.read_text()
+        assert '"tune"' not in text
+        assert "Fir_tune" not in text
+
+    def test_the_satellite_max_out_goes_with_it(self, project):
+        """`tune` takes `tune_max_out`, which is a separate row bound to a
+        separate wrapper and would otherwise be carried on its own."""
+        root, frag = project
+        from just_makeit._method import run as method_run
+        from just_makeit._remove import run as remove_run
+
+        method_run(
+            root,
+            "fir",
+            "tune",
+            "filter",
+            "float _Complex[]",
+            "size_t",
+            True,
+            [],
+        )
+        remove_run(root, "method", "tune", object_name="fir", force=True)
+        assert "tune_max_out" not in frag.read_text()
+
+    def test_a_hand_added_member_is_not_collateral(self, project):
+        """Removing one member must not take an unrelated hand-written one
+        with it — the drop set is a name, not a licence to stop carrying."""
+        root, frag = project
+        from just_makeit._method import run as method_run
+        from just_makeit._remove import run as remove_run
+
+        method_run(
+            root,
+            "fir",
+            "tune",
+            "filter",
+            "float _Complex[]",
+            "size_t",
+            True,
+            [],
+        )
+        _plant_added(frag, False)
+        remove_run(root, "method", "tune", object_name="fir", force=True)
+        text = frag.read_text()
+        assert '"tune"' not in text
+        assert "Fir_hand_added" in text
+
+
 @pytest.mark.skipif(
     not __import__("shutil").which("cmake"), reason="needs a C toolchain"
 )

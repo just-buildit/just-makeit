@@ -515,7 +515,7 @@ def _remove_method(
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
-    _regenerate_object_bindings(root, cfg, obj, pkg)
+    _regenerate_object_bindings(root, cfg, obj, pkg, name)
     print()
     print(
         f"Done!  Method '{name}' removed."
@@ -551,7 +551,7 @@ def _remove_property(
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
-    _regenerate_object_bindings(root, cfg, obj, pkg)
+    _regenerate_object_bindings(root, cfg, obj, pkg, name)
     print()
     note = (
         f"\n  note: the '{name}' field remains in {obj}_state_t "
@@ -757,18 +757,32 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
 
 
 def _regenerate_object_bindings(
-    root: Path, cfg: dict, obj: str, pkg: str
+    root: Path, cfg: dict, obj: str, pkg: str, removed: str = ""
 ) -> None:
     """Regenerate the glue (ext.c / .pyi / bench) after a method or property
     entry was dropped from the TOML.
 
     The orphaned `_core.c` body and its `_core.h` declaration are left in
     place for the user to delete — they are sacred, so removal never splices
-    or re-renders them (the caller prints a 'delete by hand' note)."""
+    or re-renders them (the caller prints a 'delete by hand' note).
+
+    *removed* is the member name this command dropped, and for a module
+    object it is load-bearing (gh-770). The regeneration now carries a
+    binding the fresh render lacks, on the assumption it is hand-written —
+    and the member just removed from the manifest looks identical to one.
+    Naming it is what tells the two apart; without it, `jm remove --method`
+    would take the method out of the manifest and the `.pyi` and leave the
+    binding callable forever."""
     module = C.component_module(cfg, obj)
     if module:
         # The module's shared ext.c / CMakeLists / __init__ / .pyi.
-        _regenerate_module(root, cfg, module, pkg)
+        _regenerate_module(
+            root,
+            cfg,
+            module,
+            pkg,
+            frozenset([removed]) if removed else frozenset(),
+        )
         return
 
     # Seed the header's create() Doxygen so the shared chain keeps a

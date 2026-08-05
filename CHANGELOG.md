@@ -32,6 +32,13 @@
     Measured against a 72-fragment downstream: 0 members lost through a
     refresh, where the four {style} x {edit kind} cells previously lost three.
 
+    `jm remove` passes the member it just deleted down to the regeneration.
+    Without that, a removed method looks exactly like a hand-written one from
+    inside the transplant and would be carried forever — dropped from the
+    manifest and the `.pyi` while its binding stayed callable. Satellites go
+    with it (`tune` takes `tune_max_out`); an unrelated hand-written member
+    beside it does not.
+
 - **`jm apply` repairs a frozen `*_max_out` binding instead of only warning
     about it (gh-767).** gh-761 fixed the arity jm *emits* — from the C
     prototype, so a state-only `x_max_out(state)` gets `METH_NOARGS` and a

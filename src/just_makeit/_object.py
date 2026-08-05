@@ -1410,7 +1410,7 @@ def deferred_module_regen() -> "Iterator[None]":
         yield
     finally:
         pending, _DEFERRED_REGEN = _DEFERRED_REGEN, prev
-        for root, module, pkg in (pending or {}).values():
+        for root, module, pkg, drop in (pending or {}).values():
             # Re-read rather than replay a stored cfg. Each command does its
             # own `C.load(root)`, so a captured cfg is a *snapshot* of the
             # manifest partway through the replay — and rendering the last
@@ -1418,21 +1418,41 @@ def deferred_module_regen() -> "Iterator[None]":
             # whose `[codec.X]` is declared by a later step is present in that
             # snapshot while its codec is not, which the immediate path never
             # saw because it rendered before the method existed at all.
-            _regenerate_module_now(root, C.load(root), module, pkg)
+            _regenerate_module_now(root, C.load(root), module, pkg, drop)
 
 
-def _regenerate_module(root: Path, cfg: dict, module: str, pkg: str) -> None:
-    """Regenerate a module's generated files, or defer under a replay."""
+def _regenerate_module(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    drop_members: "frozenset[str]" = frozenset(),
+) -> None:
+    """Regenerate a module's generated files, or defer under a replay.
+
+    *drop_members* names members this command has just removed from the
+    manifest. gh-770 carries a binding the fresh render lacks, on the
+    assumption it is hand-written — and a member `jm remove` deleted looks
+    exactly like one. Naming it here is what separates the two.
+    """
     if _DEFERRED_REGEN is not None:
         # Keyed by (root, module) so repeated calls collapse; the value is
-        # replaced each time so the flush uses the newest pkg for that module.
-        _DEFERRED_REGEN[(str(root), module)] = (root, module, pkg)
+        # replaced each time so the flush uses the newest pkg for that module,
+        # but the drop sets accumulate — a replay may remove several members
+        # before the single flush, and losing any of them resurrects it.
+        _prev = _DEFERRED_REGEN.get((str(root), module))
+        _drop = (_prev[3] | drop_members) if _prev else drop_members
+        _DEFERRED_REGEN[(str(root), module)] = (root, module, pkg, _drop)
         return
-    _regenerate_module_now(root, cfg, module, pkg)
+    _regenerate_module_now(root, cfg, module, pkg, drop_members)
 
 
 def _regenerate_module_now(
-    root: Path, cfg: dict, module: str, pkg: str
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    drop_members: "frozenset[str]" = frozenset(),
 ) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
@@ -1507,7 +1527,9 @@ def _regenerate_module_now(
             # PyMethodDef/PyGetSetDef row, into the render.
             from . import _docsync
 
-            frag = _docsync.transplant_hand_written(existing_frag, frag)
+            frag = _docsync.transplant_hand_written(
+                existing_frag, frag, drop_members
+            )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
     # Discover *_extra.c files — jm never creates or modifies them, but

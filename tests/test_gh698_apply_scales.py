@@ -76,9 +76,9 @@ def test_module_is_regenerated_once_not_once_per_method(project, monkeypatch):
     calls: list[str] = []
     real = O._regenerate_module_now
 
-    def counting(root, cfg, module, pkg):
+    def counting(root, cfg, module, pkg, *a, **k):
         calls.append(module)
-        return real(root, cfg, module, pkg)
+        return real(root, cfg, module, pkg, *a, **k)
 
     monkeypatch.setattr(O, "_regenerate_module_now", counting)
     apply_run(project)
