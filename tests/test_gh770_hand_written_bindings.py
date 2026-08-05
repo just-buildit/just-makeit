@@ -21,10 +21,23 @@ The matrix at the bottom is the shape of the bug: of the four
 {style} x {edit kind} cells, only one behaved.
 """
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+
+# `make test` runs in an isolated env (`uv run --no-project`) where jm is
+# importable only via the path this test file inserts. A subprocess does not
+# inherit that, so the build below has to be told where the package is —
+# without it the check fails with ModuleNotFoundError on CI while passing
+# locally against the editable install, which is the least useful shape a
+# test can have.
+_ENV = {
+    **os.environ,
+    "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src"),
+}
 
 from just_makeit import _config as C
 from just_makeit import _docsync as D
@@ -291,6 +304,7 @@ class TestItCompiles:
             capture_output=True,
             text=True,
             timeout=900,
+            env=_ENV,
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         # Guard: a build that short-circuits also returns 0. The extension
@@ -316,6 +330,7 @@ class TestItCompiles:
             capture_output=True,
             text=True,
             timeout=900,
+            env=_ENV,
         )
         assert build.returncode == 0, build.stdout + build.stderr
         proc = subprocess.run(
@@ -330,6 +345,7 @@ class TestItCompiles:
             capture_output=True,
             text=True,
             timeout=120,
+            env=_ENV,
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "called" in proc.stdout
