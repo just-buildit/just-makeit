@@ -565,4 +565,19 @@ def run(
             f"the per-line budget."
         )
 
+    # gh-773: `c_style` is the legacy spelling and, alone, is the one that
+    # leaves the formatter to PATH — which is how the same input produces
+    # different bytes on two machines and the gate flips red on a project
+    # nobody changed. Printed on both paths and under --check: a project can
+    # be perfectly in sync today and still be one CI image away from that.
+    _proj = cfg.get("project", {})
+    if _proj.get("c_style") and _proj.get("c_format_command") is None:
+        print(
+            "\nnote: [project] c_style is the legacy opt-in and names no "
+            "formatter, so the\n  version resolves from PATH and may differ "
+            "between here and CI. Declaring\n  c_format_command is the opt-in "
+            "on its own now — replace it with e.g.\n"
+            '    c_format_command = ["uvx", "clang-format==22.1.8"]'
+        )
+
     return drift_count

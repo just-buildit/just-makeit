@@ -2601,13 +2601,46 @@ def project_bench_block_sizes(cfg: dict) -> list[int]:
 def c_style(cfg: dict) -> str:
     """C-output style declared under ``[project] c_style`` (gh-265).
 
-    Empty (the default) leaves jm's canonical 4-space output untouched. The
-    only recognised value today is ``"clang-format"``: jm runs ``clang-format``
-    over the generated ``native/**`` C/H after every mutating command, so the
-    emitted code already matches the project's committed ``.clang-format``
-    instead of forcing a manual reformat pass (doppler's documented friction).
+    **Legacy alias — ask :func:`c_formatting_on` instead.** Kept so an
+    existing manifest keeps working, and still meaningful on its own: it is
+    how a project says "format, with whatever ``clang-format`` is on PATH"
+    without naming a command.
     """
     return str(cfg.get("project", {}).get("c_style", ""))
+
+
+def c_formatting_on(cfg: dict) -> bool:
+    """Whether jm formats the C it generates (gh-773).
+
+    The single question every caller should ask. It used to be spelled
+    ``c_style(cfg) == "clang-format"`` in five places, which is one
+    reimplementation short of the rule against peer copies — and the reason
+    the two keys drifted apart in meaning.
+
+    **Declaring the command is the opt-in.** That is how the Python side has
+    always worked (``_pyfmt``: "no-op unless ``py_format_command`` is
+    declared"), and there is no ``py_style`` beside it because there is
+    nothing for one to say. ``c_style`` has exactly one legal value, so it
+    carried no information ``c_format_command`` does not — and the split's
+    only product was a state where you set the command correctly and got
+    **nothing**, with no warning, because the existing check only fires the
+    other way round (doppler#616).
+
+    So either key turns formatting on:
+
+    - ``c_format_command = [...]`` — the modern spelling; names the binary,
+      which is what makes the output reproducible across machines (gh-745).
+    - ``c_style = "clang-format"`` — the original; means "use PATH's
+      ``clang-format``", i.e. :data:`DEFAULT_C_FORMAT_COMMAND`.
+
+    The behaviour change is confined to the combination that was broken:
+    command declared, ``c_style`` unset now formats instead of silently doing
+    nothing. A project in that state asked for formatting and was not getting
+    it, and ``jm status`` shows the resulting diff on the next run.
+    """
+    if cfg.get("project", {}).get("c_format_command") is not None:
+        return True
+    return c_style(cfg) == "clang-format"
 
 
 # The formatter invocation when none is declared. A bare name, resolved on
@@ -3569,7 +3602,15 @@ def _dump(cfg: dict) -> str:
         for k, v in proj.items():
             if isinstance(v, dict):
                 subtables[k] = v
-            elif k in ("c_deps", "find_packages", "pkg_modules", "platforms"):
+            elif isinstance(v, (list, tuple)):
+                # gh-763: this used to be a hand-maintained name list
+                # (`c_deps`, `find_packages`, `pkg_modules`, `platforms`), so
+                # any *other* list-valued key fell through to the scalar
+                # branch and was written as the Python repr of a list inside
+                # quotes — `c_format_command = "['clang-format']"`, which
+                # reloads as a string and raises. Asking the value what it is
+                # needs no registration, and a new list-valued key cannot be
+                # forgotten (see also `status_allow`, mangled the same way).
                 items_str = ", ".join(f'"{x}"' for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:

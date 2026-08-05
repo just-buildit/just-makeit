@@ -56,6 +56,38 @@
     than the bug, since the call then stops raising and silently ignores its
     argument.
 
+- **`[project] c_format_command` is the opt-in on its own (gh-773).**
+    Declaring it used to do **nothing** unless `c_style = "clang-format"` was
+    also set — silently, since the only warning fires the other way round
+    (doppler#616). That was the split's sole product: `c_style` has exactly one
+    legal value, so it carried no information the command does not.
+
+    Declaring the command now turns formatting on, which is how the Python side
+    has always worked (`_pyfmt` reads `py_format_command`, and there is no
+    `py_style` beside it because there is nothing for one to say).
+    `c_style = "clang-format"` still works and means "format, using PATH's
+    `clang-format`". Both route through one predicate, `C.c_formatting_on`,
+    replacing five copies of `c_style(cfg) == "clang-format"`.
+
+    `jm new --c-style` writes `c_format_command` rather than `c_style`: naming
+    the binary is what makes the output the same on two machines (gh-745), and
+    a new project should not be scaffolded into the spelling that leaves it to
+    `PATH`. `jm status` says so for a project still carrying only the legacy
+    key.
+
+    Only one combination changes behaviour — command declared, `c_style` unset,
+    which formatted nothing and now formats. That project asked for formatting
+    and was not getting it.
+
+- **A list-valued `[project]` key no longer round-trips as a string (gh-763,
+    partial).** `_dump`'s array branch keyed off a hand-maintained name list
+    (`c_deps`, `find_packages`, `pkg_modules`, `platforms`), so any other
+    list-valued key fell through to the scalar branch and was written as the
+    Python repr inside quotes — `c_format_command = "['clang-format']"`, which
+    reloads as a string and raises. It now asks the value what it is, which
+    needs no registration and cannot be forgotten for the next key.
+    `status_allow` was mangled the same way.
+
 ### Added
 
 - **`jm apply` reports a refresh that would rewrite the constructor's keyword
