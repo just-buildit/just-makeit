@@ -224,3 +224,71 @@ objects = ["fir"]
 
     def test_project_survives(self, migrated):
         assert migrated["project"]["name"] == "p"
+
+
+class TestTheGenericRenderer:
+    """`_dump_generic` has to guess a shape it was not told about, so each
+    shape it can be handed is worth pinning."""
+
+    def test_a_table_of_tables_round_trips(self, tmp_path):
+        """`[codec.X]`'s shape, and the one that matters in practice: the
+        component loop does not claim it, so nothing is written at all and the
+        generic tail can append it cleanly."""
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "codec": {"a": {"kind": "pack"}, "b": {"kind": "raw", "n": 2}},
+        }
+        C.save(tmp_path, cfg)
+        assert C.load(tmp_path)["codec"] == cfg["codec"]
+
+    def test_a_quote_in_a_value_is_escaped(self, tmp_path):
+        """The scalar branch builds the literal by hand, so it owns the
+        escaping — an unescaped quote produces a file that will not parse."""
+        cfg = {
+            "project": {"name": "p", "version": "0.1.0"},
+            "codec": {"a": {"note": 'he said "hi"'}},
+        }
+        C.save(tmp_path, cfg)
+        assert C.load(tmp_path)["codec"]["a"]["note"] == 'he said "hi"'
+
+
+class TestPresentButWrongFailsClosed:
+    """The half a presence check cannot see, and the reason these tests
+    exist: `_dump`'s component loop claims any unrecognised top-level table
+    and emits a bare `[name]` with none of its keys. The key *survives*,
+    empty — so "is it still there?" answers yes while the content is gone.
+
+    Appending cannot repair it (TOML forbids a second `[name]`), so `_dump`
+    raises instead. A hard error beats a manifest that silently lost a
+    section, which is the whole of gh-763.
+    """
+
+    def test_an_unrenderable_table_raises_rather_than_writing(self):
+        with pytest.raises(ValueError, match="cannot faithfully serialise"):
+            C._dump({"project": {"name": "p"}, "tuning": {"depth": 4}})
+
+    def test_the_message_names_the_section(self):
+        with pytest.raises(ValueError, match=r"\[tuning\]"):
+            C._dump({"project": {"name": "p"}, "tuning": {"depth": 4}})
+
+    def test_nothing_is_written_when_it_raises(self, tmp_path):
+        """The point of raising: no half-written manifest is left behind."""
+        with pytest.raises(ValueError):
+            C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"d": 4}})
+        assert not (tmp_path / C.FILENAME).exists()
+
+    def test_the_guarded_path_still_writes_it_faithfully(self, tmp_path):
+        """`_dump` raising is not the same as `save` failing. With a file
+        already on disk and tomlkit available, `_round_trips` sends this to
+        the tomlkit writer, which renders the section correctly — the raise
+        is a backstop for the paths that have no such fallback, not a new
+        restriction on what a manifest may contain."""
+        (tmp_path / C.FILENAME).write_text('[project]\nname = "p"\n')
+        C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"depth": 4}})
+        assert C.load(tmp_path)["tuning"] == {"depth": 4}
+
+    def test_a_faithful_config_still_writes(self, tmp_path):
+        """Guard: the raise must not fire on a normal manifest, or it would
+        break every command."""
+        C.save(tmp_path, {"project": {"name": "p", "version": "0.1.0"}})
+        assert C.load(tmp_path)["project"]["name"] == "p"

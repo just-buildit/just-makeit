@@ -4122,10 +4122,46 @@ def _dump(cfg: dict) -> str:
         survived = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return text
+
+    # Absent entirely -> append it generically. `[codec.X]` is this case: the
+    # component loop above does not claim it, so nothing was written at all.
     missing = [k for k in cfg if k not in survived]
     if missing:
         text = text.rstrip("\n") + "\n\n"
         text += "\n".join(_dump_generic(k, cfg[k]) for k in missing)
+        survived = tomllib.loads(text)
+
+    # Present but WRONG is the other half, and it cannot be repaired by
+    # appending: the section header is already in the file, and TOML forbids a
+    # second one. The component loop claims any unrecognised top-level table
+    # and emits a bare `[name]` with none of its keys — so the key survives,
+    # empty, and a presence check reads that as success. Found by the tests
+    # for this very fix, which is the argument for writing them.
+    #
+    # Raising is the only honest option left. On the guarded path the caller
+    # never gets here (`_round_trips` has already sent it to tomlkit); on the
+    # unguarded ones a hard error beats a manifest that silently lost a
+    # section, which is the failure gh-763 exists to end.
+    # Narrowly: emitted *empty* while cfg has content. A full equality test
+    # here is wrong — a component section legitimately does not compare byte
+    # equal after a round trip, which is exactly why `_round_trips` is a
+    # fall-back guard and not an assertion. Demanding equality raised on 143
+    # ordinary tests before this was narrowed, which is the useful correction:
+    # "does not round-trip exactly" and "silently lost its contents" are
+    # different facts, and only the second one is a bug.
+    _empty = ({}, [])
+    mangled = [
+        k
+        for k in cfg
+        if k in survived and survived[k] in _empty and cfg[k] not in _empty
+    ]
+    if mangled:
+        raise ValueError(
+            "jm cannot faithfully serialise "
+            + ", ".join(f"[{k}]" for k in mangled)
+            + " and will not write a manifest that loses it. Please report"
+            " this section's shape (jm-763)."
+        )
     return text
 
 
