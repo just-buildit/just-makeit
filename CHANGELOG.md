@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`*_max_out()`'s arity now comes from the C prototype, not the method's
+    parameters (gh-761).** gh-607 gave every `*_max_out` accessor a trailing
+    count. For most kernels that is wrong: the binding requires
+    `capacity >= max(max_out(state), L)`, so `max_out()` answers only "can
+    this emit more than it is given?" — and when it cannot, `0` is the exact
+    and complete bound, with nothing about the caller's block for the function
+    to know. doppler has 65 implementations splitting cleanly 26 state-only /
+    39 length-bearing, no exceptions either way.
+
+    The manifest records the *method's* shape, which says nothing about what
+    its `_max_out` sibling needs. jm now reads the header, and one source
+    drives all three faces: the spliced header declaration, the binding's
+    `METH_NOARGS`/`METH_VARARGS`, and the `.pyi` signature. A method with no
+    declaration yet keeps gh-607's default, so new projects are unchanged.
+
+    `_refresh_core_h_decls` also stops re-declaring these over the author's
+    own signature — that reverted the contract and made the derivation
+    unstable, since the next `apply` read jm's rewrite back and flipped both
+    faces to match it.
+
+    On doppler: 71 prototypes, 61 stub accessors, **0 disagreeing with their
+    prototype** — down from 48 surfaces that raised `TypeError` at runtime
+    (`obj.steps_max_out(len(x))` on a state-only kernel).
+
 ### Changed
 
 - **`jm apply` and `jm status` are ~12x faster on a large project (gh-764).**

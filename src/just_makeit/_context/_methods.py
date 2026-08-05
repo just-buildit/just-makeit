@@ -23,6 +23,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    max_out_is_state_only,
     member_doc,
     render_numpy_doc,
     render_runtime_doc,
@@ -1140,6 +1141,14 @@ def make_methods_ctx(
             _moc_decl, _ = _max_out_count_param_ctx(
                 has_arg, has_params, params
             )
+            # gh-761: never re-declare a count over a header that says
+            # otherwise. jm splices these back into the sacred `_core.h`, so
+            # emitting the count form against a state-only implementation
+            # rewrites the author's prototype out from under their code.
+            if max_out_is_state_only(
+                doc_blocks, f"{component}_{name}_max_out"
+            ):
+                _moc_decl = ""
             if has_arg:
                 decl_lines.append(
                     f"size_t {component}_{name}_max_out"
@@ -1818,6 +1827,17 @@ def make_methods_ctx(
                 _pymo_decl, _pymo_name = _max_out_count_param_ctx(
                     has_arg, has_params, params
                 )
+                # gh-761: the header's own prototype wins. jm assumed every
+                # `_max_out` takes a count (gh-607); most kernels bound their
+                # output by the state, not by the block, and declare
+                # `size_t <c>_<m>_max_out(<c>_state_t *)`. Emitting a
+                # count-taking binding against that is both a compile error
+                # and — where an older jm already wrote the no-arg form — a
+                # stub that disagrees with the binding beside it.
+                if max_out_is_state_only(
+                    doc_blocks, f"{component}_{name}_max_out"
+                ):
+                    _pymo_decl, _pymo_name = "", None
                 if _pymo_name:
                     _mo_doc = _build_ml_doc(
                         [f"{name}_max_out({_pymo_name}) -> int", ""]
@@ -2403,9 +2423,16 @@ def make_methods_ctx(
         pyi_lines.append(stub)
         if _stub_enable_out:
             # gh-607: mirror the same count parameter as the C wrapper.
+            # gh-761: including when the header says there isn't one — the
+            # stub must agree with the binding, and the binding follows the
+            # prototype.
             _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
                 has_arg, has_params, params
             )
+            if max_out_is_state_only(
+                doc_blocks, f"{component}_{name}_max_out"
+            ):
+                _stub_moc_decl, _stub_moc_name = "", None
             # gh-684: the header wins; _gluedoc supplies the fallback.
             _mo_doc_lines = _max_out_doc(
                 component,
