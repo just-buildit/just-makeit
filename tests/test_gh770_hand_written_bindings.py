@@ -112,6 +112,34 @@ def _plant_edited(frag, gnu):
     frag.write_text(_gnu(text) if gnu else text)
 
 
+def _compile(root):
+    """cmake configure + build, and nothing else.
+
+    Deliberately *not* `just-makeit build`: that also packages a wheel and
+    runs the platform repair tool, which fails on the macOS runners for
+    reasons that have nothing to do with this file (delocate rejects an
+    arm64-only binary in a `universal2`-tagged wheel). The claim under test is
+    that the carried binding compiles and links — so the check stops at the
+    extension module, and a packaging problem elsewhere cannot dress itself up
+    as a preservation bug.
+    """
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys;from pathlib import Path;"
+            "from just_makeit import _build;"
+            "r=Path('.').resolve();"
+            "_build._ensure_built(r, r / 'build')",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=900,
+        env=_ENV,
+    )
+
+
 class TestTheMatrix:
     """{jm style, GNU style} x {hand-added, hand-edited}."""
 
@@ -293,19 +321,7 @@ class TestItCompiles:
         root, frag = project
         _plant_added(frag, True)
         _regen(root)
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys;from just_makeit._cli import main;"
-                "sys.argv=['just-makeit','build'];main()",
-            ],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=900,
-            env=_ENV,
-        )
+        proc = _compile(root)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         # Guard: a build that short-circuits also returns 0. The extension
         # has to exist, or this test passes without compiling anything.
@@ -319,19 +335,7 @@ class TestItCompiles:
         root, frag = project
         _plant_added(frag, True)
         _regen(root)
-        build = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys;from just_makeit._cli import main;"
-                "sys.argv=['just-makeit','build'];main()",
-            ],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=900,
-            env=_ENV,
-        )
+        build = _compile(root)
         assert build.returncode == 0, build.stdout + build.stderr
         proc = subprocess.run(
             [
