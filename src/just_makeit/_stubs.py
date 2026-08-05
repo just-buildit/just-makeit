@@ -36,11 +36,9 @@ from dataclasses import replace as _replace
 
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
-    CLASS_DESC_WIDTH as _CLASS_DESC_WIDTH,
-    CLASS_DOC_WIDTH as _CLASS_DOC_WIDTH,
     STUB_TARGET_WIDTH,
-    _wrap,
-    wrap_summary as _wrap_summary,
+    ClassParam,
+    class_docstring,
 )
 
 # ── annotation maps ──────────────────────────────────────────────────────────
@@ -622,14 +620,12 @@ def _build_class_docstring(
     # gh-744: this renderer is not `_docstring._numpy_sections` -- it is the
     # class docstring's own builder, and it wrapped nothing at all, which is
     # where the longest measured overflow came from (a 1222-column `@param`
-    # description). Widths derive from the 4-space class indent: the summary
-    # pays three more for the opening delimiter, a description four more for
-    # its numpy hanging indent. `class_runtime_doc` is derived from this
-    # function's output rather than rebuilt beside it, so both faces wrap once.
-    _sum = _wrap_summary(summary, _CLASS_DOC_WIDTH)
-    lines: list[str] = [f'    """{_sum[0]}']
-    lines += [f"    {ln}" for ln in _sum[1:]]
-    lines += [""]
+    # description). gh-747: the wrapping and layout now live once, in
+    # `_docstring.class_docstring`, which `_composer` and `_handle` share --
+    # what stays here is deriving each parameter's type line and notes, plus
+    # the Examples section, which is this producer's alone.
+    # `class_runtime_doc` is derived from this function's output rather than
+    # rebuilt beside it, so both faces wrap once.
 
     def _pdesc(name: str, manifest_doc: str, required: bool) -> str:
         stub = (
@@ -640,17 +636,10 @@ def _build_class_docstring(
         hdr = create_blk.param_desc(name) if create_blk else None
         return manifest_doc or hdr or stub
 
-    def _pdesc_lines(
-        name: str, manifest_doc: str, required: bool
-    ) -> list[str]:
-        """`_pdesc`, wrapped and indented to its numpy hanging indent."""
-        text = _pdesc(name, manifest_doc, required)
-        return [f"        {w}" for w in _wrap(text, _CLASS_DESC_WIDTH)]
-
     # Parameters section. init_params win when present (they are what create()
     # actually takes — the #69 contract); state vars are documented only for a
     # plain --state object with no init_params.
-    param_lines: list[str] = []
+    params: list[ClassParam] = []
     if init_params:
         for name, ctype, dflt, *rest in init_params:
             # init_params 10-tuple minus (name, type, default) leaves rest =
@@ -668,10 +657,12 @@ def _build_class_docstring(
             # whatever the flag says.
             if required or ctype == "path" or ctype == "bytes":
                 # gh-266: no default — document it as a required parameter.
-                param_lines += [
-                    f"    {name} : {py_t}",
-                    *_pdesc_lines(name, manifest_doc, True),
-                ]
+                params.append(
+                    ClassParam(
+                        f"{name} : {py_t}",
+                        (_pdesc(name, manifest_doc, True),),
+                    )
+                )
                 continue
             if ctype.startswith("string_enum:"):
                 py_d = f'"{dflt}"' if dflt else "..."
@@ -681,31 +672,49 @@ def _build_class_docstring(
             # numpydoc already reads a bare `name : type` as having no default,
             # whereas the trailing `, default ` jm used to emit was neither
             # readable prose nor a literal anyone could copy into a call.
-            param_lines += [
-                f"    {name} : {py_t}"
-                + (f", default {py_d}" if dflt.strip() else ""),
-                *_pdesc_lines(name, manifest_doc, False),
-            ]
+            params.append(
+                ClassParam(
+                    f"{name} : {py_t}"
+                    + (f", default {py_d}" if dflt.strip() else ""),
+                    (_pdesc(name, manifest_doc, False),),
+                )
+            )
     elif state_vars and not no_state:
         for name, ctype, dflt in state_vars:
             m = _ARRAY_RE.match(ctype.strip())
             if m:
                 elem, size = m.group(1).rstrip(), m.group(2)
                 npt = _CTYPE_TO_NP.get(elem, "Any")
-                param_lines += [
-                    f"    {name} : NDArray[{npt}]",
-                    f"        Length-{size} array, zero-initialised.",
-                ]
+                params.append(
+                    ClassParam(
+                        f"{name} : NDArray[{npt}]",
+                        (f"Length-{size} array, zero-initialised.",),
+                    )
+                )
             else:
                 py_t = _CTYPE_TO_PY.get(ctype, "Any")
                 py_d = _py_default_stub(ctype, dflt)
-                param_lines += [
-                    f"    {name} : {py_t}, default {py_d}",
-                    f"        {name} state variable.",
-                ]
+                params.append(
+                    ClassParam(
+                        f"{name} : {py_t}, default {py_d}",
+                        (f"{name} state variable.",),
+                    )
+                )
 
-    if param_lines:
-        lines += ["    Parameters", "    ----------"] + param_lines + [""]
+    def _close(trailer: list[str]) -> list[str]:
+        """Hand summary + params + *trailer* to the shared layout (gh-747).
+
+        ``blank_before_close`` keeps this producer's long-standing blank line
+        after the ``Parameters`` block, which the other two callers do not
+        emit — normalising it would rewrite the class docstring of every
+        existing project for no benefit.
+        """
+        return class_docstring(
+            summary,
+            params=params,
+            trailer=trailer,
+            blank_before_close=True,
+        )
 
     # Examples section: construction + safe getter calls + reset demo
     scalar_getters: list[tuple[str, str]] = []
@@ -734,23 +743,26 @@ def _build_class_docstring(
     # cannot fabricate a call for (an array arg, or a required init-param with
     # no default -- gh-273) previously got no Examples section at all, which is
     # exactly the object whose author most needs to show a real one.
+    # The Examples section is passed to `class_docstring` as a ready-indented
+    # trailer rather than built by it: these lines are doctests, and wrapping
+    # or re-indenting them would break the very thing they assert.
     _authored = list(getattr(create_blk, "examples", None) or [])
     if _authored:
-        lines += ["    Examples", "    --------"]
-        lines += [f"    {ln}".rstrip() for ln in _authored]
-        # gh-691: the blank line is load-bearing, not cosmetic. Under a
-        # text-mode `.pyi` doctest run (pytest --doctest-glob='*.pyi', which
+        # gh-691: the trailing blank line is load-bearing, not cosmetic. Under
+        # a text-mode `.pyi` doctest run (pytest --doctest-glob='*.pyi', which
         # griffe-style consumers use) a doctest's expected output runs to the
         # next blank line -- so without one the last example swallows the
         # closing quotes AND the following declaration, and can never match.
         # The synthesised demo below has always emitted it; the authored path
         # added in gh-624 did not.
-        lines += ["", '    """']
-        return lines
+        return _close(
+            ["    Examples", "    --------"]
+            + [f"    {ln}".rstrip() for ln in _authored]
+            + [""]
+        )
 
     if "..." in py_create_args or Ctx._unseedable_required(init_params):
-        lines.append('    """')
-        return lines
+        return _close([])
 
     ex: list[str] = [
         "    Examples",
@@ -796,9 +808,7 @@ def _build_class_docstring(
         ]
 
     ex.append("")
-    lines += ex
-    lines.append('    """')
-    return lines
+    return _close(ex)
 
 
 def class_docstring_block(

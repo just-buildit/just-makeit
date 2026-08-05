@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import NamedTuple, Sequence
 
 
 def extract_doctests(text: str) -> list[str]:
@@ -1280,6 +1281,121 @@ def summary_docstring(
         + [f"{pad}{ln}" for ln in lines[1:]]
         + [f'{pad}"""']
     )
+
+
+class ClassParam(NamedTuple):
+    """One entry in a class docstring's numpy ``Parameters`` block.
+
+    Attributes
+    ----------
+    type_line : str
+        The ``name : annotation, default X`` line, **unindented**. Built by
+        the caller, because deriving it is the one genuinely producer-specific
+        step: a component reads init-params, a handle reads ``create_args``,
+        the composer reads field dicts, and each renders defaults its own way.
+    notes : tuple of str
+        Free prose beneath the type line — the parameter description, an enum
+        choice list, or both. Each is wrapped independently at
+        `CLASS_DESC_WIDTH` and indented to the numpy hanging indent, so the
+        caller never does its own wrapping.
+    """
+
+    type_line: str
+    notes: tuple[str, ...] = ()
+
+
+def class_docstring(
+    summary: str,
+    *,
+    body: "Sequence[str]" = (),
+    params: "Sequence[ClassParam]" = (),
+    trailer: "Sequence[str]" = (),
+    blank_before_close: bool = False,
+) -> list[str]:
+    """Lay out a numpy-style class docstring, wrapped to the column target.
+
+    gh-747. jm had **three** hand-written builders emitting
+    ``["    Parameters", "    ----------"]`` — ``_stubs``, ``_composer``, and
+    ``_handle`` — and gh-744 fixed the wrapping in two of them. The third kept
+    a hard-coded ``_wrap(para, 72)`` and emitted parameter descriptions at
+    whatever length they were written, which is how a 108-column line reached
+    doppler's ``wfm_sink.pyi`` after gh-744 was declared done. Patching the
+    third copy would only have reset the clock; this is the one layout, and
+    the three callers now supply content to it rather than re-deriving it.
+
+    What is shared is the *layout*: the widths, the 4-space class indent, the
+    8-space numpy hanging indent, the blank-line rules, and the delimiters.
+    What stays with each caller is deriving the content — see `ClassParam`.
+
+    Parameters
+    ----------
+    summary : str
+        The summary sentence, spliced onto the opening ``\"\"\"``.
+    body : sequence of str, optional
+        Extended-description paragraphs between the summary and the
+        ``Parameters`` block. Each is wrapped at `CLASS_DOC_WIDTH` and
+        followed by a blank line.
+    params : sequence of ClassParam, optional
+        The ``Parameters`` block. Omitted entirely when empty — an empty
+        numpy section header is worse than none.
+    trailer : sequence of str, optional
+        Ready-indented lines appended before the closing delimiter, for a
+        section this function does not model (``_stubs``'s ``Examples``, whose
+        doctests must not be wrapped or re-indented).
+    blank_before_close : bool, optional
+        Emit a blank line after the ``Parameters`` block even when *trailer*
+        is empty. ``_stubs`` has always done so and the other two never have;
+        the difference is preserved rather than normalised, because changing
+        it would churn the stub of every existing project for no gain.
+
+    Returns
+    -------
+    list of str
+        Complete docstring lines, delimiters included, indented ready to
+        splice into a class body.
+
+    Examples
+    --------
+    >>> class_docstring("Short.")
+    ['    \"\"\"Short.\"\"\"']
+    >>> class_docstring("A thing.", params=[ClassParam("n : int")])
+    ['    \"\"\"A thing.', '', '    Parameters', '    ----------', '    n : int', '    \"\"\"']
+    >>> block = class_docstring(
+    ...     "A thing.",
+    ...     params=[ClassParam("n : int", ("word " * 40,))],
+    ... )
+    >>> max(len(ln) for ln in block) <= STUB_TARGET_WIDTH
+    True
+    """
+    pad = " " * CLASS_INDENT
+    # Nothing but a summary: this is exactly `summary_docstring`'s job,
+    # including keeping a short one on a single line so existing stubs do not
+    # churn, and leaving room for a formatter to pull the closer up (gh-746).
+    if not body and not params and not trailer:
+        return summary_docstring(summary, indent=CLASS_INDENT)
+
+    head = wrap_summary(summary, CLASS_DOC_WIDTH)
+    lines = [f'{pad}"""{head[0]}']
+    lines += [f"{pad}{ln}" for ln in head[1:]]
+    lines += [""]
+
+    for para in body:
+        lines += [f"{pad}{w}" for w in _wrap(para, CLASS_DOC_WIDTH)] + [""]
+
+    if params:
+        lines += [f"{pad}Parameters", f"{pad}----------"]
+        for p in params:
+            lines.append(f"{pad}{p.type_line}")
+            for note in p.notes:
+                lines += [
+                    f"{pad}    {w}" for w in _wrap(note, CLASS_DESC_WIDTH)
+                ]
+        if blank_before_close or trailer:
+            lines += [""]
+
+    lines += list(trailer)
+    lines.append(f'{pad}"""')
+    return lines
 
 
 def example_budget(indent: int, width: int = STUB_TARGET_WIDTH) -> int:

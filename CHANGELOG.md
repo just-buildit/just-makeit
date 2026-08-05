@@ -4,6 +4,37 @@
 
 ### Fixed
 
+- **All five `.pyi` producers now reflow, and the class docstring has one
+    builder instead of four (gh-747).** `_handle.render_pyi` and
+    `_capsule.render_pyi` never went through `_pyfmt.reflow_pyi`, so a long
+    signature stayed long — doppler's `sample_clock.pyi:69` was a 97-column
+    `def track(...)`.
+
+    The larger half was underneath. jm had **four** hand-written builders
+    emitting `["    Parameters", "    ----------"]` — in `_stubs`, `_composer`
+    (twice) and `_handle` — and gh-744 fixed the wrapping in only two of them.
+    `_handle`'s copy still wrapped body paragraphs at a hard-coded
+    `_wrap(para, 72)` and emitted `@param` descriptions and enum choices at
+    whatever length they were written, which is how a 108-column line reached
+    doppler's `wfm_sink.pyi` after gh-744 was declared done.
+
+    The layout now lives once, as `_docstring.class_docstring` — widths, the
+    4-space class indent, the 8-space numpy hanging indent, blank-line rules
+    and delimiters. Each caller supplies content via `ClassParam` and keeps
+    only the genuinely producer-specific step: deriving a parameter's type
+    line. Output is byte-identical for every existing project; the differences
+    between the callers (a blank line before the closing delimiter, which
+    `_stubs` emits and the others never have) are preserved rather than
+    normalised, since changing them would churn every stub for no gain.
+
+    `tests/test_gh744_stub_width.py` gains handle and capsule fixtures, and
+    its gate now **enumerates** producers — every function named
+    `render_pyi` / `render_*_pyi` / `make_*_pyi` returning `str` must route
+    through the reflow — rather than naming them, which is exactly how two
+    were missed. Writing it immediately surfaced a sixth candidate
+    (`_codec.render_method_pyi`), correctly excluded as a fragment builder
+    whose output is reflowed at the component-stub door.
+
 - **Generated C is formatted to a fixed point, so `apply` and `status` can no
     longer disagree on pass count (gh-758).** A `c_style` project could carry
     `*_ext.c` files that were permanently `STALE`: `jm apply` wrote them,

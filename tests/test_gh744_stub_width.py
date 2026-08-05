@@ -19,10 +19,15 @@ acceptance criterion is a property of the whole file, not of any one of them:
 Plus the signatures, which are reflowed after the fact by ``_pyfmt`` rather
 than at 63 separate emission sites; see that module's docstring for why.
 
-The last class below is the one that matters most in six months: it pins that
-*both* stub producers reflow. Applying a transform on the write path and not
-on the compare path is what gh-635 records for the C side, and it leaves every
-project permanently stale.
+The last classes below are the ones that matter most in six months: they pin
+that *every* stub producer reflows. Applying a transform on the write path and
+not on the compare path is what gh-635 records for the C side, and it leaves
+every project permanently stale.
+
+gh-747 extended this file after two of the five producers (`_handle`,
+`_capsule`) turned out never to have been wired up, and the naming gate at the
+bottom now *enumerates* producers rather than listing them — because naming
+them is precisely how the two were missed.
 """
 
 from __future__ import annotations
@@ -318,3 +323,228 @@ class TestSynthesisedConstructorDemo:
         assert _ctor_demo_lines("Fir", long_arg) == [
             f"    >>> obj = Fir({long_arg})"
         ]
+
+
+# ── gh-747: all five producers, found rather than named ──────────────────────
+
+
+def _handle_cfg_with_long_prose():
+    """A handle module whose every docstring surface is deliberately overlong.
+
+    A long ``@brief`` (the class summary), a long ``@param`` description, and
+    a signature past 79 columns — the three surfaces `_handle` emitted raw
+    before gh-747, and the shape of doppler's `sample_clock` / `wfm_sink`.
+    """
+    return {
+        "project": {"name": "doppler", "version": "0.1.0"},
+        "enum": [{"name": "ftype", "values": ["raw", "csv", "sigmf"]}],
+        "module": {
+            "tracker": {
+                "kind": "handle",
+                "backing": "tracker",
+                "type_name": "SampleClock",
+                "create_fn": "tracker_open",
+                "close_fn": "tracker_close",
+                "create_args": [
+                    {"name": "observed_timestamp_ns", "type": "size_t"},
+                    {"name": "n_at_observation", "type": "size_t"},
+                    {"name": "tolerance_ns", "type": "size_t"},
+                    {
+                        "name": "file_type",
+                        "type": "int",
+                        "enum": "ftype",
+                        "default": "raw",
+                    },
+                ],
+                "methods": [
+                    {
+                        "name": "track",
+                        "fn": "tracker_track",
+                        "returns": "size_t",
+                        "args": [
+                            {
+                                "name": "observed_timestamp_ns",
+                                "type": "size_t",
+                            },
+                            {"name": "n_at_observation", "type": "size_t"},
+                            {"name": "tolerance_ns", "type": "size_t"},
+                        ],
+                    }
+                ],
+            }
+        },
+    }
+
+
+def _capsule_cfg_with_long_prose():
+    """A capsule module whose create and method signatures both exceed 79.
+
+    The parameter names are long on purpose. doppler has no capsule module
+    that overflows, so a fixture built from a realistic one would assert
+    nothing — the test would pass with the reflow removed, which is exactly
+    the false green that let the capsule half sit unnoticed.
+    """
+    return {
+        "project": {"name": "proj", "version": "0.1.0"},
+        "module": {
+            "ddc_fn": {
+                "kind": "capsule",
+                "backing": "ddcr",
+                "capsule_name": "proj.ddc.ddcr_state",
+                "header": "ddc/ddc_core.h",
+                "init_params": [
+                    {"name": "normalised_centre_frequency", "type": "double"},
+                    {"name": "decimation_rate_in_samples", "type": "double"},
+                    {"name": "loop_bandwidth_normalised", "type": "double"},
+                ],
+                "methods": [
+                    {
+                        "name": "execute_with_explicit_output_buffer",
+                        "arg_type": "float[]",
+                        "return_type": "float _Complex[]",
+                        "caller_out": True,
+                    },
+                ],
+            }
+        },
+    }
+
+
+class TestHandleAndCapsuleProducers:
+    """gh-747: the two producers gh-744 missed.
+
+    doppler carried three handle modules and no capsule ones, so the handle
+    half is the measured case and the capsule half is prevention.
+    """
+
+    def test_handle_stub_has_no_overlong_line(self):
+        from just_makeit import _handle
+
+        pyi = _handle.render_pyi(_handle_cfg_with_long_prose(), "tracker")
+        over = [ln for ln in pyi.split("\n") if len(ln) > TARGET]
+        assert not over, "\n".join(f"{len(ln)}: {ln}" for ln in over)
+
+    def test_the_long_handle_signature_actually_reached_the_stub(self):
+        """Guards the fixture: a stub that never got long input proves nothing."""
+        from just_makeit import _handle
+        from just_makeit._pyfmt import flatten_signatures
+
+        pyi = flatten_signatures(
+            _handle.render_pyi(_handle_cfg_with_long_prose(), "tracker")
+        )
+        flat = [ln for ln in pyi.split("\n") if "def track(" in ln]
+        assert flat and len(flat[0]) > TARGET, (
+            "fixture no longer produces an overlong signature: " + str(flat)
+        )
+
+    def test_capsule_stub_has_no_overlong_line(self):
+        from just_makeit import _capsule
+
+        pyi = _capsule.render_pyi(_capsule_cfg_with_long_prose(), "ddc_fn")
+        over = [ln for ln in pyi.split("\n") if len(ln) > TARGET]
+        assert not over, "\n".join(f"{len(ln)}: {ln}" for ln in over)
+
+    def test_the_long_capsule_signature_actually_reached_the_stub(self):
+        """Guards the fixture, as above — it passed vacuously when written."""
+        from just_makeit import _capsule
+        from just_makeit._pyfmt import flatten_signatures
+
+        pyi = flatten_signatures(
+            _capsule.render_pyi(_capsule_cfg_with_long_prose(), "ddc_fn")
+        )
+        flat = [
+            ln
+            for ln in pyi.split("\n")
+            if "def ddcr_execute_with_explicit_output_buffer(" in ln
+        ]
+        assert flat and len(flat[0]) > TARGET, (
+            "fixture no longer produces an overlong signature: " + str(flat)
+        )
+
+    def test_handle_stub_is_still_valid_python(self):
+        import ast
+
+        from just_makeit import _handle
+
+        pyi = _handle.render_pyi(_handle_cfg_with_long_prose(), "tracker")
+        ast.parse(pyi)
+
+
+class TestEveryProducerReflows:
+    """The registration-free gate the issue asked for.
+
+    gh-744 named its producers and found five; gh-747 then found that two of
+    the five were missed and that the class-docstring *builders* inside them
+    had never been counted at all. A test that enumerates cannot make that
+    mistake: a sixth producer is covered on the day it is written, without
+    anyone remembering to add it here.
+    """
+
+    @staticmethod
+    def _producers():
+        """Every function returning a complete ``.pyi`` document.
+
+        Matched by name (``render_pyi`` / ``render_*_pyi`` / ``make_*_pyi``)
+        **and** a ``-> str`` return annotation. The annotation is what
+        separates a document producer from a fragment builder:
+        ``_codec.render_method_pyi`` returns ``list[str]`` spliced into a
+        component stub that is reflowed at its own door, so requiring it to
+        reflow its own two lines would be wrong.
+
+        Honest limitation: a producer named outside that convention is not
+        found. The convention is what the package follows today, and a gate
+        over it beats the hand-written list it replaces.
+        """
+        import ast
+        import re
+
+        pat = re.compile(r"^(render_pyi|render_\w+_pyi|make_\w+_pyi)$")
+        src = Path(__file__).parent.parent / "src" / "just_makeit"
+        found = []
+        for path in sorted(src.rglob("*.py")):
+            # templates/ holds `<<token>>` placeholder files, not Python.
+            if "templates" in path.parts:
+                continue
+            text = path.read_text()
+            for node in ast.walk(ast.parse(text)):
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                if not pat.match(node.name):
+                    continue
+                ret = ast.unparse(node.returns) if node.returns else ""
+                if ret != "str":
+                    continue
+                found.append(
+                    (
+                        f"{path.name}:{node.lineno} {node.name}",
+                        ast.get_source_segment(text, node) or "",
+                    )
+                )
+        return found
+
+    def test_the_enumeration_finds_the_known_producers(self):
+        """A pattern that matches nothing would make the gate below vacuous."""
+        names = [n for n, _ in self._producers()]
+        assert len(names) >= 5, names
+        for expected in (
+            "_render.py",
+            "_stubs.py",
+            "_composer.py",
+            "_handle.py",
+            "_capsule.py",
+        ):
+            assert any(n.startswith(expected) for n in names), (
+                f"{expected} producer not found by the enumeration: {names}"
+            )
+
+    def test_every_producer_routes_through_the_reflow(self):
+        offenders = [
+            name
+            for name, body in self._producers()
+            if "reflow_pyi" not in body
+        ]
+        assert not offenders, (
+            "these .pyi producers do not reflow their output; a long "
+            "signature or docstring will ship overlong:\n  "
+            + "\n  ".join(offenders)
+        )

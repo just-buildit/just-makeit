@@ -1562,27 +1562,26 @@ def _pyi_class_docstring(
     description, and its ``@param`` descriptions annotate the matching
     constructor parameters — so the vendored backing header documents the class
     (gh-374). Absent a block, the summary falls back to ``"<Type> handle."`` and
-    the output is byte-identical to the pre-enrichment stub."""
-    from ._docstring import _wrap, group_paragraphs
+    the output is byte-identical to the pre-enrichment stub.
+
+    gh-747: this was jm's **third** hand-written copy of the class-docstring
+    layout, and the one gh-744 missed — it wrapped body paragraphs at a
+    hard-coded 72 and emitted ``@param`` descriptions and enum choices at
+    whatever length they came out (108 columns in doppler's ``wfm_sink.pyi``).
+    Layout now comes from `_docstring.class_docstring`; what remains here is
+    deriving each argument's type line and notes."""
+    from ._docstring import ClassParam, class_docstring, group_paragraphs
 
     summary = f"{tname} handle."
     body: list[str] = []
     if create_block is not None and create_block.brief:
         summary = create_block.brief
         body = group_paragraphs(create_block.body)
-    if not create_args and not body:
-        return [f'    """{summary}"""']
-    lines: list[str] = [f'    """{summary}', ""]
-    for para in body:  # extended description before the Parameters block
-        lines += [f"    {w}" for w in _wrap(para, 72)] + [""]
-    if not create_args:
-        lines.append('    """')
-        return lines
-    lines += ["    Parameters", "    ----------"]
+    params: list[ClassParam] = []
     for a in create_args:
         n = a["name"]
         ann = _pyi_arg_ann(a)
-        type_line = f"    {n} : {ann}"
+        type_line = f"{n} : {ann}"
         if "default" in a:
             dv = a["default"]
             # Numeric defaults bare; string / enum defaults quoted.
@@ -1590,17 +1589,17 @@ def _pyi_class_docstring(
                 type_line += f", default {dv}"
             else:
                 type_line += f', default ``"{dv}"``'
-        lines.append(type_line)
+        notes: list[str] = []
         pdesc = create_block.param_desc(n) if create_block else None
         if pdesc:
-            lines.append(f"        {pdesc}")
+            notes.append(pdesc)
         if a.get("enum"):
             choices = enum_reg.get(a["enum"], [])
             if choices:
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
-                lines.append(f"        One of {choice_str}.")
-    lines.append('    """')
-    return lines
+                notes.append(f"One of {choice_str}.")
+        params.append(ClassParam(type_line, tuple(notes)))
+    return class_docstring(summary, body=body, params=params)
 
 
 def _pyi_prop_doc(
@@ -1885,7 +1884,12 @@ def render_pyi(
     if any(_coerce.PATH_PY_TYPE in ln for ln in lines):
         lines.insert(lines.index("import numpy as np"), "import os")
 
-    return "\n".join(lines)
+    # gh-747: the same door every other `.pyi` producer goes through. Without
+    # it a long signature stays long — doppler's `sample_clock.pyi:69` was a
+    # 97-column `def track(...)` that splits cleanly at its top-level commas.
+    from ._pyfmt import reflow_pyi
+
+    return reflow_pyi("\n".join(lines))
 
 
 # ── materialization (driven by jm apply's _replay; mirrors _capsule) ──────────
