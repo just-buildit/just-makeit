@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.46.1] — 2026-08-05
+
 ### Fixed
 
 - **A formatted view fragment no longer fails `jm status --check` (gh-775).**
