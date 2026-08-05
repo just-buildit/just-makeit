@@ -32,6 +32,17 @@
     Measured against a 72-fragment downstream: 0 members lost through a
     refresh, where the four {style} x {edit kind} cells previously lost three.
 
+    **A hand-renamed keyword argument is preserved too**, which is worth
+    stating separately because a reader tracking "hand-written bindings" would
+    not know to check kwarg spelling. A method's `static char *kwlist[]` lives
+    *inside* its wrapper body, so the body-restore path already covered it —
+    but only once extraction works, which is exactly what the parser defect
+    blocked. Regeneration could therefore rename keywords while losing no
+    member at all: `delay`'s hand-renamed `count` -> `n` reverted, and
+    `d.ptr(n=…)` became a `TypeError` with every member still present.
+    Invisible to any member-level audit. (The *constructor's* kwlist is the
+    exception and is reported instead — see below.)
+
     `jm remove` passes the member it just deleted down to the regeneration.
     Without that, a removed method looks exactly like a hand-written one from
     inside the transplant and would be carried forever — dropped from the

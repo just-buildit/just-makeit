@@ -112,18 +112,32 @@ def test_replay_does_not_reparse_the_manifest_per_save(project, monkeypatch):
     )
 
 
-def test_scratch_writes_falls_back_when_the_dump_is_lossy():
-    """The fast path must verify, not assume.
+def test_the_dump_no_longer_loses_a_codec():
+    """`_dump` learned codecs — which is what the old assertion here asked to
+    be told about, and the reason this test changed shape rather than being
+    deleted.
 
-    `_dump` silently omits `[codec.X]`. Using it unconditionally dropped
-    codecs from the replayed manifest, and every later replay step then failed
-    to resolve them. The round-trip check is what makes the fast path safe for
-    section kinds `_dump` does not know about.
+    It used to pin the *defect*: `assert "codec" not in text`, with a note
+    saying to simplify the guard if that ever stopped holding. gh-763 made
+    `_dump` parse its own output and append whatever did not survive, so a
+    section kind nobody taught it round-trips instead of vanishing.
+
+    The guard in `save` stays regardless. It is what turns "`_dump` is
+    faithful for this cfg" from an assumption into a per-write fact, and the
+    totality fix is a second belt rather than a reason to drop the braces —
+    `_dump` is still hand-written per section kind, and the next unfamiliar
+    shape is still the one nobody has seen.
     """
-    lossy = {"project": {"name": "d"}, "codec": {"kw": {"kind": "pack"}}}
-    text = C._dump(lossy)
-    assert "codec" not in text, "if _dump learned codecs, simplify this guard"
-    assert not C._round_trips(text, lossy, None)
+    cfg = {"project": {"name": "d"}, "codec": {"kw": {"kind": "pack"}}}
+    text = C._dump(cfg)
+    assert "[codec.kw]" in text
+    assert C._round_trips(text, cfg, None)
+
+
+def test_the_round_trip_guard_still_rejects_text_that_does_not_match():
+    """The guard's own contract, independent of what `_dump` can render."""
+    cfg = {"project": {"name": "d"}}
+    assert not C._round_trips('[project]\nname = "other"\n', cfg, None)
 
 
 def test_round_trip_accepts_a_faithful_dump():

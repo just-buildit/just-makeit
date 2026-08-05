@@ -76,9 +76,12 @@ def run(root: Path) -> None:
     if (root / "modules").is_dir() and "modules/*.toml" not in globs:
         globs.append("modules/*.toml")
 
-    keep: dict = {}
-    if "project" in manifest:
-        keep["project"] = manifest["project"]
+    # Subtractive, for the reason in `_split_objects` (gh-763): an additive
+    # list here has to stay in step with `components`' exclusion list above,
+    # and nothing enforces that. `module` is relocated wholesale into
+    # modules/, so it is named explicitly rather than left to the derivation.
+    _relocated = set(components) | ({"module"} if modules else set())
+    keep = {k: v for k, v in manifest.items() if k not in _relocated}
     manifest_text = C._dump(keep)
     if globs:
         manifest_text = (

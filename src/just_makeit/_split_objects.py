@@ -52,12 +52,18 @@ def run(root: Path) -> None:
         frag_path.write_text(frag_text, encoding="utf-8")
         print(f"  create  {frag_path}")
 
-    # Manifest keeps [project] + [module.X], gains the include glob.
-    keep: dict = {}
-    if "project" in manifest:
-        keep["project"] = manifest["project"]
-    if "module" in manifest:
-        keep["module"] = manifest["module"]
+    # The manifest keeps whatever was NOT relocated, gains the include glob.
+    #
+    # Subtractive on purpose (gh-763). Written as an additive list of names to
+    # re-add, correctness depended on this list and `components`' exclusion
+    # list agreeing — two lists in different functions that have to be edited
+    # together, with nothing checking that they were. A top-level key added to
+    # one and forgotten in the other does not error; it is written to a
+    # fragment and then also dropped from root, or kept in root and never
+    # moved. Deriving `keep` from what was actually relocated makes the
+    # invariant local: a section nobody thought about survives by default
+    # instead of vanishing by default.
+    keep = {k: v for k, v in manifest.items() if k not in components}
 
     manifest_text = C._dump(keep)
     manifest_text = (
