@@ -20,6 +20,7 @@ default = "8"
 
 from __future__ import annotations
 
+import copy as _copy
 import re as _re
 
 try:
@@ -119,6 +120,13 @@ def load(root: Path) -> dict:
     (schema 6+). For a single-file project (no `include` key) the result
     is identical to `tomllib.load` of the manifest — full backward
     compatibility."""
+    # gh-764: inside a `deferred_save()` scope the pending config has not
+    # reached disk, so serve it from there — otherwise a replay step would read
+    # back the state before its predecessor's write and silently lose it.
+    if _DEFERRED is not None:
+        pending = _DEFERRED.get(_deferral_key(root))
+        if pending is not None:
+            return _copy.deepcopy(pending)
     cfg = load_manifest(root)
     includes = cfg.pop("include", None)
     if includes:
@@ -288,6 +296,67 @@ def scratch_writes() -> "Iterator[None]":
         _SCRATCH_WRITES = prev
 
 
+# gh-764: root -> the config `save()` would have written, when deferring.
+# None means "write through", which is every path except a replay.
+_DEFERRED: "dict[Path, dict] | None" = None
+
+
+def _deferral_key(root: Path) -> Path:
+    """Normalise *root* so a relative and an absolute path share a cache slot."""
+    return Path(root).resolve()
+
+
+@contextmanager
+def deferred_save() -> "Iterator[None]":
+    """Coalesce every manifest write in this scope into one flush (gh-764).
+
+    The third member of the family `scratch_writes` and
+    ``_object.deferred_module_regen`` started (gh-698), and the same shape:
+    ``apply``'s replay runs one mutating command per object, method, property
+    and function, and each one ends by writing the whole manifest.
+
+    gh-698 removed most of that cost — but only behind a guard. `scratch_writes`
+    swaps the tomlkit round-trip for the plain `_dump`, *if* `_round_trips`
+    confirms `_dump` reproduced the config. `_dump` is hand-written per section
+    kind and is not total: it drops ``[codec.X]`` outright and renders a list
+    value as its Python repr. A project with either — doppler has both — fails
+    the guard on **every** save and pays the full tomlkit path regardless. 718
+    saves, 2.48 million tomlkit ``__setitem__`` calls, 87% of a 90-second apply.
+
+    Deferring sidesteps that entirely: with one write instead of 718, even the
+    expensive path costs ~0.13 s, and `_dump`'s totality stops being a
+    performance question. (It remains a correctness one — see gh-763.)
+
+    Safe here because the tree being written is the **throwaway scaffold** the
+    replay just synthesized from ``cfg``:
+
+    - nothing outside the replay reads it, and the two readers inside it
+      (`_apply._replay`'s ``C.load(temp_root)`` calls) are served from the
+      cache, so they observe exactly what a write-through would have given;
+    - the scratch manifest is in ``_apply._SKIP_FILES``, so it is never copied
+      back and never part of what ``jm status`` byte-compares. Its intermediate
+      states — and its final formatting — are unobservable.
+
+    Only the end state has to be right, and one flush produces it.
+
+    Configs are deep-copied in and out so `load` keeps returning a dict the
+    caller owns, exactly as parsing from disk does. That costs ~2.9 ms on
+    doppler against the ~127 ms it replaces, and it means a caller that loads,
+    mutates and then decides *not* to save cannot corrupt the pending write.
+    """
+    global _DEFERRED
+    prev = _DEFERRED
+    _DEFERRED = {}
+    try:
+        yield
+    finally:
+        pending, _DEFERRED = _DEFERRED, prev
+        # Restored first, so these are real writes (or, when nested, fold into
+        # the enclosing deferral rather than escaping it).
+        for pending_root, pending_cfg in pending.items():
+            save(pending_root, pending_cfg)
+
+
 def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
     """True when *text* parses back to exactly the config it was dumped from.
 
@@ -304,6 +373,22 @@ def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
     if include_list:
         want["include"] = list(include_list)
     return got == want
+
+
+def _matches_on_disk(
+    path: Path, cfg: dict, include_list: list[str] | None
+) -> bool:
+    """True when *path* already parses to exactly *cfg* (plus *include_list*).
+
+    gh-764. Shares `_round_trips`'s comparison rather than restating it — the
+    question is identical ("does this text mean exactly this config?"), only
+    the source of the text differs.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _round_trips(text, cfg, include_list)
 
 
 def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
@@ -336,6 +421,19 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
         path.write_text(text, encoding="utf-8")
+        return
+
+    # gh-764: the file may already say exactly this. `save` rewrites *every*
+    # destination the project has — 70 files on doppler for a one-property
+    # change — and 69 of them come back byte-identical after a tomlkit
+    # round-trip costing ~11 ms each. tomllib answers "is it already right?"
+    # in ~0.8 ms, so asking is ~14x cheaper than answering by rewriting.
+    #
+    # Skipping is not a trade against gh-491's layout preservation, it is the
+    # same goal reached sooner: `_sync` deliberately leaves unchanged keys
+    # alone so an author's formatting survives, and a file that already parses
+    # to *cfg* has no changed keys to apply.
+    if _matches_on_disk(path, cfg, include_list):
         return
 
     if _SCRATCH_WRITES:
@@ -453,6 +551,17 @@ def save(root: Path, cfg: dict) -> None:
     live in the manifest. New objects go to `objects/<name>.toml` when
     the project uses the split layout, or to the manifest otherwise.
     A fragment file that ends up with no sections is deleted."""
+    # gh-764: under `deferred_save()` this becomes a cache update; the single
+    # real write happens when that scope exits.
+    #
+    # Deferred only once the manifest exists. A dozen commands gate on
+    # `(root / FILENAME).exists()` rather than on a load, so the scaffold's
+    # very first save has to reach disk or every replay step after it exits
+    # with "no just-makeit.toml found". That write is the bootstrap one; the
+    # hundreds that follow are what this exists to collapse.
+    if _DEFERRED is not None and (root / FILENAME).exists():
+        _DEFERRED[_deferral_key(root)] = _copy.deepcopy(cfg)
+        return
     manifest_path = root / FILENAME
     owners, module_owners, include_list = _provenance(root)
     split_layout = bool(include_list)

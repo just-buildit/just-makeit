@@ -211,7 +211,12 @@ def run(
     entries: list[tuple[str, str, bool, str, frozenset]] = []
     ok_count = 0
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
-        scratch = Path(tmp) / root.name
+        # gh-764: `root.name` is "" for a relative root — `jm status` run as
+        # `_status.run(Path("."))` collapsed the scratch path onto the temp
+        # directory itself and died in `copytree` with FileExistsError.
+        # Resolve for the *name* only; `root` itself stays as the caller gave
+        # it, so reported paths are unchanged.
+        scratch = Path(tmp) / (root.resolve().name or "project")
         shutil.copytree(root, scratch, ignore=_COPY_IGNORE)
         # Run apply on the copy so we observe its real reconciliation
         # (glue regenerated, _core.h merged, _core.c preserved). Suppress

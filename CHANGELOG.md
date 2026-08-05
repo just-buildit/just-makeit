@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`jm apply` and `jm status` are ~12x faster on a large project (gh-764).**
+    Measured on doppler (2213 files, 41 modules, 69 fragment files):
+
+    | command                       |  before |      after |
+    | ----------------------------- | ------: | ---------: |
+    | `jm apply`                    |  90.1 s |  **7.3 s** |
+    | `jm status --check`           |  87.6 s |  **8.1 s** |
+    | one `jm property`             |  0.36 s | **0.13 s** |
+    | CLI import (every invocation) | 29.5 ms | **8.0 ms** |
+
+    Output is **byte-identical** across all 2214 generated files — verified by
+    hashing the whole tree before and after.
+
+    The cost was never rendering, it was the manifest. `apply`'s replay runs one
+    mutating command per object, method, property and function — 718 of them on
+    doppler — and each ended by rewriting the *whole* manifest: 2.48 million
+    tomlkit `__setitem__` calls, 87% of the runtime, quadratic in project size.
+
+    gh-698 found this and added `_config.scratch_writes`, which swaps the
+    tomlkit round-trip for the plain `_dump` — but only when `_round_trips()`
+    confirms `_dump` reproduced the config, and `_dump` is not total. It drops
+    `[codec.X]` and renders a list value as its Python repr. doppler has both,
+    so the guard rejected the fast path on *every* save and gh-698's
+    optimization never applied to the project it was written for (gh-763).
+
+    Four changes:
+
+    - **`_config.deferred_save()`** — a context manager, third in the family
+        with `scratch_writes` and `_object.deferred_module_regen`, that
+        coalesces a replay's writes into one flush. Safe because the tree being
+        written is the throwaway scaffold: nothing outside the replay reads it,
+        its readers inside are served from the cache, and it is in
+        `_apply._SKIP_FILES` so it is never copied back or compared. This also
+        makes `_dump`'s totality stop being a performance question.
+    - **`save()` skips destinations already on disk.** A one-property change
+        rewrote all 70 of doppler's destinations; 69 came back byte-identical
+        after an ~11 ms tomlkit round-trip each. `tomllib` answers "is it
+        already right?" in ~0.8 ms. This is gh-491's layout preservation
+        reached sooner, not traded away.
+    - **`__version__` is resolved lazily** (PEP 562). `importlib.metadata`
+        was 25.5 ms of the 29.5 ms CLI import, paid by every invocation
+        including `jm --help`.
+    - `jm status` on a **relative root** no longer crashes — `Path(".").name`
+        is `""`, which collapsed the scratch path onto the temp directory and
+        raised `FileExistsError` from `copytree`.
+
 ### Fixed
 
 - **All five `.pyi` producers now reflow, and the class docstring has one
