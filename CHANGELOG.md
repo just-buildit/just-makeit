@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-08-05
+
 ### Fixed
 
 - **A hand-written binding in `<mod>_ext_<obj>.c` no longer disappears on the
