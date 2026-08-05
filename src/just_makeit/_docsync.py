@@ -967,7 +967,9 @@ def _leading_comment_start(text: str, start: int) -> int:
     return line_start if not text[line_start:open_at].strip() else open_at
 
 
-def transplant_hand_written(existing: str, reference: str) -> str:
+def transplant_hand_written(
+    existing: str, reference: str, drop_members: "frozenset[str]" = frozenset()
+) -> str:
     """Carry *existing*'s hand-written bindings into the fresh *reference*.
 
     The C counterpart of the ``.pyi``'s ``# jm:hand`` append path (gh-538),
@@ -1005,18 +1007,37 @@ def transplant_hand_written(existing: str, reference: str) -> str:
     ref_funcs = _extract_c_function_bodies(reference)
     orphans = [n for n in ex_funcs if n not in ref_funcs]
 
+    def _dropped(member: str) -> bool:
+        """*member* is what this command just deleted, or derived from it.
+
+        The suffix match covers the satellites jm generates alongside a
+        method — ``tune`` takes ``tune_max_out`` with it. Without this,
+        `jm remove --method` would delete the method from the manifest and
+        the `.pyi` while the binding it carried lived on forever, which is
+        the mirror image of the bug this function exists to fix.
+        """
+        return any(
+            member == d or member.startswith(f"{d}_") for d in drop_members
+        )
+
     out = reference
     ex_mask = _code_mask(existing)
+    # Wrappers reachable only from a row this command removed. They are
+    # orphans by the same test as a hand-written function — absent from the
+    # fresh render — so without collecting them they would be carried back in
+    # and left as unreferenced dead code.
+    dropped_fns: set[str] = set()
     for array_re in (_METHODS_RE, _GETSET_RE):
         out_mask = _code_mask(out)
         ref_names = _array_names(out, out_mask, array_re)
-        rows = [
-            existing[s : e + 1]
-            for name, (s, e) in _array_names(
-                existing, ex_mask, array_re
-            ).items()
-            if name not in ref_names
-        ]
+        rows = []
+        for name, (s, e) in _array_names(existing, ex_mask, array_re).items():
+            if name in ref_names:
+                continue
+            if _dropped(name):
+                dropped_fns.update(_row_fn_names(existing, ex_mask, (s, e)))
+                continue
+            rows.append(existing[s : e + 1])
         if not rows:
             continue
         decl_m = array_re.search(out_mask)
@@ -1037,6 +1058,7 @@ def transplant_hand_written(existing: str, reference: str) -> str:
             + out[rows_at:]
         )
 
+    orphans = [n for n in orphans if n not in dropped_fns]
     if orphans:
         anchor = min(
             (
