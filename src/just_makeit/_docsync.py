@@ -598,6 +598,173 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     return drifted
 
 
+_MAX_OUT_SUFFIX = "_max_out"
+
+
+def refresh_glue_bindings(existing: str, reference: str) -> tuple[str, list]:
+    """Re-render the ``*_max_out`` bindings whose signature drifted (gh-767).
+
+    :func:`warn_signature_drift` reports every member whose binding no longer
+    matches what jm would emit, and reporting is the right answer for almost
+    all of them: the wrapper body is the user's, so re-rendering it is a
+    clobber. ``*_max_out`` is the exception, on the same licence
+    :func:`_is_reclaimable_glue` takes for the glue docstrings — **there is no
+    authoring path**. The bound C function lives in the sacred ``_core.c``;
+    the wrapper is pure marshalling jm writes and nobody edits, because there
+    is nothing in it to edit.
+
+    That exception is exactly the population gh-761 stranded. Deriving the
+    arity from the C prototype fixed what jm *emits*, but a project's existing
+    fragments are frozen at whatever jm emitted when they were created, so a
+    state-only ``x_max_out(state)`` kept a ``METH_NOARGS`` row while the stub
+    moved to ``max_out(n)``. The stub then documents a call the extension
+    rejects, which is a runtime ``TypeError`` per surface.
+
+    Both halves move together or neither does: the ``METH_*`` flags on the row
+    and the wrapper body that parses (or does not parse) the argument. Returns
+    the updated text and the member names repaired.
+    """
+    from ._object import _extract_c_function_bodies
+
+    ex_sig = _method_signatures(existing)
+    ref_sig = _method_signatures(reference)
+    names = [
+        n
+        for n, sig in ref_sig.items()
+        if n.endswith(_MAX_OUT_SUFFIX) and n in ex_sig and ex_sig[n] != sig
+    ]
+    if not names:
+        return existing, []
+
+    out = existing
+    ref_funcs = _extract_c_function_bodies(reference)
+    repaired: list[str] = []
+    for name in names:
+        out_mask = _code_mask(out)
+        ref_mask = _code_mask(reference)
+        ex_rows = _array_names(out, out_mask, _METHODS_RE)
+        ref_rows = _array_names(reference, ref_mask, _METHODS_RE)
+        if name not in ex_rows or name not in ref_rows:
+            continue
+        # The wrapper is replaced whole — signature included — by a direct
+        # substring swap rather than through _restore_c_function_bodies.
+        # That function bails when the two signatures differ (gh-267), and
+        # here they differ *by design*: going from METH_NOARGS to
+        # METH_VARARGS is exactly a change from
+        # `(self, PyObject *Py_UNUSED(ignored))` to `(self, PyObject *args)`.
+        # Moving the row's flags without the body is the one outcome worse
+        # than leaving both alone — the call stops raising TypeError and
+        # starts silently ignoring the argument, returning the state-only
+        # answer for a length-bearing query.
+        ex_funcs = _extract_c_function_bodies(out)
+        swapped = True
+        for f in _row_fn_names(reference, ref_mask, ref_rows[name]):
+            if f in ref_funcs and f in ex_funcs:
+                out = out.replace(ex_funcs[f], ref_funcs[f], 1)
+            elif f in ref_funcs:
+                swapped = False
+        if not swapped:
+            continue
+        out_mask = _code_mask(out)
+        ex_rows = _array_names(out, out_mask, _METHODS_RE)
+        if name not in ex_rows:
+            continue
+        s, e = ex_rows[name]
+        rs, re_ = ref_rows[name]
+        # The whole row, not just the flags field. The doc slot has to move
+        # with them or the runtime ends up self-contradictory: the binding
+        # accepts `ptr_max_out(4)` while `help()` still shows the old
+        # `ptr_max_out()` synopsis. transplant_docs cannot fix that on its
+        # own — it reads a changed synopsis as "somebody hand-wrote this" and
+        # preserves it. For a `*_max_out` there is nobody to have written it;
+        # the text comes from _gluedoc, not from the header's Doxygen.
+        out = out[:s] + reference[rs : re_ + 1] + out[e + 1 :]
+        repaired.append(name)
+    return out, repaired
+
+
+_KWLIST_RE = re.compile(
+    r"static\s+char\s*\*\s*kwlist\s*\[\s*\]\s*=\s*\{([^}]*)\}"
+)
+
+
+def _init_kwargs(text: str) -> tuple[str, ...]:
+    """The constructor's keyword names, in ``PyArg_ParseTupleAndKeywords``
+    order. Empty when the fragment has no ``*_init`` or no kwlist.
+
+    The wrapper prefix is read off the file rather than rebuilt from the
+    manifest: it is ``<Component>Obj`` for some objects and ``<Component>``
+    for others, and a fragment naming its type something else entirely (a
+    view, a hand-written shape) still has exactly one ``_init``.
+    """
+    from ._object import _extract_c_function_bodies
+
+    bodies = _extract_c_function_bodies(text)
+    body = next(
+        (b for n, b in bodies.items() if n.endswith("_init")),
+        None,
+    )
+    if not body:
+        return ()
+    m = _KWLIST_RE.search(_code_mask(body))
+    if not m:
+        return ()
+    lit = body[m.start(1) : m.end(1)]
+    return tuple(n for n in re.findall(r'"([^"]*)"', lit))
+
+
+def warn_init_kwargs_drift(rel, existing: str, reference: str):
+    """Warn when a refresh would change the constructor's keyword arguments.
+
+    doppler#616 named this class, and it is invisible to every member-level
+    audit: regeneration can rewrite ``kwlist[]`` while losing no member at
+    all, so ``Obj(bank=…)`` becomes a ``TypeError`` and ``Obj(a, b)`` binds
+    its positionals to different parameters — silently, since both spellings
+    still compile.
+
+    Reported rather than repaired, and the asymmetry with
+    :func:`refresh_glue_bindings` is deliberate. ``<Obj>_init`` is in
+    ``_restore_c_function_bodies``'s always-regenerate set so that a newly
+    declared state field or output buffer is never silently dropped from the
+    constructor. Preserving the old ``kwlist`` under a freshly rendered body
+    would leave the name array and the ``&var`` argument list out of step —
+    ``PyArg_ParseTupleAndKeywords`` would then bind each keyword to the
+    *neighbouring* variable. That is worse than either honest outcome: it
+    compiles, it runs, and it puts the caller's values in the wrong fields.
+
+    So jm says exactly what changed and leaves the decision with the author.
+    Returns ``(added, removed, reordered)`` for tests; emits nothing when the
+    two agree.
+    """
+    ex = _init_kwargs(existing)
+    ref = _init_kwargs(reference)
+    if not ex or not ref or ex == ref:
+        return ((), (), False)
+    added = tuple(n for n in ref if n not in ex)
+    removed = tuple(n for n in ex if n not in ref)
+    reordered = not added and not removed
+    detail = []
+    if removed:
+        detail.append("no longer accepted: " + ", ".join(removed))
+    if added:
+        detail.append("newly accepted: " + ", ".join(added))
+    if reordered:
+        detail.append(
+            "same names, new positional order: "
+            f"{'/'.join(ex)} -> {'/'.join(ref)}"
+        )
+    print(
+        f"warning: {rel}: refreshing this fragment would change the"
+        f" constructor's keyword arguments [{'; '.join(detail)}]."
+        " The kwlist is regenerated with the body it belongs to, so jm will"
+        " not preserve it on its own — a kwlist kept under a fresh body binds"
+        " each keyword to the wrong variable. Reconcile the manifest with the"
+        " binding, or keep the hand-written constructor in an _extra.c.",
+        file=sys.stderr,
+    )
+    return (added, removed, reordered)
+
+
 def _splice_first_array(
     existing: str,
     reference: str,
@@ -777,6 +944,127 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
     return out
 
 
+def _leading_comment_start(text: str, start: int) -> int:
+    """Offset of the block comment immediately above *start*, or *start*.
+
+    A hand-written binding's comment is the part that says *why* it is
+    hand-written; carrying the function without it strands the explanation.
+    Only a ``/* … */`` block that ends on the line directly above (no blank
+    line between) is claimed — a comment separated by a blank line belongs to
+    the file, not to this function.
+    """
+    head = text[:start]
+    stripped = head.rstrip(" \t\n")
+    if not stripped.endswith("*/"):
+        return start
+    # Exactly one newline may separate the comment's end from the function.
+    if head[len(stripped) :].count("\n") != 1:
+        return start
+    open_at = stripped.rfind("/*")
+    if open_at == -1 or "*/" in stripped[open_at + 2 : len(stripped) - 2]:
+        return start
+    line_start = text.rfind("\n", 0, open_at) + 1
+    return line_start if not text[line_start:open_at].strip() else open_at
+
+
+def transplant_hand_written(existing: str, reference: str) -> str:
+    """Carry *existing*'s hand-written bindings into the fresh *reference*.
+
+    The C counterpart of the ``.pyi``'s ``# jm:hand`` append path (gh-538),
+    and the missing half of :func:`~._object._restore_c_function_bodies`.
+    That function replaces a rendered body with the hand-edited one **when
+    both sides have the name** — so a hand *edit* to a generated wrapper
+    survives, while a hand *addition* jm never generates has nothing to match
+    against and is dropped on the floor. Both are hand-written C in a file
+    whose own header promises "Hand-patches to this file are preserved across
+    jm commands"; only one of them was.
+
+    Two things travel, and they have to travel together or the result does not
+    compile: the function definition itself (plus the block comment directly
+    above it) and the ``PyMethodDef``/``PyGetSetDef`` row that binds it to a
+    Python name. A carried function with no row is dead code that warns as
+    unused; a carried row with no function is a link error.
+
+    A row is carried when its *name* is absent from the reference array, which
+    also covers the case where a hand-written alias points at a wrapper jm
+    does generate. Definitions go in ahead of the first binding array, rows
+    ahead of the array's ``{NULL …}`` sentinel, so both land in the file's
+    normal order.
+
+    Deliberately not covered: a hand-written *file-scope* declaration that is
+    not a function — a static lookup table, a typedef, a helper macro. Those
+    are invisible to the name-based extraction this is built on, so a fragment
+    whose hand-written binding depends on one still needs the ``_extra.c``
+    escape hatch. Named in gh-770 rather than left in this docstring.
+    """
+    from ._object import _extract_c_function_bodies
+
+    ex_funcs = _extract_c_function_bodies(existing)
+    if not ex_funcs:
+        return reference
+    ref_funcs = _extract_c_function_bodies(reference)
+    orphans = [n for n in ex_funcs if n not in ref_funcs]
+
+    out = reference
+    ex_mask = _code_mask(existing)
+    for array_re in (_METHODS_RE, _GETSET_RE):
+        out_mask = _code_mask(out)
+        ref_names = _array_names(out, out_mask, array_re)
+        rows = [
+            existing[s : e + 1]
+            for name, (s, e) in _array_names(
+                existing, ex_mask, array_re
+            ).items()
+            if name not in ref_names
+        ]
+        if not rows:
+            continue
+        decl_m = array_re.search(out_mask)
+        if decl_m is None:
+            # The reference has no array of this kind to hang the row on.
+            # Splicing one in would also need the PyTypeObject slot wired up;
+            # leave it to _splice_first_array's path rather than half-doing it.
+            continue
+        open_idx = decl_m.end() - 1
+        close_idx = _match_brace(out_mask, open_idx)
+        if close_idx == -1:
+            continue
+        sent = re.search(r"\{\s*NULL", out_mask[open_idx:close_idx])
+        rows_at = open_idx + sent.start() if sent else open_idx + 1
+        out = (
+            out[:rows_at]
+            + "".join(f"    {r},\n" for r in rows)
+            + out[rows_at:]
+        )
+
+    if orphans:
+        anchor = min(
+            (
+                m.start()
+                for m in (
+                    pat.search(_code_mask(out))
+                    for pat in (_METHODS_RE, _GETSET_RE, _TYPE_RE)
+                )
+                if m is not None
+            ),
+            default=-1,
+        )
+        blocks = []
+        for name in orphans:
+            body = ex_funcs[name]
+            at = existing.index(body)
+            blocks.append(
+                existing[_leading_comment_start(existing, at) : at + len(body)]
+            )
+        text = "\n\n".join(blocks) + "\n\n"
+        out = (
+            out + "\n\n" + text
+            if anchor == -1
+            else out[:anchor] + text + out[anchor:]
+        )
+    return out
+
+
 def refresh_module_fragment_docs(
     root: Path, cfg: dict, *, only_mod: str | None = None
 ) -> list[Path]:
@@ -821,16 +1109,23 @@ def refresh_module_fragment_docs(
             # fragment was last generated is missing entirely -- splice it in
             # additively rather than requiring delete-and-recreate.
             updated = transplant_missing_bindings(updated, reference)
+            _rel = frag.relative_to(root) if frag.is_absolute() else frag
+            # gh-767: repair the one class of drifted binding that has no
+            # authoring path (`*_max_out`) before reporting the rest, so a
+            # member jm can and does fix is not also warned about.
+            updated, _fixed = refresh_glue_bindings(updated, reference)
+            for _name in _fixed:
+                print(f"  update  {_rel}: {_name} binding arity")
             # gh-622: the splice above is additive by name, so a member whose
             # *signature* changed keeps its old binding while the .pyi takes
             # the new one. Nothing can re-render it here (the body is the
             # user's), so report it — after the splice, so a member that was
             # just added correctly is not also flagged.
-            warn_signature_drift(
-                frag.relative_to(root) if frag.is_absolute() else frag,
-                updated,
-                reference,
-            )
+            warn_signature_drift(_rel, updated, reference)
+            # doppler#616: a refresh that loses no member can still rewrite
+            # the constructor's kwlist. Invisible to a member-level audit, so
+            # it gets its own report.
+            warn_init_kwargs_drift(_rel, updated, reference)
             # gh-541: the teardown wrappers are manifest-derived, not
             # hand-owned, once [<obj>.destroy] exists. transplant_missing_
             # bindings above is additive by name, so it adds the alias ROW but

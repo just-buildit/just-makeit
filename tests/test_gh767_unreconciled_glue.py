@@ -133,7 +133,13 @@ class TestTheBlindSpot:
 
         _, out = _report(root)
         section = out.split("UNRECONCILED")[1]
-        assert "will NOT rewrite" in section
+        # gh-770 changed what is true here: apply now reconciles these
+        # member by member, so the old blanket "will NOT rewrite" would be a
+        # lie. What must still not be promised is a *full* sync — the wrapper
+        # body is never re-rendered, and that is the whole residue.
+        flat = " ".join(section.split())  # the text is hard-wrapped
+        assert "will not do is re-render a wrapper body" in flat
+        assert "will NOT rewrite" not in flat
         # The STALE section's promise must not be attached to these.
         assert "Run `jm apply` to sync" not in section.split("summary:")[0]
 
