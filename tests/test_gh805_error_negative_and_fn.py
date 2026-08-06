@@ -52,6 +52,9 @@ from just_makeit import _script  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
+from just_makeit._context._diagnostics import (  # noqa: E402
+    _c_string_literal,
+)
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
@@ -128,7 +131,10 @@ class TestErrorNegativeEmission:
         g = _glue(root)
         assert "if (_rc < 0) {" in g
         assert "PyErr_Format(PyExc_KeyError," in g
-        assert '"no probe by that name (rc=%d)"' in g
+        # The text is an argument to a fixed format, never the format itself
+        # — see TestTheMessageIsAnArgumentNotAFormat for why.
+        assert '"%s (rc=%lld)"' in g
+        assert '"no probe by that name"' in g
 
     def test_success_returns_the_value_not_none(self, tmp_path):
         """The distinction from `status_return`, and the whole point: a
@@ -305,3 +311,96 @@ class TestScriptQuoting:
 
     def test_a_plain_word_is_left_alone(self):
         assert _script._q("float") == "float"
+
+
+class TestTheMessageIsAnArgumentNotAFormat:
+    """Review of #807. The author's text was spliced into the `PyErr_Format`
+    FORMAT STRING, which fails two ways at once — and only one is loud."""
+
+    HOSTILE = 'say "hi" 100%s of the time \\ ok'
+
+    def test_quotes_and_backslashes_are_escaped(self, tmp_path):
+        """Unescaped, the `"` terminates the literal and the extension does
+        not compile."""
+        root = _project(tmp_path)
+        _add(root, "bad", error_negative=True, error_message=self.HOSTILE)
+        assert _c_string_literal(self.HOSTILE, 21).strip() in _glue(root)
+
+    def test_a_percent_cannot_become_a_conversion(self, tmp_path):
+        """The dangerous half. As the format string, a `%s` in ordinary prose
+        is a live conversion with no argument behind it, so PyErr_Format reads
+        past the end of the varargs — it compiles, and fires only on the error
+        path. The text must be an ARGUMENT to a fixed `"%s (rc=%lld)"`."""
+        root = _project(tmp_path)
+        _add(root, "bad", error_negative=True, error_message=self.HOSTILE)
+        g = _glue(root)
+        assert '"%s (rc=%lld)"' in g
+        # ...and the user's text never appears as the format operand.
+        assert f'PyErr_Format(PyExc_ValueError, "{self.HOSTILE}' not in g
+
+    def test_the_rc_is_not_truncated(self, tmp_path):
+        """`int64_t` printed with `%d`/`(int)` mangles precisely the error
+        code worth reading: rc=-4294967296 renders as rc=0."""
+        root = _project(tmp_path)
+        _add(root, "big", return_type="int64_t", error_negative=True)
+        g = _glue(root)
+        assert "(long long)_rc" in g
+        assert "(int)_rc" not in g
+
+
+class TestErrorNegativeNeedsAScalarIntResult:
+    """Review of #807: accepted, written to the manifest, and silently
+    emitting nothing — the failure mode gh-805 §G is entirely about."""
+
+    @pytest.mark.parametrize(
+        "kw",
+        [
+            {"variable_output": True},
+            {"single": True, "result_fields": [{"name": "n", "type": "int"}]},
+            {"multi_output": ["int"]},
+            {"out_type": "int"},
+        ],
+        ids=["variable_output", "single", "multi_output", "out_type"],
+    )
+    def test_a_non_scalar_shape_is_rejected(self, tmp_path, kw):
+        root = _project(tmp_path)
+        vo = kw.pop("variable_output", False)
+        mo = kw.pop("multi_output", [])
+        with (
+            pytest.raises(SystemExit),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            with contextlib.redirect_stdout(io.StringIO()):
+                method_run(
+                    root,
+                    COMP,
+                    "x",
+                    MOD,
+                    "void",
+                    "int",
+                    vo,
+                    mo,
+                    error_negative=True,
+                    **kw,
+                )
+        assert "plain scalar int return" in err.getvalue()
+
+
+class TestFnMustBeACIdentifier:
+    """Review of #807. `fn` is spliced verbatim into the generated C."""
+
+    def test_a_non_identifier_is_rejected(self, tmp_path):
+        root = _project(tmp_path)
+        with (
+            pytest.raises(SystemExit),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            _add(root, "z", fn="dp tlm; bad(")
+        assert "is not a C identifier" in err.getvalue()
+
+    def test_an_ordinary_c_symbol_is_accepted(self, tmp_path):
+        """Not the gh-625 jm-name predicate: a C symbol legitimately carries
+        uppercase and underscores."""
+        root = _project(tmp_path)
+        _add(root, "z", fn="DP_Tlm_emit_checked2")
+        assert "DP_Tlm_emit_checked2" in _core_h(root)

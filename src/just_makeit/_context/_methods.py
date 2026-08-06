@@ -33,6 +33,7 @@ from .._docstring import (
 from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
+from ._diagnostics import _c_string_literal
 from ._parse import (
     _build_ml_doc,
     _build_params_parse,
@@ -2379,13 +2380,29 @@ def make_methods_ctx(
                 # The cleanup runs BEFORE the test, as it does on every other
                 # path here — a param converter's borrow must be released
                 # whether the call succeeded or failed.
+                # The author's text is an ARGUMENT, never the format string.
+                # Spliced in as the format, a `%` in ordinary prose ("100%
+                # done") becomes a live conversion with no argument behind it,
+                # so PyErr_Format walks off the end of the varargs — and it
+                # does that only on the error path, which is the path least
+                # likely to be exercised before a release. `_c_string_literal`
+                # is the same escaper `create_error` (gh-482) routes through;
+                # a second spelling of "user text into a C literal" is exactly
+                # the pair that drifts.
+                #
+                # `%lld` + `(long long)` rather than `%d` + `(int)`: the
+                # return may be int64_t, and truncating it mangles precisely
+                # the error code worth reading.
                 _en_msg = error_message or f"{name} failed"
+                _en_lit = _c_string_literal(_en_msg, 21)
                 ret_body = (
                     f"    {ret_disp} _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
-                    f"        PyErr_Format(PyExc_{error_category},\n"
-                    f'                     "{_en_msg} (rc=%d)", (int)_rc);\n'
+                    f"        PyErr_Format(PyExc_{error_category},"
+                    f' "%s (rc=%lld)",\n'
+                    f"{_en_lit},\n"
+                    f"                     (long long)_rc);\n"
                     f"        return NULL;\n"
                     f"    }}\n"
                     f"    return {ret_meta['to_py']('_rc')};\n"

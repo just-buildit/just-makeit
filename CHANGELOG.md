@@ -51,6 +51,20 @@
     test, since it is true of `size_t` and every `uint*_t`; and an `error`
     naming something outside jm's error categories.
 
+    Three declarations are rejected rather than rendered, because each
+    produces C that compiles and is wrong: `error_negative` with
+    `status_return`; an unsigned or non-integer return type; and a result
+    shape that is not a plain scalar int (`variable_output`, `single`,
+    `record_dtype`, `multi_output`, `out_type`), where the return value is
+    built elsewhere and there is no single int for the negative test to read.
+
+    The exception message is passed as an **argument** to a fixed
+    `"%s (rc=%lld)"` format, through the same `_c_string_literal` escaper
+    `create_error` uses. As the format string, a `%` in ordinary prose
+    ("100% done") would become a live conversion with no argument behind it —
+    `PyErr_Format` reading past the end of its varargs, on the error path
+    only.
+
 ### Fixed
 
 - **`jm script` emitted two flags without their line continuation.**
