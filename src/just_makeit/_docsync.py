@@ -736,10 +736,38 @@ def warn_init_kwargs_drift(rel, existing: str, reference: str):
     Returns ``(added, removed, reordered)`` for tests; emits nothing when the
     two agree.
     """
+    added, removed, reordered, detail = init_kwargs_drift(existing, reference)
+    if not detail:
+        return ((), (), False)
+    print(
+        f"warning: {rel}: refreshing this fragment would change the"
+        f" constructor's keyword arguments [{detail}]."
+        " The kwlist is regenerated with the body it belongs to, so jm will"
+        " not preserve it on its own — a kwlist kept under a fresh body binds"
+        " each keyword to the wrong variable. Reconcile the manifest with the"
+        " binding, or keep the hand-written constructor in an _extra.c.",
+        file=sys.stderr,
+    )
+    return (added, removed, reordered)
+
+
+def init_kwargs_drift(existing: str, reference: str):
+    """``(added, removed, reordered, detail)`` for the constructor's keyword
+    arguments, comparing a fragment on disk against a fresh render.
+
+    Split out of :func:`warn_init_kwargs_drift` so the comparison has one
+    implementation and two presentations: that function prints to stderr
+    during a refresh, and ``jm status`` renders it into a report section
+    (gh-612). Two copies of this would drift in the usual way — one taught
+    about a new kwlist spelling, the other quietly still wrong.
+
+    *detail* is the human-readable summary and is ``""`` exactly when the two
+    agree, so it doubles as the "is there drift" predicate.
+    """
     ex = _init_kwargs(existing)
     ref = _init_kwargs(reference)
     if not ex or not ref or ex == ref:
-        return ((), (), False)
+        return ((), (), False, "")
     added = tuple(n for n in ref if n not in ex)
     removed = tuple(n for n in ex if n not in ref)
     reordered = not added and not removed
@@ -753,16 +781,7 @@ def warn_init_kwargs_drift(rel, existing: str, reference: str):
             "same names, new positional order: "
             f"{'/'.join(ex)} -> {'/'.join(ref)}"
         )
-    print(
-        f"warning: {rel}: refreshing this fragment would change the"
-        f" constructor's keyword arguments [{'; '.join(detail)}]."
-        " The kwlist is regenerated with the body it belongs to, so jm will"
-        " not preserve it on its own — a kwlist kept under a fresh body binds"
-        " each keyword to the wrong variable. Reconcile the manifest with the"
-        " binding, or keep the hand-written constructor in an _extra.c.",
-        file=sys.stderr,
-    )
-    return (added, removed, reordered)
+    return (added, removed, reordered, "; ".join(detail))
 
 
 def _splice_first_array(
