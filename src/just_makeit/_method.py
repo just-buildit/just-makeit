@@ -27,11 +27,21 @@ from . import _glue
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
+
 from ._init import (
     _inject_decls_into_core_h,
     standalone_extra_include,
 )
 from ._object import _regenerate_module
+
+# gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
+# Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
+# because that predicate is true of `size_t` and every `uint*_t` — the exact
+# set where the generated comparison is always false and therefore silent.
+# `bool` and `ptrdiff_t` are int-kind too and equally wrong here.
+SIGNED_INT_RETURNS = frozenset(
+    {"int", "int8_t", "int16_t", "int32_t", "int64_t"}
+)
 
 
 def _block_in_elem_disp(arg_type: str) -> str:
@@ -99,6 +109,7 @@ def _methods_c_stub_variable(
     max_out: int = 0,
     pass_capacity: bool = False,
     count_default: str = "",
+    c_fn: str = "",
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -116,6 +127,7 @@ def _methods_c_stub_variable(
     kernel, so ``0`` is an ordinary answer (e.g. "this call produces
     nothing"), not a "no information" sentinel.
     """
+    c_fn = c_fn or f"{component}_{name}"
     ret_disp = _out_elem_disp(return_type, out_type)
     has_arg = arg_type != "void"
     params = params or []
@@ -167,7 +179,7 @@ def _methods_c_stub_variable(
     lines = [
         _max_out_head,
         "size_t",
-        f"{component}_{name}_max_out({component}_state_t *state{moc_decl})",
+        f"{c_fn}_max_out({component}_state_t *state{moc_decl})",
         "{",
         f"    (void)state;{moc_suppress}",
         _max_out_body,
@@ -176,7 +188,7 @@ def _methods_c_stub_variable(
         f"/* <<IMPLEMENT: process{' input and' if has_arg else ''} write results"
         f" into out[0..n_out-1]; return actual output count >> */",
         "size_t",
-        f"{component}_{name}({component}_state_t *state"
+        f"{c_fn}({component}_state_t *state"
         f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
         "    (void)state;",
@@ -200,6 +212,7 @@ def _methods_c_stub_result_fields(
     return_type: str,
     max_results: int = 64,
     params: list | None = None,
+    c_fn: str = "",
 ) -> str:
     """C stub for a method that returns a list of structs (result_fields).
 
@@ -207,6 +220,7 @@ def _methods_c_stub_result_fields(
     :func:`_build_method_prototype` (gh-594) — the stub *is* the definition
     that prototype declares, so the two must not drift.
     """
+    c_fn = c_fn or f"{component}_{name}"
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     params = params or []
@@ -228,7 +242,7 @@ def _methods_c_stub_result_fields(
     lines = [
         "/* <<IMPLEMENT: push input, fill result[], return count >> */",
         "size_t",
-        f"{component}_{name}({component}_state_t *state"
+        f"{c_fn}({component}_state_t *state"
         f"{step_param}, {ret_disp} *result, size_t max_results)",
         "{",
         "    (void)state;",
@@ -246,6 +260,7 @@ def _methods_c_stub_result_single(
     arg_type: str,
     return_type: str,
     params: list | None = None,
+    c_fn: str = "",
 ) -> str:
     """C stub for a method that returns one record struct by value (gh-244).
 
@@ -258,6 +273,7 @@ def _methods_c_stub_result_single(
     that fix this stub took only ``state``, while the generated binding called
     it with every declared param — a guaranteed "too many arguments".
     """
+    c_fn = c_fn or f"{component}_{name}"
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     params = params or []
@@ -279,7 +295,7 @@ def _methods_c_stub_result_single(
     lines = [
         "/* <<IMPLEMENT: compute and return the record >> */",
         ret_disp,
-        f"{component}_{name}({component}_state_t *state{step_param})",
+        f"{c_fn}({component}_state_t *state{step_param})",
         "{",
         "    (void)state;",
         suppress,
@@ -299,8 +315,10 @@ def _methods_c_stub_fixed(
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
     batch: bool = False,
+    c_fn: str = "",
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
+    c_fn = c_fn or f"{component}_{name}"
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -319,7 +337,7 @@ def _methods_c_stub_fixed(
         c_params = f"{component}_state_t *state{in_part}, {ret_disp} *out"
         return (
             f"/* <<IMPLEMENT: {name} (1:1-rate batch) >> */\n"
-            f"void\n{component}_{name}({c_params})\n{{\n{sup}\n}}\n"
+            f"void\n{c_fn}({c_params})\n{{\n{sup}\n}}\n"
         )
 
     extra_params = "".join(
@@ -390,7 +408,7 @@ def _methods_c_stub_fixed(
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
         f"{ret_disp}",
-        f"{component}_{name}({c_params})",
+        f"{c_fn}({c_params})",
         "{",
         suppress,
     ]
@@ -504,8 +522,14 @@ def _build_method_prototype(
     result_fields: list[dict] | None = None,
     single: bool = False,
     record_dtype: str = "",
+    c_fn: str = "",
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
+
+    gh-805 §A2: *c_fn* is the C symbol to declare, defaulting to the derived
+    ``<component>_<name>``. This is the declaration that lands in the SACRED
+    ``_core.h``, so it is the half of the override that must be right — the
+    definition in ``_core.c`` is written against it.
 
     gh-788: *record_dtype* names the POD struct a variable-output method
     writes rows of. It reaches the ``*out`` parameter through the same
@@ -516,6 +540,7 @@ def _build_method_prototype(
     has to be drawn (the other two are ``make_methods_ctx``'s declaration
     chain and :func:`run`'s stub dispatch).
     """
+    c_fn = c_fn or f"{component}_{name}"
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -543,11 +568,10 @@ def _build_method_prototype(
             step_param += ", " + ", ".join(_p_parts)
         if single:
             return (
-                f"{ret_disp} {component}_{name}"
-                f"({component}_state_t *state{step_param});"
+                f"{ret_disp} {c_fn}({component}_state_t *state{step_param});"
             )
         return (
-            f"size_t {component}_{name}({component}_state_t *state"
+            f"size_t {c_fn}({component}_state_t *state"
             f"{step_param}, {ret_disp} *result, size_t max_results);"
         )
 
@@ -563,7 +587,7 @@ def _build_method_prototype(
             else ", size_t n"
         )
         return (
-            f"void {component}_{name}({component}_state_t *state"
+            f"void {c_fn}({component}_state_t *state"
             f"{in_part}, {ret_disp} *out);"
         )
 
@@ -595,9 +619,9 @@ def _build_method_prototype(
         moc_decl, _ = _max_out_count_param(arg_type, params)
         return "\n".join(
             [
-                f"size_t {component}_{name}_max_out({component}_state_t"
+                f"size_t {c_fn}_max_out({component}_state_t"
                 f" *state{moc_decl});",
-                f"size_t {component}_{name}({component}_state_t *state"
+                f"size_t {c_fn}({component}_state_t *state"
                 f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]
         )
@@ -634,7 +658,7 @@ def _build_method_prototype(
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"
 
-    return f"{ret_disp} {component}_{name}({c_params});"
+    return f"{ret_disp} {c_fn}({c_params});"
 
 
 def run(
@@ -668,6 +692,10 @@ def run(
     count_default: str = "",
     nogil: bool = False,
     status_return: bool = False,
+    fn: str = "",
+    error_negative: bool = False,
+    error: str = "",
+    error_message: str = "",
     doc: str = "",
     from_apply: bool = False,
     view: str = "",
@@ -708,6 +736,47 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+    # gh-805 §B: value-or-negative-error. Checked here rather than left to
+    # render, because each of these produces C that COMPILES and is wrong —
+    # the failure mode this key exists to remove.
+    if error_negative:
+        if status_return:
+            print(
+                "error: --error-negative and --status-return make opposite "
+                "claims about\nthe return value. --status-return says the int "
+                "is ONLY a status (non-zero\nraises); --error-negative says it "
+                "is a VALUE unless negative. Pick one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if return_type not in SIGNED_INT_RETURNS:
+            # An unsigned or non-integer return makes `_rc < 0` either
+            # always-false or meaningless, and always-false is the version
+            # that compiles, runs, and silently restores the bug. `kind ==
+            # "int"` is NOT the test: it is true of `size_t` and every
+            # `uint*_t` too, which is exactly the set that must be rejected.
+            print(
+                f"error: --error-negative needs a SIGNED integer return type; "
+                f"{return_type!r}\ncannot be negative, so the error test would "
+                f"never fire.\nUse one of: "
+                f"{', '.join(sorted(SIGNED_INT_RETURNS))}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if error and not error_negative:
+        print(
+            "error: --error names the exception --error-negative raises, "
+            "so it needs\n--error-negative as well.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if error and error not in C.ERROR_CATEGORIES:
+        print(
+            f"error: --error {error!r} is not a known exception category.\n"
+            f"Choose one of: {', '.join(sorted(C.ERROR_CATEGORIES))}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -869,6 +938,7 @@ def run(
                 arg_type,
                 return_type,
                 params=[(p["name"], p["type"]) for p in params],
+                c_fn=fn,
             )
         elif result_fields and not (variable_output and record_dtype):
             stub = _methods_c_stub_result_fields(
@@ -878,6 +948,7 @@ def run(
                 return_type,
                 max_results,
                 params=[(p["name"], p["type"]) for p in params],
+                c_fn=fn,
             )
         elif variable_output:
             stub = _methods_c_stub_variable(
@@ -895,6 +966,7 @@ def run(
                 out_type=record_dtype or out_type,
                 max_out=max_out,
                 pass_capacity=pass_capacity,
+                c_fn=fn,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -908,6 +980,7 @@ def run(
                 [(p["name"], p["type"]) for p in params],
                 out_type,
                 batch=batch,
+                c_fn=fn,
             )
         if impl_body is not None:
             import re as _re
@@ -940,13 +1013,16 @@ def run(
             result_fields=result_fields,
             single=single,
             record_dtype=record_dtype,
+            c_fn=fn,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
     # the author writes prose and never structure. The sibling `_max_out`
     # declaration a variable_output method emits is jm's own bookkeeping, not
     # a surface anyone documents, so only the method itself is mapped.
-    _doc_members = {f"{object_name}_{method_name}": method_name}
+    # gh-805 §A2: the skeleton is stamped above the symbol actually
+    # declared, so an `fn`-overridden method gets one too.
+    _doc_members = {(fn or f"{object_name}_{method_name}"): method_name}
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
@@ -1018,6 +1094,17 @@ def run(
         # gh-432: int return is a status code — binds -> None, ValueError
         # on non-zero.
         method_entry["status_return"] = True
+    # gh-805 §A2/§B. Written only when set, so an existing manifest is
+    # byte-identical and `jm status --check` stays quiet on every project
+    # that does not use them.
+    if fn:
+        method_entry["fn"] = fn
+    if error_negative:
+        method_entry["error_negative"] = True
+    if error:
+        method_entry["error"] = error
+    if error_message:
+        method_entry["error_message"] = error_message
     if none_on_empty:
         method_entry["none_on_empty"] = True
     if batch:
@@ -1179,6 +1266,10 @@ def run(
             f" in {object_name}_{method_name}_core.c"
         )
     else:
+        # gh-805 §A2: name the symbol actually written. Pointing the author at
+        # a function the file does not contain is a small lie that costs a
+        # grep on the one path where the two names differ.
         print(
-            f"Done!  Implement {object_name}_{method_name}() in {core_c.name}"
+            f"Done!  Implement {fn or f'{object_name}_{method_name}'}()"
+            f" in {core_c.name}"
         )

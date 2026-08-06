@@ -35,6 +35,11 @@ def run(args: list[str]) -> None:
     record_module = ""
     record_doc = ""
     record_dtype = ""
+    # gh-805 §A2 / §B
+    fn = ""
+    error_negative = False
+    error = ""
+    error_message = ""
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -83,6 +88,42 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--nogil":
             nogil = True
+            i += 1
+        elif tok == "--fn":
+            # gh-805 §A2: the C symbol to bind, when it is not the derived
+            # `<comp>_<method>`. Adopting existing C, or binding a validating
+            # variant of a hot-path function under the plain Python name.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --fn requires a C function name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn = remaining[i]
+            i += 1
+        elif tok == "--error-negative":
+            error_negative = True
+            i += 1
+        elif tok == "--error":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --error requires an exception name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            error = remaining[i]
+            i += 1
+        elif tok == "--error-message":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --error-message requires text",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            error_message = remaining[i]
             i += 1
         elif tok == "--varargs":
             varargs = True
@@ -466,6 +507,10 @@ def run(args: list[str]) -> None:
         pass_capacity=pass_capacity,
         count_default=count_default,
         nogil=nogil,
+        fn=fn,
+        error_negative=error_negative,
+        error=error,
+        error_message=error_message,
         doc=doc,
         view=view,
     )

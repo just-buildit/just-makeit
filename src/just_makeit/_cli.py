@@ -111,6 +111,19 @@ Commands:
                                 Numpy accessors are hoisted out first. Sound
                                 only when the object is not shared across
                                 threads concurrently (one object per stream).
+    --fn SYMBOL                 C function this method binds, when it is not the
+                                derived <comp>_<name>. For adopting existing C
+                                under its own prefix, or binding a validating
+                                variant (--fn dp_tlm_emit_checked) under the
+                                plain Python name. The Python face is unchanged.
+    --error-negative            The int return is a VALUE unless it is negative,
+                                in which case it is an error code and the method
+                                raises. Distinct from a status return, where the
+                                int carries nothing but status. Signed integer
+                                return types only.
+    --error EXC                 Exception --error-negative raises (default
+                                ValueError); one of jm's error categories.
+    --error-message TEXT        Text for that exception; jm appends (rc=%d).
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.

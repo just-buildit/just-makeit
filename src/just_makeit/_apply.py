@@ -441,6 +441,14 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             count_default=m.get("count_default", ""),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
+            # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a
+            # key not named here is silently absent from the replay — which
+            # is how a previous key made `apply` rewrite the sacred _core.h
+            # prototype to the wrong shape.
+            fn=m.get("fn", ""),
+            error_negative=bool(m.get("error_negative")),
+            error=m.get("error", ""),
+            error_message=m.get("error_message", ""),
             doc=m.get("doc", ""),
             from_apply=True,
             view=view,
