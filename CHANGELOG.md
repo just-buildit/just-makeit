@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.46.2] — 2026-08-05
+
 ### Fixed
 
 - **`jm status --check` now fails on a member that is simply absent from a
