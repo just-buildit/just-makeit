@@ -4,8 +4,61 @@ on:
   push:
     tags:
       - "v*"
+  # A tag push is a webhook event, so it is exactly what a GitHub Actions
+  # incident drops on the floor — and a release that cannot be started is the
+  # one automation you most want a manual handle on. The tag must ALREADY
+  # exist and already be green; this only re-enters the same pipeline for a
+  # tag whose push event never arrived. It does not create tags.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build, e.g. v0.49.0"
+        required: true
+        type: string
 
 jobs:
+  # One place resolves what is being released, so every job below reads the
+  # same answer. On a tag push these are exactly the values the jobs used
+  # before (`github.ref_name` / `github.sha`), so that path is unchanged.
+  resolve:
+    name: Resolve the tag under release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.r.outputs.tag }}
+      sha: ${{ steps.r.outputs.sha }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSH_TAG: ${{ github.ref_name }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+            # Resolve through the API rather than trusting the input: a tag
+            # that does not exist must fail HERE, loudly, and not four jobs
+            # later as a confusing checkout error.
+            SHA="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')"
+            # An annotated tag's ref points at the tag OBJECT, not the commit.
+            TYPE="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.type')"
+            if [[ "$TYPE" == "tag" ]]; then
+              SHA="$(gh api "repos/$REPO/git/tags/$SHA" --jq '.object.sha')"
+            fi
+          else
+            TAG="$PUSH_TAG"
+            SHA="$PUSH_SHA"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::'$TAG' is not a release tag (must start with v)"; exit 1 ;;
+          esac
+          echo "Releasing $TAG at $SHA"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
   # A release tag must point at a commit `main` already certified green: ci.yml's
   # "CI passed" aggregator runs on every push to main, so re-running the full
   # 6x2 matrix here is a redundant third run (PR CI + main-push CI + this one).
@@ -14,6 +67,7 @@ jobs:
   # certified. If the tag is not on a green main commit, this fails the release.
   verify-ci:
     name: Verify CI already passed for this commit
+    needs: resolve
     runs-on: ubuntu-latest
     permissions:
       checks: read
@@ -23,7 +77,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           # The merge that produced this commit may still be running its
           # main-push matrix, so poll until "CI passed" concludes (up to ~20
@@ -51,10 +105,15 @@ jobs:
           exit 1
 
   build:
-    needs: verify-ci
+    needs: [resolve, verify-ci]
     runs-on: ubuntu-latest
     steps:
+      # Pin the checkout to the resolved tag. On a tag push this is the ref
+      # the default checkout would have taken anyway; on a dispatch the
+      # default is the BRANCH, which would build the wrong tree entirely.
       - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
 
       - uses: astral-sh/setup-uv@v8.1.0
         with:
@@ -81,7 +140,7 @@ jobs:
   # real "does the shipped artifact work" check the dropped matrix used to cover.
   smoke:
     name: Smoke test the wheel
-    needs: build
+    needs: [resolve, build]
     runs-on: ubuntu-latest
     # Backstop: a hung apt mirror once sat this step for ~56 min before it was
     # cancelled by hand. Fail the job in minutes instead so release-watch (or a
@@ -120,13 +179,15 @@ jobs:
           uv pip install --python .smoke numpy "$wheel"
 
       - name: Version matches the tag
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           source .smoke/bin/activate
           got="$(just-makeit --version)"
           echo "installed: $got"
           case "$got" in
-            *"${GITHUB_REF_NAME#v}"*) ;;
-            *) echo "::error::version mismatch (want ${GITHUB_REF_NAME#v}, got '$got')"; exit 1 ;;
+            *"${TAG#v}"*) ;;
+            *) echo "::error::version mismatch (want ${TAG#v}, got '$got')"; exit 1 ;;
           esac
 
       - name: End-to-end bundled example (scaffold -> build -> test)
@@ -150,17 +211,21 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    needs: publish
+    needs: [resolve, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
 
       - name: Extract changelog section for this tag
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME}"          # e.g. v0.10.7
+          TAG="${RELEASE_TAG}"              # e.g. v0.10.7
           VER="${TAG#v}"                    # strip leading v → 0.10.7
           # Pull the block from ## [VER] down to the next ## heading (exclusive).
           # Match the literal `## [VER]` prefix with index() — a regex would need
@@ -180,15 +245,21 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
+          gh release create "${RELEASE_TAG}" \
+            --title "${RELEASE_TAG}" \
             --latest \
             --notes-file release-notes.md
 
   docker:
-    needs: github-release
+    needs: [resolve, github-release]
     uses: ./.github/workflows/docker.yml
+    with:
+      # Explicit, because a called workflow otherwise inherits THIS workflow's
+      # ref — the tag on a push, but the branch on a dispatch.
+      ref: ${{ needs.resolve.outputs.tag }}
+      publish: true
     permissions:
       contents: read
       packages: write
