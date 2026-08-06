@@ -248,9 +248,20 @@ class TestWarningValidation:
         with pytest.raises(SystemExit):
             warning_run(project, "acq", "underpowered", _MSG, category="Nope")
 
-    def test_rejects_non_identifier_condition(self, project):
+    def test_accepts_a_c_expression_condition(self, project):
+        """gh-601 moved this boundary deliberately. `a || b` was rejected as
+        "not a C identifier"; it is now a perfectly good condition, because a
+        forwarder object — whose state struct is a handle onto a shared engine
+        — has no bool field to name and could otherwise declare no warning at
+        all. A bare identifier keeps its old meaning as sugar."""
+        warning_run(project, "acq", "self->handle->a || self->handle->b", _MSG)
+
+    def test_rejects_a_condition_that_is_not_an_expression(self, project):
+        """The relaxation is to expressions, not statements: a `;` or a brace
+        spliced into `if (<condition>)` yields broken C in generated code the
+        author did not write."""
         with pytest.raises(SystemExit):
-            warning_run(project, "acq", "a || b", _MSG)
+            warning_run(project, "acq", "a; b", _MSG)
 
     def test_rejects_unsupported_after(self, project):
         # Method-site warnings are not wired; half-generating would be worse
