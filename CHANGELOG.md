@@ -93,6 +93,25 @@
     its replay-and-diff arm is the right detector and only missed this because
     no shape exercised the key. Verified failing before the fix.
 
+- **A `params` default is honoured on a `variable_output` method (gh-802).**
+    The branch that builds that shape's parse block concatenated its format
+    chars instead of going through `_join_fmt_with_optional`, so the `|` never
+    appeared, and it seeded the parse local with the type's zero rather than
+    the declared default. A param the manifest declared optional was parsed as
+    required: `obj.read()` raised `TypeError: function missing required   argument 'n' (pos 1)` while the `.pyi` generated from that same manifest
+    advertised `read(n: int = 0)` — jm's two faces disagreeing about one
+    declaration, the divergence class gh-767's kwargs-drift check exists to
+    catch.
+
+    This is the drain shape — "give me up to n, or everything" — and the
+    caller almost always wants the default. The workarounds were worse than
+    the bug: dropping the param falls back to the implicit generator `n`,
+    which defaults to **1**, so a drain would silently return one record.
+
+    The two halves are one omission. The `|` alone would accept the call and
+    then pass a zero; the seeding alone would still reject it. Both now come
+    from the same helpers every other parse path uses.
+
 ## [0.48.0] — 2026-08-06
 
 ### Added
