@@ -2181,13 +2181,16 @@ def param_headers(cfg: dict, component: str) -> list[str]:
     they are the later, weaker case; both are the same key and the same list.
     """
     out: list[str] = []
-    for p in init_params(cfg, component):
-        h = p[11] if len(p) > 11 else ""
+    # Distinct names on purpose: an init-param is a TUPLE and a method param is
+    # a DICT, so one loop variable for both reads as if they were the same
+    # shape and type-checks as neither.
+    for ip in init_params(cfg, component):
+        h = ip[11] if len(ip) > 11 else ""
         if h and h not in out:
             out.append(h)
     for m in methods(cfg, component):
-        for p in m.get("params") or []:
-            h = p.get("header")
+        for mp in m.get("params") or []:
+            h = mp.get("header", "")
             if h and h not in out:
                 out.append(h)
     return out
