@@ -33,7 +33,10 @@ REFERENCE = """\
 #include "reader/reader_core.h"
 
 static const char *const _enum_Reader_fs_source[] = {
-  "UNKNOWN", "HEADER", "USER",
+    "UNKNOWN",
+    "HEADER",
+    "USER",
+    NULL,
 };
 
 static PyObject *
@@ -182,3 +185,97 @@ class TestItCompiles:
             },
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def _gnu(text: str) -> str:
+    """*text* as the project's formatter would leave it — GNU 2-space bodies
+    and a space before the paren. Applied textually so the test does not need
+    clang-format installed and cannot drift when a new release reflows
+    something unrelated."""
+    import re as _re
+
+    out = _re.sub(r"^(\w+) ?\(", r"\1 (", text, flags=_re.M)
+    return _re.sub(r"^    ", "  ", out, flags=_re.M)
+
+
+class TestTheDeclarationIsNotDuplicated:
+    """Raised on review of #780, and it is gh-770 in a new costume.
+
+    The dedupe guard was `if decl_text not in existing`. These fragments are
+    reformatted after every apply, so the copy already in the file is GNU
+    2-space while the one the reference renders is K&R 4-space: the same
+    declaration, never equal as substrings. The guard failed **open**, the
+    carry emitted a second copy, and the file did not compile —
+
+        error: redefinition of '_enum_Reader_fs_source'
+
+    Newly reachable *because* of gh-777: before it, an absent member was
+    tolerated and nobody ran `apply` to fix it. After it the gate says fix it,
+    and the fix was what broke the build.
+
+    Every other test in this file generates both sides with jm, so both are
+    K&R and the substring check succeeds by accident. That is exactly why this
+    one formats the existing side first — the guard has to be tested against
+    input it can actually fail on.
+    """
+
+    def _existing_with_the_table(self) -> str:
+        """A fragment that already declares the table, in the project's style
+        rather than jm's, and is missing only the member."""
+        decl = REFERENCE[
+            REFERENCE.index("static const char *const") : REFERENCE.index(
+                "static PyObject *"
+            )
+        ]
+        return _gnu(
+            EXISTING.replace("static PyGetSetDef", decl + "static PyGetSetDef")
+        )
+
+    def test_a_differently_formatted_copy_is_recognised(self):
+        existing = self._existing_with_the_table()
+        assert "_enum_Reader_fs_source" in existing
+        # The guard that makes this test mean something: the copy already in
+        # the file must not be findable as a substring of the reference, or
+        # the old text-based dedupe would have worked and nothing is proven.
+        # A first draft asserted on the declaration's *header* line, which
+        # re-indenting does not touch — so the guard itself was vacuous.
+        ref_decl = D._file_scope_decls(REFERENCE)["_enum_Reader_fs_source"]
+        assert ref_decl not in existing, (
+            "fixture must differ in formatting from the reference render"
+        )
+
+        out = D.transplant_missing_bindings(existing, REFERENCE)
+        assert out.count("_enum_Reader_fs_source[] = {") == 1, (
+            "the declaration already present must not be emitted again"
+        )
+
+    def test_the_member_still_arrives(self):
+        """Guard: deduping harder must not stop the member being spliced."""
+        out = D.transplant_missing_bindings(
+            self._existing_with_the_table(), REFERENCE
+        )
+        assert "Reader_getprop_fs_source" in out
+        assert '"fs_source"' in out
+
+    def test_the_same_holds_for_the_first_array_path(self):
+        """`_splice_first_array` carried the identical text guard.
+
+        That function bails unless the fragment has a `PyTypeObject` to wire
+        the new array into — so a fixture without one exercises nothing, which
+        is how the first version of this test passed with the guard reverted.
+        """
+        existing = self._existing_with_the_table().replace(
+            "static PyGetSetDef Reader_getset[] = {\n  {NULL}\n};\n",
+            "static PyTypeObject ReaderType = {\n"
+            '  .tp_name = "Reader",\n'
+            "  .tp_methods = Reader_methods,\n"
+            "};\n",
+        )
+        assert "PyGetSetDef" not in existing
+        assert "PyTypeObject" in existing, (
+            "the splice bails without a type object — the fixture must have "
+            "one or this test proves nothing"
+        )
+        out = D.transplant_missing_bindings(existing, REFERENCE)
+        assert "Reader_getprop_fs_source" in out, "the member must arrive"
+        assert out.count("_enum_Reader_fs_source[] = {") == 1

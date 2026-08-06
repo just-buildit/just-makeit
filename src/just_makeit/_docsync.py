@@ -824,13 +824,18 @@ def _splice_first_array(
     # an object gaining its *first* property comes through here. The
     # declaration a wrapper references has to travel on both, or "it compiles
     # for me" is a fact about which branch ran.
+    # By name, not by text — see the matching note in
+    # `transplant_missing_bindings`. The declaration already in *existing* has
+    # been through the project's formatter; the one in *reference* has not.
     _deps: list[str] = []
-    _seen = ""
+    _have = set(_file_scope_decls(existing))
     for _n in _new:
-        for _decl in _referenced_file_scope_decls(reference, ref_funcs[_n]):
-            if _decl not in existing and _decl not in _seen:
+        for _name, _decl in _referenced_file_scope_decls(
+            reference, ref_funcs[_n]
+        ):
+            if _name not in _have:
                 _deps.append(_decl)
-                _seen += _decl
+                _have.add(_name)
     funcs_text = "\n\n".join([*_deps, *(ref_funcs[n] for n in _new)])
     if funcs_text:
         funcs_text += "\n\n"
@@ -886,20 +891,30 @@ def _file_scope_decls(text: str) -> "dict[str, str]":
     return out
 
 
-def _referenced_file_scope_decls(reference: str, body: str) -> "list[str]":
-    """Declarations *reference* makes at file scope that *body* references.
+def _referenced_file_scope_decls(
+    reference: str, body: str
+) -> "list[tuple[str, str]]":
+    """``(name, declaration)`` for each file-scope static *body* references.
 
     The registration-free half of the gh-779 fix: rather than asking "is this
     one of the referent types jm knows about?", ask which identifiers the
     wrapper actually names and whether the reference render declares any of
     them. A new kind of file-scope dependency is then carried the first time
     it exists, instead of the first time somebody notices it does not compile.
+
+    Returns the **name** alongside the text because that is what callers must
+    dedupe on. Asking whether the declaration's text is already in the target
+    is a formatting-sensitive test, and these fragments are routinely
+    reformatted after every apply: a GNU-indented initialiser and a K&R one
+    declare the same symbol and never match as substrings, so the guard fails
+    open and the carry emits a redefinition. Same class as gh-770 — a text
+    comparison standing in for an identity comparison.
     """
     decls = _file_scope_decls(reference)
     if not decls:
         return []
     names = set(_IDENT_RE.findall(_code_mask(body)))
-    return [d for n, d in decls.items() if n in names]
+    return [(n, d) for n, d in decls.items() if n in names]
 
 
 def transplant_missing_bindings(existing: str, reference: str) -> str:
@@ -1001,20 +1016,28 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         # because its three declarations must travel as one block, but it is
         # no longer the only thing standing between a spliced wrapper and a
         # missing symbol.
-        _preludes = [
-            d
-            for n in _new_fns
-            for d in (_record.find_descriptor(reference, n),)
-            if d and d not in out
-        ]
-        _carried = "".join(_preludes)
+        # Deduped by declared NAME, never by declaration text. `out` has been
+        # through the project's formatter and `reference` has not, so the two
+        # spellings of one declaration never match as substrings and a text
+        # guard fails open — emitting a second copy and a redefinition error.
+        # gh-770 in a new costume, and reachable through the workflow gh-777
+        # now prescribes: the gate says "run apply", and apply is what breaks
+        # the build.
+        _have = set(_file_scope_decls(out))
+        _preludes: list[str] = []
         for _n in _new_fns:
-            for _decl in _referenced_file_scope_decls(
+            _desc = _record.find_descriptor(reference, _n)
+            # The structseq triple travels as one block, so one of its names
+            # standing for all three is enough to know it is already there.
+            if _desc and f"{_n}_type" not in _have:
+                _preludes.append(_desc)
+                _have.update(_file_scope_decls(_desc))
+            for _name, _decl in _referenced_file_scope_decls(
                 reference, ref_funcs[_n]
             ):
-                if _decl not in out and _decl not in _carried:
+                if _name not in _have:
                     _preludes.append(_decl)
-                    _carried += _decl
+                    _have.add(_name)
         funcs_text = "\n\n".join(
             [*_preludes, *(ref_funcs[n] for n in _new_fns)]
         )

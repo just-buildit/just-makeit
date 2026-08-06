@@ -48,6 +48,15 @@
     the row path. Fixing only the branch the report happened to exercise is
     how a class of bug returns.
 
+    The carry dedupes by declared **name**, never by declaration text. The
+    copy already in a fragment has been through the project's formatter and
+    the reference render has not, so the two spellings of one declaration
+    never match as substrings: a text guard fails open and emits a second
+    copy — `error: redefinition of '_enum_Reader_fs_source'`. That is gh-770's
+    class again, a text comparison standing in for an identity comparison, and
+    it was reachable precisely *because* of the gh-777 change above: the gate
+    now says run `jm apply`, and `apply` was what broke the build.
+
 ## [0.46.1] — 2026-08-05
 
 ### Fixed
