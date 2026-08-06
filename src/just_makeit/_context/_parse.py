@@ -136,8 +136,20 @@ def capsule_unwrap_c(
     # — so the mandatory form replaces it with a TypeError that says what to
     # pass. Scoped to the new path deliberately: gh-432's method behaviour is
     # unchanged, byte for byte.
+    #
+    # gh-794 made that replacement conditional. `_capsule` used to be a plain
+    # attribute, so AttributeError was the ONLY way this lookup could fail and
+    # clearing unconditionally was safe. A handle's `_capsule` is a getter that
+    # raises RuntimeError("<T> is closed") over a closed handle — a real
+    # diagnosis, and the one the caller most needs. Clearing it and reporting
+    # "not a SampleClock" about an object that IS a SampleClock is worse than
+    # unhelpful: it is false, and it sends the reader looking at the argument's
+    # type instead of its lifetime. So only an AttributeError is upgraded;
+    # anything else propagates untouched.
     _no_attr = (
         f"{inner}    if (!{cap}) {{\n"
+        f"{inner}        if (!PyErr_ExceptionMatches(PyExc_AttributeError))\n"
+        f"{inner}            {fail}\n"
         f"{inner}        PyErr_Clear();\n"
         f"{inner}        PyErr_Format(PyExc_TypeError,\n"
         f'{inner}            "{name} must be the {capsule_name} capsule"\n'
