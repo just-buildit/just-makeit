@@ -12,7 +12,7 @@ from .._docstring import (
     render_numpy_doc,
     render_runtime_doc,
 )
-from ._parse import _build_ml_doc
+from ._parse import _build_ml_doc, capsule_unwrap_c as _capsule_unwrap_c
 from .._types import (
     _CTYPE_META,
     _ARRAY_DTYPE,
@@ -205,6 +205,12 @@ def _build_no_state_init_ctx(
     # gh-565: "bytes" is likewise a pseudo-type (opaque blob -> const void*,
     # size_t) — classified here for the same reason.
     bytes_ip: list[str] = []
+    # gh-790: a foreign C pointer arriving as a named PyCapsule. Classified
+    # off the `capsule` KEY rather than the type, because the type is the
+    # pointer's own spelling (`dp_tlm_t *`) — deliberately not in
+    # _CTYPE_META, since jm knows nothing about it beyond passing it along.
+    # (name, ctype, capsule_name)
+    capsule_ip: list[tuple[str, str, str]] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
     # gh-611: a plain array with a declared default is genuinely optional —
@@ -223,7 +229,21 @@ def _build_no_state_init_ctx(
         optional_flag = param[6] if len(param) > 6 else False
         alt_create_fn = param[7] if len(param) > 7 else ""
         required_flag = param[8] if len(param) > 8 else False
-        if is_array_param_type(ct):
+        capsule_flag = param[10] if len(param) > 10 else ""
+        # gh-790: checked before every other branch. `dp_tlm_t *` is not an
+        # array, not a pseudo-type and not in _CTYPE_META, so anything that
+        # reaches the scalar fallback below KeyErrors on it.
+        if capsule_flag:
+            if dflt:
+                raise ValueError(
+                    f"'{component}': capsule init-param '{name}' cannot"
+                    " declare a default. A foreign handle has no zero value"
+                    " jm could invent — the object exists to wrap it, so it"
+                    " is always a required positional (like 'path' and"
+                    " 'bytes')."
+                )
+            capsule_ip.append((name, ct, capsule_flag))
+        elif is_array_param_type(ct):
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
             if optional_flag:
@@ -324,6 +344,9 @@ def _build_no_state_init_ctx(
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
     _path_names: frozenset[str] = frozenset(path_ip)
     _bytes_names: frozenset[str] = frozenset(bytes_ip)
+    _capsule_meta: dict[str, tuple[str, str]] = {
+        n: (ct, cn) for n, ct, cn in capsule_ip
+    }
 
     # gh-266: split scalar init-params into required (no default — parsed as a
     # mandatory positional, *before* the PyArg `|`) and optional (the historic
@@ -355,7 +378,10 @@ def _build_no_state_init_ctx(
         + [("path", n) for n in path_ip]
         # gh-565: an opaque blob has no sensible default, so — like a path —
         # a bytes init-param is always a required positional.
-        + [("bytes", n) for n in bytes_ip],
+        + [("bytes", n) for n in bytes_ip]
+        # gh-790: same reasoning again. There is no object to build around a
+        # handle that is not there, so a capsule is always required.
+        + [("capsule", n) for n, _, __ in capsule_ip],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
@@ -480,6 +506,25 @@ def _build_no_state_init_ctx(
             # The zero-seeded C smoke/bench create() passes an empty buffer —
             # jm cannot invent a valid blob (see _unseedable_required).
             c_create_parts_ordered.append("NULL, 0")
+        elif pname in _capsule_meta:
+            # gh-790: C sees the plain pointer. The capsule is purely the
+            # Python-side transport, so the create() signature is what the
+            # author would have written by hand and the C smoke test can call
+            # it directly.
+            _cap_ct, _cap_name = _capsule_meta[pname]
+            _cap_disp = _ctype_display(_cap_ct)
+            if not _cap_disp.endswith("*"):
+                _cap_disp += " "
+            sig_parts.append(f"{_cap_disp}{pname}")
+            doc_parts.append(
+                f" * @param {pname}  Borrowed handle from another module"
+                f" (Python: the {_cap_name} capsule, or an object exposing"
+                " it as ._capsule). Not owned; do not free."
+            )
+            call_parts.append(pname)
+            # The zero-seeded C smoke/bench create() passes NULL — jm has no
+            # way to conjure a foreign handle (see _unseedable_required).
+            c_create_parts_ordered.append("NULL")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(f"{ct_s} {pname}")
@@ -576,6 +621,38 @@ def _build_no_state_init_ctx(
                 "    " + line for line in _coerce.bytes_decl(name)
             )
             parse_args.append(_coerce.bytes_addr(name))
+        elif kind == "capsule":
+            # gh-790: parses as a plain object, then unwraps AFTER PyArg —
+            # the same two-step the method path uses, through the same
+            # emitter. It must run before any array acquisition so a failed
+            # unwrap has nothing to release.
+            _cap_ct, _cap_name = _capsule_meta[name]
+            local_lines.append(f"    PyObject *{name}_obj = NULL;")
+            parse_args.append(f"&{name}_obj")
+            post_lines.append(
+                _capsule_unwrap_c(
+                    name,
+                    _cap_ct,
+                    _cap_name,
+                    f"{name}_obj",
+                    "return -1;",
+                    allow_none=False,
+                )
+            )
+            # gh-790, and the half that is easy to forget by hand: the C
+            # pointer is BORROWED, so this object must keep the Python owner
+            # alive for its own lifetime. Without it the producer can be
+            # collected the instant the constructor returns — the capsule's
+            # pointer dangles and the next call is a use-after-free with
+            # nothing at the crash site naming the cause.
+            #
+            # Py_XSETREF, not a bare assignment: __init__ is callable twice
+            # on the same object, and the second call would otherwise leak
+            # the first owner.
+            post_lines.append(
+                f"    Py_INCREF({name}_obj);\n"
+                f"    Py_XSETREF(self->_{name}_owner, {name}_obj);"
+            )
 
     # Optional string-enum / array / scalar kwargs, in TOML declaration
     # order (gh-422). (gh-244: a parse_type scalar such as size_t seeds its
@@ -631,8 +708,10 @@ def _build_no_state_init_ctx(
     # Required converters (before the PyArg `|`): positional arrays and
     # required scalars, interleaved in declared order (gh-422).
     required_fmt = "O" * len(_aa) + "".join(
+        # gh-790: a capsule takes the same plain "O" an array does — what
+        # differs is the post-parse unwrap, not the parse.
         "O"
-        if kind == "arr"
+        if kind in ("arr", "capsule")
         else _coerce.path_fmt()
         if kind == "path"
         else _coerce.bytes_fmt()
@@ -677,6 +756,7 @@ def _build_no_state_init_ctx(
         or scalar_ip
         or path_ip
         or bytes_ip
+        or capsule_ip
     ):
         init_parse_block = (
             f"    static char *kwlist[] = {{{init_kwlist}}};\n"
@@ -934,6 +1014,13 @@ def _build_no_state_init_ctx(
         elif kind == "bytes":
             # gh-565: an opaque blob; required, hence no `= ...` default.
             pyi_parts.append(f"{name}: bytes")
+        elif kind == "capsule":
+            # gh-790: `object`, not `Any` — the binding accepts the capsule
+            # OR anything exposing `._capsule`, and neither is nameable as a
+            # type. `object` says "some Python object" and still rejects the
+            # int a reader might otherwise try; `Any` would type-check
+            # everything, including the mistake.
+            pyi_parts.append(f"{name}: object")
         else:
             ct = _req_scalar_meta[name][0]
             pyi_parts.append(f"{name}: {scalar_py_annotation(ct)}")
@@ -1091,6 +1178,10 @@ def _build_no_state_init_ctx(
             # generally rejected by the restore/decode), so emit the same `...`
             # sentinel — _unseedable_required() marks the ctor unseedable.
             py_create_parts.append(f"{name}=...")
+        elif kind == "capsule":
+            # gh-790: a handle from another module. jm cannot conjure one, so
+            # the same `...` sentinel and the same unseedable treatment.
+            py_create_parts.append(f"{name}=...")
     for kind, name in optional_entries:
         if kind == "str_enum":
             py_create_parts.append(f'{name}="{_str_enum_by_name[name][1]}"')
@@ -1103,6 +1194,16 @@ def _build_no_state_init_ctx(
     test_obj = f"        obj = {Component}({py_create_args})"
 
     return {
+        # gh-790: the borrowed-handle owner refs. Deliberately NOT the
+        # `extra_buf_*` slots — `make_methods_ctx` runs after this and
+        # replaces those wholesale, so an owner field put there would be
+        # silently dropped the moment the object also declared a method.
+        "capsule_owner_fields": "".join(
+            f"    PyObject *_{n}_owner;\n" for n, _, __ in capsule_ip
+        ),
+        "capsule_owner_free": "".join(
+            f"    Py_XDECREF(self->_{n}_owner);\n" for n, _, __ in capsule_ip
+        ),
         "create_params": create_params,
         "create_param_docs": create_param_docs,
         "init_kwlist": init_kwlist,
@@ -1365,7 +1466,10 @@ def _unseedable_required(init_params: list) -> list:
       constructor would reject the type's zero;
     * a ``path`` param (gh-515) — jm cannot invent a filesystem path that
       exists, and a path is always required regardless of the ``required``
-      flag, so the flag is not consulted for it.
+      flag, so the flag is not consulted for it;
+    * a ``capsule`` param (gh-790) — the handle belongs to another module, so
+      there is nothing jm could construct one from. Recognised by the KEY, not
+      the type, since the type is the pointer's own spelling.
 
     Either way there is no value jm can put in a generated smoke test or
     doctest. Arrays are excluded (they seed as ``np.zeros`` and are always
@@ -1376,6 +1480,7 @@ def _unseedable_required(init_params: list) -> list:
         for p in init_params
         if str(p[1]) == "path"
         or str(p[1]) == "bytes"  # gh-565: opaque blob has no seed value
+        or (len(p) > 10 and p[10])  # gh-790: a foreign capsule handle
         or (
             len(p) > 8
             and p[8]  # required
@@ -1736,6 +1841,8 @@ def make_state_ctx(
             "array_args_decref": "",
             "create_line": (f"    self->handle = {_create}();\n"),
             "method_decls": "",
+            "capsule_owner_fields": "",  # gh-790
+            "capsule_owner_free": "",
             "extra_buf_fields": "",
             "extra_buf_free": "",
             "extra_buf_alloc": "",
@@ -2513,6 +2620,8 @@ def make_state_ctx(
         "array_args_parse_block": array_args_parse_block,
         "array_args_decref": array_args_decref,
         "method_decls": "",
+        "capsule_owner_fields": "",  # gh-790
+        "capsule_owner_free": "",
         "extra_buf_fields": "",
         "extra_buf_free": "",
         "extra_buf_alloc": "",
@@ -2639,6 +2748,13 @@ def make_state_ctx(
             "py_create_args",
             "c_create_args",
             "bench_create_stmt",
+            # gh-790: the borrowed-handle owner refs. This list is an explicit
+            # allow-list, so a slot absent from it is silently dropped rather
+            # than left unreplaced — the generated tp_init stored into a
+            # struct member that the struct never declared, which is a
+            # compile error with nothing pointing at this list.
+            "capsule_owner_fields",
+            "capsule_owner_free",
         )
         for _k in _CTOR_OVERRIDE_KEYS:
             if _k in _init_ctx:

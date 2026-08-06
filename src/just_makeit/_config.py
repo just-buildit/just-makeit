@@ -1887,10 +1887,10 @@ def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
 
 
 def init_params(cfg: dict, component: str) -> list[tuple]:
-    """Return --init-param entries as 10-tuples.
+    """Return --init-param entries as 12-tuples.
 
     ``(name, type, default, default_raw, real_type, real_create_fn, optional,
-    create_fn, required, doc)``
+    create_fn, required, doc, capsule, header)``
 
     ``default_raw`` overrides the type's parse_zero for the raw C variable.
     ``real_type`` / ``real_create_fn`` enable dtype-dispatch: when the array
@@ -1905,8 +1905,11 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     zero through to a constructor that returns NULL.  ``doc`` is the optional
     manifest override for the constructor-parameter description; when empty the
     docstring generators fall back to the create function's ``@param`` and then
-    a stub.  All fields default to ``""`` / ``False`` when absent.  Callers may
-    unpack defensively with ``param[:3]``.
+    a stub.  ``capsule`` / ``header`` (gh-790) make the param a foreign C
+    pointer arriving as a named ``PyCapsule``: the object is constructed from
+    a handle another module owns, and ``header`` is the include declaring that
+    handle's type.  All fields default to ``""`` / ``False`` when absent.
+    Callers may unpack defensively with ``param[:3]``.
     """
     return _project_init_params(
         cfg, cfg.get(component, {}).get("init_params", [])
@@ -1932,6 +1935,12 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             p.get("create_fn", ""),
             p.get("required", False),
             p.get("doc", ""),
+            # gh-790: a capsule-typed init-param — the object is CONSTRUCTED
+            # from a pointer another module published. `capsule` is the name
+            # the capsule must carry; `header` is the include that declares
+            # the pointed-to type, since it is not one jm knows.
+            p.get("capsule", ""),
+            p.get("header", ""),
         )
         for p in param_dicts
     ]
@@ -1941,7 +1950,7 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
     """Convert one parsed init-param tuple to its stored-manifest dict shape.
 
     Shared by `add_component` and the `jm view` generator so both persist an
-    identical ``init_params`` record (gh-504). Accepts the 3-to-10-field
+    identical ``init_params`` record (gh-504). Accepts the 3-to-12-field
     tuples `parse_init_param_flag` and callers produce.
     """
     n, t, d = p[:3]
@@ -1962,6 +1971,13 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["required"] = True
     if len(p) > 9 and p[9]:
         rec["doc"] = p[9]
+    # gh-790. Dropping these would round-trip a capsule param back as a
+    # scalar of an unknown C type, which is a KeyError at the next render —
+    # the same class of silent key loss gh-432 hit on the method-param path.
+    if len(p) > 10 and p[10]:
+        rec["capsule"] = p[10]
+    if len(p) > 11 and p[11]:
+        rec["header"] = p[11]
     return rec
 
 
@@ -2157,8 +2173,18 @@ def param_headers(cfg: dict, component: str) -> list[str]:
     ``<dep>/<dep>_core.h`` convention (e.g. ``telemetry/telemetry.h``); the
     per-param ``header`` key names it and this collects every such header for
     the component so the include-injection paths can reach it.
+
+    gh-790: init-params are collected too, and FIRST. A capsule-typed
+    init-param puts the foreign type in the ``<comp>_create()`` prototype —
+    which sits in the sacred ``_core.h`` — so without its header the header
+    does not even parse. Method params only need theirs in the binding, so
+    they are the later, weaker case; both are the same key and the same list.
     """
     out: list[str] = []
+    for p in init_params(cfg, component):
+        h = p[11] if len(p) > 11 else ""
+        if h and h not in out:
+            out.append(h)
     for m in methods(cfg, component):
         for p in m.get("params") or []:
             h = p.get("header")

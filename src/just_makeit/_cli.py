@@ -80,6 +80,13 @@ Commands:
                                       Optional array form: name:type[]:optional[:create_fn]
                                       Required scalar form: name:type:required (no default;
                                       omitting it raises TypeError, not a late MemoryError).
+                                      Capsule form: name:ctype:capsule:<capsule-name>[:header]
+                                      — construct from a handle another module published
+                                      (e.g. 'tlm:dp_tlm_t *:capsule:doppler.telemetry.tlm:
+                                      telemetry/telemetry.h'). Accepts the capsule or any
+                                      object exposing it as ._capsule; always required; the
+                                      object keeps the owner alive so the pointer cannot
+                                      dangle. ctype is your C spelling, not a jm type.
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --create-fn fn              C constructor tp_init calls (default <name>_create);
                                 same arg list, different name (e.g. acq_create_continuous).

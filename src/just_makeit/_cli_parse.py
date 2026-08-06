@@ -63,10 +63,14 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
       and the type must be a scalar (not an array). It parses as a positional
       before the PyArg ``|``, so omitting it raises ``TypeError`` rather than
       defaulting to the type's zero.
+    - ``name:type:capsule:<capsule-name>[:<header>]`` — a foreign C pointer
+      arriving as a named ``PyCapsule`` (gh-790), so the object is constructed
+      from a handle another module owns. The type is that pointer's own
+      spelling and is NOT validated against jm's type table. Always required.
 
-    Returns a 9-tuple and the advanced index:
+    Returns a 9- or 12-tuple and the advanced index:
     ``(name, type, default, default_raw, real_type, real_create_fn, optional,
-    create_fn, required)``
+    create_fn, required[, doc, capsule, header])``
     """
     from . import _types as T
 
@@ -100,6 +104,49 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
             sys.exit(1)
         create_fn = parts[3] if len(parts) >= 4 else ""
         return (name, ctype, "", "", "", "", True, create_fn, False), i + 1
+
+    # Capsule syntax: name:type:capsule:<capsule-name>[:<header>] (gh-790).
+    # Checked before the type validation below, because the type is the
+    # foreign pointer's own spelling (`dp_tlm_t *`) — deliberately not a
+    # type jm knows, so `is_valid_type` rejects it and must not be consulted.
+    if len(parts) >= 3 and parts[2].lower() == "capsule":
+        if len(parts) < 4 or not parts[3]:
+            print(
+                f"error: --init-param '{spec}': 'capsule' needs the capsule"
+                " name it must carry, e.g.\n"
+                "  --init-param 'tlm:dp_tlm_t *:capsule:doppler.telemetry.tlm'"
+                "\nThat name is what stops a pointer from one module being"
+                " accepted by another.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if T.is_array_param_type(ctype):
+            print(
+                f"error: --init-param '{spec}': 'capsule' is not valid for an"
+                " array type — a capsule carries one pointer.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        header = parts[4] if len(parts) >= 5 else ""
+        # Always required (slot 8): there is no object to build around a
+        # handle that is not there.
+        return (
+            (
+                name,
+                ctype,
+                "",
+                "",
+                "",
+                "",
+                False,
+                "",
+                True,
+                "",
+                parts[3],
+                header,
+            ),
+            i + 1,
+        )
 
     # Required scalar syntax: name:type:required (gh-266)
     if len(parts) >= 3 and parts[2].lower() == "required":
