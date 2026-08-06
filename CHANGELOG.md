@@ -4,6 +4,40 @@
 
 ### Added
 
+- **A `variable_output` method can return a numpy STRUCTURED array whose dtype
+    is a C struct's own layout (gh-788 gap 1).** `--record-dtype dp_tlm_rec_t`
+    alongside `--variable-output`, with one `--result-field` per member. The
+    kernel writes `dp_tlm_rec_t *out` and the binding hands back one array of
+    rows, so the drain is a `memcpy` and a row and the C record are the same
+    bytes. jm had no `PyArray_Descr` concept at all — `variable_output` returned
+    a plain typed array of one element type — which is what kept doppler's
+    `telemetry` module `no_generate` and its three doc surfaces unlinked.
+
+    **The offsets come from `offsetof` and the itemsize from `sizeof`**, never
+    from numpy packing the field list. That is the whole correctness argument,
+    and it is not defensive: `{uint8_t; uint64_t}` is 16 bytes in C and 9 packed
+    by numpy, so a dtype built the obvious way reads every row after the first
+    seven bytes off. Deriving the layout from the compiler cannot drift from
+    what the compiler actually did.
+
+    The struct itself stays the author's, declared in the sacred header exactly
+    as `--single`'s record type is. Field docs are accepted here (they were
+    `--single`-only) and render into the method's runtime `__doc__` as a
+    `Fields` block, so the columns are documented on the same face as the
+    signature rather than in a comment nothing links to. Not yet offered: an
+    `out=` buffer, which needs `PyArray_EquivTypes` against the cached descr —
+    acquiring it with a scalar enum would silently *cast* a caller's structured
+    array rather than reject it.
+
+- **An object can publish a borrowed pointer as a `PyCapsule` (gh-788 gap 4).**
+    `jm property <obj> _capsule --type capsule --capsule doppler.telemetry.tlm`
+    emits a getter returning `PyCapsule_New(ptr, "<name>", NULL)`. gh-432 taught
+    jm to *consume* a foreign C pointer arriving as a named capsule; nothing
+    could hand one out, and that attach point is the other half of what kept
+    `telemetry` hand-written. The destructor is `NULL` deliberately and is
+    asserted: the capsule lends a pointer the object still owns, so a capsule
+    that freed it on collection would double-free against `__dealloc__`.
+
 - **A warning's `condition` may be a C expression (gh-601).** A property's
     `expr` takes arbitrary C and a warning's condition had to match
     `^[A-Za-z_]\w*$` — and the strict one was the one that needed to be

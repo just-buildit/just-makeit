@@ -175,7 +175,41 @@ name = "execute_ctrl"
 arg_type = "float _Complex"
 return_type = "size_t"
 variable_output = true
+
+[[engine.methods]]        # gh-788: rows of a C struct as a structured ndarray
+name = "read"
+variable_output = true
+record_dtype = "dp_tlm_rec_t"   # the POD struct; the author declares it
+[[engine.methods.result_fields]]   # ...and these are the dtype's columns
+name = "n"
+type = "uint64_t"
 ```
+
+### Record shapes: `single` vs `record_dtype`
+
+Both carry `result_fields`, and they are different results:
+
+| key            | returns                                   | C kernel writes                   |
+| -------------- | ----------------------------------------- | --------------------------------- |
+| `single`       | ONE record, a named `PyStructSequence`    | the struct by value               |
+| `record_dtype` | an ARRAY of records, a structured ndarray | `<struct> *out`                   |
+| neither        | a `list[tuple]`                           | `<T> *result, size_t max_results` |
+
+The CLI rejects `single` and `record_dtype` together. `record_dtype` is the
+element type, so it reaches the `*out` parameter, the data-pointer cast and
+the `.pyi` through the one slot `out_type` already uses — but **four** places
+must suppress the list-of-records reading of `result_fields`:
+`_context/_methods.make_methods_ctx`'s declaration chain, its return-annotation
+chain, `_method._build_method_prototype`, and `_method.run`'s stub dispatch.
+`_apply` and `_script` forward the key explicitly (they enumerate method keys
+one by one, so an unnamed key is silently absent — that dropped the shape and
+made `apply` rewrite the sacred header prototype).
+
+The numpy dtype is built at **runtime by the generated C**, from `offsetof` and
+`sizeof`, because jm never sees the struct definition — it is the author's, in
+the sacred header. `_record.dtype_c` emits it; `_record.find_dtype` is what
+lets the gh-729 incremental splice carry the cache and its builder along with
+the wrapper that calls them.
 
 ### `JM_DEFINE_STEPS` macro
 

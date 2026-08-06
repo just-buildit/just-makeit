@@ -1451,11 +1451,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         elif m.get("status_return"):
             # gh-432: status returns bind as None (raise on failure).
             ret_ann = "None"
-        elif m_result_fields:
+        elif m_result_fields and not (m_var and m.get("record_dtype")):
             # gh-244: a `single` method returns ONE record, not a list of them.
             # gh-646: and that record is a declared class, not a bare tuple —
             # `make_module_pyi` emits it from the same `_record` builder the
             # standalone stub and the C descriptor use.
+            # gh-788: a `record_dtype` method carries `result_fields` too, but
+            # they are the columns of ONE structured ndarray rather than a
+            # list of per-row tuples — peer of the same guard in
+            # make_methods_ctx, and the two must move together.
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             ret_ann = (
                 _record.public_name(m)
@@ -1463,7 +1467,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 else f"list[tuple[{field_types}]]"
             )
         elif m_var:
-            all_rts = [m_ret] + list(m_multi)
+            # gh-788: a structured row has no scalar numpy scalar-type to
+            # name, so it annotates as NDArray[Any] — which is what `_np`
+            # already yields for a type it does not know.
+            all_rts = [m.get("record_dtype") or m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
             ret_ann = (
                 f"tuple[{', '.join(ndarrays)}]"
