@@ -18,6 +18,7 @@ from .._types import (
     _KIND_PY_TEST_VAL,
     record_tuple_build,
     _ctype_display,
+    _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
     c_param_parts,
@@ -1409,7 +1410,7 @@ def make_methods_ctx(
                 _pb_lines: list[str] = []
                 _cd_parts: list[str] = ["self->handle"]
                 _dr_lines: list[str] = []
-                _fmt = ""
+                _fmt_chars: list[str] = []
                 _fmt_args: list[str] = []
                 _first_arr: str | None = None
                 for _p in params:
@@ -1422,7 +1423,7 @@ def make_methods_ctx(
                         _pb_lines += [
                             f"    PyObject *{_pn}_obj = NULL;",
                         ]
-                        _fmt += "O"
+                        _fmt_chars.append("O")
                         _fmt_args.append(f"&{_pn}_obj")
                         _pb_lines += [
                             f"    PyArrayObject *{_pn}_arr = NULL;",
@@ -1442,24 +1443,37 @@ def make_methods_ctx(
                             "parse_type", _ctype_display(_pt)
                         )
                         _parse_zero = _pt_meta.get("parse_zero", "0")
+                        # gh-802: seed the local with the param's `default`
+                        # (falling back to the type's zero), exactly as
+                        # `_build_params_parse` does — an omitted optional arg
+                        # is left untouched by PyArg_ParseTupleAndKeywords, so
+                        # its declared default IS whatever this local holds.
+                        _init = _p.get("default") or _parse_zero
                         if _has_parse:
                             _raw = f"{_pn}_raw"
                             _pb_lines.append(
-                                f"    {_parse_t} {_raw} = {_parse_zero};"
+                                f"    {_parse_t} {_raw} = {_init};"
                             )
-                            _fmt += _fmt_char
+                            _fmt_chars.append(_fmt_char)
                             _fmt_args.append(f"&{_raw}")
                         else:
                             _pb_lines.append(
-                                f"    {_parse_t} {_pn} = {_parse_zero};"
+                                f"    {_parse_t} {_pn} = {_init};"
                             )
-                            _fmt += _fmt_char
+                            _fmt_chars.append(_fmt_char)
                             _fmt_args.append(f"&{_pn}")
                         _cd_parts.append(_pn)
                 _cd_parts.append(_VO_BUF_TOKEN)
                 # gh-412: positional-OR-keyword (kwlist from the param names),
                 # so `obj.method(x, mu=…)` works and matches the .pyi.
                 _kwnames = "".join(f'"{_p["name"]}", ' for _p in params)
+                # gh-802: the `|` goes in through the same helper every other
+                # parse path uses. Concatenating the format chars (what this
+                # branch used to do) silently dropped it, so a param declaring
+                # a `default` — optional in the manifest and in the generated
+                # .pyi — was parsed as required and the extension rejected the
+                # call its own stub advertised.
+                _fmt = _join_fmt_with_optional(_fmt_chars, params)
                 if _enable_out:
                     # gh-219 follow-up: the single-array-param case is
                     # otherwise identical to the has_arg out= branch below —
@@ -1468,7 +1482,7 @@ def make_methods_ctx(
                     # the _single_array_param definition), so "|O" makes
                     # `out` the first optional argument.
                     _pb_lines.append("    PyObject *out_obj = NULL;")
-                    _fmt += "|O"
+                    _fmt += "O" if "|" in _fmt else "|O"
                     _fmt_args.append("&out_obj")
                     _kwnames += '"out", '
                 parse_block = (
