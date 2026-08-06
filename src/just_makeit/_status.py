@@ -50,6 +50,8 @@ from . import _apply
 from . import _cfmt
 from . import _config as C
 from . import _docsync
+from . import _fmtprobe
+from . import _pyfmt
 from ._apply import _SKIP_DIRS, _SKIP_FILES, _SKIP_SUFFIXES
 
 # Directories/files never copied into the scratch tree (build artefacts,
@@ -626,22 +628,23 @@ def run(
         # from outside the project, so a CWD-dependent command formats the
         # two compared sides with two binaries and no amount of `apply`
         # clears the drift. Reported only alongside drift, like the version.
-        _cwd_dep = _cfmt.cwd_dependent_version(root, cfg)
-        if _cwd_dep:
-            _here, _there = _cwd_dep
-            print(
-                f"\nWARNING: [project] c_format_command resolves a different "
-                f"formatter depending on\n  the working directory, which is "
-                f"very likely this drift:\n"
-                f"    in {root}: {_here.splitlines()[0]}\n"
-                f"    outside a project:  {_there.splitlines()[0]}\n"
-                f"  `apply` formats a temp scaffold outside the project, so "
-                f"the two sides being\n  compared were formatted by different "
-                f"binaries. `uv run --group <g> <tool>` is\n  the usual cause "
-                f"— it no-ops outside a project and falls back to PATH. Use a "
-                f"\n  CWD-independent command (`uvx <tool>==<version>` or an "
-                f"absolute path)."
-            )
+        # gh-772: and the same question of `py_format_command`, which had the
+        # identical exposure and no detection at all. One renderer for both,
+        # so the two reports cannot drift into describing the same cause
+        # differently — and it covers the *fails to spawn* case that gh-758's
+        # check returned "fine" for, which is the shape doppler's Python
+        # command actually has.
+        for _key, _dep in (
+            (
+                "c_format_command",
+                _fmtprobe.cwd_dependence(root, C.c_format_command(cfg))
+                if C.c_formatting_on(cfg)
+                else None,
+            ),
+            ("py_format_command", _pyfmt.cwd_dependent(root, cfg)),
+        ):
+            if _dep:
+                print(_fmtprobe.describe(_dep, _key, root))
 
     # gh-767: printed on both paths, and under `--check`, for the same reason
     # the `@code` count above is — a project can be perfectly in sync and

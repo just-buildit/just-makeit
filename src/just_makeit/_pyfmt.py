@@ -47,6 +47,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _fmtprobe
 from ._docstring import (
     STUB_TARGET_WIDTH,
     summary_docstring,
@@ -433,3 +434,31 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     if not quiet:
         n = len(files)
         print(f"  format  {n} stub{'s' if n != 1 else ''} (py_format_command)")
+
+
+def format_version(cfg: dict, cwd: "Path | None" = None) -> str:
+    """The Python formatter's own ``--version`` output, or ``""``.
+
+    gh-772. The C side has had this since gh-745 and the Python side had
+    nothing, so "stale in CI, clean locally" on a ``.pyi`` had no way to name
+    its own cause.
+    """
+    return _fmtprobe.command_version(C.py_format_command(cfg), cwd=cwd)
+
+
+def cwd_dependent(root: Path, cfg: dict) -> "_fmtprobe.CwdDependence | None":
+    """Whether ``py_format_command`` means the same thing from any directory.
+
+    gh-772. jm formats its temp scaffold from outside the project and the real
+    tree from inside it, so a CWD-dependent command formats the two compared
+    sides differently — the exact exposure gh-758 fixed for C, with no
+    detection on this side.
+
+    doppler's is ``["uv", "run", "--group", "dev", "ruff", "format"]``, and
+    outside a project it does not resolve a *different* ruff — it fails
+    outright with ``Failed to spawn: ruff``. That is milder than the C case
+    (the generated Python is simply not formatted on one side, rather than
+    formatted differently) and it is the case gh-758's check returned "fine"
+    for, which is why `_fmtprobe` reports it as its own kind.
+    """
+    return _fmtprobe.cwd_dependence(root, C.py_format_command(cfg))
