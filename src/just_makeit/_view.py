@@ -42,6 +42,12 @@ def run(
     doc: str = "",
     from_apply: bool = False,
 ) -> None:
+    # gh-625's audit: a view's class name is not just a Python identifier —
+    # `_view_frag_id` lowercases it into the fragment's filename (gh-504), so
+    # an invalid one lands in a path as well as in the header and the stub.
+    _msg = C.validate_name(class_name, "view class")
+    if _msg:
+        _fail(_msg)
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         _fail(

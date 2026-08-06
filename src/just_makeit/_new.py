@@ -75,14 +75,7 @@ def run(
     fragments: bool = False,
     c_style: str = "",
 ) -> None:
-    if not project.replace("_", "").isalnum() or project[0].isdigit():
-        print(
-            f"error: '{project}' is not a valid project name.\n"
-            "Use lowercase letters, digits, and underscores only; "
-            "must not start with a digit.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    C.require_name(project, "project")
 
     root = dest or (Path.cwd() / project)
     if root.exists() and any(root.iterdir()):

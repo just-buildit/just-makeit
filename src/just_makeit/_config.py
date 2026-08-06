@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy as _copy
 import re as _re
+import sys as _sys
 
 try:
     import tomllib
@@ -758,6 +759,53 @@ def module_cnames(cfg: dict) -> set[str]:
     return {module_paths(m).cname for m in modules(cfg)}
 
 
+def valid_identifier(name: str) -> bool:
+    """True when *name* can be written into generated C and Python unchanged.
+
+    gh-625: this predicate was written out five separate times — for the
+    project, component, object, function, and module-segment names — and
+    reachable from none of the commands that were missing it. `jm property`
+    and `jm method` accepted any string, wrote it into the **sacred** header,
+    the binding, the stub and the manifest, and exited 0; the next `make`
+    then failed in generated code the user did not write, and the stub was
+    not parseable Python.
+
+    One implementation, so a command added later inherits the check instead
+    of being remembered. Semantics are byte-for-byte what the five copies
+    did, deliberately: they accept more than the message describes (`Foo`
+    and `café` both pass), and tightening that would reject names existing
+    projects may already carry. That mismatch is worth its own issue, not a
+    silent change here.
+    """
+    return (
+        bool(name)
+        and name.replace("_", "").isalnum()
+        and not name[0].isdigit()
+    )
+
+
+def validate_name(name: str, kind: str) -> str | None:
+    """Return the standard error message for an invalid *kind* name, or
+    ``None``. *kind* is the noun the user sees: ``"object"``, ``"property"``,
+    ``"method"``, ``"function"``, ``"project"``, ``"component"``."""
+    if valid_identifier(name):
+        return None
+    return (
+        f"'{name}' is not a valid {kind} name.\n"
+        "Use lowercase letters, digits, and underscores only; "
+        "must not start with a digit."
+    )
+
+
+def require_name(name: str, kind: str) -> None:
+    """Exit 1 with the standard message when *name* is not a valid
+    identifier. The one-line form for a command's argument check."""
+    msg = validate_name(name, kind)
+    if msg:
+        print(f"error: {msg}", file=_sys.stderr)
+        _sys.exit(1)
+
+
 def validate_module_id(module_id: str) -> str | None:
     """Return an error message for an invalid module id, else ``None``.
 
@@ -769,7 +817,7 @@ def validate_module_id(module_id: str) -> str | None:
         return "module name must not be empty"
     segs = module_id.split(".")
     for seg in segs:
-        if not seg or not seg.replace("_", "").isalnum() or seg[0].isdigit():
+        if not valid_identifier(seg):
             return (
                 f"'{module_id}' is not a valid module name.\n"
                 "Use lowercase letters, digits, and underscores only; dotted "

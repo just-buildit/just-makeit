@@ -84,6 +84,11 @@ def run(
     count_field: str = "",
     value_field: str = "",
 ) -> None:
+    # gh-625: `jm object` and `jm function` rejected this and these two did
+    # not, so `jm property thing level:double` — the shape muscle memory
+    # produces, since every --state/--param flag is colon-delimited — wrote
+    # `level:double` into the sacred header and exited 0.
+    C.require_name(prop_name, "property")
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
