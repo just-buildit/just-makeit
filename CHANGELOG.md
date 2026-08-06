@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-08-06
+
 ### Added
 
 - **A `kind = "handle"` module can publish its pointer as a `PyCapsule`
