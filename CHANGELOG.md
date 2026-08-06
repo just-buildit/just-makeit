@@ -2,6 +2,83 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports a constructor whose keyword arguments have drifted
+    from the manifest (gh-612).** An object whose declaration jm cannot
+    express is hand-owned in full, and the cost is not the one hand-written
+    file — it is that the object silently stops receiving every future codegen
+    fix. gh-422 fixed constructor argument order on 2026-07-08;
+    `CorrDetector2D`'s fragment was hand-owned, so it kept the pre-422 order
+    while its `.pyi` — generated from the manifest — stated the new one.
+    doppler 0.38.1 shipped with a type checker blessing the call that raises.
+
+    jm has been able to answer this since doppler#616: `warn_init_kwargs_drift`
+    is the same comparison. But it only ever asked *mid-refresh*, and `status`
+    redirects that stderr into a sink — so for a fragment nobody refreshes,
+    which is precisely the hand-owned case, the question was never put.
+
+    Reported, not gated: jm regenerates a kwlist only with the body it belongs
+    to, so there is no command to run and failing `--check` would demand a fix
+    jm cannot perform. The summary is qualified either way — an unqualified
+    "up to date" over a stub the extension rejects is the claim gh-767
+    established jm must not make.
+
+### Fixed
+
+- **`jm apply` refuses to overwrite a hand-written stub with the
+    `<<MANUAL_STUB>>` placeholder (gh-765).** Observed once in ~14 identical
+    runs on doppler — two members of `resample.pyi` replaced by the
+    placeholder, with the same code and input that produced a clean tree the
+    other thirteen times. Six fixed `PYTHONHASHSEED` values did not reproduce
+    it.
+
+    So this fixes the outcome rather than a cause. Whatever makes the
+    transplant miss — an unsorted traversal, a scratch/real race, a `cfg` read
+    while a manifest fragment was mid-write and so missing the `manual_stub`
+    entry that marks the member hand-owned — the loss has one signature at the
+    end, and jm can refuse to write it.
+
+    The check wraps the splice rather than sitting inside it: that function
+    has four exits, two of them the "recognised nothing, keep the fresh
+    render" early returns that are exactly how content goes missing, and a
+    guard repeated at each is one that gets forgotten at a fifth. Raises
+    rather than warns — the stub is jm-owned and drift-gated, so restoring the
+    text by hand has `jm status` call it drift and the next apply strip it
+    again. Keyed on `(class, member)`, never the bare name.
+
+- **`jm property` and `jm method` reject a name that breaks the build
+    (gh-625).** Both accepted any string, wrote it into four artifacts
+    including the **sacred** header, and exited 0; `make` then failed in
+    generated code the user did not write, and the `.pyi` was not parseable
+    Python. The input is a natural mistake — every `--state`/`--param` flag is
+    colon-delimited, so `jm property thing level:double` is the shape muscle
+    memory produces.
+
+    `jm object` and `jm function` already rejected exactly this. The predicate
+    was written out five times and reachable from neither command missing it,
+    so there is now one implementation all of them share. Semantics are
+    byte-for-byte what the five copies did. `jm view`'s class name is
+    validated too — it is lowercased into the fragment's *filename* (gh-504).
+    `jm app --name` is deliberately excluded: it becomes a filename, a CMake
+    target and a console script's `prog`, all of which allow a hyphen.
+
+- **A rewritten prototype in the sacred `_core.h` says so (gh-632).**
+    `_refresh_core_h_decls` documented that apply only *adds* declarations;
+    `_inject_decls_into_core_h`, the function it calls, documented that it
+    **replaces** by name. Both were internally coherent, they described
+    opposite behaviours, and the code did the second — so a hand-adjusted
+    prototype was overwritten on the next apply with nothing said.
+
+    Replace-by-name stays, and is now documented as the policy in both
+    places: `_core.h` is a hybrid — the struct and inline `step()` are sacred,
+    the declarations are glue — so a purely additive refresh would freeze a
+    changed signature out of the header permanently while the generated
+    `_ext.c` called the new one. What was not defensible is the silence: the
+    definition in `_core.c` and every call site still use the old prototype,
+    so the next build fails somewhere else entirely, one step removed from the
+    edit. The rewrite now prints the old and new prototypes side by side.
+
 ## [0.46.2] — 2026-08-05
 
 ### Fixed
