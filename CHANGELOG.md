@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-08-06
+
 ### Added
 
 - **A `variable_output` method can return a numpy STRUCTURED array whose dtype
