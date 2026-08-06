@@ -211,6 +211,40 @@ the sacred header. `_record.dtype_c` emits it; `_record.find_dtype` is what
 lets the gh-729 incremental splice carry the cache and its builder along with
 the wrapper that calls them.
 
+### The capsule triangle
+
+A foreign C pointer crosses the Python boundary as a named `PyCapsule`. All
+three directions exist, and share **one** unwrap emitter,
+`_context/_parse.capsule_unwrap_c` — two copies of a name-checked
+`PyCapsule_GetPointer` plus its duck-typed `._capsule` fallback is exactly the
+pair that drifts.
+
+| direction         | declared as                                  | issue        |
+| ----------------- | -------------------------------------------- | ------------ |
+| consume, per call | a method `param` with `capsule`              | gh-432       |
+| produce           | a property `--type capsule --capsule <name>` | gh-788 gap 4 |
+| construct         | an `init_param` with `capsule`               | gh-790       |
+
+The emitter's two knobs are `fail` (`return NULL;` in a wrapper vs `return -1;`
+in an `initproc` — a hard-coded `return NULL` inside an `initproc` compiles and
+reports *success*) and `allow_none` (a method's detach idiom vs a constructor's
+mandatory handle).
+
+Constructing adds two things nothing else needs:
+
+- a **strong reference to the Python owner**, in a dedicated
+    `capsule_owner_fields` / `capsule_owner_free` template slot. Deliberately not
+    `extra_buf_fields`: `make_methods_ctx` runs after `make_state_ctx` and
+    replaces that slot wholesale, so an owner field put there vanishes the moment
+    the object also declares a method.
+- the param's `header`, which must reach the **sacred `_core.h`** because the
+    foreign type is in the `create()` prototype. `C.param_headers` reads the
+    manifest, but at object-creation the component is not in it yet — so
+    `_init._param_headers_at_create` also reads the `init_params` argument.
+
+`_CTOR_OVERRIDE_KEYS` in `_state.py` is an explicit **allow-list**: a slot
+missing from it is silently dropped, not left unreplaced.
+
 ### `JM_DEFINE_STEPS` macro
 
 The perf path uses a C macro defined in the generated `jm_perf.h` header.

@@ -29,6 +29,30 @@
     acquiring it with a scalar enum would silently *cast* a caller's structured
     array rather than reject it.
 
+- **An object can be CONSTRUCTED from another module's capsule (gh-790).**
+    `--init-param 'tlm:dp_tlm_t *:capsule:doppler.telemetry.tlm:telemetry/telemetry.h'`
+    generates a `tp_init` that accepts the capsule — or any object exposing it
+    as `._capsule` — name-checks it, and passes the pointer to `create()`. This
+    is the third side of the capsule triangle: gh-432 consumes one as a
+    **method param**, gh-788 gap 4 **produces** one, and until now nothing
+    could **construct** around one. That kept every "layer an object over
+    another module's handle" shape hand-written — a capture over a telemetry
+    context, a sink over a stream context, a view over a plan — even when the
+    rest of the object was fully declarative.
+
+    Two things are generated that are easy to get wrong by hand. The object
+    **keeps a strong reference to the Python owner** for its lifetime, so the
+    borrowed pointer cannot dangle when the producer is collected; the
+    generated test drops every reference to the producer, forces a collection
+    and reads through the handle. And the param's `header` reaches the sacred
+    `_core.h`, because the foreign type lands in the `create()` prototype —
+    without it the header does not parse. The C signature is the plain pointer
+    the author would have written; the capsule is Python-side transport only.
+
+    Always required: there is no object to build around a handle that is not
+    there, so — like `path` and `bytes` — it is a required positional and
+    `None` is rejected rather than passed through as `NULL`.
+
 - **An object can publish a borrowed pointer as a `PyCapsule` (gh-788 gap 4).**
     `jm property <obj> _capsule --type capsule --capsule doppler.telemetry.tlm`
     emits a getter returning `PyCapsule_New(ptr, "<name>", NULL)`. gh-432 taught

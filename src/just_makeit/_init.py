@@ -609,6 +609,31 @@ def _core_h_decl_lines(text: str) -> "list[str]":
     ]
 
 
+def _param_headers_at_create(
+    cfg: dict, component: str, init_params: "list[tuple]"
+) -> "list[str]":
+    """Foreign headers this component's params need, at CREATION time.
+
+    gh-790. :func:`C.param_headers` reads the manifest, and at creation the
+    component is not in it yet — ``run()`` persists it at the end. For a
+    method's capsule header that never mattered, because a method is added to
+    an object that already exists. An init-param arrives *with* the object,
+    and its foreign type lands in the ``<comp>_create()`` prototype inside the
+    sacred ``_core.h``, so missing the include leaves a header that does not
+    parse until someone happens to run ``jm apply``.
+
+    So the creation path reads the headers off the ``init_params`` argument —
+    the same trick ``depends_on`` already uses two blocks above — and unions
+    them with whatever the manifest does know.
+    """
+    out = list(C.param_headers(cfg, component))
+    for p in init_params:
+        h = p[11] if len(p) > 11 else ""
+        if h and h not in out:
+            out.append(h)
+    return out
+
+
 def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     """Add `from .component import Component` and update __all__ in-place.
 
@@ -1016,7 +1041,9 @@ def run(
         for inc in _dep_header_includes(_inc_root, C.dep_names(depends_on))
         + [
             f'#include "{h}"'
-            for h in C.param_headers(cfg, ctx["component"])
+            for h in _param_headers_at_create(
+                cfg, ctx["component"], init_params
+            )
             if (_inc_root / h).exists()
         ]
     )

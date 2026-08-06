@@ -17,12 +17,12 @@
 typedef struct {
     PyObject_HEAD
     /*<<component>>*/_state_t *handle;
-/*<<extra_buf_fields>>*/} /*<<Component>>*/Object;
+/*<<extra_buf_fields>>*//*<<capsule_owner_fields>>*/} /*<<Component>>*/Object;
 
 static void
 /*<<ComponentW>>*/_dealloc(/*<<Component>>*/Object *self)
 {
-/*<<destroy_dealloc_call>>*//*<<extra_buf_free>>*/    Py_TYPE(self)->tp_free((PyObject *)self);
+/*<<destroy_dealloc_call>>*//*<<extra_buf_free>>*//*<<capsule_owner_free>>*/    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *

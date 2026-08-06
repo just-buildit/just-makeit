@@ -98,8 +98,21 @@ def _object_flags(
         val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--state", val))
 
-    for name, typ, default, *_ in C.init_params(cfg, comp):
-        val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
+    for p in C.init_params(cfg, comp):
+        name, typ, default = p[:3]
+        # gh-790: a capsule param has its own grammar, and dropping it here
+        # would emit `--init-param "tlm:dp_tlm_t *"` — a replay that rebuilds
+        # the param as a SCALAR of a type jm does not know, i.e. a script
+        # that claims to reproduce the project and does not. The gh-720
+        # silent-divergence trap, one param kind on.
+        capsule = p[10] if len(p) > 10 else ""
+        if capsule:
+            header = p[11] if len(p) > 11 else ""
+            val = f"{name}:{typ}:capsule:{capsule}"
+            if header:
+                val += f":{header}"
+        else:
+            val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--init-param", val))
 
     at = C.arg_type(cfg, comp)
