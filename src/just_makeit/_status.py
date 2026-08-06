@@ -206,6 +206,7 @@ def run(
     as_json: bool = False,
     show_diff: bool = False,
     check: bool = False,
+    strict_examples: bool = False,
 ) -> int:
     """Print a status report; return the count of files `apply` would change.
 
@@ -393,8 +394,24 @@ def run(
     # "this file always drifts, that's expected."
     # gh-442: same treatment for a default-doc mismatch — not suppressible,
     # always counted, so `jm status --check` actually gates on it.
+    # gh-752: a burn-down number for authored @code too wide for its stub.
+    # Reported on both the clean and the drifting path, because it is not
+    # drift — the project can be perfectly in sync and still carry examples
+    # that no downstream 79-col gate can pass. A count only; `jm apply` prints
+    # the sites.
+    from . import _codecheck
+
+    _wide = len(_codecheck.scan(root, cfg))
+    # gh-760: strict mode makes that count a gate. Computed here rather than
+    # beside its report, so the JSON path — which returns before the text
+    # rendering — gates identically. A gate that fires for a human and not
+    # for `--json` is the shape a CI consumer discovers the hard way.
+    _strict = strict_examples or C.strict_examples(cfg)
     drift_count = (
-        len(drift) + sum(1 for e in allowed if e[4]) + len(drift_entries)
+        len(drift)
+        + sum(1 for e in allowed if e[4])
+        + len(drift_entries)
+        + (_wide if _strict else 0)
     )
 
     if as_json:
@@ -555,14 +572,6 @@ def run(
 
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
-    # gh-752: a burn-down number for authored @code too wide for its stub.
-    # Reported on both the clean and the drifting path, because it is not
-    # drift — the project can be perfectly in sync and still carry examples
-    # that no downstream 79-col gate can pass. A count only; `jm apply` prints
-    # the sites.
-    from . import _codecheck
-
-    _wide = len(_codecheck.scan(root, cfg))
 
     if not drift and not dropped_entries and not drift_entries:
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
@@ -660,11 +669,23 @@ def run(
             f"  without --check to list them."
         )
 
+    # gh-760: strict mode makes the count a gate. Opt-in and off by default,
+    # so a project mid-sweep keeps today's behaviour; once it reaches zero,
+    # this is what stops the next line. Still not *drift* — the stub
+    # faithfully reflects the header and no `jm apply` clears it — so it is
+    # counted separately and says so.
     if _wide:
         print(
             f"\n{_wide} authored @code line(s) exceed 79 columns in the "
-            f"generated stubs.\n  Not drift — `jm apply` lists the sites and "
-            f"the per-line budget."
+            f"generated stubs.\n  "
+            + (
+                "Fix them at the source — `jm apply` lists the sites and "
+                "the per-line\n  budget. ([project] strict_examples is on, "
+                "so this fails the gate.)"
+                if _strict
+                else "Not drift — `jm apply` lists the sites and "
+                "the per-line budget."
+            )
         )
 
     # gh-773: `c_style` is the legacy spelling and, alone, is the one that

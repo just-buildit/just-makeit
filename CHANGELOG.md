@@ -4,6 +4,38 @@
 
 ### Added
 
+- **A warning's `condition` may be a C expression (gh-601).** A property's
+    `expr` takes arbitrary C and a warning's condition had to match
+    `^[A-Za-z_]\w*$` — and the strict one was the one that needed to be
+    flexible. The shape that must reach through a pointer is the **forwarder**:
+    an object whose state struct is a handle onto a shared engine. There is no
+    bool field on that struct and there never will be, since adding one would
+    duplicate state that already lives on the engine. So every property on such
+    an object goes through `expr`, and its one warning was the only thing in
+    the file that could not be declared at all.
+
+    A bare identifier keeps its exact meaning as sugar for
+    `self->handle-><name>`, so every existing manifest renders byte-for-byte as
+    it did. Anything else is used verbatim. Still rejected is only what cannot
+    be an expression — a `;` or a brace, which spliced into `if (<condition>)`
+    yields broken C in generated code the author did not write.
+
+- **`[project] strict_examples` makes an overlong authored `@code` line fail
+    the gate (gh-760).** gh-752's burn-down count is right while a project is
+    sweeping and not enough afterwards: once the number reaches zero nothing
+    stops the next line, so the sweep has to be re-run forever. Off by default,
+    so no consumer goes red mid-sweep; `--strict-examples` is the one-off form.
+    `jm apply` keeps applying and warning — the point is to gate the commit,
+    not to block regeneration.
+
+    The enforcement can only live in jm. A formatter reflows a doctest block as
+    prose, orphaning a trailing comment onto its own line where doctest reads
+    it as expected output — it reports success while destroying the example, so
+    this must be a checker and never a fixer. A downstream `.pyi` lint fires
+    one transform too late, points at a generated file the author must not
+    edit, and cannot state the budget, which is per-destination-indent and
+    jm-internal.
+
 - **`jm status` reports a constructor whose keyword arguments have drifted
     from the manifest (gh-612).** An object whose declaration jm cannot
     express is hand-owned in full, and the cost is not the one hand-written
@@ -25,6 +57,26 @@
     established jm must not make.
 
 ### Fixed
+
+- **The CWD question is asked of `py_format_command` too (gh-772).** gh-758
+    detects a `c_format_command` that resolves a different binary depending on
+    the directory it runs from; `py_format_command` had the identical exposure
+    and no detection.
+
+    A straight generalisation would still have missed the reported case. The
+    two commands do not fail the same way: `uv run --group dev clang-format`
+    outside a project falls through to `PATH` — two binaries, both of which
+    answer `--version` — while `uv run --group dev ruff format` fails outright
+    with `Failed to spawn: ruff`. gh-758 treated an unanswerable `--version` as
+    "cannot tell" and returned no finding. For a command that answers perfectly
+    well *inside* the project, that is not an unknown. It is now its own kind
+    with its own message: "your formatter did not run" is a different problem
+    from "your formatter ran twice as two different tools".
+
+    The question lives in `_fmtprobe` rather than in either formatter module —
+    `_cfmt` and `_pyfmt` are peers and neither owns the other — with one
+    renderer for both, so the two reports cannot drift into describing the same
+    cause differently.
 
 - **`jm apply` refuses to overwrite a hand-written stub with the
     `<<MANUAL_STUB>>` placeholder (gh-765).** Observed once in ~14 identical
