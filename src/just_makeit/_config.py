@@ -1575,6 +1575,33 @@ def status_allow(cfg: dict) -> list[str]:
     return list(cfg.get("project", {}).get("status_allow", []))
 
 
+def strict_examples(cfg: dict) -> bool:
+    """True when an overlong authored ``@code`` line should fail the gate.
+
+    gh-760. gh-752 gave `jm status --check` a burn-down *count* of authored
+    example lines too wide for their generated stub, and printing a count is
+    right while a project is sweeping. It is not enough afterwards: once the
+    number reaches zero nothing stops the next line, so the sweep has to be
+    re-run periodically forever.
+
+    Off by default, so no existing consumer goes red mid-sweep, and
+    declarative rather than a CI flag — like ``platforms`` and
+    ``status_allow``, it travels with the repo rather than living in one
+    invocation that a second workflow can forget.
+
+    The enforcement can only live here. A formatter cannot do it: fed a
+    doctest at a 79-column limit, clang-format reflows the block as prose,
+    orphaning a comment onto its own line where doctest reads it as expected
+    output and swallowing the real expected value onto a continuation. It
+    reports success while destroying both examples — so this has to be a
+    *checker*, never a fixer. And a downstream `.pyi` lint fires one
+    transform too late, points at a generated file the author must not edit,
+    and cannot state the budget, which is per-destination-indent and
+    jm-internal.
+    """
+    return _truthy(cfg.get("project", {}).get("strict_examples", False))
+
+
 def enums(cfg: dict) -> dict[str, list[str]]:
     """Return the project's named string-enums, ``{name: [values, …]}``.
 

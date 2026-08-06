@@ -262,6 +262,9 @@ Commands:
     --diff                      Print a unified diff per stale file.
     --check                     One-line summary only (exit code still set);
                                 DROPPED entries still print in full.
+    --strict-examples           Fail on an authored @code line too wide for its
+                                generated stub (else reported as a count).
+                                [project] strict_examples is the durable form.
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
@@ -989,6 +992,8 @@ def main() -> None:
         _as_json = "--json" in _args
         _show_diff = "--diff" in _args
         _check = "--check" in _args
+        # gh-760: the one-off form of [project] strict_examples.
+        _strict_examples = "--strict-examples" in _args
         _i = 0
         while _i < len(_args):
             if _args[_i] == "--allow":
@@ -1006,6 +1011,7 @@ def main() -> None:
                     as_json=_as_json,
                     show_diff=_show_diff,
                     check=_check,
+                    strict_examples=_strict_examples,
                 ),
                 1,
             )
