@@ -120,6 +120,33 @@ def _module_extras(tmp_path: Path) -> Path:
     return root
 
 
+def _renamed_class(tmp_path: Path) -> Path:
+    """A component named for its C prefix, wearing a chosen Python class name.
+
+    gh-808. `class_name` was emitted by `jm script` for VIEWS only, so a
+    replayed object came back as the CamelCased component (`DpTlm`) instead of
+    the declared class. No shape reached it -- an emitter branch no shape
+    exercises is one nothing proves correct, which is this file's own thesis.
+
+    It is also the exact shape gh-805 §A documents as the supported way to
+    adopt existing C: name the component after the C prefix and keep the
+    Python face with `class_name`. Every project following that advice had a
+    `jm script` that rebuilt a different project.
+    """
+    root = _base(tmp_path)
+    module_run(root, "telemetry")
+    object_run(
+        root,
+        "dp_tlm",
+        "telemetry",
+        state_vars=[("cap", "size_t", "64")],
+        arg_type="float",
+        return_type="float",
+        class_name="Telemetry",
+    )
+    return root
+
+
 def _serializable(tmp_path: Path) -> Path:
     root = _base(tmp_path)
     object_run(
@@ -210,6 +237,7 @@ SHAPES = {
     "standalone": _standalone,
     "module": _module,
     "module_extras": _module_extras,
+    "renamed_class": _renamed_class,
     "serializable": _serializable,
     "variable_output": _variable_output,
     "view": _view,

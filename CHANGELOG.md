@@ -77,6 +77,22 @@
     bare — a **redirect**, which wrote a file called `num_taps` and passed
     `state-` as the value. It now quotes any shell-active character.
 
+- **`jm script` dropped an object's `class_name` (gh-808).** It was emitted
+    for *views* since gh-504 but never for the object itself, so a replayed
+    project came back with the CamelCased component (`DpTlm`) instead of the
+    declared class (`Telemetry`) — a script that claims to reproduce the
+    project and does not, which is the gh-720 silent-divergence trap rather
+    than a loud failure.
+
+    This is exactly the shape gh-805 §A documents as the supported way to
+    adopt existing C — name the component after the C prefix, keep the Python
+    face with `class_name` — so every project following that advice was
+    affected.
+
+    `tests/test_manifest_wiring_gate.py` gained a `renamed_class` shape, since
+    its replay-and-diff arm is the right detector and only missed this because
+    no shape exercised the key. Verified failing before the fix.
+
 ## [0.48.0] — 2026-08-06
 
 ### Added
