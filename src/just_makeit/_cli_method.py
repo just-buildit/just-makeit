@@ -34,6 +34,7 @@ def run(args: list[str]) -> None:
     record_name = ""
     record_module = ""
     record_doc = ""
+    record_dtype = ""
     batch_method = False
     doc = ""
     multi_output: list[str] = []
@@ -125,6 +126,19 @@ def run(args: list[str]) -> None:
                 print("error: --record-doc requires text", file=sys.stderr)
                 sys.exit(1)
             record_doc = remaining[i]
+            i += 1
+        elif tok == "--record-dtype":
+            # gh-788: the POD C struct whose layout becomes the returned
+            # array's numpy dtype. Pairs with --variable-output and one
+            # --result-field per member.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --record-dtype requires a C struct type name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            record_dtype = remaining[i]
             i += 1
         elif tok == "--doc":
             i += 1
@@ -374,11 +388,28 @@ def run(args: list[str]) -> None:
     # record class in the .pyi — both of which only exist for --single. A
     # list-of-records result has no named field surface to carry it, so
     # accepting the text there would render nowhere and say nothing.
-    if not single and (record_doc or any(f.get("doc") for f in result_fields)):
+    # gh-788: ...or --record-dtype, whose fields are the columns of a
+    # structured array. Those DO have a named surface — `y["value"]` — and
+    # the whole point of migrating a hand-written module is that its doc
+    # surfaces stop being unlinked, so the field docs are accepted and
+    # rendered into the method's runtime docstring below. `--record-doc`
+    # still needs --single: there is no record TYPE here to attach it to.
+    if not single and record_doc:
         print(
-            "error: --record-doc and --result-field docs require --single.\n"
-            "Without it the method returns a list of plain tuples, which has "
-            "no named record type to document.",
+            "error: --record-doc requires --single.\n"
+            "Without it there is no named record type to document.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if (
+        not single
+        and not record_dtype
+        and any(f.get("doc") for f in result_fields)
+    ):
+        print(
+            "error: --result-field docs require --single or --record-dtype.\n"
+            "Without either the method returns a list of plain tuples, which "
+            "has no named field surface to carry them.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -429,6 +460,7 @@ def run(args: list[str]) -> None:
         record_name=record_name,
         record_module=record_module,
         record_doc=record_doc,
+        record_dtype=record_dtype,
         varargs=varargs,
         manual_stub=manual_stub,
         pass_capacity=pass_capacity,

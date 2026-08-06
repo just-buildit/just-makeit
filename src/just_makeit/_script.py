@@ -198,6 +198,13 @@ def _record_flags(entry: dict) -> list[str]:
         if entry.get(key):
             parts.append(_flag(flagname, str(entry[key])))
 
+    # gh-788: NOT behind the --single guard -- it is the other record shape.
+    # `--single` returns one record as a named tuple; `--record-dtype`
+    # returns an array of them as a structured ndarray, and the CLI rejects
+    # the two together.
+    if entry.get("record_dtype"):
+        parts.append(_flag("--record-dtype", str(entry["record_dtype"])))
+
     return parts
 
 

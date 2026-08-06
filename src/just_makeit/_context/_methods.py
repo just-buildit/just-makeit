@@ -761,6 +761,15 @@ def make_methods_ctx(
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
         pass_capacity: bool = m.get("pass_capacity", False)
+        # gh-788 gap 1: the method writes rows of a POD C struct, and the
+        # result is a numpy STRUCTURED array whose dtype IS that struct's
+        # layout. The key names the struct (`dp_tlm_rec_t`); `result_fields`
+        # names its members. Everything downstream then treats the struct as
+        # the output element type, so the C prototype (`dp_tlm_rec_t *out`)
+        # and the data-pointer cast fall out of the existing variable_output
+        # machinery -- only the numpy allocation differs, because a struct
+        # has no `_CTYPE_META` entry and so no single NPY_ enum.
+        record_dtype: str = str(m.get("record_dtype", "") or "").strip()
         # gh-657: a void-input variable_output method's `count` is the whole
         # user-facing knob — its default IS the method's zero-arg behaviour.
         # jm's own `1` was inert until gh-607 started feeding that count to
@@ -780,6 +789,11 @@ def make_methods_ctx(
         # — the token is purely a splice point, so it is defined once here
         # rather than spelled out at five call sites.
         _VO_BUF_TOKEN = f"self->_{name}_buf"
+        # The translation-unit-unique prefix for this method's file-scope
+        # statics. Shared by the structseq descriptor (gh-244) and the
+        # structured dtype (gh-788) so both name their statics the same way
+        # and `_docsync`/`_apply` have one shape to look for.
+        _sid = f"{wrapper_prefix}_{name}"
 
         ret_disp = _ctype_display(return_type)
         _ret_elem = (
@@ -794,8 +808,15 @@ def make_methods_ctx(
         # (or out_type) must be reduced to its element type `T`; otherwise the
         # buffer field, the `*out` param, sizeof(), and the NumPy enum all
         # render the invalid `T[] *out` / `sizeof(T[])` (gh-201 follow-up).
+        # gh-788: a record_dtype names the output element outright -- it is
+        # the struct the kernel writes rows of. It wins over `out_type` and
+        # `return_type` so the `*out` parameter, the `sizeof`, the data
+        # pointer cast and the `.pyi` all describe the same struct without
+        # the manifest having to spell it three times.
         _vo_out_src = (
-            out_type if (variable_output and out_type) else return_type
+            record_dtype
+            if (variable_output and record_dtype)
+            else (out_type if (variable_output and out_type) else return_type)
         )
         _vo_out_elem = (
             _vo_out_src[:-2] if _vo_out_src.endswith("[]") else _vo_out_src
@@ -827,10 +848,19 @@ def make_methods_ctx(
             # checker and undocumented to the reader. The stub now declares the
             # record class itself (see `pyi_records` below) and names it here.
             _ret_ann = _record.public_name(m)
-        elif result_fields:
+        elif result_fields and not record_dtype:
+            # gh-788: a record_dtype method also carries `result_fields`, but
+            # they describe the dtype's columns, not a list of per-row tuples
+            # -- it returns ONE structured ndarray. Without this guard the
+            # richer shape is shadowed by the older one that merely mentions
+            # the same key.
             _ret_ann = "list[tuple]"
         elif variable_output:
-            _all_rts = [return_type] + list(multi_output)
+            # Only the record case reads the resolved element type here; the
+            # `out_type` case is left reporting `return_type` exactly as
+            # before, since changing it is a separate behaviour question and
+            # not this issue's.
+            _all_rts = [record_dtype or return_type] + list(multi_output)
             _ndarrays = [_pyi_ndarray(rt) for rt in _all_rts]
             _ret_ann = (
                 f"tuple[{', '.join(_ndarrays)}]"
@@ -1113,7 +1143,14 @@ def make_methods_ctx(
             continue
 
         # ── declarations for _core.h ─────────────────────────────────────
-        if result_fields:
+        # gh-788: `record_dtype` reuses `result_fields` for the dtype's
+        # columns, so it must not be captured by the list-of-records
+        # prototype below -- its kernel has the ordinary variable_output
+        # signature, writing struct rows into `dp_tlm_rec_t *out`. The
+        # wrapper chain already prefers `variable_output`; before this the
+        # two chains disagreed and the declaration described a kernel the
+        # binding never called.
+        if result_fields and not (variable_output and record_dtype):
             # gh-594: this is the peer of _method._build_method_prototype's
             # record branch and must render the identical signature -- params
             # expanded (array -> ptr + `_len`), and `single` returning the
@@ -1263,6 +1300,15 @@ def make_methods_ctx(
             variable_output
             and not multi_output
             and (not has_params or _single_array_param)
+            # gh-788: not offered for a structured result yet. The out=
+            # branch acquires the caller's buffer with PyArray_FROM_OTF and a
+            # scalar NPY_ enum, which for a record would silently CAST the
+            # caller's structured array to that scalar type rather than
+            # reject it -- the exact silent-reinterpretation this feature
+            # exists to prevent. Doing it properly needs PyArray_EquivTypes
+            # against the cached descr; tracked separately rather than left
+            # as an undocumented carve-out.
+            and not record_dtype
         )
         # gh-412: keyword parsing is independent of the `out=` buffer feature.
         # A variable_output method with named params (e.g. Farrow.delay(x, mu))
@@ -1483,13 +1529,22 @@ def make_methods_ctx(
             # silently alias a previous result the way the reuse buffer could.
             _all_out_rts = [_vo_out_elem] + list(multi_output)
             _n_out_arrays = len(_all_out_rts)
+            # gh-788: a record element has no `_CTYPE_META` entry and so no
+            # single NPY_ enum -- its whole point is that the row is a struct.
+            # It is allocated from a PyArray_Descr instead (below), so it
+            # contributes no enum here; this stays a plain subscript for
+            # every other type, because a `.get(..., "NPY_FLOAT")` fallback
+            # is how an unregistered ctype silently becomes an array of
+            # floats.
             _out_np_enums = [
-                _NP_ENUM[
+                ""
+                if (record_dtype and i == 0)
+                else _NP_ENUM[
                     _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt][
                         "py_type"
                     ]
                 ]
-                for rt in _all_out_rts
+                for i, rt in enumerate(_all_out_rts)
             ]
             _none_on_empty_line = (
                 "    if (!n_out) Py_RETURN_NONE;\n" if none_on_empty else ""
@@ -1634,8 +1689,28 @@ def make_methods_ctx(
                 )
                 + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(
-                    f"    PyObject *arr{i} ="
-                    f" PyArray_SimpleNew(1, &_adim, {_out_np_enums[i]});\n"
+                    (
+                        # gh-788: the structured output. `_get_dtype()` hands
+                        # back a NEW reference and PyArray_NewFromDescr STEALS
+                        # one, on the failure path as well as the success
+                        # path — so the two balance exactly and there is no
+                        # decref of `_descr` anywhere below. Getting this
+                        # wrong is a refcount bug that only shows up under
+                        # sustained load, so it is spelled out rather than
+                        # left to the reader.
+                        f"    PyArray_Descr *_descr = {_sid}_get_dtype();\n"
+                        f"    if (!_descr)"
+                        f" {{ {_decref_early_vo}return NULL; }}\n"
+                        f"    PyObject *arr{i} = PyArray_NewFromDescr(\n"
+                        f"        &PyArray_Type, _descr, 1, &_adim,\n"
+                        f"        NULL, NULL, 0, NULL);\n"
+                    )
+                    if (record_dtype and i == 0)
+                    else (
+                        f"    PyObject *arr{i} ="
+                        f" PyArray_SimpleNew(1, &_adim,"
+                        f" {_out_np_enums[i]});\n"
+                    )
                     for i in _idx
                 )
                 + (
@@ -1724,7 +1799,17 @@ def make_methods_ctx(
                 f"{_vo_exact_return}"
                 f"    }}\n"
             )
-            wrapper = (
+            # gh-788: the cached descr builder is file-scope, so it is
+            # prepended to the wrapper the way the structseq descriptor is —
+            # the two travel together or the fragment does not compile.
+            _vo_dtype_helper = (
+                _record.dtype_c(
+                    _sid, record_dtype, _record.fields(m, doc_blocks)
+                )
+                if record_dtype
+                else ""
+            )
+            wrapper = _vo_dtype_helper + (
                 f"static PyObject *\n"
                 f"{wrapper_prefix}_{name}"
                 f"{_vo_sig}"
@@ -1744,10 +1829,16 @@ def make_methods_ctx(
             )
             _all_rts_vo = [_vo_out_elem] + list(multi_output)
             _dtype_strs_vo = [
-                _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt][
+                # A record row has no scalar dtype string to print; the demo
+                # below shows its field NAMES instead, which is both stable
+                # output and the thing a reader wants from a structured
+                # result.
+                ""
+                if (record_dtype and i == 0)
+                else _CTYPE_META[rt[:-2] if rt.endswith("[]") else rt][
                     "py_type"
                 ].replace("np.", "")
-                for rt in _all_rts_vo
+                for i, rt in enumerate(_all_rts_vo)
             ]
             _ret_hint_vo = (
                 f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
@@ -1770,6 +1861,20 @@ def make_methods_ctx(
                 # Python-facing signature shows `...` rather than leaking it.
                 _vo_sig_arg = f"count={'...' if _count_default else 1}"
                 _vo_call_example = f"obj.{name}(4)"
+            # gh-788: a numpydoc-shaped block naming each column of the
+            # structured result and its Python type. Only the documented
+            # fields get prose; an undocumented one still gets its name and
+            # type, because that much is derived rather than invented.
+            _vo_field_doc_lines: list[str] = []
+            if record_dtype:
+                _vo_flds = _record.fields(m, doc_blocks)
+                _vo_field_doc_lines = ["", "Fields", "------"]
+                for _vf in _vo_flds:
+                    _vo_field_doc_lines.append(
+                        f"{_vf.name} : {_pyi_scalar(_vf.ctype)}"
+                    )
+                    if _vf.doc:
+                        _vo_field_doc_lines.append(f"    {_vf.doc}")
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
@@ -1780,10 +1885,32 @@ def make_methods_ctx(
                 # still-referenced buffer is retired, never reused in place")
                 # and was wrong on both clauses once that buffer was deleted.
                 *_runtime_doc(
-                    "Returns a new NumPy-owned array each call — independent"
-                    " of every other result, and safe to keep. Pass out= to"
-                    " write into your own buffer instead."
+                    (
+                        # gh-788: a structured result gets its own sentence.
+                        # The generic one promises `out=`, which this shape
+                        # deliberately does not offer, and says nothing about
+                        # the property that makes the shape worth having.
+                        "Returns a new NumPy-owned structured array each"
+                        f" call, one row per {record_dtype} — the dtype is"
+                        " that struct's own layout, so a row and the C"
+                        " record are the same bytes. Independent of every"
+                        " other result, and safe to keep."
+                        if record_dtype
+                        else "Returns a new NumPy-owned array each call —"
+                        " independent of every other result, and safe to"
+                        " keep. Pass out= to write into your own buffer"
+                        " instead."
+                    )
                 ),
+                # gh-788: the columns, documented on the SAME face as the
+                # signature. This is the point of the migration — a
+                # hand-written module carries its field docs in a header
+                # comment, a PyMethodDef literal and a .pyi with nothing
+                # linking the three, and they drift. Here `_record.fields`
+                # resolves each doc from the manifest or, failing that, the
+                # sacred header's own `///<` member doc (gh-671), so one
+                # source feeds every face.
+                *_vo_field_doc_lines,
                 *_demo(
                     [
                         "",
@@ -1791,9 +1918,28 @@ def make_methods_ctx(
                         *_from_line,
                         _obj_line,
                         f"    >>> y = {_vo_call_example}",
-                        f"    >>> y{'[0]' if len(_all_rts_vo) > 1 else ''}"
-                        f".dtype",
-                        f"    dtype('{_dtype_strs_vo[0]}')",
+                        # A structured row has no scalar dtype to print, and
+                        # the full repr is long and numpy-version-sensitive;
+                        # the field names are the stable, useful answer.
+                        *(
+                            [
+                                "    >>> y.dtype.names",
+                                # Python's own repr, so the one-field case
+                                # keeps its trailing comma and the doctest is
+                                # copy-pasteable rather than nearly right.
+                                "    "
+                                + repr(
+                                    tuple(_f["name"] for _f in result_fields)
+                                ),
+                            ]
+                            if record_dtype
+                            else [
+                                f"    >>> y"
+                                f"{'[0]' if len(_all_rts_vo) > 1 else ''}"
+                                f".dtype",
+                                f"    dtype('{_dtype_strs_vo[0]}')",
+                            ]
+                        ),
                     ]
                 ),
             ]
@@ -1901,8 +2047,8 @@ def make_methods_ctx(
             # unpackable) instead of a list[tuple]. The C kernel returns the
             # record struct by value; the structseq type is created lazily and
             # cached in this translation unit, so module-init/aggregator wiring
-            # is untouched.
-            _sid = f"{wrapper_prefix}_{name}"
+            # is untouched. (`_sid` is hoisted to the top of the loop —
+            # gh-788's dtype statics use the same prefix.)
             # gh-257/gh-261/gh-646: the record's public name, its qualified
             # name, and its documented fields all come from _record, which the
             # two .pyi writers read too -- the descriptor emitted here and the
@@ -2370,7 +2516,13 @@ def make_methods_ctx(
         # single-array-param method (params=[{array}], no other params) is
         # eligible too -- see _single_array_param above.
         _stub_enable_out = (
-            m_var and not m_multi and (not params or _single_array_param)
+            m_var
+            and not m_multi
+            and (not params or _single_array_param)
+            # gh-788: mirrors `_enable_out` above — a structured result is
+            # not offered an out= buffer yet, and a stub that advertised one
+            # would type-check a call the binding rejects at runtime.
+            and not record_dtype
         )
         # gh-527: a variable_output method with no input to size from is the
         # generator shape -- the parse block above seeds a leading `count` for

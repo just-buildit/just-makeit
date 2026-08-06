@@ -110,6 +110,10 @@ Commands:
     --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
+    --record-dtype STRUCT       With --variable-output: return ONE numpy structured
+                                array whose dtype is that C struct's own layout
+                                (offsetof/sizeof), one row per record. The
+                                --result-field list names its columns.
     --batch                     Generate 1:1-rate array transform (allocates output per call).
     --no-bench                  Exclude this method from the C benchmark.
     --impl file::funcname       Lift method body from funcname in file.

@@ -1051,6 +1051,13 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
             if _desc and f"{_n}_type" not in _have:
                 _preludes.append(_desc)
                 _have.update(_file_scope_decls(_desc))
+            # gh-788: the structured-dtype cache and its builder are the same
+            # kind of coupled block, and invisible to the generic
+            # reference-following below for the reason `find_dtype` records.
+            _dt = _record.find_dtype(reference, _n)
+            if _dt and f"{_n}_dtype" not in _have:
+                _preludes.append(_dt)
+                _have.update(_file_scope_decls(_dt))
             for _name, _decl in _referenced_file_scope_decls(
                 reference, ref_funcs[_n]
             ):

@@ -294,6 +294,49 @@ def find_descriptor(text: str, sid: str) -> str:
     return m.group(0) if m else ""
 
 
+def find_dtype(text: str, sid: str) -> str:
+    """The file-scope dtype cache and its builder for *sid* in *text*, or ``""``.
+
+    gh-788, and the exact peer of :func:`find_descriptor` — for the same
+    reason and with the same failure mode. :func:`dtype_c` emits two coupled
+    file-scope things: the cached ``PyArray_Descr *`` and the function that
+    fills it. The incremental splice path (gh-729/gh-779) carries *functions*
+    the new wrapper calls and *file-scope declarations with an initialiser*
+    it references by name, and this block is neither in the shape that path
+    recognises: the wrapper references only ``<sid>_get_dtype()``, which is a
+    definition rather than an initialised declaration, and the cache it reads
+    is referenced by the builder rather than by the wrapper. Splicing the
+    wrapper alone would leave a call to an undeclared function — the gh-729
+    symptom, one costume along.
+
+    Kept beside the emitter deliberately: what ``dtype_c`` writes is what this
+    has to find, and a copy of that shape living in the splicer is a copy that
+    goes stale the first time the emitter changes.
+
+    Examples
+    --------
+    >>> c = dtype_c("W_read", "rec_t", [RecordField("n", "uint64_t", "")])
+    >>> found = find_dtype("/* head */\\n" + c + "\\nstatic int other = 0;", "W_read")
+    >>> found.startswith("static PyArray_Descr *W_read_dtype = NULL;")
+    True
+    >>> "W_read_get_dtype(void)" in found and found.rstrip().endswith("}")
+    True
+    >>> "other" in found
+    False
+    >>> find_dtype("nothing here", "W_read")
+    ''
+    """
+    m = re.search(
+        rf"static PyArray_Descr \*{re.escape(sid)}_dtype = NULL;"
+        # ...through the builder's closing brace, which clang-format keeps
+        # at column 0 exactly as it does for every other function.
+        rf".*?\n{re.escape(sid)}_get_dtype\(void\).*?\n\}}\n",
+        text,
+        re.DOTALL,
+    )
+    return m.group(0) if m else ""
+
+
 # ── the Python face ─────────────────────────────────────────────────────────
 
 

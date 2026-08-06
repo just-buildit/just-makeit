@@ -425,6 +425,14 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             record_name=m.get("record_name", ""),
             record_module=m.get("record_module", ""),
             record_doc=m.get("record_doc", ""),
+            # gh-788: dropping this made the replay disagree with the manifest
+            # about the method's very SHAPE, not just a detail — without it
+            # `result_fields` reads as the list-of-records form and apply
+            # rewrote the header prototype to `(state, size_t *result, size_t
+            # max_results)`, over a `_core.c` definition still using the
+            # record one. gh-632's replace-by-name warning is what surfaced
+            # it; before that it would have landed silently.
+            record_dtype=m.get("record_dtype", ""),
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
             varargs=bool(m.get("varargs")),

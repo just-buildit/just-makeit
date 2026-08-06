@@ -503,8 +503,19 @@ def _build_method_prototype(
     batch: bool = False,
     result_fields: list[dict] | None = None,
     single: bool = False,
+    record_dtype: str = "",
 ) -> str:
-    """Return C prototype declaration(s) for a method (no trailing newline)."""
+    """Return C prototype declaration(s) for a method (no trailing newline).
+
+    gh-788: *record_dtype* names the POD struct a variable-output method
+    writes rows of. It reaches the ``*out`` parameter through the same
+    ``out_type`` slot every other element type uses, and it also suppresses
+    the ``result_fields`` branch below — a record-dtype method carries
+    ``result_fields`` for the dtype's columns, not for a list-of-records
+    out-param pair, and this is the third of three places that distinction
+    has to be drawn (the other two are ``make_methods_ctx``'s declaration
+    chain and :func:`run`'s stub dispatch).
+    """
     ret_disp = T._ctype_display(return_type)
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -515,7 +526,7 @@ def _build_method_prototype(
     # declaration must match _methods_c_stub_result_fields/_result_single's
     # shape (size_t count + results[]/max_results out-params, or one record
     # by value with `single`), not the generic scalar/array fallback below.
-    if result_fields:
+    if result_fields and not (variable_output and record_dtype):
         # gh-594: the record shapes used to build their signature from
         # `arg_type` alone, silently dropping every declared `param`. The
         # binding passed them anyway, so a `single` method with params gave
@@ -580,7 +591,7 @@ def _build_method_prototype(
             step_param = ", " + ", ".join(p_parts)
         else:
             step_param = ", size_t n"
-        out_disp = _out_elem_disp(return_type, out_type)
+        out_disp = _out_elem_disp(return_type, record_dtype or out_type)
         moc_decl, _ = _max_out_count_param(arg_type, params)
         return "\n".join(
             [
@@ -648,6 +659,7 @@ def run(
     record_name: str = "",
     record_module: str = "",
     record_doc: str = "",
+    record_dtype: str = "",
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -663,6 +675,39 @@ def run(
     sink_fn: str = "",
 ) -> None:
     C.require_name(method_name, "method")  # gh-625
+    # gh-788: `record_dtype` is only meaningful as the element type of a
+    # variable-output result, and the dtype cannot be built without the
+    # member list. Both are checked here rather than left to fail later as a
+    # C compile error in the user's tree, where the cause is several
+    # generated files away from the symptom.
+    if record_dtype:
+        if not variable_output:
+            print(
+                "error: --record-dtype describes the ELEMENT of a "
+                "variable-output result;\n"
+                "it needs --variable-output as well.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not result_fields:
+            print(
+                f"error: --record-dtype {record_dtype} needs at least one "
+                "--result-field\n"
+                "to build the numpy dtype from -- the struct's members are "
+                "what become\n"
+                "the dtype's columns.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if single:
+            print(
+                "error: --record-dtype and --single are different results.\n"
+                "--single returns ONE record as a named tuple; "
+                "--record-dtype returns\n"
+                "an ARRAY of records as a structured ndarray. Pick one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -825,7 +870,7 @@ def run(
                 return_type,
                 params=[(p["name"], p["type"]) for p in params],
             )
-        elif result_fields:
+        elif result_fields and not (variable_output and record_dtype):
             stub = _methods_c_stub_result_fields(
                 object_name,
                 method_name,
@@ -842,7 +887,12 @@ def run(
                 return_type,
                 multi_output,
                 params=[(p["name"], p["type"]) for p in params],
-                out_type=out_type,
+                # gh-788: the record struct IS the output element, so it
+                # reaches the stub the same way `out_type` does — one
+                # substitution, and the `dp_tlm_rec_t *out` parameter, the
+                # `(void)out;` suppression and the binding's cast all agree
+                # because they are all derived from it.
+                out_type=record_dtype or out_type,
                 max_out=max_out,
                 pass_capacity=pass_capacity,
             )
@@ -889,6 +939,7 @@ def run(
             batch=batch,
             result_fields=result_fields,
             single=single,
+            record_dtype=record_dtype,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -998,6 +1049,10 @@ def run(
         # .pyi docstring. Without it both faces fall back to the CPython-style
         # `ToneMetrics(enob, sfdr)` synopsis, never to nothing.
         method_entry["record_doc"] = record_doc
+    if record_dtype:
+        # gh-788: the POD C struct whose layout becomes the returned numpy
+        # array's dtype. Paired with `result_fields`, which names its members.
+        method_entry["record_dtype"] = record_dtype
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:
