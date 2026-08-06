@@ -170,6 +170,19 @@ def _object_flags(
         elif not C.is_async_stream(cfg, comp):
             parts.append(_bool_flag("--streamable"))
 
+    # gh-808: the Python class name, when it is not derived from the
+    # component. Emitted for VIEWS since gh-504 but never for the object
+    # itself, so a replayed `dp_tlm` came back as `DpTlm` rather than the
+    # declared `Telemetry` — a script that claims to reproduce the project and
+    # does not, which is the gh-720 silent-divergence trap.
+    #
+    # This is the shape gh-805 §A documents as the way to adopt existing C:
+    # name the component after the C prefix, keep the Python face with
+    # `class_name`. Every project taking that advice was affected.
+    cn = C.class_name(cfg, comp)
+    if cn:
+        parts.append(_flag("--class-name", cn))
+
     # gh-509: object-level C constructor override.
     cf = C.object_create_fn(cfg, comp)
     if cf:
