@@ -56,10 +56,10 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from . import _config as C
+from . import _fmtprobe
 
 
 def _generated_c_files(root: Path) -> list[Path]:
@@ -224,20 +224,7 @@ def format_version(cfg: dict, cwd: "Path | None" = None) -> str:
     """
     if not C.c_formatting_on(cfg):
         return ""
-    command = C.c_format_command(cfg)
-    if shutil.which(command[0]) is None:
-        return ""
-    try:
-        proc = subprocess.run(
-            [*command, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=None if cwd is None else str(cwd),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
+    return _fmtprobe.command_version(C.c_format_command(cfg), cwd=cwd)
 
 
 def cwd_dependent_version(root: Path, cfg: dict) -> "tuple[str, str] | None":
@@ -257,15 +244,20 @@ def cwd_dependent_version(root: Path, cfg: dict) -> "tuple[str, str] | None":
     is on ``PATH``. doppler lost a day to it (21.1.8 on the scaffold, 22.1.8
     on the real tree) before the cause was named.
 
-    Returns ``None`` when the command is stable across directories (or when
-    the version cannot be read at all, which `format_version` already reports
-    as ``""`` and is not this check's business to escalate).
+    Returns ``None`` when the command is stable across directories, or when
+    the project itself cannot answer — a formatter that is simply absent is a
+    genuine unknown, which `format_version` already reports as ``""``.
+
+    gh-772: the question is not C-specific and now has one implementation in
+    `_fmtprobe`, shared with ``py_format_command``. This wrapper keeps the
+    ``(here, there)`` shape its callers and tests use, and is the
+    **version**-disagreement half only — a command that works here and cannot
+    spawn elsewhere is `_fmtprobe`'s ``"spawn"`` kind, which this check used
+    to return ``None`` for and which was exactly doppler's Python case.
     """
-    here = format_version(cfg, cwd=root)
-    if not here:
+    if not C.c_formatting_on(cfg):
         return None
-    with tempfile.TemporaryDirectory(prefix="jm-cfmt-") as tmp:
-        there = format_version(cfg, cwd=Path(tmp))
-    if not there or there == here:
+    dep = _fmtprobe.cwd_dependence(root, C.c_format_command(cfg))
+    if dep is None or dep.kind != "version":
         return None
-    return here, there
+    return dep.from_project, dep.from_elsewhere
