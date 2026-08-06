@@ -213,17 +213,24 @@ the wrapper that calls them.
 
 ### The capsule triangle
 
-A foreign C pointer crosses the Python boundary as a named `PyCapsule`. All
-three directions exist, and share **one** unwrap emitter,
-`_context/_parse.capsule_unwrap_c` — two copies of a name-checked
+A foreign C pointer crosses the Python boundary as a named `PyCapsule`. Every
+direction shares an emitter in `_context/_parse.py` — `capsule_new_c` for
+producing, `capsule_unwrap_c` for consuming. Two copies of a name-checked
 `PyCapsule_GetPointer` plus its duck-typed `._capsule` fallback is exactly the
-pair that drifts.
+pair that drifts, and the producing side's `NULL` destructor is a **contract**,
+not a call.
 
 | direction         | declared as                                  | issue        |
 | ----------------- | -------------------------------------------- | ------------ |
 | consume, per call | a method `param` with `capsule`              | gh-432       |
-| produce           | a property `--type capsule --capsule <name>` | gh-788 gap 4 |
+| produce (object)  | a property `--type capsule --capsule <name>` | gh-788 gap 4 |
+| produce (handle)  | `capsule = "<name>"` on a `kind = "handle"`  | gh-794       |
 | construct         | an `init_param` with `capsule`               | gh-790       |
+
+`capsule_new_c` takes no destructor argument on purpose: a capsule that *owns*
+its pointer is a different feature and should look different. Both producers
+keep their liveness guard (destroyed / closed) before handing the pointer out —
+a capsule carries no liveness for the consumer to check.
 
 The emitter's two knobs are `fail` (`return NULL;` in a wrapper vs `return -1;`
 in an `initproc` — a hard-coded `return NULL` inside an `initproc` compiles and

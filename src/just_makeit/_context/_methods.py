@@ -33,7 +33,12 @@ from .._docstring import (
 from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
-from ._parse import _build_ml_doc, _build_params_parse, _step_parse_block
+from ._parse import (
+    _build_ml_doc,
+    _build_params_parse,
+    _step_parse_block,
+    capsule_new_c as _capsule_new_c,
+)
 
 
 # Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
@@ -3127,6 +3132,10 @@ def make_properties_ctx(
             # only correct choice here, so it is not configurable — a
             # capsule that owns its pointer is a different feature and
             # should look different.
+            # gh-794: the body moved to `capsule_new_c` so a handle type can
+            # publish the identical contract. One emitter, two callers — the
+            # NULL destructor is the contract, and a second copy is a place
+            # for it to be changed on one side only.
             _cap_expr = p.get("expr") or "self->handle"
             getter = (
                 f"static PyObject *\n"
@@ -3135,11 +3144,8 @@ def make_properties_ctx(
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
-                f"    /* Borrowed: NULL destructor, so the capsule never\n"
-                f"       frees a pointer {Component} still owns. */\n"
-                f"    return PyCapsule_New((void *)({_cap_expr}),\n"
-                f'                         "{p["capsule"]}", NULL);\n'
-                f"}}"
+                + _capsule_new_c(_cap_expr, p["capsule"], Component)
+                + "\n}"
             )
         elif container:
             _cdc = None

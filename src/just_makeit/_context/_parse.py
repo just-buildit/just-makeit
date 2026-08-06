@@ -17,6 +17,62 @@ from .._types import (
 )
 
 
+def capsule_new_c(
+    ptr_expr: str,
+    capsule_name: str,
+    owner: str,
+    indent: str = "    ",
+) -> str:
+    """The body that publishes *ptr_expr* as a borrowed named ``PyCapsule``.
+
+    The producing half of the capsule triangle, and the peer of
+    :func:`capsule_unwrap_c`. gh-788 gap 4 introduced it for an **object**
+    property; gh-794 needs the identical two lines on a ``kind = "handle"``
+    type, which is the shape most likely to be on the giving end of a capsule
+    and was the only one that could not give one.
+
+    Extracted for the same reason the unwrap was: this is a *contract*, not a
+    call. The NULL destructor is the whole of it, and a second copy is a place
+    for that to be quietly changed on one side only.
+
+    Parameters
+    ----------
+    ptr_expr : str
+        C expression for the pointer to lend (``self->handle``, ``self->h``,
+        or something reached through either).
+    capsule_name : str
+        The name the capsule carries. Consumers name-check it, so it is
+        load-bearing string data rather than a label.
+    owner : str
+        Display name of the owning type, for the comment only.
+    indent : str
+        Leading whitespace for each emitted line.
+
+    Notes
+    -----
+    **The destructor is NULL and is not configurable.** The capsule lends a
+    pointer the owner still owns; a capsule with a destructor would free it on
+    garbage collection and the owner would free it again in its deallocator. A
+    capsule that *owns* its pointer is a different feature and should look
+    different.
+
+    Examples
+    --------
+    >>> print(capsule_new_c("self->h", "doppler.wfm.clk", "SampleClock"))
+        /* Borrowed: NULL destructor, so the capsule never
+           frees a pointer SampleClock still owns. */
+        return PyCapsule_New((void *)(self->h),
+                             "doppler.wfm.clk", NULL);
+    """
+    i = indent
+    return (
+        f"{i}/* Borrowed: NULL destructor, so the capsule never\n"
+        f"{i}   frees a pointer {owner} still owns. */\n"
+        f"{i}return PyCapsule_New((void *)({ptr_expr}),\n"
+        f'{i}                     "{capsule_name}", NULL);'
+    )
+
+
 def capsule_unwrap_c(
     name: str,
     ctype: str,

@@ -37,6 +37,7 @@ from . import _composer
 from . import _config as C
 from . import _context as Ctx
 from . import _types as T
+from ._context._parse import capsule_new_c as _capsule_new_c
 
 if TYPE_CHECKING:
     from ._docstring import DoxyBlock
@@ -1135,6 +1136,30 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
                     f"NULL, NULL, NULL}},"
                 )
 
+    # gh-794: `_capsule` — the handle lending its opaque pointer, borrowed.
+    # Emitted last so it never disturbs the getter numbering above, and only
+    # when declared, so every existing handle module renders byte-identically.
+    _cap = C.handle_capsule(cfg, module)
+    if _cap:
+        funcs.append(
+            f"static PyObject *\n"
+            f"{tname}_get__capsule({obj} *self,"
+            f" void *Py_UNUSED(closure))\n"
+            f"{{\n"
+            # The closed guard is not optional here: handing out a capsule
+            # over a closed handle is exactly the use-after-free the RAII
+            # protocol exists to prevent, and the consumer has no way to
+            # notice. Same reasoning as gh-788 gap 4's destroyed guard.
+            f"{closed_get}\n" + _capsule_new_c("self->h", _cap, tname) + "\n}"
+        )
+        rows.append(
+            f'    {{"_capsule", (getter){tname}_get__capsule, NULL,\n'
+            f'     "Borrowed {_cap} capsule for this handle.\\n\\n"\n'
+            f'     "Non-owning: the capsule does not free the handle, and\\n"\n'
+            f'     "is only valid while this object is alive and open.",\n'
+            f"     NULL}},"
+        )
+
     table_name = f"{tname}_getset"
     table = (
         f"static PyGetSetDef {table_name}[] = {{\n"
@@ -1844,6 +1869,21 @@ def render_pyi(
                 lines.append(
                     f"    def {f['name']}(self, value: {ann}) -> None: ..."
                 )
+
+    # gh-794: the borrowed-pointer capsule. `Any` is what gh-432's capsule
+    # params and gh-788 gap 4's producing property already annotate to, so all
+    # three faces of one pointer read alike.
+    _cap_pyi = C.handle_capsule(cfg, module)
+    if _cap_pyi:
+        lines.append("    @property")
+        lines.append("    def _capsule(self) -> Any:")
+        lines.append(
+            f'        """Borrowed `{_cap_pyi}` capsule for this handle.\n\n'
+            f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
+            f"        capsule is accepted. Non-owning: it does not free the\n"
+            f"        handle, and is only valid while this object is alive\n"
+            f'        and open."""'
+        )
 
     # serializable state triplet (gh-403).
     if C.is_serializable(cfg, module):
