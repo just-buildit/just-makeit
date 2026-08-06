@@ -51,8 +51,13 @@ def run(
     object_name : str
         Component to attach the warning to.
     condition : str
-        Name of a bool-ish field on the component's state struct. Emitted as
-        ``self->handle-><condition>``, so it must be an identifier.
+        A bare field name on the component's state struct — emitted as
+        ``self->handle-><condition>`` — or a complete C expression, used
+        verbatim (gh-601). The second form is what a **forwarder** object
+        needs: its state struct is a handle onto a shared engine and has no
+        bool field to name, so its condition reaches through
+        (``self->handle->engine->underpowered``) exactly as every one of its
+        properties already does via ``expr``.
     message : str
         Warning text shown to the Python caller.
     module : str, optional
@@ -84,10 +89,26 @@ def run(
         )
         sys.exit(1)
 
-    if not _IDENT.match(condition):
+    # gh-601: a bare identifier is sugar for `self->handle-><name>`; anything
+    # else is a complete C expression, exactly as a property's `expr` is. What
+    # is still rejected is only what cannot be an *expression* at all — a
+    # statement spliced into `if (...)` produces broken C in generated code the
+    # author did not write, which is the gh-625 failure mode.
+    if not condition.strip():
         print(
-            f"error: --condition '{condition}' is not a C identifier.\n"
-            "It names a bool field on the state struct, e.g. 'underpowered'.",
+            "error: --condition is required — a warning with no condition "
+            "would fire unconditionally.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _bad = {c for c in ";{}" if c in condition}
+    if _bad:
+        print(
+            f"error: --condition '{condition}' contains {sorted(_bad)!r} and "
+            "is not a C expression.\n"
+            "It is spliced into `if (<condition>)`. Use a bare field name "
+            "('underpowered',\nreached through the handle for you) or a full "
+            "expression\n('self->handle->engine->underpowered').",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -130,9 +151,13 @@ def run(
     # The condition must name something the component actually computes. jm
     # can only check what it declared itself — a field the user hand-added to
     # the sacred struct is invisible here — so this warns rather than errors.
+    # gh-601: only meaningful for the bare-identifier form, which is the one
+    # jm resolves against the struct. A full expression names its own reach —
+    # typically through a forwarder's `engine->`, which is by definition not a
+    # field jm declared — so cross-checking it would warn on every correct use.
     known = {n for n, _, _ in C.state_vars(cfg, object_name)}
     known |= {p["name"] for p in C.properties(cfg, object_name)}
-    if known and condition not in known:
+    if _IDENT.match(condition) and known and condition not in known:
         print(
             f"warning: '{condition}' is not a declared state field or property"
             f" on '{object_name}'. If it is hand-added to the sacred struct"

@@ -45,10 +45,50 @@ _C_ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r"}
 )
 
-# A condition names a bool-ish field on the state struct, interpolated straight
-# into C — so anything but a plain identifier is rejected before it can become
-# an undeclared-identifier error in the user's build instead of a jm message.
+# A bare identifier names a bool-ish field on the state struct and is reached
+# through the handle for the author. Anything else is taken as a complete C
+# expression (gh-601) — see `condition_expr`.
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def condition_expr(condition: str) -> str:
+    """The C a warning's ``if`` tests, from its declared *condition*.
+
+    gh-601. A property's ``expr`` takes arbitrary C and a warning's condition
+    had to be a bare identifier, and the strict one is the one that needed to
+    be flexible: the shape that must reach through a pointer is the
+    **forwarder** — an object whose state struct is a handle onto a shared
+    engine::
+
+        typedef struct {
+            acq_state_t *engine;
+        } burst_acq_state_t;
+
+    There is no bool field on that struct and there never will be, since
+    adding one would duplicate state that already exists on the engine and
+    have to be kept in sync. So every property on such an object goes through
+    ``expr``, and its one warning was the only thing in the file that could
+    not be declared at all — leaving a hand-written block in an otherwise
+    fully generated fragment, to be re-applied by hand after every
+    regeneration. The reporter lost it once already, and a regeneration is
+    exactly when nobody is looking for a missing runtime warning.
+
+    A bare identifier keeps its existing meaning, so every manifest written
+    before this renders byte-for-byte as it did:
+
+    >>> condition_expr("underpowered")
+    'self->handle->underpowered'
+
+    Anything else is used verbatim, exactly as ``expr`` is — the author
+    supplies the whole reach, and jm does not guess where it starts:
+
+    >>> condition_expr("self->handle->engine->underpowered")
+    'self->handle->engine->underpowered'
+    """
+    return (
+        f"self->handle->{condition}" if _IDENT.match(condition) else condition
+    )
+
 
 # Project-wide line budget (CLAUDE.md: 79 cols for all languages).
 _MAX_COL = 79
@@ -170,7 +210,7 @@ def make_warnings_ctx(
         stacklevel = int(w.get("stacklevel", 1) or 1)
         msg = _c_string_literal(w["message"], 25)
         parts.append(
-            f"    if (self->handle->{cond}) {{\n"
+            f"    if ({condition_expr(cond)}) {{\n"
             f"        if (PyErr_WarnEx(PyExc_{category},\n"
             f"{msg},\n"
             f"                         {stacklevel}) < 0)\n"
