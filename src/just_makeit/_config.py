@@ -1365,6 +1365,28 @@ def handle_type(cfg: dict, module: str) -> str:
     )
 
 
+def handle_capsule(cfg: dict, module: str) -> str:
+    """The ``PyCapsule`` name a handle module publishes, or ``""`` (gh-794).
+
+    When set, the generated type gains a ``_capsule`` property lending its
+    opaque ``<handle_type> *`` — borrowed and non-owning, exactly as an
+    object's gh-788 gap-4 property does, so a handle drops straight into a
+    gh-432 method param or a gh-790 constructor with no change on the
+    consuming side.
+
+    A handle is the shape most likely to be on the *giving* end of a capsule —
+    it exists to wrap a long-lived resource another component wants to borrow —
+    and before this it was the only kind that could not give one.
+
+    Falls back to the module's ``capsule_name`` (which a ``kind = "capsule"``
+    module already uses for the same purpose) so the two kinds spell one idea
+    one way; empty means the property is not generated at all, leaving every
+    existing handle module byte-identical.
+    """
+    m = cfg.get("module", {}).get(module, {})
+    return str(m.get("capsule") or m.get("capsule_name") or "")
+
+
 def handle_type_name(cfg: dict, module: str) -> str:
     """Return the Python class name the handle module registers (``"Writer"``).
 

@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A `kind = "handle"` module can publish its pointer as a `PyCapsule`
+    (gh-794).** `capsule = "doppler.wfm.dp_sample_clock"` on the module gives
+    its type a `_capsule` property lending the opaque handle — borrowed,
+    non-owning, `NULL` destructor, identical semantics to an object's gh-788
+    gap-4 property.
+
+    This was the wrong way round before. `kind = "handle"` is precisely the
+    shape that wraps a long-lived resource another component wants to borrow —
+    a clock, a socket, a device, a plan — so it is the shape most likely to be
+    on the *giving* end of a capsule, and it was the only one that could not
+    give one. A handle could be passed nowhere: not to a gh-432 method param,
+    not to a gh-790 constructor.
+
+    **The consuming side needed no change at all.** gh-432 and gh-790 both
+    already accept "the capsule, or anything exposing it as `._capsule`", so a
+    handle that publishes one drops straight in — which is the strongest
+    evidence the abstraction was drawn in the right place. The whole feature is
+    one getter and one getset row, emitted through the same
+    `capsule_new_c` gap 4 uses: the `NULL` destructor is a contract, not a
+    call, and a second copy is a place for it to be changed on one side only.
+
+    The closed guard is kept and asserted. Handing out a capsule over a closed
+    handle is exactly the use-after-free the RAII protocol exists to prevent,
+    and a capsule carries no liveness for the consumer to check.
+
 ## [0.47.0] — 2026-08-06
 
 ### Added
