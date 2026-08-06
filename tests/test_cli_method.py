@@ -383,3 +383,52 @@ class TestCliMethod:
             _run(["fir", "execute"])
             _, kwargs = mock_run.call_args
             assert not kwargs.get("varargs")
+
+
+class TestGh805Flags:
+    """gh-805 §A2 + §B reach `_method.run` from the CLI, and each
+    value-taking flag refuses a missing value rather than swallowing the
+    next token as its argument."""
+
+    def test_fn_forwards(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["dp_tlm", "emit", "--fn", "dp_tlm_emit_checked"])
+            assert mock_run.call_args[1]["fn"] == "dp_tlm_emit_checked"
+
+    def test_error_negative_forwards(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["dp_tlm", "probe_id", "--error-negative"])
+            assert mock_run.call_args[1]["error_negative"] is True
+
+    def test_error_and_message_forward(self):
+        with patch("just_makeit._method.run") as mock_run:
+            _run(
+                [
+                    "dp_tlm",
+                    "probe_id",
+                    "--error-negative",
+                    "--error",
+                    "KeyError",
+                    "--error-message",
+                    "no probe by that name",
+                ]
+            )
+            kw = mock_run.call_args[1]
+            assert kw["error"] == "KeyError"
+            assert kw["error_message"] == "no probe by that name"
+
+    def test_defaults_are_absent_when_not_given(self):
+        """Zero churn: a method declared without these keys must not gain
+        them, or every existing manifest rewrites on the next apply."""
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute"])
+            kw = mock_run.call_args[1]
+            assert kw["fn"] == ""
+            assert kw["error_negative"] is False
+            assert kw["error"] == ""
+            assert kw["error_message"] == ""
+
+    @pytest.mark.parametrize("flag", ["--fn", "--error", "--error-message"])
+    def test_a_value_taking_flag_refuses_a_missing_value(self, flag):
+        with pytest.raises(SystemExit):
+            _run(["dp_tlm", "emit", flag])
