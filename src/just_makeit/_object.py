@@ -1922,14 +1922,7 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
-    if not object_name.replace("_", "").isalnum() or object_name[0].isdigit():
-        print(
-            f"error: '{object_name}' is not a valid object name.\n"
-            "Use lowercase letters, digits, and underscores only; "
-            "must not start with a digit.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    C.require_name(object_name, "object")
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

@@ -166,14 +166,7 @@ def run(
     inline: bool = False,
     check_return: bool = False,
 ) -> None:
-    if not fn_name.replace("_", "").isalnum() or fn_name[0].isdigit():
-        print(
-            f"error: '{fn_name}' is not a valid function name.\n"
-            "Use lowercase letters, digits, and underscores only; "
-            "must not start with a digit.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    C.require_name(fn_name, "function")
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

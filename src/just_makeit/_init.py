@@ -727,14 +727,7 @@ def run(
     destroy: "dict | None" = None,
     _hint: bool = True,
 ) -> None:
-    if not component.replace("_", "").isalnum() or component[0].isdigit():
-        print(
-            f"error: '{component}' is not a valid component name.\n"
-            "Use lowercase letters, digits, and underscores only; "
-            "must not start with a digit.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    C.require_name(component, "component")
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

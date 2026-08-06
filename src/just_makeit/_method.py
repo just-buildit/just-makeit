@@ -662,6 +662,7 @@ def run(
     codec: str = "",
     sink_fn: str = "",
 ) -> None:
+    C.require_name(method_name, "method")  # gh-625
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
