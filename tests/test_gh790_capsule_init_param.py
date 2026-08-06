@@ -365,8 +365,10 @@ class TestWithAPathParam:
         ext = self._ext_of(tmp_path)
         init = ext[ext.index("Rec_init(") :]
         init = init[: init.index("\n}\n")]
-        # Three rejections: None, no `_capsule` attribute, wrong capsule name.
-        assert init.count("{ Py_XDECREF(out); return -1; }") == 3, init
+        # Four rejections: None; the `_capsule` getter raising something
+        # other than AttributeError (gh-794 — propagated, not masked); no
+        # `_capsule` attribute; wrong capsule name. Every one releases.
+        assert init.count("{ Py_XDECREF(out); return -1; }") == 4, init
         # ...and none left unguarded. Only the region BEFORE create() matters:
         # the borrow is released the moment create() has copied it, so the
         # MemoryError path after it is correctly a bare `return -1`.
@@ -609,6 +611,32 @@ class TestItCompilesAndRuns:
             "print(Capture(t._capsule).get_seen())\n",  # raw capsule
         )
         assert out.split() == ["12345", "12345"]
+
+    def test_a_failing__capsule_getter_is_not_masked(self, tmp_path):
+        """gh-794 interaction. `_capsule` used to be a plain attribute, so
+        AttributeError was the only way the lookup could fail and clearing it
+        unconditionally was safe. It is now a GETTER with a guard: over a
+        destroyed object (gh-788 gap 4) or a closed handle (gh-794) it raises
+        RuntimeError, and that is the diagnosis the caller most needs.
+
+        Clearing it and reporting "not a Telemetry" about an object that IS a
+        Telemetry is worse than unhelpful — it is false, and it sends the
+        reader looking at the argument's type instead of its lifetime."""
+        out = self._run(
+            self._duo(tmp_path),
+            "from proj import Telemetry, Capture\n"
+            "t = Telemetry(magic=12345)\n"
+            "t.destroy()\n"
+            "try:\n"
+            "    Capture(t)\n"
+            "except Exception as e:\n"
+            "    print(type(e).__name__, e)\n",
+        )
+        assert out.startswith("RuntimeError"), (
+            "the getter's real error was replaced by a type complaint about "
+            "an object of the right type: " + out
+        )
+        assert "destroyed" in out, out
 
     def test_the_owner_is_kept_alive(self, tmp_path):
         """The correctness point. Every Python reference to the producer is

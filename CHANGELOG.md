@@ -29,6 +29,25 @@
     handle is exactly the use-after-free the RAII protocol exists to prevent,
     and a capsule carries no liveness for the consumer to check.
 
+### Fixed
+
+- **A `_capsule` getter that raises is no longer masked (gh-794).** A
+    capsule-typed `init_param` (gh-790) upgraded a failed `_capsule` lookup into
+    a `TypeError` naming what to pass. That was right when `_capsule` was a
+    plain attribute and `AttributeError` was the only way it could fail. It is
+    now a *getter with a guard*: over a destroyed object (gh-788 gap 4) or a
+    closed handle (gh-794) it raises `RuntimeError`, and clearing that to report
+    "not a `Telemetry`" about an object that **is** a `Telemetry` is not merely
+    unhelpful — it is false, and it points the reader at the argument's type
+    instead of its lifetime. Only an `AttributeError` is upgraded now; anything
+    else propagates.
+
+    Neither feature could surface this alone, which is why neither caught it:
+    gh-790 shipped before `_capsule` could fail any other way, and gh-794's
+    tests are render-level. The regression test builds both extensions,
+    destroys the producer, and asserts the constructor still reports
+    `RuntimeError: ... destroyed`.
+
 ## [0.47.0] — 2026-08-06
 
 ### Added
