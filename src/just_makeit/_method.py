@@ -19,6 +19,7 @@ For fixed-output methods:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -42,6 +43,9 @@ from ._object import _regenerate_module
 SIGNED_INT_RETURNS = frozenset(
     {"int", "int8_t", "int16_t", "int32_t", "int64_t"}
 )
+
+# gh-805 §A2: what a C function name may be.
+_C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def _block_in_elem_disp(arg_type: str) -> str:
@@ -763,10 +767,52 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+        # The fourth member of this set, and the one review caught: every
+        # non-scalar result shape builds its return value somewhere else, so
+        # `error_negative` was accepted, written to the manifest, and then
+        # silently emitted nothing. That is the failure this feature's own
+        # rejections exist to prevent, and the one gh-805 §G is about — a
+        # declaration that lands where jm does not look for it, read back as
+        # correct because reading the manifest is what reviewing it consists
+        # of. Rejection rather than a warning, to match the three siblings.
+        _shape = (
+            "--variable-output"
+            if variable_output
+            else "--single"
+            if single
+            else "--record-dtype"
+            if record_dtype
+            else "--multi-output"
+            if multi_output
+            else "--out-type"
+            if out_type
+            else ""
+        )
+        if _shape:
+            print(
+                f"error: --error-negative needs a plain scalar int return, "
+                f"but {_shape}\nbuilds an array or a record instead — there "
+                "is no single int for the\nnegative test to read. Drop one "
+                "of the two.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     if error and not error_negative:
         print(
             "error: --error names the exception --error-negative raises, "
             "so it needs\n--error-negative as well.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # gh-805 §A2: `fn` is spliced verbatim into the generated C, so a
+    # non-identifier produces a file that does not compile. Not the gh-625
+    # name predicate — that one is for jm names (lowercase ASCII); a C symbol
+    # legitimately carries uppercase and underscores.
+    if fn and not _C_IDENTIFIER.fullmatch(fn):
+        print(
+            f"error: --fn {fn!r} is not a C identifier. It is emitted "
+            "verbatim as the\nfunction jm calls, so it must match "
+            "[A-Za-z_][A-Za-z0-9_]*.",
             file=sys.stderr,
         )
         sys.exit(1)
