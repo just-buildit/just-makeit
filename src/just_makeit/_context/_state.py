@@ -629,13 +629,26 @@ def _build_no_state_init_ctx(
             _cap_ct, _cap_name = _capsule_meta[name]
             local_lines.append(f"    PyObject *{name}_obj = NULL;")
             parse_args.append(f"&{name}_obj")
+            # gh-515/gh-219, same rule the str_enum check above follows: by
+            # the time this runs, PyArg's `O&` has already produced a path
+            # borrow (PyUnicode_FSConverter returns a NEW reference), so every
+            # bail-out has to release it. A bare `return -1` here leaked one
+            # bytes object per rejected construction — invisible in a test that
+            # only checks the exception, which is why it survived review.
+            _cap_fail = (
+                "{ "
+                + "".join(f"{_coerce.path_release(p)} " for p in path_ip)
+                + "return -1; }"
+                if path_ip
+                else "return -1;"
+            )
             post_lines.append(
                 _capsule_unwrap_c(
                     name,
                     _cap_ct,
                     _cap_name,
                     f"{name}_obj",
-                    "return -1;",
+                    _cap_fail,
                     allow_none=False,
                 )
             )

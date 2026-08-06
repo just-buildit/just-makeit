@@ -341,6 +341,139 @@ class TestTheManifest:
         assert "--single" in capsys.readouterr().err
 
 
+class TestTheCliFlag:
+    """`--record-dtype` end-to-end through the real argv parser.
+
+    Codecov flagged `_cli_method.py` at 8% patch coverage on #791: every test
+    above drove `_method.run` directly, so the flag's own parsing — the thing
+    a user actually types — was never executed. A flag that parses wrong is a
+    silently different project, which is the same class as the `jm script`
+    omission this issue already hit.
+    """
+
+    def _run_cli(self, root: Path, extra: list[str]) -> None:
+        import just_makeit._cli_method as M
+
+        # `_cli_method.run` receives the args AFTER the subcommand: args[0] is
+        # the object, args[1] the method, args[2:] the flags.
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.run(["telemetry", "read", *extra])
+
+    def _fresh(self, tmp_path: Path) -> Path:
+        root = tmp_path / "proj"
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("proj", root)
+            object_run(
+                root, "telemetry", None, state_vars=[("cap", "size_t", "0")]
+            )
+        return root
+
+    def test_the_flag_reaches_the_manifest(self, tmp_path, monkeypatch):
+        root = self._fresh(tmp_path)
+        monkeypatch.chdir(root)
+        self._run_cli(
+            root,
+            [
+                "--arg-type",
+                "void",
+                "--return-type",
+                "size_t",
+                "--variable-output",
+                "--result-field",
+                "n:uint64_t",
+                "--result-field",
+                "value:float",
+                "--record-dtype",
+                REC,
+            ],
+        )
+        m = next(
+            m
+            for m in C.methods(C.load(root), "telemetry")
+            if m["name"] == "read"
+        )
+        assert m["record_dtype"] == REC
+        assert m["variable_output"] is True
+        assert [f["name"] for f in m["result_fields"]] == ["n", "value"]
+
+    def test_it_generates_the_same_binding_as_the_api(
+        self, tmp_path, monkeypatch
+    ):
+        """The flag is not a second code path — it must land exactly where
+        `_method.run(record_dtype=...)` does."""
+        root = self._fresh(tmp_path)
+        monkeypatch.chdir(root)
+        self._run_cli(
+            root,
+            [
+                "--arg-type",
+                "void",
+                "--return-type",
+                "size_t",
+                "--variable-output",
+                "--result-field",
+                "n:uint64_t",
+                "--result-field",
+                "value:float",
+                "--record-dtype",
+                REC,
+            ],
+        )
+        ext = _ext(root)
+        assert "PyArray_NewFromDescr(" in ext
+        assert f"offsetof({REC}, n)" in ext
+
+    def test_a_missing_value_is_rejected(self, tmp_path, monkeypatch, capsys):
+        root = self._fresh(tmp_path)
+        monkeypatch.chdir(root)
+        capsys.readouterr()
+        with pytest.raises(SystemExit):
+            self._run_cli(root, ["--variable-output", "--record-dtype"])
+        assert "--record-dtype requires" in capsys.readouterr().err
+
+    def test_field_docs_are_accepted_with_it(self, tmp_path, monkeypatch):
+        """They are `--single`-only otherwise; a record_dtype method has a
+        named column surface, so its docs render into the runtime __doc__."""
+        root = self._fresh(tmp_path)
+        monkeypatch.chdir(root)
+        self._run_cli(
+            root,
+            [
+                "--arg-type",
+                "void",
+                "--return-type",
+                "size_t",
+                "--variable-output",
+                "--result-field",
+                "n:uint64_t:Sequence number.",
+                "--record-dtype",
+                REC,
+            ],
+        )
+        assert "Sequence number." in _ext(root)
+
+    def test_field_docs_without_it_are_still_rejected(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Guard: the carve-out is scoped to record_dtype, not a hole."""
+        root = self._fresh(tmp_path)
+        monkeypatch.chdir(root)
+        capsys.readouterr()
+        with pytest.raises(SystemExit):
+            self._run_cli(
+                root,
+                [
+                    "--arg-type",
+                    "void",
+                    "--return-type",
+                    "size_t",
+                    "--result-field",
+                    "n:uint64_t:Sequence number.",
+                ],
+            )
+        assert "--single or --record-dtype" in capsys.readouterr().err
+
+
 class TestTheIncrementalSplice:
     """gh-729/gh-779 one costume along.
 

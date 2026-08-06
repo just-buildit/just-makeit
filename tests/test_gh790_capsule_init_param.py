@@ -232,6 +232,159 @@ class TestOwnership:
         assert "Py_XDECREF(self->_tlm_owner);" in ext
 
 
+class TestDeclaredAfterADefaultedParam:
+    """Asked for at review of #793, and the one shape where a new implicitly
+    required param kind could plausibly go wrong.
+
+    A capsule is required, so declaring it *after* a defaulted scalar makes
+    the Python signature hoist it — the same hoisting gh-611 established and
+    gh-786 reports against. It is not gh-786's failure mode: the prototype and
+    the call are both built from declaration order and so agree with each
+    other, while the kwlist hoists but assigns into *named* locals, so the two
+    orders never have to match. Pinned here so a future ordering change cannot
+    reintroduce that bug through the capsule path unnoticed.
+    """
+
+    def _root(self, tmp_path: Path) -> Path:
+        root = tmp_path / "proj"
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("proj", root)
+            d = root / "native" / "inc" / "telemetry"
+            d.mkdir(parents=True)
+            (d / "telemetry.h").write_text(FOREIGN_H)
+            object_run(
+                root,
+                "capture",
+                None,
+                state_vars=[("seen", "size_t", "0")],
+                init_params=[
+                    ("block_samples", "size_t", "512"),
+                    (
+                        "tlm",
+                        PTR,
+                        "",
+                        "",
+                        "",
+                        "",
+                        False,
+                        "",
+                        True,
+                        "",
+                        CAP,
+                        HDR,
+                    ),
+                ],
+            )
+        return root
+
+    def test_the_prototype_keeps_declaration_order(self, tmp_path):
+        assert (
+            "capture_state_t *capture_create(size_t block_samples,"
+            f" {PTR}tlm);" in _core_h(self._root(tmp_path))
+        )
+
+    def test_the_call_matches_the_prototype(self, tmp_path):
+        """The pair that must agree. They are built from the same loop, so
+        this is the assertion that catches it if that ever stops being true."""
+        assert "capture_create(block_samples, tlm)" in _ext(
+            self._root(tmp_path)
+        )
+
+    def test_the_kwlist_hoists_the_required_param(self, tmp_path):
+        ext = _ext(self._root(tmp_path))
+        assert 'kwlist[] = {"tlm", "block_samples", NULL}' in ext
+        assert '"O|K", kwlist' in ext
+        # Hoisted, but assigned into NAMED locals — which is exactly why the
+        # C order and the Python order are free to differ.
+        assert "&tlm_obj, &block_samples_raw" in ext
+
+    def test_the_stub_agrees_with_the_kwlist(self, tmp_path):
+        assert (
+            "def __init__(self, tlm: object, block_samples: int = 512)"
+            in _pyi(self._root(tmp_path))
+        )
+
+
+class TestWithAPathParam:
+    """A `path` init-param acquires a NEW reference via PyUnicode_FSConverter,
+    so every later bail-out has to release it — the rule the str_enum check
+    has followed since gh-515.
+
+    Found reviewing the merged gh-790 diff, not by a failing test: the three
+    capsule rejection paths returned -1 directly, leaking one bytes object per
+    rejected construction. Invisible to a test that only checks the exception
+    type, which is how it got through.
+    """
+
+    def _ext_of(self, tmp_path: Path) -> str:
+        root = tmp_path / "proj"
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("proj", root)
+            d = root / "native" / "inc" / "telemetry"
+            d.mkdir(parents=True)
+            (d / "telemetry.h").write_text(FOREIGN_H)
+            object_run(
+                root,
+                "rec",
+                None,
+                state_vars=[("n", "size_t", "0")],
+                init_params=[
+                    (
+                        "out",
+                        "path",
+                        "",
+                        "",
+                        "",
+                        "",
+                        False,
+                        "",
+                        True,
+                        "",
+                        "",
+                        "",
+                    ),
+                    (
+                        "tlm",
+                        PTR,
+                        "",
+                        "",
+                        "",
+                        "",
+                        False,
+                        "",
+                        True,
+                        "",
+                        CAP,
+                        HDR,
+                    ),
+                ],
+            )
+        return (root / "native" / "src" / "rec" / "rec_ext.c").read_text()
+
+    def test_every_capsule_bailout_releases_the_path(self, tmp_path):
+        ext = self._ext_of(tmp_path)
+        init = ext[ext.index("Rec_init(") :]
+        init = init[: init.index("\n}\n")]
+        # Three rejections: None, no `_capsule` attribute, wrong capsule name.
+        assert init.count("{ Py_XDECREF(out); return -1; }") == 3, init
+        # ...and none left unguarded. Only the region BEFORE create() matters:
+        # the borrow is released the moment create() has copied it, so the
+        # MemoryError path after it is correctly a bare `return -1`.
+        before_create = init[: init.index("rec_create(")]
+        for stmt in before_create.split("return -1;")[:-1]:
+            assert stmt.rstrip().endswith("Py_XDECREF(out);"), (
+                "a bail-out before create() that does not release the path "
+                "borrow:\n" + before_create
+            )
+
+    def test_a_capsule_alone_does_not_gain_the_release(self, tmp_path):
+        """Zero churn: with no path param the bail-out is the plain form."""
+        ext = _ext(_project(tmp_path))
+        assert (
+            "Py_XDECREF" not in ext.split("Capture_init(")[1].split("\n}\n")[0]
+        )
+
+
 class TestThePythonFace:
     def test_the_stub_annotates_object(self, tmp_path):
         """`object`, not `Any`: the binding accepts the capsule OR anything
