@@ -183,6 +183,93 @@ def descriptor_c(
     )
 
 
+def dtype_c(sid: str, record_t: str, flds: list[RecordField]) -> str:
+    """A cached ``PyArray_Descr *`` matching the C record's layout exactly.
+
+    gh-788 gap 1. doppler's ``Telemetry.read()`` returns one row per 16-byte C
+    record and the drain is a single ``memcpy``, because the numpy dtype *is*
+    the struct layout::
+
+        dtype([("n", "<u8"), ("value", "<f4"), ("probe", "<u2"),
+               ("flags", "<u2")])
+
+    jm had no ``PyArray_Descr`` concept at all — ``variable_output`` returns a
+    plain typed array of one element type — so the module's primary read path
+    could not be declared and the whole thing stayed ``no_generate``.
+
+    **The offsets come from ``offsetof`` and the itemsize from ``sizeof``**,
+    rather than letting numpy pack the field list itself. That is the whole
+    correctness argument. numpy's default for a list of ``(name, format)``
+    pairs is *packed*; C inserts padding to satisfy alignment. The two agree
+    for doppler's record by luck — ``uint64, float, uint16, uint16`` is 16
+    bytes either way — and disagree the moment a field ordering needs padding,
+    at which point every row after the first is read from the wrong bytes.
+    Deriving the layout from the compiler cannot drift from what the compiler
+    actually did, so the ``memcpy`` this exists to enable is safe by
+    construction rather than by review.
+
+    The per-field type comes from ``_NP_ENUM``, the same table the plain array
+    paths use, so a newly registered ctype reaches this without a second
+    mapping to forget (the gh-450 lesson: a parallel table drifts).
+
+    Cached in a file-scope static because a descr is immutable and building
+    one per call would allocate four Python objects per read on the hot path.
+    """
+    n = len(flds)
+    name_args = ", ".join(f'"{f.name}"' for f in flds)
+    off_args = ",\n        ".join(
+        f"(Py_ssize_t)offsetof({record_t}, {f.name})" for f in flds
+    )
+    set_fmts = "".join(
+        f"    PyList_SET_ITEM(formats, {i},\n"
+        f"        (PyObject *)PyArray_DescrFromType("
+        f"{T._NP_ENUM[T._CTYPE_META[f.ctype]['py_type']]}));\n"
+        for i, f in enumerate(flds)
+    )
+    return (
+        f"static PyArray_Descr *{sid}_dtype = NULL;\n\n"
+        f"/* The record's numpy dtype, built from the compiler's own layout:\n"
+        f"   offsetof/sizeof, never numpy's packing rules, so a padded\n"
+        f"   struct cannot silently read every row after the first from the\n"
+        f"   wrong bytes. */\n"
+        f"static PyArray_Descr *\n"
+        f"{sid}_get_dtype(void)\n"
+        f"{{\n"
+        f"    PyObject *names = NULL, *formats = NULL;\n"
+        f"    PyObject *offsets = NULL, *spec = NULL;\n"
+        f"    PyArray_Descr *out = NULL;\n"
+        f"    if ({sid}_dtype) {{\n"
+        f"        Py_INCREF({sid}_dtype);\n"
+        f"        return {sid}_dtype;\n"
+        f"    }}\n"
+        f'    names = Py_BuildValue("[{"s" * n}]", {name_args});\n'
+        f"    if (!names) goto done;\n"
+        f"    formats = PyList_New({n});\n"
+        f"    if (!formats) goto done;\n"
+        f"{set_fmts}"
+        f'    offsets = Py_BuildValue("[{"n" * n}]",\n'
+        f"        {off_args});\n"
+        f"    if (!offsets) goto done;\n"
+        f'    spec = Py_BuildValue("{{s:O,s:O,s:O,s:n}}",\n'
+        f'        "names", names, "formats", formats,\n'
+        f'        "offsets", offsets,\n'
+        f'        "itemsize", (Py_ssize_t)sizeof({record_t}));\n'
+        f"    if (!spec) goto done;\n"
+        f"    if (!PyArray_DescrConverter(spec, &out)) out = NULL;\n"
+        f"done:\n"
+        f"    Py_XDECREF(names);\n"
+        f"    Py_XDECREF(formats);\n"
+        f"    Py_XDECREF(offsets);\n"
+        f"    Py_XDECREF(spec);\n"
+        f"    if (out) {{\n"
+        f"        {sid}_dtype = out;\n"
+        f"        Py_INCREF({sid}_dtype);\n"
+        f"    }}\n"
+        f"    return out;\n"
+        f"}}\n\n"
+    )
+
+
 def find_descriptor(text: str, sid: str) -> str:
     """The file-scope structseq statics for wrapper *sid* in *text*, or ``""``.
 
