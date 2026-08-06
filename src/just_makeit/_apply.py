@@ -462,6 +462,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             value_fn=p.get("value_fn", ""),
             codec=p.get("codec", ""),  # gh-554
             entry_fn=p.get("entry_fn", ""),
+            capsule=p.get("capsule", ""),  # gh-788
             entry_type=p.get("entry_type", ""),
             type_field=p.get("type_field", ""),
             count_field=p.get("count_field", ""),
@@ -1628,6 +1629,9 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             or p.get("codec")
             or p.get("value_fn")
             or p.get("count_fn")
+            # gh-788: a capsule property reads a pointer it already has —
+            # pure glue, like expr/buf_field, so nothing is declared.
+            or p.get("capsule")
         ):
             continue
         ctype = p.get("type", "")

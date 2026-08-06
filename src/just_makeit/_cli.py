@@ -672,6 +672,7 @@ def main() -> None:
         count_fn = ""
         key_fn = ""
         value_fn = ""
+        capsule = ""  # gh-788
 
         remaining = args[3:]
         i = 0
@@ -736,6 +737,8 @@ def main() -> None:
                 "--count-fn",
                 "--key-fn",
                 "--value-fn",
+                # gh-788: publish a borrowed pointer as a named PyCapsule.
+                "--capsule",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -758,6 +761,8 @@ def main() -> None:
                     key_fn = val
                 elif tok == "--value-fn":
                     value_fn = val
+                elif tok == "--capsule":
+                    capsule = val  # gh-788
                 else:
                     expr = val
                 i += 1
@@ -798,6 +803,7 @@ def main() -> None:
             count_fn=count_fn,
             key_fn=key_fn,
             value_fn=value_fn,
+            capsule=capsule,
         )
 
     elif cmd == "warning":
