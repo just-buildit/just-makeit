@@ -267,6 +267,9 @@ def run(
 
     # (rel_posix, state, allowed, diff_text, dropped_symbols)
     entries: list[tuple[str, str, bool, str, frozenset]] = []
+    # gh-612: (path, detail) per fragment whose constructor kwlist has
+    # drifted from what the manifest generates.
+    kwargs_entries: list[tuple[str, str]] = []
     ok_count = 0
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
@@ -337,6 +340,21 @@ def run(
                     after.decode("utf-8", "replace"),
                 ):
                     state = "stale"
+                # gh-612: a fragment whose constructor kwlist no longer
+                # agrees with what the manifest generates. jm has been able
+                # to answer this since doppler#616, but only ever asked it
+                # mid-refresh (`warn_init_kwargs_drift`), and `status`
+                # redirects that stderr away — so for a fragment nobody
+                # refreshes, which is exactly the hand-owned case this comes
+                # from, the question was never put. Asking it here costs
+                # nothing: `before` and `after` are already in hand.
+                if state in ("unreconciled", "stale"):
+                    *_, _detail = _docsync.init_kwargs_drift(
+                        before.decode("utf-8", "replace"),
+                        after.decode("utf-8", "replace"),
+                    )
+                    if _detail:
+                        kwargs_entries.append((rel_posix, _detail))
                 diff = (
                     _unified_diff(before, after, rel_posix)
                     if show_diff
@@ -398,6 +416,9 @@ def run(
                             "header_default": h,
                         }
                         for (o, n, m, h) in drift_entries
+                    ],
+                    "kwargs_drift": [
+                        {"path": p, "detail": d} for (p, d) in kwargs_entries
                     ],
                     "ok": ok_count,
                     "drift": drift_count,
@@ -499,6 +520,37 @@ def run(
         )
         print()
 
+    # gh-612: same "impossible to miss" treatment as DROPPED and DRIFT, and
+    # for the same reason — nothing downstream can see it. The `.pyi` is
+    # rendered from the manifest, so it documents the constructor the
+    # manifest describes while the compiled extension parses the one the
+    # fragment has. Both spellings compile, both import, and a type checker
+    # blesses the call that raises: doppler's `CorrDetector2D(ref, 1, 0, 3,
+    # "median")` shipped in 0.38.1 as a `TypeError` its own stub endorsed.
+    if kwargs_entries:
+        print(
+            f"KWARGS ({len(kwargs_entries)}) — the constructor's keyword "
+            "arguments disagree with the manifest:"
+        )
+        for path, detail in kwargs_entries:
+            print(f"  ! {path}")
+            print(f"      {detail}")
+        print(
+            "  The .pyi is generated from the manifest and the extension is "
+            "not, so the\n"
+            "  stub advertises a signature the compiled object rejects — a "
+            "keyword that\n"
+            "  raises TypeError, or positionals that bind to the wrong "
+            "fields and do not.\n"
+            "  Not counted as drift: jm regenerates a kwlist only with the "
+            "body it belongs\n"
+            "  to, so there is nothing to run — reconcile the manifest with "
+            "the binding, or\n"
+            "  move the hand-written constructor into an _extra.c. See "
+            "gh-612."
+        )
+        print()
+
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
     # gh-752: a burn-down number for authored @code too wide for its stub.
@@ -520,9 +572,17 @@ def run(
             if unreconciled_entries
             else ""
         )
+        # gh-612: and the same for a drifted constructor — "up to date" over
+        # a stub whose signature the extension rejects is the exact claim
+        # gh-767 established jm must not make.
+        _kw = (
+            f"; {len(kwargs_entries)} kwargs-drift (!)"
+            if kwargs_entries
+            else ""
+        )
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}."
+            f"{suffix}{_unrec}{_kw}."
         )
     else:
         print(
@@ -538,6 +598,11 @@ def run(
             + (
                 f", {len(drift_entries)} default-drift (!)"
                 if drift_entries
+                else ""
+            )
+            + (
+                f", {len(kwargs_entries)} kwargs-drift (!)"
+                if kwargs_entries
                 else ""
             )
             + ".\n"
