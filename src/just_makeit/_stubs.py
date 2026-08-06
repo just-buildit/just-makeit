@@ -174,6 +174,7 @@ def _title(name: str) -> str:
 # would be worse than not splicing at all.
 
 _HAND_MARKER = "# jm:hand"
+_MANUAL_STUB_PLACEHOLDER = "<<MANUAL_STUB>>"
 
 
 def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
@@ -370,7 +371,98 @@ def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
     return pairs
 
 
+def _placeholder_members(text: str) -> set[tuple[str, str]]:
+    """``(ClassName, member_name)`` for every member still carrying the
+    unfilled ``<<MANUAL_STUB>>`` placeholder as its body.
+
+    Keyed on the pair, never on the bare name: two classes in one stub can
+    both declare ``execute``, and a name-level comparison would let a
+    legitimately-still-placeholder member on one class vouch for a member on
+    the other that just lost its content. That is the failure-open shape this
+    whole check exists to close.
+    """
+    out: set[tuple[str, str]] = set()
+    for key, nodes in _member_groups(text).items():
+        start, end = _group_span(text, nodes)
+        if _MANUAL_STUB_PLACEHOLDER in text[start:end]:
+            out.add(key)
+    return out
+
+
+def placeholder_regressions(old_text: str, new_text: str) -> list[str]:
+    """``Class.member`` for each member that carried hand-written content in
+    *old_text* and comes back as the bare placeholder in *new_text*.
+
+    gh-765: content loss of exactly this shape was observed once in ~14
+    identical runs of `jm apply` on doppler — `execute_ctrl_max_out` and
+    `delay_max_out` in `resample.pyi` both replaced by the placeholder, with
+    the same code and the same input that produced a clean tree the other
+    thirteen times. Six fixed `PYTHONHASHSEED` values did not reproduce it,
+    so the trigger is order- or environment-dependent and may never be found.
+
+    This is the durable answer to that, and it is deliberately a *check* on
+    the outcome rather than a fix for any particular cause: whatever makes
+    the transplant miss — an unsorted traversal, a scratch/real race, a `cfg`
+    read while a manifest fragment was mid-write and so missing the
+    `manual_stub` entry that marks the member hand-owned — the loss has the
+    same signature at the end, and jm can refuse to write it.
+
+    A stub the transplant simply does not reach is exactly the dangerous
+    case, since :func:`_splice_manual_stub_bodies` returns the fresh render
+    untouched whenever it recognises nothing. So this compares the *final*
+    text against the old file rather than instrumenting the splice, and it is
+    called on every path out.
+
+    Silent on a first render (no *old_text*) and on a newly declared
+    ``manual_stub`` method, both of which introduce a placeholder correctly:
+    only a member that demonstrably *had* content is reported.
+    """
+    if not old_text.strip() or _MANUAL_STUB_PLACEHOLDER not in new_text:
+        return []
+    old_placeholders = _placeholder_members(old_text)
+    old_members = set(_member_groups(old_text))
+    lost = [
+        f"{cls}.{name}"
+        for cls, name in _placeholder_members(new_text)
+        if (cls, name) in old_members and (cls, name) not in old_placeholders
+    ]
+    return sorted(lost)
+
+
 def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
+    """Preserve every hand-owned member of *old_text*, refusing to lose one.
+
+    The transplant itself is :func:`_splice_hand_owned`; this wraps it in the
+    gh-765 check. The wrapper exists because the splice has four exits — two
+    of them the "I recognised nothing, keep the fresh render" early returns
+    that are precisely how content goes missing — and a guard that has to be
+    repeated at each one is a guard that will eventually be forgotten at a
+    fifth. Checking the outcome once, here, also means all seven callers
+    (`_apply`, `_glue`, `_object`, `_method`, `_bind`, `_remove`, and this
+    module) are covered by construction rather than by each remembering.
+
+    Raises ``ValueError`` rather than warning: the stub is jm-owned and
+    drift-gated, so a caller who restores the lost text by hand has `jm
+    status` call it drift and the next `apply` strip it again. There is no
+    downstream recovery, which is the same reason gh-426's dropped-symbol
+    check is non-suppressible.
+    """
+    out = _splice_hand_owned(cfg, old_text, new_text)
+    lost = placeholder_regressions(old_text, out)
+    if lost:
+        raise ValueError(
+            "refusing to write a stub that would replace hand-written "
+            "content with the <<MANUAL_STUB>> placeholder:\n"
+            + "".join(f"  {name}\n" for name in lost)
+            + "This is gh-765 — an intermittent failure of the manual_stub\n"
+            "transplant, not something you did. Nothing has been written.\n"
+            "Re-run the command; if it recurs, the .pyi on disk is still\n"
+            "intact and worth attaching to gh-765."
+        )
+    return out
+
+
+def _splice_hand_owned(cfg: dict, old_text: str, new_text: str) -> str:
     """Preserve every hand-owned member of *old_text* across *new_text*'s
     fresh render.
 
@@ -1308,9 +1400,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
-                '        """<<MANUAL_STUB>> hand-write this signature/'
-                "docstring in the .pyi — jm preserves it verbatim on"
-                ' future regens."""',
+                f'        """{_MANUAL_STUB_PLACEHOLDER} hand-write this'
+                " signature/docstring in the .pyi — jm preserves it"
+                ' verbatim on future regens."""',
             ]
             continue
         # codec-pack method (gh-554): the SAME renderer the standalone stub
