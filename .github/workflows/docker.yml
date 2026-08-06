@@ -3,6 +3,23 @@ name: Docker examples
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      # A called workflow inherits the CALLER's ref and event. On a tag push
+      # that ref is the tag, which is right; on release.yml's dispatch path it
+      # is the branch, which would build an image from the wrong tree. So the
+      # caller says explicitly what to build.
+      ref:
+        type: string
+        required: false
+        default: ""
+      # ...and whether to publish. The gates below read `github.event_name`,
+      # which for a called workflow is the caller's event — `workflow_dispatch`
+      # on that path, which the old condition did not list, so the images
+      # would have been built and silently not pushed.
+      publish:
+        type: boolean
+        required: false
+        default: true
   push:
     branches: [main]
     paths:
@@ -42,11 +59,13 @@ jobs:
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: docker/setup-buildx-action@v4.2.0
 
       - uses: docker/login-action@v4.4.0
-        if: github.event_name == 'push' || github.event_name == 'workflow_call'
+        if: github.event_name == 'push' || inputs.publish
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -110,7 +129,7 @@ jobs:
       # directly, so that tag never briefly points at a single-arch image.
       # The manifest job below combines these into the public tags.
       - name: Tag and push arch-specific image to GHCR
-        if: github.event_name == 'push' || github.event_name == 'workflow_call'
+        if: github.event_name == 'push' || inputs.publish
         run: |
           BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
           docker tag jm-examples-linux:ci "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
@@ -122,7 +141,7 @@ jobs:
   manifest:
     name: Publish multi-arch manifest
     needs: linux
-    if: github.event_name == 'push' || github.event_name == 'workflow_call'
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: docker/login-action@v4.4.0
