@@ -79,6 +79,7 @@ def run(
     value_fn: str = "",
     codec: str = "",
     entry_fn: str = "",
+    capsule: str = "",
     entry_type: str = "",
     type_field: str = "",
     count_field: str = "",
@@ -104,6 +105,7 @@ def run(
         not container
         and not buf_field
         and not expr
+        and not capsule  # gh-788: a capsule names no C type; it is opaque
         and ctype not in T._CTYPE_META
     ):
         supported = ", ".join(sorted(T._CTYPE_META) + list(T.CONTAINER_KINDS))
@@ -265,6 +267,11 @@ def run(
         prop_entry["expr"] = expr
     if enum:
         prop_entry["enum"] = enum
+    if capsule:
+        # gh-788: the PyCapsule name the pointer is published under. It is
+        # the same string gh-432's capsule-typed params unwrap with, and the
+        # two must agree exactly or PyCapsule_GetPointer returns NULL.
+        prop_entry["capsule"] = capsule
     if container:
         # Only record what was actually asked for; the render layer supplies
         # the defaults, so an unspecified accessor stays unspecified in the
@@ -336,7 +343,7 @@ def run(
         disp = T._ctype_display(ctype)
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
-    elif not buf_field and not expr:
+    elif not buf_field and not expr and not capsule:
         decls = plain_accessor_decls(object_name, prop_name, ctype, writable)
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")

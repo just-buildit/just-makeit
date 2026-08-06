@@ -2954,7 +2954,42 @@ def make_properties_ctx(
                 f"    return PyUnicode_FromString({_t}[_v]);\n"
             )
 
-        if container:
+        if p.get("capsule"):
+            # gh-788 gap 4: the PRODUCING side of gh-432. That issue taught
+            # jm to *consume* a foreign pointer arriving as a named
+            # `PyCapsule` (or duck-unwrapped from an object's `_capsule`);
+            # nothing could hand one out. doppler's telemetry object is the
+            # attach point for every instrumented component — it lends a
+            # borrowed `dp_tlm_t *` so their `set_telemetry` can take it —
+            # and with no way to declare that, the whole module stayed
+            # `no_generate`.
+            #
+            # gh-286's `kind = "capsule"` is a different shape entirely:
+            # free functions over an opaque capsule *as the state*, not a
+            # property on a `PyTypeObject`.
+            #
+            # The destructor is NULL, and that is the load-bearing detail.
+            # The capsule lends a pointer the object still owns; a capsule
+            # with a destructor would free it on garbage-collection and the
+            # owner would free it again on `__dealloc__`. Non-owning is the
+            # only correct choice here, so it is not configurable — a
+            # capsule that owns its pointer is a different feature and
+            # should look different.
+            _cap_expr = p.get("expr") or "self->handle"
+            getter = (
+                f"static PyObject *\n"
+                f"{Component}_getprop_{pname}"
+                f"({Component}Object *self,"
+                f" void *Py_UNUSED(closure))\n"
+                f"{{\n"
+                f"{guard}"
+                f"    /* Borrowed: NULL destructor, so the capsule never\n"
+                f"       frees a pointer {Component} still owns. */\n"
+                f"    return PyCapsule_New((void *)({_cap_expr}),\n"
+                f'                         "{p["capsule"]}", NULL);\n'
+                f"}}"
+            )
+        elif container:
             _cdc = None
             if _codec.is_codec_property(p):
                 _cdc = (codecs or {}).get(p["codec"])
@@ -3174,6 +3209,13 @@ def make_properties_ctx(
             from .._stubs import _py as _stubs_py
 
             py_t = _stubs_py("string_enum:" + ",".join(enums[p_enum]))
+        elif p.get("capsule"):
+            # gh-788: a PyCapsule has no Python type to name — the whole
+            # point is that its contents are opaque to Python and meaningful
+            # only to the C that unwraps it. `Any` is what gh-432's
+            # capsule-typed *params* already annotate to, so the producing
+            # and consuming faces of the same pointer read alike.
+            py_t = "Any"
         elif container:
             _pcdc = (
                 (codecs or {}).get(p["codec"])
