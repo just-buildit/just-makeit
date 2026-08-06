@@ -1183,11 +1183,29 @@ def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
     """Bring the real ``_core.h`` up to date with the manifest, splice-free.
 
     The temp header is freshly rendered from the manifest and carries every
-    declaration the spec implies.  We extract those prototypes and inject any
-    the user's header is *missing* — the sacred state struct and inline
-    ``step()`` body are never touched.  Apply only *adds* decls; a signature
-    change is a structural edit reached through ``jm regenerate`` (so it never
-    duplicates a prototype).  Returns True if the real header changed."""
+    declaration the spec implies.  We extract those prototypes and reconcile
+    them into the user's header — the sacred state struct and inline
+    ``step()`` body are never touched.
+
+    gh-632: this used to claim apply "only *adds* decls", while
+    :func:`_init._inject_decls_into_core_h`, the function it calls, documented
+    the opposite and **replaced by name**. Both docstrings were internally
+    coherent and described different behaviours; the code did the second.
+
+    Replace-by-name is the policy, and is deliberate. ``_core.h`` is a hybrid
+    — the struct and the inline ``step()`` are sacred, the declarations are
+    glue — so a prototype that no longer matches the manifest is stale glue,
+    and a purely additive refresh would freeze a changed signature out of the
+    header permanently while the generated ``_ext.c`` called the new one.
+
+    What was wrong is that it happened *silently*, so the author learned
+    about it from a build failure in `_core.c` or at a call site, one step
+    removed from the edit. It now warns, naming the old and new prototypes.
+    ``skip_names`` remains the targeted exception, for declarations whose
+    author-written form jm reads back as a contract (gh-761's ``*_max_out``
+    arity) and would otherwise flip-flop on each apply.
+
+    Returns True if the real header changed."""
     if not temp.exists():
         return False
     from ._init import _core_h_decl_lines, _inject_decls_into_core_h

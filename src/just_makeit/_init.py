@@ -354,6 +354,11 @@ def _inject_decls_into_core_h(
     just before the ``extern "C"`` close (falling back to the header guard).
     The sacred state struct and inline ``step()`` body are never touched.
 
+    gh-632: a replacement **warns**, naming the old and new prototypes. This
+    is a rewrite inside a sacred file, and it is not distinguishable from a
+    hand edit being discarded — `_apply._refresh_core_h_decls`, the caller,
+    documents why replace-by-name is nevertheless the right policy.
+
     skip_names — function names that should NOT be replaced even if a
     declaration with that name already exists.  When the header already
     declares a name in skip_names (with any signature), the incoming decl is
@@ -430,8 +435,31 @@ def _inject_decls_into_core_h(
                 if skip_names and fn_name in skip_names:
                     # Name is in skip_names — preserve the existing decl.
                     continue
+                # gh-632: say so. Reaching here means the header's prototype
+                # differs from the manifest's beyond the decorative
+                # qualifiers `_normalize_decl` already forgives, so this is a
+                # real rewrite of a declaration in a *sacred* file. jm cannot
+                # tell an intended manifest change from a hand edit it is
+                # about to discard — and the author wants to hear about it
+                # either way, because the definition in `_core.c` and every
+                # call site still use the old prototype. Silent, the next
+                # build fails somewhere else entirely.
+                _old = use.search(text)
+                _prev = _old.group(0).strip() if _old else ""
                 new_text, n = use.subn(d, text, count=1)
                 if n:
+                    if _prev:
+                        print(
+                            f"warning: {path}: replacing the declaration of"
+                            f" {fn_name}() to match the manifest\n"
+                            f"    was: {_prev}\n"
+                            f"    now: {d}\n"
+                            "  The definition in _core.c and any call sites"
+                            " still use the old prototype. If the header was"
+                            " right, update the manifest instead — this"
+                            " refresh runs on every apply.",
+                            file=sys.stderr,
+                        )
                     text = new_text
                     continue
         to_insert.append(d)
