@@ -270,6 +270,10 @@ def _bench_method_block(component: str, m: dict) -> str:
         return ""
 
     name: str = m["name"]
+    # gh-805 §A2: benchmark the C symbol the method actually binds. The local
+    # variable names below stay keyed on `name` (they are C identifiers in the
+    # generated bench, and `fn` may repeat across methods).
+    c_fn: str = m.get("fn", "") or f"{component}_{name}"
     arg_type: str = m.get("arg_type", "void")
     return_type: str = m.get("return_type", "float _Complex")
     batch: bool = m.get("batch", False)
@@ -319,11 +323,11 @@ def _bench_method_block(component: str, m: dict) -> str:
                 f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
             ]
             call = (
-                f"{component}_{name}(obj, {name}_in, BENCH_N,"
+                f"{c_fn}(obj, {name}_in, BENCH_N,"
                 f" {name}_results, {max_results})"
             )
         else:
-            call = f"{component}_{name}(obj, {name}_results, {max_results})"
+            call = f"{c_fn}(obj, {name}_results, {max_results})"
         lines.append(f"        volatile size_t {name}_sink;")
         lines += [
             f"        for (int i = 0; i < 4; i++) {name}_sink = {call};",
@@ -356,7 +360,7 @@ def _bench_method_block(component: str, m: dict) -> str:
             f'        if (!({chk_vars})) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
         ]
         in_arg = f" {name}_in," if has_arg else ""
-        call = f"{component}_{name}(obj,{in_arg} BENCH_N, {name}_out)"
+        call = f"{c_fn}(obj,{in_arg} BENCH_N, {name}_out)"
         lines += [
             "        for (int i = 0; i < 4; i++)",
             f"            {call};",
@@ -381,7 +385,7 @@ def _bench_method_block(component: str, m: dict) -> str:
         if has_ret:
             lines.append(f"        volatile {ret_disp} {name}_sink;")
         sink = f"{name}_sink = " if has_ret else ""
-        call = f"{component}_{name}(obj, {name}_in, BENCH_N{param_args})"
+        call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args})"
         lines += [
             "        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
@@ -399,7 +403,7 @@ def _bench_method_block(component: str, m: dict) -> str:
             lines.append(f"        volatile {ret_disp} {name}_sink;")
         sink = f"{name}_sink = " if has_ret else ""
         in_arg = f", {arg_zero}" if has_arg else ""
-        call = f"{component}_{name}(obj{in_arg}{param_args})"
+        call = f"{c_fn}(obj{in_arg}{param_args})"
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
@@ -528,15 +532,22 @@ def serializable_triplet_parts(
     return c_funcs, pmd, pyi
 
 
-def _max_out_doc(component, name, count_param, max_out_const, block_of):
+def _max_out_doc(
+    component, name, count_param, max_out_const, block_of, c_fn=""
+):
     """The doc for ``<name>_max_out``: header block if authored, else jm's.
 
     gh-684. Unlike the glue in :mod:`_gluedoc`, ``max_out``'s *value* is
     object-specific and its C body is an ``IMPLEMENT`` stub the author writes
     unless the manifest declared the constant -- so the header always wins and
     jm's prose is only the fallback.
+
+    gh-805 §A2: *c_fn* is the method's resolved C symbol, which the header
+    documents. *name* stays the PYTHON face — ``max_out_method`` below renders
+    ``<name>_max_out`` for the reader — so the two are deliberately separate
+    arguments rather than one. Defaults to the derived symbol.
     """
-    blk = block_of(f"{component}_{name}_max_out")
+    blk = block_of(f"{c_fn or f'{component}_{name}'}_max_out")
     gm = max_out_method(name, count_param or "", int(max_out_const or 0))
     if blk is not None:
         gm = replace(gm, block=blk)
@@ -672,30 +683,52 @@ def make_methods_ctx(
 
     for m in methods:
         name: str = m["name"]
+        # gh-805 §A2: the C symbol this method binds. Derived from the
+        # component by default — `fn` overrides it so existing C with its own
+        # established prefix can be adopted without renaming a public API, and
+        # so a hot-path function and its validating variant can coexist
+        # (`name = "emit"`, `fn = "dp_tlm_emit_checked"`).
+        #
+        # Resolved ONCE, here, and used for every C symbol this method forms
+        # below — including the `_max_out` companion, so the pair cannot
+        # disagree. `name` remains the PYTHON face throughout: the PyMethodDef
+        # row, the .pyi and the docstrings are unaffected by `fn`.
+        #
+        # `fn` is already the spelling on properties, getters, setters,
+        # composer fields and handle methods; this is that key reaching one
+        # more place, not a new concept.
+        c_fn: str = m.get("fn", "") or f"{component}_{name}"
 
         # Summary precedence: TOML `doc` override > header @brief > name
         # fallback. This one is still resolved here because the *runtime*
         # PyMethodDef doc is brief-only (gh-642 is the parity ask); the .pyi's
         # param/return prose is resolved inside render_numpy_doc.
-        _block = (doc_blocks or {}).get(f"{component}_{name}")
+        #
+        # Keyed on the C symbol, not the derived name: the header documents
+        # the function actually declared, so an `fn`-overridden method finds
+        # its Doxygen block under `fn`. Same fallback shape `_handle.py`
+        # already uses for its own `fn`-carrying methods.
+        _block = (doc_blocks or {}).get(c_fn) or (doc_blocks or {}).get(
+            f"{component}_{name}"
+        )
         _brief = m.get("doc") or (
             _block.brief if (_block and _block.brief) else ""
         )
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
         if m.get("varargs"):
-            binding_file = f"{component}_{name}_core.c"
+            binding_file = f"{c_fn}_core.c"
             varargs_binding_files.append(binding_file)
             extern_decl = (
                 f"/* varargs binding — body in {binding_file} */\n"
                 f"extern PyObject *\n"
-                f"{component}_{name}"
+                f"{c_fn}"
                 f"(PyObject *, PyObject *, PyObject *);\n"
             )
             method_c_parts.append(extern_decl)
             pmd_lines.append(
                 f'    {{"{name}",'
-                f" (PyCFunction)(void *){component}_{name},"
+                f" (PyCFunction)(void *){c_fn},"
                 f" METH_VARARGS | METH_KEYWORDS,\n"
                 f'     "{name}(*args, **kwargs)."}},\n'
             )
@@ -762,6 +795,18 @@ def make_methods_ctx(
         # same contract the serializable set_state glue emits). Fixed-output
         # methods only.
         status_return: bool = m.get("status_return", False)
+        # gh-805 §B: the int return is a VALUE unless it is negative, in
+        # which case it is an error code — `open`/`read`/`snprintf` and every
+        # registry-style lookup work this way. Distinct from `status_return`,
+        # which claims the whole int: here a successful call still has a
+        # number to give back, so the `.pyi` return annotation is unchanged
+        # and only the failure path differs. The CLI rejects the two together.
+        error_negative: bool = m.get("error_negative", False)
+        # The exception category and text for that failure. `error` reuses
+        # gh-482's ERROR_CATEGORIES (already validated at declaration time),
+        # so this renders a name jm has vetted rather than arbitrary C.
+        error_category: str = m.get("error", "") or "ValueError"
+        error_message: str = m.get("error_message", "")
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -985,7 +1030,7 @@ def make_methods_ctx(
         if batch:
             if has_arg:
                 decl_lines.append(
-                    f"void {component}_{name}({component}_state_t *state,"
+                    f"void {c_fn}({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n, {ret_disp} *out);"
                 )
                 # gh-222: fixed-size (1:1) batch methods accept an optional
@@ -1028,7 +1073,7 @@ def make_methods_ctx(
                     f"            Py_DECREF(out_arr);"
                     f" Py_DECREF(in_arr); return NULL;\n"
                     f"        }}\n"
-                    f"        {component}_{name}(self->handle,\n"
+                    f"        {c_fn}(self->handle,\n"
                     f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
                     f"            (size_t)n,\n"
                     f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
@@ -1039,7 +1084,7 @@ def make_methods_ctx(
                     f"    PyObject *out ="
                     f" PyArray_SimpleNew(1, dims, {ret_np});\n"
                     f"    if (!out) {{ Py_DECREF(in_arr); return NULL; }}\n"
-                    f"    {component}_{name}(self->handle,\n"
+                    f"    {c_fn}(self->handle,\n"
                     f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
                     f"        (size_t)n,\n"
                     f"        ({ret_disp} *)PyArray_DATA"
@@ -1050,7 +1095,7 @@ def make_methods_ctx(
                 )
             else:
                 decl_lines.append(
-                    f"void {component}_{name}({component}_state_t *state,"
+                    f"void {c_fn}({component}_state_t *state,"
                     f" size_t n, {ret_disp} *out);"
                 )
                 # gh-222: count-driven batch generator with optional `out=`.
@@ -1084,7 +1129,7 @@ def make_methods_ctx(
                     f" (Py_ssize_t)n);\n"
                     f"            Py_DECREF(out_arr); return NULL;\n"
                     f"        }}\n"
-                    f"        {component}_{name}(self->handle,\n"
+                    f"        {c_fn}(self->handle,\n"
                     f"            (size_t)n,\n"
                     f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
                     f"        return (PyObject *)out_arr;\n"
@@ -1093,7 +1138,7 @@ def make_methods_ctx(
                     f"    PyObject *out ="
                     f" PyArray_SimpleNew(1, dims, {ret_np});\n"
                     f"    if (!out) return NULL;\n"
-                    f"    {component}_{name}(self->handle,\n"
+                    f"    {c_fn}(self->handle,\n"
                     f"        (size_t)n,\n"
                     f"        ({ret_disp} *)PyArray_DATA"
                     f"((PyArrayObject *)out));\n"
@@ -1168,13 +1213,11 @@ def make_methods_ctx(
             _rf_parts += c_param_parts(params)
             if single_record:
                 decl_lines.append(
-                    f"{ret_disp} {component}_{name}({', '.join(_rf_parts)});"
+                    f"{ret_disp} {c_fn}({', '.join(_rf_parts)});"
                 )
             else:
                 _rf_parts += [f"{ret_disp} *result", "size_t max_results"]
-                decl_lines.append(
-                    f"size_t {component}_{name}({', '.join(_rf_parts)});"
-                )
+                decl_lines.append(f"size_t {c_fn}({', '.join(_rf_parts)});")
         elif variable_output:
             extra_params = "".join(
                 f", {_ctype_display(rt)} *out{i + 1}"
@@ -1187,15 +1230,13 @@ def make_methods_ctx(
             # otherwise. jm splices these back into the sacred `_core.h`, so
             # emitting the count form against a state-only implementation
             # rewrites the author's prototype out from under their code.
-            if max_out_is_state_only(
-                doc_blocks, f"{component}_{name}_max_out"
-            ):
+            if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                 _moc_decl = ""
             if has_arg:
                 decl_lines.append(
-                    f"size_t {component}_{name}_max_out"
+                    f"size_t {c_fn}_max_out"
                     f"({component}_state_t *state{_moc_decl});\n"
-                    f"size_t {component}_{name}"
+                    f"size_t {c_fn}"
                     f"({component}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
@@ -1212,18 +1253,18 @@ def make_methods_ctx(
                             f"{_ctype_display(_p['type'])} {_p['name']}"
                         )
                 decl_lines.append(
-                    f"size_t {component}_{name}_max_out"
+                    f"size_t {c_fn}_max_out"
                     f"({component}_state_t *state{_moc_decl});\n"
-                    f"size_t {component}_{name}"
+                    f"size_t {c_fn}"
                     f"({component}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             else:
                 decl_lines.append(
-                    f"size_t {component}_{name}_max_out"
+                    f"size_t {c_fn}_max_out"
                     f"({component}_state_t *state{_moc_decl});\n"
-                    f"size_t {component}_{name}"
+                    f"size_t {c_fn}"
                     f"({component}_state_t *state, size_t n,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
@@ -1255,7 +1296,7 @@ def make_methods_ctx(
                         )
                 c_param_str = ", ".join(p_parts)
                 decl_lines.append(
-                    f"{ret_disp} {component}_{name}"
+                    f"{ret_disp} {c_fn}"
                     f"({component}_state_t *state,"
                     f" {c_param_str}{extra_params}{out_type_param});"
                 )
@@ -1263,20 +1304,20 @@ def make_methods_ctx(
                 if is_array_param_type(arg_type):
                     _e_disp = _ctype_display(array_elem_ctype(arg_type))
                     decl_lines.append(
-                        f"{ret_disp} {component}_{name}"
+                        f"{ret_disp} {c_fn}"
                         f"({component}_state_t *state,"
                         f" const {_e_disp} *x, size_t x_len"
                         f"{extra_params}{out_type_param});"
                     )
                 else:
                     decl_lines.append(
-                        f"{ret_disp} {component}_{name}"
+                        f"{ret_disp} {c_fn}"
                         f"({component}_state_t *state,"
                         f" {arg_disp} x{extra_params}{out_type_param});"
                     )
             else:
                 decl_lines.append(
-                    f"{ret_disp} {component}_{name}"
+                    f"{ret_disp} {c_fn}"
                     f"({component}_state_t *state"
                     f"{extra_params}{out_type_param});"
                 )
@@ -1472,7 +1513,7 @@ def make_methods_ctx(
                 _lazy_fallback = (
                     f"(size_t)PyArray_SIZE({_first_arr}_arr)"
                     if _first_arr is not None
-                    else f"{component}_{name}_max_out(self->handle)"
+                    else f"{c_fn}_max_out(self->handle)"
                 )
                 # gh-607: an all-scalar params shape (no array to size from)
                 # has no count for the kernel to take either — max_out()
@@ -1579,7 +1620,7 @@ def make_methods_ctx(
                 _out_cap_arg = ", _cap" if pass_capacity else ""
                 _out_kernel = _reindent(
                     _kernel_call_block(
-                        f"{component}_{name}({_out_call_data}{_out_cap_arg})",
+                        f"{c_fn}({_out_call_data}{_out_cap_arg})",
                         nogil,
                     )
                 )
@@ -1608,7 +1649,7 @@ def make_methods_ctx(
                     f" {_decref_early_vo}return NULL; }}\n"
                     f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                     f"        size_t _omax ="
-                    f" {component}_{name}_max_out(self->handle{_moc_call_arg});\n"
+                    f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
                     # Without pass_capacity, max_out() alone is not always a
                     # true call-independent upper bound — a generator's
                     # steps(count) writes exactly the caller's requested
@@ -1678,7 +1719,7 @@ def make_methods_ctx(
             _vo_alloc = (
                 f"    size_t _need = {_lazy_fallback};\n"
                 f"    size_t _cap ="
-                f" {component}_{name}_max_out(self->handle{_moc_call_arg});\n"
+                f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
                 # gh-607: without pass_capacity, the kernel is never told its
                 # capacity, so max_out() is only a sizing HINT and the alloc
                 # is clamped to at least what the call needs — a mechanically
@@ -1743,8 +1784,7 @@ def make_methods_ctx(
             )
             _vo_cap_arg = ", _cap" if pass_capacity else ""
             _kernel_vo = _kernel_call_block(
-                f"{component}_{name}"
-                f"({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
+                f"{c_fn}({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
                 nogil,
             )
             _vo_empty = (
@@ -1985,9 +2025,7 @@ def make_methods_ctx(
                 # count-taking binding against that is both a compile error
                 # and — where an older jm already wrote the no-arg form — a
                 # stub that disagrees with the binding beside it.
-                if max_out_is_state_only(
-                    doc_blocks, f"{component}_{name}_max_out"
-                ):
+                if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                     _pymo_decl, _pymo_name = "", None
                 if _pymo_name:
                     _mo_doc = _build_ml_doc(
@@ -1998,6 +2036,7 @@ def make_methods_ctx(
                             _pymo_name,
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
+                            c_fn=c_fn,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -2011,7 +2050,7 @@ def make_methods_ctx(
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
                         f"    return PyLong_FromSize_t(\n"
-                        f"        {component}_{name}_max_out(self->handle,"
+                        f"        {c_fn}_max_out(self->handle,"
                         f" (size_t){_pymo_name}));\n"
                         f"}}"
                     )
@@ -2029,6 +2068,7 @@ def make_methods_ctx(
                             "",
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
+                            c_fn=c_fn,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -2039,7 +2079,7 @@ def make_methods_ctx(
                         f"{{\n"
                         f"{guard}"
                         f"    return PyLong_FromSize_t(\n"
-                        f"        {component}_{name}_max_out(self->handle));\n"
+                        f"        {c_fn}_max_out(self->handle));\n"
                         f"}}"
                     )
                     pmd_lines.append(
@@ -2107,7 +2147,7 @@ def make_methods_ctx(
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
-                        f"{component}_{name}(self->handle, {_p_call})",
+                        f"{c_fn}(self->handle, {_p_call})",
                         nogil,
                     )
                     + _p_cleanup
@@ -2134,7 +2174,7 @@ def make_methods_ctx(
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
-                        f"{component}_{name}(self->handle,\n"
+                        f"{c_fn}(self->handle,\n"
                         f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
                         f" n_in)",
                         nogil,
@@ -2152,7 +2192,7 @@ def make_methods_ctx(
                 )
                 _s_call = _single_kernel_block(
                     ret_disp,
-                    f"{component}_{name}(self->handle)",
+                    f"{c_fn}(self->handle)",
                     nogil,
                 )
             _set_lines = []
@@ -2214,7 +2254,7 @@ def make_methods_ctx(
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
                     + _kernel_call_block(
-                        f"{component}_{name}(self->handle, "
+                        f"{c_fn}(self->handle, "
                         f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
                         f"results, {max_results})",
                         nogil,
@@ -2226,8 +2266,7 @@ def make_methods_ctx(
                 _rf_call = (
                     f"    {ret_disp} results[{max_results}];\n"
                     + _kernel_call_block(
-                        f"{component}_{name}(self->handle, "
-                        f"results, {max_results})",
+                        f"{c_fn}(self->handle, results, {max_results})",
                         nogil,
                     )
                 )
@@ -2328,11 +2367,34 @@ def make_methods_ctx(
                 )
                 meth_flags = "METH_NOARGS"
 
-            if status_return:
+            if error_negative:
+                # gh-805 §B: value-or-negative-error. The int IS the result on
+                # success, so this returns it; only `< 0` raises.
+                #
+                # Deliberately a sibling of `status_return` rather than a flag
+                # on it: the two make opposite claims about what the int
+                # carries, and folding them into one branch is how a method
+                # ends up raising on every successful call but id 0.
+                #
+                # The cleanup runs BEFORE the test, as it does on every other
+                # path here — a param converter's borrow must be released
+                # whether the call succeeded or failed.
+                _en_msg = error_message or f"{name} failed"
+                ret_body = (
+                    f"    {ret_disp} _rc = {c_fn}({call_args_c});\n"
+                    f"{_p_cleanup}"
+                    f"    if (_rc < 0) {{\n"
+                    f"        PyErr_Format(PyExc_{error_category},\n"
+                    f'                     "{_en_msg} (rc=%d)", (int)_rc);\n'
+                    f"        return NULL;\n"
+                    f"    }}\n"
+                    f"    return {ret_meta['to_py']('_rc')};\n"
+                )
+            elif status_return:
                 # gh-432: status-code return — 0 = OK -> None, non-zero
                 # raises ValueError carrying the method name and rc.
                 ret_body = (
-                    f"    int _rc = {component}_{name}({call_args_c});\n"
+                    f"    int _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc != 0) {{\n"
                     f"        PyErr_Format(PyExc_ValueError,\n"
@@ -2353,14 +2415,12 @@ def make_methods_ctx(
                 if ret_meta:
                     call_line = (
                         f"    {ret_disp} y ="
-                        f" {component}_{name}"
+                        f" {c_fn}"
                         f"({call_args_c}{extra_call});\n"
                     )
                     py_primary = ret_meta["to_py"]("y")
                 else:
-                    call_line = (
-                        f"    {component}_{name}({call_args_c}{extra_call});\n"
-                    )
+                    call_line = f"    {c_fn}({call_args_c}{extra_call});\n"
                     py_primary = "Py_None"
                 pack_parts = [py_primary] + [
                     _CTYPE_META[rt]["to_py"](f"out{i + 1}")
@@ -2418,7 +2478,7 @@ def make_methods_ctx(
                     f" PyArray_EMPTY(1, _dims, {out_npy}, 0);\n"
                     f"    if (!_out)"
                     f" {{{cleanup_inline} return NULL; }}\n"
-                    f"    {component}_{name}({call_args_c},"
+                    f"    {c_fn}({call_args_c},"
                     f" ({out_disp} *)PyArray_DATA"
                     f"((PyArrayObject *)_out));\n"
                     f"{_p_cleanup}"
@@ -2428,13 +2488,13 @@ def make_methods_ctx(
                 ret_expr = ret_meta["to_py"]("y")
                 ret_body = (
                     f"    {ret_disp} y ="
-                    f" {component}_{name}({call_args_c});\n"
+                    f" {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    return {ret_expr};\n"
                 )
             else:
                 ret_body = (
-                    f"    {component}_{name}({call_args_c});\n"
+                    f"    {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    Py_RETURN_NONE;\n"
                 )
@@ -2586,9 +2646,7 @@ def make_methods_ctx(
             _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
                 has_arg, has_params, params
             )
-            if max_out_is_state_only(
-                doc_blocks, f"{component}_{name}_max_out"
-            ):
+            if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                 _stub_moc_decl, _stub_moc_name = "", None
             # gh-684: the header wins; _gluedoc supplies the fallback.
             _mo_doc_lines = _max_out_doc(
@@ -2597,6 +2655,7 @@ def make_methods_ctx(
                 _stub_moc_name,
                 m.get("max_out", 0),
                 lambda k: (doc_blocks or {}).get(k),
+                c_fn=c_fn,
             ).pyi_doc()
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"

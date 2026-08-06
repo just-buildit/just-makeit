@@ -16,6 +16,14 @@ from pathlib import Path
 from . import _config as C
 
 
+# Characters that make a bare shell word mean something other than itself.
+# `>` is the one that bit: a `count_default` of `state->num_taps` emitted
+# unquoted is a REDIRECT, so replaying the script wrote a file called
+# `num_taps` and passed `state-` as the value. Quoting on spaces alone is not
+# enough for values that are C expressions.
+_SHELL_ACTIVE = set(" ()[]<>|&;$`*?!#'\"\\~{}")
+
+
 def _q(s: str) -> str:
     """Quote a CLI value if it contains spaces or special characters.
 
@@ -27,8 +35,10 @@ def _q(s: str) -> str:
     '"float _Complex[]"'
     >>> _q("fir_create_poly(d0,d1,ptr)")
     '"fir_create_poly(d0,d1,ptr)"'
+    >>> _q("state->num_taps")
+    '"state->num_taps"'
     """
-    if " " in s or "(" in s or ")" in s or "[" in s:
+    if any(c in _SHELL_ACTIVE for c in s):
         return f'"{s}"'
     return s
 
@@ -248,7 +258,7 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))
     if m.get("count_default"):
-        parts.append(f'--count-default "{m["count_default"]}"')
+        parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
     # gh-684: the worst-case output count. Dropping it replayed the method
@@ -258,6 +268,17 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     for mo in m.get("multi_output", []):
         parts.append(_flag("--multi-output", mo))
+
+    # gh-805 §A2/§B: `jm script` reconstructs the CLI history from the
+    # manifest, so a key it does not emit replays as a DIFFERENT project.
+    if m.get("fn"):
+        parts.append(_flag("--fn", str(m["fn"])))
+    if m.get("error_negative"):
+        parts.append(_bool_flag("--error-negative"))
+    if m.get("error"):
+        parts.append(_flag("--error", str(m["error"])))
+    if m.get("error_message"):
+        parts.append(_flag("--error-message", str(m["error_message"])))
 
     if m.get("out_type"):
         parts.append(_flag("--out-type", m["out_type"]))

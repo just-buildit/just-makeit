@@ -2,6 +2,67 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A method can bind a C symbol that is not `<comp>_<name>` (gh-805 §A2).**
+    `fn = "dp_tlm_emit_checked"` on a `[[<obj>.methods]]` entry overrides the
+    derived symbol; the Python face — the `PyMethodDef` row, the `.pyi`, the
+    docstrings — is unchanged.
+
+    Two cases needed it, and neither is exotic. **Adoption**: existing C with
+    its own established prefix, where renaming a public API to match a Python
+    module name is backwards — the C is the artifact with the ABI and the
+    callers. **A validating variant of a hot-path function**: the unchecked
+    inline `dp_tlm_emit` is the right C API for a C caller, *and* is the wrong
+    thing for a binding to call with a caller-supplied id. The right answer is
+    both functions, with the checked one bound as `emit`; before this the
+    symbol was derived from the method name, so the two collided and the only
+    outs were renaming the hot-path function or hand-writing the member.
+
+    `create_fn` (gh-509) already conceded the principle for constructors.
+    `fn` is also already the spelling on properties, getters, setters,
+    composer fields and handle methods, so this is one key reaching one more
+    place rather than a new concept. The `_max_out` companion derives from
+    `fn` too, so the pair cannot disagree.
+
+- **A method returning a value-or-negative-error can raise (gh-805 §B).**
+    `error_negative = true`, with optional `error = "KeyError"` (default
+    `ValueError`) and `error_message`. Below zero raises; anything else is
+    returned as the value.
+
+    jm could already translate an int return into an exception three ways —
+    `status_return`, `check_return` (gh-363), destroy's `error` (gh-541) — and
+    all three assume the int carries *nothing but* status. That cannot express
+    what is probably the most common convention in C: `open`, `read`,
+    `snprintf` and every registry-style `..._lookup()` return a value unless it
+    is negative. `status_return` cannot be stretched over it, because the int
+    IS the result on success, so "non-zero raises" rejects every successful
+    call but zero.
+
+    Left unexpressible, the sentinel reaches Python as data: `probe_id("nope")`
+    returned `-4`, shaped exactly like a probe id, so a caller stores it and
+    the failure surfaces arbitrarily far from the call as bad data rather than
+    as an exception.
+
+    Three declarations are rejected rather than rendered, because each produces
+    C that compiles and is wrong: `error_negative` with `status_return` (they
+    make opposite claims about the same int); an unsigned or non-integer return
+    type, where `_rc < 0` is always false — note `kind == "int"` is *not* the
+    test, since it is true of `size_t` and every `uint*_t`; and an `error`
+    naming something outside jm's error categories.
+
+### Fixed
+
+- **`jm script` emitted two flags without their line continuation.**
+    `--count-default` (pre-existing) and `--error-message` were appended as
+    raw text rather than through `_flag`, so they landed with no leading
+    indent and no trailing `\`, breaking the replayed script at that line.
+
+- **`jm script` did not quote shell metacharacters.** `_q` quoted on spaces
+    and brackets only, so a `count_default` of `state->num_taps` was emitted
+    bare — a **redirect**, which wrote a file called `num_taps` and passed
+    `state-` as the value. It now quotes any shell-active character.
+
 ## [0.48.0] — 2026-08-06
 
 ### Added

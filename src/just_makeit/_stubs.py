@@ -1450,6 +1450,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ret_ann = m_py_return_type
         elif m.get("status_return"):
             # gh-432: status returns bind as None (raise on failure).
+            #
+            # gh-805 §B: `error_negative` is deliberately NOT folded in here.
+            # It also raises, but the int is the VALUE on success, so its
+            # annotation is the ordinary scalar one and it must fall through.
+            # The two keys are mutually exclusive at declaration time.
             ret_ann = "None"
         elif m_result_fields and not (m_var and m.get("record_dtype")):
             # gh-244: a `single` method returns ONE record, not a list of them.
