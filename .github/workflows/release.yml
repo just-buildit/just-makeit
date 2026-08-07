@@ -111,7 +111,7 @@ jobs:
       # Pin the checkout to the resolved tag. On a tag push this is the ref
       # the default checkout would have taken anyway; on a dispatch the
       # default is the BRANCH, which would build the wrong tree entirely.
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
@@ -217,7 +217,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
