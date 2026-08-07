@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-08-07
+
 ### Added
 
 - **An unparseable `.pyi` no longer loses every hand-written member in silence
