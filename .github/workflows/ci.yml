@@ -114,15 +114,7 @@ jobs:
       # no longer a prerequisite would quietly narrow that from 18 combinations
       # to 3.
       - name: Smoke-test that the package installs
-        run: |
-          # Retry a transient network flake before failing the job.
-          for attempt in 1 2 3; do
-            uv tool install . && exit 0
-            echo "uv tool install attempt $attempt failed (transient?); retrying…"
-            sleep 10
-          done
-          echo "::error::uv tool install failed after 3 attempts"
-          exit 1
+        run: make tool-install
 
       # `make install-deps` — the standard target whose whole job is this, and
       # which `make help` already advertises as "Install system build
@@ -202,16 +194,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install just-makeit
-        run: |
-          # Retry a transient network flake (a curl SSL blip once failed this
-          # with exit 35 on a macOS runner) before failing the job.
-          for attempt in 1 2 3; do
-            uv tool install . && exit 0
-            echo "uv tool install attempt $attempt failed (transient?); retrying…"
-            sleep 10
-          done
-          echo "::error::uv tool install failed after 3 attempts"
-          exit 1
+        run: make tool-install
 
       - name: Install jbx
         run: |
@@ -228,11 +211,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get -o Acquire::Retries=3 update
-          jbx install-deps -g dev -s apt
+          make install-deps-dev
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
-        run: jbx install-deps -g dev -s brew
+        run: make install-deps-dev
 
       - name: Run example tests
         run: make test-examples
@@ -256,16 +239,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install just-makeit as a tool
-        run: |
-          # Retry a transient network flake (a curl SSL blip once failed this
-          # with exit 35 on a macOS runner) before failing the job.
-          for attempt in 1 2 3; do
-            uv tool install . && exit 0
-            echo "uv tool install attempt $attempt failed (transient?); retrying…"
-            sleep 10
-          done
-          echo "::error::uv tool install failed after 3 attempts"
-          exit 1
+        run: make tool-install
 
       - name: Run jm-install-deps (pass temp venv path as first arg)
         run: jm-install-deps ${{ runner.temp }}/jm-smoke-venv
