@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm status`'s `SILENT` section no longer double-counts (gh-836).** Every
+    finding was reported twice, so the count was exactly 2× the files —
+    measured on doppler as `SILENT (62)` over 31 files, and `SILENT (2)` over
+    one on its downstream example.
+
+    `C.components()` returns **every** component, module objects included: a
+    module object keeps its own top-level `[<obj>]` section, and `components`
+    returns every top-level key that is not reserved. Unioning
+    `module_objects` on top of it visited each module object a second time.
+    That is also why doppler saw two differently-ordered runs of the same
+    list — `components` follows manifest key order, `module_objects` follows
+    the `objects = [...]` array.
+
+    `UNBUILT` was never affected: it collected the same names into a `set`.
+    The redundant union is gone from both, and both are now covered by a test
+    that fails if it comes back.
+
 ## [0.52.0] — 2026-08-07
 
 ### Added

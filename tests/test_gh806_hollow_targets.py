@@ -39,6 +39,7 @@ from just_makeit import _hollow  # noqa: E402
 from just_makeit import _status  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
+from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
@@ -304,6 +305,38 @@ class TestTheSilentBenchmark:
     def test_a_benched_component_is_not_reported(self, tmp_path):
         root = _project(tmp_path, "fir")
         assert _hollow.silent_benches(root, C.load(root)) == []
+
+    def test_a_module_objects_bench_is_reported_once(self, tmp_path):
+        # gh-836: `C.components` already returns every component — a module
+        # object keeps its own top-level `[<obj>]` section — so unioning
+        # `module_objects` on top of it counted each one twice and the
+        # section read 2x the files (doppler: 31 files, `SILENT (62)`).
+        # One object, one file, one finding.
+        root = tmp_path / "modproj"
+        _quiet(new_run, "modproj", root)
+        _quiet(module_run, root, "m")
+        _quiet(
+            object_run,
+            root,
+            "tlm",
+            "m",
+            state_vars=[("gain", "float", "0.0f")],
+            no_step=True,
+        )
+        _quiet(
+            method_run, root, "tlm", "read", "m", "void", "uint64_t", True, []
+        )
+        benches = _hollow.silent_benches(root, C.load(root))
+        assert [s.rel for s in benches] == [
+            "native/benchmarks/bench_tlm_core.c"
+        ]
+        # And the same object must not double the orphan scan either.
+        (root / "native" / "tests" / "test_ghost_core.c").write_text(
+            "int main(void) { return 0; }\n", encoding="utf-8"
+        )
+        assert [o.stem for o in _hollow.orphans(root, C.load(root))] == [
+            "ghost"
+        ]
 
 
 class TestTheScaffoldCheckCount:
