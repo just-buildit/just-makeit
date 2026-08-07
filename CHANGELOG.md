@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A manifest key that belongs to another kind of table is now reported
+    (gh-816).** `check_return` is a `jm function` key. Written on an object
+    method it was accepted, round-tripped, and never acted on — the binding
+    did not raise while the method's own `doc` promised it would, and the only
+    way to find out was to build the extension and call it. jm now says:
+
+    ```
+    warning: meter.set_truth: unknown method key `check_return` — it is a
+    function key; on a method, `status_return = true` translates a non-zero
+    return into an exception
+    ```
+
+    Naming the kind the key *is* valid for is most of the value: both reported
+    cases were someone reaching for the right idea with the wrong key. A key
+    of no kind at all gets the plainer "jm does not read it anywhere".
+
+    The tolerance itself is unchanged — gh-257 deliberately round-trips an
+    unknown scalar key so a hand-authored manifest survives `save()`, and a
+    hard error would break every manifest already relying on that. This makes
+    the tolerance **loud**, not strict.
+
+    The check runs in `_config.load`, so any command surfaces it, deduplicated
+    per process. The registry lives in the new `_keys.py`, built from the
+    union of what the three manifest writers handle.
+
+    **Scope is deliberately narrow.** Handle, composer and capsule modules
+    carry their own method vocabulary (`returns`, `out_len_fn`, `caller_out`)
+    and are skipped rather than guessed at — a false warning on a valid key is
+    worse than the silence it replaces, because it trains the reader to ignore
+    the channel. Widening to those tables is additive and safe later.
+
+### Fixed
+
+- **A `depends_on` block in `test_gh491_manifest_comments` never reached its
+    object.** Found by running the whole suite with gh-816's new check armed
+    to raise. The fixture appended `depends_on = [...]` to the end of the
+    manifest, but everything after the trailing `[[acq.state]]` header binds
+    into *that state table* — so the linkage the fixture's own comment
+    describes was landing on the state entry and going nowhere. This is
+    exactly the shape gh-805 §G reports for `create_error` under
+    `[[obj.init_params]]`, reproduced accidentally inside jm's own tests.
+
 ## [0.49.0] — 2026-08-06
 
 ### Added

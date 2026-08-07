@@ -62,14 +62,19 @@ def project(tmp_path):
     # Author the manifest the way a real project does: prose above a component,
     # and a hand-formatted multi-line array.
     text = manifest.read_text(encoding="utf-8")
-    text = text.replace("[acq]", _PROSE.strip() + "\n[acq]")
-    text += (
-        "\n# OBJECT-library object files do not propagate transitively, so\n"
+    # `depends_on` has to go directly under `[acq]`, NOT appended to the end
+    # of the file: everything after the trailing `[[acq.state]]` header binds
+    # into that state table, so an appended key would land on the state entry
+    # and never reach the object. gh-816's warning is what caught this.
+    text = text.replace(
+        "[acq]",
+        _PROSE.strip() + "\n[acq]\n"
+        "# OBJECT-library object files do not propagate transitively, so\n"
         "# fft2d/fft must be linked explicitly.\n"
         "depends_on = [\n"
         '    { name = "corr2d", link = true },\n'
         '    { name = "fft", link = true },\n'
-        "]\n"
+        "]",
     )
     manifest.write_text(text, encoding="utf-8")
     return dest
