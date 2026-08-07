@@ -103,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -189,7 +189,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
@@ -234,7 +234,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
@@ -273,7 +273,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
@@ -327,7 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           # >=3.10 so mdformat is installable; `make lint-mdformat` would
           # otherwise self-skip and the gate would silently check nothing.
@@ -364,7 +364,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
