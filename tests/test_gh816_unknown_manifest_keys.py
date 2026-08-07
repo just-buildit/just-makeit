@@ -19,6 +19,14 @@ Two halves are tested here, and the second is the one that matters:
 
 from __future__ import annotations
 
+# tomllib is stdlib only on 3.11+; jm supports down to 3.9 and guards this the
+# same way in _config.py. A bare `import tomllib` is a collection error on the
+# 3.9/3.10 legs, which fail-fast then reports as an 18-job matrix wipeout.
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
+
 import pytest
 
 from just_makeit import _config as C
@@ -96,8 +104,6 @@ class TestTomlBindsATrailingKeyIntoTheLastTable:
     """
 
     def test_a_key_after_a_state_header_lands_on_the_state_entry(self):
-        import tomllib
-
         cfg = tomllib.loads(
             '[acq]\narg_type = "float"\n\n'
             '[[acq.state]]\nname = "n"\ntype = "int"\n\n'
