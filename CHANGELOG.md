@@ -4,6 +4,36 @@
 
 ### Fixed
 
+- **`jm object` silently dropped an array init-param's default (gh-826).**
+    `parse_init_param_flag` discarded the third field for any array type — no
+    warning, no error — while a scalar sibling in the same command kept its
+    own:
+
+    ```sh
+    jm object thing --init-param "tmpl:float[]:[]" --init-param "gain:double:1.0"
+    ```
+
+    emitted a `tmpl` entry with no `default` line at all.
+
+    It was invisible rather than merely wrong: with the default gone the
+    manifest, the stub and the binding all agree the parameter is required,
+    because as far as the project is concerned it *is*. Nothing is red, and
+    the next reader sees a parameter that was never given a default rather
+    than one whose default was discarded.
+
+    `[]` is the one array default the manifest path supports — it is what
+    routes the parameter to `def_arr` and makes it omittable — so dropping it
+    left the CLI unable to express a shape the manifest can. That is also why
+    a CLI-driven reproduction of gh-823's Ask A kept coming out clean, on both
+    sides of the report.
+
+    The default is now passed through and deliberately **not** re-validated in
+    the CLI: `_state.py` already owns the rule that `[]` is the only supported
+    array default and names the component and parameter when it refuses. A
+    second copy of that predicate is the pair that drifts.
+
+### Fixed
+
 - **A generated project checked that numpy *imports*, then built against
     headers that may not exist (gh-824).** cmake does not need numpy to
     import; `find_package(Python3 ... NumPy)` resolves

@@ -178,7 +178,22 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
         )
         sys.exit(1)
     if T.is_array_param_type(ctype):
-        default = ""
+        # gh-826: this used to be `default = ""` unconditionally — an array
+        # init-param's declared default was discarded here, silently, while
+        # its scalar sibling in the same command kept its own.
+        #
+        # `[]` is not a value jm has no use for: it is the one array default
+        # the manifest path supports, and it is what makes the parameter
+        # omittable (`_state.py` routes it to `def_arr`). Dropping it left the
+        # CLI unable to express a shape the manifest can, and left everything
+        # downstream self-consistent about a declaration that was no longer
+        # there — so a CLI-driven reproduction of that shape came out clean.
+        #
+        # Deliberately NOT re-validated here. `_state.py` already owns the
+        # rule that `[]` is the only supported array default, and states it
+        # with the component and parameter named; a second copy of the
+        # predicate in the CLI is the pair that drifts.
+        default = parts[2] if len(parts) >= 3 else ""
     else:
         default = parts[2] if len(parts) >= 3 else T._CTYPE_META[ctype]["zero"]
     return (name, ctype, default, "", "", "", False, "", False), i + 1
