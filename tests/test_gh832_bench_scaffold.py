@@ -134,9 +134,9 @@ class TestTheOrphanGateFollowsCapabilityNotBackend:
     def test_a_make_project_is_now_under_the_gate(self, tmp_path):
         root = _make_project(tmp_path, "fir")
         self._ghost(root)
-        assert [o.stem for o in _hollow.orphans(root, C.load(root))] == [
-            "ghost"
-        ]
+        assert [
+            (o.stem, o.declared) for o in _hollow.orphans(root, C.load(root))
+        ] == [("ghost", False)]
 
     def test_a_tree_that_builds_no_benchmark_still_is_not(self, tmp_path):
         # The gh-767 rule: do not fail a gate for something no `jm apply` can
