@@ -35,6 +35,41 @@
     worse than the silence it replaces, because it trains the reader to ignore
     the channel. Widening to those tables is additive and safe later.
 
+- **The fragment-drift warning now covers the RETURN SHAPE (gh-815).**
+    gh-622 reports a sacred `_ext_<obj>.c` member whose binding no longer
+    matches the manifest, but its fingerprint is the *calling convention* —
+    the `METH_*` flags and the `PyArg_Parse*` format. `status_return`,
+    `error_negative`, `single` and `record_dtype` all leave both identical and
+    change what comes back, so they sailed past it while the `.pyi`,
+    regenerated from the same manifest, moved:
+
+    ```
+    warning: native/src/tel/tel_ext_dp_tlm.c: binding no longer matches the
+    manifest [install: the manifest's result shape needs Py_RETURN_NONE,
+    raises, absent here]. ...
+    ```
+
+    The reported case shipped: a stub advertising `-> None` — and by
+    implication "this raises" — over a wrapper still returning the int and
+    unable to raise, with the method's own doctest recording the wrong
+    behaviour as expected output.
+
+    The check is **one-directional** on purpose. A shape the manifest now
+    implies and the fragment lacks is drift; a construct the fragment has and
+    the reference does not is a hand-written body doing more than jm would,
+    which is the entire point of a sacred fragment and must never warn.
+    Markers accept equivalent spellings for the same reason — a body doing
+    `Py_INCREF(Py_None); return Py_None;` is the same shape as the
+    `Py_RETURN_NONE` macro jm emits.
+
+    The error axis cannot be a plain substring test: every wrapper already
+    carries one `PyErr_SetString` for the liveness guard, so matching that
+    spelling would match everything and neuter it. A body raises if it uses a
+    spelling the guard does not, or uses the guard's spelling more than once.
+
+    Delete-and-reapply remains the only fix — that is the sacred-fragment
+    contract — and being told is the ask.
+
 ### Fixed
 
 - **A `depends_on` block in `test_gh491_manifest_comments` never reached its

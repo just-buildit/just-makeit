@@ -513,18 +513,13 @@ _METH_FLAGS_RE = re.compile(r"METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*")
 _PYARG_FMT_RE = re.compile(r'PyArg_Parse\w*\s*\((?:[^;{}]|\n)*?"([^"]*)"')
 
 
-def _method_signatures(text: str) -> dict:
-    """Map each ``PyMethodDef`` name to its binding's *calling signature*.
+def _row_bodies(text: str) -> dict:
+    """Map each ``PyMethodDef`` name to ``(wrapper body, row span)``.
 
-    The fingerprint is the pair that decides what Python may pass: the
-    ``METH_*`` flags on the row (``METH_NOARGS`` vs ``METH_VARARGS`` vs
-    ``METH_VARARGS | METH_KEYWORDS``) and the ``PyArg_Parse*`` format string
-    inside the wrapper (its arity and types). Both are jm-generated; the body
-    around them is the user's and is deliberately *not* compared, so a
-    hand-written implementation never reads as drift.
-
-    Scoped to methods: a property getter takes no arguments by construction,
-    so there is no signature for a manifest change to invalidate.
+    The row's first function field that resolves to a real definition wins.
+    Shared by the calling-convention and return-shape fingerprints below so
+    both walk the table the same way and cannot disagree about which body
+    belongs to which member.
     """
     from ._object import _extract_c_function_bodies
 
@@ -542,17 +537,106 @@ def _method_signatures(text: str) -> dict:
         name = _entry_name(text, mask, s, e)
         if name is None:
             continue
+        body = ""
+        for fn in _row_fn_names(text, mask, (s, e)):
+            if funcs.get(fn):
+                body = funcs[fn]
+                break
+        out[name] = (body, (s, e))
+    return out
+
+
+def _method_signatures(text: str) -> dict:
+    """Map each ``PyMethodDef`` name to its binding's *calling signature*.
+
+    The fingerprint is the pair that decides what Python may pass: the
+    ``METH_*`` flags on the row (``METH_NOARGS`` vs ``METH_VARARGS`` vs
+    ``METH_VARARGS | METH_KEYWORDS``) and the ``PyArg_Parse*`` format string
+    inside the wrapper (its arity and types). Both are jm-generated; the body
+    around them is the user's and is deliberately *not* compared, so a
+    hand-written implementation never reads as drift.
+
+    Scoped to methods: a property getter takes no arguments by construction,
+    so there is no signature for a manifest change to invalidate.
+    """
+    out: dict = {}
+    for name, (body, (s, e)) in _row_bodies(text).items():
         flags = _METH_FLAGS_RE.search(_code_mask(text[s : e + 1]))
         fmt = ""
-        for fn in _row_fn_names(text, mask, (s, e)):
-            body = funcs.get(fn)
-            if body:
-                fmt_m = _PYARG_FMT_RE.search(_code_mask(body))
-                if fmt_m:
-                    # Mask offsets line up with the real text.
-                    fmt = body[fmt_m.start(1) : fmt_m.end(1)]
-                break
+        if body:
+            fmt_m = _PYARG_FMT_RE.search(_code_mask(body))
+            if fmt_m:
+                # Mask offsets line up with the real text.
+                fmt = body[fmt_m.start(1) : fmt_m.end(1)]
         out[name] = (flags.group(0).replace(" ", "") if flags else "", fmt)
+    return out
+
+
+#: The jm-emitted constructs that decide what a binding hands back, and the
+#: manifest key each one is the signature of. Measured from the rendered
+#: fragment for every shape rather than assumed:
+#:
+#: ===================== ==========================================
+#: marker                emitted for
+#: ===================== ==========================================
+#: ``Py_RETURN_NONE``    ``status_return`` — the int is status only
+#: ``PyErr_Format``      ``status_return`` / ``error_negative``
+#: ``PyStructSequence_`` ``single`` — one record, by value
+#: ``PyArray_NewFrom``   ``record_dtype`` — a structured ndarray
+#: ``PyList_New``        the list-of-records shape
+#: ===================== ==========================================
+#:
+#: Each marker lists the spellings that satisfy it, because the fragment being
+#: checked may be **hand-written**: a body returning ``Py_None`` after its own
+#: ``Py_INCREF`` implements the same shape as the ``Py_RETURN_NONE`` macro jm
+#: emits, and flagging it would be a false positive on correct code.
+_RETURN_SHAPE_MARKERS = {
+    "Py_RETURN_NONE": ("Py_RETURN_NONE", "Py_None"),
+    "PyStructSequence_New": ("PyStructSequence_New",),
+    "PyArray_NewFromDescr": (
+        "PyArray_NewFromDescr",
+        "PyArray_SimpleNewFromDescr",
+    ),
+    "PyList_New": ("PyList_New",),
+}
+
+#: The error-translation axis, kept separate because it cannot be a plain
+#: substring test. It is what separates ``error_negative`` from a plain scalar
+#: return — both end in ``PyLong_FromLong``, and only the raise branch differs
+#: — but **every** wrapper already carries one ``PyErr_SetString`` for the
+#: liveness guard, so testing for that spelling would match everything and
+#: neuter the axis. A body raises if it uses a spelling the guard does not, or
+#: uses the guard's spelling more than once.
+_RAISE_MARKER = "raises"
+_RAISE_SPELLINGS = ("PyErr_Format", "PyErr_SetObject", "PyErr_SetFromErrno")
+
+
+def _raises(code: str) -> bool:
+    """Whether a masked wrapper body translates a failure into an exception."""
+    return any(s in code for s in _RAISE_SPELLINGS) or (
+        code.count("PyErr_SetString") > 1
+    )
+
+
+def _method_return_shapes(text: str) -> dict:
+    """Map each ``PyMethodDef`` name to the return-shape markers it exhibits.
+
+    Presence of a construct, not its surrounding code — so a hand-written
+    wrapper that genuinely implements the shape carries the same marker as the
+    generated one and never reads as drift. Comment and string contents are
+    masked out, so a marker named in a docstring does not count.
+    """
+    out: dict = {}
+    for name, (body, _span) in _row_bodies(text).items():
+        code = _code_mask(body) if body else ""
+        found = {
+            label
+            for label, spellings in _RETURN_SHAPE_MARKERS.items()
+            if any(s in code for s in spellings)
+        }
+        if _raises(code):
+            found.add(_RAISE_MARKER)
+        out[name] = frozenset(found)
     return out
 
 
@@ -575,24 +659,50 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     """
     ex = _method_signatures(existing)
     ref = _method_signatures(reference)
-    drifted = [n for n, sig in ref.items() if n in ex and ex[n] != sig]
-    if not drifted:
-        return []
 
     def _show(sig):
         return (sig[0] or "METH_?") + (f' "{sig[1]}"' if sig[1] else "")
 
-    detail = "; ".join(
-        f"{n}: binding {_show(ex[n])} vs manifest {_show(ref[n])}"
-        for n in drifted
-    )
+    details: dict = {}
+    for n, sig in ref.items():
+        if n in ex and ex[n] != sig:
+            details[n] = (
+                f"{n}: binding {_show(ex[n])} vs manifest {_show(sig)}"
+            )
+
+    # gh-815: the calling convention is only one of the two ways a member can
+    # stop matching the manifest. `status_return`, `error_negative`, `single`
+    # and `record_dtype` all leave METH flags and the PyArg format *identical*
+    # and change what comes back, so they sail past the comparison above —
+    # while the .pyi, regenerated from the same manifest, moves. The reported
+    # case: a stub advertising `-> None` (and, by implication, "this raises")
+    # over a wrapper still returning the int and unable to raise.
+    #
+    # Deliberately one-directional: a marker the manifest now implies and the
+    # fragment lacks is drift, but a marker the fragment has and the reference
+    # does not is a hand-written body doing more than jm would, which is the
+    # whole point of a sacred fragment and must never warn.
+    ex_shape = _method_return_shapes(existing)
+    ref_shape = _method_return_shapes(reference)
+    for n, markers in ref_shape.items():
+        missing = markers - ex_shape.get(n, frozenset())
+        if not missing:
+            continue
+        want = ", ".join(sorted(missing))
+        note = f"{n}: the manifest's result shape needs {want}, absent here"
+        details[n] = f"{details[n]}; {note}" if n in details else note
+
+    if not details:
+        return []
+    drifted = [n for n in ref if n in details]
     print(
-        f"warning: {rel}: binding signature no longer matches the manifest"
-        f" [{detail}]. A sacred fragment only gains missing members on apply,"
-        " so a changed signature stays as written while the .pyi moves — the"
-        " stub now documents a call the extension will reject. Delete"
-        f" {rel} and re-run `just-makeit apply` to regenerate it (any"
-        " hand-written body in it is lost), or edit the binding to match.",
+        f"warning: {rel}: binding no longer matches the manifest"
+        f" [{'; '.join(details[n] for n in drifted)}]. A sacred fragment only"
+        " gains missing members on apply, so a changed member stays as"
+        " written while the .pyi moves — the stub now documents behaviour the"
+        f" extension does not have. Delete {rel} and re-run"
+        " `just-makeit apply` to regenerate it (any hand-written body in it is"
+        " lost), or edit the binding to match.",
         file=sys.stderr,
     )
     return drifted
