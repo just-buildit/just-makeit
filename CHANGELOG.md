@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-08-07
+
 ### Added
 
 - **`make bench` exists on the `make` backend (gh-832).** The backend wrote
@@ -29,28 +31,6 @@
     block naming the candidate methods — the same list `SILENT` counts when it
     reports `(N method(s), none benchable)` — and a worked, copy-pasteable
     `jm_bench_add` example.
-
-### Fixed
-
-- **A benchmark stub no longer ships dead code (gh-840).** The timing helper
-    `elapsed_sec` and the `t0`/`t1` locals were emitted unconditionally, and a
-    stub with no timing block never used them. Under `-Wall -Wextra` that was
-    four unused-symbol warnings, so a project building its benchmarks with
-    `-Werror` **could not compile a jm scaffold at all**. The helper and the
-    locals now follow the timing block, and the `TODO` carries a copy of both
-    so pasting it in gives a compiling measurement. `jm_bench.h`'s
-    `jm_bench_add` became `static inline` for the same reason — the idiom that
-    stops an uncalled header function warning.
-
-- **`jm status`'s `UNBUILT` gate keys on capability, not on the build backend
-    (gh-832).** gh-806 carved make-built projects out of the bench half
-    because the gap was total. With the gap closed, the carve-out would have
-    named a backend that had been fixed. It now reports a bench orphan only
-    when the tree builds *some* benchmark — which also covers a cmake project
-    that stripped its targets by hand, and self-clears the moment a project
-    gains bench rules. The trade-off, stated because it is real: a project
-    with exactly one component whose only bench went orphaned is
-    indistinguishable from one that builds no benchmarks.
 
 - **A capsule init-param can be nullable, so `None` reaches C as `NULL`
     (gh-805 §H).** `gh-432` (method params) and `gh-790` (constructor params)
@@ -95,6 +75,26 @@
 
 ### Fixed
 
+- **A benchmark stub no longer ships dead code (gh-840).** The timing helper
+    `elapsed_sec` and the `t0`/`t1` locals were emitted unconditionally, and a
+    stub with no timing block never used them. Under `-Wall -Wextra` that was
+    four unused-symbol warnings, so a project building its benchmarks with
+    `-Werror` **could not compile a jm scaffold at all**. The helper and the
+    locals now follow the timing block, and the `TODO` carries a copy of both
+    so pasting it in gives a compiling measurement. `jm_bench.h`'s
+    `jm_bench_add` became `static inline` for the same reason — the idiom that
+    stops an uncalled header function warning.
+
+- **`jm status`'s `UNBUILT` gate keys on capability, not on the build backend
+    (gh-832).** gh-806 carved make-built projects out of the bench half
+    because the gap was total. With the gap closed, the carve-out would have
+    named a backend that had been fixed. It now reports a bench orphan only
+    when the tree builds *some* benchmark — which also covers a cmake project
+    that stripped its targets by hand, and self-clears the moment a project
+    gains bench rules. The trade-off, stated because it is real: a project
+    with exactly one component whose only bench went orphaned is
+    indistinguishable from one that builds no benchmarks.
+
 - **A constructor's capsule error message no longer depends on the handle
     being mandatory (gh-805 §H).** `capsule_unwrap_c`'s `allow_none` was doing
     double duty as "is this a `tp_init`?", which is what gated replacing the
@@ -105,8 +105,6 @@
     call the upgrade was written for. Split into `explain_type_error`, keyed on
     constructor-ness. The method form and the mandatory constructor form are
     both unchanged, byte for byte.
-
-### Fixed
 
 - **`jm status`'s `SILENT` section no longer double-counts (gh-836).** Every
     finding was reported twice, so the count was exactly 2× the files —
