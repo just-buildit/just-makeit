@@ -191,7 +191,7 @@ GATES_DEPS    = lint test test-examples coverage-gate bench docs-check
 # reachable from `gates`, and it caught both of these the moment ci.yml started
 # calling them — which is the gate working: naming them here is a decision,
 # where leaving them out of ci.yml entirely would have been an accident.
-GATES_PROVISION = install-deps install-deps-dev tool-install
+GATES_PROVISION = install-deps install-deps-dev tool-install setup
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
 # Two commands because a report is not a gate — the standard splits them so CI
@@ -230,6 +230,20 @@ COVERAGE_GATE_CMD = $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN)
 # The strict build catches broken TOC anchors (which the test suite does NOT),
 # and tests/test_docs.py catches mangled MkDocs tab blocks + other invariants.
 DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
+
+# `install.sh` is served from the Pages site root — it is what
+# `curl -fsSL <site>/install.sh` fetches — so it is part of the site, not part
+# of deployment. docs.yml used to copy it in as its own step, which made a
+# locally-built `site/` quietly different from the one CI deploys: the file
+# only existed in CI. Here it is in the build, so `make docs` and `make
+# docs-serve` produce the real site.
+#
+# It has to run AFTER the build rather than in DOCS_PREPARE, because the
+# build's `--clean` wipes `site/` first.
+define DOCS_BUILD_CMD
+$(ZENSICAL) build --clean --strict
+cp install.sh site/install.sh
+endef
 
 # A post-gate, not DOCS_CHECK_CMD: the docs tests run after the strict build,
 # and the list form accumulates, so a build failure no longer hides whatever

@@ -50,15 +50,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `make install-deps-dev`, not a hand-picked apt line: jb.toml is the
+      # SSOT for which system packages a build needs, and the transcribed
+      # `cmake gcc` here was already a narrower list than the dev group it
+      # meant to install.
       - name: Install system build tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cmake gcc
+        run: make install-deps-dev
 
+      # `make tool-install`, not `uv tool install .` — the target exists
+      # precisely because ci.yml hand-rolled this (it wraps the install in a
+      # retry for the transient network failure that flaked CI), and this
+      # workflow was missed when the rest moved over.
       - name: Install just-makeit
         run: |
-          uv tool install .
-          uv sync
+          make tool-install
+          make setup
 
       - name: Install jm build deps (cmake, Python, NumPy)
         run: jm-install-deps ${{ runner.temp }}/jm-venv
