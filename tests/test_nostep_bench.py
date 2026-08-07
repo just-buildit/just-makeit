@@ -8,6 +8,7 @@ the bench must declare it.
 
 import contextlib
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -57,7 +58,19 @@ def test_nostep_void_create_bench_declares_obj(tmp_path):
     _silent(apply_run, dest)
 
     bench = (dest / "native/benchmarks/bench_cfg_core.c").read_text("utf-8")
-    assert "cfg_state_t *obj = cfg_create();" in bench  # declared
-    assert "TODO" not in bench  # not a commented-out stub
+    # gh-181 is about the CREATE line specifically: leaving it as a comment
+    # left `obj` undeclared while `cfg_destroy(obj)` was still emitted, so the
+    # bench did not compile. Asserted at statement position, because a bare
+    # substring matches the commented form too — which is the very state this
+    # guards against.
+    #
+    # The old proxy for that was `"TODO" not in bench`. gh-840 gave the file a
+    # legitimate TODO for an unrelated reason (no benchable method, so no
+    # timing loop), and a whole-file TODO check now fails on a correct
+    # scaffold. Narrowed to what it always meant.
+    assert re.search(
+        r"^\s*cfg_state_t \*obj = cfg_create\(\);", bench, re.M
+    ), bench
+    assert "/* TODO" not in bench.split("cfg_create();")[0]
     # destroy still references obj, now validly
     assert "cfg_destroy(obj);" in bench

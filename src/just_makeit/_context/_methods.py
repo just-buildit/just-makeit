@@ -276,6 +276,96 @@ def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: The timing helper the no-`step()` bench template used to define
+#: unconditionally. gh-840: with no benchable method it was dead code, and the
+#: compiler said so — `-Wall -Wextra` on a generated stub gives four
+#: unused-symbol warnings, so a project building its benchmarks with `-Werror`
+#: could not compile a jm scaffold at all. Emitted only when something times.
+_BENCH_ELAPSED_HELPER = """static double
+elapsed_sec(struct timespec *t0, struct timespec *t1)
+{
+    return (double)(t1->tv_sec - t0->tv_sec)
+           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
+}
+"""
+
+_BENCH_TIMER_DECLS = "    struct timespec t0, t1;\n"
+
+
+def _bench_todo(component: str, methods: list[dict]) -> str:
+    """The `TODO:` block for a benchmark jm could not populate (gh-840).
+
+    jm's contract is *scaffold, green from day 0, then fill in the TODOs* —
+    and for a benchmark the file did not say it. Measured across doppler's 31
+    such files: two carried a marker, and both were hand-added years earlier.
+    No template jm ships emitted one, so "fill in the TODOs" named nothing an
+    author could act on.
+
+    Three things go in, all from data jm already has at render time:
+
+    * that the file is unfinished, in the one word a reader greps for;
+    * **which** methods are candidates — the same list `SILENT` counts when
+      it reports `(N method(s), none benchable)`, so having it here costs
+      nothing;
+    * a worked `jm_bench_add` call. That symbol appeared in **zero**
+      generated stubs, so the API the scaffold exists to standardise was
+      never shown by the scaffold.
+
+    The example carries its own `elapsed_sec` / `t0` / `t1` declarations
+    because those are no longer emitted unconditionally (they were dead code
+    the compiler flagged), so pasting the block in gives a compiling
+    measurement rather than a fragment needing three other edits first.
+
+    The comment prefix is applied **once, here**, rather than written into
+    each line: hand-prefixing produced a block whose continuation lines sat
+    at column 0 while the rest were indented, and a generated comment is not
+    something clang-format will straighten out.
+    """
+    names = [m["name"] for m in methods]
+    if names:
+        body = [
+            "jm did not generate a timing loop: this component has no",
+            f"step(), and none of its {len(names)} method(s) has a shape jm",
+            "can size at bench time (variable_output / out_type / varargs /",
+            "codec).",
+            "",
+            "Candidates:",
+        ] + [f"  {component}_{n}(obj, ...)" for n in names]
+    else:
+        body = [
+            "jm did not generate a timing loop: this component has no",
+            "step() and no methods, so there is nothing it could time for",
+            "you.",
+        ]
+    body += [
+        "",
+        "The pattern — uncomment and adapt. `jm_bench_add` is what puts a",
+        "measurement into the JSON; without one this target writes an empty",
+        '"benchmarks": [] array.',
+        "",
+        "  static double",
+        "  elapsed_sec(struct timespec *t0, struct timespec *t1)",
+        "  {",
+        "      return (double)(t1->tv_sec - t0->tv_sec)",
+        "             + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;",
+        "  }",
+        "",
+        "  struct timespec t0, t1;",
+        "  double times[ITERATIONS];",
+        "  for (int r = 0; r < ITERATIONS; r++) {",
+        "      clock_gettime(CLOCK_MONOTONIC, &t0);",
+        "      ... call the method BENCH_N times ...",
+        "      clock_gettime(CLOCK_MONOTONIC, &t1);",
+        "      times[r] = elapsed_sec(&t0, &t1);",
+        "  }",
+        '  jm_bench_add(&_bench, "<name>", times, ITERATIONS, BENCH_N);',
+    ]
+    out = ["    /* TODO: benchmark this component."]
+    out += [("     *" + (f" {ln}" if ln else "")) for ln in body]
+    out.append("     */")
+    return "\n".join(out) + "\n"
+
+
 def _bench_method_block(component: str, m: dict) -> str:
     """Return a self-contained C bench timing block for method *m*.
 
@@ -707,6 +797,12 @@ def make_methods_ctx(
         "pyi_extra_methods": "",
         "pyi_records": "",
         "bench_methods_timing_block": "",
+        # gh-840: nothing to time, so no helper, no timer locals, and a TODO
+        # that says which is which. Set here as well as at the real return
+        # below — this branch renders the same template.
+        "bench_elapsed_helper": "",
+        "bench_timer_decls": "",
+        "bench_todo": _bench_todo(component, []),
         "varargs_binding_files": [],
     }
     if not methods and not serializable:
@@ -2754,6 +2850,11 @@ def make_methods_ctx(
     _method_bench_blocks = [_bench_method_block(component, m) for m in methods]
     _filled = [b for b in _method_bench_blocks if b]
     bench_methods_timing_block = "\n" + "\n\n".join(_filled) if _filled else ""
+    # gh-840: the helper and the timer locals exist to serve the timing
+    # block. With no block they were dead code the compiler flagged, so they
+    # follow it rather than being unconditional, and the TODO carries a
+    # copy-pasteable version of both.
+    _has_timing = bool(_filled)
     return {
         "method_decls": method_decls,
         "extra_buf_fields": "".join(buf_fields),
@@ -2769,6 +2870,9 @@ def make_methods_ctx(
         # for every project without one, so the slot costs nothing.
         "pyi_records": _pyi_records(methods, doc_blocks),
         "bench_methods_timing_block": bench_methods_timing_block,
+        "bench_elapsed_helper": (_BENCH_ELAPSED_HELPER if _has_timing else ""),
+        "bench_timer_decls": _BENCH_TIMER_DECLS if _has_timing else "",
+        "bench_todo": ("" if _has_timing else _bench_todo(component, methods)),
         "varargs_binding_files": varargs_binding_files,
         **(
             {

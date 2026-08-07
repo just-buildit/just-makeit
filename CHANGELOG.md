@@ -4,6 +4,54 @@
 
 ### Added
 
+- **`make bench` exists on the `make` backend (gh-832).** The backend wrote
+    `bench_<comp>_core.c` for every component and emitted no rule to build it,
+    for any component, ever — so on a make-built project you could fill in the
+    benchmark and nothing would run it. The cmake backend has had a per-component
+    bench target since gh-15. Green-from-day-0 means the scaffolded file is
+    *reachable*, not merely present.
+
+    The Makefile now carries a `C_BENCHES` list beside `C_TESTS`, a `bench:`
+    target that builds and runs each one, cleanup in `clean`, and a line in
+    `help`. The per-component rule uses **`-std=gnu99`, not the `-std=c99` the
+    test rule beside it uses**: `struct timespec` is not visible under strict
+    c99, so the benchmark's own timing helper does not compile. The cmake
+    backend works today only because CMake leaves extensions on by default.
+
+- **A benchmark jm could not populate now says so, and says what to do
+    (gh-840).** jm's contract is *scaffold, green from day 0, then fill in the
+    TODOs* — and for a benchmark, the file did not say it. No template jm
+    shipped contained a `TODO`; `jm_bench_add`, the one call that puts a
+    measurement into the JSON, appeared in **zero** generated stubs.
+
+    A `no_step` component whose methods jm cannot size at bench time
+    (`variable_output` / `out_type` / `varargs` / `codec`) now gets a `TODO:`
+    block naming the candidate methods — the same list `SILENT` counts when it
+    reports `(N method(s), none benchable)` — and a worked, copy-pasteable
+    `jm_bench_add` example.
+
+### Fixed
+
+- **A benchmark stub no longer ships dead code (gh-840).** The timing helper
+    `elapsed_sec` and the `t0`/`t1` locals were emitted unconditionally, and a
+    stub with no timing block never used them. Under `-Wall -Wextra` that was
+    four unused-symbol warnings, so a project building its benchmarks with
+    `-Werror` **could not compile a jm scaffold at all**. The helper and the
+    locals now follow the timing block, and the `TODO` carries a copy of both
+    so pasting it in gives a compiling measurement. `jm_bench.h`'s
+    `jm_bench_add` became `static inline` for the same reason — the idiom that
+    stops an uncalled header function warning.
+
+- **`jm status`'s `UNBUILT` gate keys on capability, not on the build backend
+    (gh-832).** gh-806 carved make-built projects out of the bench half
+    because the gap was total. With the gap closed, the carve-out would have
+    named a backend that had been fixed. It now reports a bench orphan only
+    when the tree builds *some* benchmark — which also covers a cmake project
+    that stripped its targets by hand, and self-clears the moment a project
+    gains bench rules. The trade-off, stated because it is real: a project
+    with exactly one component whose only bench went orphaned is
+    indistinguishable from one that builds no benchmarks.
+
 - **A capsule init-param can be nullable, so `None` reaches C as `NULL`
     (gh-805 §H).** `gh-432` (method params) and `gh-790` (constructor params)
     are the same idea and disagreed about `None`: the method path mapped it to

@@ -37,8 +37,15 @@ typedef struct {
     int count;
 } jm_bench_t;
 
-/* Copy times[0..rounds-1] into the bench.  iters = BENCH_N. */
-static void
+/* Copy times[0..rounds-1] into the bench.  iters = BENCH_N.
+ *
+ * gh-840: `static inline`, not plain `static`. A benchmark that has not been
+ * filled in yet never calls this, and a plain `static` in a header makes that
+ * a -Wunused-function warning -- so a project building its benchmarks with
+ * -Werror could not compile a jm scaffold at all. GCC and clang do not warn
+ * about an unused `static inline` in a header, which is what the idiom is
+ * for. */
+static inline void
 jm_bench_add(jm_bench_t *b, const char *name,
              const double *times, int rounds, int iters)
 {

@@ -76,6 +76,15 @@ _KINDS = (
     ),
 )
 
+#: A **call** to `jm_bench_add`, at statement position. Anchored, and that is
+#: not a nicety: gh-840 put a worked `jm_bench_add(...)` example into the
+#: `TODO` comment of every benchmark jm could not populate — which is exactly
+#: the population this detector exists to find. A plain `"jm_bench_add" in
+#: body` therefore matched the instructions telling the author the file is
+#: empty, and `SILENT` stopped firing altogether. The comment lines begin
+#: ` *`, so requiring the call to open its own line separates them.
+_BENCH_ADD_CALL = re.compile(r"^\s*jm_bench_add\s*\(", re.M)
+
 #: A build file that enumerates sources by wildcard tells us nothing about
 #: which ones it picked up, so the scan stands down rather than guessing.
 #: False positives here send an author to delete a file that *is* built.
@@ -176,15 +185,26 @@ def orphans(root: Path, cfg: dict) -> list[Orphan]:
     texts = _build_texts(root)
     if texts is None:
         return []
-    # jm's `build = "make"` backend patches TARGETS and C_TESTS and stops
-    # there — it has never emitted a bench rule, for any component. So a
-    # make-built project's bench sources are unbuilt *by construction*, and
-    # reporting each one as an orphan would fail the gate on every such
-    # project for something no `jm apply` can clear (the gh-767 rule). That
-    # gap is real and is filed as gh-832; it is a missing feature in the
-    # make backend, not a rename in the author's tree.
+    # A kind is only worth reporting if the tree builds *any* target of that
+    # kind. gh-832 arrived as a backend special case — the make backend had
+    # never emitted a bench rule, so every one of its bench sources was
+    # unbuilt by construction and gating on them would fail the gate for
+    # something no `jm apply` could clear (the gh-767 rule). Keying on the
+    # capability instead of on `build_system` is strictly better: it covers a
+    # cmake project that stripped its bench targets by hand, and it
+    # **self-clears** — a make project that regenerates its Makefile with a
+    # `C_BENCHES` list is under the gate from that moment, with nothing here
+    # to update.
+    #
+    # The cost, stated because it is a real hole: a project with exactly one
+    # component whose only bench went orphaned looks identical to a project
+    # that builds no benchmarks. Accepted — a false positive here sends
+    # someone to delete a file that *is* built, which is worse than a missed
+    # finding in the narrowest possible tree.
     kinds = [
-        k for k in _KINDS if k[0] != "bench" or C.build_system(cfg) == "cmake"
+        k
+        for k in _KINDS
+        if any(re.search(rf"\b{k[0]}_\w+_core\b", t) for t in texts)
     ]
     declared = set(C.components(cfg))
 
@@ -240,7 +260,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
             body = src.read_text(encoding="utf-8")
         except OSError:
             continue
-        if "jm_bench_add" in body:
+        if _BENCH_ADD_CALL.search(body):
             continue
         out.append(
             SilentBench(

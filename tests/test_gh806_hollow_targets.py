@@ -286,7 +286,15 @@ class TestTheSilentBenchmark:
 
     def test_the_generated_bench_records_nothing(self, hollow_bench):
         src = hollow_bench / "native" / "benchmarks" / "bench_tlm_core.c"
-        assert "jm_bench_add" not in src.read_text(encoding="utf-8")
+        text = src.read_text(encoding="utf-8")
+        # gh-840 put a worked `jm_bench_add(...)` into the TODO of exactly
+        # this file, so a bare substring test now matches the instructions
+        # rather than a measurement. Asserted through the detector's own
+        # pattern so the test and `silent_benches` cannot drift on what
+        # counts as a call — which is how the substring form silently
+        # disabled the whole SILENT section.
+        assert _hollow._BENCH_ADD_CALL.search(text) is None
+        assert "jm_bench_add(&_bench," in text, "the TODO shows the call"
 
     def test_it_is_reported_with_the_method_count(self, hollow_bench):
         found = _hollow.silent_benches(hollow_bench, C.load(hollow_bench))
