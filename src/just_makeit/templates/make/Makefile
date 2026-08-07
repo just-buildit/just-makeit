@@ -18,6 +18,15 @@ NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
 PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
 endif
 BUILD_DIR  ?= build
+
+# An empty interpreter is never a valid answer here (gh-814). Every cmake
+# invocation below passes -DPython3_EXECUTABLE=$(PYTHON), and CMake treats an
+# empty value as "discover one yourself" rather than as an error — so if the
+# fallbacks above found nothing, fail HERE, where the cause is visible, rather
+# than at import time with an ABI mismatch.
+ifeq ($(strip $(PYTHON)),)
+$(error no Python interpreter found — set PYTHON=/path/to/python (gh-814))
+endif
 BUILD_TYPE ?= Release
 
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
@@ -90,11 +99,21 @@ coverage:
 		--cov-report=term-missing
 	@echo "Python coverage: docs/coverage/python/index.html"
 
+# $(PYTHON), NOT $(JUST_BUILDIT_PYTHON) — gh-814. Do not "simplify" this back
+# to the raw variable: it is set by just-buildit and EMPTY otherwise, and an
+# empty `-DPython3_EXECUTABLE=` does not mean "use the default", it means
+# CMake picks the interpreter itself. On any box with more than one numpy (a
+# system python3-numpy plus a venv one — which jb.toml actively creates) the
+# extension can then compile against one numpy and be imported under the
+# other. That surfaces as `compiled using NumPy 1.x cannot be run in NumPy
+# 2.x` at IMPORT time, arbitrarily far from the build that caused it.
+# $(PYTHON) already prefers $(JUST_BUILDIT_PYTHON) and falls back to a real
+# interpreter, so it is correct in both cases and empty in neither.
 just-build:
 	cmake -B $(BUILD_DIR) -S . \
 		$(CMAKE_GEN_FLAG) \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DPython3_EXECUTABLE=$(JUST_BUILDIT_PYTHON) \
+		-DPython3_EXECUTABLE=$(PYTHON) \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 	cmake --build $(BUILD_DIR) --parallel $(NPROC)
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
