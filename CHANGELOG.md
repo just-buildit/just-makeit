@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-08-07
+
 ### Added
 
 - **`status_return` can name its exception and carry a message (gh-823 Ask
