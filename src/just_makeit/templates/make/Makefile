@@ -29,6 +29,23 @@ $(error no Python interpreter found — set PYTHON=/path/to/python (gh-814))
 endif
 BUILD_TYPE ?= Release
 
+# cmake needs numpy's HEADERS, not an importable numpy (gh-824).
+# `find_package(Python3 ... NumPy)` resolves Python3_NumPy_INCLUDE_DIRS from
+# `numpy.get_include()`, so a numpy whose package imports while that directory
+# is absent satisfies an `import numpy` guard and then fails inside cmake —
+# as `Could NOT find Python3_NumPy_INCLUDE_DIRS`, or, when the path is only
+# read at generate time, as `Imported target "Python3::NumPy" includes
+# non-existent path`. Both come from this one condition.
+#
+# The install is a REinstall for the same reason: in that state numpy is
+# already present, so a plain `pip install numpy` is a no-op and cannot repair
+# it. And the verify runs unconditionally afterwards, because an environment
+# where the reinstall did not help should say so here — naming the directory —
+# rather than at the cmake error two steps later. Same trade gh-814 made for
+# an unresolvable interpreter.
+NUMPY_HEADERS_OK     = import numpy, os, sys; sys.exit(0 if os.path.isdir(numpy.get_include()) else 1)
+NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(0 if os.path.isdir(p) else 'error: numpy is installed but its C headers are missing from ' + p + ' -- cmake cannot build the extension without them. Reinstall numpy for this interpreter (gh-824).')
+
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
 # shell), force the MinGW Makefiles generator so CMake uses gcc instead of
 # MSVC.  MSVC does not support C99 float complex; gcc does.
@@ -45,10 +62,12 @@ all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
 ifeq ($(OS), Windows_NT)
-	$(PYTHON) -c "import numpy" 2>nul || $(PYTHON) -m pip install numpy
+	$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>nul || $(PYTHON) -m pip install --force-reinstall numpy
+	$(PYTHON) -c "$(NUMPY_HEADERS_VERIFY)"
 <<ensure_pytest_win>>
 else
-	@$(PYTHON) -c "import numpy" 2>/dev/null || $(PYTHON) -m pip install numpy
+	@$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>/dev/null || $(PYTHON) -m pip install --force-reinstall numpy
+	@$(PYTHON) -c "$(NUMPY_HEADERS_VERIFY)"
 <<ensure_pytest_unix>>
 endif
 	cmake -B $(BUILD_DIR) -S . \

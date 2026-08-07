@@ -21,6 +21,14 @@ PY_INC := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('incl
 EXT    := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 INC     = -I$(PY_INC) -Inative/inc
 
+# The compile rules below pass -I$(numpy.get_include()), so an importable
+# numpy whose header tree is absent produces `numpy/arrayobject.h: No such
+# file` rather than anything naming numpy (gh-824). Test the directory, and
+# REinstall — in that state numpy is already present, so a plain install is a
+# no-op and cannot repair it.
+NUMPY_HEADERS_OK     = import numpy, os, sys; sys.exit(0 if os.path.isdir(numpy.get_include()) else 1)
+NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(0 if os.path.isdir(p) else 'error: numpy is installed but its C headers are missing from ' + p + ' -- the extension cannot compile without them. Reinstall numpy for this interpreter (gh-824).')
+
 TARGETS :=
 C_TESTS :=
 

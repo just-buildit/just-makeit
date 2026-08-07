@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A generated project checked that numpy *imports*, then built against
+    headers that may not exist (gh-824).** cmake does not need numpy to
+    import; `find_package(Python3 ... NumPy)` resolves
+    `Python3_NumPy_INCLUDE_DIRS` from `numpy.get_include()`, and needs that
+    **directory** to be on disk. The generated Makefile guarded the configure
+    with `import numpy`, so a numpy satisfying the first condition but not the
+    second walked past the guard and failed inside cmake.
+
+    Its own remedy could not repair that state either: numpy *is* installed
+    there, so `pip install numpy` is a no-op. The guard could neither detect
+    the condition nor fix it.
+
+    Three of the four symptom shapes gh-811 catalogued come from this one
+    cause, which is why they looked unrelated: `Could NOT find   Python3_NumPy_INCLUDE_DIRS` when the path is read at configure time,
+    `Imported target "Python3::NumPy" includes non-existent path` when it is
+    read at generate time, and `numpy/arrayobject.h: No such file` on the
+    simple backend, which passes the directory straight to `-I`.
+
+    This is **not** gh-814. There `-DPython3_EXECUTABLE` expanded to the empty
+    string and cmake chose its own interpreter. Here the pin works — cmake
+    reports `found components: Interpreter Development.Module NumPy` — and the
+    interpreter it is correctly pinned to has an incomplete numpy. The
+    observed CI case was an ephemeral uv build environment
+    (`setup-uv-cache/builds-v0/.tmpXXXX`).
+
+    Now the guard tests the directory and the install is a **re**install, so
+    the common broken state self-heals; a verify then runs unconditionally and
+    fails naming the directory when it did not, rather than deferring to a
+    cmake error two steps later. Both arms of the `Windows_NT` conditional and
+    both build backends are covered.
+
 ## [0.50.0] — 2026-08-06
 
 ### Added
