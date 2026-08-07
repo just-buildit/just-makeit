@@ -40,6 +40,66 @@
     **Zero churn**: with neither key declared the derived `"<name> failed"`
     stays, and the runtime string is byte-identical to before.
 
+- **Constructor drift is now compared on a third axis: OPTIONALITY.**
+    `init_kwargs_drift` compared which keyword names the constructor accepts
+    and in what order. Neither reads the `PyArg_ParseTupleAndKeywords` format
+    string, so the `|` was invisible to it — and a parameter that gains a
+    default in the manifest **without moving** produces identical names in
+    identical order and a moved `|`. That reported no drift at all, while the
+    regenerated `.pyi` grew a `= ...` the binding does not honour:
+
+    ```
+    fresh render     "d|K"   n is optional
+    stale fragment   "dK"    n is required
+    kwlist           identical, same order
+    jm apply         (silent)
+    ```
+
+    Added to the existing comparison rather than as a second checker — one
+    implementation, three axes, and the two presentations it already has
+    (stderr on refresh, the `jm status` section) stay in step. A separate
+    checker would be a fourth thing to teach about every future kwlist
+    spelling.
+
+    Compared **by name**, never by position: on this class the reordering *is*
+    the drift, so a positional comparison names the wrong parameter — the
+    reporting project's named the one that still worked and stayed silent
+    about the one that did not.
+
+    Note a PyArg format character is not one-to-one with a parameter: `O&` (a
+    path) and `y#` (bytes) are two characters and one parameter each, so the
+    `|` boundary is computed by counting parameters, not characters.
+
+### Changed
+
+- **A drifted constructor now fails `jm status --check` (gh-823 Ask B).**
+    Previously it was reported and the gate passed. gh-612 made that call
+    deliberately, reasoning that jm regenerates a kwlist only with the body it
+    belongs to, so failing `--check` would demand a fix jm cannot perform.
+
+    The premise was wrong: delete-the-fragment-and-reapply is a real remedy —
+    the same one gh-815's return-shape warning prescribes — and it is
+    destructive of hand-written bodies, which makes it the author's decision
+    to take rather than an impossible one.
+
+    What settled it is what happened while the condition was merely reported.
+    The warning was correct, named the file and the reordering, and printed on
+    every `jm apply` for months, inside a block of a dozen warnings about
+    fragments that were fine. A public constructor shipped raising when called
+    as documented, with a type checker endorsing the failing call. The
+    distance between "jm knew" and "someone acted" is the exit code.
+
+    Unconditional rather than opt-in, following gh-777 (which moved an absent
+    `PyMethodDef` row to `stale` so `--check` fails on it) rather than
+    `strict_examples`: an opt-in means a project that never enables it never
+    learns its signature is broken, and that silence is the whole failure
+    mode. `status_allow` is the escape hatch — the check stays on and an
+    instance is exempted by name, through the same matcher every other allowed
+    path uses.
+
+    The summary no longer opens `OK — up to date` over a drifted constructor
+    either; that headline is what a reader takes away, and it said fine.
+
 ### Fixed
 
 - **`jm object` silently dropped an array init-param's default (gh-826).**

@@ -357,7 +357,14 @@ def run(
                         after.decode("utf-8", "replace"),
                     )
                     if _detail:
-                        kwargs_entries.append((rel_posix, _detail))
+                        # gh-823: `status_allow` is the escape hatch for the
+                        # gate this now feeds, so it has to reach here — an
+                        # allowlist a project cannot use is an opt-out that
+                        # does not exist. Through `_is_allowed`, the same
+                        # matcher every other allowed path goes through, so
+                        # one entry means the same thing everywhere.
+                        if not _is_allowed(rel_posix, allow_patterns):
+                            kwargs_entries.append((rel_posix, _detail))
                 diff = (
                     _unified_diff(before, after, rel_posix)
                     if show_diff
@@ -411,6 +418,20 @@ def run(
         len(drift)
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
+        # gh-823: unconditional, not opt-in. `strict_examples` above is a
+        # completeness ratchet projects legitimately differ on; this is "the
+        # published constructor raises when called as documented", which is
+        # not a matter of taste. The precedent is gh-777, which moved an
+        # absent PyMethodDef row from `unreconciled` to `stale` so `--check`
+        # fails on it — the reclassification only bites where something was
+        # already wrong, and that holds here too.
+        #
+        # An opt-in key would mean a project that never enables it never
+        # learns its signature is broken, and silence is the entire failure
+        # mode this addresses. `status_allow` is the escape hatch: the check
+        # stays on, the finding is visible, and an instance is exempted by
+        # name with a reason.
+        + len(kwargs_entries)
         + (_wide if _strict else 0)
     )
 
@@ -573,7 +594,20 @@ def run(
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
 
-    if not drift and not dropped_entries and not drift_entries:
+    # gh-823: a drifted constructor is no longer merely *qualified* in the
+    # "OK" line — it leaves that branch entirely. jm detected this condition,
+    # named the file and named the reordering on every single apply, and
+    # doppler still shipped a public constructor that raises when called as
+    # documented, because the finding arrived inside a block of a dozen
+    # warnings about fragments that were fine. A summary that opens "OK — up
+    # to date" is what a reader takes away, and the exit code is what CI
+    # takes away; both said fine.
+    if (
+        not drift
+        and not dropped_entries
+        and not drift_entries
+        and not kwargs_entries
+    ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
         # longer agrees with, even though they are not drift and `apply`
@@ -583,17 +617,13 @@ def run(
             if unreconciled_entries
             else ""
         )
-        # gh-612: and the same for a drifted constructor — "up to date" over
-        # a stub whose signature the extension rejects is the exact claim
-        # gh-767 established jm must not make.
-        _kw = (
-            f"; {len(kwargs_entries)} kwargs-drift (!)"
-            if kwargs_entries
-            else ""
-        )
+        # gh-612 qualified this line with a kwargs-drift count; gh-823 took
+        # the condition out of the branch instead, so there is nothing left
+        # to qualify — a drifted constructor now reports under `summary:` and
+        # fails the gate rather than being a parenthetical on "OK".
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}."
+            f"{suffix}{_unrec}."
         )
     else:
         print(

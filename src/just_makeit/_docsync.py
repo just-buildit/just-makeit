@@ -798,9 +798,8 @@ _KWLIST_RE = re.compile(
 )
 
 
-def _init_kwargs(text: str) -> tuple[str, ...]:
-    """The constructor's keyword names, in ``PyArg_ParseTupleAndKeywords``
-    order. Empty when the fragment has no ``*_init`` or no kwlist.
+def _init_body(text: str) -> str | None:
+    """The constructor wrapper's body, or ``None``.
 
     The wrapper prefix is read off the file rather than rebuilt from the
     manifest: it is ``<Component>Obj`` for some objects and ``<Component>``
@@ -810,10 +809,56 @@ def _init_kwargs(text: str) -> tuple[str, ...]:
     from ._object import _extract_c_function_bodies
 
     bodies = _extract_c_function_bodies(text)
-    body = next(
-        (b for n, b in bodies.items() if n.endswith("_init")),
-        None,
-    )
+    return next((b for n, b in bodies.items() if n.endswith("_init")), None)
+
+
+# In a PyArg format a character is not one-to-one with a parameter: jm emits
+# `O&` for a path (the converter form) and `y#` for bytes — two characters,
+# one parameter each. `|` and `$` are partition markers, not parameters.
+# Counting characters would put the `|` boundary in the wrong place for any
+# constructor taking a path or a bytes param, and where the `|` falls is the
+# entire question here.
+_FMT_NON_PARAM = "&#|$"
+
+
+def _fmt_param_count(fmt: str) -> int:
+    """How many parameters a PyArg format segment describes."""
+    return sum(1 for ch in fmt if ch not in _FMT_NON_PARAM)
+
+
+def _init_kwarg_optionality(text: str) -> tuple | None:
+    """``(required names, optional names)`` split at the constructor's ``|``.
+
+    ``None`` when the fragment has no constructor, no kwlist or no format
+    string to read — the same "nothing to compare" answer `_init_kwargs`
+    gives, so a caller can treat both the same way.
+
+    This is the axis `_init_kwargs` cannot see. It returns names in order and
+    nothing else, so a parameter that *gains a default* without moving
+    produces identical names in identical order and a moved ``|`` — no drift
+    by that comparison, while the stub gains a ``= …`` the binding does not
+    honour (gh-823).
+    """
+    names = _init_kwargs(text)
+    body = _init_body(text)
+    if not names or body is None:
+        return None
+    m = _PYARG_FMT_RE.search(_code_mask(body))
+    if not m:
+        return None
+    fmt = body[m.start(1) : m.end(1)]
+    if "|" not in fmt:
+        return (names, ())
+    head, _, _tail = fmt.partition("|")
+    k = _fmt_param_count(head)
+    return (names[:k], names[k:])
+
+
+def _init_kwargs(text: str) -> tuple[str, ...]:
+    """The constructor's keyword names, in ``PyArg_ParseTupleAndKeywords``
+    order. Empty when the fragment has no ``*_init`` or no kwlist.
+    """
+    body = _init_body(text)
     if not body:
         return ()
     m = _KWLIST_RE.search(_code_mask(body))
@@ -876,11 +921,12 @@ def init_kwargs_drift(existing: str, reference: str):
     """
     ex = _init_kwargs(existing)
     ref = _init_kwargs(reference)
-    if not ex or not ref or ex == ref:
+    if not ex or not ref:
         return ((), (), False, "")
+
     added = tuple(n for n in ref if n not in ex)
     removed = tuple(n for n in ex if n not in ref)
-    reordered = not added and not removed
+    reordered = ex != ref and not added and not removed
     detail = []
     if removed:
         detail.append("no longer accepted: " + ", ".join(removed))
@@ -891,6 +937,40 @@ def init_kwargs_drift(existing: str, reference: str):
             "same names, new positional order: "
             f"{'/'.join(ex)} -> {'/'.join(ref)}"
         )
+
+    # gh-823: the third axis, and the one that is silent on its own. The
+    # names above answer "which keywords" and "in what order"; neither sees
+    # the PyArg `|`. A parameter that gains a default in the manifest without
+    # moving produces identical names in identical order and a moved `|` — so
+    # the comparison returned "no drift" while the regenerated .pyi grew a
+    # `= …` the fragment's binding does not honour, and the published
+    # constructor raised when called as documented.
+    #
+    # Compared by NAME rather than by position: on this class the reordering
+    # IS the drift, so a positional comparison names the wrong parameter —
+    # doppler's reported the one that still worked and stayed silent about
+    # the one that did not.
+    ex_opt, ref_opt = (
+        _init_kwarg_optionality(existing),
+        _init_kwarg_optionality(reference),
+    )
+    if ex_opt is not None and ref_opt is not None:
+        became_optional = tuple(
+            n for n in ref_opt[1] if n in ex_opt[0] and n in ref
+        )
+        became_required = tuple(
+            n for n in ref_opt[0] if n in ex_opt[1] and n in ref
+        )
+        if became_optional:
+            detail.append(
+                "now omittable, still required here: "
+                + ", ".join(became_optional)
+            )
+        if became_required:
+            detail.append(
+                "now required, still omittable here: "
+                + ", ".join(became_required)
+            )
     return (added, removed, reordered, "; ".join(detail))
 
 

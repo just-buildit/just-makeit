@@ -170,19 +170,43 @@ class TestTheWiring:
         _reorder_kwlist(frag)
         assert "KWARGS (1)" in _status_output(root, check=False)[1]
 
-    def test_it_does_not_fail_the_gate(self, tmp_path, capsys):
-        """Deliberate: jm regenerates a kwlist only with the body it belongs
-        to, so there is no command to run — failing `--check` would demand a
-        fix jm cannot perform. Same call as gh-767/gh-752, and the opposite
-        of gh-777, where `apply` *could* put the member back."""
+    def test_it_fails_the_gate(self, tmp_path, capsys):
+        """Reversed by gh-823, and the reversal is the point of that issue.
+
+        gh-612 deliberately did NOT gate this, reasoning that "jm regenerates
+        a kwlist only with the body it belongs to, so there is no command to
+        run — failing `--check` would demand a fix jm cannot perform", and
+        calling it the opposite of gh-777 where `apply` could put the member
+        back.
+
+        The premise turned out to be wrong. There *is* a command: delete the
+        fragment and re-apply, which is the same remedy gh-815's return-shape
+        warning already prescribes. It is destructive of hand-written bodies,
+        which is why jm will not do it unasked — but that makes it the
+        author's decision to take, not an impossible one. Confirmed on the
+        reporting project: deleting the fragment and re-applying fixed the
+        constructor outright, with an otherwise identical member set.
+
+        What settled it is what happened while it was merely reported. The
+        warning was correct, named the file and the reordering, and printed on
+        every apply for months — inside a block of a dozen warnings about
+        fragments that were fine. A public constructor shipped raising when
+        called as documented, with a type checker endorsing the failing call.
+        The distance between "jm knew" and "someone acted" is the exit code.
+
+        Unconditional rather than opt-in: a project that never enables an
+        opt-in never learns its signature is broken, and that silence is the
+        whole failure mode. `status_allow` is the escape hatch — the check
+        stays on and an instance is exempted by name.
+        """
         root = tmp_path / "proj"
         frag = _project(root)
         capsys.readouterr()
         _reorder_kwlist(frag)
         rc, out = _status_output(root)
-        assert rc == 0, "kwargs drift must be reported, not gated"
-        assert "kwargs-drift (!)" in out, (
-            "and it must still qualify the summary — an unqualified "
-            "'up to date' over a stub the extension rejects is the exact "
-            "claim gh-767 established jm must not make"
+        assert rc != 0, "a drifted constructor must fail --check"
+        assert "kwargs-drift (!)" in out
+        assert "OK — up to date" not in out, (
+            "and it must not open with OK: that headline is what a reader "
+            "takes away, and it said fine while the signature was broken"
         )
