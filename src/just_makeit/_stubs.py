@@ -1365,11 +1365,35 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # genuinely optional and keeps its declared position below — only
             # the default-less array is hoisted here.
             is_required_array = t.endswith("[]") and not optional and not dflt
+            # gh-845: a capsule init-param is required-POSITIONAL whatever its
+            # nullability — `_context/_state.py`'s `required_entries` adds
+            # every capsule unconditionally, so the binding puts it before the
+            # `|` either way. Tested directly rather than inferred from
+            # `required`, which caught it only by accident while every capsule
+            # was also mandatory. gh-805 §H made a nullable one `required =
+            # false` and this fell through to the defaulted branch: the stub
+            # then advertised `clock: Any = ...` for a positional the binding
+            # demands, AND left it in declaration order behind a defaulted
+            # scalar the kwlist hoists it above — so `Capn(4096)` bound 4096 to
+            # `clock` while the stub promised `n`. Same accidental coupling as
+            # `allow_none`/`explain_type_error` in `_context/_parse.py`.
+            capsule = param[10] if len(param) > 10 else ""
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
             # the other default-less params rather than given a `= ...`.
             # gh-565: a bytes blob is required-positional for the same reason.
-            if (
+            if capsule:
+                # gh-790/gh-845: `object`, not `Any` — the binding accepts the
+                # capsule or anything exposing `._capsule`, and `Any` would
+                # type-check the int a reader might try. `| None` when
+                # nullable, and never a `= None`: accepting None and being
+                # omittable are different axes. Matches the standalone
+                # producer in `_context/_state.py`, which gh-805 §H fixed and
+                # this one was missed by — jm has five `.pyi` producers.
+                req_parts.append(
+                    f"{n}: object | None" if not required else f"{n}: object"
+                )
+            elif (
                 t == "path"
                 or t == "bytes"
                 or is_required_array

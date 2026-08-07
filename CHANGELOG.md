@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every TOML escaping path emits TOML `tomllib` can read (gh-844).** There
+    were **five** hand-rolled escapers at three levels of completeness, and
+    three of them produced strings `tomllib` refuses:
+
+    | path                           | lone CR    | U+007F     | newline    |
+    | ------------------------------ | ---------- | ---------- | ---------- |
+    | `_toml_inline_string`          | ok         | **reject** | ok         |
+    | `_str_assign`                  | **reject** | **reject** | ok         |
+    | `_toml_scalar` / `_toml_value` | **reject** | **reject** | **reject** |
+
+    All now route through one `_toml_basic_string` that spells out TOML's
+    rules. gh-838 had used `json.dumps` on the reasoning that JSON's escape
+    set is a subset of TOML's — true except for `U+007F`, which is what a
+    near-subset of another format's rules buys you. `_str_assign`'s
+    multi-line `"""` form is taken only when the value is representable in
+    it, so a lone CR falls back to the single-line form instead of through
+    it.
+
+    The fifth escaper, `_toml_string_array`, was found by the new test's
+    discovery ratchet rather than by anyone reading the code. It was the only
+    correct one, and only because `json.dumps` defaults to
+    `ensure_ascii=True`.
+
+- **`_dump` refuses to hand back a manifest it cannot read (gh-844).** Its
+    self-check has re-parsed its own output since gh-763, and on a
+    `TOMLDecodeError` it **returned the text anyway** — so a serializer bug
+    became a manifest that broke the *next* command, in a different verb from
+    the one that wrote it. That is why three escaping bugs survived three
+    releases. It now raises; there is no false alarm to weigh against it,
+    since text `tomllib` cannot read is wrong by definition.
+
+- **A nullable capsule init-param's module stub agrees with its binding
+    (gh-845).** gh-805 §H fixed the standalone `.pyi` producer and missed the
+    module-aggregated one, which decides "required-positional" from the
+    manifest's `required` flag — `True` for every capsule until §H set it
+    `False`. The stub then advertised `clock: Any = ...` for a positional the
+    binding demands (the gh-611 shape) **and** left it in declaration order
+    behind a defaulted scalar the kwlist hoists it above (the gh-823 shape),
+    so `Capn(4096)` bound 4096 to `clock` while the stub promised `n`.
+
+    The module producer now tests capsule-ness directly instead of inferring
+    it from `required`, and annotates `object` / `object | None` rather than
+    `Any`. A mandatory capsule's stub is unchanged. The test asserts the stub
+    against the **generated kwlist** rather than a literal, so the two faces
+    cannot drift apart again.
+
 ## [0.53.0] — 2026-08-07
 
 ### Added
