@@ -8,6 +8,7 @@ the same names callers already use (COMPONENT_CORE_H, CMAKE_LISTS_TOP, etc.).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ._types import (
@@ -130,6 +131,34 @@ def render_component_pyi(ctx: dict) -> str:
     from ._pyfmt import reflow_pyi
 
     return reflow_pyi(render(COMPONENT_PYI, ctx))
+
+
+#: A ``CHECK(...)`` **statement** in the rendered C test. Anchored to the
+#: start of the line on purpose: every emitter in `_context._state` writes the
+#: call as a statement of its own, and anchoring is what keeps the macro's own
+#: ``#define`` — and any prose in a comment that happens to mention ``CHECK()``
+#: — out of the count. The unanchored form got both wrong on its first run.
+_CHECK_CALL = re.compile(r"^\s*CHECK\s*\(", re.M)
+
+
+def render_component_test_c(ctx: dict) -> str:
+    """Render the C test scaffold and stamp how many checks it contains.
+
+    gh-806. **The** way to render ``COMPONENT_TEST_C``. The count cannot come
+    from the context dict: the checks are contributed by four independent
+    slots (``obj_null_check``, ``getter_setter_test_c``, ``step_c_smoke_test``,
+    ``reset_test_c``), each built by a different ``make_*_ctx``, and any
+    arithmetic over them is a second implementation that drifts the first time
+    a fifth slot is added. Counting the rendered text is a measurement of the
+    file being written, so it cannot disagree with it.
+
+    A call site that skipped this would leave ``JM_SCAFFOLD_CHECKS`` defined
+    as nothing and the generated C would not compile — deliberately loud,
+    since the alternative is a silent banner that never fires.
+    """
+    text = render(COMPONENT_TEST_C, ctx)
+    checks = len(_CHECK_CALL.findall(text))
+    return text.replace("/*<<scaffold_checks>>*/", str(checks))
 
 
 # ── Multi-object module support ──────────────────────────────────────────────

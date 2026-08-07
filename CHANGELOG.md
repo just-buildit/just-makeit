@@ -2,6 +2,69 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A scaffolded test or benchmark no longer displaces a real one in silence
+    (gh-806).** Renaming a component moves its manifest section and its native
+    directories, but its C test and benchmark keep their old filenames.
+    `jm apply` then materialises `test_<new>_core.c` / `bench_<new>_core.c` and
+    re-renders the CMake that builds *those* names, so the author's real files
+    stay on disk compiled by nothing while a scaffold takes over the target.
+
+    The scaffold **passes**. `ctest` prints "100% tests passed" with the real
+    suite missing from the denominator; `make bench` exits 0 having measured
+    nothing. doppler carried both — a 5.5 KB four-arm benchmark and a 500-line
+    test suite, in the same component — for weeks with CI green.
+
+    `jm status` gains two sections, and `jm apply` prints the same findings as
+    warnings:
+
+    | section   | what it is                                                  | gates |
+    | --------- | ----------------------------------------------------------- | ----- |
+    | `UNBUILT` | a `test_*_core.c` / `bench_*_core.c` no build file compiles | yes   |
+    | `SILENT`  | a generated benchmark that records no measurement           | no    |
+
+    `UNBUILT` gates, unconditionally. The failure mode is a green CI run, so a
+    finding that did not fail the gate would reproduce the exact silence it
+    exists to break. `[project] status_allow` remains the escape hatch — the
+    file stays listed and marked, and stops counting.
+
+    The detected property is not "was renamed" — jm has no memory of the
+    previous name and does not need one. It is the thing that is actually
+    wrong and is directly checkable: **a C source in the canonical test or
+    benchmark directory that no build file compiles.** That also catches a
+    target deleted by hand, or a file dropped into the directory and never
+    wired. A project whose CMake enumerates sources with `file(GLOB …)` is
+    skipped rather than guessed at, and `build = "make"` projects are not
+    reported for benchmarks, which that backend has never built for any
+    component — that gap is gh-832.
+
+- **Generated tests and benchmarks say what they covered (gh-806).** Two
+    runtime signals, so a CI log distinguishes a placeholder from a suite
+    without anyone running `jm status`:
+
+    - a generated C test prints its assertion count — `PASSED (4 checks)` —
+        followed by a `scaffold coverage only` note. The note is guarded by the
+        number of checks jm stamped in at scaffold time, so it clears itself
+        the moment an author adds one of their own, rather than being a marker
+        that keeps claiming to be a placeholder long after the real suite
+        exists;
+    - `jm_bench_write_json` prints `no measurements recorded` (stdout and
+        stderr) when a benchmark timed nothing — the counterpart to the empty
+        `"benchmarks": []` array it was already writing, on the side a human
+        reads.
+
+    Both live in create-only files, so they reach newly scaffolded components.
+    Existing trees are covered by the `UNBUILT` / `SILENT` scan above, which
+    needs nothing but the files already on disk.
+
+### Changed
+
+- A `no_step` component's benchmark banner no longer promises
+    `(no step(); methods below)` when there are no benchable methods below it
+    (gh-806). It reads `(no step())`, and what was actually measured is
+    reported by `jm_bench_write_json`.
+
 ## [0.51.0] — 2026-08-07
 
 ### Added

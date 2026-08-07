@@ -23,7 +23,11 @@ main(void)
     jm_bench_t _bench = {0};
 
     printf("=== /*<<component>>*/ benchmark ===\n");
-    printf("  (no step(); methods below)\n");
+    /* gh-806: "methods below" was a promise, not a fact -- a component whose
+     * methods are all variable_output / out_type / varargs / codec has no
+     * benchable shape among them, and this line read as though it did.  What
+     * actually got measured is reported by jm_bench_write_json(). */
+    printf("  (no step())\n");
     printf("block = %d samples,  %d iterations\n\n", BENCH_N, ITERATIONS);
 
 /*<<bench_methods_timing_block>>*/
