@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.50.0] — 2026-08-06
+
 ### Added
 
 - **A manifest key that belongs to another kind of table is now reported
