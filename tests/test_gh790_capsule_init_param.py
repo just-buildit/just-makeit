@@ -495,11 +495,47 @@ class TestTheSharedEmitter:
         implementation detail there is unhelpful."""
         method = capsule_unwrap_c("p", PTR, CAP, "p_obj", "return NULL;")
         init = capsule_unwrap_c(
-            "p", PTR, CAP, "p_obj", "return -1;", allow_none=False
+            "p",
+            PTR,
+            CAP,
+            "p_obj",
+            "return -1;",
+            allow_none=False,
+            explain_type_error=True,
         )
         assert "PyErr_Clear()" not in method
         assert "PyErr_Clear()" in init
         assert "Py_TYPE(p_obj)->tp_name" in init
+
+    def test_the_upgrade_follows_the_constructor_not_the_nullability(self):
+        """gh-805 §H split `explain_type_error` out of `allow_none`.
+
+        They were the same question only by accident: every constructor param
+        was mandatory, so `allow_none=False` could stand in for "this is a
+        tp_init". A NULLABLE constructor param breaks that coupling, and
+        leaving them fused silently downgraded the message this exists to
+        give — `'int' object has no attribute '_capsule'` on the very call
+        the upgrade was written for.
+        """
+        nullable_init = capsule_unwrap_c(
+            "p",
+            PTR,
+            CAP,
+            "p_obj",
+            "return -1;",
+            allow_none=True,
+            explain_type_error=True,
+        )
+        # Nullable AND explained: None is accepted, a wrong object is named.
+        assert "if (p_obj != Py_None) {" in nullable_init
+        assert "PyErr_Clear()" in nullable_init
+        assert "Py_TYPE(p_obj)->tp_name" in nullable_init
+        # And the knob is genuinely independent: mandatory without the
+        # upgrade is expressible too, which is what proves the two are not
+        # the same question wearing different names.
+        assert "PyErr_Clear()" not in capsule_unwrap_c(
+            "p", PTR, CAP, "p_obj", "return -1;", allow_none=False
+        )
 
 
 # ── the claims only a compiler and a live interpreter can settle ────────────

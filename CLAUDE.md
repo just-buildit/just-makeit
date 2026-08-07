@@ -232,10 +232,24 @@ its pointer is a different feature and should look different. Both producers
 keep their liveness guard (destroyed / closed) before handing the pointer out —
 a capsule carries no liveness for the consumer to check.
 
-The emitter's two knobs are `fail` (`return NULL;` in a wrapper vs `return -1;`
-in an `initproc` — a hard-coded `return NULL` inside an `initproc` compiles and
-reports *success*) and `allow_none` (a method's detach idiom vs a constructor's
-mandatory handle).
+The emitter has **three** knobs, and the third exists because two of them were
+briefly one:
+
+- `fail` — `return NULL;` in a wrapper vs `return -1;` in an `initproc`. A
+    hard-coded `return NULL` inside an `initproc` compiles and reports *success*.
+- `allow_none` — `None` maps to `NULL` (the detach idiom, and gh-805 §H's
+    "no time base stated") vs the handle is mandatory and `None` is rejected up
+    front.
+- `explain_type_error` — replace the raw `AttributeError` from the `._capsule`
+    lookup with a `TypeError` naming what to pass. True for a **constructor**.
+
+`explain_type_error` was `allow_none` until gh-805 §H. They were the same
+question only by accident: every constructor param was mandatory, so
+`allow_none=False` could stand in for "this is a `tp_init`". A nullable
+constructor param breaks that coupling, and leaving them fused silently
+downgraded the message to `'int' object has no attribute '_capsule'` on exactly
+the call the upgrade was written for. A flag standing in for a second question
+is a bug waiting for the first case that separates them.
 
 Constructing adds two things nothing else needs:
 

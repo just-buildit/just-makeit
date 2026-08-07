@@ -127,9 +127,26 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
                 file=sys.stderr,
             )
             sys.exit(1)
-        header = parts[4] if len(parts) >= 5 else ""
-        # Always required (slot 8): there is no object to build around a
-        # handle that is not there.
+        # gh-805 §H: a trailing `optional` makes the handle NULLABLE — the
+        # Python face accepts `None` and C receives NULL. Matched as a literal
+        # token rather than by position so it reads the same with or without a
+        # header (`…:capsule:cap:optional` and `…:capsule:cap:clk.h:optional`
+        # both work); a header file is never named `optional`.
+        #
+        # It does NOT make the argument omittable. That is the separate
+        # optionality axis, and half-doing it would put a `= ...` in the stub
+        # for a slot the binding still demands.
+        tail = [t for t in parts[4:] if t]
+        nullable = any(t.lower() == "optional" for t in tail)
+        header = next(
+            (t for t in tail if t.lower() != "optional"),
+            "",
+        )
+        # `required` (slot 8) is the switch, and it already meant "reject
+        # None" — it simply had no contrasting branch, because both sides
+        # rejected it. Default stays required: there is usually no object to
+        # build around a handle that is not there, and a NULL that *means*
+        # something is the special case the author opts into.
         return (
             (
                 name,
@@ -140,7 +157,7 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
                 "",
                 False,
                 "",
-                True,
+                not nullable,
                 "",
                 parts[3],
                 header,
