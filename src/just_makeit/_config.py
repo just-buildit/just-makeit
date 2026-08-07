@@ -21,7 +21,6 @@ default = "8"
 from __future__ import annotations
 
 import copy as _copy
-import json as _json
 import re as _re
 import sys as _sys
 
@@ -156,10 +155,17 @@ def load(root: Path) -> dict:
 
 
 def _toml_string_array(items: list[str]) -> str:
-    """Render a list of strings as a TOML inline array (double quotes)."""
-    import json
+    """Render a list of strings as a TOML inline array (double quotes).
 
-    return "[" + ", ".join(json.dumps(s) for s in items) + "]"
+    Only used for the `include = [...]` glob list, so its inputs are paths.
+    gh-844 routed it through `_toml_basic_string` with the other four escapers
+    anyway: it was the one that happened to be *correct*, and only because
+    `json.dumps` defaults to ``ensure_ascii=True`` and so escapes ``U+007F``
+    as a side effect of escaping everything non-ASCII. Correct by accident is
+    the state the other four were also in until it stopped holding, and it
+    cost readability — an accented character in a path came out ``\u00e9``.
+    """
+    return "[" + ", ".join(_toml_basic_string(s) for s in items) + "]"
 
 
 def _provenance(
@@ -3258,6 +3264,60 @@ def add_component(
     return cfg
 
 
+#: Anything a TOML *multi-line* basic string still forbids raw. Newline is
+#: legal there (that is the point); a lone CR, the other C0 controls and
+#: U+007F are not.
+_TOML_UNSAFE_IN_MULTILINE = _re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")
+
+#: Characters TOML 1.0.0 gives a short escape for inside a basic string.
+#: Tab is deliberately escaped too: it is legal raw, but a literal tab in a
+#: generated manifest is invisible to a reader diffing it.
+_TOML_SHORT_ESCAPES = {
+    '"': '\\"',
+    "\\": "\\\\",
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
+
+
+def _toml_basic_string(value: str) -> str:
+    """*value* as a TOML **basic string**, quotes included.
+
+    gh-844. The one escaper. There were **four**, hand-rolled to three
+    different levels of completeness, and three of them emitted strings
+    ``tomllib`` refuses:
+
+    ==========================  =======  ======  =========
+    path                        lone CR  U+007F  newline
+    ==========================  =======  ======  =========
+    ``_toml_inline_string``     ok       reject  ok
+    ``_str_assign``             reject   reject  ok
+    ``_toml_scalar``            reject   reject  reject
+    ==========================  =======  ======  =========
+
+    Escaping is spelled out here rather than delegated to ``json.dumps``,
+    which gh-838 used on the strength of "JSON's string grammar is a subset of
+    TOML's basic string for every character that needs escaping". That claim
+    was **wrong by exactly one codepoint**: TOML also forbids a raw ``U+007F``
+    and JSON's control set stops at ``U+001F``. A near-subset of another
+    format's rules is not a substitute for the rules — so this states TOML's,
+    and `tests/test_gh844_toml_escaping.py` checks every path against every
+    class of forbidden character rather than against a remembered list.
+    """
+    out = []
+    for ch in value:
+        if ch in _TOML_SHORT_ESCAPES:
+            out.append(_TOML_SHORT_ESCAPES[ch])
+        elif ch < "\u0020" or ch == "\u007f":
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
 def _str_assign(key: str, value: str) -> str:
     """Render ``<key> = ...`` for the TOML dump, escaping as needed.
 
@@ -3266,14 +3326,20 @@ def _str_assign(key: str, value: str) -> str:
     by the ``message`` key on ``[[<comp>.warnings]]`` (gh-481), whose prose is
     authored by a human and routinely contains quotes.
     """
-    if "\n" in value:
+    # gh-844: the multi-line form is for READABILITY, so it is taken only when
+    # the value is representable in it — newlines plus otherwise-safe text. A
+    # lone CR or a U+007F inside `"""…"""` is just as illegal as inside a basic
+    # string, and this branch used to pass both through raw: `"a\r\nb"` took
+    # the multi-line path and survived, `"a\rb"` did not. Falling back to the
+    # single-line basic string keeps the pretty form where it is correct and is
+    # never wrong where it is not.
+    if "\n" in value and not _TOML_UNSAFE_IN_MULTILINE.search(value):
         # strip("\n") for round-trip idempotency (gh-192) — see _dump impl keys.
         body = (
             value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"').strip("\n")
         )
         return f'{key} = """\n{body}\n"""'
-    body = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'{key} = "{body}"'
+    return f"{key} = {_toml_basic_string(value)}"
 
 
 def _doc_assign(value: str) -> str:
@@ -3298,7 +3364,7 @@ def _toml_inline_string(value: str) -> str:
     control as ``\\uXXXX``). ``ensure_ascii=False`` keeps an author's non-ASCII
     prose readable, which TOML accepts unescaped.
     """
-    return _json.dumps(value, ensure_ascii=False)
+    return _toml_basic_string(value)
 
 
 def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
@@ -3839,6 +3905,30 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
     return lines
 
 
+def _reparse_or_raise(text: str) -> dict:
+    """Parse what `_dump` just produced, refusing to hand back bad TOML.
+
+    gh-844. `_dump` has always re-parsed its own output — to find sections it
+    failed to render (gh-763) — and on a `TOMLDecodeError` it **returned the
+    text anyway**. So a serializer bug became a manifest that broke the *next*
+    command, in a different verb from the one that wrote it, which is exactly
+    why three separate escaping bugs went unnoticed across three releases.
+
+    There is no false alarm to weigh against raising: if `tomllib` cannot read
+    what jm just emitted, the text is wrong by definition. Anything reaching
+    here is a jm bug, and failing at the moment of authorship is what makes
+    the next one findable.
+    """
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"just-makeit generated a manifest it cannot read back: {exc}\n"
+            "This is a bug in jm's TOML serializer, not in your project. "
+            "Nothing has been written."
+        ) from exc
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -4339,10 +4429,19 @@ def _dump(cfg: dict) -> str:
     # is appended generically. Asking the output what is missing needs no list
     # of known kinds, and cannot be forgotten for the kind added next — the
     # same reason the array branch above tests the value instead of its name.
-    try:
-        survived = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        return text
+    # gh-844: RAISE, do not hand the text back. This check exists to find
+    # sections `_dump` failed to render, and it was swallowing a different
+    # failure entirely — "what I just wrote is not TOML" — by returning the
+    # bad text for `save` to write. The manifest then broke the *next*
+    # command, in a different verb from the one that caused it, which is why
+    # three separate escaping bugs stayed invisible until someone tested the
+    # escapers directly.
+    #
+    # There is no false alarm to trade against: if `tomllib` cannot read what
+    # this function just emitted, the text is wrong by definition. Anything
+    # reaching here is a jm bug, and the traceback names the manifest jm was
+    # about to corrupt.
+    survived = _reparse_or_raise(text)
 
     # Absent entirely -> append it generically. `[codec.X]` is this case: the
     # component loop above does not claim it, so nothing was written at all.
@@ -4350,7 +4449,10 @@ def _dump(cfg: dict) -> str:
     if missing:
         text = text.rstrip("\n") + "\n\n"
         text += "\n".join(_dump_generic(k, cfg[k]) for k in missing)
-        survived = tomllib.loads(text)
+        # Same guard as above: the generic append can itself emit something
+        # unreadable (it renders values jm was never taught about), and this
+        # was the one bare `tomllib.loads` left on the path.
+        survived = _reparse_or_raise(text)
 
     # Present but WRONG is the other half, and it cannot be repaired by
     # appending: the section header is already in the file, and TOML forbids a
@@ -4392,7 +4494,10 @@ def _toml_scalar(v: object) -> str:
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return str(v)
-    return '"{}"'.format(str(v).replace("\\", "\\\\").replace('"', '\\"'))
+    # gh-844: was `\\` and `"` only — no newline, CR or U+007F — and it is
+    # what `_toml_value` falls through to for every generically-rendered
+    # section, so it was the widest of the four broken paths.
+    return _toml_basic_string(str(v))
 
 
 def _toml_value(v: object) -> str:

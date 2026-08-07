@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C  # noqa: E402
 from just_makeit._cli_parse import parse_init_param_flag  # noqa: E402
+from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
@@ -317,3 +319,77 @@ class TestItCompilesAndRuns:
         )
         assert out.startswith("TypeError"), out
         assert "must be the doppler.telemetry.tlm capsule" in out
+
+
+class TestTheModuleFaceAgreesWithItsBinding:
+    """gh-845: §H fixed the standalone `.pyi` and missed the module one.
+
+    jm has five `.pyi` producers. §H changed `_context/_state.py`'s (the
+    standalone object) and `_stubs.make_module_pyi` kept its own idea of which
+    params are required-positional — a predicate that qualified a capsule only
+    via the manifest's `required` flag, which was `True` for every capsule
+    until §H set it `False` for a nullable one.
+
+    Two divergences followed, and the second is the worse:
+
+    * the stub advertised `clock: Any = ...` for a positional the binding
+      demands, so `Capn()` type-checked and raised (the gh-611 shape);
+    * the stub left it in declaration order behind a defaulted scalar the
+      kwlist hoists it *above*, so `Capn(4096)` bound 4096 to `clock` while
+      the stub promised `n` (the gh-823 shape) — a wrong binding, silently.
+
+    Asserted against the generated kwlist rather than against a literal, so
+    the two faces cannot drift apart again without this failing.
+    """
+
+    def _module_project(self, tmp_path, *, nullable: bool) -> Path:
+        root = tmp_path / "proj"
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("proj", root)
+            module_run(root, "m")
+            d = root / "native" / "inc" / "telemetry"
+            d.mkdir(parents=True)
+            (d / "telemetry.h").write_text(FOREIGN_H)
+            object_run(
+                root,
+                "capn",
+                "m",
+                no_state=True,
+                no_step=True,
+                class_name="Capn",
+                init_params=[
+                    ("n", "size_t", "1024"),
+                    _param(nullable=nullable),
+                ],
+            )
+        return root
+
+    def _faces(self, root: Path) -> tuple[list[str], list[str]]:
+        """(stub parameter names, kwlist names) — the pair that must agree."""
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        sig = re.search(r"def __init__\(self, (.*?)\) -> None", pyi).group(1)
+        stub = [p.split(":")[0].strip() for p in sig.split(", ")]
+        ext = (root / "native" / "src" / "m" / "m_ext_capn.c").read_text()
+        kw = re.search(r"kwlist\[\] = \{(.*?), NULL\}", ext).group(1)
+        return stub, [k.strip().strip('"') for k in kw.split(",")]
+
+    @pytest.mark.parametrize("nullable", [True, False])
+    def test_the_stub_and_the_kwlist_agree_on_order(self, tmp_path, nullable):
+        stub, kwlist = self._faces(
+            self._module_project(tmp_path, nullable=nullable)
+        )
+        assert stub == kwlist
+
+    def test_a_nullable_handle_is_positional_and_annotated(self, tmp_path):
+        root = self._module_project(tmp_path, nullable=True)
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        assert "def __init__(self, tlm: object | None, n: int = ...)" in pyi
+        # The binding keeps it before the `|`, so a default here would bless
+        # a call that raises.
+        assert "tlm: object | None = " not in pyi
+        assert "tlm: Any" not in pyi
+
+    def test_a_mandatory_handle_is_unchanged(self, tmp_path):
+        root = self._module_project(tmp_path, nullable=False)
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        assert "def __init__(self, tlm: object, n: int = ...)" in pyi
