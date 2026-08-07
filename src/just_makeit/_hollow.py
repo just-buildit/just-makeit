@@ -187,8 +187,6 @@ def orphans(root: Path, cfg: dict) -> list[Orphan]:
         k for k in _KINDS if k[0] != "bench" or C.build_system(cfg) == "cmake"
     ]
     declared = set(C.components(cfg))
-    for mod in C.modules(cfg):
-        declared |= set(C.module_objects(cfg, mod))
 
     found: list[Orphan] = []
     for kind, subdir, _fmt, pattern in kinds:
@@ -225,12 +223,16 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
     from the source *is* the emptiness — no need to run the binary, and no way
     for the answer to disagree with what the target will do.
     """
-    declared = list(C.components(cfg))
-    for mod in C.modules(cfg):
-        declared += list(C.module_objects(cfg, mod))
-
     out: list[SilentBench] = []
-    for comp in declared:
+    # gh-836: `C.components` is ALREADY every component, module objects
+    # included — a module object keeps its own top-level `[<obj>]` section and
+    # `components` returns every top-level key that is not reserved. Unioning
+    # `module_objects` on top of it therefore visited each module object twice
+    # and reported its benchmark twice, so the count came out at exactly 2x
+    # the files (doppler: 31 files, `SILENT (62)`). The two orderings doppler
+    # saw in the listing are the two sources: `components` follows manifest
+    # key order, `module_objects` follows the `objects = [...]` array.
+    for comp in C.components(cfg):
         src = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
         if not src.is_file():
             continue
