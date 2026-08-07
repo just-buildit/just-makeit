@@ -209,8 +209,10 @@ def _build_no_state_init_ctx(
     # off the `capsule` KEY rather than the type, because the type is the
     # pointer's own spelling (`dp_tlm_t *`) — deliberately not in
     # _CTYPE_META, since jm knows nothing about it beyond passing it along.
-    # (name, ctype, capsule_name)
-    capsule_ip: list[tuple[str, str, str]] = []
+    # gh-805 §H: (name, ctype, capsule_name, nullable). `required` on the
+    # manifest entry already meant "reject None"; it simply had no
+    # contrasting branch, so both sides rejected it.
+    capsule_ip: list[tuple[str, str, str, bool]] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
     # gh-611: a plain array with a declared default is genuinely optional —
@@ -242,7 +244,7 @@ def _build_no_state_init_ctx(
                     " is always a required positional (like 'path' and"
                     " 'bytes')."
                 )
-            capsule_ip.append((name, ct, capsule_flag))
+            capsule_ip.append((name, ct, capsule_flag, not required_flag))
         elif is_array_param_type(ct):
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
@@ -344,8 +346,8 @@ def _build_no_state_init_ctx(
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
     _path_names: frozenset[str] = frozenset(path_ip)
     _bytes_names: frozenset[str] = frozenset(bytes_ip)
-    _capsule_meta: dict[str, tuple[str, str]] = {
-        n: (ct, cn) for n, ct, cn in capsule_ip
+    _capsule_meta: dict[str, tuple[str, str, bool]] = {
+        n: (ct, cn, nullable) for n, ct, cn, nullable in capsule_ip
     }
 
     # gh-266: split scalar init-params into required (no default — parsed as a
@@ -381,7 +383,7 @@ def _build_no_state_init_ctx(
         + [("bytes", n) for n in bytes_ip]
         # gh-790: same reasoning again. There is no object to build around a
         # handle that is not there, so a capsule is always required.
-        + [("capsule", n) for n, _, __ in capsule_ip],
+        + [("capsule", n) for n, _, __, ___ in capsule_ip],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
@@ -511,7 +513,7 @@ def _build_no_state_init_ctx(
             # Python-side transport, so the create() signature is what the
             # author would have written by hand and the C smoke test can call
             # it directly.
-            _cap_ct, _cap_name = _capsule_meta[pname]
+            _cap_ct, _cap_name, _cap_nullable = _capsule_meta[pname]
             _cap_disp = _ctype_display(_cap_ct)
             if not _cap_disp.endswith("*"):
                 _cap_disp += " "
@@ -520,6 +522,10 @@ def _build_no_state_init_ctx(
                 f" * @param {pname}  Borrowed handle from another module"
                 f" (Python: the {_cap_name} capsule, or an object exposing"
                 " it as ._capsule). Not owned; do not free."
+                # gh-805 §H: say so in the sacred header too. NULL is a value
+                # the author's create() must then handle, and the header is
+                # where they read its contract.
+                + (" May be NULL (Python: None)." if _cap_nullable else "")
             )
             call_parts.append(pname)
             # The zero-seeded C smoke/bench create() passes NULL — jm has no
@@ -626,7 +632,7 @@ def _build_no_state_init_ctx(
             # the same two-step the method path uses, through the same
             # emitter. It must run before any array acquisition so a failed
             # unwrap has nothing to release.
-            _cap_ct, _cap_name = _capsule_meta[name]
+            _cap_ct, _cap_name, _cap_nullable = _capsule_meta[name]
             local_lines.append(f"    PyObject *{name}_obj = NULL;")
             parse_args.append(f"&{name}_obj")
             # gh-515/gh-219, same rule the str_enum check above follows: by
@@ -649,7 +655,15 @@ def _build_no_state_init_ctx(
                     _cap_name,
                     f"{name}_obj",
                     _cap_fail,
-                    allow_none=False,
+                    # gh-805 §H: this was hard-coded False, so `required` had
+                    # no contrasting branch and the key was inert. doppler's
+                    # capture borrows a clock whose NULL *means* "no time base
+                    # stated" — the sidecar then omits the keys rather than
+                    # fabricating a sample rate into a file that outlives the
+                    # process — and the Python face could not say it.
+                    allow_none=_cap_nullable,
+                    # Always: this is a tp_init whatever the nullability.
+                    explain_type_error=True,
                 )
             )
             # gh-790, and the half that is easy to forget by hand: the C
@@ -1033,7 +1047,15 @@ def _build_no_state_init_ctx(
             # type. `object` says "some Python object" and still rejects the
             # int a reader might otherwise try; `Any` would type-check
             # everything, including the mistake.
-            pyi_parts.append(f"{name}: object")
+            #
+            # gh-805 §H: `| None` when the handle is nullable, so the stub
+            # says what the binding now accepts. No `= None` with it — the
+            # argument is still required to be *passed*; being omittable is
+            # the separate optionality axis, and advertising a default the
+            # binding does not honour is the gh-611 failure this repo already
+            # has a checker for.
+            _ann = "object | None" if _capsule_meta[name][2] else "object"
+            pyi_parts.append(f"{name}: {_ann}")
         else:
             ct = _req_scalar_meta[name][0]
             pyi_parts.append(f"{name}: {scalar_py_annotation(ct)}")
@@ -1212,10 +1234,11 @@ def _build_no_state_init_ctx(
         # replaces those wholesale, so an owner field put there would be
         # silently dropped the moment the object also declared a method.
         "capsule_owner_fields": "".join(
-            f"    PyObject *_{n}_owner;\n" for n, _, __ in capsule_ip
+            f"    PyObject *_{n}_owner;\n" for n, _, __, ___ in capsule_ip
         ),
         "capsule_owner_free": "".join(
-            f"    Py_XDECREF(self->_{n}_owner);\n" for n, _, __ in capsule_ip
+            f"    Py_XDECREF(self->_{n}_owner);\n"
+            for n, _, __, ___ in capsule_ip
         ),
         "create_params": create_params,
         "create_param_docs": create_param_docs,

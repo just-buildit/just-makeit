@@ -117,6 +117,14 @@ def _init_param_spec(p: dict) -> str:
         spec = f"{name}:{typ}:capsule:{p['capsule']}"
         if p.get("header"):
             spec += f":{p['header']}"
+        # gh-805 §H: a capsule param carries `required` like any other, and a
+        # nullable one is the absence of it. Omitting the token here would
+        # replay a NULLABLE handle as a mandatory one — a script that rebuilds
+        # a constructor which rejects the `None` the original accepted, which
+        # is the same silent-divergence class as dropping the capsule grammar
+        # itself.
+        if not p.get("required"):
+            spec += ":optional"
         return spec
     if p.get("optional"):
         spec = f"{name}:{typ}:optional"

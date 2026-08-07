@@ -523,12 +523,55 @@ for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
-| TOML field                                                | CLI flag                                                  | Status                      |
-| --------------------------------------------------------- | --------------------------------------------------------- | --------------------------- |
-| `name`, `type`, `default`                                 | `jm object --init-param name:type[:default]` (repeatable) | ✅                          |
-| `optional = true`                                         | `jm object --init-param 'name:type[]:optional'`           | ✅ (syntax extension)       |
-| `default_raw`, `real_type`, `real_create_fn`, `create_fn` | (TOML only)                                               | 🟡                          |
-| compose with `[[state]]`                                  | `--init-param + --state` together                         | ✅ (0.13.23) (gate dropped) |
+| TOML field                                                | CLI flag                                                                | Status                      |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
+| `name`, `type`, `default`                                 | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
+| `optional = true`                                         | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
+| `default_raw`, `real_type`, `real_create_fn`, `create_fn` | (TOML only)                                                             | 🟡                          |
+| `capsule = "<name>"`, `header = "path/hdr.h"`             | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
+| `required = false` on a capsule param (nullable handle)   | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
+| compose with `[[state]]`                                  | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+
+#### A capsule-typed init-param: constructing from a foreign handle
+
+The constructor counterpart of the method params above — the object is built
+*around* a pointer another module published. `header` injects the `#include`
+that declares the foreign type into the sacred `_core.h`, because the type
+appears in the `create()` prototype.
+
+A capsule init-param is **mandatory by default**: there is usually no object
+to build around a handle that is not there. Declare it `optional` when `NULL`
+is a value that *means* something:
+
+```toml
+[[capture.init_params]]
+name    = "clock"
+type    = "dp_sample_clock_t *"
+capsule = "doppler.clk"
+header  = "clk.h"
+# required omitted -> nullable
+```
+
+```python
+Capture(clock)        # borrows the handle
+Capture(None)         # C receives NULL -- "no time base stated"
+```
+
+`required = true` (the default, and what the CLI writes without `:optional`)
+rejects `None` up front with a `TypeError` naming what to pass, rather than
+letting a `NULL` reach `create()` and surfacing the failure a layer away from
+its cause. Either way a wrong object — an `int`, say — gets a `TypeError`
+naming the capsule, not the `AttributeError` from the internal `._capsule`
+lookup.
+
+The stub annotates a nullable handle `object | None`, **without** a `= None`
+default: the argument still has to be passed. Being *omittable* is a separate
+axis, and a stub advertising a default the binding does not honour is the
+gh-611 defect this project ships a checker for.
+
+The generated `create()`'s Doxygen says `May be NULL (Python: None).` on a
+nullable handle, so the contract is visible where the author writes the body
+that has to honour it.
 
 ### `[[<component>.methods]]` entries
 

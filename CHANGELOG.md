@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A capsule init-param can be nullable, so `None` reaches C as `NULL`
+    (gh-805 §H).** `gh-432` (method params) and `gh-790` (constructor params)
+    are the same idea and disagreed about `None`: the method path mapped it to
+    `NULL`, the constructor path rejected it unconditionally. doppler's capture
+    borrows a `dp_sample_clock_t *` whose `NULL` *means* "no time base stated"
+    — after which the sidecar omits the keys rather than fabricating a sample
+    rate into a file that outlives the process — and the Python face could not
+    say it.
+
+    No new manifest key. `required = true` **already** meant "reject None" on a
+    capsule param; it simply had no contrasting branch, because
+    `capsule_ip` never carried the flag and `allow_none=False` was hard-coded.
+    Honouring it restores the key's meaning:
+
+    ```toml
+    [[capture.init_params]]
+    name    = "clock"
+    type    = "dp_sample_clock_t *"
+    capsule = "doppler.clk"
+    header  = "clk.h"
+    # required omitted -> nullable
+    ```
+
+    ```python
+    Capture(clock)   # borrows the handle
+    Capture(None)    # C receives NULL
+    ```
+
+    On the CLI, a trailing `optional` token:
+    `--init-param 'clock:dp_sample_clock_t *:capsule:doppler.clk:clk.h:optional'`.
+    Matched as a literal rather than by position, so it reads the same with or
+    without a header. **Mandatory remains the default** — a `NULL` that means
+    something is the case an author opts into.
+
+    The stub annotates the handle `object | None`, with **no** `= None`
+    default: accepting `None` and being *omittable* are different axes, and a
+    stub advertising a default the binding does not honour is the gh-611
+    defect this project ships a checker for. The generated `create()`'s
+    Doxygen gains `May be NULL (Python: None).`, so the contract is visible
+    where the author writes the body that must honour it.
+
+### Fixed
+
+- **A constructor's capsule error message no longer depends on the handle
+    being mandatory (gh-805 §H).** `capsule_unwrap_c`'s `allow_none` was doing
+    double duty as "is this a `tp_init`?", which is what gated replacing the
+    raw `AttributeError` from the `._capsule` lookup with a `TypeError` naming
+    what to pass. The two were the same question only by accident — every
+    constructor param was mandatory — so a nullable one would have silently
+    downgraded to `'int' object has no attribute '_capsule'` on exactly the
+    call the upgrade was written for. Split into `explain_type_error`, keyed on
+    constructor-ness. The method form and the mandatory constructor form are
+    both unchanged, byte for byte.
+
 ### Fixed
 
 - **`jm status`'s `SILENT` section no longer double-counts (gh-836).** Every
