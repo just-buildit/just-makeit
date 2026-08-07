@@ -279,7 +279,7 @@ jobs:
 
       - name: Install just-makeit and build deps
         run: |
-          uv sync --group dev
+          make setup
           uv pip install -e .
           uv run jm-install-deps ${{ runner.temp }}/jm-venv
 
@@ -333,8 +333,12 @@ jobs:
           # otherwise self-skip and the gate would silently check nothing.
           python-version: "3.12"
 
+      # `make setup`, not a transcribed `uv sync --group dev`: SYNC_CMD is the
+      # Makefile's, and the standard's default is a bare `uv sync`, so a change
+      # to this repo's dev group would have left the copy here behind without
+      # anything saying so.
       - name: Install dev tooling
-        run: uv sync --group dev
+        run: make setup
 
       - name: Run make lint
         run: make lint
