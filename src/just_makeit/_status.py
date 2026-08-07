@@ -272,7 +272,9 @@ def run(
     entries: list[tuple[str, str, bool, str, frozenset]] = []
     # gh-612: (path, detail) per fragment whose constructor kwlist has
     # drifted from what the manifest generates.
-    kwargs_entries: list[tuple[str, str]] = []
+    # (path, detail, allowed) — gh-823. `allowed` entries are reported
+    # and not counted, exactly like every other allowed deviation.
+    kwargs_entries: list[tuple[str, str, bool]] = []
     ok_count = 0
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
@@ -363,8 +365,23 @@ def run(
                         # does not exist. Through `_is_allowed`, the same
                         # matcher every other allowed path goes through, so
                         # one entry means the same thing everywhere.
-                        if not _is_allowed(rel_posix, allow_patterns):
-                            kwargs_entries.append((rel_posix, _detail))
+                        #
+                        # Recorded WITH that verdict rather than dropped on
+                        # it. Dropping made an exempted constructor vanish
+                        # from the report entirely: nothing listed it, the
+                        # summary went back to a bare "OK — up to date" over
+                        # a constructor the generator disagrees with, and
+                        # there was no way to audit which exemptions existed
+                        # or to notice one that had stopped diverging. Every
+                        # other allowed deviation stays visible and uncounted;
+                        # so does this.
+                        kwargs_entries.append(
+                            (
+                                rel_posix,
+                                _detail,
+                                _is_allowed(rel_posix, allow_patterns),
+                            )
+                        )
                 diff = (
                     _unified_diff(before, after, rel_posix)
                     if show_diff
@@ -431,7 +448,7 @@ def run(
         # mode this addresses. `status_allow` is the escape hatch: the check
         # stays on, the finding is visible, and an instance is exempted by
         # name with a reason.
-        + len(kwargs_entries)
+        + sum(1 for e in kwargs_entries if not e[2])
         + (_wide if _strict else 0)
     )
 
@@ -458,7 +475,8 @@ def run(
                         for (o, n, m, h) in drift_entries
                     ],
                     "kwargs_drift": [
-                        {"path": p, "detail": d} for (p, d) in kwargs_entries
+                        {"path": p, "detail": d, "allowed": a}
+                        for (p, d, a) in kwargs_entries
                     ],
                     "ok": ok_count,
                     "drift": drift_count,
@@ -572,9 +590,15 @@ def run(
             f"KWARGS ({len(kwargs_entries)}) — the constructor's keyword "
             "arguments disagree with the manifest:"
         )
-        for path, detail in kwargs_entries:
-            print(f"  ! {path}")
+        for path, detail, _allowed in kwargs_entries:
+            # gh-823: an exempted entry is listed, not hidden — marked the
+            # way the ALLOWED section marks its own, so the exemptions are
+            # auditable and one that has stopped diverging can be spotted
+            # and removed. `!` gates, `~` does not.
+            print(f"  {'~' if _allowed else '!'} {path}")
             print(f"      {detail}")
+            if _allowed:
+                print("      (allowed by status_allow — not counted)")
         print(
             "  The .pyi is generated from the manifest and the extension is "
             "not, so the\n"
@@ -606,7 +630,7 @@ def run(
         not drift
         and not dropped_entries
         and not drift_entries
-        and not kwargs_entries
+        and not any(not e[2] for e in kwargs_entries)
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -617,13 +641,17 @@ def run(
             if unreconciled_entries
             else ""
         )
-        # gh-612 qualified this line with a kwargs-drift count; gh-823 took
-        # the condition out of the branch instead, so there is nothing left
-        # to qualify — a drifted constructor now reports under `summary:` and
-        # fails the gate rather than being a parenthetical on "OK".
+        # gh-612 qualified this line with a kwargs-drift count. gh-823 takes
+        # a *gating* drift out of the branch entirely, so there is nothing to
+        # qualify for that case — but an ALLOWED one still lands here, and an
+        # unqualified "up to date" over a constructor the generator disagrees
+        # with is the exact claim gh-767 established jm must not make. Being
+        # exempt from the gate is not the same as being in sync.
+        _kw_allowed = sum(1 for e in kwargs_entries if e[2])
+        _kw = f"; {_kw_allowed} kwargs-drift (allowed)" if _kw_allowed else ""
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}."
+            f"{suffix}{_unrec}{_kw}."
         )
     else:
         print(
@@ -642,8 +670,8 @@ def run(
                 else ""
             )
             + (
-                f", {len(kwargs_entries)} kwargs-drift (!)"
-                if kwargs_entries
+                f", {sum(1 for e in kwargs_entries if not e[2])} kwargs-drift (!)"
+                if any(not e[2] for e in kwargs_entries)
                 else ""
             )
             + ".\n"

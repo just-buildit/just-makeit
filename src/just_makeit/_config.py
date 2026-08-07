@@ -1602,7 +1602,22 @@ def status_allow(cfg: dict) -> list[str]:
 
     Each entry is an exact POSIX relative path or an fnmatch glob, e.g.
     ``status_allow = ["native/inc/ddc/ddc_core.h", "native/inc/*/legacy_*.h"]``.
-    Pairs with the ``--allow`` CLI flag (gh-140)."""
+    Pairs with the ``--allow`` CLI flag (gh-140).
+
+    **An entry exempts the FILE, not the finding that prompted it.** One
+    matcher serves every check, so a pattern added to accept (say) a drifted
+    constructor also accepts that file's ``stale``/``missing`` classification,
+    and the next genuine divergence in it is masked. That breadth is
+    deliberate — one mechanism is worth more than a key per check — but it is
+    wider than the reasoning of the person adding the entry, who is usually
+    thinking about one parameter. Prefer the narrowest path that covers the
+    case, and expect the exemption to be re-examined rather than permanent:
+    ``jm status`` lists allowed deviations precisely so a stale entry can be
+    spotted and removed (gh-823).
+
+    Never suppressed, whatever the pattern: a dropped ``.pyi`` symbol
+    (gh-426) and a default-doc mismatch (gh-442), which are content loss
+    rather than accepted difference."""
     return list(cfg.get("project", {}).get("status_allow", []))
 
 
