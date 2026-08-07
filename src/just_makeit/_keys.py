@@ -31,7 +31,7 @@ is additive and safe to do later; warning on them now is not.
 
 from __future__ import annotations
 
-import sys
+from . import _report
 
 # --- object tables ---------------------------------------------------------
 
@@ -447,6 +447,6 @@ def warn_unknown_keys(cfg: dict, stream=None) -> list:
         if text in _SEEN:
             continue
         _SEEN.add(text)
-        print(f"warning: {text}", file=stream or sys.stderr)
+        _report.warn(text, gates=False, stream=stream)
         out.append(text)
     return out

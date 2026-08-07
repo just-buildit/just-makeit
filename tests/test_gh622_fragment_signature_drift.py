@@ -70,7 +70,7 @@ def _apply(root, toml=None):
     ):
         apply_run(root)
     return [
-        ln for ln in err.getvalue().splitlines() if ln.startswith("warning:")
+        ln for ln in err.getvalue().splitlines() if ln.startswith("warning")
     ]
 
 
