@@ -206,6 +206,21 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
     fprintf(fp, "}\n");
     fclose(fp);
     printf("  json    bench_%s_core.json\n", component);
+
+    /* gh-806: a benchmark that timed nothing exits 0 and writes a
+     * well-formed file with an empty "benchmarks" array -- indistinguishable,
+     * in a CI log, from one that measured everything.  Said out loud here
+     * rather than at each call site because this is the one function every
+     * bench target reaches, so no shape can be added later that forgets to
+     * say it.  On stderr as well as stdout: the JSON consumer reads the file,
+     * the human reads the log, and the log is where this was missed. */
+    if (b->count == 0) {
+        printf("  EMPTY   bench_%s_core: no measurements recorded\n",
+               component);
+        fprintf(stderr,
+                "bench_%s_core: recorded 0 measurements -- this target"
+                " measures nothing.\n", component);
+    }
 }
 
 #endif /* JM_BENCH_H */

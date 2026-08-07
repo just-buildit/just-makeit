@@ -2195,6 +2195,15 @@ def run(
 
     _codecheck.report(root, cfg)
 
+    # gh-806: apply is the command that materialises a scaffold over a renamed
+    # component's target, so it is the one that must say the previous file is
+    # now compiled by nothing. Reported after the summary and on stderr, not
+    # inside the create/update block: the finding is about files apply did
+    # *not* touch, and the ones it did are already listed above.
+    from . import _hollow
+
+    _hollow.report(root, cfg, indent="")
+
     # gh-823: last, after everything that could warn. A count is what survives
     # a long scroll when individual lines do not — the warning that cost
     # doppler months was correct, printed every run, and indistinguishable

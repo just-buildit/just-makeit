@@ -206,6 +206,12 @@ field** — is *structural*: rebuild the body from the manifest with
 new method or computed property is additive instead — `jm method` /
 `jm property` inject a declaration and append a fresh stub.
 
+`apply` also warns about the files it did **not** touch: a
+`native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no
+build file compiles, and a generated benchmark that records no measurement.
+The first is marked `!` because it fails `jm status --check` — see
+[Why `UNBUILT` gates](#why-unbuilt-gates).
+
 ______________________________________________________________________
 
 ## `just-makeit regenerate <component>`
@@ -357,9 +363,41 @@ Prints a table of files in one of six states:
 | `ALLOWED` | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                               | no        |
 | `DROPPED` | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`. | yes       |
 | `DRIFT`   | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                   | yes       |
+| `UNBUILT` | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.      | yes       |
+| `SILENT`  | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806).                    | no        |
 
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
+
+### Why `UNBUILT` gates
+
+Renaming a component moves its manifest section and its native directories,
+but its C test and benchmark keep their old filenames. `jm apply` then
+materialises `test_<new>_core.c` / `bench_<new>_core.c` and re-renders the
+CMake that builds *those* names — so the author's real files stay on disk,
+compiled by nothing, and a scaffold takes over the target.
+
+The scaffold **passes**. `ctest` reports "100% tests passed" with the real
+suite missing from the denominator, and `make bench` exits 0 having measured
+nothing. Every other finding here shows up as something visibly wrong
+somewhere; this one shows up as a green CI run, which is why it is the one
+finding whose report had to be a gate rather than a note.
+
+If a file is deliberately kept unbuilt, name it in `[project] status_allow`:
+it stays listed, marked `[status_allow]`, and stops counting.
+
+Two runtime signals back this up in newly scaffolded components, so a CI log
+tells a placeholder from a suite without anyone running `jm status`:
+
+- a generated C test prints its assertion count — `PASSED (4 checks)` — plus
+    a `scaffold coverage only` note that clears itself the moment an author adds
+    a check of their own;
+- `jm_bench_write_json` prints `no measurements recorded` when a benchmark
+    timed nothing.
+
+Both live in create-only files, so they reach components scaffolded from
+v0.52.0 onward. Existing trees are covered by the `UNBUILT` / `SILENT` scan,
+which needs nothing but the files already on disk.
 
 `status` never writes anything (it runs `apply` against a throwaway copy of
 the tree); it is always safe to run. Use it to confirm that `jm apply` is a

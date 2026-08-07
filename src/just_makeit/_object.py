@@ -2216,9 +2216,10 @@ def run(
     # new component picks up the same if(SOME_LIB) include/link wiring without
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
+    # gh-806: via the one renderer that stamps the scaffold check count.
     _write(
         root / "native" / "tests" / f"test_{comp}_core.c",
-        r(R.COMPONENT_TEST_C),
+        R.render_component_test_c(ctx),
     )
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",

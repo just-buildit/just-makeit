@@ -431,6 +431,16 @@ def run(
     # rendering — gates identically. A gate that fires for a human and not
     # for `--json` is the shape a CI consumer discovers the hard way.
     _strict = strict_examples or C.strict_examples(cfg)
+    # gh-806: a `test_*_core.c` / `bench_*_core.c` that no build file compiles.
+    # Computed here, above the JSON return, for the same reason `_wide` is:
+    # the gate must fire identically for a human and for a CI consumer.
+    from . import _hollow
+
+    _orphans = _hollow.orphans(root, cfg)
+    _orphan_allowed = {
+        o.rel: _is_allowed(o.rel, allow_patterns) for o in _orphans
+    }
+    _silent = _hollow.silent_benches(root, cfg)
     drift_count = (
         len(drift)
         + sum(1 for e in allowed if e[4])
@@ -450,6 +460,13 @@ def run(
         # name with a reason.
         + sum(1 for e in kwargs_entries if not e[2])
         + (_wide if _strict else 0)
+        # gh-806: gates, unconditionally. The failure mode is a **green** CI
+        # run — a scaffold that compiles, passes and is counted while the real
+        # suite sits unbuilt beside it — so a finding that did not fail the
+        # gate would reproduce the exact silence it exists to break. doppler
+        # carried one for weeks with CI green. `status_allow` remains the
+        # escape hatch for a file a project keeps unbuilt on purpose.
+        + sum(1 for o in _orphans if not _orphan_allowed[o.rel])
     )
 
     if as_json:
@@ -477,6 +494,29 @@ def run(
                     "kwargs_drift": [
                         {"path": p, "detail": d, "allowed": a}
                         for (p, d, a) in kwargs_entries
+                    ],
+                    # gh-806: the file, why it is jm-shaped, and how much
+                    # content is going unbuilt — the last of those is what
+                    # tells a reader at a glance whether a scaffold displaced
+                    # a real suite or an empty one.
+                    "unbuilt_sources": [
+                        {
+                            "path": o.rel,
+                            "kind": o.kind,
+                            "component": o.stem,
+                            "declared": o.declared,
+                            "lines": o.lines,
+                            "allowed": _orphan_allowed[o.rel],
+                        }
+                        for o in _orphans
+                    ],
+                    "silent_benchmarks": [
+                        {
+                            "path": s.rel,
+                            "component": s.component,
+                            "methods": s.methods,
+                        }
+                        for s in _silent
                     ],
                     "ok": ok_count,
                     "drift": drift_count,
@@ -559,6 +599,54 @@ def run(
         )
         print()
 
+    # gh-806: same "impossible to miss" treatment, and for the sharpest
+    # version of the same reason — every other listing here describes
+    # something that is visibly wrong somewhere. This one describes a tree
+    # where `ctest` prints "100% tests passed" and `make bench` exits 0.
+    if _orphans:
+        print(
+            f"UNBUILT ({len(_orphans)}) — test/bench source(s) no build "
+            "file compiles:"
+        )
+        for o in _orphans:
+            tag = " [status_allow]" if _orphan_allowed[o.rel] else ""
+            note = (
+                "not a declared component"
+                if not o.declared
+                else "declared, but its target is gone"
+            )
+            print(
+                f"  {'~' if _orphan_allowed[o.rel] else '!'} {o.rel} "
+                f"({o.lines} lines, {note}){tag}"
+            )
+        print(
+            "  A renamed component leaves its old test/bench behind and a "
+            "fresh scaffold\n  takes over the target — which passes, so "
+            "nothing goes red. See gh-806."
+        )
+        print()
+
+    # gh-806: advisory, and printed beside the orphans because they are the
+    # same discovery from opposite ends — one target covers nothing because
+    # its content moved, the other because it never had any.
+    if _silent:
+        print(
+            f"SILENT ({len(_silent)}) — benchmark(s) that record no "
+            "measurement:"
+        )
+        for s in _silent:
+            detail = (
+                f"{s.methods} method(s), none benchable"
+                if s.methods
+                else "no step(), no methods"
+            )
+            print(f"  ~ {s.rel} ({detail})")
+        print(
+            '  These build, run, exit 0 and write an empty "benchmarks": []. '
+            "Not drift."
+        )
+        print()
+
     # gh-442: same "impossible to miss" treatment as DROPPED — this is a
     # static doc-consistency check, not a diff of what apply would write,
     # so it prints even when every managed file is otherwise OK.
@@ -631,6 +719,11 @@ def run(
         and not dropped_entries
         and not drift_entries
         and not any(not e[2] for e in kwargs_entries)
+        # gh-806: same treatment as the gating kwargs drift above. Saying
+        # "OK — up to date" over a tree where a real test suite sits unbuilt
+        # is the precise sentence this issue is about; the exit code alone
+        # would be right and unread.
+        and not any(not _orphan_allowed[o.rel] for o in _orphans)
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -649,9 +742,15 @@ def run(
         # exempt from the gate is not the same as being in sync.
         _kw_allowed = sum(1 for e in kwargs_entries if e[2])
         _kw = f"; {_kw_allowed} kwargs-drift (allowed)" if _kw_allowed else ""
+        # gh-806: an exempted orphan is still a file nothing compiles, and
+        # gh-767's rule applies unchanged — exempt from the gate is not the
+        # same as in sync. A silent benchmark qualifies the line too: the
+        # project is in sync and one of its bench targets measures nothing.
+        _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
+        _sil = f"; {len(_silent)} silent bench" if _silent else ""
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}."
+            f"{suffix}{_unrec}{_kw}{_orph}{_sil}."
         )
     else:
         print(
@@ -674,6 +773,16 @@ def run(
                 if any(not e[2] for e in kwargs_entries)
                 else ""
             )
+            # gh-806: in the one-line summary as well, because that line is
+            # what a reader skims when --check has already told them the
+            # exit code is 1.
+            + (
+                f", {sum(1 for o in _orphans if not _orphan_allowed[o.rel])}"
+                " unbuilt (!)"
+                if any(not _orphan_allowed[o.rel] for o in _orphans)
+                else ""
+            )
+            + (f", {len(_silent)} silent bench" if _silent else "")
             + ".\n"
             "Your `_core.c` is sacred — apply never changes it; use "
             "`jm regenerate <component>` to rebuild one from the manifest."

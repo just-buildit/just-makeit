@@ -1,0 +1,280 @@
+"""_hollow.py — targets that pass without covering anything (gh-806).
+
+Two findings, one failure mode: **a build target that reports success while
+covering nothing.** Both are silent by construction, which is why they are
+expensive — a red target gets fixed the day it appears.
+
+Orphans
+-------
+`jm apply` materialises ``native/tests/test_<comp>_core.c`` and
+``native/benchmarks/bench_<comp>_core.c`` for every component in the manifest,
+and re-renders the CMake that builds *those names*. Rename a component and the
+old files stay on disk under the old name, referenced by nothing, while a fresh
+scaffold takes over their target.
+
+Measured on doppler, twice in the same component: a hand-written 5.5 KB
+four-arm benchmark and a **500-line** test suite were both displaced by
+scaffolds during a ``telemetry`` -> ``dp_tlm`` migration. The benchmark half at
+least wrote an empty ``benchmarks[]`` array. The test half was worse, for the
+one reason that decides everything here: **it passed.** A scaffold compiles,
+runs, prints ``test_dp_tlm_core PASSED`` and is counted, so ``ctest`` reports
+"100% tests passed" with the real suite missing from the denominator. That tree
+was green for weeks.
+
+The detected property is not "was renamed" — jm has no memory of the previous
+name and does not need one. It is the thing that is actually wrong and is
+directly checkable: **a C source sitting in the canonical test/bench directory
+that no build file compiles.** That is strictly more general than rename
+detection (it also catches a target deleted by hand, or a file added to the
+directory and never wired) and it cannot go stale.
+
+Silent benchmarks
+-----------------
+A ``no_step`` component's benchmark has no ``step()`` to time, and every one of
+its methods may be a shape `_bench_method_block` skips — ``variable_output``,
+``out_type``, ``varargs``, ``codec``. doppler's had **eight** methods and timed
+none of them, so the target built, ran, and wrote an empty ``benchmarks[]``.
+That is defensible behaviour and a terrible thing to discover from an empty
+JSON file six months later, so jm says it once, at apply time, where it is
+actionable.
+
+Read from the emitted source, never predicted from the manifest — the
+`_codecheck` precedent. A hand-edited benchmark that added its own timing loop
+is not silent, and a manifest-side prediction would call it one.
+
+What this does *not* fix
+------------------------
+The generated C is create-only, so the runtime half of gh-806 — a test that
+prints how many checks it ran, a `jm_bench_write_json` that says when it wrote
+nothing — reaches new components only. Existing trees are served by this scan,
+which needs nothing but the files already on disk.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import _config as C
+
+#: Where jm puts each kind of generated C target, and the filename shape it
+#: uses. A file in one of these directories matching the pattern is jm-shaped
+#: whether or not jm wrote it, which is exactly the population worth checking.
+_KINDS = (
+    (
+        "test",
+        "native/tests",
+        "test_{}_core.c",
+        re.compile(r"^test_(\w+)_core\.c$"),
+    ),
+    (
+        "bench",
+        "native/benchmarks",
+        "bench_{}_core.c",
+        re.compile(r"^bench_(\w+)_core\.c$"),
+    ),
+)
+
+#: A build file that enumerates sources by wildcard tells us nothing about
+#: which ones it picked up, so the scan stands down rather than guessing.
+#: False positives here send an author to delete a file that *is* built.
+_GLOB_HINT = re.compile(r"file\s*\(\s*glob", re.I)
+
+
+@dataclass(frozen=True)
+class Orphan:
+    """A generated-shape C source that no build file compiles."""
+
+    rel: str  #: POSIX path relative to the project root
+    kind: str  #: "test" or "bench"
+    stem: str  #: the ``<X>`` in ``test_<X>_core.c``
+    lines: int  #: how much content is going unbuilt
+    declared: bool  #: whether ``<X>`` is a component in the manifest
+
+    def describe(self) -> str:
+        """One warning line, plus the reason it is worth reading."""
+        what = (
+            "CTest never runs it" if self.kind == "test" else "it never runs"
+        )
+        why = (
+            f"'{self.stem}' is not a component in {C.FILENAME}, which is\n"
+            "  the shape a component rename leaves behind."
+            if not self.declared
+            else f"'{self.stem}' is a declared component, so its\n"
+            "  target should exist — the wiring was removed or hand-edited."
+        )
+        return (
+            f"{self.rel}\n"
+            f"  is compiled by no build file ({self.lines} lines), so"
+            f" {what}.\n"
+            f"  {why}\n"
+            "  Wire it up, rename it onto the component it belongs to, or"
+            " delete it."
+        )
+
+
+@dataclass(frozen=True)
+class SilentBench:
+    """A benchmark source that records no measurement at all."""
+
+    rel: str  #: POSIX path relative to the project root
+    component: str
+    methods: int  #: declared methods, none of which produced a timing block
+
+    def describe(self) -> str:
+        """One warning line naming why the JSON will come out empty."""
+        detail = (
+            f"no step(), and none of its {self.methods} method(s)\n"
+            "  has a benchable shape"
+            if self.methods
+            else "no step() and no methods"
+        )
+        return (
+            f"{self.rel}\n"
+            f"  has {detail}, so it measures nothing and writes an empty\n"
+            '  "benchmarks": [] array. It still builds, runs and exits 0.'
+        )
+
+
+def _build_texts(root: Path) -> list[str] | None:
+    """Every file that can name a C target, read once.
+
+    Returns ``None`` when one of them enumerates sources by wildcard, which
+    makes "is this file compiled?" unanswerable by reading — see `_GLOB_HINT`.
+    """
+    texts: list[str] = []
+    for cml in sorted(root.rglob("CMakeLists.txt")):
+        if "build" in cml.relative_to(root).parts:
+            continue
+        try:
+            texts.append(cml.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    # `build = "make"` projects name their C tests in the root Makefile's
+    # C_TESTS list instead, so the same question has a second place to look.
+    for extra in ("Makefile", "local.mk"):
+        path = root / extra
+        if path.is_file():
+            try:
+                texts.append(path.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+    if any(_GLOB_HINT.search(t) for t in texts):
+        return None
+    return texts
+
+
+def orphans(root: Path, cfg: dict) -> list[Orphan]:
+    """Every ``test_*_core.c`` / ``bench_*_core.c`` that nothing compiles.
+
+    The reference is looked up by **target stem** (``test_fir_core``) rather
+    than by filename, because the two build systems spell it differently: CMake
+    names the source path, the generated Makefile names the executable in
+    ``C_TESTS``. The stem is the substring both contain.
+    """
+    texts = _build_texts(root)
+    if texts is None:
+        return []
+    # jm's `build = "make"` backend patches TARGETS and C_TESTS and stops
+    # there — it has never emitted a bench rule, for any component. So a
+    # make-built project's bench sources are unbuilt *by construction*, and
+    # reporting each one as an orphan would fail the gate on every such
+    # project for something no `jm apply` can clear (the gh-767 rule). That
+    # gap is real and is filed as gh-832; it is a missing feature in the
+    # make backend, not a rename in the author's tree.
+    kinds = [
+        k for k in _KINDS if k[0] != "bench" or C.build_system(cfg) == "cmake"
+    ]
+    declared = set(C.components(cfg))
+    for mod in C.modules(cfg):
+        declared |= set(C.module_objects(cfg, mod))
+
+    found: list[Orphan] = []
+    for kind, subdir, _fmt, pattern in kinds:
+        directory = root / subdir
+        if not directory.is_dir():
+            continue
+        for src in sorted(directory.glob("*.c")):
+            m = pattern.match(src.name)
+            if not m:
+                continue
+            stem = src.name[: -len(".c")]
+            if any(stem in t for t in texts):
+                continue
+            try:
+                body = src.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            found.append(
+                Orphan(
+                    rel=src.relative_to(root).as_posix(),
+                    kind=kind,
+                    stem=m.group(1),
+                    lines=len(body.splitlines()),
+                    declared=m.group(1) in declared,
+                )
+            )
+    return found
+
+
+def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
+    """Every component benchmark whose source records no measurement.
+
+    ``jm_bench_add`` is the only way a timing reaches the JSON, so its absence
+    from the source *is* the emptiness — no need to run the binary, and no way
+    for the answer to disagree with what the target will do.
+    """
+    declared = list(C.components(cfg))
+    for mod in C.modules(cfg):
+        declared += list(C.module_objects(cfg, mod))
+
+    out: list[SilentBench] = []
+    for comp in declared:
+        src = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
+        if not src.is_file():
+            continue
+        try:
+            body = src.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "jm_bench_add" in body:
+            continue
+        out.append(
+            SilentBench(
+                rel=src.relative_to(root).as_posix(),
+                component=comp,
+                methods=len(C.methods(cfg, comp)),
+            )
+        )
+    return out
+
+
+def report(root: Path, cfg: dict, *, stream=None, indent: str = "  ") -> None:
+    """Print both findings through `_report`, weighted.
+
+    An orphan **gates**: `jm status --check` counts it, because "a real test
+    suite is on disk and nothing runs it" is not a matter of taste, and the
+    only reason it survived weeks on doppler is that nothing said it. A silent
+    benchmark is advisory — measuring nothing is a legitimate state for a
+    ``no_step`` component, and the bug gh-806 reports is the silence, which
+    this line ends.
+    """
+    from . import _report
+
+    # The one matcher every other check already honours -- imported here
+    # rather than reimplemented, so a `status_allow` glob means the same
+    # thing for an orphan as it does for a stale header. Lazy because
+    # `_status` reaches back into this module for its own section.
+    from ._status import _is_allowed
+
+    allow = C.status_allow(cfg)
+    for orphan in orphans(root, cfg):
+        _report.warn(
+            orphan.describe(),
+            gates=not _is_allowed(orphan.rel, allow),
+            stream=stream,
+            indent=indent,
+        )
+    for silent in silent_benches(root, cfg):
+        _report.warn(silent.describe(), stream=stream, indent=indent)

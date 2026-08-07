@@ -1091,7 +1091,6 @@ def run(
     core_h_tmpl = R.COMPONENT_CORE_H
     core_c_tmpl = R.COMPONENT_CORE_C
     ext_c_tmpl = R.COMPONENT_EXT_C
-    test_c_tmpl = R.COMPONENT_TEST_C
     bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
     pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (
@@ -1135,7 +1134,11 @@ def run(
         )
 
     # C test
-    _write(root / "native" / "tests" / f"test_{comp}_core.c", r(test_c_tmpl))
+    # gh-806: via the one renderer that stamps the scaffold check count.
+    _write(
+        root / "native" / "tests" / f"test_{comp}_core.c",
+        R.render_component_test_c(ctx),
+    )
 
     # C benchmark
     _write(
