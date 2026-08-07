@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.53.1] — 2026-08-07
+
 ### Fixed
 
 - **Every TOML escaping path emits TOML `tomllib` can read (gh-844).** There
@@ -49,6 +51,15 @@
     `Any`. A mandatory capsule's stub is unchanged. The test asserts the stub
     against the **generated kwlist** rather than a literal, so the two faces
     cannot drift apart again.
+
+    **This one arrives on a plain pin bump** — unlike gh-805 §H in 0.53.0,
+    which did not. §H changed a `tp_init` body inside a sacred `_ext`
+    fragment, and `jm apply` only *adds missing members* to those, so the
+    already-materialized body was stranded and the fragments had to be
+    deleted and re-applied by hand (that gap is gh-848). gh-845 is entirely
+    in the `.pyi` producer, and `apply` regenerates a stub wholesale — so
+    bumping the pin and re-running `jm apply` is enough. No delete-and-
+    reapply.
 
 ## [0.53.0] — 2026-08-07
 
