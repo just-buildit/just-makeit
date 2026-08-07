@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _report
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
@@ -449,8 +450,8 @@ def _inject_decls_into_core_h(
                 new_text, n = use.subn(d, text, count=1)
                 if n:
                     if _prev:
-                        print(
-                            f"warning: {path}: replacing the declaration of"
+                        _report.warn(
+                            f"{path}: replacing the declaration of"
                             f" {fn_name}() to match the manifest\n"
                             f"    was: {_prev}\n"
                             f"    now: {d}\n"
@@ -458,7 +459,8 @@ def _inject_decls_into_core_h(
                             " still use the old prototype. If the header was"
                             " right, update the manifest instead — this"
                             " refresh runs on every apply.",
-                            file=sys.stderr,
+                            # Advisory: apply performs the replacement.
+                            gates=False,
                         )
                     text = new_text
                     continue

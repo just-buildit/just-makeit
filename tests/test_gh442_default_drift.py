@@ -163,7 +163,7 @@ class TestApplyWarns:
             apply_run(dest)  # must not raise / sys.exit
         out = buf.getvalue()
         assert (
-            "warning: burst.carrier default mismatch: "
+            "warning !: burst.carrier default mismatch: "
             "manifest='0.01' header='0.05'" in out
         )
 

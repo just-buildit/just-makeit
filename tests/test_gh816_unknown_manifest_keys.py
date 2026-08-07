@@ -183,7 +183,7 @@ class TestWarningEmission:
         second = warn_unknown_keys(cfg)
         assert len(first) == 1
         assert second == [], "the same warning was printed twice"
-        assert "warning:" in capsys.readouterr().err
+        assert "warning" in capsys.readouterr().err
 
     def test_load_reports_it(self, tmp_path, capsys):
         """The whole point: an ordinary command surfaces it."""

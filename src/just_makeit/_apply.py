@@ -34,6 +34,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _report
 from . import _stubs as S
 from ._init import _to_title
 
@@ -725,14 +726,16 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
             if content_changed and _STUB_MARKER not in original:
                 rel = h_path.relative_to(root)
                 owner_rel = _impl_owner_rel(comp, root)
-                print(
-                    f"warning: {rel}: {comp}_step body differs from the"
+                _report.warn(
+                    f"{rel}: {comp}_step body differs from the"
                     f" [{comp}] impl/impl_file in {owner_rel}; the"
                     " manifest is the source of truth — overwriting"
                     " the header from it. If you meant to change the"
                     f" body, edit {comp}'s impl/impl_file in {owner_rel}"
                     " instead.",
-                    file=sys.stderr,
+                    # Advisory: apply resolves it in the same breath by
+                    # writing the header from the manifest.
+                    gates=False,
                 )
             h_path.write_text(updated, encoding="utf-8")
             patched.append(h_path)
@@ -1945,6 +1948,12 @@ def run(
     *,
     honor_status_allow: bool = True,
 ) -> None:
+    # gh-823: apply is the command where these findings are actionable, so
+    # it is the one that counts them and says how many matter. Reset here
+    # rather than at import: a process running apply twice (the test suite
+    # does, constantly) must not accumulate.
+    _report.reset()
+
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -2147,10 +2156,17 @@ def run(
     # DRIFT section for projects that want it enforced.
     for obj in C.components(cfg):
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
-            print(
-                f"  warning: {obj}.{name} default mismatch: "
+            # Gating: `init_param_drift` is exactly what fills `status`'s
+            # DRIFT section, which reaches `drift_count` — so leaving this
+            # unactioned fails `--check`. Stays on stdout, inside apply's own
+            # block, with the mark carrying the weight.
+            _report.warn(
+                f"{obj}.{name} default mismatch: "
                 f"manifest={m_dflt!r} header={h_dflt!r} "
-                f"(native/inc/{obj}/{obj}_core.h) — one of these is stale"
+                f"(native/inc/{obj}/{obj}_core.h) — one of these is stale",
+                gates=True,
+                stream=sys.stdout,
+                indent="  ",
             )
 
     print()
@@ -2178,6 +2194,12 @@ def run(
     from . import _codecheck
 
     _codecheck.report(root, cfg)
+
+    # gh-823: last, after everything that could warn. A count is what survives
+    # a long scroll when individual lines do not — the warning that cost
+    # doppler months was correct, printed every run, and indistinguishable
+    # from the dozen advisory ones around it.
+    _report.trailer()
 
     if C.app_config(cfg):
         from . import _app

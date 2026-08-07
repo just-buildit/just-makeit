@@ -146,7 +146,7 @@ class TestMarkerComment:
         apply_run(root)
 
         captured = capsys.readouterr()
-        assert "warning:" not in captured.err
+        assert "warning" not in captured.err
         assert _STUB_MARKER not in h_path.read_text(encoding="utf-8")
 
     def test_reapply_is_idempotent_and_quiet(self, project_with_impl, capsys):
@@ -156,7 +156,7 @@ class TestMarkerComment:
         after = _core_h(project_with_impl).read_text(encoding="utf-8")
         assert before == after
         captured = capsys.readouterr()
-        assert "warning:" not in captured.err
+        assert "warning" not in captured.err
 
 
 class TestOverwriteWarning:
@@ -176,7 +176,7 @@ class TestOverwriteWarning:
         apply_run(project_with_impl)
 
         captured = capsys.readouterr()
-        assert "warning:" in captured.err
+        assert "warning" in captured.err
         assert "scaler_core.h" in captured.err
         assert "[scaler] impl/impl_file" in captured.err
 
@@ -201,7 +201,7 @@ class TestOverwriteWarning:
         apply_run(project_with_impl)
 
         captured = capsys.readouterr()
-        assert "warning:" in captured.err
+        assert "warning" in captured.err
         text = _core_h(project_with_impl).read_text(encoding="utf-8")
         assert "3.0f * state->gain * x" in text
 
@@ -237,7 +237,7 @@ class TestOverwriteWarning:
         apply_run(project_with_impl)
 
         captured = capsys.readouterr()
-        assert "warning:" not in captured.err
+        assert "warning" not in captured.err
         # The marker is still (re-)added even though nothing warned.
         after = h_path.read_text(encoding="utf-8")
         assert marker in after
@@ -310,7 +310,7 @@ class TestMarkerNamesOwningFile:
         apply_run(flat_project_with_impl)
 
         captured = capsys.readouterr()
-        assert "warning:" in captured.err
+        assert "warning" in captured.err
         assert "objects/scaler.toml" in captured.err
 
 
@@ -340,5 +340,5 @@ class TestStatusCheckDoesNotLeakWarning:
         drift_count = _status.run(project_with_impl, check=True)
 
         captured = capsys.readouterr()
-        assert "warning:" not in captured.err
+        assert "warning" not in captured.err
         assert drift_count >= 1

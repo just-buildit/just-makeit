@@ -33,12 +33,12 @@ the file is left untouched, so a second ``jm apply`` produces no diff.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from . import _config as C
 from . import _gluedoc
 from . import _record
+from . import _report
 from . import _render as R
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
@@ -695,15 +695,19 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     if not details:
         return []
     drifted = [n for n in ref if n in details]
-    print(
-        f"warning: {rel}: binding no longer matches the manifest"
+    _report.warn(
+        f"{rel}: binding no longer matches the manifest"
         f" [{'; '.join(details[n] for n in drifted)}]. A sacred fragment only"
         " gains missing members on apply, so a changed member stays as"
         " written while the .pyi moves — the stub now documents behaviour the"
         f" extension does not have. Delete {rel} and re-run"
         " `just-makeit apply` to regenerate it (any hand-written body in it is"
         " lost), or edit the binding to match.",
-        file=sys.stderr,
+        # Advisory: `jm status` reports these fragments as unreconciled and
+        # says outright they are not counted as drift, because no jm command
+        # clears them — the remaining difference is one only the author can
+        # settle.
+        gates=False,
     )
     return drifted
 
@@ -894,14 +898,17 @@ def warn_init_kwargs_drift(rel, existing: str, reference: str):
     added, removed, reordered, detail = init_kwargs_drift(existing, reference)
     if not detail:
         return ((), (), False)
-    print(
-        f"warning: {rel}: refreshing this fragment would change the"
+    _report.warn(
+        f"{rel}: refreshing this fragment would change the"
         f" constructor's keyword arguments [{detail}]."
         " The kwlist is regenerated with the body it belongs to, so jm will"
         " not preserve it on its own — a kwlist kept under a fresh body binds"
         " each keyword to the wrong variable. Reconcile the manifest with the"
         " binding, or keep the hand-written constructor in an _extra.c.",
-        file=sys.stderr,
+        # Gating: gh-823 made this condition reach `drift_count`, so
+        # `jm status --check` fails on it. This is the warning that printed
+        # correctly for months inside a block of advisory ones.
+        gates=True,
     )
     return (added, removed, reordered)
 

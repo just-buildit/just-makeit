@@ -72,6 +72,44 @@
 
 ### Changed
 
+- **An apply-time warning now says whether it fails the gate (gh-823).** Every
+    warning `jm apply` printed looked identical — same prefix, same weight, in
+    whatever order the work reached them. Most are advisory: `apply` is about
+    to fix the thing, or the difference is one only the author can settle and
+    no command clears. Two are not, and they are the conditions
+    `jm status --check` counts as drift.
+
+    ```
+    warning !: …_ext_thing.c: refreshing this fragment would change the
+               constructor's keyword arguments […]
+    warning ~: …_ext_dp_tlm.c: binding no longer matches the manifest […]
+
+    1 of the warning(s) above fail `jm status --check` (marked `!`).
+    The rest are advisory.
+    ```
+
+    `!` gates and `~` does not — the same marks `jm status` uses in its own
+    listings, so a reader who has seen one recognises the other. The trailer
+    is there because a count survives a long scroll when individual lines do
+    not: the warning that cost the reporting project months was correct and
+    printed on every single apply, inside a block of a dozen warnings about
+    fragments that were fine.
+
+    Gating today are exactly two: constructor kwargs drift and an init-param
+    default mismatch — both reach `drift_count`. That is the test for the
+    mark, rather than whether a finding feels important; a `!` on something
+    that does not fail the gate teaches the reader to ignore it, which is the
+    failure this removes.
+
+    Deliberately two weights and not a severity system: one question, will
+    `--check` fail on this. A third level is how the second stops meaning
+    anything.
+
+    `apply` still warns regardless of `status_allow` — that key states what
+    the *gate* tolerates, and `apply` is the one place the finding is
+    actionable, so suppressing it there would remove the information exactly
+    when someone could act on it.
+
 - **A drifted constructor now fails `jm status --check` (gh-823 Ask B).**
     Previously it was reported and the gate passed. gh-612 made that call
     deliberately, reasoning that jm regenerates a kwlist only with the body it
