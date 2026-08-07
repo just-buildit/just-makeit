@@ -187,6 +187,12 @@ TEST_ALL_DEPS = test test-examples
 # that gets caught.
 GATES_DEPS    = lint test test-examples coverage-gate bench docs-check
 
+# Setup, not gates. `gates-check` requires every `make <target>` CI runs to be
+# reachable from `gates`, and it caught both of these the moment ci.yml started
+# calling them — which is the gate working: naming them here is a decision,
+# where leaving them out of ci.yml entirely would have been an accident.
+GATES_PROVISION = install-deps install-deps-dev tool-install
+
 # ── Coverage ─────────────────────────────────────────────────────────────────
 # Two commands because a report is not a gate — the standard splits them so CI
 # can call the one that fails, rather than producing a report and hoping
