@@ -653,7 +653,10 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
                 cfg_path = root / C.FILENAME
                 old_cfg = C.load(root) if cfg_path.exists() else {}
                 pyi_text = S._splice_manual_stub_bodies(
-                    old_cfg, pyi.read_text(encoding="utf-8"), pyi_text
+                    old_cfg,
+                    pyi.read_text(encoding="utf-8"),
+                    pyi_text,
+                    path=pyi,
                 )
             pyi.parent.mkdir(parents=True, exist_ok=True)
             verb = "update" if pyi.exists() else "create"

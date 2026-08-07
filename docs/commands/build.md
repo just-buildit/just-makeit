@@ -212,6 +212,10 @@ build file compiles, and a generated benchmark that records no measurement.
 The first is marked `!` because it fails `jm status --check` — see
 [Why `UNBUILT` gates](#why-unbuilt-gates).
 
+It also warns before rendering over a `.pyi` that does not parse, naming the
+hand-written members that will not survive — see
+[Why `UNPARSEABLE` gates](#why-unparseable-gates-and-why-only-status-can-catch-it).
+
 ______________________________________________________________________
 
 ## `just-makeit regenerate <component>`
@@ -355,16 +359,17 @@ just-makeit status
 
 Prints a table of files in one of six states:
 
-| Status    | Meaning                                                                                                                                                                                                             | Gates CI? |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `OK`      | `apply` would leave the file untouched.                                                                                                                                                                             | no        |
-| `MISSING` | `apply` would create it — declared in the manifest, absent on disk.                                                                                                                                                 | yes       |
-| `STALE`   | `apply` would rewrite it from the manifest (glue regenerated, `_core.h` declarations merged).                                                                                                                       | yes       |
-| `ALLOWED` | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                               | no        |
-| `DROPPED` | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`. | yes       |
-| `DRIFT`   | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                   | yes       |
-| `UNBUILT` | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.      | yes       |
-| `SILENT`  | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806).                    | no        |
+| Status        | Meaning                                                                                                                                                                                                                     | Gates CI? |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `OK`          | `apply` would leave the file untouched.                                                                                                                                                                                     | no        |
+| `MISSING`     | `apply` would create it — declared in the manifest, absent on disk.                                                                                                                                                         | yes       |
+| `STALE`       | `apply` would rewrite it from the manifest (glue regenerated, `_core.h` declarations merged).                                                                                                                               | yes       |
+| `ALLOWED`     | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                                       | no        |
+| `DROPPED`     | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`.         | yes       |
+| `DRIFT`       | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                           | yes       |
+| `UNBUILT`     | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.              | yes       |
+| `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806).                            | no        |
+| `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible. | yes       |
 
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
@@ -385,6 +390,40 @@ finding whose report had to be a gate rather than a note.
 
 If a file is deliberately kept unbuilt, name it in `[project] status_allow`:
 it stays listed, marked `[status_allow]`, and stops counting.
+
+### Why `UNPARSEABLE` gates, and why only `status` can catch it
+
+Every other finding on this page describes something `jm apply` fixes. This
+one describes something `jm apply` **consumes**.
+
+jm preserves a stub's hand-owned members — `manual_stub` methods and any
+member marked `# jm:hand` — by parsing the old file with `ast` and
+transplanting the text back over the fresh render. A stub that does not parse
+has no members to find, so the render replaces all of them. Then the file jm
+writes *does* parse, the finding disappears, and the next `jm status` is
+clean over a tree that has lost members no manifest can put back — a
+`# jm:hand` member has no manifest declaration at all.
+
+So `status` is the last moment anything can say so while the content is still
+on disk:
+
+```
+UNPARSEABLE (1) — .pyi file(s) that do not parse, holding 2 hand-written member(s):
+  ! src/sp/thing.pyi: line 64: invalid syntax
+      - execute_ci16
+      - execute_special
+```
+
+**Fix the syntax error first and every one of them survives.** Run `jm apply`
+first and they are gone; `jm apply` says so as it happens, but by then the
+only copy is in version control.
+
+jm warns rather than refusing here, unlike the sibling check that guards a
+*parseable* stub (gh-765, which raises). A stub that is not valid Python is
+itself broken, and regenerating it is the natural repair — refusing would
+block the recovery path for exactly the situation that produces it. A broken
+stub with nothing hand-owned in it is therefore repaired silently, as routine
+`STALE` drift.
 
 Two runtime signals back this up in newly scaffolded components, so a CI log
 tells a placeholder from a suite without anyone running `jm status`:

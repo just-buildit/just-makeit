@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import re as _re
+import sys as _sys
 import textwrap
 
 from . import _codec as _codec
@@ -359,6 +360,123 @@ def _hand_marker_start(lines: list[str], member_lineno: int) -> int | None:
     return idx + 1 if lines[idx].strip() == _HAND_MARKER else None
 
 
+#: A ``def`` opening a class member, matched on raw text rather than through
+#: `ast`. Only ever used on a stub that has *already* failed to parse, where
+#: there is nothing else to read — see :func:`hand_owned_at_risk`.
+_DEF_LINE = _re.compile(r"^[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)[ \t]*\(")
+
+
+def hand_owned_at_risk(cfg: dict, text: str) -> list[str]:
+    """Names of hand-owned members recoverable from an **unparseable** stub.
+
+    gh-785. When `ast.parse` fails there is no member map, so
+    :func:`_splice_hand_owned` transplants nothing and every hand-written
+    member in the file is discarded by the next render. jm can still say
+    *what* is being discarded, because both ownership marks survive in plain
+    text: ``# jm:hand`` is a comment, and a ``manual_stub`` member's name is
+    in the manifest.
+
+    Deliberately a **text** scan. Every structural tool jm has for a ``.pyi``
+    starts with `ast.parse`, and the whole point of this function is the case
+    where that has already raised — a tolerant re-parse would be a second,
+    weaker implementation of the member map that only ever runs on input the
+    first one rejected.
+
+    Returns bare member names, not ``Class.member`` pairs: the class a
+    ``def`` belongs to is exactly the structure that was lost. A name is
+    listed once however many classes declare it, which is the honest
+    precision for a file jm cannot read.
+
+    Parameters
+    ----------
+    cfg : dict
+        The manifest, for the ``manual_stub`` declarations.
+    text : str
+        The old stub source, known not to parse.
+
+    Returns
+    -------
+    list of str
+        Sorted member names. Empty when the broken stub held nothing
+        hand-owned — the case where regenerating over it costs nothing and
+        should stay quiet.
+    """
+    lines = text.splitlines()
+    manual_names = {name for _cls, name in _manual_stub_pairs(cfg)}
+    # Where each member's text starts, so a manual_stub member can be asked
+    # whether it still carries the placeholder (nothing to lose) or has been
+    # hand-filled (everything to lose).
+    starts = [
+        (i, m.group(1))
+        for i, line in enumerate(lines)
+        if (m := _DEF_LINE.match(line))
+    ]
+    at_risk: set[str] = set()
+    for pos, (idx, name) in enumerate(starts):
+        end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        if _hand_marker_start(lines, idx + 1) is not None:
+            at_risk.add(name)
+        elif (
+            name in manual_names
+            and _MANUAL_STUB_PLACEHOLDER not in "\n".join(lines[idx:end])
+        ):
+            at_risk.add(name)
+    return sorted(at_risk)
+
+
+def parse_error(text: str) -> SyntaxError | None:
+    """The `SyntaxError` a ``.pyi`` source raises, or None if it parses.
+
+    One place asks this question, so the apply-time warning and the
+    ``jm status`` section cannot disagree about whether a given file is
+    readable. Blank or whitespace-only text is *not* a failure: a stub that
+    has not been written yet is the first-render case, not a broken one.
+    """
+    if not text.strip():
+        return None
+    try:
+        ast.parse(text)
+    except SyntaxError as exc:
+        return exc
+    return None
+
+
+def describe_unparseable(
+    cfg: dict, text: str, where: str = "the stub"
+) -> str | None:
+    """The gh-785 report for *text*, or None when there is nothing to say.
+
+    Returns None both when the stub parses and when it does not parse but
+    holds nothing hand-owned — in the second case the fresh render is a
+    clean repair and announcing it would train the reader to skip the
+    message that matters.
+    """
+    exc = parse_error(text)
+    if exc is None:
+        return None
+    lost = hand_owned_at_risk(cfg, text)
+    if not lost:
+        return None
+    lines = text.splitlines()
+    offending = (
+        lines[exc.lineno - 1].strip()
+        if exc.lineno and exc.lineno <= len(lines)
+        else ""
+    )
+    return (
+        f"{len(lost)} hand-written .pyi member(s) will not survive this "
+        "render.\n"
+        f"  {where}:{exc.lineno}: {exc.msg}\n"
+        + (f"    {offending}\n" if offending else "")
+        + "  jm finds a stub's members with `ast`, so a stub it cannot parse "
+        "has none to\n  find and the fresh render replaces them:\n"
+        + "".join(f"    - {name}\n" for name in lost)
+        + "  Fix the syntax error first and every one of them is preserved. "
+        "Recover them\n  from version control, or paste them back once the "
+        "stub parses again."
+    )
+
+
 def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
     """``{(ClassName, method_name)}`` for every ``manual_stub = true`` entry
     declared anywhere in the manifest (standalone or module object)."""
@@ -429,7 +547,9 @@ def placeholder_regressions(old_text: str, new_text: str) -> list[str]:
     return sorted(lost)
 
 
-def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
+def _splice_manual_stub_bodies(
+    cfg: dict, old_text: str, new_text: str, *, path=None
+) -> str:
     """Preserve every hand-owned member of *old_text*, refusing to lose one.
 
     The transplant itself is :func:`_splice_hand_owned`; this wraps it in the
@@ -446,7 +566,28 @@ def _splice_manual_stub_bodies(cfg: dict, old_text: str, new_text: str) -> str:
     status` call it drift and the next `apply` strip it again. There is no
     downstream recovery, which is the same reason gh-426's dropped-symbol
     check is non-suppressible.
+
+    gh-785 is the sibling case and gets the **opposite** handling. When the
+    old stub does not parse there is no member map, so the check above has
+    nothing to compare and passes: `_placeholder_members(old_text)` and
+    `_member_groups(old_text)` are both empty, and every `lost` candidate is
+    filtered out by `(cls, name) in old_members`. Refusing there would be
+    wrong anyway — a stub that is not valid Python is itself broken, and
+    regenerating it is the repair — so this says what the repair costs and
+    proceeds. `path` only names the file in that message; the splice does not
+    read it.
     """
+    report = describe_unparseable(
+        cfg, old_text, where=str(path) if path else "the previous stub"
+    )
+    if report:
+        # Its own block rather than a `_report.warn` mark. The two weights
+        # answer "will `jm status --check` fail on this?", and after this
+        # write the answer is no: the stub jm is about to lay down parses, so
+        # the condition is gone and a `!` would be a claim the next status run
+        # contradicts. `jm status` carries the gate, where the finding is
+        # still live and still recoverable.
+        print(f"\nWARNING: {report}", file=_sys.stderr)
     out = _splice_hand_owned(cfg, old_text, new_text)
     lost = placeholder_regressions(old_text, out)
     if lost:

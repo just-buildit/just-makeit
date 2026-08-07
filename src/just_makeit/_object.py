@@ -1853,7 +1853,7 @@ def _regenerate_module_now(
     # the otherwise-blind regen above.
     _write(
         pyi_path,
-        S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+        S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi_path),
         "update",
     )
 

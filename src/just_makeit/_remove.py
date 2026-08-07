@@ -805,7 +805,7 @@ def _regenerate_object_bindings(
         # gh-428: preserve a sibling manual_stub method's hand-written text
         # across the regen triggered by removing a different method/property.
         pyi.write_text(
-            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi),
             encoding="utf-8",
         )
         print(f"  update  {pyi}")

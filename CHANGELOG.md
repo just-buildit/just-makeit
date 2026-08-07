@@ -4,6 +4,56 @@
 
 ### Added
 
+- **An unparseable `.pyi` no longer loses every hand-written member in silence
+    (gh-785).** jm preserves a stub's hand-owned members — `manual_stub`
+    methods and anything marked `# jm:hand` — by parsing the old file with
+    `ast` and transplanting the text back over the fresh render. A stub that
+    does **not** parse has no members to find, so the render replaced all of
+    them, with no signal at all. The gh-765 guard could not catch it: it
+    compares against the old file's member map, which is empty for exactly
+    this input, so every candidate was filtered out and the check passed over
+    the largest loss it could ever see.
+
+    `jm apply` now names what it is discarding, with the syntax error and the
+    members:
+
+    ```
+    WARNING: 2 hand-written .pyi member(s) will not survive this render.
+      src/sp/thing.pyi:64: invalid syntax
+        <<<<<<< HEAD
+      jm finds a stub's members with `ast`, so a stub it cannot parse has none to
+      find and the fresh render replaces them:
+        - execute_ci16
+        - execute_special
+    ```
+
+    Both marks are recoverable from text that `ast` rejects: `# jm:hand` is a
+    comment, and a `manual_stub` member's name is in the manifest. A
+    `manual_stub` member still carrying its placeholder is *not* listed —
+    there is nothing to lose, and a message padded with those is one people
+    learn to skip.
+
+    It **warns rather than refusing**, unlike the sibling gh-765 check on a
+    parseable stub. A stub that is not valid Python is itself broken and
+    regenerating it is the natural repair; refusing would block recovery for
+    exactly the situation that produces it. A broken stub with nothing
+    hand-owned is repaired silently, as routine `STALE` drift.
+
+- **`jm status` gains an `UNPARSEABLE` section, and it gates (gh-785).** This
+    is the only finding jm reports that `jm apply` does not *fix* but
+    **consumes**: the stub apply writes parses, so the finding vanishes along
+    with the content, and a `# jm:hand` member has no manifest declaration to
+    restore it from. `status` is therefore the last moment anything can say so
+    while the members are still on disk — fix the syntax error first and every
+    one of them survives. Never suppressed by `status_allow`, the same rule as
+    the gh-426 dropped symbol it sits beside, for the same reason.
+
+    Related, and named rather than fixed: `_status._pyi_symbols` returns an
+    empty set on a `SyntaxError`, so the gh-426 dropped-symbol check
+    **fails open** on this same input. A tolerant re-parse would be a second,
+    weaker member map; the new section reports the same file from the other
+    side instead.
+
 - **A scaffolded test or benchmark no longer displaces a real one in silence
     (gh-806).** Renaming a component moves its manifest section and its native
     directories, but its C test and benchmark keep their old filenames.
