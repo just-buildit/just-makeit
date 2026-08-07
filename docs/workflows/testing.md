@@ -25,7 +25,15 @@ make bench    # C timing loop + Python perf_counter suite
 ```
 
 The C benchmark in `native/benchmarks/bench_gain_core.c` runs a raw timing
-loop — useful for measuring SIMD uplift without Python overhead. The Python
+loop — useful for measuring SIMD uplift without Python overhead. `make bench`
+works on both build backends (gh-832; the `--build-system make` backend gained
+its `bench:` target and `C_BENCHES` list there).
+
+jm can only auto-populate the timing loop for a shape it can size: a `step()`,
+or a method that is not `variable_output` / `out_type` / `varargs` / `codec`.
+For anything else the file is a **scaffold with a `TODO:`** naming the
+candidate methods and showing a worked `jm_bench_add` call to copy — fill it in
+and the target measures. `jm status` lists the unfilled ones under `SILENT`. The Python
 benchmark script runs as a plain script (`python bench_gain.py`) and reports
 ns/call for `step()` and µs + MSa/s for `steps()`.
 

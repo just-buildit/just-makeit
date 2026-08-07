@@ -6,3 +6,11 @@ src/<<package>>/<<component>>$(EXT): native/src/<<component>>/<<component>>_core
 test_<<component>>_core: native/tests/test_<<component>>_core.c native/src/<<component>>/<<component>>_core.c
 	$(CC) -O2 -std=c99 -Inative/inc $^ -o $@
 
+# gh-832. Two differences from the test rule above, both load-bearing:
+#   -std=gnu99, not -std=c99 -- `struct timespec` is not visible under strict
+#     c99, so the benchmark's own timing helper does not compile. The cmake
+#     backend works today because CMake leaves C extensions on by default.
+#   -lm -- jm_bench.h computes a standard deviation.
+bench_<<component>>_core: native/benchmarks/bench_<<component>>_core.c native/src/<<component>>/<<component>>_core.c
+	$(CC) -O2 -std=gnu99 -Inative/inc -Inative/benchmarks $^ -o $@ -lm
+

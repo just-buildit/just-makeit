@@ -1241,6 +1241,14 @@ def run(
         ctest = f"test_{comp}_core"
         mf = re.sub(r"^(TARGETS\s*:=.*)$", rf"\1 {target}", mf, flags=re.M)
         mf = re.sub(r"^(C_TESTS\s*:=.*)$", rf"\1 {ctest}", mf, flags=re.M)
+        # gh-832: the bench source has always been written; nothing built it.
+        # A project scaffolded before this has no `C_BENCHES :=` line, so the
+        # substitution is a no-op there rather than an error — and
+        # `_hollow.orphans` keys off whether the tree builds any bench at all,
+        # so such a project is not reported for a category it cannot build.
+        mf = re.sub(
+            r"^(C_BENCHES\s*:=.*)$", rf"\1 bench_{comp}_core", mf, flags=re.M
+        )
         rules = R.render(R.MAKEFILE_SIMPLE_COMPONENT, ctx)
         mf = mf.replace("# ── Fixed targets", rules + "# ── Fixed targets")
         mf_path.write_text(mf, encoding="utf-8")

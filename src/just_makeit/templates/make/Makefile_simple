@@ -3,6 +3,7 @@
 # Targets:
 #   make             Build extension(s)
 #   make test        C tests + <<py_test_label>>
+#   make bench       Build and run the C benchmarks
 #   make just-build  PEP 517 hook for just-buildit
 #   make clean       Remove build artifacts
 #   make help        Show this message
@@ -31,8 +32,9 @@ NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(
 
 TARGETS :=
 C_TESTS :=
+C_BENCHES :=
 
-.PHONY: all test just-build clean help
+.PHONY: all test bench just-build clean help
 
 all: $(TARGETS)
 
@@ -48,12 +50,24 @@ else
 <<ensure_pytest_unix>>	<<py_test_cmd_unix>>
 endif
 
+# gh-832: the cmake backend has emitted a bench target per component since
+# gh-15; this one emitted the SOURCE and no rule to build it, so on a
+# make-built project you could not fill in the benchmark TODO and have
+# anything run it. Green-from-day-0 means the scaffolded file is reachable,
+# not merely present.
+bench: $(C_BENCHES)
+ifeq ($(OS), Windows_NT)
+	@for %%b in ($(C_BENCHES)) do @echo --- %%b --- && %%b || exit /b 1
+else
+	@for b in $(C_BENCHES); do echo "--- $$b ---" && ./$$b || exit 1; done
+endif
+
 just-build: all
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 	cp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
 
 clean:
-	rm -f $(TARGETS) $(C_TESTS)
+	rm -f $(TARGETS) $(C_TESTS) $(C_BENCHES)
 	find src -name "*.so" -o -name "*.pyd" | xargs rm -f 2>/dev/null; true
 
 help:
@@ -62,5 +76,6 @@ help:
 	@echo ""
 	@echo "  make          Build extension(s)"
 	@echo "  make test     Run C tests + <<py_test_label>>"
+	@echo "  make bench    Build and run the C benchmarks"
 	@echo "  make clean    Remove build artifacts"
 	@echo ""
