@@ -135,6 +135,15 @@ def load(root: Path) -> dict:
             with fragment_path.open("rb") as f:
                 fragment = tomllib.load(f)
             _merge_fragment(cfg, fragment, fragment_path)
+    # gh-816: an unknown key is still accepted and still round-trips (gh-257);
+    # it just no longer does so in silence. Here rather than in each command
+    # because this is the one place every reader passes through, and a
+    # wrong-kind key is worth reporting whichever command surfaced it. The
+    # walk is deduplicated per process, so `apply` loading both the real tree
+    # and its temp scaffold says each thing once.
+    from ._keys import warn_unknown_keys
+
+    warn_unknown_keys(cfg)
     return cfg
 
 
