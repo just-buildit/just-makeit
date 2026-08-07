@@ -21,6 +21,71 @@
     The redundant union is gone from both, and both are now covered by a test
     that fails if it comes back.
 
+- **A capsule init-param now round-trips (gh-838).** `_config._dump` dropped
+    its `capsule` and `header` keys, so the param was written back as a plain
+    scalar of a C type jm does not know and the **next** command died:
+
+    ```
+    jm object capture --init-param 'clock:dp_sample_clock_t *:capsule:doppler.clk:clk.h'
+    jm status
+      KeyError: 'dp_sample_clock_t *'   (_context/_state.py:540)
+    ```
+
+    The first `jm object` renders from the CLI tuple, which still has the
+    keys, so the generated `_ext.c` was correct and the project looked healthy
+    until anything touched the manifest again. gh-790's capsule init-param
+    (0.47.0) was therefore unusable past its own scaffold.
+
+    The cause was **three** lists of one key set. `_keys.INIT_PARAM_KEYS`
+    already named `capsule` and `header` — so jm's own unknown-key validator
+    accepted them — while `_dump` wrote an init-param in two syntaxes, a
+    `[[<comp>.init_params]]` table and a view's inline `init_params = [{…}]`,
+    each with its own idea of which keys existed. They drifted in opposite
+    directions: the table forgot `capsule` and `header`, the inline form
+    forgot those *plus* `default_raw`, `real_type`, `real_create_fn` and
+    `doc`.
+
+    The ordered field list now lives in `_keys` as `INIT_PARAM_FIELDS`, with
+    `INIT_PARAM_KEYS` derived from it and both emitters rendering from it. A
+    key cannot be legal-to-author and unwritable again, which is the state
+    this bug actually was in.
+
+    `[[module.X.init_params]]` looked like a fourth instance and is not — its
+    reader (`module_init_params`) projects only `(name, type, default)`, so
+    writing exactly those three is symmetric. Asserted in the tests, because
+    the obvious "consistency" fix there would write keys nothing reads.
+
+    gh-826 was this same defect one key over, in the same enumerated block.
+    The new test derives the key set by growing a tuple until
+    `init_param_tuple_to_dict` stops producing new keys, so a thirteenth field
+    is covered without anyone remembering to add it here.
+
+- **A `.pyi`-adjacent manifest string can no longer be written unreadable
+    (gh-838).** `_dump` self-checks with `tomllib.loads` and, on failure,
+    returns the text anyway, so a bad escape is not caught at write time —
+    `C.save` succeeds and the next `C.load` raises `TOMLDecodeError`. Two
+    routes to it, both now closed:
+
+    - a view's inline `doc` containing a carriage return (prose lifted from a
+        CRLF-authored header) emitted a raw `\r`, which TOML forbids in a
+        basic string. Newly reachable, since the inline form previously
+        dropped `doc` entirely. It now escapes through `json.dumps`, whose
+        string grammar is a subset of TOML's basic string for every character
+        that needs escaping;
+    - a block-form scalar containing a quote or backslash — any `default_raw`
+        holding a C expression with a string literal — was written with a bare
+        f-string and emitted `default_raw = "a"b"`. Every block scalar now
+        goes through `_str_assign`, which already escaped correctly for `doc`.
+        Ordinary values render byte-identically.
+
+- **`jm script` re-declares a view's capsule init-param (gh-838).** The object
+    path had grown the gh-790 capsule grammar and the view path had not, so a
+    view's capsule param replayed as `clk:dp_clk_t *:required` — a script
+    claiming to rebuild the project as a scalar of a type jm does not know.
+    Invisible until now only because the keys never survived a save. Both
+    paths share one emitter rather than the view path gaining a second copy of
+    the branch; the duplication was the defect.
+
 ## [0.52.0] — 2026-08-07
 
 ### Added

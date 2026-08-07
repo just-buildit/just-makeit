@@ -21,8 +21,16 @@ default = "8"
 from __future__ import annotations
 
 import copy as _copy
+import json as _json
 import re as _re
 import sys as _sys
+
+# gh-838: the ordered init-param field list lives in `_keys`, beside the
+# validator that already knew those key names. Two lists — one saying which
+# keys are legal and one saying which get written — is precisely how
+# `capsule` and `header` came to be accepted by the first and dropped by the
+# second. `_keys` imports only `_report`, so this is not a cycle.
+from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 
 try:
     import tomllib
@@ -3273,6 +3281,97 @@ def _doc_assign(value: str) -> str:
     return _str_assign("doc", value)
 
 
+def _toml_inline_string(value: str) -> str:
+    """*value* as a TOML **basic string**, safe on one line, quotes included.
+
+    `_str_assign` is the multi-line-capable sibling and cannot be used inside
+    an inline table, which has no ``\"\"\"`` form. Hand-rolling the escape here
+    was a mistake worth recording: escaping only ``\\``, ``"`` and ``\\n``
+    leaves a raw carriage return in the output, which TOML forbids in a basic
+    string. `_dump` self-checks with ``tomllib.loads`` and, on failure, returns
+    the text anyway — so ``C.save`` wrote a manifest that ``C.load`` then
+    refused, from prose as ordinary as a docstring lifted out of a CRLF file.
+
+    ``json.dumps`` is the escape, not a reimplementation of one: JSON's string
+    grammar is a subset of TOML's basic string for every character that needs
+    escaping (``\\b \\t \\n \\f \\r \\" \\\\`` literally, everything else
+    control as ``\\uXXXX``). ``ensure_ascii=False`` keeps an author's non-ASCII
+    prose readable, which TOML accepts unescaped.
+    """
+    return _json.dumps(value, ensure_ascii=False)
+
+
+def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
+    """``(key, is_bool, value)`` for each key *p* actually carries.
+
+    Presence is the **narrower** of the two old rules, deliberately: a bool key
+    is written when truthy, everything else when present and non-empty. The
+    old table form wrote a present-but-empty value (`if "default" in p`); the
+    old inline form did not. `_project_init_params` reads an absent key and an
+    empty one identically, so dropping it loses no meaning — and converging on
+    the narrower rule is what lets the two syntaxes produce the same key set
+    for the same manifest, which is the property this exists to give them.
+
+    One consequence worth naming, since it is not local to the renderer: a
+    hand-written `default = ""` now disappears on the first save. That makes
+    `_round_trips`' `got == want` false for such a manifest, so the gh-698
+    `_dump` fast path stops applying to it and every save falls back to
+    tomlkit — slower, still correct. On the brand-new-file path, where `_dump`
+    runs unguarded, the key is simply not written. Both are the right outcome
+    for a key whose empty value means nothing, but neither is silent about it
+    here.
+    """
+    out: list[tuple[str, bool, str]] = []
+    for key, is_bool in _INIT_PARAM_FIELDS:
+        val = p.get(key)
+        if is_bool:
+            if val:
+                out.append((key, True, "true"))
+        elif val not in (None, ""):
+            out.append((key, False, str(val)))
+    return out
+
+
+def _init_param_block_lines(p: dict) -> list[str]:
+    """One init-param as ``key = value`` lines under a ``[[…]]`` header.
+
+    ``doc`` goes through `_str_assign` so multi-line prose keeps the readable
+    ``\"\"\"`` form it has always had here; every other key is a plain quoted
+    scalar or a bare boolean.
+    """
+    lines: list[str] = []
+    for key, is_bool, val in _init_param_pairs(p):
+        # Every scalar through `_str_assign`, not just `doc`. It already does
+        # the quote/backslash escape correctly, and the bare f-string this
+        # replaced could not survive its own output: a `default_raw` holding a
+        # C expression with a string literal (`default_raw = 'a"b'`) emitted
+        # `default = "a"b"`, which `C.load` then rejects with a
+        # TOMLDecodeError. Ordinary values render byte-identically, so this is
+        # zero churn for every manifest that was already fine.
+        lines.append(
+            "{} = true".format(key) if is_bool else _str_assign(key, val)
+        )
+    return lines
+
+
+def _init_param_inline(p: dict) -> str:
+    """One init-param as a TOML **inline table**, for a view's ``init_params``.
+
+    `doc` is emitted as a single-line basic string even when the prose has
+    newlines: an inline table cannot hold TOML's ``\"\"\"`` form, and dropping
+    the key — which is what happened before — silently loses an author's
+    documentation. `_str_assign`'s escaping is not reused here for that
+    reason; this needs the always-inline spelling.
+    """
+    parts = []
+    for key, is_bool, val in _init_param_pairs(p):
+        if is_bool:
+            parts.append(f"{key} = true")
+        else:
+            parts.append(f"{key} = {_toml_inline_string(val)}")
+    return "{" + ", ".join(parts) + "}"
+
+
 # Method keys the _dump serializer emits explicitly (the list/table ones —
 # multi_output/extra_args/params/result_fields — included). Any OTHER scalar
 # key authored on a manifest method is round-tripped generically (gh-257) so a
@@ -4090,24 +4189,7 @@ def _dump(cfg: dict) -> str:
             lines.append("")
         for p in comp_data.get("init_params", []):
             lines.append(f"[[{comp}.init_params]]")
-            lines.append(f'name = "{p["name"]}"')
-            lines.append(f'type = "{p["type"]}"')
-            if "default" in p:
-                lines.append(f'default = "{p["default"]}"')
-            if "default_raw" in p:
-                lines.append(f'default_raw = "{p["default_raw"]}"')
-            if "real_type" in p:
-                lines.append(f'real_type = "{p["real_type"]}"')
-            if "real_create_fn" in p:
-                lines.append(f'real_create_fn = "{p["real_create_fn"]}"')
-            if p.get("optional"):
-                lines.append("optional = true")
-            if "create_fn" in p:
-                lines.append(f'create_fn = "{p["create_fn"]}"')
-            if p.get("required"):
-                lines.append("required = true")
-            if p.get("doc"):
-                lines.append(_doc_assign(p["doc"]))
+            lines += _init_param_block_lines(p)
             lines.append("")
         if comp_data.get("init_post_parse"):
             ipp = (
@@ -4146,20 +4228,9 @@ def _dump(cfg: dict) -> str:
             if v.get("doc"):
                 lines.append(_doc_assign(v["doc"]))
             if v.get("init_params"):
-
-                def _ip_inline(p: dict) -> str:
-                    s = f'name = "{p["name"]}", type = "{p["type"]}"'
-                    if p.get("default") not in (None, ""):
-                        s += f', default = "{p["default"]}"'
-                    if p.get("optional"):
-                        s += ", optional = true"
-                    if p.get("create_fn"):
-                        s += f', create_fn = "{p["create_fn"]}"'
-                    if p.get("required"):
-                        s += ", required = true"
-                    return "{" + s + "}"
-
-                parts = ", ".join(_ip_inline(p) for p in v["init_params"])
+                parts = ", ".join(
+                    _init_param_inline(p) for p in v["init_params"]
+                )
                 lines.append(f"init_params = [{parts}]")
             if v.get("exclude_properties"):
                 ep = ", ".join(f'"{n}"' for n in v["exclude_properties"])

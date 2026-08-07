@@ -92,6 +92,44 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
     return parts
 
 
+def _init_param_spec(p: dict) -> str:
+    """The ``--init-param`` argument that re-declares *p*.
+
+    gh-838. Both replay paths — an object's `init_params` and a view's
+    (gh-504) — reconstruct this spec, and they disagreed: the object path
+    grew the gh-790 capsule grammar, the view path never did. That was
+    invisible while `_dump` dropped a view's `capsule`/`header` keys, because
+    the replay had nothing to lose. Making those keys persist is what would
+    have turned it into a live divergence — `jm script` emitting
+    ``clk:dp_clk_t *:required`` for a capsule param, i.e. a script claiming to
+    rebuild the project as a scalar of a type jm does not know.
+
+    So there is one emitter. The object path reaches it by projecting its
+    tuple back through `C.init_param_tuple_to_dict`, which is the same
+    conversion `add_component` uses to persist one.
+
+    The order of the branches is the grammar's, not a preference: `optional`
+    and `required` are positional words in slot 3, so a param carrying either
+    cannot also spell a default there.
+    """
+    name, typ = p["name"], p["type"]
+    if p.get("capsule"):
+        spec = f"{name}:{typ}:capsule:{p['capsule']}"
+        if p.get("header"):
+            spec += f":{p['header']}"
+        return spec
+    if p.get("optional"):
+        spec = f"{name}:{typ}:optional"
+        if p.get("create_fn"):
+            spec += f":{p['create_fn']}"
+        return spec
+    if p.get("required"):
+        return f"{name}:{typ}:required"
+    if p.get("default") not in (None, ""):
+        return f"{name}:{typ}:{p['default']}"
+    return f"{name}:{typ}"
+
+
 def _object_flags(
     cfg: dict, comp: str, module: str | None = None
 ) -> list[str]:
@@ -109,21 +147,8 @@ def _object_flags(
         parts.append(_flag("--state", val))
 
     for p in C.init_params(cfg, comp):
-        name, typ, default = p[:3]
-        # gh-790: a capsule param has its own grammar, and dropping it here
-        # would emit `--init-param "tlm:dp_tlm_t *"` — a replay that rebuilds
-        # the param as a SCALAR of a type jm does not know, i.e. a script
-        # that claims to reproduce the project and does not. The gh-720
-        # silent-divergence trap, one param kind on.
-        capsule = p[10] if len(p) > 10 else ""
-        if capsule:
-            header = p[11] if len(p) > 11 else ""
-            val = f"{name}:{typ}:capsule:{capsule}"
-            if header:
-                val += f":{header}"
-        else:
-            val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
-        parts.append(_flag("--init-param", val))
+        spec = _init_param_spec(C.init_param_tuple_to_dict(p))
+        parts.append(_flag("--init-param", spec))
 
     at = C.arg_type(cfg, comp)
     if at != "float _Complex":
@@ -404,18 +429,7 @@ def _view_flags(v: dict, module: str | None) -> list[str]:
     parts.append(_flag("--create-fn", v["create_fn"]))
 
     for p in v.get("init_params", []):
-        name, typ = p["name"], p["type"]
-        if p.get("optional"):
-            spec = f"{name}:{typ}:optional"
-            if p.get("create_fn"):
-                spec += f":{p['create_fn']}"
-        elif p.get("required"):
-            spec = f"{name}:{typ}:required"
-        elif p.get("default") not in (None, ""):
-            spec = f"{name}:{typ}:{p['default']}"
-        else:
-            spec = f"{name}:{typ}"
-        parts.append(_flag("--init-param", spec))
+        parts.append(_flag("--init-param", _init_param_spec(p)))
 
     for name in v.get("exclude_properties", []):
         parts.append(_flag("--exclude-property", name))

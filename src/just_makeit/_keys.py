@@ -104,26 +104,37 @@ STATE_KEYS = frozenset(
     }
 )
 
-#: Keys valid on a ``[[<component>.init_params]]`` entry. Mirrors the fields
-#: :func:`_config.init_param_tuple_to_dict` persists and
+#: Every key valid on an init-param, **in the order `_dump` writes them**,
+#: paired with whether the value is a bare TOML boolean.
+#:
+#: Mirrors the fields :func:`_config.init_param_tuple_to_dict` persists and
 #: :func:`_config._project_init_params` reads back — the pair that defines the
 #: constructor's shape.
-INIT_PARAM_KEYS = frozenset(
-    {
-        "name",
-        "type",
-        "default",
-        "default_raw",
-        "real_type",
-        "real_create_fn",
-        "optional",
-        "create_fn",
-        "required",
-        "doc",
-        "capsule",
-        "header",
-    }
+#:
+#: gh-838: the order and the bool flag live here, with the names, rather than
+#: in a second list beside the serializer. This registry already said `capsule`
+#: and `header` were valid keys while `_config._dump` had no branch writing
+#: them — so jm's own validator accepted a key the writer then dropped, and a
+#: capsule init-param came back as a scalar of an unknown C type. A separate
+#: ordered copy next to the emitter would have re-created exactly that gap one
+#: key later, which is the shape of the bug it was added to fix.
+INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
+    ("name", False),
+    ("type", False),
+    ("default", False),
+    ("default_raw", False),
+    ("real_type", False),
+    ("real_create_fn", False),
+    ("optional", True),
+    ("create_fn", False),
+    ("required", True),
+    ("doc", False),
+    ("capsule", False),
+    ("header", False),
 )
+
+#: The same set, unordered, for key validation. Derived so it cannot disagree.
+INIT_PARAM_KEYS = frozenset(key for key, _is_bool in INIT_PARAM_FIELDS)
 
 #: Keys valid on a ``[[<component>.methods]]`` entry.
 #:
