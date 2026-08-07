@@ -199,11 +199,7 @@ class TestItGates:
         _rc, out = self._status(project)
         assert "OK — up to date" not in out
 
-    def test_status_allow_exempts_it(self, project):
-        """The escape hatch has to be real, or the gate is an opt-out that
-        does not exist. Same matcher as every other allowed path."""
-        self._give_n_a_default(project)
-        assert self._status(project)[0] != 0
+    def _allowlist(self, project: Path) -> None:
         manifest = project / "just-makeit.toml"
         manifest.write_text(
             manifest.read_text().replace(
@@ -212,6 +208,42 @@ class TestItGates:
                 1,
             )
         )
+
+    def test_status_allow_exempts_it(self, project):
+        """The escape hatch has to be real, or the gate is an opt-out that
+        does not exist. Same matcher as every other allowed path."""
+        self._give_n_a_default(project)
+        assert self._status(project)[0] != 0
+        self._allowlist(project)
+        assert self._status(project)[0] == 0
+
+    def test_an_allowed_entry_is_still_listed(self, project):
+        """Exempt is not invisible. Dropping the entry on the allow verdict
+        removed it from the report entirely: nothing named the file, so the
+        exemptions could not be audited and one that had stopped diverging
+        would sit there forever — the failure mode of this issue, one level
+        up."""
+        self._give_n_a_default(project)
+        self._allowlist(project)
+        _rc, out = self._status(project)
+        assert "native/src/m/m_ext_thing.c" in out, "the file must be named"
+        assert "allowed by status_allow" in out
+        assert "~ native" in out, "marked as not-counted, like ALLOWED does"
+
+    def test_an_allowed_entry_still_qualifies_the_summary(self, project):
+        """A bare "OK — up to date" over a constructor the generator
+        disagrees with is the claim gh-767 established jm must not make.
+        Exempt from the gate is not the same as in sync."""
+        self._give_n_a_default(project)
+        self._allowlist(project)
+        _rc, out = self._status(project)
+        assert "kwargs-drift (allowed)" in out
+        assert "OK — up to date" in out, "it is still OK — just qualified"
+
+    def test_the_allowed_one_does_not_gate(self, project):
+        """...and the marker distinguishes the two: `!` gates, `~` does not."""
+        self._give_n_a_default(project)
+        self._allowlist(project)
         rc, out = self._status(project)
-        assert rc == 0, "status_allow must exempt a named instance"
-        assert "kwargs-drift" not in out
+        assert rc == 0
+        assert "! native" not in out
