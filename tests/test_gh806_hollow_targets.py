@@ -213,6 +213,64 @@ class TestNoFalsePositives:
         assert _hollow.orphans(root, cfg) == []
         assert _hollow.silent_benches(root, cfg) == []
 
+    def test_declared_selects_between_two_different_diagnoses(self, tmp_path):
+        """gh-847. `.declared` is the product, and nothing pinned it.
+
+        The stem-only assertions this file used could not fail against the
+        code they were written to protect: `orphans()` builds one `Orphan` per
+        matching **file**, and `declared` never drives that loop. The gh-837
+        change removed a `module_objects` union that `C.components` already
+        subsumed — so it altered nothing observable, `.declared` included, and
+        a stem list was identical either way.
+
+        Tightening those to `(stem, declared)` is worth doing but is not
+        sufficient on its own: a ghost is undeclared under both versions. What
+        was actually untested is the **branch** — `.declared` chooses between
+        "the wiring was removed or hand-edited" and "this is the shape a
+        component rename leaves behind", which are different instructions to
+        a reader. So exercise both values, and assert the sentences.
+        """
+        root = _project(tmp_path, "fir")
+        # A SECOND component, so the tree still builds a benchmark after the
+        # first one's target is removed. Without it this test trips the
+        # gh-832 capability rule — no bench targets anywhere means the whole
+        # kind stands down — which is that trade-off showing up for real
+        # rather than only in a docstring.
+        _quiet(
+            object_run,
+            root,
+            "iir",
+            None,
+            state_vars=[("gain", "float", "0.0f")],
+        )
+        bench_dir = root / "native" / "benchmarks"
+        # (a) a file named after NO component — the rename shape.
+        (root / "native" / "tests" / "test_ghost_core.c").write_text(
+            "int main(void) { return 0; }\n", encoding="utf-8"
+        )
+        # (b) a file named after a component that IS declared, whose target
+        # has been removed — same orphan, different cause, different advice.
+        (bench_dir / "bench_fir_core.c").write_text(
+            "int main(void) { return 0; }\n", encoding="utf-8"
+        )
+        cml = root / "native" / "src" / "fir" / "CMakeLists.txt"
+        cml.write_text(
+            "\n".join(
+                ln
+                for ln in cml.read_text(encoding="utf-8").split("\n")
+                if "bench_fir_core" not in ln
+            ),
+            encoding="utf-8",
+        )
+        found = {o.stem: o for o in _hollow.orphans(root, C.load(root))}
+        assert set(found) == {"ghost", "fir"}
+        assert found["ghost"].declared is False
+        assert found["fir"].declared is True
+        # The reason `.declared` matters at all:
+        assert "leaves behind" in found["ghost"].describe()
+        assert "removed or hand-edited" in found["fir"].describe()
+        assert "leaves behind" not in found["fir"].describe()
+
     def test_a_wildcard_build_file_stands_the_scan_down(self, tmp_path):
         # `file(GLOB ...)` makes "is this compiled?" unanswerable by reading,
         # so the scan declines rather than guessing.
@@ -221,7 +279,9 @@ class TestNoFalsePositives:
             "int main(void) { return 0; }\n", encoding="utf-8"
         )
         cfg = C.load(root)
-        assert [o.stem for o in _hollow.orphans(root, cfg)] == ["ghost"]
+        assert [(o.stem, o.declared) for o in _hollow.orphans(root, cfg)] == [
+            ("ghost", False)
+        ]
 
         cml = root / "CMakeLists.txt"
         cml.write_text(
@@ -342,9 +402,9 @@ class TestTheSilentBenchmark:
         (root / "native" / "tests" / "test_ghost_core.c").write_text(
             "int main(void) { return 0; }\n", encoding="utf-8"
         )
-        assert [o.stem for o in _hollow.orphans(root, C.load(root))] == [
-            "ghost"
-        ]
+        assert [
+            (o.stem, o.declared) for o in _hollow.orphans(root, C.load(root))
+        ] == [("ghost", False)]
 
 
 class TestTheScaffoldCheckCount:
