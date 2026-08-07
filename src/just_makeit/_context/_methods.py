@@ -43,6 +43,54 @@ from ._parse import (
 )
 
 
+def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
+    """The ``PyErr_Format`` that turns a failing return code into an exception.
+
+    Shared by ``status_return`` and ``error_negative`` (gh-823 Ask D). They
+    disagree about *which* codes are failures — ``!= 0`` against ``< 0`` — and
+    about what happens afterwards, so the test and the success path stay with
+    each caller. Everything from the raise inwards is one concept, and it had
+    two implementations: ``error_negative`` routed the author's text through
+    `_c_string_literal` as an **argument**, while ``status_return`` spliced the
+    method name straight into the format string and hard-coded
+    ``PyExc_ValueError``.
+
+    That split is the reason ``status_return`` could not carry a message: the
+    keys existed, and only one of the two emitters read them.
+
+    Parameters
+    ----------
+    category : str
+        An `_config.ERROR_CATEGORIES` name, already validated at declaration
+        time — ``"ValueError"`` when the author declared nothing.
+    message : str
+        The author's prose, or the derived ``"<name> failed"``. Passed as an
+        **argument** to a fixed ``"%s (rc=%lld)"`` format, never as the format
+        itself: spliced in as the format, a ``%`` in ordinary prose ("100%
+        done") becomes a live conversion with no argument behind it, and
+        ``PyErr_Format`` walks off the end of its varargs — on the error path
+        only, which is the path least likely to be exercised before a release.
+    indent : int
+        Continuation-line indent for the rendered literal.
+
+    Notes
+    -----
+    ``%lld`` + ``(long long)`` rather than ``%d``: ``error_negative``'s return
+    may be ``int64_t``, and truncating it mangles precisely the error code
+    worth reading. ``status_return``'s ``_rc`` is an ``int``, which widens
+    losslessly — so unifying on the wider conversion removes a difference
+    rather than parameterising one, and the rendered message is unchanged
+    (``"<name> failed (rc=-4)"`` either way).
+    """
+    return (
+        f"        PyErr_Format(PyExc_{category},"
+        f' "%s (rc=%lld)",\n'
+        f"{_c_string_literal(message, indent)},\n"
+        f"                     (long long)_rc);\n"
+        f"        return NULL;\n"
+    )
+
+
 # Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
 # return stubs and make_properties_ctx's property stubs — keyed off
 # _CTYPE_META's "kind" rather than a parallel ctype table, so a new ctype
@@ -2394,45 +2442,37 @@ def make_methods_ctx(
                 # The cleanup runs BEFORE the test, as it does on every other
                 # path here — a param converter's borrow must be released
                 # whether the call succeeded or failed.
-                # The author's text is an ARGUMENT, never the format string.
-                # Spliced in as the format, a `%` in ordinary prose ("100%
-                # done") becomes a live conversion with no argument behind it,
-                # so PyErr_Format walks off the end of the varargs — and it
-                # does that only on the error path, which is the path least
-                # likely to be exercised before a release. `_c_string_literal`
-                # is the same escaper `create_error` (gh-482) routes through;
-                # a second spelling of "user text into a C literal" is exactly
-                # the pair that drifts.
-                #
-                # `%lld` + `(long long)` rather than `%d` + `(int)`: the
-                # return may be int64_t, and truncating it mangles precisely
-                # the error code worth reading.
-                _en_msg = error_message or f"{name} failed"
-                _en_lit = _c_string_literal(_en_msg, 21)
+                # The raise itself is `_rc_raise_c` — see there for why the
+                # author's text is an argument and never the format string.
                 ret_body = (
                     f"    {ret_disp} _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
-                    f"        PyErr_Format(PyExc_{error_category},"
-                    f' "%s (rc=%lld)",\n'
-                    f"{_en_lit},\n"
-                    f"                     (long long)_rc);\n"
-                    f"        return NULL;\n"
-                    f"    }}\n"
+                    + _rc_raise_c(
+                        error_category, error_message or f"{name} failed"
+                    )
+                    + f"    }}\n"
                     f"    return {ret_meta['to_py']('_rc')};\n"
                 )
             elif status_return:
-                # gh-432: status-code return — 0 = OK -> None, non-zero
-                # raises ValueError carrying the method name and rc.
+                # gh-432: status-code return — 0 = OK -> None, non-zero raises.
+                #
+                # gh-823 Ask D: `error` / `error_message` now reach here too.
+                # They were always read (above, generically), and only
+                # `error_negative`'s emitter looked at them — so a method whose
+                # whole purpose is to explain a failure could say nothing but
+                # "<name> failed (rc=%d)", while the same verdict reached
+                # through the destructor, which can carry a message, explained
+                # itself. Additive: the derived string stays the default.
                 ret_body = (
                     f"    int _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc != 0) {{\n"
-                    f"        PyErr_Format(PyExc_ValueError,\n"
-                    f'                     "{name} failed (rc=%d)", _rc);\n'
-                    f"        return NULL;\n"
-                    f"    }}\n"
-                    f"    Py_RETURN_NONE;\n"
+                    + _rc_raise_c(
+                        error_category, error_message or f"{name} failed"
+                    )
+                    + "    }\n"
+                    "    Py_RETURN_NONE;\n"
                 )
             elif multi_output:
                 extra_decls = "".join(

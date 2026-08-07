@@ -178,6 +178,39 @@ def _variable_output(tmp_path: Path) -> Path:
     return root
 
 
+def _status_return(tmp_path: Path) -> Path:
+    """Exercises status_return + its error/error_message pair (gh-823 Ask D).
+
+    `status_return` was forwarded by `_apply` and emitted by neither the CLI
+    nor `jm script`, so a replayed project came back without it — silently,
+    because no shape here exercised the key. That is the same hole gh-808 fell
+    through, and this arm is what closes it.
+    """
+    root = _base(tmp_path)
+    object_run(
+        root,
+        "cap",
+        None,
+        state_vars=[("n", "size_t", "0")],
+        arg_type="float",
+        return_type="float",
+    )
+    method_run(
+        root,
+        "cap",
+        "close",
+        None,
+        "void",
+        "int",
+        False,
+        [],
+        status_return=True,
+        error="RuntimeError",
+        error_message="records were dropped; the caller broke the contract",
+    )
+    return root
+
+
 def _view(tmp_path: Path) -> Path:
     root = _base(tmp_path)
     module_run(root, "dsp")
@@ -240,6 +273,7 @@ SHAPES = {
     "renamed_class": _renamed_class,
     "serializable": _serializable,
     "variable_output": _variable_output,
+    "status_return": _status_return,
     "view": _view,
     "record": _record,
 }

@@ -797,10 +797,21 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-    if error and not error_negative:
+    # gh-823 Ask D: `status_return` raises too, so it may name the exception
+    # and carry the message. The key was never the problem — both were already
+    # read from the manifest; only `error_negative`'s emitter looked at them.
+    # This gate is what turned that into a refusal rather than a silent no-op.
+    if error and not (error_negative or status_return):
         print(
-            "error: --error names the exception --error-negative raises, "
-            "so it needs\n--error-negative as well.",
+            "error: --error names the exception a failing return raises, so "
+            "it needs\n--error-negative or status_return as well.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if error_message and not (error_negative or status_return):
+        print(
+            "error: --error-message is the text a failing return raises with, "
+            "so it\nneeds --error-negative or status_return as well.",
             file=sys.stderr,
         )
         sys.exit(1)
