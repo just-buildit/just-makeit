@@ -120,7 +120,12 @@ class TestGeneratedParseGlue:
         )
         assert "if (_rc != 0) {" in ext
         assert "PyErr_Format(PyExc_ValueError" in ext
-        assert '"set_telemetry failed (rc=%d)"' in ext
+        # gh-823 Ask D: the derived text is unchanged, but it is now an
+        # ARGUMENT to a fixed format rather than the format itself — the same
+        # shape `error_negative` already used, from the one emitter both call.
+        # Runtime output is identical: "set_telemetry failed (rc=-1)".
+        assert '"%s (rc=%lld)"' in ext
+        assert '"set_telemetry failed"' in ext
         assert "Py_RETURN_NONE;" in ext
 
     def test_sibling_params_still_parse(self, tmp_path):

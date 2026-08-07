@@ -288,6 +288,12 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--fn", str(m["fn"])))
     if m.get("error_negative"):
         parts.append(_bool_flag("--error-negative"))
+    # gh-823 Ask D. `status_return` was forwarded by `_apply` and emitted by
+    # nobody, so a replayed script rebuilt the method WITHOUT it — gh-808's
+    # shape exactly. Now load-bearing as well as wrong: `--error` below may
+    # accompany it, and would replay with nothing to attach to.
+    if m.get("status_return"):
+        parts.append(_bool_flag("--status-return"))
     if m.get("error"):
         parts.append(_flag("--error", str(m["error"])))
     if m.get("error_message"):

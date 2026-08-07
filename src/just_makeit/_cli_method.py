@@ -38,6 +38,7 @@ def run(args: list[str]) -> None:
     # gh-805 §A2 / §B
     fn = ""
     error_negative = False
+    status_return = False
     error = ""
     error_message = ""
     batch_method = False
@@ -104,6 +105,13 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--error-negative":
             error_negative = True
+            i += 1
+        # gh-823 Ask D: `status_return` was manifest-only, so `jm script`
+        # replayed a project WITHOUT it — the gh-808 divergence class, and it
+        # became load-bearing the moment `--error` could accompany it, since
+        # the replay would otherwise emit `--error` with nothing to attach to.
+        elif tok == "--status-return":
+            status_return = True
             i += 1
         elif tok == "--error":
             i += 1
@@ -509,6 +517,7 @@ def run(args: list[str]) -> None:
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,
+        status_return=status_return,
         error=error,
         error_message=error_message,
         doc=doc,

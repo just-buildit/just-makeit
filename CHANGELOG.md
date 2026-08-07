@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`status_return` can name its exception and carry a message (gh-823 Ask
+    D).** `error` and `error_message` now work alongside it, exactly as they
+    already did for `error_negative`:
+
+    ```toml
+    [[capture.methods]]
+    name = "close"
+    return_type = "int"
+    status_return = true
+    error = "RuntimeError"
+    error_message = "records were dropped; the caller broke the block bound"
+    ```
+
+    Three mechanisms translate a failing C int into an exception —
+    `[<obj>.destroy]` `returns`+`error` (gh-541), `error_negative` (gh-805 §B)
+    and `status_return` (gh-432) — and only the third could not explain
+    itself, always raising `ValueError: <name> failed (rc=…)`. For a method
+    whose whole purpose is to report *which* contract the caller broke, that
+    is the one thing it needed to say; the same verdict reached through the
+    destructor, which can carry a message, explained itself.
+
+    Neither key was missing. Both were already read from every method's
+    manifest entry — only `error_negative`'s emitter looked at them, and a
+    validation gate turned the combination into a refusal rather than a silent
+    no-op.
+
+    Fixed by giving both paths **one** raise emitter (`_rc_raise_c`) rather
+    than copying the good one: two implementations of "turn a bad rc into an
+    exception" is what produced the asymmetry. The author's text is passed as
+    an argument to a fixed `"%s (rc=%lld)"` format, never as the format — a
+    `%` in ordinary prose ("100% of the bound") would otherwise become a live
+    conversion with no argument behind it, on the error path only.
+
+    **Zero churn**: with neither key declared the derived `"<name> failed"`
+    stays, and the runtime string is byte-identical to before.
+
 ### Fixed
 
 - **`jm object` silently dropped an array init-param's default (gh-826).**
@@ -31,8 +69,6 @@
     the CLI: `_state.py` already owns the rule that `[]` is the only supported
     array default and names the component and parameter when it refuses. A
     second copy of that predicate is the pair that drifts.
-
-### Fixed
 
 - **A generated project checked that numpy *imports*, then built against
     headers that may not exist (gh-824).** cmake does not need numpy to
@@ -64,6 +100,18 @@
     fails naming the directory when it did not, rather than deferring to a
     cmake error two steps later. Both arms of the `Windows_NT` conditional and
     both build backends are covered.
+
+- **`jm script` dropped `status_return`.** `_apply` forwarded it and nothing
+    emitted it, so a replayed script rebuilt the method without it — the
+    gh-808 divergence class, and invisible because no wiring-gate shape
+    exercised the key. `--status-return` is now a real CLI flag (it was
+    manifest-only), `jm script` emits it, and
+    `tests/test_manifest_wiring_gate.py` gained a `status_return` shape whose
+    replay-and-diff arm fails without the emission. Verified failing before
+    the fix.
+
+- **`error_message` without a raising mechanism was accepted and ignored.**
+    `error` was already rejected in that position; its companion was not.
 
 ## [0.50.0] — 2026-08-06
 
