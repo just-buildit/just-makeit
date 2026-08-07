@@ -1095,6 +1095,7 @@ def _overwrite_if_changed(
                 cfg,
                 real.read_text(encoding="utf-8"),
                 new_bytes.decode("utf-8"),
+                path=real,
             ).encode("utf-8")
         except UnicodeDecodeError:
             pass

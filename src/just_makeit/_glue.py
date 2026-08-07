@@ -307,7 +307,7 @@ def regenerate_standalone(
         # gh-428: preserve any manual_stub method's hand-written text across
         # the otherwise-blind regen above.
         pyi_path.write_text(
-            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi),
+            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi_path),
             encoding="utf-8",
         )
         print(f"  update  {pyi_path}")

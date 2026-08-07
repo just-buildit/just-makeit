@@ -52,6 +52,7 @@ from . import _config as C
 from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
+from . import _stubs
 from ._apply import _SKIP_DIRS, _SKIP_FILES, _SKIP_SUFFIXES
 
 # Directories/files never copied into the scratch tree (build artefacts,
@@ -146,6 +147,12 @@ def _pyi_symbols(text: str) -> "set[str]":
     Best-effort: an unparsable (e.g. mid-edit) file yields an empty set
     rather than raising, so a broken .pyi degrades to "no drop detected"
     instead of crashing status.
+
+    gh-785: that degradation is a **fail-open** on the input where content
+    loss is largest — an unparseable stub yields no symbols, so nothing is
+    ever reported as dropped from it. Not fixed here (a tolerant re-parse
+    would be a second, weaker member map); covered instead by the
+    UNPARSEABLE section, which reports the same file from the other side.
     """
     try:
         tree = ast.parse(text)
@@ -275,6 +282,12 @@ def run(
     # (path, detail, allowed) — gh-823. `allowed` entries are reported
     # and not counted, exactly like every other allowed deviation.
     kwargs_entries: list[tuple[str, str, bool]] = []
+    # gh-785: (path, lineno, message, [at-risk member names]) per `.pyi` on
+    # disk that does not parse *and* holds hand-owned members. Only that
+    # intersection: a broken stub with nothing hand-written in it is
+    # repaired by the next render at no cost, and reporting it would train
+    # the reader past the one that costs everything.
+    unparseable_entries: list[tuple[str, int, str, list[str]]] = []
     ok_count = 0
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
@@ -324,6 +337,24 @@ def run(
                 state, diff = "missing", ""
             else:
                 before = real.read_bytes()
+                # gh-785: asked before the equality shortcut below, and
+                # before anything classifies the file. An unparseable `.pyi`
+                # is the one finding here that `jm apply` does not fix but
+                # *consumes* — the render it writes parses, so after the
+                # apply there is nothing left to detect and nothing left to
+                # recover. This is the only place it can still be said while
+                # the members are still on disk.
+                if rel_posix.endswith(".pyi"):
+                    _lost = _stubs.hand_owned_at_risk(
+                        cfg, before.decode("utf-8", "replace")
+                    )
+                    _exc = _stubs.parse_error(
+                        before.decode("utf-8", "replace")
+                    )
+                    if _exc is not None and _lost:
+                        unparseable_entries.append(
+                            (rel_posix, _exc.lineno or 0, _exc.msg, _lost)
+                        )
                 if before == after:
                     ok_count += 1
                     continue
@@ -467,6 +498,13 @@ def run(
         # carried one for weeks with CI green. `status_allow` remains the
         # escape hatch for a file a project keeps unbuilt on purpose.
         + sum(1 for o in _orphans if not _orphan_allowed[o.rel])
+        # gh-785: gates, and never suppressed by `status_allow` — the same
+        # rule as the gh-426 dropped symbol it sits beside, for the same
+        # reason. This is content loss, and it is the *last* moment anything
+        # can say so: `jm apply` does not fix this finding, it consumes it.
+        # The stub it writes parses, so the next status run is clean over a
+        # tree that has lost members no manifest can put back.
+        + len(unparseable_entries)
     )
 
     if as_json:
@@ -509,6 +547,15 @@ def run(
                             "allowed": _orphan_allowed[o.rel],
                         }
                         for o in _orphans
+                    ],
+                    "unparseable_stubs": [
+                        {
+                            "path": p,
+                            "line": ln,
+                            "error": msg,
+                            "hand_owned_at_risk": names,
+                        }
+                        for (p, ln, msg, names) in unparseable_entries
                     ],
                     "silent_benchmarks": [
                         {
@@ -647,6 +694,29 @@ def run(
         )
         print()
 
+    # gh-785: printed on both paths and under --check. The strongest case
+    # for that treatment of any section here — this is the only finding whose
+    # window closes when you act on the report, because the command that
+    # clears it is the command that destroys the evidence.
+    if unparseable_entries:
+        _n = sum(len(names) for *_x, names in unparseable_entries)
+        print(
+            f"UNPARSEABLE ({len(unparseable_entries)}) — .pyi file(s) that "
+            f"do not parse, holding {_n} hand-written member(s):"
+        )
+        for path, lineno, msg, names in unparseable_entries:
+            print(f"  ! {path}: line {lineno}: {msg}")
+            for name in names:
+                print(f"      - {name}")
+        print(
+            "  jm finds a stub's members with `ast`, so a stub it cannot "
+            "parse has none to\n  find and the next `jm apply` renders over "
+            "them. Fix the syntax error first\n  and every `# jm:hand` / "
+            "`manual_stub` member survives; run `jm apply` first and\n  they "
+            "are gone. Not suppressed by status_allow. See gh-785."
+        )
+        print()
+
     # gh-442: same "impossible to miss" treatment as DROPPED — this is a
     # static doc-consistency check, not a diff of what apply would write,
     # so it prints even when every managed file is otherwise OK.
@@ -724,6 +794,7 @@ def run(
         # is the precise sentence this issue is about; the exit code alone
         # would be right and unread.
         and not any(not _orphan_allowed[o.rel] for o in _orphans)
+        and not unparseable_entries
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -783,6 +854,11 @@ def run(
                 else ""
             )
             + (f", {len(_silent)} silent bench" if _silent else "")
+            + (
+                f", {len(unparseable_entries)} unparseable (!)"
+                if unparseable_entries
+                else ""
+            )
             + ".\n"
             "Your `_core.c` is sacred — apply never changes it; use "
             "`jm regenerate <component>` to rebuild one from the manifest."
