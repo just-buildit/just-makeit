@@ -36,8 +36,16 @@ the one that wrote it.
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    # The same shim `_config` uses. Importing `tomllib` unconditionally is
+    # what broke this file on the 3.9 and 3.10 matrix legs while a local 3.12
+    # run stayed green — it is stdlib only from 3.11, and a test ABOUT the
+    # TOML parser is the last place to assume the parser is importable.
+    import tomli as tomllib
 
 import pytest
 
