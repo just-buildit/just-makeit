@@ -2,26 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **A generated project no longer hands interpreter choice to CMake
-    (gh-814).** The `just-build` target passed `-DPython3_EXECUTABLE=` with
-    the **raw** `$(JUST_BUILDIT_PYTHON)`, which just-buildit sets and nothing
-    else does — so outside just-buildit it expanded to the empty string, and
-    CMake reads an empty value as "discover an interpreter yourself" rather
-    than as an error.
-
-    On any machine carrying more than one numpy — a system `python3-numpy`
-    plus a venv one, which `jb.toml` actively creates — the extension can then
-    compile against one numpy and be imported under the other. It surfaces as
-    `compiled using NumPy 1.x cannot be run in NumPy 2.x` at **import** time,
-    arbitrarily far from the build that caused it, which is why six CI flakes
-    (gh-811) presented as four unrelated numpy errors.
-
-    Now `$(PYTHON)`, which already prefers `$(JUST_BUILDIT_PYTHON)` and falls
-    back to a real interpreter, so it is empty in neither case. An interpreter
-    that cannot be resolved at all is now a parse-time `$(error)` rather than
-    a silent fallback.
+## [0.49.0] — 2026-08-06
 
 ### Added
 
@@ -65,19 +46,15 @@
     the failure surfaces arbitrarily far from the call as bad data rather than
     as an exception.
 
-    Three declarations are rejected rather than rendered, because each produces
+    Four declarations are rejected rather than rendered, because each produces
     C that compiles and is wrong: `error_negative` with `status_return` (they
     make opposite claims about the same int); an unsigned or non-integer return
     type, where `_rc < 0` is always false — note `kind == "int"` is *not* the
-    test, since it is true of `size_t` and every `uint*_t`; and an `error`
-    naming something outside jm's error categories.
-
-    Three declarations are rejected rather than rendered, because each
-    produces C that compiles and is wrong: `error_negative` with
-    `status_return`; an unsigned or non-integer return type; and a result
-    shape that is not a plain scalar int (`variable_output`, `single`,
-    `record_dtype`, `multi_output`, `out_type`), where the return value is
-    built elsewhere and there is no single int for the negative test to read.
+    test, since it is true of `size_t` and every `uint*_t`; a result shape that
+    is not a plain scalar int (`variable_output`, `single`, `record_dtype`,
+    `multi_output`, `out_type`), where the return value is built elsewhere and
+    there is no single int for the negative test to read; and an `error` naming
+    something outside jm's error categories.
 
     The exception message is passed as an **argument** to a fixed
     `"%s (rc=%lld)"` format, through the same `_c_string_literal` escaper
@@ -87,6 +64,25 @@
     only.
 
 ### Fixed
+
+- **A generated project no longer hands interpreter choice to CMake
+    (gh-814).** The `just-build` target passed `-DPython3_EXECUTABLE=` with
+    the **raw** `$(JUST_BUILDIT_PYTHON)`, which just-buildit sets and nothing
+    else does — so outside just-buildit it expanded to the empty string, and
+    CMake reads an empty value as "discover an interpreter yourself" rather
+    than as an error.
+
+    On any machine carrying more than one numpy — a system `python3-numpy`
+    plus a venv one, which `jb.toml` actively creates — the extension can then
+    compile against one numpy and be imported under the other. It surfaces as
+    `compiled using NumPy 1.x cannot be run in NumPy 2.x` at **import** time,
+    arbitrarily far from the build that caused it, which is why six CI flakes
+    (gh-811) presented as four unrelated numpy errors.
+
+    Now `$(PYTHON)`, which already prefers `$(JUST_BUILDIT_PYTHON)` and falls
+    back to a real interpreter, so it is empty in neither case. An interpreter
+    that cannot be resolved at all is now a parse-time `$(error)` rather than
+    a silent fallback.
 
 - **`jm script` emitted two flags without their line continuation.**
     `--count-default` (pre-existing) and `--error-message` were appended as
