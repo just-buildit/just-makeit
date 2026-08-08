@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.54.4] — 2026-08-08
+
 ### Fixed
 
 - **A module's sacred fragment can refresh its glue docstrings again
@@ -40,12 +42,13 @@
     `make_destroy_ctx` had just used, three lines above, and so needed every
     glue fix applied twice — it now reads the slots.
 
-### Testing
+### Changed
 
 - `tests/test_body_vs_doc_gate.py` now checks the **runtime** `PyMethodDef`
     face as well as the `.pyi`, reading both through one anchored section
     parser. A `.pyi`-only gate would have gone green on a fix that left
-    `help()` documenting no exception. Known gap ratcheted as gh-871.
+    `help()` documenting no exception — and covering that face is what found
+    gh-871, fixed above, so the gate's ratchet ships empty.
 - `tests/test_claude_md_drift.py` holds `CLAUDE.md` to the tree it describes:
     every `src/just_makeit/_*.py` appears in it, every path it names exists,
     and it states no version or schema literal in prose. Measured drift is why
