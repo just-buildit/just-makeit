@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`exit` on `[<obj>.destroy]` — `__exit__` can finalize instead of freeing
+    (gh-805 §H).** jm modelled teardown as ONE operation: `destroy_py_names`
+    could give it several Python names, but every one of them bound to the
+    same `<comp>_destroy`, and `__exit__` ran that body. A C API whose
+    *finalize* and *free* are separable had no way to say so, and the context
+    manager took the wrong half — discarding the object at exactly the moment
+    its results became valid, so `with cap: ...` then `cap.dropped` raised
+    `RuntimeError: destroyed`.
+
+    `exit` names an already-declared **method**, not a bare C symbol, so
+    `__exit__` inherits its `fn`, `status_return`, `error` and
+    `error_message`. The explicit `cap.close()` and the implicit one at block
+    exit therefore cannot disagree about whether a failed finalize raises —
+    a second C-symbol slot would have re-created exactly the split gh-541
+    closed. `__exit__` leaves the handle intact; `tp_dealloc` still calls
+    destroy and still swallows its status, so the free happens exactly once
+    whether or not the `with` block ran.
+
+    Both doc faces move with the call: the runtime `__doc__` and the `.pyi`
+    say the object is finalized and stays usable. That is the half that could
+    not be fixed downstream — `__enter__`/`__exit__` are 100% jm-owned glue,
+    so a project patching the behaviour keeps jm's prose, re-transplanted at
+    every apply, and a doc-parity gate compares the two faces against *each
+    other* rather than against the body, leaving both wrong and green.
+
+    A misdeclared `exit` is refused at generation time — unknown method, or
+    one naming the teardown itself (a no-op dressed as a feature). A render
+    path that cannot resolve it raises rather than falling back to the destroy
+    body, because the fallback is precisely the silent-wrong outcome the key
+    removes. With no `exit` declared every slot renders byte-identically.
+
+### Changed
+
+- **`_rc_raise_c` moved to `_context/_diagnostics.py`**, beside the
+    `_c_string_literal` it already used. It is now shared by three callers
+    (`status_return`, `error_negative`, and the gh-805 §H finalizer); a
+    teardown emitter reaching into the method renderer for its raise is how
+    the two spellings that docstring describes came apart originally.
+
 ### Fixed
 
 - **The post-release artifact smoke test installs `pytest`, so it stops

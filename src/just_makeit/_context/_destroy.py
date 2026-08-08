@@ -82,7 +82,9 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 _DEFAULT_CATEGORY = "RuntimeError"
 
 
-def validate_destroy_spec(component: str, spec: dict) -> None:
+def validate_destroy_spec(
+    component: str, spec: dict, methods: list[dict] | None = None
+) -> None:
     """Reject an ill-formed ``[<comp>.destroy]`` table at generation time.
 
     Every check here exists because the alternative is a *silent* wrong
@@ -99,13 +101,18 @@ def validate_destroy_spec(component: str, spec: dict) -> None:
         at the offending section.
     spec : dict
         The raw table. Empty/None is always valid (the undeclared default).
+    methods : list of dict, optional
+        The component's declared methods, so ``exit`` can be checked against
+        them. ``None`` means "the caller has no method list here" and skips
+        only that one check — every other check still runs.
 
     Raises
     ------
     ValueError
         On an unknown key, a bad ``returns``, a non-identifier ``name`` or
-        alias, an ``error`` outside `_config.ERROR_CATEGORIES`, or an
-        ``error``/``error_message`` paired with a non-``int`` ``returns``.
+        alias, an ``error`` outside `_config.ERROR_CATEGORIES`, an
+        ``error``/``error_message`` paired with a non-``int`` ``returns``, or
+        an ``exit`` that is not a declared method distinct from the teardown.
 
     Examples
     --------
@@ -116,13 +123,24 @@ def validate_destroy_spec(component: str, spec: dict) -> None:
     ... except ValueError as e:
     ...     print(str(e)[:43])
     object 'w': [w.destroy] error/error_message
+    >>> validate_destroy_spec("c", {"exit": "close"}, [{"name": "close"}])
+    >>> try:
+    ...     validate_destroy_spec("c", {"exit": "flush"}, [{"name": "close"}])
+    ... except ValueError as e:
+    ...     print(str(e)[:52])
+    object 'c': [c.destroy] exit 'flush' is not a declar
+    >>> try:
+    ...     validate_destroy_spec("c", {"exit": "destroy"})
+    ... except ValueError as e:
+    ...     print(str(e)[:50])
+    object 'c': [c.destroy] exit 'destroy' names the t
     """
     from .. import _config as C
 
     if not spec:
         return
 
-    known = {"name", "aliases", "returns", "error", "error_message"}
+    known = {"name", "aliases", "returns", "error", "error_message", "exit"}
     unknown = sorted(set(spec) - known)
     if unknown:
         raise ValueError(
@@ -169,6 +187,34 @@ def validate_destroy_spec(component: str, spec: dict) -> None:
             f'error/error_message require returns = "int" — without a '
             f"status to test they would never be raised."
         )
+
+    # gh-805 §H: `exit` names a DECLARED method, not a C symbol. Checked here
+    # rather than left to the compiler because the failure it prevents is not
+    # a link error: a typo'd name that happens to match nothing would fall
+    # back to the destroy body and produce a binding whose __exit__ frees
+    # while both its doc faces say it finalizes — the silent-wrong shape.
+    exit_name = spec.get("exit") or ""
+    if exit_name and not _PY_IDENT.match(exit_name):
+        raise ValueError(
+            f"object '{component}': [{component}.destroy] exit "
+            f"'{exit_name}' is not a valid Python identifier."
+        )
+    if exit_name and exit_name in destroy_py_names(spec):
+        raise ValueError(
+            f"object '{component}': [{component}.destroy] exit "
+            f"'{exit_name}' names the teardown itself, which is what "
+            f"__exit__ already calls. Point it at a separate finalizing "
+            f"method — the key exists to split finalize from free."
+        )
+    if exit_name and methods is not None:
+        declared = [m.get("name", "") for m in methods]
+        if exit_name not in declared:
+            known_names = ", ".join(sorted(n for n in declared if n)) or "none"
+            raise ValueError(
+                f"object '{component}': [{component}.destroy] exit "
+                f"'{exit_name}' is not a declared method. "
+                f"Declared: {known_names}."
+            )
 
 
 def destroy_py_names(spec: dict) -> list[str]:
@@ -229,10 +275,67 @@ def _teardown_body(component: str, spec: dict) -> str:
     )
 
 
+def _exit_body(component: str, method: dict) -> str:
+    """``__exit__``'s body when ``exit`` names a finalizing method (gh-805 §H).
+
+    Two differences from `_teardown_body`, and both are the point:
+
+    - it calls the **finalizer**, not ``<comp>_destroy``;
+    - it **leaves ``self->handle`` set**, so the object is still usable after
+      the ``with`` block. That is the whole request: a capture's records and
+      its drop verdict only become valid once the tail is drained, and the
+      natural Python — run the block, then look at what you captured — was
+      unreachable while ``__exit__`` freed.
+
+    ``tp_dealloc`` still calls destroy and still discards the status (gh-541),
+    so the memory is released exactly once, on the GC path, whether or not the
+    ``with`` block ran.
+
+    The failure test and the raise are the finalizer's own declared
+    ``status_return`` / ``error`` / ``error_message`` — read from the method
+    rather than re-declared, so the explicit ``cap.close()`` call and the
+    implicit one at ``__exit__`` cannot disagree about whether a failed
+    finalize raises. gh-541 is precisely the bug where they did.
+    """
+    from ._diagnostics import _rc_raise_c
+
+    name = method.get("name", "")
+    c_fn = method.get("fn", "") or f"{component}_{name}"
+
+    # The handle guard is an early return rather than a wrapping `if`, so the
+    # `_rc != 0` test lands at indent 4 — the shape `_rc_raise_c` renders its
+    # block for. Re-indenting the shared emitter to suit this one caller would
+    # have parameterised a difference instead of removing one.
+    guard = (
+        "    if (!self->handle)\n"
+        "        Py_RETURN_NONE;\n"
+        "    /* gh-805 §H: the handle deliberately SURVIVES this call —\n"
+        "       finalize is not free, and the captured results only become\n"
+        "       valid once it has run. The free stays in tp_dealloc. */\n"
+    )
+
+    if not method.get("status_return"):
+        return (
+            guard + f"    (void){c_fn}(self->handle);\n    Py_RETURN_NONE;\n"
+        )
+
+    category = method.get("error", "") or "ValueError"
+    message = method.get("error_message", "") or f"{name} failed"
+    return (
+        guard
+        + f"    int _rc = {c_fn}(self->handle);\n"
+        + "    if (_rc != 0) {\n"
+        + _rc_raise_c(category, message)
+        + "    }\n"
+        "    Py_RETURN_NONE;\n"
+    )
+
+
 def make_destroy_ctx(
     component: str,
     ComponentW: str,
     spec: "dict | None" = None,
+    methods: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -247,6 +350,12 @@ def make_destroy_ctx(
         The ``[<comp>.destroy]`` table. ``None``/``{}`` reproduces the
         pre-gh-541 hardcoded text byte for byte, which is what makes these
         slots safe to introduce into templates every existing project renders.
+    methods : list of dict, optional
+        The component's declared methods, needed only to resolve ``exit``
+        (gh-805 §H). Omitting it while ``exit`` is declared **raises** rather
+        than falling back to the destroy body: a silent fallback would emit a
+        binding that frees while both its doc faces say it finalizes, which is
+        the exact silent-wrong outcome the key was filed to remove.
 
     Returns
     -------
@@ -302,6 +411,32 @@ def make_destroy_ctx(
         )
 
     body = _teardown_body(component, spec)
+
+    # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
+    # here so the body and BOTH doc faces below are built from one decision.
+    exit_name = (spec or {}).get("exit") or ""
+    exit_method: dict = {}
+    if exit_name:
+        if methods is None:
+            raise ValueError(
+                f"object '{component}': [{component}.destroy] exit "
+                f"'{exit_name}' was declared, but this render path did not "
+                f"supply the method list, so the finalizer cannot be "
+                f"resolved. Pass methods= to make_destroy_ctx."
+            )
+        for m in methods:
+            if m.get("name") == exit_name:
+                exit_method = m
+                break
+        if not exit_method:
+            declared = ", ".join(
+                sorted(m.get("name", "") for m in methods if m.get("name"))
+            )
+            raise ValueError(
+                f"object '{component}': [{component}.destroy] exit "
+                f"'{exit_name}' is not a declared method. "
+                f"Declared: {declared or 'none'}."
+            )
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.
@@ -359,7 +494,18 @@ def make_destroy_ctx(
     # gh-647: the context-manager pair. Built here because this is where the
     # teardown's Python name is settled -- __exit__'s prose names it, and a
     # reader-shaped object calls it `close`, not `destroy`.
-    _cm = glue_methods(Component, close_name=names[0])
+    #
+    # gh-805 §H: when `exit` redirects __exit__ at a finalizer, the prose has
+    # to follow the CALL, not the teardown. Both faces read `_cm`, so passing
+    # the finalizer's name here is what keeps the runtime __doc__ and the
+    # `.pyi` from saying "destroy" over a body that closes -- the failure the
+    # issue calls out as undetectable, since a doc-parity gate compares the
+    # two faces against each other and both would carry the same wrong word.
+    _cm = glue_methods(
+        Component,
+        close_name=exit_name or names[0],
+        finalizes=bool(exit_name),
+    )
 
     # The `__exit__` signature is built from the same param list that drives
     # its documented Parameters section, so the two cannot disagree. Defaults
@@ -374,7 +520,14 @@ def make_destroy_ctx(
         "pyi_exit_sig": _exit_sig,
         "destroy_dealloc_call": dealloc,
         "destroy_method_body": body,
-        "destroy_exit_body": body,
+        # gh-805 §H: the two were one string on purpose (gh-541 — the explicit
+        # call and the context manager must agree about raising). They still
+        # are whenever `exit` is absent; when it is present they are two
+        # DIFFERENT C calls, and the agreement that matters moves with it —
+        # __exit__ now shares its raise semantics with the finalizer it calls.
+        "destroy_exit_body": (
+            _exit_body(component, exit_method) if exit_method else body
+        ),
         "destroy_pymethoddef": pmd,
         "destroy_c_ret": "int" if fallible else "void",
         "destroy_ret_stmt": "\n    return 0;" if fallible else "",

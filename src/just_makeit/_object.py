@@ -1143,7 +1143,10 @@ def _make_view_ctx(
     # different class name.
     ctx.update(
         Ctx.make_destroy_ctx(
-            ctx["component"], ctx["ComponentW"], C.destroy_spec(cfg, obj)
+            ctx["component"],
+            ctx["ComponentW"],
+            C.destroy_spec(cfg, obj),
+            C.methods(cfg, obj),
         )
     )
     ctx.update(
@@ -1297,6 +1300,7 @@ def build_component_ctxs(
                 ctx["component"],
                 ctx["ComponentW"],
                 C.destroy_spec(cfg, obj),
+                C.methods(cfg, obj),
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -2072,7 +2076,11 @@ def run(
     # gh-541/gh-544: same as the standalone path in _init.run — this render
     # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
     ctx.update(
-        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy)
+        # A freshly created object has no extra methods yet, so [] is the
+        # truth here rather than "unknown" — and it makes a destroy spec that
+        # names an `exit` at creation time fail with the useful message
+        # ("not a declared method") instead of the plumbing one.
+        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy, [])
     )
 
     if create_impl_body is not None:

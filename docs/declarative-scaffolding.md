@@ -296,10 +296,56 @@ aliases       = ["destroy"]    # extra names bound to the same C function
 returns       = "int"          # non-zero rc raises
 error         = "OSError"      # exception class (default RuntimeError)
 error_message = "failed to finalise the capture"
+exit          = "flush"        # __exit__ calls this method instead (see below)
 ```
 
-Manifest-only — there is no CLI flag (five interacting keys is not a CLI
+Manifest-only — there is no CLI flag (six interacting keys is not a CLI
 shape; `package` set the same precedent). Edit the TOML and run `jm apply`.
+
+#### `exit` — when finalize and free are separable
+
+By default `__exit__` runs the teardown, which releases the object. For a C
+API that splits *finalize* from *free* — flush and detach, but keep the struct
+— that is the wrong half, and it discards the object at exactly the moment its
+results become valid:
+
+```python
+with Capture(tlm, block, path) as cap:
+    ...
+cap.dropped          # RuntimeError: destroyed
+```
+
+`exit` names an already-declared **method** to call instead:
+
+```toml
+[[dp_tlm_capture.methods]]
+name          = "close"
+fn            = "dp_tlm_capture_close"
+status_return = true
+error         = "ValueError"
+error_message = "the capture has a hole: records were dropped"
+
+[dp_tlm_capture.destroy]
+exit = "close"
+```
+
+Now `__exit__` calls `close()`, **leaves the handle intact**, and the natural
+shape works — run the block, then read what you captured. `tp_dealloc` still
+calls destroy and still swallows its status, so the memory is freed exactly
+once whether or not the `with` block ran.
+
+It names a method rather than a bare C symbol on purpose: the finalizer
+already carries `fn`, `status_return`, `error` and `error_message`, so
+`__exit__` inherits all four and the explicit `cap.close()` cannot disagree
+with the implicit one about whether a failure raises. A second C-symbol slot
+would have re-created the very split gh-541 closed.
+
+The docstrings follow the call on **both** faces — the runtime `__doc__` and
+the `.pyi` both say the object is finalized and stays usable. That matters
+because `__enter__`/`__exit__` are 100% jm-owned: a project that hand-patched
+the behaviour would keep jm's prose, re-transplanted at every apply, and a
+doc-parity gate compares the two faces against *each other* — so both carrying
+the same wrong sentence stays green.
 
 `returns = "int"` changes the **sacred** core signature to
 `int wfm_writer_destroy(wfm_writer_state_t *state)` in both `_core.h` and
