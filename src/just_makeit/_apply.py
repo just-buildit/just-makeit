@@ -390,6 +390,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 create_impl_body=create_impl,
                 reset_impl_body=reset_impl,
                 destroy_impl_body=destroy_impl,
+                # gh-860: the module-object replay, the sibling of the
+                # standalone site above. Same reason, same source: the temp
+                # tree has not replayed this object's methods yet. Set at
+                # the CALL SITE rather than in _object_kwargs, which is
+                # shared with callers that do not want it.
+                declared_methods=C.methods(cfg, comp),
                 **_object_kwargs(cfg, comp),
             )
 

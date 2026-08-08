@@ -321,6 +321,67 @@ class TestApplyResolvesTheFinalizer:
         assert "finalizing" in pyi
 
 
+class TestApplyResolvesTheFinalizerForAModuleObject:
+    """The same, for an object declared inside `[module.X]` -- gh-860.
+
+    gh-856 wired the STANDALONE replay and its end-to-end test covered the
+    standalone shape, so the module-object replay -- a separate loop in
+    `_apply._replay`, reached through `_object.run(..., mod)` -- kept reading
+    the half-built temp cfg. `exit` was therefore unusable for the more common
+    shape: nearly every doppler object is a module object.
+
+    "Reading ONE face misleads: test standalone AND module" is a rule this
+    repo already had. gh-856's fix and its test both honoured the first half.
+    """
+
+    @pytest.fixture()
+    def applied(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._method import run as method_run
+        from just_makeit._module import run as module_run
+        from just_makeit._new import run as new_run
+        from just_makeit._object import run as object_run
+
+        dest = tmp_path / "cap"
+        new_run("cap", dest, [], [])
+        module_run(dest, "tele")
+        object_run(
+            dest, "widget", "tele", arg_type="float", return_type="float"
+        )
+        method_run(
+            dest,
+            "widget",
+            "close",
+            "tele",
+            "void",
+            "int",
+            False,
+            [],
+            status_return=True,
+            error="ValueError",
+            error_message="the capture has a hole",
+        )
+        cfg = C.load(dest)
+        C.set_destroy_spec(cfg, "widget", {"returns": "int", "exit": "close"})
+        C.save(dest, cfg)
+        apply_run(dest)  # must not raise
+        return dest
+
+    def _frag(self, root):
+        return (
+            root / "native" / "src" / "tele" / "tele_ext_widget.c"
+        ).read_text(encoding="utf-8")
+
+    def test_module_exit_calls_the_finalizer(self, applied):
+        exit_fn = self._frag(applied).split("_exit(")[1].split("\n}")[0]
+        assert "widget_close(self->handle)" in exit_fn
+        assert "widget_destroy" not in exit_fn
+
+    def test_module_exit_leaves_the_handle_set(self, applied):
+        exit_fn = self._frag(applied).split("_exit(")[1].split("\n}")[0]
+        assert "self->handle = NULL" not in exit_fn
+
+
 class TestManifestRoundTrip:
     """The key survives the serializer -- an unnamed key is silently lost."""
 

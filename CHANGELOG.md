@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`exit` renders for a MODULE object too (gh-860).** gh-856 wired the
+    standalone replay and left its sibling — `_apply._replay`'s module-object
+    loop — still reading the half-built temp manifest, so `exit` was unusable
+    for the shape most real manifests use. It failed loudly rather than
+    rendering something wrong, but it failed.
+
+    `declared_methods` is now **keyword-only**. It was appended-with-a-default
+    because inserting it ahead of `state_vars` rebinds every positional caller
+    — but that let a test-ergonomics constraint decide a correctness question,
+    and the module path then forgot it. `*` removes the positional hazard, so
+    position is no longer the reason it sits last. It stays *defaulted* rather
+    than required only because 319 tests legitimately create fresh objects
+    with no methods; all four `src/` call sites pass it explicitly.
+
+    The shape worth naming: gh-856 closed the silent-omission hole at
+    `make_destroy_ctx` by making its argument required, and **reopened it one
+    layer up** with an optional parameter and a silent fallback. A required
+    argument only guards the layer it is on.
+
+    The end-to-end test now covers **both faces**. "Reading ONE face
+    misleads — test standalone AND module" is a rule this repo already had;
+    gh-856's fix and its test both honoured only the first half.
+
 ## [0.54.1] — 2026-08-08
 
 ### Fixed
