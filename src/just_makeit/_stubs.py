@@ -1832,9 +1832,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # gh-647: the context-manager protocol used to be the one part of the
     # generated surface with no docstring on either face, so `help()` showed
     # nothing at all for it.
+    # gh-864: the MODULE-AGGREGATED stub is a second doc-face producer, and
+    # gh-805 §H wired only the one in `_context/_destroy`. So a module object
+    # with `exit` kept "releasing the X" / "Equivalent to calling destroy()"
+    # here — false on both counts, over a body that finalizes and leaves the
+    # object usable. jm has five `.pyi` producers; fixing one is how gh-747
+    # happened, and this is the same shape again.
+    _exit_name = C.destroy_exit(cfg, obj)
     _cm = glue_methods(
         Component,
-        close_name=Ctx.destroy_py_names(C.destroy_spec(cfg, obj))[0],
+        close_name=(
+            _exit_name or Ctx.destroy_py_names(C.destroy_spec(cfg, obj))[0]
+        ),
+        finalizes=bool(_exit_name),
     )
     lines += ["", f'    def __enter__(self) -> "{Component}":']
     lines += _cm["__enter__"].pyi_doc()

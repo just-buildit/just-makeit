@@ -262,14 +262,17 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
     and the ``destroy`` table — which is the duplication this key removes
     everywhere else.
     """
-    if spec.get("error") or spec.get("error_message"):
-        return (
-            spec.get("error") or _DEFAULT_CATEGORY,
-            spec.get("error_message") or "",
-        )
+    # gh-864: INDEPENDENTLY, not both-or-neither. This shipped as a pair
+    # because a half-inherited pair "pins one declaration's message under the
+    # other's category" — but that reasoning was wrong twice over. The message
+    # describes the CONDITION ("the capture has a hole"), not the exception
+    # class, so it stays accurate under a different class. And pairing left no
+    # setting where all three surfaces were right: declaring `error` to fix
+    # the stub silently dropped the message, which is the entire content of
+    # the diagnostic gh-541 exists to preserve.
     return (
-        exit_method.get("error") or _DEFAULT_CATEGORY,
-        exit_method.get("error_message") or "",
+        spec.get("error") or exit_method.get("error") or _DEFAULT_CATEGORY,
+        spec.get("error_message") or exit_method.get("error_message") or "",
     )
 
 
@@ -520,7 +523,15 @@ def make_destroy_ctx(
     Component = C.default_class_name(component)
     _raises: list[str] = []
     if fallible:
-        category = spec.get("error") or _DEFAULT_CATEGORY
+        # gh-864: the RESOLVED category, not the raw key. The emitter went
+        # through `_inherited_error` and this did not, so with `exit` set the
+        # stub's Raises said RuntimeError over a body raising ValueError —
+        # a type checker blessing the wrong except clause.
+        category = (
+            _inherited_error(spec, exit_method)[0]
+            if exit_method
+            else (spec.get("error") or _DEFAULT_CATEGORY)
+        )
         # gh-744: the description wraps like every other numpy description.
         # It landed at 173 columns as one line -- the section is indented 4
         # inside a docstring already indented 8, so the budget is DESC_WIDTH.
