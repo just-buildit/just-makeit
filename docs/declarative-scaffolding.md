@@ -340,6 +340,15 @@ already carries `fn`, `status_return`, `error` and `error_message`, so
 with the implicit one about whether a failure raises. A second C-symbol slot
 would have re-created the very split gh-541 closed.
 
+The **teardown** inherits too. `close` and `destroy` are two routes to one
+condition — the finalizer latches the verdict, the destructor reports the same
+hole at collection — so when `[<obj>.destroy]` states no `error` or
+`error_message` of its own, both are taken from the named finalizer. Without
+that, the minimal declaration above would raise `ValueError: the capture has a hole` from `__exit__` and `RuntimeError: dp_tlm_capture_destroy reported failure` from the GC path, for the same hole.
+
+It is both keys or neither: declaring either one keeps both explicit, so a
+teardown that genuinely needs to say something different still can.
+
 The docstrings follow the call on **both** faces — the runtime `__doc__` and
 the `.pyi` both say the object is finalized and stays usable. That matters
 because `__enter__`/`__exit__` are 100% jm-owned: a project that hand-patched

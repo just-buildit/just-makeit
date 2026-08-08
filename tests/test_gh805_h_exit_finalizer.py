@@ -183,6 +183,66 @@ class TestByteIdenticalWhenUndeclared:
         assert "cap_close" not in ctx["destroy_exit_body"]
 
 
+class TestOneConditionOneDeclaration:
+    """The teardown inherits the finalizer's error when it states none.
+
+    Raised in review of #853. Once `exit` splits the two calls apart they are
+    still ONE condition reached by two routes -- the finalizer latches the
+    verdict, the destructor reports the same hole on the GC path. Left to the
+    ordinary defaults the minimal adoption rendered a different exception
+    CLASS and a different sentence for that one condition, so this was the
+    out-of-the-box result rather than a drift risk.
+    """
+
+    _MSG = "the capture has a hole: records were dropped"
+
+    def _bodies(self, spec):
+        ctx = _ctx(spec, [_CLOSE])
+        return ctx["destroy_exit_body"], ctx["destroy_method_body"]
+
+    def test_minimal_adoption_agrees_on_class_and_text(self):
+        exit_body, destroy_body = self._bodies(
+            {"returns": "int", "exit": "close"}
+        )
+        for body in (exit_body, destroy_body):
+            assert "PyExc_ValueError" in body
+            assert self._MSG in body
+        assert "reported failure" not in destroy_body
+
+    def test_explicit_teardown_error_still_wins(self):
+        # Saying something different on purpose stays possible.
+        _, destroy_body = self._bodies(
+            {
+                "returns": "int",
+                "exit": "close",
+                "error": "OSError",
+                "error_message": "my own words",
+            }
+        )
+        assert "PyExc_OSError" in destroy_body
+        assert "my own words" in destroy_body
+
+    def test_declaring_either_key_keeps_both_explicit(self):
+        # Both or neither: a half-inherited pair would pin someone else's
+        # message under the author's category, which is a THIRD message
+        # rather than one fewer.
+        _, destroy_body = self._bodies(
+            {"returns": "int", "exit": "close", "error": "OSError"}
+        )
+        assert "PyExc_OSError" in destroy_body
+        assert self._MSG not in destroy_body
+
+    def test_without_exit_the_generic_default_is_untouched(self):
+        _, destroy_body = self._bodies({"returns": "int"})
+        assert "PyExc_RuntimeError" in destroy_body
+        assert "cap_destroy reported failure" in destroy_body
+
+    def test_void_teardown_inherits_nothing(self):
+        # No status to report, so there is no message to agree about.
+        _, destroy_body = self._bodies({"exit": "close"})
+        assert "PyErr" not in destroy_body
+
+
 class TestManifestRoundTrip:
     """The key survives the serializer -- an unnamed key is silently lost."""
 
