@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.54.2] — 2026-08-08
+
 ### Fixed
 
 - **`exit` renders for a MODULE object too (gh-860).** gh-856 wired the
