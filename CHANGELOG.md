@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-08-08
+
 ### Added
 
 - **`exit` on `[<obj>.destroy]` — `__exit__` can finalize instead of freeing
