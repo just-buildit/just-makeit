@@ -29,6 +29,15 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    # The same shim `_config` and the gh-844 test use. `tomllib` is stdlib
+    # only from 3.11, so importing it unconditionally passes a local 3.12 run
+    # and fails the 3.9/3.10 matrix legs — which is exactly how this landed
+    # here, one day after the identical break was fixed in the gh-844 test.
+    import tomli as tomllib
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
@@ -247,8 +256,6 @@ class TestManifestRoundTrip:
     """The key survives the serializer -- an unnamed key is silently lost."""
 
     def test_dump_emits_and_tomllib_reads_back(self):
-        import tomllib
-
         cfg = {"cap": {"destroy": dict(_SPEC), "methods": [dict(_CLOSE)]}}
         rt = tomllib.loads(C._dump(cfg))
         assert rt["cap"]["destroy"]["exit"] == "close"
