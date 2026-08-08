@@ -39,6 +39,15 @@ jobs:
           done
           pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
 
+      # pytest belongs to the ENVIRONMENT, not to the steps that happen to
+      # need it today. It was installed per-step (ce15733, 2026-05-16) until
+      # a bundled example grew a `pytest --doctest-glob=*.pyi` check (8276d2d,
+      # 2026-07-24) and ran ~480 lines EARLIER than those installs -- so the
+      # smoke test failed on every release for 15 days with "No module named
+      # pytest", reported as a doctest failure. Any future step gets it free.
+      - name: Install pytest (needed by bundled examples and doctest steps)
+        run: pip install pytest
+
       - name: Install jbx
         run: |
           _JBS="https://just-buildit.github.io"
@@ -530,7 +539,6 @@ jobs:
       - name: pytest --doctest-modules passes on placeholder implementation
         working-directory: osc_doctest
         run: |
-          pip install pytest
           python3 -c "
           import sys; sys.path.insert(0, 'src')
           from osc_doctest import Osc
@@ -566,7 +574,6 @@ jobs:
       - name: pytest --doctest-modules passes for extra-method doctests
         working-directory: meth_doctest
         run: |
-          pip install pytest
           python3 -c "
           import sys; sys.path.insert(0, 'src')
           from meth_doctest import Mixer

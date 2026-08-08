@@ -340,6 +340,17 @@ print("accumulator: all checks passed")
         capture_output=True,
         text=True,
     )
+    # An ABSENT pytest also exits non-zero, and saying "doctests failed" for
+    # that is a wrong answer, not a vague one: it sends the reader to the
+    # header's `@code` blocks when the real fault is an uninstalled runner.
+    # It reported exactly that for 15 days, because artifact.yml ran this
+    # step before its `pip install pytest`. Separate the two answers.
+    if "No module named pytest" in doctest_res.stderr:
+        raise AssertionError(
+            "pytest is not installed, so the header-authored .pyi doctests "
+            "NEVER RAN -- this is an environment problem, not a doctest "
+            "failure. Install it (`pip install pytest`) and re-run."
+        )
     assert doctest_res.returncode == 0, (
         "header-authored .pyi doctests failed:\n"
         f"{doctest_res.stdout}\n{doctest_res.stderr}"
