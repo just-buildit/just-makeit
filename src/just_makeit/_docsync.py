@@ -335,18 +335,46 @@ def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
     fb` on a glue slot therefore means "jm owns this text outright", not
     "there is nothing to say".
 
-    Still not unconditional. The reclaim is limited to a slot that is empty or
-    a **single logical line**, because every pre-gh-647 glue doc was a
-    one-liner and every gh-647 one is multi-paragraph. That covers the whole
-    reported population while bounding the worst case to "somebody hand-wrote
-    a *one-line* glue docstring" — the least valuable thing to preserve. A
-    rich hand-written glue doc has more than one line and is left alone.
+    gh-871: **unconditional**, where it used to stop at a slot that was empty
+    or a single logical line.
+
+    That bound was drawn for gh-707's reported population, which was entirely
+    pre-gh-647 one-liners, and it read as a cheap safety margin: "a rich
+    hand-written glue doc has more than one line and is left alone." What it
+    actually did was freeze the feature shut. *Every* gh-647 glue docstring is
+    multi-paragraph, so the moment a project picked one up its glue prose
+    became unrevisable by any later jm — and the three fixes that followed all
+    landed in that dead zone:
+
+    ===========  ==========================================================
+    issue        what could not reach an existing fragment
+    ===========  ==========================================================
+    gh-805 §H    ``__exit__`` saying "finalizing" instead of "releasing"
+    gh-864       ``destroy`` naming the inherited exception class
+    gh-869       the ``Raises`` section itself
+    ===========  ==========================================================
+
+    Each rendered correctly into a *fresh* fragment and into the ``.pyi``, so
+    every test passed while the runtime face of every existing module object
+    stayed wrong. `tests/test_body_vs_doc_gate.py` caught it only once it
+    started reading the ``PyMethodDef`` literal.
+
+    The licence is the paragraph above, applied honestly: there is **no
+    authoring path** for these members. A downstream cannot document
+    ``__exit__`` with Doxygen — there is no declaration to attach a comment
+    to — so `der == fb` on a glue slot means jm owns the text outright. That
+    is true of a five-paragraph glue docstring exactly as much as a one-line
+    one; line count was never evidence of authorship, only a proxy for "how
+    much would we destroy if we were wrong".
+
+    So the reclaim is now total and, in exchange, **loud**: every reclaimed
+    member is reported by name (see `refresh_module_fragment_docs`), the way
+    `refresh_glue_bindings` already reports a repaired arity. A hand-edited
+    glue docstring is no longer silently preserved *or* silently overwritten —
+    it is overwritten and named, and `git diff` on a sacred fragment is a
+    thing this workflow already expects a human to read.
     """
-    if name not in _gluedoc.glue_method_names() or not der:
-        return False
-    body = "".join(_STR_LIT_RE.findall(cur))
-    lines = [ln for ln in body.split("\\n") if ln.strip()]
-    return len(lines) <= 1
+    return name in _gluedoc.glue_method_names() and bool(der)
 
 
 def _refresh_slot(
@@ -378,7 +406,12 @@ def _refresh_slot(
     return None  # hand-written -> preserve
 
 
-def transplant_docs(existing: str, reference: str, fallback: str) -> str:
+def transplant_docs(
+    existing: str,
+    reference: str,
+    fallback: str,
+    reclaimed: "list[str] | None" = None,
+) -> str:
     """Return *existing* with refreshable doc slots updated from *reference*.
 
     For each ``PyMethodDef`` / ``PyGetSetDef`` entry whose name appears in both
@@ -388,6 +421,15 @@ def transplant_docs(existing: str, reference: str, fallback: str) -> str:
     the header Doxygen ignored — or is empty with real derived content.
     Hand-written docstrings and every non-manifest binding pass through
     untouched. Edits apply right-to-left so earlier spans stay valid.
+
+    Parameters
+    ----------
+    reclaimed : list of str, optional
+        Sink for the names of **glue** members whose prose was overwritten
+        (gh-871). Since that reclaim became unconditional it can now replace a
+        hand-edited glue docstring, so the caller reports what it took rather
+        than doing it silently — the trade the issue's decision rests on. Left
+        ``None`` by callers that only want the text.
     """
     ex_mask = _code_mask(existing)
     ref_mask = _code_mask(reference)
@@ -406,6 +448,15 @@ def transplant_docs(existing: str, reference: str, fallback: str) -> str:
             )
             if new_text is not None:
                 edits.append((fs, fe, new_text))
+                # gh-871: only glue is reported. Every other refresh already
+                # required the slot to hold jm's own scaffold or synopsis, so
+                # nothing a human wrote was at stake there.
+                if (
+                    reclaimed is not None
+                    and name in _gluedoc.glue_method_names()
+                    and _norm(cur)
+                ):
+                    reclaimed.append(name)
 
     ex_tp = _tp_doc_span(existing, ex_mask)
     ref_tp = _tp_doc_span(reference, ref_mask)
@@ -1532,7 +1583,8 @@ def refresh_module_fragment_docs(
             existing = frag.read_text(encoding="utf-8")
             reference = R.render_module_ext_fragment(ctx)
             fb = R.render_module_ext_fragment(fallback[comp])
-            updated = transplant_docs(existing, reference, fb)
+            _reclaimed: list[str] = []
+            updated = transplant_docs(existing, reference, fb, _reclaimed)
             # gh-440: a new method/property added to the manifest since this
             # fragment was last generated is missing entirely -- splice it in
             # additively rather than requiring delete-and-recreate.
@@ -1544,6 +1596,15 @@ def refresh_module_fragment_docs(
             updated, _fixed = refresh_glue_bindings(updated, reference)
             for _name in _fixed:
                 print(f"  update  {_rel}: {_name} binding arity")
+            # gh-871: the reclaim is unconditional now, so it is also loud.
+            # This is the whole safety story for overwriting a glue docstring
+            # somebody may have hand-edited: it is named, in the same place a
+            # repaired arity is named, and the diff is right there.
+            if _reclaimed:
+                print(
+                    f"  update  {_rel}: refreshed jm-owned docstring(s) for "
+                    f"{', '.join(sorted(set(_reclaimed)))}"
+                )
             # gh-622: the splice above is additive by name, so a member whose
             # *signature* changed keeps its old binding while the .pyi takes
             # the new one. Nothing can re-render it here (the body is the
