@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.54.1] — 2026-08-08
+
 ### Fixed
 
 - **`exit` is reachable through `jm apply` (gh-856).** gh-805 §H shipped in
