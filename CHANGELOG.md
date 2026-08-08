@@ -31,6 +31,11 @@
     face as well as the `.pyi`, reading both through one anchored section
     parser. A `.pyi`-only gate would have gone green on a fix that left
     `help()` documenting no exception. Known gap ratcheted as gh-871.
+- `tests/test_claude_md_drift.py` holds `CLAUDE.md` to the tree it describes:
+    every `src/just_makeit/_*.py` appears in it, every path it names exists,
+    and it states no version or schema literal in prose. Measured drift is why
+    — 33 of 60 modules were absent from its file table. Ratcheted at that 33;
+    the other two rules pass outright and carry no allowance.
 
 ## [0.54.3] — 2026-08-08
 
