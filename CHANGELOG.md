@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.54.3] — 2026-08-08
+
+> Projects using `exit` will see a `.pyi` diff on the next `jm apply`: the
+> stub's `Raises` and the context-manager prose both change to match what the
+> binding already did. That is the fix arriving, not drift.
+
 ### Fixed
 
 - **With `exit`, every face now names the same exception (gh-864).** §H routed
