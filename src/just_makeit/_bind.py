@@ -527,7 +527,11 @@ def _build_ctx(
     # reflects. `bind` therefore renders the undeclared default, which is the
     # text it produced before this feature existed. Re-run with the settled
     # ComponentW so the PyMethodDef entry names the right static function.
-    ctx.update(Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"]))
+    # gh-856: no spec is passed here by design (see above), so there is no
+    # `exit` to resolve and [] is the truth rather than a stand-in.
+    ctx.update(
+        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], None, [])
+    )
 
     # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
     # slot with the <<package>>/<<Component>> placeholder that only _init.run and

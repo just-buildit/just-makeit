@@ -342,6 +342,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             temp_root,
             comp,
             None,
+            # gh-856: the SOURCE manifest's methods. The temp tree has not
+            # replayed them yet, so `exit` cannot resolve against it.
+            declared_methods=C.methods(cfg, comp),
             impl_body=impl,
             create_impl_body=create_impl,
             reset_impl_body=reset_impl,

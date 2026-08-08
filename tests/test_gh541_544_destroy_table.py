@@ -148,7 +148,7 @@ class TestNamesAndAliases:
 
     def test_pymethoddef_has_one_row_per_unique_name(self):
         pmd = make_destroy_ctx(
-            "w", "WObj", {"name": "close", "aliases": ["destroy", "close"]}
+            "w", "WObj", {"name": "close", "aliases": ["destroy", "close"]}, []
         )["destroy_pymethoddef"]
         assert pmd.count('{"close",') == 1
         assert pmd.count('{"destroy",') == 1
