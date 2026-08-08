@@ -35,6 +35,7 @@ from . import _context as Ctx
 from . import _types as T
 from dataclasses import replace as _replace
 
+from ._context._diagnostics import raises_doc as _raises_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     STUB_TARGET_WIDTH,
@@ -1156,12 +1157,20 @@ def _method_doc_lines(
     py_params: list[tuple[str, str]],
     ret_ann: str,
     override: str = "",
+    raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
-    """Return indented `.pyi` docstring lines for an object method."""
+    """Return indented `.pyi` docstring lines for an object method.
+
+    *raises* is `_context._diagnostics.raises_doc` for the method — the same
+    list the standalone stub and the runtime ``PyMethodDef`` pass, because
+    this is the second ``.pyi`` producer and wiring a value into one and not
+    its sibling is the habit `tests/test_face_parity_gate.py` exists to catch
+    (gh-869).
+    """
     from ._docstring import render_numpy_doc
 
     return render_numpy_doc(
-        block, m_name, py_params, ret_ann, override, indent=8
+        block, m_name, py_params, ret_ann, override, indent=8, raises=raises
     )
 
 
@@ -1698,7 +1707,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 )
             )
         _doc = _method_doc_lines(
-            _blk, m_name, _py_params, ret_ann, override=m.get("doc", "")
+            _blk,
+            m_name,
+            _py_params,
+            ret_ann,
+            override=m.get("doc", ""),
+            raises=_raises_doc(m),
         )
         header = (
             f"    def {m_name}(self, {sig}) -> {ret_ann}:"
@@ -1823,12 +1837,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # than restating the method list. `pyi_destroy_methods` is
     # "\n    def <name>...\n" per name, whose split reproduces the previous
     # literal list exactly when nothing is declared.
-    lines += Ctx.make_destroy_ctx(
+    _dctx = Ctx.make_destroy_ctx(
         obj,
         Component,
         C.destroy_spec(cfg, obj),
         C.methods(cfg, obj),  # gh-856
-    )["pyi_destroy_methods"].split("\n")
+    )
+    lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the
     # generated surface with no docstring on either face, so `help()` showed
     # nothing at all for it.
@@ -1838,22 +1853,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # here — false on both counts, over a body that finalizes and leaves the
     # object usable. jm has five `.pyi` producers; fixing one is how gh-747
     # happened, and this is the same shape again.
-    _exit_name = C.destroy_exit(cfg, obj)
-    _cm = glue_methods(
-        Component,
-        close_name=(
-            _exit_name or Ctx.destroy_py_names(C.destroy_spec(cfg, obj))[0]
-        ),
-        finalizes=bool(_exit_name),
-    )
+    #
+    # gh-869: so it stopped being a producer. It used to rebuild the pair from
+    # `glue_methods` — the same call `make_destroy_ctx` had *just* made, three
+    # lines above, with the same arguments — and that second call is what kept
+    # needing the same fix twice: __exit__'s declared `Raises` reached the
+    # slot and not the restatement, so a module object documented no exception
+    # over the identical raising body. The slots are read instead.
     lines += ["", f'    def __enter__(self) -> "{Component}":']
-    lines += _cm["__enter__"].pyi_doc()
+    lines += _dctx["pyi_enter_doc"].split("\n")
     # Signature from the same param list that drives the documented
     # Parameters section, so griffe never sees a documented name the
     # signature lacks.
-    _exit_sig = _cm["__exit__"].pyi_params(defaults=True)
-    lines += ["", f"    def __exit__({_exit_sig}) -> None:"]
-    lines += _cm["__exit__"].pyi_doc()
+    lines += ["", f"    def __exit__({_dctx['pyi_exit_sig']}) -> None:"]
+    lines += _dctx["pyi_exit_doc"].split("\n")
 
     return "\n".join(lines)
 

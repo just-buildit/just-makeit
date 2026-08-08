@@ -82,14 +82,25 @@ class GlueMethod:
             body.append(para)
         return replace(self.block, body=body)
 
-    def pyi_doc(self, indent: int = 8) -> list[str]:
-        """Rendered numpy docstring lines for the ``.pyi`` face."""
+    def pyi_doc(
+        self,
+        indent: int = 8,
+        raises: "list[tuple[str, str]] | None" = None,
+    ) -> list[str]:
+        """Rendered numpy docstring lines for the ``.pyi`` face.
+
+        *raises* is the manifest-declared exception (gh-869), forwarded
+        unchanged to :meth:`c_doc_lines`' renderer as well — a glue method
+        that raises must say so on both faces or a face-parity gate reports
+        parity over a binding that raises.
+        """
         return render_numpy_doc(
             self._spaced(),
             self.name,
             self.py_params,
             self.ret_ann,
             indent=indent,
+            raises=raises,
         )
 
     def pyi_params(self, defaults: bool = False) -> str:
@@ -119,7 +130,9 @@ class GlueMethod:
             ["self"] + [f"{n}: {a}{tail}" for n, a in self.py_params]
         )
 
-    def c_doc_lines(self) -> list[str]:
+    def c_doc_lines(
+        self, raises: "list[tuple[str, str]] | None" = None
+    ) -> list[str]:
         """Logical doc lines for the runtime ``PyMethodDef`` entry.
 
         The same prose as :meth:`pyi_doc` with the stub-only parts removed —
@@ -136,7 +149,11 @@ class GlueMethod:
         reads and clang-format will not reflow.
         """
         return render_runtime_doc(
-            self._spaced(), self.name, self.py_params, self.ret_ann
+            self._spaced(),
+            self.name,
+            self.py_params,
+            self.ret_ann,
+            raises=raises,
         )
 
 

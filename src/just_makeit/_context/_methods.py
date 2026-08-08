@@ -34,7 +34,7 @@ from .._docstring import (
 from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
-from ._diagnostics import _rc_raise_c
+from ._diagnostics import _rc_raise_c, declared_raise, raises_doc
 from ._parse import (
     _build_ml_doc,
     _build_params_parse,
@@ -903,8 +903,14 @@ def make_methods_ctx(
         # The exception category and text for that failure. `error` reuses
         # gh-482's ERROR_CATEGORIES (already validated at declaration time),
         # so this renders a name jm has vetted rather than arbitrary C.
-        error_category: str = m.get("error", "") or "ValueError"
-        error_message: str = m.get("error_message", "")
+        #
+        # gh-869: resolved ONCE, by `declared_raise`, and read by the emitter
+        # below *and* by both doc faces. They used to be two readings of the
+        # same four keys — one that emitted `PyErr_Format(PyExc_ValueError,
+        # ...)` and one that documented nothing at all, so the two doc faces
+        # agreed there was no exception over a binding that raises one.
+        _raise_pair = declared_raise(m)
+        _raises_doc = raises_doc(m)
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -1047,8 +1053,23 @@ def make_methods_ctx(
             it would put two example blocks in one docstring — the second one
             constructing the object a different way than the author just
             showed. The author's wins; jm's is the fallback it always was.
+
+            It carries its own ``Examples`` heading (gh-869). It never did:
+            the demo was appended as bare indented ``>>>`` lines, which read
+            as a continuation of whatever section happened to end above it.
+            While that was always the summary the ambiguity was invisible —
+            but a declared exception now puts a ``Raises`` section there, and
+            numpydoc reads four-space-indented lines under an entry as that
+            entry's description. So the doctest rendered as part of the
+            exception's prose. The heading is what the header-supplied
+            examples already get one line up, in `render_runtime_doc`.
             """
-            return [] if _has_header_examples else lines
+            if _has_header_examples:
+                return []
+            # The demo's own leading blank separates it from the section
+            # above; the heading takes that slot instead.
+            body = lines[1:] if lines and not lines[0].strip() else lines
+            return ["", "Examples", "--------", *body]
 
         def _runtime_doc(default_summary: str) -> list[str]:
             """This method's runtime numpy block, summary resolved.
@@ -1060,7 +1081,12 @@ def make_methods_ctx(
             ``_brief`` already resolved the first two.
             """
             return render_runtime_doc(
-                _block, name, _doc_params, _ret_ann, _brief or default_summary
+                _block,
+                name,
+                _doc_params,
+                _ret_ann,
+                _brief or default_summary,
+                raises=_raises_doc,
             )
 
         # gh-219 follow-up: a method's primary array input is sometimes
@@ -2496,9 +2522,7 @@ def make_methods_ctx(
                     f"    {ret_disp} _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
-                    + _rc_raise_c(
-                        error_category, error_message or f"{name} failed"
-                    )
+                    + _rc_raise_c(*_raise_pair)
                     + f"    }}\n"
                     f"    return {ret_meta['to_py']('_rc')};\n"
                 )
@@ -2516,9 +2540,7 @@ def make_methods_ctx(
                     f"    int _rc = {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    if (_rc != 0) {{\n"
-                    + _rc_raise_c(
-                        error_category, error_message or f"{name} failed"
-                    )
+                    + _rc_raise_c(*_raise_pair)
                     + "    }\n"
                     "    Py_RETURN_NONE;\n"
                 )
@@ -2626,10 +2648,20 @@ def make_methods_ctx(
                 f"{ret_body}"
                 f"}}"
             )
+            # gh-869: `status_return` claims the whole int as a status, so
+            # the binding returns None — the `.pyi` has said so since gh-432
+            # and this signature line still said `-> int`, on the one face
+            # that sits next to a `Py_RETURN_NONE` body. Same defect as the
+            # missing `Raises`, one line down: a doc face describing a
+            # different function than the one it is attached to.
             _fix_ret_hint = (
-                "ndarray"
-                if out_type or multi_output
-                else _pyi_scalar(return_type)
+                "None"
+                if status_return
+                else (
+                    "ndarray"
+                    if out_type or multi_output
+                    else _pyi_scalar(return_type)
+                )
             )
             _fix_demo: list[str] = []
             if has_arg or has_params:
@@ -2659,7 +2691,14 @@ def make_methods_ctx(
                 _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
                 _fix_demo.append("    >>> y.ndim")
                 _fix_demo.append("    1")
-            elif return_type != "void" and return_type in _CTYPE_META:
+            elif (
+                return_type != "void"
+                and return_type in _CTYPE_META
+                # gh-869: ...and so the demo showed the status code as the
+                # call's output. It has none; the expected-output line made
+                # the doctest wrong as well as the signature.
+                and not status_return
+            ):
                 _py_z = _CTYPE_META[return_type].get("py_zero", "0")
                 _fix_demo.append(f"    >>> obj.{name}({_call_str})")
                 _fix_demo.append(f"    {_py_z}")
@@ -2747,6 +2786,7 @@ def make_methods_ctx(
                     m.get("doc") or "",
                     indent=8,
                     skeleton_fallback=True,
+                    raises=_raises_doc,
                 )
             )
             + "\n"

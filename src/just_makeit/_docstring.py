@@ -1602,6 +1602,7 @@ def render_numpy_doc(
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
     return_fallback: str = "Output.",
+    raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -1642,6 +1643,11 @@ def render_numpy_doc(
         The two paths genuinely disagree here, and the disagreement is about
         policy rather than layout, so it stays a caller's choice rather than
         being silently unified. Worth settling separately.
+    raises : list of tuple(str, str), optional
+        ``(exception_class, description)`` the *manifest* declares this member
+        raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
+        a header ``@throws``, which the block carries and which is merged with
+        these; both end up in the one section.
 
     Returns
     -------
@@ -1649,7 +1655,7 @@ def render_numpy_doc(
         Complete docstring lines, opening and closing ``\"\"\"`` included.
     """
     pad = " " * indent
-    if block is None and not override and not skeleton_fallback:
+    if block is None and not override and not skeleton_fallback and not raises:
         return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
 
     lines, examples = _numpy_sections(
@@ -1661,6 +1667,7 @@ def render_numpy_doc(
         skeleton_fallback=skeleton_fallback,
         param_fallback=param_fallback,
         return_fallback=return_fallback,
+        raises=raises,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -1818,6 +1825,7 @@ def _numpy_sections(
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
     return_fallback: str = "Output.",
+    raises: "list[tuple[str, str]] | None" = None,
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -1851,6 +1859,14 @@ def _numpy_sections(
     # gh-652: quarantined block tags become real numpy sections. Rendered here
     # rather than in either face, so both get them from the one builder.
     tag_secs, retvals = _tag_sections(block) if block is not None else ({}, [])
+    # gh-869: an exception the *manifest* declares. A header ``@throws`` is
+    # the same section reached from the other direction, so it is merged into
+    # the same list rather than rendered beside it — two ``Raises`` headings
+    # in one docstring is not a numpy document. Declared entries come last:
+    # a header that documents the failure in the author's own words should
+    # read first.
+    for _cat, _desc in raises or []:
+        tag_secs.setdefault("Raises", []).append(f"{_cat} {_desc}")
     # gh-744: the summary wraps like every other section. It used to be the
     # single exception, spliced in at whatever length the header wrote it.
     out = wrap_summary(summary)
@@ -1936,6 +1952,7 @@ def render_runtime_doc(
     *,
     param_fallback: str = "Input.",
     return_fallback: str = "Output.",
+    raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -2003,6 +2020,7 @@ def render_runtime_doc(
         skeleton_fallback=True,
         param_fallback=param_fallback,
         return_fallback=return_fallback,
+        raises=raises,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
