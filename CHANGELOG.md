@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **With `exit`, every face now names the same exception (gh-864).** §H routed
+    the emitted *body* through the inherited `error`/`error_message` and left
+    the `Raises` doc reading the raw key, so the stub said `RuntimeError` over
+    a body raising `ValueError` — a type checker blessing the wrong `except`
+    clause. The Raises section now resolves through the same pair the emitter
+    uses.
+
+- **`error` and `error_message` inherit independently (gh-864).** They shipped
+    as both-or-neither, on the reasoning that a half-inherited pair mixes one
+    declaration's message with another's class. That was wrong twice: the
+    message describes the *condition*, not the exception class, so it stays
+    accurate; and pairing left **no setting where every surface was right** —
+    declaring `error` to correct the stub silently dropped the message, which
+    is the entire content of the diagnostic gh-541 exists to preserve.
+
+- **A module object's stub says `finalizing`, not `releasing` (gh-864).** The
+    module-aggregated `.pyi` is a **second** doc-face producer, and §H wired
+    only the one in `_context/_destroy`. So a module object with `exit` kept
+    "Exit a context manager, releasing the X" and "Equivalent to calling
+    `destroy()`" — both false over a body that finalizes and leaves the object
+    usable, and precisely the surface a downstream project cannot correct
+    itself. jm has five `.pyi` producers; fixing one is how gh-747 happened,
+    and this was the same shape again.
+
 ## [0.54.2] — 2026-08-08
 
 ### Fixed

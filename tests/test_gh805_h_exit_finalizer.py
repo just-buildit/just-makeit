@@ -231,15 +231,18 @@ class TestOneConditionOneDeclaration:
         assert "PyExc_OSError" in destroy_body
         assert "my own words" in destroy_body
 
-    def test_declaring_either_key_keeps_both_explicit(self):
-        # Both or neither: a half-inherited pair would pin someone else's
-        # message under the author's category, which is a THIRD message
-        # rather than one fewer.
+    def test_each_key_inherits_independently(self):
+        # gh-864 REVERSED this. It shipped both-or-neither, on the reasoning
+        # that a half-inherited pair mixes one declaration's message with
+        # another's class. Wrong twice: the message describes the CONDITION,
+        # not the class, so it stays accurate; and pairing left no setting
+        # where every surface was right, because declaring `error` to fix the
+        # stub silently dropped the message gh-541 exists to preserve.
         _, destroy_body = self._bodies(
             {"returns": "int", "exit": "close", "error": "OSError"}
         )
         assert "PyExc_OSError" in destroy_body
-        assert self._MSG not in destroy_body
+        assert self._MSG in destroy_body
 
     def test_without_exit_the_generic_default_is_untouched(self):
         _, destroy_body = self._bodies({"returns": "int"})
@@ -380,6 +383,94 @@ class TestApplyResolvesTheFinalizerForAModuleObject:
     def test_module_exit_leaves_the_handle_set(self, applied):
         exit_fn = self._frag(applied).split("_exit(")[1].split("\n}")[0]
         assert "self->handle = NULL" not in exit_fn
+
+    def _stub(self, root):
+        return (root / "src" / "cap" / "tele" / "tele.pyi").read_text(
+            encoding="utf-8"
+        )
+
+    def test_module_stub_says_finalizing(self, applied):
+        # gh-864 defect 3: the module-aggregated stub is a SECOND doc-face
+        # producer and §H wired only the one in `_context/_destroy`, so this
+        # kept saying "releasing" over a body that finalizes. jm has five
+        # `.pyi` producers; fixing one is how gh-747 happened.
+        stub = self._stub(applied)
+        assert "finalizing the Widget" in stub
+        assert "releasing the Widget" not in stub
+
+    def test_module_stub_raises_matches_the_binding(self, applied):
+        # gh-864 defect 1, on the face a type checker actually reads.
+        stub = self._stub(applied)
+        assert any(ln.strip() == "ValueError" for ln in stub.splitlines())
+        assert "PyExc_ValueError" in self._frag(applied)
+
+
+class TestEveryFaceAgreesOnTheError:
+    """The stub's Raises names what the body actually raises -- gh-864.
+
+    §H routed the BODY through `_inherited_error` and left the Raises doc
+    reading `spec.get("error")` raw, so with `exit` set the stub said
+    `RuntimeError` over a body raising `ValueError` -- a type checker blessing
+    the wrong except clause. `check_doc_face_parity` reported 0 divergent
+    throughout: whatever it compares, the Raises section is not in it.
+
+    Inheritance is per-key, not both-or-neither. It shipped paired, on the
+    reasoning that a half-inherited pair mixes one declaration's message with
+    another's class -- but the message describes the CONDITION, not the class,
+    and pairing left NO setting where every surface was right: declaring
+    `error` to fix the stub silently dropped the message that is the whole
+    content of the diagnostic.
+    """
+
+    def _faces(self, spec):
+        ctx = _ctx(spec, [_CLOSE])
+        body = ctx["destroy_method_body"]
+        pyi = ctx["pyi_destroy_methods"]
+        raised = next(
+            c
+            for c in ("ValueError", "OSError", "RuntimeError")
+            if f"PyExc_{c}" in body
+        )
+        documented = next(
+            c
+            for c in ("ValueError", "OSError", "RuntimeError")
+            if any(ln.strip() == c for ln in pyi.splitlines())
+        )
+        return raised, documented, body
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            {"returns": "int", "exit": "close"},
+            {"returns": "int", "exit": "close", "error": "OSError"},
+            {"returns": "int", "exit": "close", "error_message": "mine"},
+            {
+                "returns": "int",
+                "exit": "close",
+                "error": "OSError",
+                "error_message": "mine",
+            },
+            {"returns": "int"},
+        ],
+    )
+    def test_stub_raises_matches_the_body(self, spec):
+        raised, documented, _ = self._faces(spec)
+        assert raised == documented
+
+    def test_declaring_the_class_keeps_the_inherited_message(self):
+        # Defect 2: this combination previously lost the finalizer's message.
+        _, _, body = self._faces(
+            {"returns": "int", "exit": "close", "error": "OSError"}
+        )
+        assert "PyExc_OSError" in body
+        assert "the capture has a hole" in body
+
+    def test_declaring_the_message_keeps_the_inherited_class(self):
+        _, _, body = self._faces(
+            {"returns": "int", "exit": "close", "error_message": "mine"}
+        )
+        assert "PyExc_ValueError" in body
+        assert "mine" in body
 
 
 class TestManifestRoundTrip:
