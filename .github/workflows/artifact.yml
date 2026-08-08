@@ -91,7 +91,29 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: my_fir
         run: |
-          sudo apt-get update
+          # Retry, matching ci.yml and release.yml's smoke job — this was the
+          # last bare `apt-get update` in the repo. A third-party list the
+          # runner ships (Google Chrome) went mid-mirror-sync during the
+          # v0.54.0 release and took the whole leg down with exit 100:
+          #   File has unexpected size (1407 != 1408). Mirror sync in progress?
+          # Nothing to do with the package being installed, and it resolves in
+          # seconds — so failing the release's post-publish gate on it just
+          # trains people to ignore a red gate (see gh-851).
+          ok=""
+          for attempt in 1 2 3; do
+            if sudo timeout 300 apt-get -o Acquire::Retries=3 update; then
+              ok=1
+              break
+            fi
+            echo "apt-get update attempt $attempt failed; retrying…"
+            sleep 10
+          done
+          # Explicit, because `break`-less fallthrough would run jbx against
+          # stale package lists and fail later, somewhere less obvious.
+          if [ -z "$ok" ]; then
+            echo "::error::apt-get update failed after 3 attempts"
+            exit 1
+          fi
           jbx install-deps -g dev -s apt
 
       - name: Install build deps via generated jb.toml (macOS)
