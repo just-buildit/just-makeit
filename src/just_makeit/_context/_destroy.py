@@ -64,7 +64,6 @@ from __future__ import annotations
 import re
 
 from .. import _config as C
-from .._docstring import DESC_WIDTH, _wrap
 from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
@@ -334,7 +333,58 @@ def _teardown_int_body(component: str, category: str, message: str) -> str:
     )
 
 
-def _exit_body(component: str, method: dict) -> str:
+def _exit_raise(
+    component: str, spec: dict, exit_method: dict
+) -> "tuple[str, str] | None":
+    """``(category, message)`` ``__exit__`` raises, or ``None`` (gh-869).
+
+    Read from exactly where the *body* reads it, because that is the whole
+    content of the bug: ``__exit__`` documented no ``Raises`` at all over a
+    body emitting ``PyErr_Format(PyExc_ValueError, ...)``, so both doc faces
+    agreed there was no exception and a face-parity gate reported parity.
+
+    The two routes are genuinely different sources, and the split is
+    `_exit_body`'s, not this function's:
+
+    - with ``exit``, ``__exit__`` calls the **finalizer's** C symbol, so the
+      raise is the finalizer's own declaration;
+    - without it, ``__exit__`` *is* the teardown body, so the raise is the
+      ``[<comp>.destroy]`` table's — the same pair `destroy` documents.
+
+    Only ``status_return`` promotes the finalizer's return to a raise here,
+    mirroring `_exit_body`'s test. An ``error_negative`` finalizer's int is a
+    *value*; ``__exit__`` discards it through a ``(void)`` cast and raises
+    nothing, so documenting an exception there would be the same defect
+    pointing the other way.
+
+    Examples
+    --------
+    >>> _exit_raise("w", {"returns": "int"}, {}) is None
+    False
+    >>> _exit_raise("w", {}, {}) is None
+    True
+    >>> _exit_raise("w", {"returns": "int", "exit": "close"},
+    ...             {"name": "close", "status_return": True,
+    ...              "error": "OSError", "error_message": "hole"})
+    ('OSError', 'hole')
+    """
+    if exit_method:
+        if not exit_method.get("status_return"):
+            return None
+        return (
+            exit_method.get("error") or "ValueError",
+            exit_method.get("error_message")
+            or f"{exit_method.get('name', '')} failed",
+        )
+    if spec.get("returns") != "int":
+        return None
+    return (
+        spec.get("error") or _DEFAULT_CATEGORY,
+        spec.get("error_message") or _DEFAULT_MSG.format(component=component),
+    )
+
+
+def _exit_body(component: str, method: dict, raise_pair) -> str:
     """``__exit__``'s body when ``exit`` names a finalizing method (gh-805 §H).
 
     Two differences from `_teardown_body`, and both are the point:
@@ -355,6 +405,11 @@ def _exit_body(component: str, method: dict) -> str:
     rather than re-declared, so the explicit ``cap.close()`` call and the
     implicit one at ``__exit__`` cannot disagree about whether a failed
     finalize raises. gh-541 is precisely the bug where they did.
+
+    gh-869: *raise_pair* is that resolution, hoisted into `_exit_raise` so the
+    rendered ``Raises`` section reads the pair this body raises rather than a
+    second, separately-derived answer to the same question. ``None`` is the
+    finalizer that cannot fail.
     """
     from ._diagnostics import _rc_raise_c
 
@@ -373,13 +428,12 @@ def _exit_body(component: str, method: dict) -> str:
         "       valid once it has run. The free stays in tp_dealloc. */\n"
     )
 
-    if not method.get("status_return"):
+    if raise_pair is None:
         return (
             guard + f"    (void){c_fn}(self->handle);\n    Py_RETURN_NONE;\n"
         )
 
-    category = method.get("error", "") or "ValueError"
-    message = method.get("error_message", "") or f"{name} failed"
+    category, message = raise_pair
     return (
         guard
         + f"    int _rc = {c_fn}(self->handle);\n"
@@ -521,7 +575,7 @@ def make_destroy_ctx(
     # "Release resources." while the stub said "Release C resources
     # immediately." -- which is exactly what a shared definition prevents.
     Component = C.default_class_name(component)
-    _raises: list[str] = []
+    _raises: list[tuple[str, str]] = []
     if fallible:
         # gh-864: the RESOLVED category, not the raw key. The emitter went
         # through `_inherited_error` and this did not, so with `exit` set the
@@ -534,37 +588,27 @@ def make_destroy_ctx(
         )
         # gh-744: the description wraps like every other numpy description.
         # It landed at 173 columns as one line -- the section is indented 4
-        # inside a docstring already indented 8, so the budget is DESC_WIDTH.
+        # inside a docstring already indented 8, so the budget is narrower.
+        # gh-869: and the wrapping is now the shared renderer's, not a second
+        # hand-built copy of `Raises`/`------`/entry — `__exit__` needs the
+        # same section from a different pair, and two builders of one section
+        # is how the two faces get to disagree about it.
         _raises = [
-            "Raises",
-            "------",
-            f"{category}",
-            *(
-                f"    {w}"
-                for w in _wrap(
-                    "If the C destructor reports failure. Raised from an "
-                    "explicit call and from ``__exit__`` alike, so a failing "
-                    "teardown propagates out of a ``with`` block (gh-541).",
-                    DESC_WIDTH,
-                )
-            ),
+            (
+                category,
+                "If the C destructor reports failure. Raised from an "
+                "explicit call and from ``__exit__`` alike, so a failing "
+                "teardown propagates out of a ``with`` block (gh-541).",
+            )
         ]
 
     def _doc_for(n: str) -> tuple[str, str]:
         """``(pyi_docstring, c_string_literal)`` for teardown name *n*."""
         gm = glue_methods(Component, close_name=n)[n]
-        c_lines = gm.c_doc_lines()
-        pyi_lines = gm.pyi_doc()
-        if _raises:
-            c_lines += [""] + _raises
-            # Splice the Raises section in above the closing `"""`.
-            pyi_lines = (
-                pyi_lines[:-1]
-                + [""]
-                + [(" " * 8) + ln if ln else "" for ln in _raises]
-                + pyi_lines[-1:]
-            )
-        return "\n".join(pyi_lines) + "\n", _build_ml_doc(c_lines)
+        return (
+            "\n".join(gm.pyi_doc(raises=_raises)) + "\n",
+            _build_ml_doc(gm.c_doc_lines(raises=_raises)),
+        )
 
     pmd = ""
     pyi = ""
@@ -597,11 +641,37 @@ def make_destroy_ctx(
     # keep it as permissive as the METH_VARARGS binding actually is.
     _exit_sig = _cm["__exit__"].pyi_params(defaults=True)
 
+    # gh-869: __exit__'s OWN Raises. It is not `_raises`: with `exit` set the
+    # body calls the finalizer rather than the destructor, so the pair and the
+    # sentence both move with the call. Without `exit` the two coincide, and
+    # they coincide because both come from `_exit_raise` — not because two
+    # builders happened to agree.
+    _exit_pair = _exit_raise(component, spec, exit_method)
+    _exit_raises: list[tuple[str, str]] = []
+    if _exit_pair is not None:
+        _exit_raises = [
+            (
+                _exit_pair[0],
+                (
+                    f"If ``{exit_name}()`` reports failure. ``__exit__`` "
+                    f"calls it and raises what it raises, so a failed "
+                    f"finalize propagates out of the ``with`` block "
+                    f"(gh-805 §H)."
+                )
+                if exit_method
+                else _raises[0][1],
+            )
+        ]
+
     return {
         "cm_enter_doc": _build_ml_doc(_cm["__enter__"].c_doc_lines()),
-        "cm_exit_doc": _build_ml_doc(_cm["__exit__"].c_doc_lines()),
+        "cm_exit_doc": _build_ml_doc(
+            _cm["__exit__"].c_doc_lines(raises=_exit_raises)
+        ),
         "pyi_enter_doc": "\n".join(_cm["__enter__"].pyi_doc()),
-        "pyi_exit_doc": "\n".join(_cm["__exit__"].pyi_doc()),
+        "pyi_exit_doc": "\n".join(
+            _cm["__exit__"].pyi_doc(raises=_exit_raises)
+        ),
         "pyi_exit_sig": _exit_sig,
         "destroy_dealloc_call": dealloc,
         "destroy_method_body": body,
@@ -611,7 +681,9 @@ def make_destroy_ctx(
         # DIFFERENT C calls, and the agreement that matters moves with it —
         # __exit__ now shares its raise semantics with the finalizer it calls.
         "destroy_exit_body": (
-            _exit_body(component, exit_method) if exit_method else body
+            _exit_body(component, exit_method, _exit_pair)
+            if exit_method
+            else body
         ),
         "destroy_pymethoddef": pmd,
         "destroy_c_ret": "int" if fallible else "void",

@@ -361,7 +361,17 @@ class TestGeneratedProject:
         ext_c = (root / "native/src/fir/fir_ext.c").read_text()
         runtime = "\n".join(_runtime_doc(ext_c, "run"))
         assert ">>> from demo import Fir" in runtime
-        assert "Examples" not in runtime
+        # gh-869: the synthesised demo now carries its own `Examples` heading,
+        # so "no heading" no longer discriminates it from a header-derived
+        # section — it was only ever a proxy for "jm's fallback fired".
+        #
+        # It gained the heading because a declared exception put a `Raises`
+        # section directly above it, and numpydoc reads four-space-indented
+        # lines below a `Raises` entry as that entry's description: the
+        # doctest rendered as part of the exception's prose. What actually
+        # identifies jm's fallback is its content — it constructs the object —
+        # which the assertion above already pins.
+        assert "Examples\n--------\n    >>> " in runtime
 
 
 # ── built-ins (gh-700) ──────────────────────────────────────────────────────

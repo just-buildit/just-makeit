@@ -203,6 +203,79 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
     )
 
 
+def declared_raise(m: dict) -> "tuple[str, str] | None":
+    """``(category, message)`` a declared method raises, or ``None``.
+
+    The one reading of the ``status_return`` / ``error_negative`` / ``error``
+    / ``error_message`` quartet. `_rc_raise_c` renders the raise from this
+    pair and every doc face documents it from the same pair, so a member
+    cannot advertise an exception class its binding does not use — which is
+    gh-869 in the direction gh-864 did not cover.
+
+    Returns ``None`` for a method whose binding translates no status into an
+    exception. That is not "no exception at all": every wrapper still carries
+    the ``RuntimeError "destroyed"`` liveness guard, which is jm's plumbing
+    rather than the author's contract and is deliberately undocumented here.
+
+    Parameters
+    ----------
+    m : dict
+        One ``[[<comp>.methods]]`` entry.
+
+    Examples
+    --------
+    >>> declared_raise({"name": "close"}) is None
+    True
+    >>> declared_raise({"name": "close", "status_return": True})
+    ('ValueError', 'close failed')
+    >>> declared_raise({"name": "seek", "error_negative": True,
+    ...                 "error": "OSError", "error_message": "bad offset"})
+    ('OSError', 'bad offset')
+    """
+    if not (m.get("status_return") or m.get("error_negative")):
+        return None
+    return (
+        m.get("error") or "ValueError",
+        m.get("error_message") or f"{m.get('name', '')} failed",
+    )
+
+
+def raises_doc(m: dict) -> "list[tuple[str, str]]":
+    """The ``raises=`` argument for a declared method's two doc faces.
+
+    Built from `declared_raise`, so the documented class is by construction
+    the class `_rc_raise_c` emits. The description quotes the author's own
+    message because that is what a caller sees at the REPL, and states which
+    return codes fail — the two shapes disagree there, and a reader cannot
+    tell them apart from the signature.
+
+    Examples
+    --------
+    >>> raises_doc({"name": "write"})
+    []
+    >>> cat, desc = raises_doc({"name": "write", "status_return": True,
+    ...                         "error_message": "short write"})[0]
+    >>> cat
+    'ValueError'
+    >>> desc.startswith('If the C call returns a non-zero status.')
+    True
+    """
+    pair = declared_raise(m)
+    if pair is None:
+        return []
+    category, message = pair
+    condition = (
+        "a negative value" if m.get("error_negative") else "a non-zero status"
+    )
+    return [
+        (
+            category,
+            f"If the C call returns {condition}. The exception message is "
+            f"``{message}``, with the return code appended (gh-869).",
+        )
+    ]
+
+
 def make_warnings_ctx(
     component: str,
     Component: str,

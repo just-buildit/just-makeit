@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A declared exception is now documented on every face (gh-869).** A
+    `status_return` / `error_negative` method and `__exit__` emitted
+    `PyErr_Format(PyExc_<Class>, ...)` and rendered no `Raises` section at all,
+    so both doc faces agreed there was no exception over a binding that raises
+    one — and a face-parity gate that compares the faces to each other reported
+    parity. `destroy` was already correct and is the shape the rest now follow.
+    The exception is resolved once, by `_diagnostics.declared_raise`, and read
+    by the emitter and by both faces, so the documented class is by
+    construction the class the binding uses.
+- **`status_return` no longer advertises `-> int` at runtime (gh-869).** The
+    `PyMethodDef` synopsis and its synthesized doctest reported the C status
+    code as the call's result, directly above a `Py_RETURN_NONE` body; the
+    `.pyi` has said `-> None` since gh-432.
+- **The synthesized doctest carries its own `Examples` heading (gh-869).** It
+    was appended as bare indented `>>>` lines, so with a `Raises` section above
+    it numpydoc read the whole doctest as the exception's description.
+- **The module-aggregated `.pyi` stopped rebuilding the context-manager pair
+    (gh-869).** It called `glue_methods` again with the same arguments
+    `make_destroy_ctx` had just used, three lines above, and so needed every
+    glue fix applied twice — it now reads the slots.
+
+### Testing
+
+- `tests/test_body_vs_doc_gate.py` now checks the **runtime** `PyMethodDef`
+    face as well as the `.pyi`, reading both through one anchored section
+    parser. A `.pyi`-only gate would have gone green on a fix that left
+    `help()` documenting no exception. Known gap ratcheted as gh-871.
+
 ## [0.54.3] — 2026-08-08
 
 > Projects using `exit` will see a `.pyi` diff on the next `jm apply`: the
