@@ -153,8 +153,28 @@ jobs:
       - name: Create and push combined manifest
         run: |
           BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
-          docker buildx imagetools create \
-            -t "${BASE}:latest" \
-            -t "${BASE}:sha-${{ github.sha }}" \
-            "${BASE}:sha-${{ github.sha }}-amd64" \
-            "${BASE}:sha-${{ github.sha }}-arm64"
+          # Retry: this reads both arch manifests' blobs back out of GHCR, and
+          # a reset there fails the job after BOTH images have already built
+          # and pushed — the most expensive place to lose to a network blip:
+          #   httpReadSeeker: failed open: ... read: connection reset by peer
+          # `imagetools create` overwrites the tags it is given, so re-running
+          # it is idempotent rather than additive. Third instance tonight of
+          # "network-dependent command with no retry on the release path"
+          # (gh-851's siblings were apt in artifact.yml and the uv cache).
+          ok=""
+          for attempt in 1 2 3; do
+            if docker buildx imagetools create \
+                 -t "${BASE}:latest" \
+                 -t "${BASE}:sha-${{ github.sha }}" \
+                 "${BASE}:sha-${{ github.sha }}-amd64" \
+                 "${BASE}:sha-${{ github.sha }}-arm64"; then
+              ok=1
+              break
+            fi
+            echo "imagetools create attempt $attempt failed; retrying…"
+            sleep 15
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::imagetools create failed after 3 attempts"
+            exit 1
+          fi
