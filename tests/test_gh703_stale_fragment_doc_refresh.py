@@ -22,7 +22,12 @@ are pinned here:
 
 1. a slot still carrying jm's synopsis is refreshed, whichever release wrote
    the rest of it;
-2. a genuinely hand-written docstring is preserved.
+2. a genuinely hand-written docstring is preserved — **for a member that can
+   be hand-written**. gh-871 carved out the glue set (``destroy``,
+   ``__enter__``, ``__exit__``, the serializable triplet), where the carve-out
+   is not an exception to the rule but the rule applied honestly: those
+   members have no declaration to attach Doxygen to, so there is no authoring
+   path and the prose is jm's at any length. See `TestGlueSlotReclaim`.
 
 Tests drive `_refresh_slot`/`transplant_docs` directly *and* a real `apply` on
 a scaffolded project — the unit layer localises a break, the project layer is
@@ -294,12 +299,36 @@ class TestGlueSlotReclaim:
         """
         assert _refresh_slot("NULL", GLUE_DER, GLUE_DER, "__enter__")
 
-    def test_a_rich_hand_written_glue_doc_is_preserved(self):
-        """The bound on the permissive rule: more than one line stays."""
+    def test_a_rich_glue_doc_is_reclaimed_too(self):
+        """gh-871 inverted this: the one-line bound froze the feature shut.
+
+        It used to assert the opposite — that a multi-line glue docstring was
+        preserved — on the reasoning that length is evidence somebody wrote
+        it by hand. It is not. There is **no authoring path** for a glue
+        member (no declaration to hang Doxygen on), so every one of these
+        docstrings is jm's, at any length.
+
+        What the bound actually did was freeze glue prose permanently: every
+        gh-647 glue docstring is multi-paragraph, so once a project had one,
+        no later jm could revise it. gh-805 §H, gh-864 and gh-869 each fixed
+        this prose and each reached only a *fresh* fragment — three releases
+        landing correctly everywhere except the projects that already existed.
+
+        The trade is that a hand-edited glue docstring is now overwritten.
+        It is overwritten **by name**: `refresh_module_fragment_docs` reports
+        every reclaimed member, so it shows up in the apply output and in the
+        diff rather than silently.
+        """
         assert (
             _refresh_slot(GLUE_RICH_HAND, GLUE_DER, GLUE_DER, "get_state")
-            is None
+            == GLUE_DER
         )
+
+    def test_a_glue_doc_already_current_is_left_alone(self):
+        # The reclaim being unconditional must not mean "always edit" — an
+        # identical slot still returns None, or every apply would rewrite
+        # every fragment and report a reclaim that changed nothing.
+        assert _refresh_slot(GLUE_DER, GLUE_DER, GLUE_DER, "get_state") is None
 
     def test_a_non_glue_name_is_unaffected(self):
         """Scoped to the closed glue set — no other slot kind changes."""

@@ -57,29 +57,22 @@ _DECLARED = "ValueError"
 # `__exit__` calls the finalizer and inherits its raise semantics.
 _LIFECYCLE = ("close", "destroy", "__exit__")
 
-# gh-869's own entries are gone: `close` and `__exit__` sat here documenting
-# no `Raises` at all, on every producer, and now document it on all of them.
+# The ratchet is EMPTY, and both defects it briefly held are fixed.
 #
-# What is left is a DIFFERENT defect, which this gate found by covering the
-# runtime face: a module object's `<mod>_ext_<obj>.c` is a sacred fragment,
-# and `_docsync._is_reclaimable_glue` will only reclaim a glue docstring that
-# is at most one logical line (gh-707's bound, pinned by
-# `test_gh703_stale_fragment_doc_refresh.py::test_a_rich_hand_written_glue_
-# doc_is_preserved`). Every gh-647-era glue doc is multi-paragraph, so once a
-# project has one, no later jm can revise it — gh-805 §H's "finalizing" and
-# gh-869's `Raises` both reach a FRESH fragment and neither reaches an
-# existing one. Verified: deleting the fragment and re-running `apply`
-# renders both correctly.
+# gh-869 put `close` and `__exit__` here: they documented no `Raises` at all
+# on every producer. Then covering the runtime face exposed a second, unrelated
+# defect — a module object's `<mod>_ext_<obj>.c` is a sacred fragment, and
+# `_docsync._is_reclaimable_glue` would only reclaim a glue docstring of at
+# most one logical line (gh-707's bound). Every gh-647-era glue doc is
+# multi-paragraph, so once a project had one, no later jm could revise it:
+# gh-805 §H, gh-864 and gh-869 all reached a FRESH fragment and none reached
+# an existing one. gh-871 lifted the bound; the reclaim is unconditional and
+# reports every member it overwrites.
 #
-# So the generation is right and the refresh is stale. Tracked as gh-871;
-# lifting the bound is a policy change (it trades a hand-edited glue
-# docstring for a revisable one) rather than a wiring fix. Ratchet — it may
-# only shrink, and `test_the_ratchet_only_holds_real_gaps` fails if an entry
-# stops being a gap.
-_KNOWN_STALE = {
-    ("module", "help()", "destroy"),
-    ("module", "help()", "__exit__"),
-}
+# It stays a `set` rather than being deleted so that re-seeding it is a
+# one-line change when the next genuine known-gap appears — but an empty
+# ratchet is the goal state, not a placeholder to fill.
+_KNOWN_STALE: set[tuple[str, str, str]] = set()
 
 # Every wrapper opens with this; it is jm's plumbing, not a declared error.
 _GUARD = re.compile(r'PyExc_RuntimeError,\s*"destroyed"')

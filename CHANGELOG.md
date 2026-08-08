@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **A module's sacred fragment can refresh its glue docstrings again
+    (gh-871).** `_docsync._is_reclaimable_glue` reclaimed a glue slot only when
+    it held at most one logical line — a bound drawn for gh-707's population of
+    pre-gh-647 one-liners. But every gh-647 glue docstring is multi-paragraph,
+    so once a project had one its glue prose became unrevisable by any later
+    jm, and gh-805 §H, gh-864 and gh-869 each reached a *fresh* fragment and no
+    existing one. The reclaim is now unconditional, on gh-707's own reasoning:
+    a glue member has no declaration to attach Doxygen to, so there is no
+    authoring path and the prose is jm's at any length. In exchange it is
+    **loud** — `jm apply` names every member whose docstring it refreshed,
+    the way a repaired binding arity is already named.
+
 - **A declared exception is now documented on every face (gh-869).** A
     `status_return` / `error_negative` method and `__exit__` emitted
     `PyErr_Format(PyExc_<Class>, ...)` and rendered no `Raises` section at all,
@@ -13,13 +25,16 @@
     The exception is resolved once, by `_diagnostics.declared_raise`, and read
     by the emitter and by both faces, so the documented class is by
     construction the class the binding uses.
+
 - **`status_return` no longer advertises `-> int` at runtime (gh-869).** The
     `PyMethodDef` synopsis and its synthesized doctest reported the C status
     code as the call's result, directly above a `Py_RETURN_NONE` body; the
     `.pyi` has said `-> None` since gh-432.
+
 - **The synthesized doctest carries its own `Examples` heading (gh-869).** It
     was appended as bare indented `>>>` lines, so with a `Raises` section above
     it numpydoc read the whole doctest as the exception's description.
+
 - **The module-aggregated `.pyi` stopped rebuilding the context-manager pair
     (gh-869).** It called `glue_methods` again with the same arguments
     `make_destroy_ctx` had just used, three lines above, and so needed every
