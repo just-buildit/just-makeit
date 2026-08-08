@@ -153,9 +153,27 @@ jobs:
           name: dist
           path: dist/
 
+      # enable-cache: false is load-bearing, not tidying. This is the ONLY job
+      # in the repo that runs setup-uv without actions/checkout — deliberately,
+      # since it smoke-tests the built wheel rather than the tree. With no
+      # checkout, setup-uv's cache-dependency-glob matches nothing, so the
+      # cache key is derived from nothing that ever changes and THE CACHE NEVER
+      # INVALIDATES (v9 says so in a warning).
+      #
+      # Everywhere else that is merely wasteful. Here it is a correctness risk
+      # on the last gate before PyPI: the next step installs numpy alongside a
+      # freshly built C extension, and a frozen numpy against a new ABI is
+      # exactly the two-numpys mismatch that produced
+      # "compiled using NumPy 1.x cannot be run in NumPy 2.4.6" (gh-811/814).
+      # A gate that validates a wheel against a permanently stale dependency
+      # set is weaker than it looks, and it is the one nobody re-reads.
+      #
+      # Silencing it with `cache-dependency-glob: ""` would keep the same
+      # never-invalidating cache and only hide the warning.
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: false
 
       - name: System build deps (cmake + C compiler)
         run: |
