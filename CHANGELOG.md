@@ -35,6 +35,19 @@
     body, because the fallback is precisely the silent-wrong outcome the key
     removes. With no `exit` declared every slot renders byte-identically.
 
+    **The teardown inherits the finalizer's `error`/`error_message` when it
+    states none of its own.** Once `exit` splits the calls apart they remain
+    one *condition* reached by two routes — the finalizer latches the verdict,
+    the destructor reports the same hole on the GC path — and the ordinary
+    defaults gave the minimal adoption a different exception **class** and a
+    different sentence for it (`ValueError: the capture has a hole` from
+    `__exit__`, `RuntimeError: <comp>_destroy reported failure` from
+    collection). That was the out-of-the-box result, not a drift risk.
+    Inheritance is both keys or neither: a half-inherited pair would pin one
+    declaration's message under the other's category, which is a third message
+    rather than one fewer. Declaring either key keeps both explicit, so saying
+    something different on purpose stays possible.
+
 ### Changed
 
 - **`_rc_raise_c` moved to `_context/_diagnostics.py`**, beside the

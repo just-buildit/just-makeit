@@ -239,12 +239,53 @@ def destroy_py_names(spec: dict) -> list[str]:
     return out
 
 
-def _teardown_body(component: str, spec: dict) -> str:
+def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
+    """``(category, message)`` for the teardown, inherited when unstated.
+
+    gh-805 §H review. Once ``exit`` splits the two calls apart they describe
+    **one condition** reached by two routes — the finalizer's verdict is
+    latched, and the destructor reports the same hole on the GC path. Left to
+    the ordinary defaults, the minimal adoption (``exit`` alone) rendered a
+    *different exception class and a different sentence* for that one
+    condition: ``ValueError: the capture has a hole`` from ``__exit__`` and
+    ``RuntimeError: <comp>_destroy reported failure`` from collection. Not a
+    drift risk — the out-of-the-box result.
+
+    So an unstated pair is inherited from the named finalizer. Both keys or
+    neither: a half-inherited pair would pin someone else's message under the
+    author's own category, which is a third message rather than one fewer.
+    Declaring either key keeps both explicit, so saying something different
+    on purpose stays possible.
+
+    doppler maintains this identity **by hand today** — the same
+    180-character ``error_message`` copied verbatim into the ``close`` method
+    and the ``destroy`` table — which is the duplication this key removes
+    everywhere else.
+    """
+    if spec.get("error") or spec.get("error_message"):
+        return (
+            spec.get("error") or _DEFAULT_CATEGORY,
+            spec.get("error_message") or "",
+        )
+    return (
+        exit_method.get("error") or _DEFAULT_CATEGORY,
+        exit_method.get("error_message") or "",
+    )
+
+
+def _teardown_body(
+    component: str, spec: dict, exit_method: dict | None = None
+) -> str:
     """The shared ``close()``/``__exit__`` body.
 
     One string for both paths on purpose: the explicit method and the context
     manager must agree about whether a failed teardown raises, and gh-541 is
     precisely the bug where they did not.
+
+    When ``exit`` redirects ``__exit__`` (gh-805 §H) the two are no longer one
+    string — but they are still one *condition*, so an unstated
+    ``error``/``error_message`` is inherited from the finalizer rather than
+    falling back to the generic default. See `_inherited_error`.
     """
     if spec.get("returns") != "int":
         return (
@@ -254,10 +295,25 @@ def _teardown_body(component: str, spec: dict) -> str:
             "    }\n"
             "    Py_RETURN_NONE;\n"
         )
+    if exit_method:
+        category, _inherited_msg = _inherited_error(spec, exit_method)
+        message = _inherited_msg or _DEFAULT_MSG.format(component=component)
+        return _teardown_int_body(component, category, message)
     category = spec.get("error") or _DEFAULT_CATEGORY
     message = spec.get("error_message") or _DEFAULT_MSG.format(
         component=component
     )
+    return _teardown_int_body(component, category, message)
+
+
+def _teardown_int_body(component: str, category: str, message: str) -> str:
+    """The fallible teardown block, once — inherited and declared alike.
+
+    Extracted so the gh-805 §H inheritance path and the ordinary declared
+    path cannot render the destructor differently. Two copies of this block
+    differing only in where their strings came from is precisely the shape
+    this whole key is removing.
+    """
     return (
         "    if (self->handle) {\n"
         f"        int rc = {component}_destroy(self->handle);\n"
@@ -410,10 +466,10 @@ def make_destroy_ctx(
             f"        {component}_destroy(self->handle);\n"
         )
 
-    body = _teardown_body(component, spec)
-
     # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
-    # here so the body and BOTH doc faces below are built from one decision.
+    # BEFORE the teardown body, because the destructor inherits the
+    # finalizer's error/message when it states none of its own — the two are
+    # one condition reached by two routes.
     exit_name = (spec or {}).get("exit") or ""
     exit_method: dict = {}
     if exit_name:
@@ -437,6 +493,8 @@ def make_destroy_ctx(
                 f"'{exit_name}' is not a declared method. "
                 f"Declared: {declared or 'none'}."
             )
+
+    body = _teardown_body(component, spec, exit_method or None)
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.
