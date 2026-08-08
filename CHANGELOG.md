@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The post-release artifact smoke test installs `pytest`, so it stops
+    reporting an install problem as a doctest failure (gh-851).** It had failed
+    on **every** release for 15 days — 34 consecutive runs, all 12 matrix legs
+    each time — with `No module named pytest` surfacing as
+    `AssertionError: header-authored .pyi doctests failed`.
+
+    `artifact.yml` installed pytest **per-step**, at the two doctest steps that
+    needed it when that was written (`ce15733`, 2026-05-16). When a bundled
+    example grew its own `pytest --doctest-glob=*.pyi` check (`8276d2d`,
+    2026-07-24), it ran ~480 lines *earlier* than those installs and was broken
+    by construction. pytest is now installed once, with the environment, so a
+    step added anywhere in the file gets it. That the same bug had already been
+    fixed once is the point: a dependency pinned at the call sites that happen
+    to need it today is a regression waiting for the next call site.
+
+    The example's assertion now separates the two answers as well. "The runner
+    is absent" and "the doctests failed" are different faults, and conflating
+    them sent every reader for 15 days to the header's `@code` blocks over an
+    uninstalled package.
+
+    Not fixed here, and worth knowing: this workflow is `workflow_run` on
+    Release completion and is **not a required check**, so it cannot block a
+    release and nothing surfaced its failure. A gate whose result nobody reads
+    is not a gate.
+
 ## [0.53.1] — 2026-08-07
 
 ### Fixed
