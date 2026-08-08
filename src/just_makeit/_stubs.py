@@ -1827,6 +1827,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         obj,
         Component,
         C.destroy_spec(cfg, obj),
+        C.methods(cfg, obj),  # gh-856
     )["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the
     # generated surface with no docstring on either face, so `help()` showed

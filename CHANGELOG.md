@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`exit` is reachable through `jm apply` (gh-856).** gh-805 §H shipped in
+    0.54.0 with every unit assertion green and was unusable: the one command
+    every project renders with could not resolve the finalizer.
+
+    `jm apply` replays a manifest into a **half-built temp tree** — the object
+    is created first, its methods replayed after — so at the creation render
+    the temp manifest legitimately has no methods yet and `exit` resolved
+    against nothing. The behaviour was inverted: an object with no methods
+    rendered fine, and an object declaring the finalizer `exit` exists to name
+    was refused *because* it declared it.
+
+    The replay now passes the **source** manifest's method list down through
+    `_object.run` into `_init.run`. Reading it from the temp `cfg` cannot work
+    and never could.
+
+    Two things made this survivable-but-invisible, and both are fixed:
+    `make_destroy_ctx`'s `methods` argument shipped **optional**, and four of
+    its **eight** call sites were left unwired — including the two whose own
+    comments describe them as the apply replay path. It is now required with
+    no default, so a forgotten site is an immediate `TypeError` rather than a
+    wrong render nobody sees until a downstream project runs `apply`. And the
+    regression test drives `jm apply` end to end rather than calling the
+    builder directly: every existing unit test passed throughout, because they
+    hand the builder a method list the real replay path never had.
+
 ## [0.54.0] — 2026-08-08
 
 ### Added

@@ -252,6 +252,75 @@ class TestOneConditionOneDeclaration:
         assert "PyErr" not in destroy_body
 
 
+class TestApplyResolvesTheFinalizer:
+    """`jm apply` must resolve `exit` -- gh-856.
+
+    §H shipped with every unit-level assertion green and was still unreachable
+    through the one command every project uses to render. `jm apply` REPLAYS
+    into a half-built temp tree: the object is created before its methods are
+    replayed, so the temp manifest legitimately has no `close` yet and `exit`
+    resolved against nothing. The behaviour inverted -- an object with no
+    methods rendered fine, and one declaring the finalizer `exit` exists to
+    name was refused *because* it declared it.
+
+    Nothing below touches make_destroy_ctx directly. That is the point: the
+    unit tests all passed while this was broken, because they call the builder
+    with a method list the real replay path never had.
+    """
+
+    @pytest.fixture()
+    def applied(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+        from just_makeit._method import run as method_run
+        from just_makeit._new import run as new_run
+        from just_makeit._object import run as object_run
+
+        dest = tmp_path / "cap"
+        new_run("cap", dest, [], [])
+        object_run(dest, "widget", None, arg_type="float", return_type="float")
+        method_run(
+            dest,
+            "widget",
+            "close",
+            None,
+            "void",
+            "int",
+            False,
+            [],
+            status_return=True,
+            error="ValueError",
+            error_message="the capture has a hole",
+        )
+        cfg = C.load(dest)
+        C.set_destroy_spec(cfg, "widget", {"returns": "int", "exit": "close"})
+        C.save(dest, cfg)
+        apply_run(dest)  # must not raise
+        return dest
+
+    def _ext_c(self, root):
+        return (root / "native" / "src" / "widget" / "widget_ext.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_apply_succeeds(self, applied):
+        assert self._ext_c(applied)
+
+    def test_exit_calls_the_finalizer(self, applied):
+        exit_fn = self._ext_c(applied).split("_exit(")[1].split("\n}")[0]
+        assert "widget_close(self->handle)" in exit_fn
+        assert "widget_destroy" not in exit_fn
+
+    def test_exit_leaves_the_handle_set(self, applied):
+        exit_fn = self._ext_c(applied).split("_exit(")[1].split("\n}")[0]
+        assert "self->handle = NULL" not in exit_fn
+
+    def test_stub_says_finalizing(self, applied):
+        pyi = (applied / "src" / "cap" / "widget.pyi").read_text(
+            encoding="utf-8"
+        )
+        assert "finalizing" in pyi
+
+
 class TestManifestRoundTrip:
     """The key survives the serializer -- an unnamed key is silently lost."""
 

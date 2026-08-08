@@ -106,7 +106,9 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # (a no_state object's prefix gains an `Obj` suffix), so every real
         # path re-runs make_destroy_ctx with the real prefix and the manifest's
         # spec right after that.
-        **Ctx.make_destroy_ctx(component, _to_title(component)),
+        # gh-856: [] not None — this seed runs before any manifest is read
+        # and never carries a spec, so there is no `exit` to resolve.
+        **Ctx.make_destroy_ctx(component, _to_title(component), None, []),
         # gh-542: the slots that wrap a reset body — the sacred _core.c
         # function and the generated test defs. Seeded here for the same
         # reason as the destructor slots above: no render path may leak a
@@ -780,7 +782,14 @@ def run(
     extra_include_dirs: list[str] = (),
     create_fn: str | None = None,
     destroy: "dict | None" = None,
+    # gh-856: `jm apply` replays into a HALF-BUILT temp tree — the object
+    # is created before its methods are replayed, so the temp manifest
+    # legitimately has none yet. `exit` names one of those methods, so it
+    # cannot be resolved from the temp cfg; the replay passes the SOURCE
+    # manifest's list here. None means "read it from cfg", which is right
+    # for every non-replay caller.
     _hint: bool = True,
+    declared_methods: "list[dict] | None" = None,
 ) -> None:
     C.require_name(component, "component")
 
@@ -913,7 +922,16 @@ def run(
     # scaffold of a fallible destructor gets `int <comp>_destroy(...)` and a
     # `return 0;` stub without any hand edit.
     ctx.update(
-        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy)
+        # gh-856: the replay path this comment already described. C.methods
+        # is right for BOTH creation (component absent -> []) and replay.
+        Ctx.make_destroy_ctx(
+            ctx["component"],
+            ctx["ComponentW"],
+            destroy,
+            declared_methods
+            if declared_methods is not None
+            else C.methods(cfg, component),
+        )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
     # a streamable object resolves its producer to the built-in source `steps`;

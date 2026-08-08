@@ -1901,6 +1901,12 @@ def run(
     create_fn: str | None = None,
     destroy: "dict | None" = None,
     _hint: bool = True,
+    # gh-856: APPENDED, never inserted — this signature has positional
+    # callers, and slotting a parameter in ahead of `state_vars` silently
+    # rebinds every one of them (48 tests said so). See _init.run for what
+    # it carries: the SOURCE manifest's methods during an apply replay,
+    # because the temp tree has not replayed them yet.
+    declared_methods: "list[dict] | None" = None,
 ) -> None:
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
@@ -1946,6 +1952,7 @@ def run(
             root,
             object_name,
             state_vars,
+            declared_methods=declared_methods,
             perf=perf,
             arg_type=arg_type,
             return_type=return_type,
@@ -2080,7 +2087,17 @@ def run(
         # truth here rather than "unknown" — and it makes a destroy spec that
         # names an `exit` at creation time fail with the useful message
         # ("not a declared method") instead of the plumbing one.
-        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], destroy, [])
+        Ctx.make_destroy_ctx(
+            ctx["component"],
+            ctx["ComponentW"],
+            destroy,
+            # gh-856: was a hardcoded []. `jm apply` REPLAYS creation for
+            # existing objects, so [] was not "no methods yet" but the
+            # opposite of the truth.
+            declared_methods
+            if declared_methods is not None
+            else C.methods(cfg, ctx["component"]),
+        )
     )
 
     if create_impl_body is not None:

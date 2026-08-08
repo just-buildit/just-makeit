@@ -390,8 +390,8 @@ def _exit_body(component: str, method: dict) -> str:
 def make_destroy_ctx(
     component: str,
     ComponentW: str,
-    spec: "dict | None" = None,
-    methods: "list[dict] | None" = None,
+    spec: "dict | None",
+    methods: "list[dict] | None",
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -406,12 +406,28 @@ def make_destroy_ctx(
         The ``[<comp>.destroy]`` table. ``None``/``{}`` reproduces the
         pre-gh-541 hardcoded text byte for byte, which is what makes these
         slots safe to introduce into templates every existing project renders.
-    methods : list of dict, optional
-        The component's declared methods, needed only to resolve ``exit``
+    methods : list of dict or None
+        The component's declared methods, needed to resolve ``exit``
         (gh-805 §H). Omitting it while ``exit`` is declared **raises** rather
         than falling back to the destroy body: a silent fallback would emit a
         binding that frees while both its doc faces say it finalizes, which is
         the exact silent-wrong outcome the key was filed to remove.
+
+        **Deliberately required, with no default** (gh-856). It shipped
+        optional, and four of this function's *eight* call sites were left
+        unwired — including the two the docstring above and at `_init.py`
+        describe as the ``jm apply`` replay path. The result inverted the
+        feature: an object with no methods rendered fine, and an object
+        declaring the finalizer ``exit`` exists to name was refused *because*
+        it declared it. An argument that must be supplied for correctness must
+        not be silently omittable: with no default, a forgotten call site is a
+        ``TypeError`` the suite hits immediately, instead of a wrong render
+        nobody sees until a downstream project runs ``jm apply``. (Runtime,
+        not static — this repo has no mypy gate.) Pass ``C.methods(cfg, comp)``
+        wherever a
+        manifest is in hand — it is correct for creation *and* replay, since
+        an absent component yields ``[]`` — and ``[]`` only where the render
+        genuinely predates any method (the template seeds).
 
     Returns
     -------
@@ -424,14 +440,14 @@ def make_destroy_ctx(
 
     Examples
     --------
-    >>> ctx = make_destroy_ctx("acq", "AcqObj")
+    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [])
     >>> print(ctx["destroy_dealloc_call"], end="")
         if (self->handle)
             acq_destroy(self->handle);
     >>> ctx["destroy_c_ret"], ctx["destroy_ret_stmt"]
     ('void', '')
     >>> ctx = make_destroy_ctx("w", "WObj", {"name": "close",
-    ...                                      "aliases": ["destroy"]})
+    ...                                      "aliases": ["destroy"]}, [])
     >>> [ln for ln in ctx["destroy_pymethoddef"].splitlines()
     ...  if "PyCFunction" in ln]
     ['    {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,', \
