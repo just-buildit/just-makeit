@@ -1901,11 +1901,18 @@ def run(
     create_fn: str | None = None,
     destroy: "dict | None" = None,
     _hint: bool = True,
-    # gh-856: APPENDED, never inserted — this signature has positional
-    # callers, and slotting a parameter in ahead of `state_vars` silently
-    # rebinds every one of them (48 tests said so). See _init.run for what
-    # it carries: the SOURCE manifest's methods during an apply replay,
-    # because the temp tree has not replayed them yet.
+    # gh-860: KEYWORD-ONLY. It was appended-with-a-default because slotting
+    # it ahead of `state_vars` rebinds every positional caller (48 tests
+    # said so) — but that let a test-ergonomics constraint decide a
+    # correctness question, and the module-object replay then forgot it.
+    # `*` removes the positional hazard outright, so position stops being
+    # the reason it sits last. It stays DEFAULTED rather than required only
+    # because 319 tests legitimately create fresh objects that have no
+    # methods; the 4 src call sites all pass it explicitly.
+    #
+    # Carries the SOURCE manifest's methods during an apply replay, because
+    # the temp tree has not replayed them yet.
+    *,
     declared_methods: "list[dict] | None" = None,
 ) -> None:
     # gh-588: `opaque_state` forward-declares the struct, so anything that
