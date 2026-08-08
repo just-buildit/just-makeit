@@ -34,61 +34,13 @@ from .._docstring import (
 from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
-from ._diagnostics import _c_string_literal
+from ._diagnostics import _rc_raise_c
 from ._parse import (
     _build_ml_doc,
     _build_params_parse,
     _step_parse_block,
     capsule_new_c as _capsule_new_c,
 )
-
-
-def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
-    """The ``PyErr_Format`` that turns a failing return code into an exception.
-
-    Shared by ``status_return`` and ``error_negative`` (gh-823 Ask D). They
-    disagree about *which* codes are failures — ``!= 0`` against ``< 0`` — and
-    about what happens afterwards, so the test and the success path stay with
-    each caller. Everything from the raise inwards is one concept, and it had
-    two implementations: ``error_negative`` routed the author's text through
-    `_c_string_literal` as an **argument**, while ``status_return`` spliced the
-    method name straight into the format string and hard-coded
-    ``PyExc_ValueError``.
-
-    That split is the reason ``status_return`` could not carry a message: the
-    keys existed, and only one of the two emitters read them.
-
-    Parameters
-    ----------
-    category : str
-        An `_config.ERROR_CATEGORIES` name, already validated at declaration
-        time — ``"ValueError"`` when the author declared nothing.
-    message : str
-        The author's prose, or the derived ``"<name> failed"``. Passed as an
-        **argument** to a fixed ``"%s (rc=%lld)"`` format, never as the format
-        itself: spliced in as the format, a ``%`` in ordinary prose ("100%
-        done") becomes a live conversion with no argument behind it, and
-        ``PyErr_Format`` walks off the end of its varargs — on the error path
-        only, which is the path least likely to be exercised before a release.
-    indent : int
-        Continuation-line indent for the rendered literal.
-
-    Notes
-    -----
-    ``%lld`` + ``(long long)`` rather than ``%d``: ``error_negative``'s return
-    may be ``int64_t``, and truncating it mangles precisely the error code
-    worth reading. ``status_return``'s ``_rc`` is an ``int``, which widens
-    losslessly — so unifying on the wider conversion removes a difference
-    rather than parameterising one, and the rendered message is unchanged
-    (``"<name> failed (rc=-4)"`` either way).
-    """
-    return (
-        f"        PyErr_Format(PyExc_{category},"
-        f' "%s (rc=%lld)",\n'
-        f"{_c_string_literal(message, indent)},\n"
-        f"                     (long long)_rc);\n"
-        f"        return NULL;\n"
-    )
 
 
 # Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/

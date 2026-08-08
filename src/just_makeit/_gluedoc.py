@@ -209,9 +209,45 @@ def _serialization(Component: str) -> list[GlueMethod]:
 
 
 def _lifecycle(
-    Component: str, close_name: str = "destroy"
+    Component: str, close_name: str = "destroy", finalizes: bool = False
 ) -> list[GlueMethod]:
-    """``destroy``/``close`` plus the context-manager protocol."""
+    """``destroy``/``close`` plus the context-manager protocol.
+
+    ``finalizes`` (gh-805 §H) switches the context-manager prose from
+    *releases* to *finalizes*. It is a separate argument from ``close_name``
+    because the two answer different questions — *what is called* and *what
+    survives* — and a name cannot carry the second. Naming the finalizer while
+    still promising the object is released would leave both faces agreeing on
+    the same wrong sentence, which is exactly the failure the key removes and
+    the one a doc-parity gate cannot see.
+    """
+    _cm_effect = (
+        "finalized deterministically on exit rather than at collection time"
+        if finalizes
+        else "released deterministically on exit rather than at collection "
+        "time"
+    )
+    _exit_brief = (
+        f"Exit a context manager, finalizing the {Component}."
+        if finalizes
+        else f"Exit a context manager, releasing the {Component}."
+    )
+    _exit_body = (
+        [
+            f"Equivalent to calling `{close_name}()`. The {Component} is "
+            f"**not** released here: it stays usable, which is what makes "
+            f"results gathered during the `with` body readable after it. "
+            f"The memory is freed when the object is collected.",
+            "Returns ``None``, so an exception raised inside the `with` "
+            "body propagates normally; this never suppresses one.",
+        ]
+        if finalizes
+        else [
+            f"Equivalent to calling `{close_name}()`. Returns "
+            "``None``, so an exception raised inside the `with` body "
+            "propagates normally; this never suppresses one.",
+        ]
+    )
     return [
         GlueMethod(
             name=close_name,
@@ -237,8 +273,7 @@ def _lifecycle(
                 brief="Enter a context manager, returning this object.",
                 body=[
                     f"Lets a {Component} be used in a `with` statement so its "
-                    f"C resources are released deterministically on exit "
-                    f"rather than at collection time.",
+                    f"C resources are {_cm_effect}.",
                 ],
                 returns="This same object, not a copy.",
             ),
@@ -251,12 +286,8 @@ def _lifecycle(
                 ("tb", "object | None"),
             ],
             block=DoxyBlock(
-                brief=f"Exit a context manager, releasing the {Component}.",
-                body=[
-                    f"Equivalent to calling `{close_name}()`. Returns "
-                    "``None``, so an exception raised inside the `with` body "
-                    "propagates normally; this never suppresses one.",
-                ],
+                brief=_exit_brief,
+                body=_exit_body,
                 params=[
                     ("exc_type", "Exception class, or None. Ignored."),
                     ("exc", "Exception instance, or None. Ignored."),
@@ -294,7 +325,7 @@ def glue_method_names() -> frozenset[str]:
 
 
 def glue_methods(
-    Component: str, *, close_name: str = "destroy"
+    Component: str, *, close_name: str = "destroy", finalizes: bool = False
 ) -> dict[str, GlueMethod]:
     """Every generated glue method for *Component*, keyed by Python name.
 
@@ -305,6 +336,10 @@ def glue_methods(
     close_name : str, optional
         Name of the explicit-release method (``close`` for reader-shaped
         objects, ``destroy`` otherwise).
+    finalizes : bool, optional
+        gh-805 §H. ``True`` when ``__exit__`` calls a finalizer that leaves
+        the object alive, so the context-manager prose promises finalization
+        rather than release. Affects ``__enter__``/``__exit__`` only.
 
     Returns
     -------
@@ -322,7 +357,9 @@ def glue_methods(
     [('blob', 'bytes')]
     """
     out: dict[str, GlueMethod] = {}
-    for gm in _serialization(Component) + _lifecycle(Component, close_name):
+    for gm in _serialization(Component) + _lifecycle(
+        Component, close_name, finalizes
+    ):
         out[gm.name] = gm
     return out
 

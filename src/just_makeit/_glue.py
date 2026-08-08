@@ -160,6 +160,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             object_name,
             ctx["ComponentW"],
             C.destroy_spec(cfg, object_name),
+            C.methods(cfg, object_name),
         )
     )
     ctx.update(

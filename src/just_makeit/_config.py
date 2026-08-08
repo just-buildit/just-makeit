@@ -3169,6 +3169,33 @@ def destroy_returns_int(cfg: dict, component: str) -> bool:
     return destroy_spec(cfg, component).get("returns") == "int"
 
 
+def destroy_exit(cfg: dict, component: str) -> str:
+    """Declared method ``__exit__`` calls instead of the destructor ("" if none).
+
+    gh-805 §H. jm modelled teardown as ONE operation with possibly several
+    Python names — ``destroy_py_names`` returns the names, and every one of
+    them binds to the same ``<comp>_destroy``. A C API that separates
+    *finalize* from *free* has two operations, and ``__exit__`` wants the
+    first: releasing everything that is not memory, while the object stays
+    alive and readable.
+
+    Naming a **declared method** rather than a bare C symbol is deliberate.
+    The finalizer already exists in the manifest with its own ``fn``,
+    ``status_return``, ``error`` and ``error_message``; pointing at it reuses
+    all four, so the two faces cannot disagree about whether a failed
+    finalize raises. A second C-symbol slot would have re-created exactly the
+    gh-541 split this key exists to close.
+
+    Examples
+    --------
+    >>> destroy_exit({"cap": {"destroy": {"exit": "close"}}}, "cap")
+    'close'
+    >>> destroy_exit({"cap": {}}, "cap")
+    ''
+    """
+    return destroy_spec(cfg, component).get("exit") or ""
+
+
 def add_component(
     cfg: dict,
     component: str,
@@ -4258,6 +4285,11 @@ def _dump(cfg: dict) -> str:
                 lines.append(
                     _str_assign("error_message", _destroy["error_message"])
                 )
+            # gh-805 §H. Plain quoting like `name`/`error`, not `_str_assign`:
+            # both are _PY_IDENT-validated at declaration time, so there is no
+            # free text to escape (gh-844's rule is about the text keys).
+            if _destroy.get("exit"):
+                lines.append(f'exit = "{_destroy["exit"]}"')
             lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
