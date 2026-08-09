@@ -155,6 +155,9 @@ METHOD_KEYS = frozenset(
         "extra_args",
         "varargs",
         "pass_capacity",
+        # gh-805 §D: trust `max_out` as a true bound; drop the
+        # `max(max_out, n)` clamp without changing the kernel signature.
+        "exact_max_out",
         "count_default",
         "batch",
         "nogil",

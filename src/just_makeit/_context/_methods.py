@@ -712,6 +712,74 @@ def _max_out_count_param_ctx(
     return ", size_t n", "n"
 
 
+def _capacity_exprs(
+    pass_capacity: bool, exact_max_out: bool, fallback: str
+) -> "tuple[str, str]":
+    """``(alloc_clamp, min_cap_expr)`` for a variable-output method (gh-805 §D).
+
+    The two capacity decisions a variable-output wrapper makes — how much the
+    internal path allocates, and how much an ``out=`` buffer must hold — are
+    one question asked twice, and they must give the same answer or ``out=``
+    under-validates relative to what the binding would have allocated itself.
+    Derived together here rather than written out at the two call sites.
+
+    ``pass_capacity``
+        The kernel is handed the capacity and enforces the bound itself, so
+        the exact value is trusted and there is no clamp. Unchanged by gh-805.
+
+    ``exact_max_out``
+        gh-805 §D. The same trust, without changing the kernel's signature.
+        The clamp goes; the **zero-guard stays**, because `_method` scaffolds
+        ``return 0; /* placeholder */`` and a project that has not implemented
+        the function yet must not allocate nothing and hand the kernel a
+        buffer to overrun.
+
+    neither
+        ``max(max_out, n)``. The historical default and still the right one.
+
+    **Why this is an assertion and not a derivation.** The obvious rule —
+    "trust it when the prototype takes ``n_in``, since it was given the input
+    size" — is wrong, and jm's own fixtures prove it: ``Nco().steps_ovf(n)``
+    declares the length-bearing form, returns a fixed internal cap of 65536,
+    and writes exactly the ``n`` the caller asked for. Dropping the clamp
+    there reintroduces the gh-600 heap corruption. Arity says what the C
+    function was *told*, never what it does with it, so only the author can
+    say whether the answer is a true bound.
+
+    Parameters
+    ----------
+    pass_capacity : bool
+        The method hands the kernel its capacity (gh-138/gh-607).
+    exact_max_out : bool
+        The author asserts ``max_out`` bounds any call (gh-805 §D). Ignored
+        when *pass_capacity* is set, which already implies it and is stronger.
+    fallback : str
+        C expression for the call's own length — ``_need`` at the allocation
+        site, the lazy-fallback expression at the ``out=`` site.
+
+    Examples
+    --------
+    >>> _capacity_exprs(False, False, "_need")[0]
+    '    if (!_cap || _cap < _need) _cap = _need;\\n'
+    >>> _capacity_exprs(False, True, "_need")
+    ('    if (!_cap) _cap = _need;\\n', '        size_t _min_cap = _omax ? _omax : (_need);\\n')
+    >>> _capacity_exprs(True, False, "_need")
+    ('    (void)_need;\\n', '        size_t _min_cap = _omax;\\n')
+    """
+    if pass_capacity:
+        return "    (void)_need;\n", "        size_t _min_cap = _omax;\n"
+    if exact_max_out:
+        return (
+            f"    if (!_cap) _cap = {fallback};\n",
+            f"        size_t _min_cap = _omax ? _omax : ({fallback});\n",
+        )
+    return (
+        f"    if (!_cap || _cap < {fallback}) _cap = {fallback};\n",
+        f"        size_t _min_cap = _omax >"
+        f" {fallback} ? _omax : ({fallback});\n",
+    )
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -915,6 +983,11 @@ def make_methods_ctx(
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
         pass_capacity: bool = m.get("pass_capacity", False)
+        # gh-805 §D: the author asserts `max_out` is a true upper bound for
+        # any call, so the binding allocates exactly it instead of clamping up
+        # to the call's own length. See `_capacity_exprs` for why this is an
+        # assertion rather than something jm can derive.
+        exact_max_out: bool = m.get("exact_max_out", False)
         # gh-788 gap 1: the method writes rows of a POD C struct, and the
         # result is a numpy STRUCTURED array whose dtype IS that struct's
         # layout. The key names the struct (`dp_tlm_rec_t`); `result_fields`
@@ -1861,15 +1934,14 @@ def make_methods_ctx(
                     # condition). Requiring anything more than _omax here
                     # would reject a caller-owned buffer sized to the exact
                     # bound the binding itself would have allocated.
-                    + (
-                        "        size_t _min_cap = _omax;\n"
-                        if pass_capacity
-                        else (
-                            f"        size_t _min_cap = _omax >"
-                            f" {_lazy_fallback}"
-                            f" ? _omax : ({_lazy_fallback});\n"
-                        )
-                    )
+                    #
+                    # gh-805 §D: `exact_max_out` earns the same trust without
+                    # changing the kernel signature. `_capacity_exprs` holds
+                    # all three cases and also produces `_vo_alloc`'s clamp
+                    # below, so the two cannot answer differently.
+                    + _capacity_exprs(
+                        bool(pass_capacity), exact_max_out, _lazy_fallback
+                    )[1]
                     + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
                     f'                "out has %zu elements,'
@@ -1922,11 +1994,13 @@ def make_methods_ctx(
                 # (it's handed `_cap` below), so the exact bound is trusted
                 # and the clamp is dropped — that's the entire point of
                 # opting in: exact allocation instead of a defensive one.
-                + (
-                    "    (void)_need;\n"
-                    if pass_capacity
-                    else "    if (!_cap || _cap < _need) _cap = _need;\n"
-                )
+                #
+                # gh-805 §D: `exact_max_out` drops the clamp too, keeping only
+                # the zero-guard — a mechanically migrated `return 0;` must
+                # still allocate `_need` rather than nothing.
+                + _capacity_exprs(bool(pass_capacity), exact_max_out, "_need")[
+                    0
+                ]
                 + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(
                     (
