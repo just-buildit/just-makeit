@@ -20,7 +20,11 @@ STEPS = (
     / "running_stats"
     / ".steps"
 )
-PYTHON = sys.executable
+# The interpreter of the environment this test installs into. Under xdist that
+# is the worker's private environment (gh-879, see conftest); everywhere else
+# it is this process's own. Running `sys.executable` unconditionally would look
+# right and fail with ModuleNotFoundError the moment the two differ.
+PYTHON = os.environ.get("JUST_BUILDIT_PYTHON") or sys.executable
 
 
 def _run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
