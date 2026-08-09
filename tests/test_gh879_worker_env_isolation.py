@@ -229,6 +229,45 @@ def test_worker_env_has_pip_for_the_gh824_guard():
     )
 
 
+def test_worker_installs_are_constrained_to_the_parents_numpy():
+    """Nothing this worker installs may move numpy off the parent's release.
+
+    The `.pth` makes the parent's numpy *importable*, which is not the same as
+    binding it. uv resolves against the worker's own site-packages, so the
+    first scaffolded project depending on numpy installs a fresh copy and
+    takes the newest release — shadowing the inherited one the moment upstream
+    publishes. The worker then compiles the extension against one release
+    while `sys.executable` imports it with another.
+
+    That is not hypothetical: numpy 2.5.2 shipped while this was in flight and
+    turned CI red on a PR that touched none of it. `UV_CONSTRAINT` binds every
+    install in the worker, including transitive ones, which an up-front pin of
+    numpy alone would not.
+    """
+    if not _worker():
+        return
+
+    constraint = os.environ.get("UV_CONSTRAINT", "")
+    assert constraint, (
+        "UV_CONSTRAINT is unset, so a scaffolded project's install is free to "
+        "pull a newer numpy than the parent and split the C-API across the "
+        "compile/import boundary"
+    )
+    text = Path(constraint).read_text()
+    assert "numpy==" in text, f"constraint file does not pin numpy: {text!r}"
+
+    parent = subprocess.run(
+        [sys.executable, "-c", "import numpy; print(numpy.__version__)"],
+        capture_output=True,
+        text=True,
+    )
+    assert parent.returncode == 0, parent.stderr
+    assert f"numpy=={parent.stdout.strip()}" in text, (
+        f"the constraint pins a different release than the parent imports: "
+        f"{text.strip()!r} vs {parent.stdout.strip()}"
+    )
+
+
 def test_worker_env_inherits_the_base_numpy():
     """Isolation must not fork numpy's C-API away from `sys.executable`.
 
