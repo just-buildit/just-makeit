@@ -113,7 +113,10 @@ class TestStateOnlyStillWorks:
         block = _pyi_class_block(
             (project / "src" / "dsp" / "io" / "io.pyi").read_text(), "Osc"
         )
-        assert "def __init__(self, gain: float = ...) -> None: ..." in block
+        # gh-parity: the module face now shows the real default, matching the
+        # standalone one. `...` is still emitted when there is no literal
+        # to seed (gh-515).
+        assert "def __init__(self, gain: float = 1.0) -> None: ..." in block
 
 
 class TestNoStateInitParamsUnchanged:

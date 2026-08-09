@@ -150,13 +150,13 @@ class TestClassStub:
 
     def test_init_with_state_param(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
-        assert "def __init__(self, coeff: float = ...) -> None: ..." in pyi
+        assert "def __init__(self, coeff: float = 0.5) -> None: ..." in pyi
 
     def test_init_default_gain_param(self, void_arg_project):
         # object_run defaults to state_vars=[("gain","double","0.0")] when
         # none are supplied.
         pyi = _pyi(void_arg_project, "dsp", "myproj")
-        assert "def __init__(self, gain: float = ...) -> None: ..." in pyi
+        assert "def __init__(self, gain: float = 0.0) -> None: ..." in pyi
 
     def test_initparams_ctor_docstring(self, tmp_path):
         """#69: with both init_params and scalar state, the class docstring's
@@ -217,11 +217,11 @@ class TestStepStubs:
 
     def test_steps_void_arg(self, void_arg_project):
         pyi = _pyi(void_arg_project, "dsp", "myproj")
-        assert "def steps(self, n: int) -> NDArray[np.float32]:" in pyi
+        assert "def steps(self, n: int = 1) -> NDArray[np.float32]:" in pyi
 
     def test_steps_both_void(self, both_void_project):
         pyi = _pyi(both_void_project, "dsp", "myproj")
-        assert "def steps(self, n: int) -> None:" in pyi
+        assert "def steps(self, n: int = 1) -> None:" in pyi
 
 
 # ── methods ───────────────────────────────────────────────────────────────────

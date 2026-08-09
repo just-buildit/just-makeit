@@ -1486,8 +1486,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     elif state_vars and not no_state:
         # State-only object (no init_params): the scalar state vars ARE the
         # constructor, each with a default.
+        # The real default, not `...`. This producer already has
+        # `_py_default_stub` and uses it elsewhere in this file; the
+        # constructor was the one place it discarded the value and emitted the
+        # sentinel, so the same object advertised `gain: float = 0.0`
+        # standalone and `gain: float = ...` in a module. It falls back to
+        # `...` on its own when there is no literal to seed (gh-515), so the
+        # sentinel still appears exactly where it should.
         init_params_str = ", ".join(
-            f"{n}: {_py(t)} = ..." for n, t, _ in scalar_vars
+            f"{n}: {_py(t)} = {_py_default_stub(t, d)}"
+            for n, t, d in scalar_vars
         )
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     else:
@@ -1614,7 +1622,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if return_type != "void":
             lines += [
                 "",
-                f"    def steps(self, n: int{_ctrl_kw})"
+                # gh-527 fixed this default on the standalone face only:
+                # without it `obj.steps()` type-checks against one stub
+                # and fails against the other, for the same object.
+                f"    def steps(self, n: int = 1{_ctrl_kw})"
                 f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(
@@ -1627,7 +1638,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             lines += [
                 "",
-                f"    def steps(self, n: int{_ctrl_kw}) -> None:",
+                f"    def steps(self, n: int = 1{_ctrl_kw}) -> None:",
             ]
             lines += _builtin_doc(
                 f"{obj}_steps",
