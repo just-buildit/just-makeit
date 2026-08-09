@@ -53,7 +53,6 @@ import os
 import shutil
 import subprocess
 import sys
-import sysconfig
 import tempfile
 from pathlib import Path
 
@@ -93,6 +92,40 @@ def _missing_runtime_deps() -> list[str]:
 # Where this worker's private environment lives, so `pytest_unconfigure` can
 # remove exactly what `pytest_configure` created. None when isolation is off.
 _worker_env_root: Path | None = None
+
+
+def _inheritable_paths(paths: list[str] | None = None) -> list[str]:
+    """Every existing directory on the parent's ``sys.path``, in order.
+
+    Deliberately not ``sysconfig.get_path("purelib")``, which names only *one*
+    directory and is the wrong one under ``uv run``. uv assembles that
+    environment from layers: when a ``.venv`` is present it installs ``--with``
+    packages straight into it and ``purelib`` happens to hold everything, but
+    with no ``.venv`` — which is CI, always — the base is an empty ephemeral
+    venv under ``builds-v0/`` and the packages live in a separate
+    ``archive-v0/`` overlay reached only through ``sys.path``.
+
+    Inheriting ``purelib`` alone therefore works on a developer's machine and
+    inherits nothing on CI, where it surfaced as ``Could NOT find Python3
+    (missing: Python3_NumPy_INCLUDE_DIRS NumPy)`` in every test that compiles.
+    Reading ``sys.path`` is correct under either layout.
+
+    Parameters
+    ----------
+    paths : list of str, optional
+        Stand-in for ``sys.path``; the default reads the live one. Present so
+        the layout above can be tested without arranging one.
+
+    Returns
+    -------
+    list of str
+        Existing directories, order preserved, no duplicates.
+    """
+    seen = []
+    for entry in sys.path if paths is None else paths:
+        if entry and Path(entry).is_dir() and entry not in seen:
+            seen.append(entry)
+    return seen
 
 
 def _provision_worker_env() -> None:
@@ -151,8 +184,11 @@ def _provision_worker_env() -> None:
 
     root = Path(tempfile.mkdtemp(prefix=f"jm-{worker}-env-"))
     venv = root / "venv"
+    # `--seed` because the gh-824 header guard in every generated Makefile
+    # shells out to `$(PYTHON) -m pip install --force-reinstall numpy`, and a
+    # bare uv venv ships no pip at all — 16 × `No module named pip` on CI.
     proc = subprocess.run(
-        ["uv", "venv", "--python", sys.executable, str(venv)],
+        ["uv", "venv", "--seed", "--python", sys.executable, str(venv)],
         capture_output=True,
         text=True,
     )
@@ -165,10 +201,10 @@ def _provision_worker_env() -> None:
         )
 
     # Inherit the parent's packages for reading, behind this worker's own.
-    inherited = sysconfig.get_path("purelib")
     site_dirs = sorted(venv.glob("lib/python*/site-packages"))
     if not site_dirs:  # Windows lays it out flat
         site_dirs = sorted(venv.glob("Lib/site-packages"))
+    inherited = "\n".join(_inheritable_paths())
     (site_dirs[0] / "_jm_inherited.pth").write_text(inherited + "\n")
 
     _worker_env_root = root

@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import conftest
@@ -163,6 +164,68 @@ def test_installing_tests_run_the_interpreter_they_installed_into():
         f"consult JUST_BUILDIT_PYTHON, so they install into one environment "
         f"and run another. Use "
         f"`os.environ.get('JUST_BUILDIT_PYTHON') or sys.executable` (gh-879)."
+    )
+
+
+def test_inheritance_covers_every_sys_path_entry_not_just_purelib():
+    """Every package directory must be inherited, not only ``purelib``.
+
+    This is the one that has to fail on a developer's machine, because the bug
+    it guards only *manifests* on CI. uv assembles the run environment from
+    layers. With a ``.venv`` present it installs ``--with`` packages straight
+    into it, so ``purelib`` happens to name everything and inheriting it alone
+    looks correct. With no ``.venv`` — CI, always — the base is an empty
+    ephemeral venv under ``builds-v0/`` and the packages sit in a separate
+    ``archive-v0/`` overlay reachable only through ``sys.path``.
+
+    So the purelib-only version passed every local run and inherited *nothing*
+    on CI: 14 failures across two shapes, ``Could NOT find Python3 (missing:
+    Python3_NumPy_INCLUDE_DIRS NumPy)`` wherever a test compiled.
+
+    Feeding a synthetic ``sys.path`` makes that testable anywhere, instead of
+    waiting for a machine laid out the other way.
+    """
+    with tempfile.TemporaryDirectory() as base:
+        overlay = Path(base) / "archive-v0" / "site-packages"
+        ephemeral = Path(base) / "builds-v0" / "site-packages"
+        overlay.mkdir(parents=True)
+        ephemeral.mkdir(parents=True)
+
+        got = conftest._inheritable_paths(
+            ["", str(ephemeral), str(overlay), str(Path(base) / "nonexistent")]
+        )
+
+    assert str(overlay) in got, (
+        "the overlay directory was dropped. Under `uv run` with no .venv that "
+        "is where numpy lives, so inheriting only purelib yields a worker "
+        "environment with no numpy at all."
+    )
+    assert str(ephemeral) in got
+    assert all(Path(p).name != "nonexistent" for p in got), (
+        "a path that does not exist was inherited"
+    )
+
+
+def test_worker_env_has_pip_for_the_gh824_guard():
+    """The worker interpreter must be able to run `-m pip`.
+
+    Every generated Makefile repairs an absent numpy include directory with
+    ``$(PYTHON) -m pip install --force-reinstall numpy`` (gh-824). ``$(PYTHON)``
+    is now this worker's interpreter, and a bare ``uv venv`` ships no pip — so
+    without ``--seed`` the guard dies with ``No module named pip`` rather than
+    repairing anything, 16 times in one CI job.
+    """
+    if not _worker():
+        return
+
+    proc = subprocess.run(
+        [os.environ["JUST_BUILDIT_PYTHON"], "-m", "pip", "--version"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"`-m pip` fails in the worker environment, so the gh-824 numpy "
+        f"header guard cannot run:\n{proc.stderr}"
     )
 
 
