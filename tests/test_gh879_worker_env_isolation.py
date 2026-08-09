@@ -268,6 +268,72 @@ def test_worker_installs_are_constrained_to_the_parents_numpy():
     )
 
 
+def test_an_install_into_the_worker_cannot_move_numpy():
+    """Perform the drifting operation, then assert it did not drift.
+
+    **This is the gate; the two checks around it are the description.** The
+    numpy split that turned CI red was invisible to every passive assertion
+    because nothing in a targeted run *installs* into the worker environment —
+    the drift needs a `uv pip install` to happen first. It surfaced only when
+    the full-suite Coverage job happened to schedule an end-to-end test and
+    this file onto the same xdist worker, and only once upstream published a
+    newer release. Two coincidences stacked on a real defect.
+
+    Waiting for that pairing again is not a gate. Neither is a `make` target
+    someone has to remember. So this does the install itself: the operation is
+    the one a scaffolded project performs, and the assertion is the invariant
+    it must not break. No `xdist_group`, no `--dist loadgroup`, and no
+    serialising the slow example files onto one worker to arrange a collision
+    on purpose.
+
+    It fails on a developer machine the moment the constraint is missing,
+    rather than the next time numpy ships.
+    """
+    if not _worker():
+        return
+
+    before = subprocess.run(
+        [sys.executable, "-c", "import numpy; print(numpy.__version__)"],
+        capture_output=True,
+        text=True,
+    )
+    assert before.returncode == 0, before.stderr
+
+    # The exact operation a scaffolded project's install performs, and the one
+    # that took the newest release before UV_CONSTRAINT bound it.
+    got = subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            os.environ["JUST_BUILDIT_PYTHON"],
+            "numpy",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert got.returncode == 0, f"could not install numpy:\n{got.stderr}"
+
+    after = subprocess.run(
+        [
+            os.environ["JUST_BUILDIT_PYTHON"],
+            "-c",
+            "import numpy; print(numpy.__version__)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert after.returncode == 0, after.stderr
+    assert after.stdout.strip() == before.stdout.strip(), (
+        f"installing numpy into the worker moved it to "
+        f"{after.stdout.strip()} while sys.executable still imports "
+        f"{before.stdout.strip()}. The generated extension is compiled by the "
+        f"first interpreter and imported by the second, so this is an ABI "
+        f"split — the release only has to differ, not the major version."
+    )
+
+
 def test_worker_env_inherits_the_base_numpy():
     """Isolation must not fork numpy's C-API away from `sys.executable`.
 
