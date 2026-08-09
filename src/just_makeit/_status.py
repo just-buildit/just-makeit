@@ -326,11 +326,49 @@ def run(
         # header" message about a throwaway temp path even though `status`
         # never touches the real project. The resulting STALE entry below
         # already reports the real divergence.
-        with (
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            _apply.run(scratch, honor_status_allow=False)
+        # gh-886: the buffers are named, because a *fatal* apply is not
+        # progress. When the replay refuses — an old pin, a key this jm no
+        # longer accepts, a half-finished migration — its `error:` line went
+        # into a StringIO that was thrown away with the frame, and its
+        # `sys.exit(1)` propagated out through `status`. The user got two
+        # warnings, no report, exit 1, and no reason: the diagnostic is
+        # unavailable in exactly the situation it exists for, and fails in
+        # the least informative way available. Suppressing progress and
+        # suppressing errors were one decision sharing one redirect.
+        _replay_out, _replay_err = io.StringIO(), io.StringIO()
+        try:
+            with (
+                contextlib.redirect_stdout(_replay_out),
+                contextlib.redirect_stderr(_replay_err),
+            ):
+                _apply.run(scratch, honor_status_allow=False)
+        except SystemExit as _exc:
+            # stderr first: that is where apply puts `error:`. stdout is the
+            # fallback for the few exits that print there, and is not shown
+            # otherwise — it is the progress log this block exists to hide.
+            _why = (
+                _replay_err.getvalue().strip()
+                or _replay_out.getvalue().strip()
+            )
+            print(
+                "error: the internal `apply` replay refused this manifest, "
+                "so no status report can be produced.\n"
+                "It ran on a scratch copy — your project was NOT modified.",
+                file=sys.stderr,
+            )
+            for _ln in (
+                _why or "(apply exited without a message)"
+            ).splitlines():
+                print(f"  {_ln}", file=sys.stderr)
+            print(
+                "\nResolve the above, then re-run `just-makeit status`. "
+                "Running `just-makeit apply` directly\n"
+                "shows the same failure with its full output.",
+                file=sys.stderr,
+            )
+            raise SystemExit(
+                _exc.code if isinstance(_exc.code, int) else 1
+            ) from None
 
         for rel in _walk_managed(scratch):
             real = root / rel
