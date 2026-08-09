@@ -70,14 +70,13 @@ def test_worker_env_is_private_to_this_worker():
     )
 
 
-def test_the_three_consumers_agree_on_the_worker_env():
-    """VIRTUAL_ENV, PATH and JUST_BUILDIT_PYTHON must name one environment.
+def test_both_consumers_agree_on_the_worker_env():
+    """VIRTUAL_ENV and JUST_BUILDIT_PYTHON must name one environment.
 
-    They are read by three different consumers — ``uv pip install``, the
-    generated Makefile's ``python3`` lookup, and its explicit override — so a
-    fix that set only one of them would isolate installs while leaving builds
-    pointed at the shared environment, which is half a fix and reads as a
-    whole one.
+    They are read by the two consumers that matter — ``uv pip install`` and
+    the generated Makefile — so setting only one would isolate installs while
+    leaving builds pointed at the shared environment, which is half a fix and
+    reads as a whole one.
     """
     if not _worker():
         assert (
@@ -95,6 +94,28 @@ def test_the_three_consumers_agree_on_the_worker_env():
     assert jbp.exists(), f"JUST_BUILDIT_PYTHON does not exist: {jbp}"
     assert venv in jbp.parents, f"{jbp} is outside {venv}"
 
+
+def test_path_discovery_is_left_alone():
+    """`python3` off PATH must NOT be this worker's venv.
+
+    Isolating the *writes* is the goal; isolating interpreter discovery for
+    every subprocess in the suite is not, and doing it breaks the build.
+
+    Some tests invoke ``cmake`` directly rather than through the generated
+    Makefile, so they pass no ``-DPython3_EXECUTABLE`` and CMake finds an
+    interpreter itself, off PATH. Point that at the worker venv — whose numpy
+    is reachable only through the inherited ``.pth`` — and ``FindPython3``'s
+    NumPy probe does not honour it, so configure dies with ``Could NOT find
+    Python3 (missing: Python3_NumPy_INCLUDE_DIRS NumPy)``.
+
+    That is not hypothetical: prepending PATH is what a first cut of this fix
+    did, and it turned CI red on ``ubuntu-24.04-arm, 3.14`` in
+    ``test_c_style.py::test_formatted_project_builds`` while passing locally.
+    """
+    if not _worker():
+        return
+
+    venv = Path(os.environ["VIRTUAL_ENV"])
     found = subprocess.run(
         ["python3", "-c", "import sys; print(sys.executable)"],
         capture_output=True,
@@ -102,10 +123,11 @@ def test_the_three_consumers_agree_on_the_worker_env():
     )
     assert found.returncode == 0, found.stderr
     on_path = Path(found.stdout.strip())
-    assert venv in on_path.parents, (
-        f"`python3` off PATH resolves to {on_path}, outside this worker's "
-        f"{venv} — the generated Makefile takes its interpreter from PATH "
-        f"(templates/make/Makefile:18), so its builds would escape isolation"
+    assert venv not in on_path.parents, (
+        f"`python3` off PATH resolves into this worker's venv ({on_path}). "
+        f"CMake discovers its interpreter that way when a test invokes it "
+        f"directly, and this venv's numpy is only reachable via a .pth that "
+        f"FindPython3's NumPy probe ignores."
     )
 
 
