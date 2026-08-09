@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _config as C
 from just_makeit import _status
 from just_makeit._apply import run as apply_run
+from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 
@@ -118,6 +119,95 @@ def test_an_ascii_project_reports_nothing(tmp_path):
         with contextlib.redirect_stderr(io.StringIO()):
             _status.run(root)
     assert "NON-ASCII" not in buf.getvalue()
+
+
+def test_every_kind_that_reaches_generated_c_is_reported():
+    """The report is only a migration story if it names ALL of them.
+
+    A staged tightening makes one promise: rename what `status` lists and
+    `apply` will not refuse you later. A report covering some declaration
+    kinds and not others breaks exactly that promise — the project renames
+    what it was shown, ships, and is refused anyway for a name it was never
+    told about. Partial coverage is worse than none, because it reads as a
+    clean bill of health.
+
+    Functions, state fields and init params were the three missing kinds.
+    All are written into the **sacred** header — a function's C symbol, a
+    state field's struct member, an init param's `create()` parameter — so
+    each carries the same GCC-accepts-it/MSVC-may-not trap that put the
+    other six on the list.
+    """
+    cfg = {
+        "project": {"name": "p"},
+        "module": {"m": {"objects": ["w"], "functions": [{"name": "café"}]}},
+        "w": {
+            "state": [{"name": "gaïn", "type": "double", "default": "1.0"}],
+            "init_params": [{"name": "tempÖ", "type": "double"}],
+        },
+    }
+    reported = dict((name, kind) for kind, name in C.non_ascii_names(cfg))
+    assert reported.get("café") == "function", (
+        f"a non-ASCII module function is invisible to the report: {reported}"
+    )
+    assert reported.get("gaïn") == "state field", (
+        f"a non-ASCII state field is invisible to the report: {reported}"
+    )
+    assert reported.get("tempÖ") == "init param", (
+        f"a non-ASCII init param is invisible to the report: {reported}"
+    )
+
+
+def test_status_reports_a_non_ascii_function_name(tmp_path):
+    """End to end, because the unit above cannot prove the wiring.
+
+    `non_ascii_names` walking a hand-built dict says nothing about whether a
+    real manifest stores functions where the walk looks for them.
+    """
+    root = tmp_path / "p"
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_run("p", root, [], [])
+        module_run(root, "m")
+        object_run(root, "w", "m", arg_type="float", return_type="float")
+    cfg = C.load(root)
+    C.add_module_function(cfg, "m", {"name": "café", "doc": ""})
+    C.save(root, cfg)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with contextlib.redirect_stderr(io.StringIO()):
+            _status.run(root)
+    out = buf.getvalue()
+    # Anchored on the report's own line format, not on the name appearing
+    # somewhere in the output. Declaring the function also creates drift, so
+    # `status` prints `+ native/src/m/café.c` under MISSING — a substring
+    # check for the name alone passes with the feature entirely removed.
+    assert "  ? function 'café'" in out, (
+        f"a declared non-ASCII function name never reaches the report:\n{out}"
+    )
+
+
+def test_the_module_message_does_not_claim_lowercase_either():
+    """The peer copy of the message gh-784's first half fixed.
+
+    `validate_name` stopped saying "lowercase" because `valid_identifier`
+    accepts `Foo`. `validate_module_id` calls that same predicate and kept
+    the same false word, so `jm object --module Foo` is accepted while the
+    error text for a bad sibling still promises it would not be. Two
+    messages over one predicate is the peer-implementation shape: fixing
+    one and not the other leaves the defect fully intact for half the users
+    who hit it.
+    """
+    msg = C.validate_module_id("9bad")
+    assert msg is not None
+    assert "lowercase" not in msg, (
+        f"the module message still promises a stricter rule than the "
+        f"shared predicate enforces:\n{msg}"
+    )
+    assert C.validate_module_id("Foo") is None, (
+        "uppercase module ids are accepted by the predicate; if this fails "
+        "the message was made true by tightening, which is the other half "
+        "of gh-784 and needs its own decision"
+    )
 
 
 def test_it_is_not_counted_as_drift(tmp_path):
