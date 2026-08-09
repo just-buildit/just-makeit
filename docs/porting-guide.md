@@ -193,13 +193,13 @@ default = "1.0"
 
 Write the body inline in TOML using these interpolated placeholders:
 
-| Placeholder     | Expands to                      |
-| --------------- | ------------------------------- |
-| `{component}`   | lowercase component name        |
-| `{Component}`   | title-cased component name      |
-| `{arg_type}`    | C type of `step()` argument     |
-| `{return_type}` | C type of `step()` return value |
-| `{method}`      | method name (in `[[methods]]`)  |
+| Placeholder     | Expands to                          |
+| --------------- | ----------------------------------- |
+| `{component}`   | component name, exactly as declared |
+| `{Component}`   | title-cased component name          |
+| `{arg_type}`    | C type of `step()` argument         |
+| `{return_type}` | C type of `step()` return value     |
+| `{method}`      | method name (in `[[methods]]`)      |
 
 ```toml
 [gain]

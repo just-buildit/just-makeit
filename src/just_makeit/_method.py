@@ -817,9 +817,16 @@ def run(
         )
         sys.exit(1)
     # gh-805 §A2: `fn` is spliced verbatim into the generated C, so a
-    # non-identifier produces a file that does not compile. Not the gh-625
-    # name predicate — that one is for jm names (lowercase ASCII); a C symbol
-    # legitimately carries uppercase and underscores.
+    # non-identifier produces a file that does not compile. Deliberately not
+    # the gh-625 name predicate, though gh-784's `isascii()` term has since
+    # narrowed the two to within one case of each other (`valid_identifier`
+    # rejects a name of only underscores; C does not). They answer different
+    # questions and only look alike: `valid_identifier` governs names *jm*
+    # writes into its own artifacts, while `--fn` names a symbol the AUTHOR
+    # already has, which must match C's rule exactly because jm is not
+    # generating it — it is calling it. The earlier note here justified the
+    # split by claiming jm names are lowercase; they never were, which is the
+    # whole of gh-784's first half.
     if fn and not _C_IDENTIFIER.fullmatch(fn):
         print(
             f"error: --fn {fn!r} is not a C identifier. It is emitted "
