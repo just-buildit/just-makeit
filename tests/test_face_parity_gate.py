@@ -93,6 +93,36 @@ SHAPES = [
 ]
 
 
+def _signatures(pyi: Path) -> dict[str, str]:
+    """``{member_name: normalised signature}`` for every method in *pyi*.
+
+    The gate compared docstrings only, and that is a real blind spot: a
+    member can be documented identically on both faces while the two
+    producers disagree about its *parameters*. gh-805 §E is the worked
+    example — `_stubs.py`'s module-aggregated producer offered `out=` on a
+    `record_dtype` method while the standalone producer and the binding both
+    refused it, so the module stub type-checked a call that raised at
+    runtime. Every docstring matched throughout.
+
+    Normalised through `ast.unparse` rather than compared as source text, so
+    a line break is not a divergence. Adding a parameter wraps a signature
+    across lines, and a gate that failed on formatting would be turned off
+    the first time it cried wolf.
+
+    `ast.unparse` needs 3.9+, which is this project's floor.
+    """
+    tree = ast.parse(pyi.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        for fn in cls.body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = ast.unparse(fn.args)
+            returns = ast.unparse(fn.returns) if fn.returns else ""
+            out[fn.name] = f"({args}) -> {returns}"
+    return out
+
+
 def _scaffold(
     root: Path,
     module: str | None,
@@ -147,6 +177,20 @@ def faces_by_shape(tmp_path_factory) -> dict:
         out[(at, rt)] = (
             _docstrings(_scaffold(base / tag / "sa", None, at, rt)),
             _docstrings(_scaffold(base / tag / "mo", "m", at, rt)),
+        )
+    return out
+
+
+@pytest.fixture(scope="module")
+def sigs_by_shape(tmp_path_factory) -> dict:
+    """Signatures, per shape, both faces. Scaffolded once for the module."""
+    base = tmp_path_factory.mktemp("parity_sigs")
+    out = {}
+    for at, rt in SHAPES:
+        tag = f"{at}_{rt}".replace("[]", "arr")
+        out[(at, rt)] = (
+            _signatures(_scaffold(base / tag / "sa", None, at, rt)),
+            _signatures(_scaffold(base / tag / "mo", "m", at, rt)),
         )
     return out
 
@@ -207,6 +251,47 @@ class TestBothStubProducersAgree:
             f"return_type={return_type!r}, these members document differently "
             f"depending on whether it is standalone or in a module: "
             f"{divergent}."
+        )
+
+    @pytest.mark.parametrize(("arg_type", "return_type"), SHAPES)
+    def test_every_shape_has_the_same_signature(
+        self, sigs_by_shape, arg_type, return_type
+    ):
+        """The blind spot this gate had: it compared docstrings only.
+
+        A member can be documented identically on both faces while the two
+        producers disagree about its PARAMETERS, and that disagreement is the
+        more damaging kind — a docstring difference misinforms, a signature
+        difference makes a type checker bless a call that raises.
+
+        Both instances found when this was added were real:
+
+        - `steps(n: int = 1)` standalone against `steps(n: int)` in a module,
+          so `obj.steps()` type-checked on one face and failed on the other.
+          gh-527 fixed that default on one producer and not its sibling.
+        - `__init__` advertising `gain: float = 0.0` standalone and
+          `gain: float = ...` in a module — the same object documented less
+          for living in a module, which is gh-642's defect again.
+        - and gh-805 §E, where the module face offered an `out=` the binding
+          refused outright.
+
+        `_KNOWN_DIVERGENT` is deliberately not consulted: the divergences were
+        fixed rather than waived, so this arrives with nothing to allow.
+        """
+        standalone, module = sigs_by_shape[(arg_type, return_type)]
+        assert standalone and module
+
+        divergent = sorted(
+            f"{name}\n      standalone: {standalone[name]}"
+            f"\n      module:     {module[name]}"
+            for name in set(standalone) & set(module)
+            if standalone[name] != module[name]
+        )
+        assert not divergent, (
+            f"for arg_type={arg_type!r} return_type={return_type!r} these "
+            f"members have different SIGNATURES depending on whether the "
+            f"object is standalone or in a module:\n    "
+            + "\n    ".join(divergent)
         )
 
     def test_every_shape_documents_steps_at_all(self, faces_by_shape):

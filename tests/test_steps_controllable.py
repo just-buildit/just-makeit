@@ -168,7 +168,7 @@ class TestModuleStub:
                 "void",
                 "float",
                 "def step(self, gain: float = ..., /)",
-                "def steps(self, n: int, gain: float = ...)",
+                "def steps(self, n: int = 1, gain: float = ...)",
             ),
             # sink: step(x, gain, /) positional-only, steps(x, gain=...) kw.
             (
