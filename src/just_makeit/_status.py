@@ -282,6 +282,10 @@ def run(
     # (path, detail, allowed) — gh-823. `allowed` entries are reported
     # and not counted, exactly like every other allowed deviation.
     kwargs_entries: list[tuple[str, str, bool]] = []
+    # gh-848: why each unreconciled fragment differs, keyed by path.
+    # Kept beside `entries` rather than widened into its tuple, which
+    # several call sites unpack positionally.
+    unreconciled_reasons: dict[str, dict] = {}
     # gh-785: (path, lineno, message, [at-risk member names]) per `.pyi` on
     # disk that does not parse *and* holds hand-owned members. Only that
     # intersection: a broken stub with nothing hand-written in it is
@@ -384,6 +388,22 @@ def run(
                 # refreshes, which is exactly the hand-owned case this comes
                 # from, the question was never put. Asking it here costs
                 # nothing: `before` and `after` are already in hand.
+                # gh-848: UNRECONCILED was a bare list of paths, and its
+                # entries are two different things — a body the author wrote
+                # (permanent, nothing to do) and a fragment predating a
+                # codegen change (a fix sitting undelivered). doppler carried
+                # 75 of these unchanged across many pins, so the two that had
+                # become actionable — a feature released that day sat in
+                # their delta — were indistinguishable from the 73 that never
+                # will be. `before`/`after` are already in hand, and the
+                # comparison is the one `warn_signature_drift` already makes.
+                if state == "unreconciled":
+                    _why = _docsync.signature_drift_details(
+                        before.decode("utf-8", "replace"),
+                        after.decode("utf-8", "replace"),
+                    )
+                    if _why:
+                        unreconciled_reasons[rel_posix] = _why
                 if state in ("unreconciled", "stale"):
                     *_, _detail = _docsync.init_kwargs_drift(
                         before.decode("utf-8", "replace"),
@@ -601,10 +621,54 @@ def run(
                 f"UNRECONCILED ({len(unreconciled_entries)}) — `jm apply` "
                 "reconciles these in place, but not wholesale:"
             )
-            for p, _, _, diff, _ in unreconciled_entries:
-                print(f"  ! {p}")
-                if diff:
-                    print("".join(f"    {ln}" for ln in diff.splitlines(True)))
+            # gh-848: split by WHY, because the two halves want opposite
+            # actions and a single list made the actionable ones invisible.
+            _actionable = [
+                e for e in unreconciled_entries if e[0] in unreconciled_reasons
+            ]
+            _authored = [
+                e
+                for e in unreconciled_entries
+                if e[0] not in unreconciled_reasons
+            ]
+            if _actionable:
+                print(
+                    f"  ACTIONABLE ({len(_actionable)}) — the manifest moved "
+                    "and these did not, so a fix is\n"
+                    "  sitting undelivered. Delete the file and re-run `jm "
+                    "apply` to receive it\n"
+                    "  (any hand-written body in it is lost)."
+                )
+                for p_, _, _, diff, _ in _actionable:
+                    print(f"    ! {p_}")
+                    for _member in sorted(unreconciled_reasons[p_]):
+                        print(f"        {unreconciled_reasons[p_][_member]}")
+                    if diff and show_diff:
+                        print(
+                            "".join(
+                                f"      {ln}" for ln in diff.splitlines(True)
+                            )
+                        )
+            if _authored:
+                print(
+                    f"  AUTHOR-OWNED ({len(_authored)}) — these differ "
+                    "because you wrote them that way.\n"
+                    "  Nothing to do; they stay unreconciled permanently."
+                )
+                # Paths stay listed. Suppressing them was the first cut, and
+                # `test_an_edited_fragment_is_reported` (gh-767) caught it:
+                # a project with ONE unreconciled fragment needs to know
+                # which. What made the old report wallpaper was the absence
+                # of a reason, not the presence of a path — so the split and
+                # the reasons are the fix, and hiding evidence is not.
+                for p_, _, _, diff, _ in _authored:
+                    print(f"    ! {p_}")
+                    if diff and show_diff:
+                        print(
+                            "".join(
+                                f"      {ln}" for ln in diff.splitlines(True)
+                            )
+                        )
             print(
                 "  apply refreshes these member by member (gh-767): "
                 "docstrings, bindings the\n"

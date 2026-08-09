@@ -691,22 +691,27 @@ def _method_return_shapes(text: str) -> dict:
     return out
 
 
-def warn_signature_drift(rel, existing: str, reference: str) -> list:
-    """Warn when a fragment's binding no longer matches the manifest (gh-622).
+def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
+    """``{member: why it differs}`` for members the reference has moved past.
 
-    A sacred ``_ext_<obj>.c`` fragment only ever *gains* members on apply — an
-    existing member's binding is never revised. So when a manifest edit or a
-    jm upgrade changes a method's generated signature, the ``.pyi`` moves and
-    the binding does not, and nothing reports it: ``jm status --check``
-    compares manifest-owned files, and both artifacts legitimately match what
-    jm would write. The reporter found 26 such methods across 10 doppler
-    modules only by building them and calling each one.
+    Extracted from `warn_signature_drift` so `jm status` can ask the same
+    question without emitting a warning (gh-848). One comparison with two
+    consumers rather than a second copy of the rules — the peer-implementation
+    trap this repo keeps paying for.
 
-    Re-rendering is not available here — the bodies are the user's — so this
-    says exactly what diverged and what to do about it, the same trade gh-609
-    made for a hand-edited ``impl`` body. Returns the drifted names (for
-    tests); emits nothing when they agree, which is the overwhelmingly common
-    case.
+    **The direction is the classification.** A member the reference declares
+    and the fragment lacks is a codegen or manifest change the fragment has not
+    received. A member the fragment has and the reference does not is the
+    author's body doing more than jm would, which is the entire point of a
+    sacred fragment. Only the first is returned, and that asymmetry is what
+    lets `status` split "a fix you are not receiving" from "you wrote it that
+    way" — the two things gh-848 could not tell apart in a bare path list.
+
+    Returns
+    -------
+    dict of str to str
+        Member name to a one-line explanation. Empty when the fragment is
+        merely the author's, which is the overwhelmingly common case.
     """
     ex = _method_signatures(existing)
     ref = _method_signatures(reference)
@@ -725,14 +730,7 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     # stop matching the manifest. `status_return`, `error_negative`, `single`
     # and `record_dtype` all leave METH flags and the PyArg format *identical*
     # and change what comes back, so they sail past the comparison above —
-    # while the .pyi, regenerated from the same manifest, moves. The reported
-    # case: a stub advertising `-> None` (and, by implication, "this raises")
-    # over a wrapper still returning the int and unable to raise.
-    #
-    # Deliberately one-directional: a marker the manifest now implies and the
-    # fragment lacks is drift, but a marker the fragment has and the reference
-    # does not is a hand-written body doing more than jm would, which is the
-    # whole point of a sacred fragment and must never warn.
+    # while the .pyi, regenerated from the same manifest, moves.
     ex_shape = _method_return_shapes(existing)
     ref_shape = _method_return_shapes(reference)
     for n, markers in ref_shape.items():
@@ -742,10 +740,31 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
         want = ", ".join(sorted(missing))
         note = f"{n}: the manifest's result shape needs {want}, absent here"
         details[n] = f"{details[n]}; {note}" if n in details else note
+    return details
+
+
+def warn_signature_drift(rel, existing: str, reference: str) -> list:
+    """Warn when a fragment's binding no longer matches the manifest (gh-622).
+
+    A sacred ``_ext_<obj>.c`` fragment only ever *gains* members on apply — an
+    existing member's binding is never revised. So when a manifest edit or a
+    jm upgrade changes a method's generated signature, the ``.pyi`` moves and
+    the binding does not, and nothing reports it: ``jm status --check``
+    compares manifest-owned files, and both artifacts legitimately match what
+    jm would write. The reporter found 26 such methods across 10 doppler
+    modules only by building them and calling each one.
+
+    Re-rendering is not available here — the bodies are the user's — so this
+    says exactly what diverged and what to do about it, the same trade gh-609
+    made for a hand-edited ``impl`` body. Returns the drifted names (for
+    tests); emits nothing when they agree, which is the overwhelmingly common
+    case.
+    """
+    details = signature_drift_details(existing, reference)
 
     if not details:
         return []
-    drifted = [n for n in ref if n in details]
+    drifted = sorted(details)
     _report.warn(
         f"{rel}: binding no longer matches the manifest"
         f" [{'; '.join(details[n] for n in drifted)}]. A sacred fragment only"
