@@ -276,6 +276,97 @@ def raises_doc(m: dict) -> "list[tuple[str, str]]":
     ]
 
 
+def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
+    """The ``raises=`` argument for a component's CLASS docstring (gh-805 §F).
+
+    `raises_doc` is the per-method reading of the same question; this is the
+    constructor's, from `create_error`/`create_error_message` (gh-482). Both
+    exist because jm is the *only* thing that knows the answer: no header
+    ``@throws`` can name the exception class jm chose, and no manifest author
+    should have to restate it beside the declaration that already implies it.
+
+    Only a **declared** failure is documented. An object with no
+    ``create_error`` still raises ``MemoryError`` when ``create()`` returns
+    NULL, and that is deliberately left out for the reason `declared_raise`
+    leaves out the ``RuntimeError "destroyed"`` liveness guard: it is jm's
+    plumbing rather than the author's contract, identical in every generated
+    object, and documenting it everywhere would bury the one entry that is
+    actually about this component.
+
+    Parameters
+    ----------
+    category : str
+        A name from `_config.ERROR_CATEGORIES`, or ``""`` when undeclared.
+    message : str
+        The declared exception text. This is quoted verbatim because it is
+        what the caller sees at the REPL.
+
+    Examples
+    --------
+    >>> create_raises_doc("", "")
+    []
+    >>> cat, desc = create_raises_doc("ValueError", "rate must be positive")[0]
+    >>> cat
+    'ValueError'
+    >>> desc
+    'If construction fails. The exception message is ``rate must be positive``.'
+    """
+    if not category:
+        return []
+    return [
+        (
+            category,
+            f"If construction fails. The exception message is ``{message}``.",
+        )
+    ]
+
+
+def warns_doc(warnings: "list[dict]") -> "list[tuple[str, str]]":
+    """The ``warns=`` argument for a component's class docstring (gh-805 §F).
+
+    Built from the same ``[[<obj>.warnings]]`` entries `make_warnings_ctx`
+    compiles into the ``PyErr_WarnEx`` block, so a documented category is by
+    construction the category the binding emits.
+
+    The description names the state field that gates the warning as well as
+    quoting the message. A caller who sees the warning wants to know what
+    provoked it, and the condition is a field on the object's own state — the
+    one piece of the contract that is visible in the author's C and nowhere in
+    the Python signature.
+
+    Parameters
+    ----------
+    warnings : list of dict
+        Entries with ``condition``, ``category`` and ``message``, as
+        `_config.warnings` returns them.
+
+    Examples
+    --------
+    >>> warns_doc([])
+    []
+    >>> cat, desc = warns_doc([{"condition": "underpowered",
+    ...                         "category": "UserWarning",
+    ...                         "message": "under-powered"}])[0]
+    >>> cat
+    'UserWarning'
+    >>> desc
+    'Emitted after construction when ``underpowered`` holds: ``under-powered``.'
+    """
+    out: list[tuple[str, str]] = []
+    for w in warnings:
+        category = w.get("category", "UserWarning")
+        message = w.get("message", "")
+        condition = w.get("condition", "")
+        out.append(
+            (
+                category,
+                f"Emitted after construction when ``{condition}`` holds: "
+                f"``{message}``.",
+            )
+        )
+    return out
+
+
 def make_warnings_ctx(
     component: str,
     Component: str,

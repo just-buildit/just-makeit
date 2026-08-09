@@ -1380,6 +1380,8 @@ def class_docstring(
     *,
     body: "Sequence[str]" = (),
     params: "Sequence[ClassParam]" = (),
+    raises: "Sequence[tuple[str, str]]" = (),
+    warns: "Sequence[tuple[str, str]]" = (),
     trailer: "Sequence[str]" = (),
     blank_before_close: bool = False,
 ) -> list[str]:
@@ -1409,6 +1411,13 @@ def class_docstring(
     params : sequence of ClassParam, optional
         The ``Parameters`` block. Omitted entirely when empty — an empty
         numpy section header is worse than none.
+    raises : sequence of tuple(str, str), optional
+        ``(exception_class, description)`` the constructor may raise, from the
+        manifest's ``create_error``/``create_error_message`` (gh-805 §F).
+    warns : sequence of tuple(str, str), optional
+        ``(warning_category, description)`` construction may emit, from
+        ``[[<obj>.warnings]]`` (gh-805 §F). Rendered like *raises* and placed
+        after it, which is numpydoc's order.
     trailer : sequence of str, optional
         Ready-indented lines appended before the closing delimiter, for a
         section this function does not model (``_stubs``'s ``Examples``, whose
@@ -1439,10 +1448,19 @@ def class_docstring(
     True
     """
     pad = " " * CLASS_INDENT
+    # gh-805 §F: the diagnostic sections, in numpydoc's order. Paired with
+    # their headings here so the "is there anything to emit" test below and
+    # the emission itself read the same list — the shape where a section is
+    # added to one and forgotten in the other.
+    diagnostics = [
+        (heading, list(entries))
+        for heading, entries in (("Raises", raises), ("Warns", warns))
+        if entries
+    ]
     # Nothing but a summary: this is exactly `summary_docstring`'s job,
     # including keeping a short one on a single line so existing stubs do not
     # churn, and leaving room for a formatter to pull the closer up (gh-746).
-    if not body and not params and not trailer:
+    if not body and not params and not trailer and not diagnostics:
         return summary_docstring(summary, indent=CLASS_INDENT)
 
     head = wrap_summary(summary, CLASS_DOC_WIDTH)
@@ -1461,6 +1479,17 @@ def class_docstring(
                 lines += [
                     f"{pad}    {w}" for w in _wrap(note, CLASS_DESC_WIDTH)
                 ]
+        if blank_before_close or trailer or diagnostics:
+            lines += [""]
+
+    # `typed_section` opens with its own blank separator, so it is dropped when
+    # the block above already left one — two blanks between numpy sections is
+    # a paragraph break, and numpydoc reads it as the section body ending.
+    for heading, entries in diagnostics:
+        sec = typed_section(heading, entries, CLASS_DESC_WIDTH)
+        if lines and lines[-1] == "":
+            sec = sec[1:]
+        lines += [f"{pad}{ln}".rstrip() for ln in sec]
         if blank_before_close or trailer:
             lines += [""]
 
@@ -1759,7 +1788,71 @@ _TAG_DROPPED = frozenset(
 
 # numpydoc's section order. Anything jm emits must follow it, or tooling that
 # parses by section (griffe, numpydoc's own validator) mis-associates the body.
-_SECTION_ORDER = ("Raises", "See Also", "Notes", "Warnings")
+#
+# gh-805 §F: ``Warns`` sits between ``Raises`` and ``See Also`` in numpydoc's
+# standard, and it is not the same section as ``Warnings`` further down —
+# ``Warns`` is the structured list of warning *categories* a call may emit,
+# ``Warnings`` is free cautionary prose. Both appear here because jm emits
+# both, from different inputs, and the near-identical names are exactly the
+# pair a future edit would collapse.
+_SECTION_ORDER = ("Raises", "Warns", "See Also", "Notes", "Warnings")
+
+#: Sections whose entries are ``(type, description)`` rather than free prose:
+#: the type alone on its line, the description indented under it. numpydoc
+#: renders `Raises` and `Warns` identically, so they share one layout.
+TYPED_SECTIONS = ("Raises", "Warns")
+
+
+def typed_section(
+    heading: str,
+    entries: "Sequence[tuple[str, str]]",
+    desc_width: int,
+    fallback: str = "Raised.",
+) -> list[str]:
+    """Lay out a ``Raises``/``Warns`` section, unindented.
+
+    numpydoc wants the exception or warning class on a line of its own with an
+    indented description beneath — not one run-on line. Both faces need that
+    layout and both used to be candidates for writing it out: the method face
+    had it inline in `_numpy_sections`, and gh-805 §F needed the same thing for
+    the class docstring, at a different width. A second copy is how the two
+    would come to disagree about the fallback text or the hanging indent, so
+    the layout lives here and the callers supply content and width.
+
+    Parameters
+    ----------
+    heading : str
+        ``"Raises"`` or ``"Warns"``. Underlined to its own length.
+    entries : sequence of tuple(str, str)
+        ``(class_name, description)`` pairs, in the order they should read.
+    desc_width : int
+        Column budget for the wrapped description, already net of its own
+        four-space hanging indent. The class face and the member face differ
+        here because their base indents differ.
+    fallback : str, optional
+        Description for an entry that carries none.
+
+    Returns
+    -------
+    list of str
+        Lines with no base indent, opening with a blank separator so the
+        caller can splice without tracking whether one is needed.
+
+    Examples
+    --------
+    >>> typed_section("Raises", [("ValueError", "If n < 0.")], 60)
+    ['', 'Raises', '------', 'ValueError', '    If n < 0.']
+    >>> typed_section("Warns", [("UserWarning", "")], 60, "Emitted.")
+    ['', 'Warns', '-----', 'UserWarning', '    Emitted.']
+    """
+    out = ["", heading, "-" * len(heading)]
+    for cls, desc in entries:
+        out.append(cls)
+        out += [
+            f"    {w}" for w in _wrap(desc.strip() or fallback, desc_width)
+        ]
+    return out
+
 
 # ``@f$ ... @f$`` is Doxygen's inline math. Mapped to reST ``:math:`` so a docs
 # build renders it — and, just as importantly, so the backslashes inside it are
@@ -1949,20 +2042,20 @@ def _numpy_sections(
         entries = tag_secs.get(heading)
         if not entries:
             continue
+        if heading in TYPED_SECTIONS:
+            # numpydoc wants `ExceptionType` then an indented description, not
+            # one run-on line. `@throws ValueError if n < 0` carries the type
+            # as its first token, which is the convention Doxygen users already
+            # follow — so splitting on the first space recovers the pair the
+            # shared layout wants.
+            out += typed_section(
+                heading,
+                [(e.partition(" ")[0], e.partition(" ")[2]) for e in entries],
+                DESC_WIDTH,
+            )
+            continue
         out += ["", heading, "-" * len(heading)]
         for i, entry in enumerate(entries):
-            if heading == "Raises":
-                # numpydoc wants `ExceptionType` then an indented description,
-                # not one run-on line. `@throws ValueError if n < 0` carries
-                # the type as its first token, which is the convention Doxygen
-                # users already follow.
-                exc, _, rest = entry.partition(" ")
-                out.append(exc)
-                out += [
-                    f"    {w}"
-                    for w in _wrap(rest.strip() or "Raised.", DESC_WIDTH)
-                ]
-                continue
             # Notes and Warnings are free prose, so consecutive entries must be
             # blank-line separated — otherwise two `@note`s render as one
             # run-on paragraph, which is what the reader would blame on jm.
