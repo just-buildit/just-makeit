@@ -1555,7 +1555,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f"{obj}_step",
             [("x", _py(arg_type))],
             _py(return_type),
-            "Process one input sample.",
+            (
+                "Process one input sample."
+                if return_type != "void"
+                else "Consume one input sample (no output)."
+            ),
         )
         if return_type != "void":
             lines += [
@@ -1585,7 +1589,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"{obj}_steps",
                 [("x", f"NDArray[{_np(arg_type)}]")],
                 "None",
-                "Process a samples array.",
+                # gh-881: the standalone face's wording. These canned
+                # summaries drifted per shape; the standalone is the
+                # reference face, and for the void-return shapes it is also
+                # the accurate one.
+                "Process a block of input samples.",
             )
     else:
         lines += [
@@ -1594,7 +1602,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f" -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
-            f"{obj}_step", [], _py(return_type), "Generate one output sample."
+            f"{obj}_step",
+            [],
+            _py(return_type),
+            (
+                "Generate one output sample from internal state."
+                if return_type != "void"
+                else "Advance state by one tick (no I/O)."
+            ),
         )
         if return_type != "void":
             lines += [
@@ -1618,7 +1633,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"{obj}_steps",
                 [("n", "int")],
                 "None",
-                "Advance state by n ticks.",
+                "Run n iterations.",  # gh-881: standalone wording
                 param_fallback="Number of iterations to run.",
             )
 

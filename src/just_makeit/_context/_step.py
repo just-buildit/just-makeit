@@ -372,6 +372,39 @@ def make_step_ctx(
                 f"    ) -> NDArray[{out_np_dtype}]: ...\n"
             )
 
+        # gh-877 reached the scalar shapes and not this one: the blockwise
+        # branch returns early (below), well before the stub-doc handling, so
+        # its `steps()` kept the bare `...` that `make_sample_ctx` bakes — no
+        # docstring at all, on the ONE shape where `steps` is the only method
+        # the object has. Found by gh-881's sweep, which is the argument for
+        # that sweep: fixing one of two peer paths is the failure this repo
+        # keeps repeating.
+        _bw_sblk = (doc_blocks or {}).get(f"{component}_steps")
+        _bw_sig = _split_steps_stub_signature(pyi_steps) if pyi_steps else None
+        if _bw_sig is not None and not _is_authored(_bw_sblk):
+            _bw_desc = (
+                _bw_sblk.brief
+                if _bw_sblk and _bw_sblk.brief
+                else "Apply the blockwise transform to the input array."
+            )
+            pyi_steps = (
+                f"{_bw_sig}\n"
+                + "\n".join(
+                    render_numpy_doc(
+                        None,
+                        "steps",
+                        [("x", f"NDArray[{in_np_dtype}]")],
+                        f"NDArray[{out_np_dtype}]",
+                        _bw_desc,
+                        indent=8,
+                        skeleton_fallback=True,
+                        param_fallback="Input sample.",
+                        return_fallback="Output sample.",
+                    )
+                )
+                + "\n"
+            )
+
         steps_c_decl_bw = (
             f"void\n"
             f"{component}_steps(\n"
