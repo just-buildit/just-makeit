@@ -139,6 +139,118 @@ def bytes_call_exprs(name: str) -> str:
 # was, by definition, not getting its buffer written.
 
 
+def out_buffer_guard_record(
+    obj_var: str,
+    dtype_fn: str,
+    *,
+    label: str = "out",
+    decrefs: str = "",
+    indent: str = "    ",
+) -> str:
+    """`out_buffer_guard` for a STRUCTURED result (gh-805 §E).
+
+    The scalar guard compares ``PyArray_TYPE(...) != NPY_x``. A structured
+    array's type num is ``NPY_VOID``, so that comparison cannot express "the
+    record layout this method returns" — it would reject every correct buffer
+    and, worse, the acquisition that follows it (``PyArray_FROM_OTF`` with a
+    scalar enum) would silently **cast** a correctly-shaped structured array to
+    that scalar type. That is the exact silent reinterpretation the ``out=``
+    guard exists to prevent, and it is why the feature was carved out for
+    ``record_dtype`` rather than shipped half-working.
+
+    So the comparison is against the descriptor jm already generates:
+    ``PyArray_EquivTypes`` against ``<sid>_get_dtype()``. Equivalence rather
+    than identity, because a caller who rebuilds the same dtype from a list of
+    fields has an equal-but-not-identical descr and is not wrong.
+
+    The reference is released on every path. ``<sid>_get_dtype()`` returns a
+    NEW reference, and only ``PyArray_NewFromDescr`` steals one — the guard
+    does not, so it must not leak.
+
+    Parameters
+    ----------
+    obj_var : str
+        Borrowed ``PyObject *`` holding the caller's argument.
+    dtype_fn : str
+        Name of the generated descriptor accessor, e.g. ``"W_read_get_dtype"``.
+        Emitted by :func:`_record.dtype_c`.
+    label, decrefs, indent
+        As :func:`out_buffer_guard`.
+
+    Returns
+    -------
+    str
+        A newline-terminated C block. Contains literal braces — interpolate it
+        as a value, never inside an f-string literal.
+
+    Examples
+    --------
+    >>> print(out_buffer_guard_record("out_obj", "W_read_get_dtype"), end="")
+        /* Require the exact record dtype AND C-contiguity. Compared with
+         * EquivTypes against the generated descr: a structured array's type
+         * num is NPY_VOID, so a scalar enum cannot say what layout is
+         * wanted, and coercing to one would silently reinterpret the
+         * caller's buffer. */
+        {
+            PyArray_Descr *_want = W_read_get_dtype();
+            if (!_want) {
+                return NULL;
+            }
+            if (!PyArray_Check(out_obj) ||
+                !PyArray_EquivTypes(
+                    PyArray_DESCR((PyArrayObject *)out_obj), _want) ||
+                !PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) ||
+                !PyArray_ISWRITEABLE((PyArrayObject *)out_obj)) {
+                PyErr_Format(PyExc_TypeError,
+                    "out must be a writable, C-contiguous ndarray of"
+                    " dtype %R, not %R", _want,
+                    PyArray_Check(out_obj)
+                        ? (PyObject *)PyArray_DESCR((PyArrayObject *)out_obj)
+                        : Py_None);
+                Py_DECREF(_want);
+                return NULL;
+            }
+            Py_DECREF(_want);
+        }
+    """
+    i = indent
+    release = f"{i}        {decrefs}\n" if decrefs else ""
+    return (
+        f"{i}/* Require the exact record dtype AND C-contiguity. Compared"
+        f" with\n"
+        f"{i} * EquivTypes against the generated descr: a structured array's"
+        f" type\n"
+        f"{i} * num is NPY_VOID, so a scalar enum cannot say what layout is\n"
+        f"{i} * wanted, and coercing to one would silently reinterpret the\n"
+        f"{i} * caller's buffer. */\n"
+        f"{i}{{\n"
+        f"{i}    PyArray_Descr *_want = {dtype_fn}();\n"
+        f"{i}    if (!_want) {{\n"
+        f"{release}"
+        f"{i}        return NULL;\n"
+        f"{i}    }}\n"
+        f"{i}    if (!PyArray_Check({obj_var}) ||\n"
+        f"{i}        !PyArray_EquivTypes(\n"
+        f"{i}            PyArray_DESCR((PyArrayObject *){obj_var}), _want) ||\n"
+        f"{i}        !PyArray_IS_C_CONTIGUOUS((PyArrayObject *){obj_var}) ||\n"
+        f"{i}        !PyArray_ISWRITEABLE((PyArrayObject *){obj_var})) {{\n"
+        f"{i}        PyErr_Format(PyExc_TypeError,\n"
+        f'{i}            "{label} must be a writable, C-contiguous ndarray'
+        f' of"\n'
+        f'{i}            " dtype %R, not %R", _want,\n'
+        f"{i}            PyArray_Check({obj_var})\n"
+        f"{i}                ? (PyObject *)PyArray_DESCR("
+        f"(PyArrayObject *){obj_var})\n"
+        f"{i}                : Py_None);\n"
+        f"{i}        Py_DECREF(_want);\n"
+        f"{release}"
+        f"{i}        return NULL;\n"
+        f"{i}    }}\n"
+        f"{i}    Py_DECREF(_want);\n"
+        f"{i}}}\n"
+    )
+
+
 def out_buffer_guard(
     obj_var: str,
     npy_enum: str,

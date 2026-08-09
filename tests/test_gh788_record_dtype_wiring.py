@@ -179,17 +179,32 @@ class TestTheAllocation:
 
 class TestThePythonFaces:
     def test_the_stub_returns_one_structured_ndarray(self, tmp_path):
-        pyi = _pyi(_project(tmp_path))
-        assert "def read(self, count: int = 1) -> NDArray[Any]:" in pyi
-
-    def test_the_stub_does_not_offer_out(self, tmp_path):
-        """gh-788 carve-out, asserted rather than assumed. The out= branch
-        acquires the caller's buffer with a scalar NPY_ enum, which for a
-        record would CAST rather than reject. A stub advertising `out=` would
-        type-check a call the binding cannot honour."""
+        # Asserted on the signature's CONTENT, not its line breaks: adding
+        # `out=` (gh-805 §E) wrapped it across several lines, and an exact
+        # one-line match would fail for a formatting change rather than a
+        # behavioural one.
         pyi = _pyi(_project(tmp_path))
         read = pyi[pyi.index("def read(") :]
-        assert "out:" not in read[: read.index("def ", 5)]
+        sig = read[: read.index("-> ") + 40]
+        assert "count: int = 1" in sig, sig
+        assert "-> NDArray[Any]:" in sig, sig
+
+    def test_the_stub_offers_out(self, tmp_path):
+        """gh-805 §E lifted the gh-788 carve-out, so this inverts.
+
+        It asserted the ABSENCE of `out=` while the branch spoke in scalar
+        NPY_ enums, which for a record would cast rather than reject. The
+        branch now has a descr-based form — `PyArray_EquivTypes` against
+        `<sid>_get_dtype()`, no coercion — so the stub must advertise what
+        the binding accepts.
+
+        Kept as an assertion rather than deleted: a stub and a binding
+        disagreeing about `out=` is the same defect in either direction, and
+        this file is where that is pinned.
+        """
+        pyi = _pyi(_project(tmp_path))
+        read = pyi[pyi.index("def read(") :]
+        assert "out:" in read[: read.index("def ", 5)], read[:400]
 
     def test_it_is_not_annotated_as_a_list_of_tuples(self, tmp_path):
         """`result_fields` alone annotates `list[tuple]`. The richer shape
@@ -627,6 +642,93 @@ def _build(root: Path):
 
 @pytest.mark.skipif(not shutil.which("cmake"), reason="needs a C toolchain")
 class TestItCompilesAndRoundTrips:
+    def test_out_buffer_lands_in_the_callers_memory(self, tmp_path):
+        """gh-805 §E: `out=` works for a structured result, and rejects.
+
+        Every other single-output `variable_output` method offered the
+        zero-allocation `out=` contract and a `record_dtype` one did not,
+        because the branch spoke in scalar NPY_ enums throughout — the guard,
+        the acquisition, and the trimmed view. A structured array's type num
+        is NPY_VOID, so a scalar enum cannot name the layout, and coercing to
+        one would silently CAST the caller's buffer to float. That silent
+        reinterpretation is what the whole `out=` guard exists to prevent, so
+        the feature was carved out rather than shipped half-working.
+
+        Both halves are asserted here, and the second matters more: a wrong
+        dtype must RAISE, not be quietly reinterpreted.
+        """
+        root = _project(tmp_path)
+        _implement(
+            root,
+            "typedef struct {\n"
+            "    uint64_t n;\n"
+            "    float value;\n"
+            "    uint16_t probe;\n"
+            "    uint16_t flags;\n"
+            f"}} {REC};\n",
+            [
+                (_MAX_OUT_STUB, _MAX_OUT_IMPL),
+                (
+                    "    (void)state;\n    (void)n;\n    (void)out;\n"
+                    "    return 0; /* placeholder */",
+                    "    (void)state;\n"
+                    "    for (size_t i = 0; i < (size_t)n; ++i) {\n"
+                    "        out[i].n = (uint64_t)i;\n"
+                    "        out[i].value = (float)i * 1.5f;\n"
+                    "        out[i].probe = (uint16_t)(i + 7);\n"
+                    "        out[i].flags = (uint16_t)(i & 1);\n"
+                    "    }\n"
+                    "    return (size_t)n;",
+                ),
+            ],
+        )
+        _build(root)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import numpy as np\n"
+                "from proj import Telemetry\n"
+                "t = Telemetry(cap=0)\n"
+                "dt = t.read(1).dtype\n"
+                "buf = np.zeros(8, dtype=dt)\n"
+                "y = t.read(5, out=buf)\n"
+                "print(len(y))\n"
+                "print(y.dtype == dt)\n"
+                # The zero-allocation contract: the result must be a view
+                # INTO the caller's buffer, not a copy that happens to match.
+                "print(np.shares_memory(y, buf))\n"
+                "print(buf['n'][:5].tolist())\n"
+                "try:\n"
+                "    t.read(5, out=np.zeros(8, dtype=np.float32))\n"
+                "    print('NO-RAISE')\n"
+                "except TypeError as e:\n"
+                "    print('TypeError')\n",
+            ],
+            cwd=root / "src",
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        n, same_dtype, shares, written, wrong = (
+            proc.stdout.strip().splitlines()
+        )
+        assert n == "5", proc.stdout
+        assert same_dtype == "True", proc.stdout
+        assert shares == "True", (
+            "the result does not share memory with the caller's buffer, so "
+            "out= allocated instead of landing in place — the entire point "
+            "of the contract:\n" + proc.stdout
+        )
+        assert written == "[0, 1, 2, 3, 4]", proc.stdout
+        assert wrong == "TypeError", (
+            "a float32 buffer was ACCEPTED for a structured result. That is "
+            "the silent reinterpretation this feature exists to prevent — "
+            "the caller's bytes would be read as the wrong layout:\n"
+            + proc.stdout
+        )
+
     def test_the_doppler_record(self, tmp_path):
         """The end-to-end claim: doppler's `Telemetry.read()` dtype, produced
         by generated code, from a struct jm never saw the definition of."""
