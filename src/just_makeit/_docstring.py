@@ -1851,11 +1851,18 @@ def _numpy_sections(
         summary, body, descs, ret, examples = "", [], {}, "", []
     summary = override or summary
     if not summary:
-        summary = (
-            f"{name}."
-            if skeleton_fallback
-            else name.replace("_", " ").capitalize() + "."
-        )
+        # gh-867: capitalised on BOTH faces. `skeleton_fallback` used to
+        # decide this too, so one flag answered two questions -- "emit the
+        # section skeleton?" and "how is a name-derived summary spelled?" --
+        # and the answers had no reason to travel together. The cost was that
+        # the same undocumented member read `Close.` in a module-aggregated
+        # stub and `close.` in a standalone one, and `steps.` at runtime.
+        #
+        # A capitalised sentence is also simply the right answer: numpydoc
+        # wants the summary capitalised and terminated, and gh-685 already
+        # pinned that spelling as a deliberate guarantee for views. The flag
+        # now controls the skeleton alone, which is what its name says.
+        summary = name.replace("_", " ").capitalize() + "."
     # gh-652: quarantined block tags become real numpy sections. Rendered here
     # rather than in either face, so both get them from the one builder.
     tag_secs, retvals = _tag_sections(block) if block is not None else ({}, [])

@@ -1158,8 +1158,22 @@ def _method_doc_lines(
     ret_ann: str,
     override: str = "",
     raises: "list[tuple[str, str]] | None" = None,
+    skeleton_fallback: bool = False,
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
+
+    *skeleton_fallback* selects what an UNDOCUMENTED member falls back to, and
+    it is a caller's choice because the callers genuinely want different
+    things. A module OBJECT's method passes True, to match what the standalone
+    face emits for the same member -- without it an undocumented `close` read
+    `Close.` here and `close.` there, the same member capitalised differently
+    for living in a module (gh-867). A VIEW's method leaves it False: gh-685
+    pins the capitalised name stub as a deliberate guarantee, and flipping the
+    shared helper broke that test rather than the module face.
+
+    Which spelling is better is a separate and real question -- numpydoc wants
+    a capitalised summary, so both object faces are arguably wrong together
+    now. Deliberately not smuggled into a parity fix.
 
     *raises* is `_context._diagnostics.raises_doc` for the method — the same
     list the standalone stub and the runtime ``PyMethodDef`` pass, because
@@ -1170,7 +1184,14 @@ def _method_doc_lines(
     from ._docstring import render_numpy_doc
 
     return render_numpy_doc(
-        block, m_name, py_params, ret_ann, override, indent=8, raises=raises
+        block,
+        m_name,
+        py_params,
+        ret_ann,
+        override,
+        indent=8,
+        raises=raises,
+        skeleton_fallback=skeleton_fallback,
     )
 
 
@@ -1254,14 +1275,53 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     _ctrl_kw = "".join(f", {n}: {_py(ct)} = ..." for n, ct in _ctrl)
     _ctrl_posonly = ", /" if _ctrl else ""
 
-    def _builtin_doc(cfn, py_params, ret_ann, fallback_doc):
+    def _builtin_doc(
+        cfn,
+        py_params,
+        ret_ann,
+        fallback_doc,
+        skeleton=False,
+        param_fallback="Input sample.",
+        return_fallback="Output sample.",
+    ):
         """Docstring lines for a built-in method: the header Doxygen for *cfn*
         when present (so reset/step/steps are documentable), else the canned
-        one-liner *fallback_doc*."""
+        summary *fallback_doc* over the full section skeleton.
+
+        gh-867: the skeleton is the point. This used to return a bare
+        ``\"\"\"<fallback_doc>\"\"\"``, so the same object documented LESS for
+        living in a module -- `step` lost its `Parameters` and `Returns`
+        entirely, and `steps` lost the second half of its summary. Since a
+        module object is the common shape (nearly every doppler object is
+        one), the abbreviated stub was what most users actually got.
+
+        *skeleton* is per built-in ON PURPOSE, because it mirrors what the
+        standalone face already emits rather than imposing a policy: `step`
+        renders the sections there, `steps` and `reset` render the summary
+        alone. Making every built-in render sections here would fix `step`
+        and break the other two in the opposite direction -- which is what
+        the first attempt at this did, giving the module face MORE than the
+        standalone for `steps`. Parity is the deliverable; whether the
+        standalone face should itself be consistent is gh-877.
+        """
         blk = doc_blocks.get(cfn)
         if blk is not None:
             return _method_doc_lines(blk, cfn, py_params, ret_ann)
-        return [f'        """{fallback_doc}"""']
+        if not skeleton:
+            return [f'        """{fallback_doc}"""']
+        from ._docstring import render_numpy_doc
+
+        return render_numpy_doc(
+            None,
+            cfn,
+            py_params,
+            ret_ann,
+            fallback_doc,
+            indent=8,
+            skeleton_fallback=True,
+            param_fallback=param_fallback,
+            return_fallback=return_fallback,
+        )
 
     # Constructor arg string for doctest. init_params drive create() when
     # present (the #69 contract — even when scalar state vars also exist, which
@@ -1494,6 +1554,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             [("x", _py(arg_type))],
             _py(return_type),
             "Process one input sample.",
+            skeleton=True,
         )
         if return_type != "void":
             lines += [
@@ -1507,7 +1568,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"{obj}_steps",
                 [("x", f"NDArray[{_np(arg_type)}]")],
                 f"NDArray[{_np(return_type)}]",
-                "Process a samples array.",
+                # gh-867: the standalone face's exact wording. Two
+                # spellings of one canned summary is the same drift one layer
+                # down. No skeleton: the standalone renders this summary alone.
+                "Process a samples array. Returns ndarray, or fills out= if "
+                "supplied.",
             )
         else:
             lines += [

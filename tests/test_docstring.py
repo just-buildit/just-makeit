@@ -488,6 +488,12 @@ class TestRenderNumpyDoc:
 
     def test_undocumented_keeps_skeleton_when_asked(self):
         # What a standalone object's .pyi has always done.
+        #
+        # gh-867: the summary is now capitalised here too. The flag decides
+        # whether the SECTION SKELETON is emitted -- which is what this test
+        # is about, and what the three assertions below still pin. It used to
+        # decide the summary's spelling as well, so one undocumented member
+        # read `Close.` in a module stub and `close.` in a standalone one.
         out = render_numpy_doc(
             None,
             "do_thing",
@@ -495,7 +501,7 @@ class TestRenderNumpyDoc:
             "float",
             skeleton_fallback=True,
         )
-        assert out[0] == '        """do_thing.'
+        assert out[0] == '        """Do thing.'
         assert "        x : float" in out
         assert "            Input." in out
         assert "            Output." in out

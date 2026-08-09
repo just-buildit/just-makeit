@@ -56,11 +56,7 @@ from just_makeit._object import run as object_run
 # Tracked as gh-867. The set may only shrink; deleting an entry is the fix
 # landing, and `test_the_ratchet_only_holds_real_divergence` fails if an entry
 # stops diverging, so this cannot rust into a permanent allowlist.
-_KNOWN_DIVERGENT = {
-    "step",
-    "steps",
-    "close",
-}
+_KNOWN_DIVERGENT: set[str] = set()
 
 
 def _docstrings(pyi: Path) -> dict[str, str]:
