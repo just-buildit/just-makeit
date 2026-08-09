@@ -850,6 +850,16 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     refusing, which is the migration story gh-784 asks for. Nothing here
     rejects anything.
 
+    **Every declared name, or the promise is worthless.** A staged tightening
+    says one thing: rename what this lists and `apply` will not refuse you
+    later. Covering some kinds and not others breaks precisely that — the
+    project renames what it was shown, ships, and is refused anyway for a name
+    it was never told about, having read a partial list as a clean bill of
+    health. Functions, state fields and init params were missed on the first
+    pass; each is written into the **sacred** header (a C symbol, a struct
+    member, a ``create()`` parameter), so each carries the identical
+    GCC-accepts-it/MSVC-may-not trap that put the other six on the list.
+
     Returns
     -------
     list of (str, str)
@@ -865,6 +875,8 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     _check("project", project_name(cfg))
     for module in modules(cfg):
         _check("module", module)
+        for fn in module_functions(cfg, module):
+            _check("function", fn.get("name", ""))
     for comp in components(cfg):
         _check("object", comp)
         for meth in methods(cfg, comp):
@@ -873,6 +885,13 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
             _check("property", prop.get("name", ""))
         for view in views(cfg, comp):
             _check("view class", view.get("class_name", ""))
+        # Both accessors return positional tuples whose first slot is the
+        # name; unpacking the rest would couple this walk to two shapes that
+        # grow a field whenever a declaration gains an option.
+        for var in state_vars(cfg, comp):
+            _check("state field", var[0])
+        for param in init_params(cfg, comp):
+            _check("init param", param[0])
     return found
 
 
@@ -891,6 +910,11 @@ def validate_module_id(module_id: str) -> str | None:
     Each dot-separated segment must be a valid identifier (letters/digits/
     underscores, not starting with a digit). Empty, leading/trailing-dot, and
     double-dot names are rejected.
+
+    gh-784: this message is the peer of ``validate_name``'s and said the same
+    false word. Both describe one predicate — ``valid_identifier``, which
+    accepts ``Foo`` — so fixing one and leaving this one left the defect whole
+    for anyone who tripped it on a module id instead of an object name.
     """
     if not module_id:
         return "module name must not be empty"
@@ -899,7 +923,7 @@ def validate_module_id(module_id: str) -> str | None:
         if not valid_identifier(seg):
             return (
                 f"'{module_id}' is not a valid module name.\n"
-                "Use lowercase letters, digits, and underscores only; dotted "
+                "Use letters, digits, and underscores only; dotted "
                 "names (e.g. dsp.filters) nest the module in a subpackage. "
                 "Each dot-separated segment must not start with a digit."
             )
