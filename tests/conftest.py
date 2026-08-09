@@ -213,6 +213,31 @@ def _provision_worker_env() -> None:
     os.environ["JUST_BUILDIT_PYTHON"] = str(
         bindir / ("python.exe" if os.name == "nt" else "python")
     )
+    # Pin numpy to the parent's release for everything this worker installs.
+    #
+    # Inheriting the parent's packages through the `.pth` is only half the
+    # job: it makes numpy *importable*, but uv resolves against the worker's
+    # own site-packages, so the first scaffolded project that depends on
+    # numpy installs a fresh copy — and takes the newest release, which
+    # shadows the inherited one. The moment upstream publishes, the worker
+    # builds the extension against 2.5.2 while `sys.executable` imports it
+    # with 2.5.1. That is an ABI split across the compile/import boundary,
+    # and it is exactly what `test_worker_env_inherits_the_base_numpy`
+    # exists to catch — it caught this.
+    #
+    # A constraint rather than an up-front `uv pip install numpy==...`,
+    # because it also binds anything pulled in transitively later, and costs
+    # nothing when no install happens.
+    try:
+        from importlib.metadata import version as _dist_version
+
+        _numpy_version = _dist_version("numpy")
+    except Exception:  # numpy absent from the parent: nothing to pin to
+        _numpy_version = ""
+    if _numpy_version:
+        constraint = root / "constraints.txt"
+        constraint.write_text(f"numpy=={_numpy_version}\n")
+        os.environ["UV_CONSTRAINT"] = str(constraint)
     # PATH is deliberately NOT prepended with this venv's bin, though the
     # generated Makefile does fall back to `python3` off PATH. It does not need
     # to: `JUST_BUILDIT_PYTHON` is the first arm of that `$(or ...)`
