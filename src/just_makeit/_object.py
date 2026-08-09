@@ -1563,6 +1563,13 @@ def _regenerate_module_now(
             extra_files.add(f"{cname}_ext_{comp}_extra.c")
     if (ext_dir / f"{cname}_ext_extra.c").exists():
         extra_files.add(f"{cname}_ext_extra.c")
+    # gh-862: and the one hook that goes BEFORE the fragments. Every other
+    # hand-written file here is included after the code that would use it, so
+    # C shared by two objects' bindings had nowhere to live that both could
+    # call — doppler duplicated ~55 lines of `read_dict()` verbatim across two
+    # sacred fragments rather than pick one to include from the other.
+    if (ext_dir / f"{cname}_ext_prologue.c").exists():
+        extra_files.add(f"{cname}_ext_prologue.c")
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     aggregator = R.render_module_ext_aggregator(

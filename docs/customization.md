@@ -45,6 +45,31 @@ re-asserts it (see
 
 ______________________________________________________________________
 
+## Hand-written C in a module's binding
+
+A module's `<module>_ext.c` aggregator is glue and is rewritten every time,
+but it wires in three files that jm **never creates and never modifies**. Each
+is discovered by existing on disk — there is no manifest key to set — and each
+is included at a different point, which is the only thing that distinguishes
+them.
+
+| File                         | Included                     | Use it for                                      |
+| ---------------------------- | ---------------------------- | ----------------------------------------------- |
+| `<module>_ext_prologue.c`    | **before** every fragment    | C that two objects' bindings share              |
+| `<module>_ext_<obj>_extra.c` | after that object's fragment | a hand-owned binding for one object             |
+| `<module>_ext_extra.c`       | after all fragments          | a hand-written CPython type (see `extra_types`) |
+
+The prologue exists because the other two cannot serve the shared case: a
+helper included *after* its callers is not available to them, so two objects
+needing the same hand-written function had nowhere to put it that both
+fragments could call. Duplicating it into both sacred fragments is the trap it
+replaces — a fix applied to one copy leaves the other silently wrong.
+
+Names use the module's flat form, so a nested id `dsp.filters` looks for
+`dsp_filters_ext_prologue.c` in `native/src/dsp_filters/`.
+
+______________________________________________________________________
+
 ## Hand-owning one member of a generated stub
 
 The table above calls `.pyi` **glue**, and by default it is — regenerated in

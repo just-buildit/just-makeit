@@ -1342,8 +1342,19 @@ def render_module_ext_aggregator(
         f" * Objects: {object_list}\n"
         f" * GENERATED — do not hand-edit. Patches belong in the _ext_<obj>.c fragments.",
     )
-    # Include each per-object fragment, then its per-object extra if present.
+    # gh-862: the prologue comes FIRST, before any fragment, because that is
+    # the whole point of it — a declaration included after its callers is not
+    # available to them. It is the only hook here that is not "extra"; the
+    # other two exist so hand-written types survive regeneration, while this
+    # one exists so two fragments in the same module can share a helper
+    # without one of them having to include the other.
     include_parts: list[str] = []
+    prologue = f"{module}_ext_prologue.c"
+    if prologue in extra_files:
+        include_parts.append(
+            f'#include "{prologue}"  /* hand-written — jm never modifies */'
+        )
+    # Include each per-object fragment, then its per-object extra if present.
     for ctx in comp_ctxs:
         # gh-504: a view's fragment is keyed on its frag_id, not the shared
         # parent component; real objects have frag_id == component.
