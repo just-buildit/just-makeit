@@ -78,12 +78,32 @@ def _docstrings(pyi: Path) -> dict[str, str]:
     return out
 
 
-def _scaffold(root: Path, module: str | None) -> Path:
+# gh-881: the I/O shapes an object can have. The gate compared exactly ONE
+# of these — `float`/`float` — for its whole life, and it is the only one that
+# was clean: the other four each diverged, on `step`, `steps`, or both. An
+# empty `_KNOWN_DIVERGENT` therefore read as "no divergence anywhere" while
+# measuring one case in five. Coverage is the first thing to check about a
+# gate that keeps reporting green.
+SHAPES = [
+    ("float", "float"),
+    ("void", "float"),
+    ("void", "void"),
+    ("float", "void"),
+    ("float[]", "float[]"),
+]
+
+
+def _scaffold(
+    root: Path,
+    module: str | None,
+    arg_type: str = "float",
+    return_type: str = "float",
+) -> Path:
     """One object, built standalone or into *module*; returns its ``.pyi``."""
     new_run("p", root, [], [])
     if module:
         module_run(root, module)
-    object_run(root, "w", module, arg_type="float", return_type="float")
+    object_run(root, "w", module, arg_type=arg_type, return_type=return_type)
     method_run(
         root,
         "w",
@@ -110,10 +130,25 @@ def _scaffold(root: Path, module: str | None) -> Path:
 
 @pytest.fixture(scope="module")
 def faces(tmp_path_factory) -> tuple[dict[str, str], dict[str, str]]:
+    """The default `float`/`float` shape, for the tests that name members."""
     base = tmp_path_factory.mktemp("parity")
     standalone = _docstrings(_scaffold(base / "sa", None))
     module = _docstrings(_scaffold(base / "mo", "m"))
     return standalone, module
+
+
+@pytest.fixture(scope="module")
+def faces_by_shape(tmp_path_factory) -> dict:
+    """Both faces for every shape in `SHAPES`, built once for the module."""
+    base = tmp_path_factory.mktemp("parity_shapes")
+    out = {}
+    for at, rt in SHAPES:
+        tag = f"{at}_{rt}".replace("[]", "arr")
+        out[(at, rt)] = (
+            _docstrings(_scaffold(base / tag / "sa", None, at, rt)),
+            _docstrings(_scaffold(base / tag / "mo", "m", at, rt)),
+        )
+    return out
 
 
 class TestBothStubProducersAgree:
@@ -143,6 +178,54 @@ class TestBothStubProducersAgree:
             f"object is standalone or in a module: {divergent}. A second "
             "producer was wired in one place and not the other — see this "
             "file's docstring for why that keeps happening."
+        )
+
+    @pytest.mark.parametrize(("arg_type", "return_type"), SHAPES)
+    def test_every_shape_documents_identically(
+        self, faces_by_shape, arg_type, return_type
+    ):
+        """gh-881: the same claim, for every I/O shape rather than one.
+
+        `_KNOWN_DIVERGENT` is deliberately NOT consulted here. It exists to
+        ratchet down a known set, and seeding it with these would be adding
+        entries to a set whose whole rule is that it may only shrink — so the
+        divergences were fixed instead, and this arrives with nothing to
+        waive.
+        """
+        standalone, module = faces_by_shape[(arg_type, return_type)]
+        assert standalone and module, (
+            f"{arg_type} -> {return_type} produced no documented members on "
+            f"one of the two faces, so this comparison would pass vacuously"
+        )
+        divergent = sorted(
+            name
+            for name in set(standalone) & set(module)
+            if standalone[name] != module[name]
+        )
+        assert not divergent, (
+            f"for an object with arg_type={arg_type!r} "
+            f"return_type={return_type!r}, these members document differently "
+            f"depending on whether it is standalone or in a module: "
+            f"{divergent}."
+        )
+
+    def test_every_shape_documents_steps_at_all(self, faces_by_shape):
+        """A member present on both faces but documented on neither passes
+        `test_every_shape_documents_identically` while saying nothing.
+
+        The blockwise shape did exactly that: its standalone `steps()` was a
+        bare `...` with no docstring, so the members simply did not appear in
+        either mapping and equality never had anything to compare.
+        """
+        missing = [
+            f"{at} -> {rt} ({name})"
+            for (at, rt), faces_pair in faces_by_shape.items()
+            for name, face in zip(("standalone", "module"), faces_pair)
+            if "steps" not in face
+        ]
+        assert not missing, (
+            f"steps() is undocumented on at least one face for: "
+            f"{sorted(set(missing))}"
         )
 
     def test_the_ratchet_only_holds_real_divergence(self, faces):
